@@ -42,6 +42,8 @@ pub type FableFloatUnary = fn(f64) -> Result<f64, FableError>;
 pub type FableFieldStringUnary = for<'field> fn(FableField<'field>) -> Result<String, FableError>;
 /// Host function for `field -> bool` intrinsics.
 pub type FableFieldBoolUnary = for<'field> fn(FableField<'field>) -> Result<bool, FableError>;
+/// Host function for `field_mut -> unit` intrinsics.
+pub type FableFieldMutUnary = for<'field> fn(FableFieldMut<'field>) -> Result<(), FableError>;
 
 /// Read-only handle passed to field-aware Fable host intrinsics.
 pub struct FableField<'field> {
@@ -132,6 +134,156 @@ impl<'field> FableField<'field> {
     /// Read the field as an f64.
     pub fn read_f64(&self) -> Result<f64, FableError> {
         read_float_scalar(self.scalar, self.ptr)
+    }
+}
+
+/// Mutable handle passed to field-aware Fable host intrinsics.
+pub struct FableFieldMut<'field> {
+    path: &'field str,
+    shape: &'static Shape,
+    scalar: ScalarType,
+    ptr: PtrMut,
+}
+
+impl<'field> fmt::Debug for FableFieldMut<'field> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FableFieldMut")
+            .field("path", &self.path)
+            .field("shape", &self.shape)
+            .field("scalar", &self.scalar)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'field> FableFieldMut<'field> {
+    /// Dot-separated field path, starting at `root`.
+    #[must_use]
+    pub fn path(&self) -> &'field str {
+        self.path
+    }
+
+    /// Reflected shape of the referenced field.
+    #[must_use]
+    pub fn shape(&self) -> &'static Shape {
+        self.shape
+    }
+
+    /// Scalar kind of the referenced field.
+    #[must_use]
+    pub fn scalar(&self) -> ScalarType {
+        self.scalar
+    }
+
+    /// Read the field as a bool.
+    pub fn read_bool(&self) -> Result<bool, FableError> {
+        FableField {
+            path: self.path,
+            shape: self.shape,
+            scalar: self.scalar,
+            ptr: self.ptr.as_const(),
+        }
+        .read_bool()
+    }
+
+    /// Read the field as a char.
+    pub fn read_char(&self) -> Result<char, FableError> {
+        FableField {
+            path: self.path,
+            shape: self.shape,
+            scalar: self.scalar,
+            ptr: self.ptr.as_const(),
+        }
+        .read_char()
+    }
+
+    /// Read the field as an owned string.
+    pub fn read_string(&self) -> Result<String, FableError> {
+        FableField {
+            path: self.path,
+            shape: self.shape,
+            scalar: self.scalar,
+            ptr: self.ptr.as_const(),
+        }
+        .read_string()
+    }
+
+    /// Read the field as a signed integer.
+    pub fn read_i128(&self) -> Result<i128, FableError> {
+        read_signed_scalar(self.scalar, self.ptr.as_const())
+    }
+
+    /// Read the field as an unsigned integer.
+    pub fn read_u128(&self) -> Result<u128, FableError> {
+        read_unsigned_scalar(self.scalar, self.ptr.as_const())
+    }
+
+    /// Read the field as an f64.
+    pub fn read_f64(&self) -> Result<f64, FableError> {
+        read_float_scalar(self.scalar, self.ptr.as_const())
+    }
+
+    /// Write the field as a bool.
+    pub fn write_bool(&mut self, value: bool) -> Result<(), FableError> {
+        match self.scalar {
+            ScalarType::Bool => {
+                *unsafe { self.ptr.as_mut::<bool>() } = value;
+                Ok(())
+            }
+            _ => Err(FableError::TypeMismatch {
+                expected: "bool".into(),
+                actual: scalar_kind_name(self.scalar),
+            }),
+        }
+    }
+
+    /// Write the field as a char.
+    pub fn write_char(&mut self, value: char) -> Result<(), FableError> {
+        match self.scalar {
+            ScalarType::Char => {
+                *unsafe { self.ptr.as_mut::<char>() } = value;
+                Ok(())
+            }
+            _ => Err(FableError::TypeMismatch {
+                expected: "char".into(),
+                actual: scalar_kind_name(self.scalar),
+            }),
+        }
+    }
+
+    /// Write the field as an owned string.
+    pub fn write_string(&mut self, value: impl Into<String>) -> Result<(), FableError> {
+        match self.scalar {
+            ScalarType::String => {
+                *unsafe { self.ptr.as_mut::<String>() } = value.into();
+                Ok(())
+            }
+            ScalarType::CowStr => {
+                *unsafe { self.ptr.as_mut::<Cow<'static, str>>() } = Cow::Owned(value.into());
+                Ok(())
+            }
+            ScalarType::Str => Err(FableError::Unsupported {
+                feature: "writing Str".into(),
+            }),
+            _ => Err(FableError::TypeMismatch {
+                expected: "string".into(),
+                actual: scalar_kind_name(self.scalar),
+            }),
+        }
+    }
+
+    /// Write the field as a signed integer.
+    pub fn write_i128(&mut self, value: i128) -> Result<(), FableError> {
+        write_signed_scalar(self.scalar, self.ptr, value)
+    }
+
+    /// Write the field as an unsigned integer.
+    pub fn write_u128(&mut self, value: u128) -> Result<(), FableError> {
+        write_unsigned_scalar(self.scalar, self.ptr, value)
+    }
+
+    /// Write the field as an f64.
+    pub fn write_f64(&mut self, value: f64) -> Result<(), FableError> {
+        write_float_scalar(self.scalar, self.ptr, value)
     }
 }
 
@@ -438,6 +590,10 @@ enum UnitExpr {
     Null,
     Read(FieldPath),
     Local(LocalRef),
+    HostFieldMut {
+        function: FableFieldMutUnary,
+        field: FieldPath,
+    },
 }
 
 #[derive(Debug)]
@@ -908,8 +1064,11 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         for expr in raw_args {
             args.push(match signature.arg_kind {
                 IntrinsicArgKind::Expr => IntrinsicArgPlan::Expr(self.lower_expr(&expr)?),
-                IntrinsicArgKind::Field => {
+                IntrinsicArgKind::FieldRead => {
                     IntrinsicArgPlan::Field(self.lower_readable_path(&expr)?)
+                }
+                IntrinsicArgKind::FieldMut => {
+                    IntrinsicArgPlan::Field(self.lower_writable_path(&expr)?)
                 }
             });
         }
@@ -1035,6 +1194,7 @@ enum Intrinsic {
     Trim,
     FieldString(FableFieldStringUnary),
     FieldBool(FableFieldBoolUnary),
+    FieldMut(FableFieldMutUnary),
     StringUnary(FableStringUnary),
     StringBinaryPredicate(FableStringBinaryPredicate),
     SignedUnary(FableSignedUnary),
@@ -1070,7 +1230,8 @@ enum NumericLane {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IntrinsicArgKind {
     Expr,
-    Field,
+    FieldRead,
+    FieldMut,
 }
 
 enum IntrinsicArgPlan {
@@ -1188,7 +1349,7 @@ impl FableIntrinsics {
             name,
             Intrinsic::FieldString(function),
             1,
-            IntrinsicArgKind::Field,
+            IntrinsicArgKind::FieldRead,
         )
     }
 
@@ -1202,7 +1363,21 @@ impl FableIntrinsics {
             name,
             Intrinsic::FieldBool(function),
             1,
-            IntrinsicArgKind::Field,
+            IntrinsicArgKind::FieldRead,
+        )
+    }
+
+    /// Register a `field_mut -> unit` host intrinsic.
+    pub fn add_field_mut_unary(
+        &mut self,
+        name: &'static str,
+        function: FableFieldMutUnary,
+    ) -> Result<&mut Self, FableError> {
+        self.insert(
+            name,
+            Intrinsic::FieldMut(function),
+            1,
+            IntrinsicArgKind::FieldMut,
         )
     }
 
@@ -1348,6 +1523,10 @@ fn lower_intrinsic(
                 function,
                 field,
             }))
+        }
+        Intrinsic::FieldMut(function) => {
+            let field = only_field_arg(signature.name, args)?;
+            Ok(ExprPlan::Unit(UnitExpr::HostFieldMut { function, field }))
         }
         Intrinsic::StringUnary(function) => {
             let value = only_string_arg(signature.name, expr_args(signature.name, args)?)?;
@@ -1789,6 +1968,7 @@ impl FableInterp {
                 Ok(())
             }
             UnitExpr::Local(local) => self.local_unit(*local),
+            UnitExpr::HostFieldMut { function, field } => function(self.field_mut(field)),
         }
     }
 
@@ -1886,6 +2066,15 @@ impl FableInterp {
             shape: field.shape,
             scalar: field.scalar,
             ptr: unsafe { field.ptr_const(self.root.as_const()) },
+        }
+    }
+
+    fn field_mut<'field>(&self, field: &'field FieldPath) -> FableFieldMut<'field> {
+        FableFieldMut {
+            path: &field.source,
+            shape: field.shape,
+            scalar: field.scalar,
+            ptr: unsafe { field.ptr_mut(self.root) },
         }
     }
 
@@ -2448,6 +2637,81 @@ fn read_float_scalar(scalar: ScalarType, ptr: PtrConst) -> Result<f64, FableErro
     }
 }
 
+fn write_signed_scalar(scalar: ScalarType, ptr: PtrMut, value: i128) -> Result<(), FableError> {
+    match scalar {
+        ScalarType::I8 => unsafe { write_signed_value::<i8>(ptr, scalar, value) },
+        ScalarType::I16 => unsafe { write_signed_value::<i16>(ptr, scalar, value) },
+        ScalarType::I32 => unsafe { write_signed_value::<i32>(ptr, scalar, value) },
+        ScalarType::I64 => unsafe { write_signed_value::<i64>(ptr, scalar, value) },
+        ScalarType::I128 => unsafe { write_signed_value::<i128>(ptr, scalar, value) },
+        ScalarType::ISize => unsafe { write_signed_value::<isize>(ptr, scalar, value) },
+        _ => Err(FableError::TypeMismatch {
+            expected: "signed number".into(),
+            actual: scalar_kind_name(scalar),
+        }),
+    }
+}
+
+unsafe fn write_signed_value<T>(
+    ptr: PtrMut,
+    target: ScalarType,
+    value: i128,
+) -> Result<(), FableError>
+where
+    T: TryFrom<i128>,
+{
+    let converted =
+        T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
+    *unsafe { ptr.as_mut::<T>() } = converted;
+    Ok(())
+}
+
+fn write_unsigned_scalar(scalar: ScalarType, ptr: PtrMut, value: u128) -> Result<(), FableError> {
+    match scalar {
+        ScalarType::U8 => unsafe { write_unsigned_value::<u8>(ptr, scalar, value) },
+        ScalarType::U16 => unsafe { write_unsigned_value::<u16>(ptr, scalar, value) },
+        ScalarType::U32 => unsafe { write_unsigned_value::<u32>(ptr, scalar, value) },
+        ScalarType::U64 => unsafe { write_unsigned_value::<u64>(ptr, scalar, value) },
+        ScalarType::U128 => unsafe { write_unsigned_value::<u128>(ptr, scalar, value) },
+        ScalarType::USize => unsafe { write_unsigned_value::<usize>(ptr, scalar, value) },
+        _ => Err(FableError::TypeMismatch {
+            expected: "unsigned number".into(),
+            actual: scalar_kind_name(scalar),
+        }),
+    }
+}
+
+unsafe fn write_unsigned_value<T>(
+    ptr: PtrMut,
+    target: ScalarType,
+    value: u128,
+) -> Result<(), FableError>
+where
+    T: TryFrom<u128>,
+{
+    let converted =
+        T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
+    *unsafe { ptr.as_mut::<T>() } = converted;
+    Ok(())
+}
+
+fn write_float_scalar(scalar: ScalarType, ptr: PtrMut, value: f64) -> Result<(), FableError> {
+    match scalar {
+        ScalarType::F32 => {
+            *unsafe { ptr.as_mut::<f32>() } = value as f32;
+            Ok(())
+        }
+        ScalarType::F64 => {
+            *unsafe { ptr.as_mut::<f64>() } = value;
+            Ok(())
+        }
+        _ => Err(FableError::TypeMismatch {
+            expected: "float".into(),
+            actual: scalar_kind_name(scalar),
+        }),
+    }
+}
+
 fn expect_unit_expr(expr: &ExprPlan) -> Result<&UnitExpr, FableError> {
     match expr {
         ExprPlan::Unit(expr) => Ok(expr),
@@ -2845,6 +3109,7 @@ mod tests {
         visits: u32,
         score: f64,
         marker: char,
+        tag: &'static str,
     }
 
     fn state() -> State {
@@ -2857,6 +3122,7 @@ mod tests {
             visits: 1,
             score: 1.5,
             marker: 'a',
+            tag: "seed",
         }
     }
 
@@ -3082,6 +3348,61 @@ mod tests {
                 expected,
                 actual: "string",
             } if expected == "signed number"
+        ));
+    }
+
+    #[test]
+    fn applies_field_mut_host_intrinsics() {
+        let mut value = state();
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics
+            .add_field_mut_unary("rewrite_field", rewrite_field)
+            .unwrap();
+
+        FablePlan::<State>::compile_with_intrinsics(
+            r#"
+                rewrite_field(root.user.name);
+                rewrite_field(root.user.age);
+                rewrite_field(root.visits);
+                rewrite_field(root.score);
+                rewrite_field(root.user.active);
+                rewrite_field(root.marker);
+            "#,
+            &intrinsics,
+        )
+        .unwrap()
+        .apply(&mut value)
+        .unwrap();
+
+        assert_eq!(value.user.name, "ADA!");
+        assert_eq!(value.user.age, 22);
+        assert_eq!(value.visits, 4);
+        assert_eq!(value.score, 3.0);
+        assert!(value.user.active);
+        assert_eq!(value.marker, 'Z');
+        assert_eq!(value.tag, "seed");
+    }
+
+    #[test]
+    fn rejects_field_mut_intrinsics_for_read_only_fields() {
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics
+            .add_field_mut_unary("rewrite_field", rewrite_field)
+            .unwrap();
+
+        let err = match FablePlan::<State>::compile_with_intrinsics(
+            "rewrite_field(root.tag);",
+            &intrinsics,
+        ) {
+            Ok(_) => panic!("expected Fable compilation to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            FableError::Unsupported {
+                feature
+            } if feature == "writing Str"
         ));
     }
 
@@ -3367,5 +3688,23 @@ mod tests {
 
     fn field_is_positive(field: FableField<'_>) -> Result<bool, FableError> {
         Ok(field.read_i128()? > 0)
+    }
+
+    fn rewrite_field(mut field: FableFieldMut<'_>) -> Result<(), FableError> {
+        match field.scalar() {
+            ScalarType::String => {
+                let value = field.read_string()?.to_ascii_uppercase();
+                field.write_string(format!("{value}!"))
+            }
+            ScalarType::I32 => field.write_i128(field.read_i128()? + 5),
+            ScalarType::U32 => field.write_u128(field.read_u128()? + 3),
+            ScalarType::F64 => field.write_f64(field.read_f64()? * 2.0),
+            ScalarType::Bool => field.write_bool(!field.read_bool()?),
+            ScalarType::Char => field.write_char('Z'),
+            other => Err(FableError::TypeMismatch {
+                expected: "known rewrite field".into(),
+                actual: scalar_kind_name(other),
+            }),
+        }
     }
 }
