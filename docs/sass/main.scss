@@ -547,7 +547,10 @@ a { color: var(--signal); }
   li::marker { color: var(--signal-deep); }
   li + li { margin-top: 0.35rem; }
 
-  a {
+  // Only underline plain prose links. Structural links (cards, panels, …) all
+  // carry a class and style themselves, so excluding classed links keeps their
+  // descriptions/titles from inheriting the prose underline.
+  a:not([class]) {
     color: var(--signal);
     text-decoration: underline;
     text-decoration-thickness: 1px;
