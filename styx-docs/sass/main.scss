@@ -60,10 +60,64 @@ body {
   min-height: 100vh;
 }
 
+// Ecosystem bar: the one uniform layer shared with the other facet-ecosystem
+// sites (facet/picante/dibs). Cross-site links + the shared search box; styx
+// keeps its own header below. Mirrors docs/sass/main.scss, restyled with styx's
+// own tokens. Links carry data-x-site so mount-localization leaves their
+// site-absolute targets (e.g. facet-home `/`) alone.
+$eco-bar-height: 2.5rem;
+
+.eco-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  height: $eco-bar-height;
+  padding: 0 1.5rem;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 110;
+}
+
+.eco-bar-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.eco-bar-links {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  a {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+
+    &:hover,
+    &.active {
+      color: var(--accent);
+    }
+  }
+}
+
+.eco-bar-search {
+  margin-left: auto;
+  width: 14rem;
+  max-width: 30vw;
+}
+
 // Header & Navigation
 .header {
   position: sticky;
-  top: 0;
+  top: $eco-bar-height;
   z-index: 100;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
