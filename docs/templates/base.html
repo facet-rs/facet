@@ -36,9 +36,9 @@
     </nav>
     <input type="checkbox" id="nav-toggle" class="nav-toggle">
     <nav class="site-nav">
-        <a href="/" class="site-nav-brand">
+        <a href="{{ source.mount | default(value='/') }}" class="site-nav-brand">
             <img src="/favicon.png" alt="" class="site-nav-logo">
-            <span>facet</span>
+            <span>{{ source.name | default(value='facet') }}</span>
         </a>
         <label for="nav-toggle" class="site-nav-hamburger" aria-label="Toggle menu">
             <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
@@ -48,12 +48,14 @@
             </svg>
         </label>
         <div class="site-nav-links">
-            <a href="/guide" {% if current_path is starting_with("/guide") %}class="active"{% endif %}>Guide</a>
-            <a href="/ecosystem" {% if current_path is starting_with("/ecosystem") %}class="active"{% endif %}>Ecosystem</a>
-            <a href="/showcases" {% if current_path is starting_with("/showcases") %}class="active"{% endif %}>Showcases</a>
-            <a href="/reference" {% if current_path is starting_with("/reference") or current_path == "/format-crate-matrix/" %}class="active"{% endif %}>Reference</a>
-            <a href="/extend" {% if current_path is starting_with("/extend") %}class="active"{% endif %}>Extend</a>
-            <a href="/contribute" {% if current_path is starting_with("/contribute") %}class="active"{% endif %}>Contribute</a>
+            {# Per-site nav, derived from THIS source's own top-level sections
+               (source.root is the current mounted site's root, not the aggregate). #}
+            {% if source is defined and source.root %}
+            {% for sub in source.root.subsections | sort(attribute="weight") %}
+            {% set s = get_section(path=sub.path) %}
+            <a href="{{ s.permalink }}" {% if current_path is starting_with(s.path) %}class="active"{% endif %}>{{ s.title or sub.title }}</a>
+            {% endfor %}
+            {% endif %}
         </div>
         <a href="https://github.com/facet-rs/facet" class="site-nav-github" title="GitHub">
             <svg viewBox="0 0 16 16" width="24" height="24" fill="currentColor">
