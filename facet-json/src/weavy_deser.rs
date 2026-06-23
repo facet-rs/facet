@@ -31,6 +31,10 @@ use weavy::mem::runtime::{
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 use crate::JsonParser;
+use crate::parser::{
+    JsonFieldKeyInput, JsonObjectKeyStep, JsonObjectOrderedI32Step, JsonObjectOrderedScalarStep,
+    JsonScalarInput, JsonScalarToken, JsonSequenceScalarStep,
+};
 #[cfg(all(
     feature = "jit",
     any(
@@ -38,11 +42,7 @@ use crate::JsonParser;
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-use crate::parser::NativeOrderedRootCursor;
-use crate::parser::{
-    JsonFieldKeyInput, JsonObjectKeyStep, JsonObjectOrderedI32Step, JsonObjectOrderedScalarStep,
-    JsonScalarInput, JsonScalarToken, JsonSequenceScalarStep,
-};
+use crate::parser::{NativeArrayStep, NativeOrderedRootCursor};
 use crate::scanner::{NumberHint, ParsedNumber, SpannedToken, Token as ScanToken};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -781,6 +781,11 @@ impl JsonNativeState {
             return Ok(());
         }
 
+        if self.try_read_cursor_f64_scalar_struct_list(parser, info)? {
+            info.record_ordered_probe(true);
+            return Ok(());
+        }
+
         if self.try_read_cursor_scalar_struct_list(parser, info)? {
             info.record_ordered_probe(true);
             return Ok(());
@@ -904,10 +909,14 @@ impl JsonNativeState {
         );
         let mut after_element = false;
         loop {
-            if cursor.consume_array_end_if_next(after_element)? {
-                self.adopt_native_list(info, &mut builder)?;
-                parser.commit_native_ordered_root(cursor);
-                return Ok(true);
+            match cursor.consume_array_step(after_element)? {
+                Some(NativeArrayStep::End) => {
+                    self.adopt_native_list(info, &mut builder)?;
+                    parser.commit_native_ordered_root(cursor);
+                    return Ok(true);
+                }
+                Some(NativeArrayStep::Element) => {}
+                None => return Ok(false),
             }
 
             let slot = builder.next_uninit_slot().map_err(raw_alloc_error)?;
@@ -919,7 +928,67 @@ impl JsonNativeState {
                 &mut cursor,
                 &info.element,
                 &mut guard,
-                Some(after_element),
+                Some(false),
+            );
+            self.base = old_base;
+
+            let matched = matched?;
+            if !matched {
+                return Ok(false);
+            }
+
+            guard.finish();
+            unsafe {
+                builder.mark_initialized();
+            }
+            after_element = true;
+        }
+    }
+
+    #[inline]
+    fn try_read_cursor_f64_scalar_struct_list<const TRUSTED_UTF8: bool>(
+        &mut self,
+        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+        info: &JsonNativeScalarStructListInfo,
+    ) -> Result<bool, DeserializeError> {
+        if !tiny_f64_struct_fields_are_fusible(&info.element.fields) {
+            return Ok(false);
+        }
+
+        let Some(mut cursor) = parser.native_ordered_root_cursor() else {
+            return Ok(false);
+        };
+        if !cursor.consume_root_array_start()? {
+            return Ok(false);
+        }
+
+        let mut builder = RawArrayBuilder::new(
+            info.element_layout,
+            info.list.t() as *const Shape as *const (),
+            drop_shape_value,
+        );
+        let mut after_element = false;
+        loop {
+            match cursor.consume_array_step(after_element)? {
+                Some(NativeArrayStep::End) => {
+                    self.adopt_native_list(info, &mut builder)?;
+                    parser.commit_native_ordered_root(cursor);
+                    return Ok(true);
+                }
+                Some(NativeArrayStep::Element) => {}
+                None => return Ok(false),
+            }
+
+            let slot = builder.next_uninit_slot().map_err(raw_alloc_error)?;
+            let old_base = self.base;
+            self.base = PtrUninit::new(slot);
+
+            let mut guard = NativeScalarStructGuard::new(self.base, &info.element.fields);
+            let matched = self.read_cursor_f64_scalar_struct_object(
+                &mut cursor,
+                &info.element,
+                &mut guard,
+                Some(false),
             );
             self.base = old_base;
 
@@ -995,10 +1064,14 @@ impl JsonNativeState {
         );
         let mut after_element = false;
         loop {
-            if cursor.consume_array_end_if_next(after_element)? {
-                self.adopt_native_list(info, &mut builder)?;
-                parser.commit_native_ordered_root(cursor);
-                return Ok(true);
+            match cursor.consume_array_step(after_element)? {
+                Some(NativeArrayStep::End) => {
+                    self.adopt_native_list(info, &mut builder)?;
+                    parser.commit_native_ordered_root(cursor);
+                    return Ok(true);
+                }
+                Some(NativeArrayStep::Element) => {}
+                None => return Ok(false),
             }
 
             let slot = builder.next_uninit_slot().map_err(raw_alloc_error)?;
@@ -1011,7 +1084,7 @@ impl JsonNativeState {
                 &mut cursor,
                 &info.element,
                 &mut guard,
-                Some(after_element),
+                Some(false),
             );
             self.base = old_base;
 

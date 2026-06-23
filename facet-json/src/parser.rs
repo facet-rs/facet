@@ -277,6 +277,19 @@ pub(crate) struct NativeOrderedRootCursor<'de> {
     last_token_start: usize,
 }
 
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeArrayStep {
+    Element,
+    End,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ObjectState {
     KeyOrEnd,
@@ -2669,24 +2682,27 @@ impl<'de> NativeOrderedRootCursor<'de> {
     }
 
     #[inline]
-    pub(crate) fn consume_array_end_if_next(
+    pub(crate) fn consume_array_step(
         &mut self,
         after_element: bool,
-    ) -> Result<bool, ParseError> {
-        let original = self.scanner.clone();
+    ) -> Result<Option<NativeArrayStep>, ParseError> {
         if self.consume_punctuation(b']')? {
-            return Ok(true);
-        }
-        self.scanner = original.clone();
-
-        if after_element {
-            if self.consume_punctuation(b',')? && self.consume_punctuation(b']')? {
-                return Ok(true);
-            }
-            self.scanner = original;
+            return Ok(Some(NativeArrayStep::End));
         }
 
-        Ok(false)
+        if !after_element {
+            return Ok(Some(NativeArrayStep::Element));
+        }
+
+        if !self.consume_punctuation(b',')? {
+            return Ok(None);
+        }
+
+        if self.consume_punctuation(b']')? {
+            return Ok(Some(NativeArrayStep::End));
+        }
+
+        Ok(Some(NativeArrayStep::Element))
     }
 
     #[inline]
