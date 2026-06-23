@@ -330,6 +330,55 @@ impl Scanner {
         )
     ))]
     #[inline]
+    pub fn try_consume_one_byte_field_name_colon_f64(
+        &mut self,
+        buf: &[u8],
+        expected: u8,
+        require_comma: bool,
+    ) -> Result<Option<(Span, f64)>, ScanError> {
+        if matches!(expected, b'"' | b'\\' | 0x00..=0x1f) {
+            return Ok(None);
+        }
+
+        let original = self.pos;
+        self.skip_whitespace_if_needed(buf)?;
+
+        if require_comma {
+            if buf.get(self.pos) != Some(&b',') {
+                self.pos = original;
+                return Ok(None);
+            }
+            self.pos += 1;
+            self.skip_whitespace_if_needed(buf)?;
+        }
+
+        if !matches!(
+            (buf.get(self.pos), buf.get(self.pos + 1), buf.get(self.pos + 2)),
+            (Some(b'"'), Some(byte), Some(b'"')) if *byte == expected
+        ) {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 3;
+
+        self.skip_whitespace_if_needed(buf)?;
+        if buf.get(self.pos) != Some(&b':') {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 1;
+
+        self.try_consume_f64_number_with_rollback(buf, original)
+    }
+
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    #[inline]
     pub fn try_consume_array_object_start(
         &mut self,
         buf: &[u8],
@@ -606,6 +655,22 @@ impl Scanner {
     #[inline]
     pub fn try_consume_f64_number(&mut self, buf: &[u8]) -> Result<Option<(Span, f64)>, ScanError> {
         let original = self.pos;
+        self.try_consume_f64_number_with_rollback(buf, original)
+    }
+
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    #[inline(always)]
+    fn try_consume_f64_number_with_rollback(
+        &mut self,
+        buf: &[u8],
+        original: usize,
+    ) -> Result<Option<(Span, f64)>, ScanError> {
         self.skip_whitespace_if_needed(buf)?;
 
         let start = self.pos;
@@ -614,29 +679,37 @@ impl Scanner {
             return Ok(None);
         }
 
-        let token = match self.scan_number(buf, start) {
-            Ok(token) => token,
-            Err(_) => {
-                self.pos = original;
-                return Ok(None);
-            }
-        };
-        let Token::Number { start, end, hint } = token.token else {
-            unreachable!("scan_number returns a number token");
-        };
-        let value = match parse_number(buf, start, end, hint) {
-            Ok(ParsedNumber::F64(value)) => value,
-            Ok(ParsedNumber::I64(value)) => value as f64,
-            Ok(ParsedNumber::U64(value)) => value as f64,
-            Ok(ParsedNumber::I128(value)) => value as f64,
-            Ok(ParsedNumber::U128(value)) => value as f64,
+        let (end, hint) = match self.scan_number_bounds(buf, start) {
+            Ok(bounds) => bounds,
             Err(_) => {
                 self.pos = original;
                 return Ok(None);
             }
         };
 
-        Ok(Some((token.span, value)))
+        let value = if hint == NumberHint::Float {
+            match parse_f64(buf, start, end) {
+                Ok(value) => value,
+                Err(_) => {
+                    self.pos = original;
+                    return Ok(None);
+                }
+            }
+        } else {
+            match parse_number(buf, start, end, hint) {
+                Ok(ParsedNumber::F64(value)) => value,
+                Ok(ParsedNumber::I64(value)) => value as f64,
+                Ok(ParsedNumber::U64(value)) => value as f64,
+                Ok(ParsedNumber::I128(value)) => value as f64,
+                Ok(ParsedNumber::U128(value)) => value as f64,
+                Err(_) => {
+                    self.pos = original;
+                    return Ok(None);
+                }
+            }
+        };
+
+        Ok(Some((Span::new(start, end - start), value)))
     }
 
     /// Scan the next token from the buffer.
@@ -888,6 +961,20 @@ impl Scanner {
 
     /// Scan a number, finding its boundaries and determining its type hint.
     fn scan_number(&mut self, buf: &[u8], start: usize) -> ScanResult {
+        let (end, hint) = self.scan_number_bounds(buf, start)?;
+
+        Ok(SpannedToken {
+            token: Token::Number { start, end, hint },
+            span: Span::new(start, end - start),
+        })
+    }
+
+    #[inline]
+    fn scan_number_bounds(
+        &mut self,
+        buf: &[u8],
+        start: usize,
+    ) -> Result<(usize, NumberHint), ScanError> {
         let mut hint = NumberHint::Unsigned;
 
         if buf.get(self.pos) == Some(&b'-') {
@@ -895,15 +982,16 @@ impl Scanner {
             self.pos += 1;
         }
 
-        self.scan_number_content(buf, start, hint)
+        self.scan_number_content_bounds(buf, start, hint)
     }
 
-    fn scan_number_content(
+    #[inline]
+    fn scan_number_content_bounds(
         &mut self,
         buf: &[u8],
         start: usize,
         mut hint: NumberHint,
-    ) -> ScanResult {
+    ) -> Result<(usize, NumberHint), ScanError> {
         let mut pos = self.pos;
 
         // Integer part
@@ -964,10 +1052,7 @@ impl Scanner {
             });
         }
 
-        Ok(SpannedToken {
-            token: Token::Number { start, end, hint },
-            span: Span::new(start, end - start),
-        })
+        Ok((end, hint))
     }
 
     /// Scan a literal keyword (true, false, null)
@@ -1487,18 +1572,12 @@ pub fn parse_number(
     end: usize,
     hint: NumberHint,
 ) -> Result<ParsedNumber, ScanError> {
-    use lexical_parse_float::FromLexical as _;
     use lexical_parse_integer::FromLexical as _;
 
     let slice = &buf[start..end];
 
     match hint {
-        NumberHint::Float => f64::from_lexical(slice)
-            .map(ParsedNumber::F64)
-            .map_err(|_| ScanError {
-                kind: ScanErrorKind::UnexpectedChar('?'),
-                span: Span::new(start, end - start),
-            }),
+        NumberHint::Float => parse_f64(buf, start, end).map(ParsedNumber::F64),
         NumberHint::Signed => {
             if let Ok(n) = i64::from_lexical(slice) {
                 Ok(ParsedNumber::I64(n))
@@ -1524,6 +1603,17 @@ pub fn parse_number(
             }
         }
     }
+}
+
+#[cfg(feature = "lexical-parse")]
+#[inline]
+fn parse_f64(buf: &[u8], start: usize, end: usize) -> Result<f64, ScanError> {
+    use lexical_parse_float::FromLexical as _;
+
+    f64::from_lexical(&buf[start..end]).map_err(|_| ScanError {
+        kind: ScanErrorKind::UnexpectedChar('?'),
+        span: Span::new(start, end - start),
+    })
 }
 
 /// Parse a number from the buffer slice, skipping UTF-8 validation.
@@ -1586,13 +1676,7 @@ fn parse_number_inner(
     hint: NumberHint,
 ) -> Result<ParsedNumber, ScanError> {
     match hint {
-        NumberHint::Float => s
-            .parse::<f64>()
-            .map(ParsedNumber::F64)
-            .map_err(|_| ScanError {
-                kind: ScanErrorKind::UnexpectedChar('?'),
-                span: Span::new(start, end - start),
-            }),
+        NumberHint::Float => parse_f64_inner(s, start, end).map(ParsedNumber::F64),
         NumberHint::Signed => {
             if let Ok(n) = s.parse::<i64>() {
                 Ok(ParsedNumber::I64(n))
@@ -1618,6 +1702,27 @@ fn parse_number_inner(
             }
         }
     }
+}
+
+#[cfg(not(feature = "lexical-parse"))]
+#[inline]
+fn parse_f64(buf: &[u8], start: usize, end: usize) -> Result<f64, ScanError> {
+    let slice = &buf[start..end];
+    let s = str::from_utf8(slice).map_err(|_| ScanError {
+        kind: ScanErrorKind::InvalidUtf8,
+        span: Span::new(start, end - start),
+    })?;
+
+    parse_f64_inner(s, start, end)
+}
+
+#[cfg(not(feature = "lexical-parse"))]
+#[inline]
+fn parse_f64_inner(s: &str, start: usize, end: usize) -> Result<f64, ScanError> {
+    s.parse::<f64>().map_err(|_| ScanError {
+        kind: ScanErrorKind::UnexpectedChar('?'),
+        span: Span::new(start, end - start),
+    })
 }
 
 #[cfg(test)]
@@ -1862,5 +1967,69 @@ mod tests {
                 ParsedNumber::F64(3.14)
             );
         }
+    }
+
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    #[test]
+    fn try_consume_f64_number_direct_path() {
+        let mut scanner = Scanner::new();
+        let (span, value) = scanner
+            .try_consume_f64_number(b"  -0.03125,")
+            .unwrap()
+            .unwrap();
+        assert_eq!(span, Span::new(2, 8));
+        assert_eq!(value, -0.03125);
+
+        let mut scanner = Scanner::new();
+        let (span, value) = scanner.try_consume_f64_number(b"9000}").unwrap().unwrap();
+        assert_eq!(span, Span::new(0, 4));
+        assert_eq!(value, 9000.0);
+    }
+
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    #[test]
+    fn try_consume_f64_number_rolls_back_on_invalid_float() {
+        let mut scanner = Scanner::new();
+        assert!(scanner.try_consume_f64_number(b"1e,").unwrap().is_none());
+        assert_eq!(scanner.pos(), 0);
+    }
+
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    #[test]
+    fn try_consume_one_byte_field_name_colon_f64_rolls_back_together() {
+        let mut scanner = Scanner::new();
+        let (span, value) = scanner
+            .try_consume_one_byte_field_name_colon_f64(br#" "x": -1.25,"#, b'x', false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(span, Span::new(6, 5));
+        assert_eq!(value, -1.25);
+
+        let mut scanner = Scanner::new();
+        assert!(
+            scanner
+                .try_consume_one_byte_field_name_colon_f64(br#" "x": "1.25""#, b'x', false)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(scanner.pos(), 0);
     }
 }

@@ -11,6 +11,13 @@ struct Point {
 }
 
 #[derive(Facet, Debug, PartialEq)]
+struct FloatPoint {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+#[derive(Facet, Debug, PartialEq)]
 struct Person {
     name: String,
     age: u32,
@@ -386,6 +393,23 @@ fn weavy_jit_ordered_wide_scalars_accept_numeric_strings() {
             j: -10,
             k: true,
             l: 11.5,
+        }
+    );
+}
+
+#[test]
+fn weavy_jit_ordered_float_scalars_replay_after_string_mismatch() {
+    let plan = facet_json::JsonWeavyPlan::<FloatPoint>::build_jit().unwrap();
+    let got = plan
+        .from_str(r#"{"x":12.5,"y":"-0.03125","z":9000.125}"#)
+        .unwrap();
+
+    assert_eq!(
+        got,
+        FloatPoint {
+            x: 12.5,
+            y: -0.03125,
+            z: 9000.125,
         }
     );
 }

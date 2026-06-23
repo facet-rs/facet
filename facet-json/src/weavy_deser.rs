@@ -1076,6 +1076,15 @@ impl JsonNativeState {
     where
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
+        if tiny_f64_struct_fields_are_fusible(&info.fields) {
+            return self.read_cursor_f64_scalar_struct_object(
+                cursor,
+                info,
+                guard,
+                array_element_object,
+            );
+        }
+
         if let Some(require_comma) = array_element_object
             && !cursor.consume_array_object_start(require_comma)?
         {
@@ -1096,6 +1105,39 @@ impl JsonNativeState {
                     field_ptr,
                     JsonScalarInput::Raw(token),
                 )?;
+            }
+            guard.mark(index);
+        }
+
+        if !cursor.consume_object_end()? {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    #[inline]
+    fn read_cursor_f64_scalar_struct_object(
+        &mut self,
+        cursor: &mut NativeOrderedRootCursor<'_>,
+        info: &JsonNativeScalarStructInfo,
+        guard: &mut NativeScalarStructGuard<'_>,
+        array_element_object: Option<bool>,
+    ) -> Result<bool, DeserializeError> {
+        if let Some(require_comma) = array_element_object
+            && !cursor.consume_array_object_start(require_comma)?
+        {
+            return Ok(false);
+        }
+
+        for (index, expected) in info.ordered_names.iter().copied().enumerate() {
+            let Some(value) = cursor.consume_ordered_f64_field(expected, index > 0)? else {
+                return Ok(false);
+            };
+
+            let field = info.fields[index];
+            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+            unsafe {
+                field_ptr.put(value);
             }
             guard.mark(index);
         }
@@ -3500,6 +3542,24 @@ fn tiny_i32_struct_fields_are_fusible(fields: &[ScalarFieldPlan]) -> bool {
         && fields.iter().all(|field| {
             field.alias.is_none()
                 && field.scalar.scalar == ScalarType::I32
+                && matches!(field.missing, MissingField::Required)
+        })
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+fn tiny_f64_struct_fields_are_fusible(fields: &[ScalarFieldPlan]) -> bool {
+    !fields.is_empty()
+        && fields.len() <= TINY_SCALAR_STRUCT_MAX_FIELDS
+        && fields.iter().all(|field| {
+            field.alias.is_none()
+                && field.scalar.scalar == ScalarType::F64
+                && matches!(field.name.as_bytes(), [_])
                 && matches!(field.missing, MissingField::Required)
         })
 }
