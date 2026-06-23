@@ -22,8 +22,147 @@ use crate::{ParseError, parse};
 /// Build a plan once with [`FablePlan::compile`], then apply it repeatedly to
 /// mutable values of the same Facet-reflected type.
 pub struct FablePlan<T> {
-    lowered: DenseLowered<FableOp>,
+    plan: FableRootPlan,
     _marker: PhantomData<fn() -> T>,
+}
+
+/// A reusable lowered Fable program over explicitly named roots.
+///
+/// This is the lower-level form used by transform/debug-shell style callers
+/// that expose more than one typed root to a script.
+pub struct FableRootPlan {
+    lowered: DenseLowered<FableOp>,
+    roots: Box<[FableRootSpec]>,
+}
+
+/// Access policy for a Fable root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FableRootAccess {
+    /// The script may read this root, but may not assign through it or pass it
+    /// to mutable field intrinsics.
+    ReadOnly,
+    /// The script may read and write this root.
+    ReadWrite,
+}
+
+/// Compile-time description of a named Fable root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FableRootSpec {
+    name: &'static str,
+    shape: &'static Shape,
+    access: FableRootAccess,
+}
+
+impl FableRootSpec {
+    /// Create a read-only root spec for `T`.
+    #[must_use]
+    pub fn read_only<T>(name: &'static str) -> Self
+    where
+        T: Facet<'static>,
+    {
+        Self {
+            name,
+            shape: T::SHAPE,
+            access: FableRootAccess::ReadOnly,
+        }
+    }
+
+    /// Create a read-write root spec for `T`.
+    #[must_use]
+    pub fn read_write<T>(name: &'static str) -> Self
+    where
+        T: Facet<'static>,
+    {
+        Self {
+            name,
+            shape: T::SHAPE,
+            access: FableRootAccess::ReadWrite,
+        }
+    }
+
+    /// Root name as used in Fable source.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// Root shape.
+    #[must_use]
+    pub fn shape(&self) -> &'static Shape {
+        self.shape
+    }
+
+    /// Root access policy.
+    #[must_use]
+    pub fn access(&self) -> FableRootAccess {
+        self.access
+    }
+}
+
+/// Runtime value bound to a named Fable root.
+pub struct FableRootValue<'root> {
+    name: &'static str,
+    shape: &'static Shape,
+    ptr: RuntimeRootPtr,
+    _marker: PhantomData<&'root mut ()>,
+}
+
+impl<'root> FableRootValue<'root> {
+    /// Bind an immutable value to a read-only root.
+    #[must_use]
+    pub fn read_only<T>(name: &'static str, value: &'root T) -> Self
+    where
+        T: Facet<'static>,
+    {
+        Self {
+            name,
+            shape: T::SHAPE,
+            ptr: RuntimeRootPtr::Const(PtrConst::new_sized(value as *const T)),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Bind a mutable value to a read-write root.
+    #[must_use]
+    pub fn read_write<T>(name: &'static str, value: &'root mut T) -> Self
+    where
+        T: Facet<'static>,
+    {
+        Self {
+            name,
+            shape: T::SHAPE,
+            ptr: RuntimeRootPtr::Mut(PtrMut::new_sized(value as *mut T)),
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RuntimeRootPtr {
+    Const(PtrConst),
+    Mut(PtrMut),
+}
+
+impl RuntimeRootPtr {
+    fn as_const(self) -> PtrConst {
+        match self {
+            Self::Const(ptr) => ptr,
+            Self::Mut(ptr) => ptr.as_const(),
+        }
+    }
+
+    fn as_mut(self) -> Option<PtrMut> {
+        match self {
+            Self::Const(_) => None,
+            Self::Mut(ptr) => Some(ptr),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RuntimeRoot {
+    name: &'static str,
+    ptr: RuntimeRootPtr,
 }
 
 /// Host-call registry used while lowering Fable calls.
@@ -305,6 +444,42 @@ where
         src: &str,
         intrinsics: &FableIntrinsics,
     ) -> Result<Self, FableError> {
+        let roots = [FableRootSpec::read_write::<T>("root")];
+        let plan = FableRootPlan::compile_with_intrinsics(src, &roots, intrinsics)?;
+
+        Ok(Self {
+            plan,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Run this plan against `value`.
+    pub fn apply(&self, value: &mut T) -> Result<(), FableError> {
+        let mut roots = [FableRootValue::read_write("root", value)];
+        self.plan.apply(&mut roots)
+    }
+
+    /// Run this plan and return Weavy execution counters.
+    pub fn apply_with_stats(&self, value: &mut T) -> Result<RunStats, FableError> {
+        let mut roots = [FableRootValue::read_write("root", value)];
+        self.plan.apply_with_stats(&mut roots)
+    }
+}
+
+impl FableRootPlan {
+    /// Parse and lower Fable source for an explicit root set.
+    pub fn compile(src: &str, roots: &[FableRootSpec]) -> Result<Self, FableError> {
+        Self::compile_with_intrinsics(src, roots, &FableIntrinsics::standard())
+    }
+
+    /// Parse and lower Fable source with explicit roots and host intrinsics.
+    pub fn compile_with_intrinsics(
+        src: &str,
+        roots: &[FableRootSpec],
+        intrinsics: &FableIntrinsics,
+    ) -> Result<Self, FableError> {
+        validate_root_specs(roots)?;
+
         let parsed = parse(src);
         if !parsed.errors().is_empty() {
             return Err(FableError::Parse {
@@ -315,33 +490,67 @@ where
         let root = ast::Root::cast(parsed.syntax().clone()).ok_or(FableError::MalformedSyntax {
             reason: "parse root was not a Fable root node",
         })?;
-        let mut lowerer = Lowerer::new(T::SHAPE, intrinsics);
+        let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_root(&root)?;
 
         Ok(Self {
             lowered: DenseLowered::new(program, Vec::new()),
-            _marker: PhantomData,
+            roots: roots.into(),
         })
     }
 
-    /// Run this plan against `value`.
-    pub fn apply(&self, value: &mut T) -> Result<(), FableError> {
-        let root = PtrMut::new_sized(value as *mut T);
+    /// Run this plan against explicitly bound root values.
+    pub fn apply(&self, roots: &mut [FableRootValue<'_>]) -> Result<(), FableError> {
+        let runtime_roots = self.runtime_roots(roots)?;
         let mut interp = FableInterp {
-            root,
+            roots: runtime_roots,
             locals: LocalSlots::default(),
         };
         weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)
     }
 
     /// Run this plan and return Weavy execution counters.
-    pub fn apply_with_stats(&self, value: &mut T) -> Result<RunStats, FableError> {
-        let root = PtrMut::new_sized(value as *mut T);
+    pub fn apply_with_stats(
+        &self,
+        roots: &mut [FableRootValue<'_>],
+    ) -> Result<RunStats, FableError> {
+        let runtime_roots = self.runtime_roots(roots)?;
         let mut interp = FableInterp {
-            root,
+            roots: runtime_roots,
             locals: LocalSlots::default(),
         };
         weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)
+    }
+
+    fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
+        validate_runtime_roots(values)?;
+
+        let mut roots = Vec::with_capacity(self.roots.len());
+        for spec in self.roots.iter() {
+            let value = values
+                .iter()
+                .find(|value| value.name == spec.name)
+                .ok_or_else(|| FableError::MissingRoot {
+                    name: spec.name.to_owned(),
+                })?;
+            if value.shape != spec.shape {
+                return Err(FableError::RootShapeMismatch {
+                    name: spec.name.to_owned(),
+                    expected: spec.shape,
+                    actual: value.shape,
+                });
+            }
+            if spec.access == FableRootAccess::ReadWrite && value.ptr.as_mut().is_none() {
+                return Err(FableError::ReadOnlyRoot {
+                    name: spec.name.to_owned(),
+                });
+            }
+            roots.push(RuntimeRoot {
+                name: spec.name,
+                ptr: value.ptr,
+            });
+        }
+        Ok(roots)
     }
 }
 
@@ -372,6 +581,56 @@ fn run_error(err: RunError<BlockRef, FableError>) -> FableError {
     }
 }
 
+fn validate_root_specs(roots: &[FableRootSpec]) -> Result<(), FableError> {
+    for (index, root) in roots.iter().enumerate() {
+        validate_root_name(root.name)?;
+        if roots[..index].iter().any(|seen| seen.name == root.name) {
+            return Err(FableError::DuplicateRoot {
+                name: root.name.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_runtime_roots(roots: &[FableRootValue<'_>]) -> Result<(), FableError> {
+    for (index, root) in roots.iter().enumerate() {
+        validate_root_name(root.name)?;
+        if roots[..index].iter().any(|seen| seen.name == root.name) {
+            return Err(FableError::DuplicateRoot {
+                name: root.name.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_root_name(name: &'static str) -> Result<(), FableError> {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return Err(invalid_root(name, "empty root name"));
+    };
+    if first != '_' && !first.is_ascii_alphabetic() {
+        return Err(invalid_root(
+            name,
+            "root name must start with '_' or an ASCII letter",
+        ));
+    }
+    if chars.any(|ch| ch != '_' && !ch.is_ascii_alphanumeric()) {
+        return Err(invalid_root(
+            name,
+            "root name must contain only '_' and ASCII alphanumeric characters",
+        ));
+    }
+    if matches!(
+        name,
+        "if" | "else" | "let" | "and" | "or" | "not" | "true" | "false" | "null" | "none"
+    ) {
+        return Err(invalid_root(name, "root name is a Fable keyword"));
+    }
+    Ok(())
+}
+
 /// Error returned while parsing, lowering, or running Fable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FableError {
@@ -389,6 +648,37 @@ pub enum FableError {
     Unsupported {
         /// Unsupported feature name.
         feature: String,
+    },
+    /// A root spec or runtime binding was malformed.
+    InvalidRoot {
+        /// Root name.
+        name: String,
+        /// Reason it was rejected.
+        reason: &'static str,
+    },
+    /// A root name appeared more than once.
+    DuplicateRoot {
+        /// Duplicate root name.
+        name: String,
+    },
+    /// A required runtime root binding was not supplied.
+    MissingRoot {
+        /// Missing root name.
+        name: String,
+    },
+    /// A runtime root binding had a different shape than the compiled plan.
+    RootShapeMismatch {
+        /// Root name.
+        name: String,
+        /// Compiled shape.
+        expected: &'static Shape,
+        /// Runtime shape.
+        actual: &'static Shape,
+    },
+    /// The script attempted to mutate a read-only root.
+    ReadOnlyRoot {
+        /// Root name.
+        name: String,
     },
     /// A path did not start at `root`.
     ExpectedRoot {
@@ -517,8 +807,30 @@ impl fmt::Display for FableError {
             FableError::Unsupported { feature } => {
                 write!(f, "Fable lowering does not support {feature} yet")
             }
+            FableError::InvalidRoot { name, reason } => {
+                write!(f, "invalid Fable root {name}: {reason}")
+            }
+            FableError::DuplicateRoot { name } => {
+                write!(f, "Fable root {name} is already defined")
+            }
+            FableError::MissingRoot { name } => {
+                write!(f, "Fable runtime root {name} was not supplied")
+            }
+            FableError::RootShapeMismatch {
+                name,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "Fable runtime root {name} has shape {actual}, expected {expected}"
+                )
+            }
+            FableError::ReadOnlyRoot { name } => {
+                write!(f, "Fable root {name} is read-only")
+            }
             FableError::ExpectedRoot { found } => {
-                write!(f, "Fable paths must start at root, found {found}")
+                write!(f, "Fable path root {found} is not available")
             }
             FableError::UnknownField { shape, field } => {
                 write!(f, "{shape} has no field named {field}")
@@ -837,6 +1149,7 @@ impl StructExpr {
 
 #[derive(Debug)]
 struct FieldPath {
+    root: usize,
     source: Box<str>,
     shape: &'static Shape,
     scalar: Option<ScalarType>,
@@ -1071,7 +1384,7 @@ impl LocalAllocator {
 }
 
 struct Lowerer<'intrinsics> {
-    root_shape: &'static Shape,
+    roots: Box<[FableRootSpec]>,
     intrinsics: &'intrinsics FableIntrinsics,
     scopes: Vec<BTreeMap<String, LocalRef>>,
     locals: LocalAllocator,
@@ -1079,11 +1392,13 @@ struct Lowerer<'intrinsics> {
 }
 
 impl<'intrinsics> Lowerer<'intrinsics> {
-    fn new(root_shape: &'static Shape, intrinsics: &'intrinsics FableIntrinsics) -> Self {
+    fn new(roots: &[FableRootSpec], intrinsics: &'intrinsics FableIntrinsics) -> Self {
         let mut type_shapes = Vec::new();
-        collect_reachable_shapes(root_shape, &mut type_shapes);
+        for root in roots {
+            collect_reachable_shapes(root.shape, &mut type_shapes);
+        }
         Self {
-            root_shape,
+            roots: roots.into(),
             intrinsics,
             scopes: vec![BTreeMap::new()],
             locals: LocalAllocator::default(),
@@ -1438,6 +1753,11 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             });
         }
         let path = self.resolve_path(expr)?;
+        if self.roots[path.root].access != FableRootAccess::ReadWrite {
+            return Err(FableError::ReadOnlyRoot {
+                name: self.roots[path.root].name.to_owned(),
+            });
+        }
         if let Some(scalar) = path.scalar {
             ensure_writable(scalar)?;
         } else if !path.shape.is_pod() {
@@ -1471,13 +1791,13 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 reason: "path did not start with a variable reference",
             });
         };
-        if first != "root" {
+        let Some(root) = self.roots.iter().position(|root| root.name == first) else {
             return Err(FableError::ExpectedRoot {
                 found: first.clone(),
             });
-        }
+        };
 
-        let mut shape = self.root_shape;
+        let mut shape = self.roots[root].shape;
         let mut source = first.clone();
         let mut steps = Vec::with_capacity(rest.len());
         for segment in rest {
@@ -1506,6 +1826,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
         let scalar = ScalarType::try_from_shape(shape);
         Ok(FieldPath {
+            root,
             source: source.into_boxed_str(),
             shape,
             scalar,
@@ -1514,7 +1835,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn declare_local(&mut self, name: String, expr: &ExprPlan) -> Result<LocalRef, FableError> {
-        if name == "root" {
+        if self.roots.iter().any(|root| root.name == name) {
             return Err(FableError::ReservedLocalName { name });
         }
         let scope = self.scopes.last_mut().ok_or(FableError::MalformedProgram {
@@ -2348,7 +2669,7 @@ impl Drop for StructInitGuard {
 }
 
 struct FableInterp {
-    root: PtrMut,
+    roots: Vec<RuntimeRoot>,
     locals: LocalSlots,
 }
 
@@ -2366,7 +2687,7 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
                 Ok(Control::Continue)
             }
             FableOp::Assign { target, value } => {
-                let ptr = target.ptr_mut(self.root)?;
+                let ptr = self.path_ptr_mut(target)?;
                 if let Some(scalar) = target.scalar {
                     unsafe { self.write_scalar(scalar, ptr, value) }?;
                 } else {
@@ -2400,6 +2721,31 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
 }
 
 impl FableInterp {
+    fn path_ptr_const(&self, path: &FieldPath) -> Result<PtrConst, FableError> {
+        let root = self
+            .roots
+            .get(path.root)
+            .ok_or(FableError::MalformedProgram {
+                reason: "path referenced missing runtime root",
+            })?;
+        path.ptr_const(root.ptr.as_const())
+    }
+
+    fn path_ptr_mut(&self, path: &FieldPath) -> Result<PtrMut, FableError> {
+        let root = self
+            .roots
+            .get(path.root)
+            .ok_or(FableError::MalformedProgram {
+                reason: "path referenced missing runtime root",
+            })?;
+        let Some(ptr) = root.ptr.as_mut() else {
+            return Err(FableError::ReadOnlyRoot {
+                name: root.name.to_owned(),
+            });
+        };
+        path.ptr_mut(ptr)
+    }
+
     fn init_local(&mut self, local: LocalRef, expr: &ExprPlan) -> Result<(), FableError> {
         match local {
             LocalRef::Unit(index) => {
@@ -2453,7 +2799,7 @@ impl FableInterp {
         match expr {
             UnitExpr::Null => Ok(()),
             UnitExpr::Read(path) => {
-                let _ = path.ptr_const(self.root.as_const())?;
+                let _ = self.path_ptr_const(path)?;
                 Ok(())
             }
             UnitExpr::Local(local) => self.local_unit(*local),
@@ -2465,7 +2811,7 @@ impl FableInterp {
         match expr {
             BoolExpr::Literal(value) => Ok(*value),
             BoolExpr::Read(path) => {
-                let ptr = path.ptr_const(self.root.as_const())?;
+                let ptr = self.path_ptr_const(path)?;
                 Ok(*unsafe { ptr.get::<bool>() })
             }
             BoolExpr::Local(local) => self.local_bool(*local),
@@ -2520,7 +2866,7 @@ impl FableInterp {
     fn eval_char(&self, expr: &CharExpr) -> Result<char, FableError> {
         match expr {
             CharExpr::Read(path) => {
-                let ptr = path.ptr_const(self.root.as_const())?;
+                let ptr = self.path_ptr_const(path)?;
                 Ok(*unsafe { ptr.get::<char>() })
             }
             CharExpr::Local(local) => self.local_char(*local),
@@ -2531,7 +2877,7 @@ impl FableInterp {
         match expr {
             StringExpr::Literal(value) => Ok(value.clone()),
             StringExpr::Read(path) => {
-                let ptr = path.ptr_const(self.root.as_const())?;
+                let ptr = self.path_ptr_const(path)?;
                 unsafe { self.read_string_path(path, ptr) }
             }
             StringExpr::Local(local) => self.local_string(*local),
@@ -2557,7 +2903,7 @@ impl FableInterp {
             path: &field.source,
             shape: field.shape,
             scalar: field_scalar(field)?,
-            ptr: field.ptr_const(self.root.as_const())?,
+            ptr: self.path_ptr_const(field)?,
         })
     }
 
@@ -2569,7 +2915,7 @@ impl FableInterp {
             path: &field.source,
             shape: field.shape,
             scalar: field_scalar(field)?,
-            ptr: field.ptr_mut(self.root)?,
+            ptr: self.path_ptr_mut(field)?,
         })
     }
 
@@ -2604,7 +2950,7 @@ impl FableInterp {
     fn eval_i128(&self, expr: &IntExpr) -> Result<i128, FableError> {
         match expr {
             IntExpr::Read(path) => {
-                let ptr = path.ptr_const(self.root.as_const())?;
+                let ptr = self.path_ptr_const(path)?;
                 unsafe { self.read_signed_path(field_scalar(path)?, ptr) }
             }
             IntExpr::Local(local) => self.local_i128(*local),
@@ -2671,7 +3017,7 @@ impl FableInterp {
         match expr {
             UIntExpr::Literal(value) => Ok(*value),
             UIntExpr::Read(path) => {
-                let ptr = path.ptr_const(self.root.as_const())?;
+                let ptr = self.path_ptr_const(path)?;
                 unsafe { self.read_unsigned_path(field_scalar(path)?, ptr) }
             }
             UIntExpr::Local(local) => self.local_u128(*local),
@@ -2727,7 +3073,7 @@ impl FableInterp {
         match expr {
             FloatExpr::Literal(value) => Ok(*value),
             FloatExpr::Read(path) => {
-                let ptr = path.ptr_const(self.root.as_const())?;
+                let ptr = self.path_ptr_const(path)?;
                 match field_scalar(path)? {
                     ScalarType::F32 => Ok((*unsafe { ptr.get::<f32>() }).into()),
                     ScalarType::F64 => Ok(*unsafe { ptr.get::<f64>() }),
@@ -3809,6 +4155,13 @@ fn invalid_intrinsic(name: &'static str, reason: &'static str) -> FableError {
     FableError::InvalidIntrinsic { name, reason }
 }
 
+fn invalid_root(name: &'static str, reason: &'static str) -> FableError {
+    FableError::InvalidRoot {
+        name: name.to_owned(),
+        reason,
+    }
+}
+
 fn validate_intrinsic_name(name: &'static str) -> Result<(), FableError> {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
@@ -3930,6 +4283,22 @@ mod tests {
         tag: &'static str,
     }
 
+    #[derive(Debug, Facet, PartialEq)]
+    struct TransformInput {
+        first_name: String,
+        last_name: String,
+        age: u8,
+        deleted: bool,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct TransformOutput {
+        name: String,
+        age: u8,
+        status: String,
+        adult: bool,
+    }
+
     fn state() -> State {
         State {
             user: User {
@@ -3955,6 +4324,24 @@ mod tests {
             score: 1.5,
             marker: 'a',
             tag: "seed",
+        }
+    }
+
+    fn transform_input() -> TransformInput {
+        TransformInput {
+            first_name: "Ada".into(),
+            last_name: "Lovelace".into(),
+            age: 36,
+            deleted: false,
+        }
+    }
+
+    fn transform_output() -> TransformOutput {
+        TransformOutput {
+            name: String::new(),
+            age: 0,
+            status: String::new(),
+            adult: false,
         }
     }
 
@@ -3999,6 +4386,125 @@ mod tests {
 
         assert_eq!(value.user.name, "minor");
         assert!(stats.step_count >= 1);
+    }
+
+    #[test]
+    fn applies_transform_style_named_roots() {
+        let roots = [
+            FableRootSpec::read_only::<TransformInput>("in"),
+            FableRootSpec::read_write::<TransformOutput>("out"),
+        ];
+        let plan = FableRootPlan::compile(
+            r#"
+                out.name = in.first_name + " " + in.last_name;
+                out.age = in.age;
+                out.adult = in.age >= 18;
+
+                if in.deleted {
+                    out.status = "archived";
+                } else {
+                    out.status = "active";
+                }
+            "#,
+            &roots,
+        )
+        .unwrap();
+
+        let input = transform_input();
+        let mut output = transform_output();
+        let stats = {
+            let mut values = [
+                FableRootValue::read_only("in", &input),
+                FableRootValue::read_write("out", &mut output),
+            ];
+            plan.apply_with_stats(&mut values).unwrap()
+        };
+
+        assert_eq!(
+            output,
+            TransformOutput {
+                name: "Ada Lovelace".into(),
+                age: 36,
+                status: "active".into(),
+                adult: true,
+            }
+        );
+        assert!(stats.step_count >= 1);
+    }
+
+    #[test]
+    fn rejects_writes_to_read_only_named_roots() {
+        let roots = [
+            FableRootSpec::read_only::<TransformInput>("in"),
+            FableRootSpec::read_write::<TransformOutput>("out"),
+        ];
+
+        let err = match FableRootPlan::compile("in.age = 1;", &roots) {
+            Ok(_) => panic!("expected Fable compilation to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            FableError::ReadOnlyRoot {
+                name
+            } if name == "in"
+        ));
+    }
+
+    #[test]
+    fn rejects_missing_runtime_named_roots() {
+        let roots = [
+            FableRootSpec::read_only::<TransformInput>("in"),
+            FableRootSpec::read_write::<TransformOutput>("out"),
+        ];
+        let plan = FableRootPlan::compile("out.age = in.age;", &roots).unwrap();
+
+        let mut output = transform_output();
+        let mut values = [FableRootValue::read_write("out", &mut output)];
+        let err = plan.apply(&mut values).unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::MissingRoot {
+                name
+            } if name == "in"
+        ));
+    }
+
+    #[test]
+    fn rejects_read_only_runtime_binding_for_read_write_root() {
+        let roots = [FableRootSpec::read_write::<TransformOutput>("out")];
+        let plan = FableRootPlan::compile("out.age = 1;", &roots).unwrap();
+
+        let output = transform_output();
+        let mut values = [FableRootValue::read_only("out", &output)];
+        let err = plan.apply(&mut values).unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::ReadOnlyRoot {
+                name
+            } if name == "out"
+        ));
+    }
+
+    #[test]
+    fn rejects_runtime_root_shape_mismatches() {
+        let roots = [FableRootSpec::read_only::<TransformInput>("in")];
+        let plan = FableRootPlan::compile("in.age;", &roots).unwrap();
+
+        let output = transform_output();
+        let mut values = [FableRootValue::read_only("in", &output)];
+        let err = plan.apply(&mut values).unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::RootShapeMismatch {
+                name,
+                ..
+            } if name == "in"
+        ));
     }
 
     #[test]
