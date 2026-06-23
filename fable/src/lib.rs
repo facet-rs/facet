@@ -2,8 +2,8 @@
 //!
 //! Fable is the tiny typed language intended to inspect and mutate
 //! Facet-reflected Rust values, then lower toward canonical Weavy IR. This crate
-//! currently owns only the syntax layer: a lossless lexer/parser, the cstree
-//! language tags, and a small typed AST facade for the first grammar slice.
+//! owns the lossless lexer/parser plus the first typed lowering and interpreter
+//! surfaces for in-place scripts and `in` to `out` transforms.
 
 mod lexer;
 pub use lexer::{Lexeme, lex};
@@ -18,7 +18,8 @@ pub use lowering::{
     FableError, FableField, FableFieldBoolUnary, FableFieldMut, FableFieldMutUnary,
     FableFieldStringUnary, FableFloatUnary, FableIntrinsics, FablePlan, FableRootAccess,
     FableRootPlan, FableRootSpec, FableRootValue, FableSignedUnary, FableStringBinaryPredicate,
-    FableStringUnary, FableUnsignedUnary, apply, apply_with_intrinsics,
+    FableStringUnary, FableTransformPlan, FableUnsignedUnary, apply, apply_with_intrinsics,
+    transform, transform_with_intrinsics,
 };
 
 /// A node in the resolved, text-bearing syntax tree.
