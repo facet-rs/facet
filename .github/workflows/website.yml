@@ -5,7 +5,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs/**'
+      - '.config/dodeca.styx'          # source set / mounts / link-check config
+      - 'docs/**'                       # primary facet content + templates + sass + static
+      - 'styx-docs/**'                  # styx subsite source
+      - '*/docs/**'                     # crate subsites (figue/docs, vox/docs, facet-json/docs, …)
+      - '*/README.md'                   # crate READMEs embedded via the include shortcode
       - '.github/workflows/website.yml'
       - 'facet-showcase/**'
       - 'facet-*/examples/*showcase*.rs'
