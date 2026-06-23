@@ -31,12 +31,12 @@ stand on it — each with its own docs.
 <a class="section-card" href="/styx"><span>Styx →</span><small>A document language for mortals. Minimal punctuation, real types, one obvious meaning.</small></a>
 <a class="section-card" href="/picante"><span>Picante →</span><small>Async incremental queries. Salsa-style memoization and dependency tracking, built for Tokio.</small></a>
 <a class="section-card" href="/dibs"><span>Dibs →</span><small>Postgres toolkit. Schema as Rust, queries as Styx — typed end to end, migrations included.</small></a>
-<a class="section-card" href="https://docs.rs/figue"><span>Figue</span><small>Type-safe CLI args, config files, and environment variables — from one derive.</small></a>
-<a class="section-card" href="https://docs.rs/rediff"><span>Rediff</span><small>Structural diffing for Facet values, with detailed difference reports.</small></a>
-<a class="section-card" href="https://docs.rs/strid"><span>Strid</span><small>Strongly-typed strings with far less boilerplate.</small></a>
-<a class="section-card" href="https://docs.rs/fable"><span>Fable</span><small>A tiny typed language over Facet-reflected values, lowered toward Weavy IR.</small></a>
-<a class="section-card" href="https://docs.rs/weavy"><span>Weavy</span><small>A shared lowered-program substrate for interpreters and copy-and-patch backends.</small></a>
-<a class="section-card" href="https://docs.rs/vox"><span>Vox</span><small>Typed RPC — generated TypeScript types, a WebSocket transport, no schema duplication.</small></a>
+<a class="section-card" href="/figue"><span>Figue →</span><small>Type-safe CLI args, config files, and environment variables — from one derive.</small></a>
+<a class="section-card" href="/rediff"><span>Rediff →</span><small>Structural diffing for Facet values, with detailed difference reports.</small></a>
+<a class="section-card" href="/strid"><span>Strid →</span><small>Strongly-typed strings with far less boilerplate.</small></a>
+<a class="section-card" href="/fable"><span>Fable →</span><small>A tiny typed language over Facet-reflected values, lowered toward Weavy IR.</small></a>
+<a class="section-card" href="/weavy"><span>Weavy →</span><small>A shared lowered-program substrate for interpreters and copy-and-patch backends.</small></a>
+<a class="section-card" href="/vox"><span>Vox →</span><small>Rust-native RPC with cross-language codegen and multiple transport backends.</small></a>
 </div>
 
 ## Use facet itself

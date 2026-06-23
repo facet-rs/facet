@@ -22,6 +22,12 @@ sources (
     { name styx,    mount /styx,    local styx-docs/content }
     { name picante, mount /picante, local docs/picante-content }
     { name dibs,    mount /dibs,    local docs/dibs-content }
+    { name figue,   mount /figue,   local figue/docs/content }
+    { name rediff,  mount /rediff,  local rediff/docs/content }
+    { name strid,   mount /strid,   local strid/docs/content }
+    { name fable,   mount /fable,   local fable/docs/content }
+    { name weavy,   mount /weavy,   local weavy/docs/content }
+    { name vox,     mount /vox,     local vox/docs/content }
 )
 
 // Link checking configuration
