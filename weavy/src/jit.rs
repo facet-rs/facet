@@ -137,6 +137,7 @@ pub struct NativeProgram {
 impl NativeProgram {
     /// Make a finalized stencil layout executable.
     #[must_use]
+    #[inline]
     pub fn new(layout: StencilLayout, entry: Chain) -> Self {
         let (code, progs, stencil_count) = layout.into_parts();
         Self {
@@ -149,6 +150,7 @@ impl NativeProgram {
 
     /// Return the executable code buffer's base pointer.
     #[must_use]
+    #[inline]
     pub fn code_ptr(&self) -> *const u8 {
         self.buf.as_ptr()
     }
@@ -158,6 +160,7 @@ impl NativeProgram {
     /// # Safety
     /// The copied root code must use the caller's `extern "C" fn(*mut C)` ABI.
     #[must_use]
+    #[inline]
     pub unsafe fn entry_fn<C>(&self) -> unsafe extern "C" fn(*mut C) {
         unsafe { self.chain_fn(self.entry.entry) }
     }
@@ -168,6 +171,7 @@ impl NativeProgram {
     /// `entry` must be a chain offset in this program, and that chain must use
     /// the caller's `extern "C" fn(*mut C)` ABI.
     #[must_use]
+    #[inline]
     pub unsafe fn chain_fn<C>(&self, entry: usize) -> unsafe extern "C" fn(*mut C) {
         unsafe {
             core::mem::transmute::<*const u8, unsafe extern "C" fn(*mut C)>(
@@ -178,46 +182,54 @@ impl NativeProgram {
 
     /// Return the root chain's program-stream index.
     #[must_use]
+    #[inline]
     pub fn entry_prog_index(&self) -> usize {
         self.entry.prog_index
     }
 
     /// Return the root chain's program stream.
     #[must_use]
+    #[inline]
     pub fn entry_prog(&self) -> *const u64 {
         self.prog_ptr(self.entry_prog_index())
     }
 
     /// Return one chain's program stream.
     #[must_use]
+    #[inline]
     pub fn prog_ptr(&self, prog_index: usize) -> *const u64 {
         self.progs[prog_index].as_ptr()
     }
 
     /// Fill a previously reserved word in a program stream.
+    #[inline]
     pub fn fill_prog_word(&mut self, prog_index: usize, slot: usize, value: u64) {
         self.progs[prog_index][slot] = value;
     }
 
     /// Fill a previously reserved program-stream slot.
+    #[inline]
     pub fn fill_prog_slot(&mut self, slot: ProgSlot, value: u64) {
         self.fill_prog_word(slot.prog_index, slot.slot, value);
     }
 
     /// Number of callable chains.
     #[must_use]
+    #[inline]
     pub fn chain_count(&self) -> usize {
         self.progs.len()
     }
 
     /// Number of copied stencils.
     #[must_use]
+    #[inline]
     pub fn stencil_count(&self) -> usize {
         self.stencil_count
     }
 
     /// Total number of program-stream words.
     #[must_use]
+    #[inline]
     pub fn prog_slot_count(&self) -> usize {
         self.progs.iter().map(Vec::len).sum()
     }
