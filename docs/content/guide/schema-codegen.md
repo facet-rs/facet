@@ -112,5 +112,5 @@ for Python projects.
 
 ## Related
 
-- [JSON](@/guide/json.md) — serialize the very types you generated schemas for
+- [JSON](/facet-json/guide/) — serialize the very types you generated schemas for
 - [Ecosystem](@/ecosystem/_index.md) — the full schema & codegen group

@@ -1,6 +1,6 @@
 +++
-title = "JSON"
-weight = 2
+title = "JSON guide"
+weight = 1
 insert_anchor_links = "heading"
 +++
 
@@ -76,12 +76,12 @@ the [docs.rs reference](https://docs.rs/facet-json) for the full surface.
 JSON honors the common facet attributes — `rename`, `rename_all`, `skip`,
 `default`, `transparent`, `flatten`, enum tagging — plus `opaque` / `proxy` for
 types that don't implement `Facet`. The complete catalog with per-format support
-is in the [Attributes reference](@/reference/_index.md) and the
-[Format matrix](@/reference/format-crate-matrix/_index.md).
+is in the [Attributes reference](/reference/) and the
+[Format matrix](/reference/format-crate-matrix/).
 
 ## Related
 
-- [Type Support](@/guide/type-support.md) — using `Uuid`, `DateTime`, paths, etc.
-- [facet-validate](@/guide/facet-validate.md) — reject bad data *during* parsing
-- [Schema codegen](@/guide/schema-codegen.md) — generate TS/Zod/JSON Schema from the same type
-- [Ecosystem](@/ecosystem/_index.md) — every other format crate
+- [Type Support](/guide/type-support/) — using `Uuid`, `DateTime`, paths, etc.
+- [facet-validate](/guide/facet-validate/) — reject bad data *during* parsing
+- [Schema codegen](/guide/schema-codegen/) — generate TS/Zod/JSON Schema from the same type
+- [Ecosystem](/ecosystem/) — every other format crate

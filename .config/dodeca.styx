@@ -31,6 +31,8 @@ sources (
     { name facet-axum,       mount /facet-axum,       local facet-axum/docs/content }
     { name facet-cargo-toml, mount /facet-cargo-toml, local facet-cargo-toml/docs/content }
     { name rusqlite-facet,   mount /rusqlite-facet,   local rusqlite-facet/docs/content }
+    { name facet-json,       mount /facet-json,       local facet-json/docs/content }
+    { name facet-pretty,     mount /facet-pretty,     local facet-pretty/docs/content }
 )
 
 // Link checking configuration

@@ -73,5 +73,5 @@ type — the type system and the validator together keep bad data out.
 
 ## Related
 
-- [JSON](@/guide/json.md) — the parse path validation plugs into
+- [JSON](/facet-json/guide/) — the parse path validation plugs into
 - [Ecosystem](@/ecosystem/_index.md) — other derive plugins

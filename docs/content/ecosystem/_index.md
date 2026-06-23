@@ -35,7 +35,7 @@ call `to_string` / `from_str`.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-json`](https://docs.rs/facet-json) | JSON serialization and deserialization. The flagship — [start here](@/guide/json.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json) |
+| [`facet-json`](https://docs.rs/facet-json) | JSON serialization and deserialization. The flagship — [start here](/facet-json/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json) |
 | [`facet-toml`](https://docs.rs/facet-toml) | TOML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-toml) |
 | [`facet-yaml`](https://docs.rs/facet-yaml) | YAML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-yaml) |
 | [`facet-msgpack`](https://docs.rs/facet-msgpack) | MessagePack binary format. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-msgpack) |
@@ -77,7 +77,7 @@ Day-to-day ergonomics: better output, better errors, less boilerplate.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-pretty`](https://docs.rs/facet-pretty) | Colored, structured pretty-printing with sensitive-field redaction. [Guide](@/guide/pretty-printing.md). | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-pretty`](https://docs.rs/facet-pretty) | Colored, structured pretty-printing with sensitive-field redaction. [Guide](/facet-pretty/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet) |
 | [`rediff`](https://docs.rs/rediff) | Structural diff and pretty assertions for any `Facet` type — no `PartialEq` required. | [bearcove/rediff](https://github.com/bearcove/rediff) |
 | [`facet-default`](https://docs.rs/facet-default) | Derive `Default` with per-field custom defaults. [Guide](@/guide/facet-default.md). | [facet-rs/facet](https://github.com/facet-rs/facet) |
 | [`facet-error`](https://docs.rs/facet-error) | A `thiserror` replacement — derive `Error` from doc comments. [Guide](@/guide/facet-error.md). | [facet-rs/facet](https://github.com/facet-rs/facet) |

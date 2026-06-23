@@ -1,6 +1,6 @@
 +++
-title = "Pretty-printing"
-weight = 5
+title = "Pretty-printing guide"
+weight = 1
 insert_anchor_links = "heading"
 +++
 
@@ -96,4 +96,4 @@ serialization, diffing, schema generation, and CLI parsing — and because
 ## Related
 
 - [rediff](https://docs.rs/rediff) — structural diffing with the same no-`PartialEq` philosophy
-- [Ecosystem](@/ecosystem/_index.md) — diagnostics & derive plugins
+- [Ecosystem](/ecosystem/) — diagnostics & derive plugins

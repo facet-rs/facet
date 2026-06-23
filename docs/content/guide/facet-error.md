@@ -74,4 +74,4 @@ structured logging and RPC.
 ## Related
 
 - [Ecosystem](@/ecosystem/_index.md) — derive plugins overview
-- [Pretty-printing](@/guide/pretty-printing.md) — render errors with context
+- [Pretty-printing](/facet-pretty/guide/) — render errors with context
