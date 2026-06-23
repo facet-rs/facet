@@ -698,6 +698,7 @@ impl JsonNativeState {
         Ok(())
     }
 
+    #[inline]
     fn try_read_ordered_i32_scalar_struct<const TRUSTED_UTF8: bool>(
         &mut self,
         parser: &mut JsonParser<'_, TRUSTED_UTF8>,
@@ -707,29 +708,28 @@ impl JsonNativeState {
             return Ok(false);
         }
 
-        let mut spans = [Span { offset: 0, len: 0 }; TINY_SCALAR_STRUCT_MAX_FIELDS];
-        let mut values = [0i32; TINY_SCALAR_STRUCT_MAX_FIELDS];
-        let len = info.fields.len();
-        if !parser.try_consume_ordered_i32_object(
+        let mut guard = NativeScalarStructGuard::new(self.base, &info.fields);
+        let matched = parser.try_consume_ordered_i32_object_with(
             &info.ordered_names,
-            &mut spans[..len],
-            &mut values[..len],
-        )? {
+            |_, index, _, value| {
+                let field = info.fields[index];
+                let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+                unsafe {
+                    field_ptr.put(value);
+                }
+                guard.mark(index);
+                Ok::<(), DeserializeError>(())
+            },
+        )?;
+        if !matched {
             return Ok(false);
         }
 
-        let mut guard = NativeScalarStructGuard::new(self.base, &info.fields);
-        for (index, field) in info.fields.iter().copied().enumerate() {
-            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
-            unsafe {
-                field_ptr.put(values[index]);
-            }
-            guard.mark(index);
-        }
         guard.finish();
         Ok(true)
     }
 
+    #[inline]
     fn try_read_ordered_scalar_struct<const TRUSTED_UTF8: bool>(
         &mut self,
         parser: &mut JsonParser<'_, TRUSTED_UTF8>,

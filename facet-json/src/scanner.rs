@@ -141,6 +141,11 @@ impl Scanner {
         self.pos
     }
 
+    /// Whether JSONC-style comments are accepted.
+    pub const fn allows_comments(&self) -> bool {
+        self.allow_comments
+    }
+
     /// Set position (used after buffer operations)
     #[allow(dead_code)]
     pub const fn set_pos(&mut self, pos: usize) {
@@ -162,7 +167,7 @@ impl Scanner {
     ) -> Result<Option<(usize, u8)>, ScanError> {
         let mut scanner = self.clone();
         scanner.pos = pos;
-        scanner.skip_whitespace(buf)?;
+        scanner.skip_whitespace_if_needed(buf)?;
         Ok(buf
             .get(scanner.pos)
             .copied()
@@ -175,7 +180,7 @@ impl Scanner {
         buf: &[u8],
         expected: u8,
     ) -> Result<Option<Span>, ScanError> {
-        self.skip_whitespace(buf)?;
+        self.skip_whitespace_if_needed(buf)?;
 
         let start = self.pos;
         if buf.get(self.pos) == Some(&expected) {
@@ -191,12 +196,12 @@ impl Scanner {
         buf: &[u8],
         expected: &[u8],
     ) -> Result<Option<Span>, ScanError> {
-        if expected.iter().any(|byte| matches!(*byte, b'"' | b'\\')) {
+        if !can_match_unescaped_string(expected) {
             return Ok(None);
         }
 
         let original = self.pos;
-        self.skip_whitespace(buf)?;
+        self.skip_whitespace_if_needed(buf)?;
 
         let start = self.pos;
         if buf.get(self.pos) != Some(&b'"') {
@@ -205,12 +210,11 @@ impl Scanner {
         }
         self.pos += 1;
 
-        let expected_end = self.pos + expected.len();
-        if buf.get(self.pos..expected_end) != Some(expected) {
+        if !bytes_match_at(buf, self.pos, expected) {
             self.pos = original;
             return Ok(None);
         }
-        self.pos = expected_end;
+        self.pos += expected.len();
 
         if buf.get(self.pos) != Some(&b'"') {
             self.pos = original;
@@ -221,9 +225,136 @@ impl Scanner {
         Ok(Some(Span::new(start, self.pos - start)))
     }
 
+    #[inline]
+    pub fn try_consume_exact_field_name_colon(
+        &mut self,
+        buf: &[u8],
+        expected: &[u8],
+        require_comma: bool,
+    ) -> Result<Option<Span>, ScanError> {
+        if !can_match_unescaped_string(expected) {
+            return Ok(None);
+        }
+
+        let original = self.pos;
+        self.skip_whitespace_if_needed(buf)?;
+
+        if require_comma {
+            if buf.get(self.pos) != Some(&b',') {
+                self.pos = original;
+                return Ok(None);
+            }
+            self.pos += 1;
+            self.skip_whitespace_if_needed(buf)?;
+        }
+
+        let start = self.pos;
+        if buf.get(self.pos) != Some(&b'"') {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 1;
+
+        if !bytes_match_at(buf, self.pos, expected) {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += expected.len();
+
+        if buf.get(self.pos) != Some(&b'"') {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 1;
+        let span = Span::new(start, self.pos - start);
+
+        self.skip_whitespace_if_needed(buf)?;
+        if buf.get(self.pos) != Some(&b':') {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 1;
+
+        Ok(Some(span))
+    }
+
+    #[inline]
+    pub fn try_consume_one_byte_field_name_colon(
+        &mut self,
+        buf: &[u8],
+        expected: u8,
+        require_comma: bool,
+    ) -> Result<Option<Span>, ScanError> {
+        if matches!(expected, b'"' | b'\\' | 0x00..=0x1f) {
+            return Ok(None);
+        }
+
+        let original = self.pos;
+        self.skip_whitespace_if_needed(buf)?;
+
+        if require_comma {
+            if buf.get(self.pos) != Some(&b',') {
+                self.pos = original;
+                return Ok(None);
+            }
+            self.pos += 1;
+            self.skip_whitespace_if_needed(buf)?;
+        }
+
+        let start = self.pos;
+        if !matches!(
+            (buf.get(self.pos), buf.get(self.pos + 1), buf.get(self.pos + 2)),
+            (Some(b'"'), Some(byte), Some(b'"')) if *byte == expected
+        ) {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 3;
+        let span = Span::new(start, 3);
+
+        self.skip_whitespace_if_needed(buf)?;
+        if buf.get(self.pos) != Some(&b':') {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 1;
+
+        Ok(Some(span))
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[inline]
+    pub fn try_consume_array_object_start(
+        &mut self,
+        buf: &[u8],
+        require_comma: bool,
+    ) -> Result<Option<Span>, ScanError> {
+        let original = self.pos;
+        self.skip_whitespace_if_needed(buf)?;
+
+        if require_comma {
+            if buf.get(self.pos) != Some(&b',') {
+                self.pos = original;
+                return Ok(None);
+            }
+            self.pos += 1;
+            self.skip_whitespace_if_needed(buf)?;
+        }
+
+        let start = self.pos;
+        if buf.get(self.pos) != Some(&b'{') {
+            self.pos = original;
+            return Ok(None);
+        }
+        self.pos += 1;
+
+        Ok(Some(Span::new(start, 1)))
+    }
+
+    #[inline]
     pub fn try_consume_i32_number(&mut self, buf: &[u8]) -> Result<Option<(Span, i32)>, ScanError> {
         let original = self.pos;
-        self.skip_whitespace(buf)?;
+        self.skip_whitespace_if_needed(buf)?;
 
         let start = self.pos;
         let Some(&first) = buf.get(self.pos) else {
@@ -278,7 +409,7 @@ impl Scanner {
 
     /// Scan the next token from the buffer.
     pub fn next_token(&mut self, buf: &[u8]) -> ScanResult {
-        self.skip_whitespace(buf)?;
+        self.skip_whitespace_if_needed(buf)?;
 
         let start = self.pos;
         let Some(&byte) = buf.get(self.pos) else {
@@ -398,6 +529,15 @@ impl Scanner {
         }
         self.pos = pos;
         Ok(())
+    }
+
+    #[inline]
+    fn skip_whitespace_if_needed(&mut self, buf: &[u8]) -> Result<(), ScanError> {
+        match buf.get(self.pos) {
+            Some(b' ' | b'\t' | b'\n' | b'\r') => self.skip_whitespace(buf),
+            Some(b'/') if self.allow_comments => self.skip_whitespace(buf),
+            _ => Ok(()),
+        }
     }
 
     /// Scan a string, finding its boundaries and noting if it has escapes.
@@ -642,6 +782,35 @@ impl Scanner {
             token,
             span: Span::new(start, expected.len()),
         })
+    }
+}
+
+fn can_match_unescaped_string(expected: &[u8]) -> bool {
+    !expected
+        .iter()
+        .any(|byte| matches!(*byte, b'"' | b'\\' | 0x00..=0x1f))
+}
+
+#[inline]
+fn bytes_match_at(buf: &[u8], pos: usize, expected: &[u8]) -> bool {
+    match expected {
+        [] => true,
+        [a] => buf.get(pos) == Some(a),
+        [a, b] => {
+            matches!((buf.get(pos), buf.get(pos + 1)), (Some(x), Some(y)) if x == a && y == b)
+        }
+        [a, b, c] => {
+            matches!((buf.get(pos), buf.get(pos + 1), buf.get(pos + 2)), (Some(x), Some(y), Some(z)) if x == a && y == b && z == c)
+        }
+        [a, b, c, d] => {
+            matches!((buf.get(pos), buf.get(pos + 1), buf.get(pos + 2), buf.get(pos + 3)), (Some(w), Some(x), Some(y), Some(z)) if w == a && x == b && y == c && z == d)
+        }
+        _ => {
+            let Some(end) = pos.checked_add(expected.len()) else {
+                return false;
+            };
+            buf.get(pos..end) == Some(expected)
+        }
     }
 }
 
