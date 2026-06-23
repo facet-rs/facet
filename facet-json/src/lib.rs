@@ -69,8 +69,9 @@ pub use serializer::{
     to_writer_std_pretty, to_writer_std_with_options,
 };
 pub use weavy_deser::{
-    JsonWeavyPlan, from_slice_weavy, from_slice_weavy_with_stats, from_str_weavy,
-    from_str_weavy_with_stats,
+    JsonWeavyActiveBackend, JsonWeavyExecutionMode, JsonWeavyJitFallbackRecord,
+    JsonWeavyJitFallbackReport, JsonWeavyPlan, from_slice_weavy, from_slice_weavy_jit,
+    from_slice_weavy_with_stats, from_str_weavy, from_str_weavy_jit, from_str_weavy_with_stats,
 };
 
 // Re-export DeserializeError for convenience

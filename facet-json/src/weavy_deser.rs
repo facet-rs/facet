@@ -77,6 +77,69 @@ where
     plan.from_slice_with_stats(input)
 }
 
+/// Deserialize a value from a JSON string through the opt-in Weavy runner with
+/// JIT enabled when a JSON native backend is available.
+pub fn from_str_weavy_jit<T>(input: &str) -> Result<T, DeserializeError>
+where
+    T: Facet<'static>,
+{
+    JsonWeavyPlan::<T>::build_jit()?.from_str(input)
+}
+
+/// Deserialize a value from JSON bytes through the opt-in Weavy runner with JIT
+/// enabled when a JSON native backend is available.
+pub fn from_slice_weavy_jit<T>(input: &[u8]) -> Result<T, DeserializeError>
+where
+    T: Facet<'static>,
+{
+    JsonWeavyPlan::<T>::build_jit()?.from_slice(input)
+}
+
+/// Requested execution policy for a reusable Weavy JSON plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JsonWeavyExecutionMode {
+    /// Run with the portable Weavy interpreter.
+    Interpreter,
+    /// Use the native JIT when available, falling back to the interpreter when
+    /// the current build or lowered program cannot run natively yet.
+    Jit,
+}
+
+/// Backend that will execute a reusable Weavy JSON plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JsonWeavyActiveBackend {
+    /// The portable Weavy interpreter.
+    Interpreter,
+    /// Native copy-and-patch code.
+    NativeJit,
+}
+
+/// One diagnostic record explaining why a JSON Weavy plan did not use native
+/// JIT execution after JIT was requested.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JsonWeavyJitFallbackRecord {
+    /// Program path that fell back.
+    pub path: String,
+    /// Stable fallback reason.
+    pub reason: &'static str,
+}
+
+/// Diagnostic report for JSON Weavy native-JIT coverage.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct JsonWeavyJitFallbackReport {
+    /// Fallback records. Empty means the plan is native-clean for the selected
+    /// execution mode.
+    pub records: Vec<JsonWeavyJitFallbackRecord>,
+}
+
+impl JsonWeavyJitFallbackReport {
+    /// Whether this report contains no fallbacks.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+}
+
 /// Reusable opt-in Weavy JSON deserialization plan for `T`.
 ///
 /// The default `facet_json::from_str` path is unchanged. This type is for the
@@ -84,6 +147,7 @@ where
 /// input decoding.
 pub struct JsonWeavyPlan<T> {
     lowered: DenseLowered<ExecOp>,
+    execution: JsonWeavyExecutionMode,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -93,11 +157,63 @@ where
 {
     /// Lower `T::SHAPE` into the JSON-specific Weavy bytecode.
     pub fn build() -> Result<Self, DeserializeError> {
+        Self::build_with_execution(JsonWeavyExecutionMode::Interpreter)
+    }
+
+    /// Lower `T::SHAPE` into JSON-specific Weavy bytecode with JIT enabled when
+    /// a JSON native backend is available.
+    pub fn build_jit() -> Result<Self, DeserializeError> {
+        Self::build_with_execution(JsonWeavyExecutionMode::Jit)
+    }
+
+    /// Lower `T::SHAPE` into JSON-specific Weavy bytecode with an explicit
+    /// execution mode.
+    pub fn build_with_execution(
+        execution: JsonWeavyExecutionMode,
+    ) -> Result<Self, DeserializeError> {
         let symbolic = Lowering::new().lower(T::SHAPE)?;
         Ok(Self {
             lowered: resolve_json_lowered(symbolic)?,
+            execution,
             _marker: PhantomData,
         })
+    }
+
+    /// Requested execution mode for this plan.
+    #[must_use]
+    pub fn execution_mode(&self) -> JsonWeavyExecutionMode {
+        self.execution
+    }
+
+    /// Backend currently selected for this plan.
+    ///
+    /// This returns [`JsonWeavyActiveBackend::Interpreter`] until JSON-native
+    /// stencils are wired into the JIT slot.
+    #[must_use]
+    pub fn active_backend(&self) -> JsonWeavyActiveBackend {
+        let _ = self;
+        JsonWeavyActiveBackend::Interpreter
+    }
+
+    /// Whether this build exposes Weavy's native copy-and-patch substrate.
+    #[must_use]
+    pub fn native_jit_available() -> bool {
+        json_weavy_native_jit_available()
+    }
+
+    /// Report why this plan is not using native JIT execution.
+    #[must_use]
+    pub fn jit_fallback_report(&self) -> JsonWeavyJitFallbackReport {
+        if self.execution != JsonWeavyExecutionMode::Jit {
+            return JsonWeavyJitFallbackReport::default();
+        }
+
+        JsonWeavyJitFallbackReport {
+            records: vec![JsonWeavyJitFallbackRecord {
+                path: "$".to_string(),
+                reason: json_weavy_jit_fallback_reason(),
+            }],
+        }
     }
 
     /// Deserialize from a JSON string using this pre-lowered plan.
@@ -160,6 +276,36 @@ where
 
         Ok(unsafe { slot.assume_init() })
     }
+}
+
+#[cfg(not(feature = "jit"))]
+fn json_weavy_native_jit_available() -> bool {
+    false
+}
+
+#[cfg(feature = "jit")]
+fn json_weavy_native_jit_available() -> bool {
+    weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
+}
+
+#[cfg(not(feature = "jit"))]
+fn json_weavy_jit_fallback_reason() -> &'static str {
+    "facet-json was built without its jit feature"
+}
+
+#[cfg(all(
+    feature = "jit",
+    not(all(target_os = "macos", target_arch = "aarch64"))
+))]
+fn json_weavy_jit_fallback_reason() -> &'static str {
+    let _ = json_weavy_native_jit_available();
+    "native JIT is not enabled for this build target"
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+fn json_weavy_jit_fallback_reason() -> &'static str {
+    let _ = json_weavy_native_jit_available();
+    "JSON native JIT stencils are not implemented yet"
 }
 
 fn run_error(err: RunError<ExecBlock, DeserializeError>) -> DeserializeError {
