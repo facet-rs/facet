@@ -13,6 +13,17 @@
     {% block head %}{% endblock head %}
 </head>
 <body>
+    {% set eco = "styx" %}
+    <nav class="eco-bar" aria-label="facet ecosystem">
+        <span class="eco-bar-label">ecosystem</span>
+        <ul class="eco-bar-links">
+            <li><a href="/" data-x-site {% if eco == "facet" %}class="active"{% endif %}>Facet</a></li>
+            <li><a href="/styx" data-x-site {% if eco == "styx" %}class="active"{% endif %}>Styx</a></li>
+            <li><a href="/picante" data-x-site {% if eco == "picante" %}class="active"{% endif %}>Picante</a></li>
+            <li><a href="/dibs" data-x-site {% if eco == "dibs" %}class="active"{% endif %}>Dibs</a></li>
+        </ul>
+        <div id="search" class="eco-bar-search"></div>
+    </nav>
     <header class="header">
         <nav class="nav">
             <a href="/" class="logo">

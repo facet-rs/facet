@@ -101,6 +101,9 @@ h6 {
   }
 }
 
+// Height of the shared ecosystem bar; the site nav sticks just below it.
+$eco-bar-height: 2.5rem;
+
 // Site navigation
 .site-nav {
   display: flex;
@@ -111,7 +114,7 @@ h6 {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   position: sticky;
-  top: 0;
+  top: $eco-bar-height;
   z-index: 100;
   height: 60px;
 
@@ -188,6 +191,61 @@ h6 {
   &:hover {
     color: var(--text-color);
   }
+}
+
+// Ecosystem bar: the one uniform layer across every facet-ecosystem site
+// (facet, styx, picante, dibs). Cross-site links make the sites mutually
+// discoverable; the search box is shared chrome too. Each site keeps its own
+// nav below this. Links carry `data-x-site` so mount-localization leaves their
+// site-absolute targets (e.g. facet-home `/`) untouched on subsites.
+.eco-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  height: $eco-bar-height;
+  padding: 0 var(--spacing-lg);
+  background-color: var(--code-bg);
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  z-index: 110;
+}
+
+.eco-bar-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.eco-bar-links {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  a {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+
+    &:hover {
+      color: var(--link-color);
+    }
+
+    &.active {
+      color: var(--accent-color);
+    }
+  }
+}
+
+.eco-bar-search {
+  margin-left: auto;
+  width: 14rem;
+  max-width: 30vw;
 }
 
 // Base styles
