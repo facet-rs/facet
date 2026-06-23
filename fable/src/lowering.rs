@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
 
-use facet_core::{Facet, PtrConst, PtrMut, ScalarType, Shape, StructKind, Type, UserType};
+use facet_core::{Def, Facet, PtrConst, PtrMut, ScalarType, Shape, StructKind, Type, UserType};
 use weavy::{BlockRef, Control, DenseLowered, Program, RunError, RunStats, Step};
 
 use crate::SyntaxKind;
@@ -398,6 +398,15 @@ pub enum FableError {
         /// Missing field name.
         field: String,
     },
+    /// An indexed path step was out of bounds at runtime.
+    IndexOutOfBounds {
+        /// Path prefix being indexed.
+        path: String,
+        /// Requested index.
+        index: usize,
+        /// Runtime sequence length.
+        len: usize,
+    },
     /// A typed expression was used in a context that expects another type.
     TypeMismatch {
         /// Expected expression type.
@@ -482,6 +491,9 @@ impl fmt::Display for FableError {
             }
             FableError::UnknownField { shape, field } => {
                 write!(f, "{shape} has no field named {field}")
+            }
+            FableError::IndexOutOfBounds { path, index, len } => {
+                write!(f, "{path} index {index} is out of bounds for length {len}")
             }
             FableError::TypeMismatch { expected, actual } => {
                 write!(f, "expected {expected}, found {actual}")
@@ -742,24 +754,168 @@ struct FieldPath {
 }
 
 impl FieldPath {
-    unsafe fn ptr_mut(&self, mut ptr: PtrMut) -> PtrMut {
+    fn ptr_mut(&self, mut ptr: PtrMut) -> Result<PtrMut, FableError> {
         for step in self.steps.iter() {
-            ptr = unsafe { ptr.field(step.offset) };
+            ptr = unsafe { step.ptr_mut(ptr)? };
         }
-        ptr
+        Ok(ptr)
     }
 
-    unsafe fn ptr_const(&self, mut ptr: PtrConst) -> PtrConst {
+    fn ptr_const(&self, mut ptr: PtrConst) -> Result<PtrConst, FableError> {
         for step in self.steps.iter() {
-            ptr = unsafe { ptr.field(step.offset) };
+            ptr = unsafe { step.ptr_const(ptr)? };
         }
-        ptr
+        Ok(ptr)
     }
 }
 
 #[derive(Debug)]
-struct FieldStep {
-    offset: usize,
+enum FieldStep {
+    Field {
+        offset: usize,
+    },
+    ListIndex {
+        source: Box<str>,
+        shape: &'static Shape,
+        index: usize,
+    },
+    ArrayIndex {
+        source: Box<str>,
+        shape: &'static Shape,
+        len: usize,
+        stride: usize,
+        index: usize,
+    },
+    SliceIndex {
+        source: Box<str>,
+        shape: &'static Shape,
+        len: unsafe extern "C" fn(PtrConst) -> usize,
+        stride: usize,
+        index: usize,
+    },
+}
+
+impl FieldStep {
+    unsafe fn ptr_mut(&self, ptr: PtrMut) -> Result<PtrMut, FableError> {
+        match self {
+            Self::Field { offset } => Ok(unsafe { ptr.field(*offset) }),
+            Self::ListIndex {
+                source,
+                shape,
+                index,
+            } => {
+                let Def::List(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "list index step did not point to a list shape",
+                    });
+                };
+                let Some(get_mut) = def.vtable.get_mut else {
+                    return Err(FableError::Unsupported {
+                        feature: format!("mutable index access on {shape}"),
+                    });
+                };
+                unsafe { get_mut(ptr, *index, shape) }.ok_or_else(|| {
+                    let len = unsafe { (def.vtable.len)(ptr.as_const()) };
+                    index_out_of_bounds(source, *index, len)
+                })
+            }
+            Self::ArrayIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                if *index >= *len {
+                    return Err(index_out_of_bounds(source, *index, *len));
+                }
+                let Def::Array(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "array index step did not point to an array shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_mut_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            Self::SliceIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let runtime_len = unsafe { len(ptr.as_const()) };
+                if *index >= runtime_len {
+                    return Err(index_out_of_bounds(source, *index, runtime_len));
+                }
+                let Def::Slice(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "slice index step did not point to a slice shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_mut_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+        }
+    }
+
+    unsafe fn ptr_const(&self, ptr: PtrConst) -> Result<PtrConst, FableError> {
+        match self {
+            Self::Field { offset } => Ok(unsafe { ptr.field(*offset) }),
+            Self::ListIndex {
+                source,
+                shape,
+                index,
+            } => {
+                let Def::List(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "list index step did not point to a list shape",
+                    });
+                };
+                unsafe { (def.vtable.get)(ptr, *index, shape) }.ok_or_else(|| {
+                    let len = unsafe { (def.vtable.len)(ptr) };
+                    index_out_of_bounds(source, *index, len)
+                })
+            }
+            Self::ArrayIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                if *index >= *len {
+                    return Err(index_out_of_bounds(source, *index, *len));
+                }
+                let Def::Array(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "array index step did not point to an array shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            Self::SliceIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let runtime_len = unsafe { len(ptr) };
+                if *index >= runtime_len {
+                    return Err(index_out_of_bounds(source, *index, runtime_len));
+                }
+                let Def::Slice(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "slice index step did not point to a slice shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -946,9 +1102,10 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             }
             Expr::Unary(unary) => self.lower_unary(unary),
             Expr::Binary(binary) => self.lower_binary(binary),
-            Expr::Index(_) => Err(FableError::Unsupported {
-                feature: "index expressions".into(),
-            }),
+            Expr::Index(_) => {
+                let path = self.lower_readable_path(expr)?;
+                path_to_expr(path)
+            }
             Expr::Call(call) => self.lower_call(call),
         }
     }
@@ -1104,11 +1261,15 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn resolve_path(&self, expr: &Expr) -> Result<FieldPath, FableError> {
-        let names = collect_path(expr)?;
-        let source = names.join(".");
-        let Some((first, fields)) = names.split_first() else {
+        let segments = collect_path(expr)?;
+        let Some((first, rest)) = segments.split_first() else {
             return Err(FableError::MalformedSyntax {
                 reason: "empty field path",
+            });
+        };
+        let PathSegment::Name(first) = first else {
+            return Err(FableError::MalformedSyntax {
+                reason: "path did not start with a variable reference",
             });
         };
         if first != "root" {
@@ -1118,14 +1279,30 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         }
 
         let mut shape = self.root_shape;
-        let mut steps = Vec::with_capacity(fields.len());
-        for field_name in fields {
-            let field = find_field(shape, field_name)?;
-            let field_shape = field.shape.get();
-            steps.push(FieldStep {
-                offset: field.offset,
-            });
-            shape = field_shape;
+        let mut source = first.clone();
+        let mut steps = Vec::with_capacity(rest.len());
+        for segment in rest {
+            match segment {
+                PathSegment::Name(field_name) => {
+                    let field = find_field(shape, field_name)?;
+                    let field_shape = field.shape.get();
+                    source.push('.');
+                    source.push_str(field_name);
+                    steps.push(FieldStep::Field {
+                        offset: field.offset,
+                    });
+                    shape = field_shape;
+                }
+                PathSegment::Index { index, literal } => {
+                    source.push('[');
+                    source.push_str(literal);
+                    source.push(']');
+                    let (step, element_shape) =
+                        index_step(shape, *index, source.clone().into_boxed_str())?;
+                    steps.push(step);
+                    shape = element_shape;
+                }
+            }
         }
 
         let scalar = ScalarType::try_from_shape(shape).ok_or_else(|| FableError::Unsupported {
@@ -1886,7 +2063,7 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
                 Ok(Control::Continue)
             }
             FableOp::Assign { target, value } => {
-                let ptr = unsafe { target.ptr_mut(self.root) };
+                let ptr = target.ptr_mut(self.root)?;
                 unsafe { self.write_scalar(target.scalar, ptr, value) }?;
                 Ok(Control::Continue)
             }
@@ -1964,11 +2141,11 @@ impl FableInterp {
         match expr {
             UnitExpr::Null => Ok(()),
             UnitExpr::Read(path) => {
-                let _ = unsafe { path.ptr_const(self.root.as_const()) };
+                let _ = path.ptr_const(self.root.as_const())?;
                 Ok(())
             }
             UnitExpr::Local(local) => self.local_unit(*local),
-            UnitExpr::HostFieldMut { function, field } => function(self.field_mut(field)),
+            UnitExpr::HostFieldMut { function, field } => function(self.field_mut(field)?),
         }
     }
 
@@ -1976,11 +2153,11 @@ impl FableInterp {
         match expr {
             BoolExpr::Literal(value) => Ok(*value),
             BoolExpr::Read(path) => {
-                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                let ptr = path.ptr_const(self.root.as_const())?;
                 Ok(*unsafe { ptr.get::<bool>() })
             }
             BoolExpr::Local(local) => self.local_bool(*local),
-            BoolExpr::HostFieldPredicate { function, field } => function(self.field_ref(field)),
+            BoolExpr::HostFieldPredicate { function, field } => function(self.field_ref(field)?),
             BoolExpr::HostStringPredicate { function, lhs, rhs } => {
                 let lhs = self.eval_string(lhs)?;
                 let rhs = self.eval_string(rhs)?;
@@ -2031,7 +2208,7 @@ impl FableInterp {
     fn eval_char(&self, expr: &CharExpr) -> Result<char, FableError> {
         match expr {
             CharExpr::Read(path) => {
-                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                let ptr = path.ptr_const(self.root.as_const())?;
                 Ok(*unsafe { ptr.get::<char>() })
             }
             CharExpr::Local(local) => self.local_char(*local),
@@ -2042,11 +2219,11 @@ impl FableInterp {
         match expr {
             StringExpr::Literal(value) => Ok(value.clone()),
             StringExpr::Read(path) => {
-                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                let ptr = path.ptr_const(self.root.as_const())?;
                 unsafe { self.read_string_path(path, ptr) }
             }
             StringExpr::Local(local) => self.local_string(*local),
-            StringExpr::HostFieldString { function, field } => function(self.field_ref(field)),
+            StringExpr::HostFieldString { function, field } => function(self.field_ref(field)?),
             StringExpr::HostUnary { function, value } => {
                 let value = self.eval_string(value)?;
                 function(&value)
@@ -2060,22 +2237,28 @@ impl FableInterp {
         }
     }
 
-    fn field_ref<'field>(&self, field: &'field FieldPath) -> FableField<'field> {
-        FableField {
+    fn field_ref<'field>(
+        &self,
+        field: &'field FieldPath,
+    ) -> Result<FableField<'field>, FableError> {
+        Ok(FableField {
             path: &field.source,
             shape: field.shape,
             scalar: field.scalar,
-            ptr: unsafe { field.ptr_const(self.root.as_const()) },
-        }
+            ptr: field.ptr_const(self.root.as_const())?,
+        })
     }
 
-    fn field_mut<'field>(&self, field: &'field FieldPath) -> FableFieldMut<'field> {
-        FableFieldMut {
+    fn field_mut<'field>(
+        &self,
+        field: &'field FieldPath,
+    ) -> Result<FableFieldMut<'field>, FableError> {
+        Ok(FableFieldMut {
             path: &field.source,
             shape: field.shape,
             scalar: field.scalar,
-            ptr: unsafe { field.ptr_mut(self.root) },
-        }
+            ptr: field.ptr_mut(self.root)?,
+        })
     }
 
     unsafe fn read_string_path(
@@ -2108,7 +2291,7 @@ impl FableInterp {
     fn eval_i128(&self, expr: &IntExpr) -> Result<i128, FableError> {
         match expr {
             IntExpr::Read(path) => {
-                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                let ptr = path.ptr_const(self.root.as_const())?;
                 unsafe { self.read_signed_path(path.scalar, ptr) }
             }
             IntExpr::Local(local) => self.local_i128(*local),
@@ -2175,7 +2358,7 @@ impl FableInterp {
         match expr {
             UIntExpr::Literal(value) => Ok(*value),
             UIntExpr::Read(path) => {
-                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                let ptr = path.ptr_const(self.root.as_const())?;
                 unsafe { self.read_unsigned_path(path.scalar, ptr) }
             }
             UIntExpr::Local(local) => self.local_u128(*local),
@@ -2231,7 +2414,7 @@ impl FableInterp {
         match expr {
             FloatExpr::Literal(value) => Ok(*value),
             FloatExpr::Read(path) => {
-                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                let ptr = path.ptr_const(self.root.as_const())?;
                 match path.scalar {
                     ScalarType::F32 => Ok((*unsafe { ptr.get::<f32>() }).into()),
                     ScalarType::F64 => Ok(*unsafe { ptr.get::<f64>() }),
@@ -2742,13 +2925,19 @@ fn expect_number_expr(expr: &ExprPlan) -> Result<&NumberExpr, FableError> {
     }
 }
 
-fn collect_path(expr: &Expr) -> Result<Vec<String>, FableError> {
+#[derive(Debug)]
+enum PathSegment {
+    Name(String),
+    Index { index: usize, literal: String },
+}
+
+fn collect_path(expr: &Expr) -> Result<Vec<PathSegment>, FableError> {
     match expr {
         Expr::Var(var) => {
             let name = var.name().ok_or(FableError::MalformedSyntax {
                 reason: "variable reference without identifier",
             })?;
-            Ok(vec![name])
+            Ok(vec![PathSegment::Name(name)])
         }
         Expr::Field(field) => {
             let base = field.base().ok_or(FableError::MalformedSyntax {
@@ -2758,7 +2947,19 @@ fn collect_path(expr: &Expr) -> Result<Vec<String>, FableError> {
             let field_name = field.field_name().ok_or(FableError::MalformedSyntax {
                 reason: "field expression without field name",
             })?;
-            path.push(field_name);
+            path.push(PathSegment::Name(field_name));
+            Ok(path)
+        }
+        Expr::Index(index) => {
+            let base = index.base().ok_or(FableError::MalformedSyntax {
+                reason: "index expression without base",
+            })?;
+            let index_expr = index.index().ok_or(FableError::MalformedSyntax {
+                reason: "index expression without index",
+            })?;
+            let mut path = collect_path(&base)?;
+            let (index, literal) = literal_index(&index_expr)?;
+            path.push(PathSegment::Index { index, literal });
             Ok(path)
         }
         Expr::Paren(paren) => {
@@ -2767,9 +2968,6 @@ fn collect_path(expr: &Expr) -> Result<Vec<String>, FableError> {
             })?;
             collect_path(&inner)
         }
-        Expr::Index(_) => Err(FableError::Unsupported {
-            feature: "index paths".into(),
-        }),
         Expr::Call(_) => Err(FableError::Unsupported {
             feature: "call paths".into(),
         }),
@@ -2777,6 +2975,81 @@ fn collect_path(expr: &Expr) -> Result<Vec<String>, FableError> {
             feature: "non-path assignment targets".into(),
         }),
     }
+}
+
+fn literal_index(expr: &Expr) -> Result<(usize, String), FableError> {
+    let Expr::Literal(literal) = expr else {
+        return Err(FableError::Unsupported {
+            feature: "dynamic index paths".into(),
+        });
+    };
+    let token = literal.token().ok_or(FableError::MalformedSyntax {
+        reason: "index literal without token",
+    })?;
+    if token.kind() != SyntaxKind::Int {
+        return Err(FableError::Unsupported {
+            feature: "non-integer index paths".into(),
+        });
+    }
+    let text = token.text().to_owned();
+    let index = text.parse().map_err(|_| FableError::InvalidLiteral {
+        literal: text.clone(),
+        reason: "index literal is out of range",
+    })?;
+    Ok((index, text))
+}
+
+fn index_step(
+    shape: &'static Shape,
+    index: usize,
+    source: Box<str>,
+) -> Result<(FieldStep, &'static Shape), FableError> {
+    match shape.def {
+        Def::List(def) => Ok((
+            FieldStep::ListIndex {
+                source,
+                shape,
+                index,
+            },
+            def.t(),
+        )),
+        Def::Array(def) => Ok((
+            FieldStep::ArrayIndex {
+                source,
+                shape,
+                len: def.n,
+                stride: element_stride(def.t(), shape)?,
+                index,
+            },
+            def.t(),
+        )),
+        Def::Slice(def) => Ok((
+            FieldStep::SliceIndex {
+                source,
+                shape,
+                len: def.vtable.len,
+                stride: element_stride(def.t(), shape)?,
+                index,
+            },
+            def.t(),
+        )),
+        _ => Err(FableError::Unsupported {
+            feature: format!("index access on {shape}"),
+        }),
+    }
+}
+
+fn element_stride(
+    element_shape: &'static Shape,
+    owner_shape: &'static Shape,
+) -> Result<usize, FableError> {
+    let layout = element_shape
+        .layout
+        .sized_layout()
+        .map_err(|_| FableError::Unsupported {
+            feature: format!("index access to unsized elements in {owner_shape}"),
+        })?;
+    Ok(layout.pad_to_align().size())
 }
 
 fn find_field(
@@ -2993,6 +3266,14 @@ fn number_out_of_range(target: ScalarType, value: String) -> FableError {
     FableError::NumberOutOfRange { target, value }
 }
 
+fn index_out_of_bounds(path: &str, index: usize, len: usize) -> FableError {
+    FableError::IndexOutOfBounds {
+        path: path.to_owned(),
+        index,
+        len,
+    }
+}
+
 fn invalid_call(function: &'static str, reason: &'static str) -> FableError {
     FableError::InvalidCall { function, reason }
 }
@@ -3106,6 +3387,8 @@ mod tests {
     #[derive(Debug, Facet, PartialEq)]
     struct State {
         user: User,
+        users: Vec<User>,
+        checkpoints: [i32; 3],
         visits: u32,
         score: f64,
         marker: char,
@@ -3119,6 +3402,19 @@ mod tests {
                 age: 17,
                 active: false,
             },
+            users: vec![
+                User {
+                    name: "Ada".into(),
+                    age: 17,
+                    active: false,
+                },
+                User {
+                    name: "Grace".into(),
+                    age: 30,
+                    active: false,
+                },
+            ],
+            checkpoints: [1, 2, 3],
             visits: 1,
             score: 1.5,
             marker: 'a',
@@ -3257,6 +3553,29 @@ mod tests {
     }
 
     #[test]
+    fn applies_indexed_paths_to_lists_and_arrays() {
+        let mut value = state();
+
+        apply(
+            &mut value,
+            r#"
+                root.users[1].name = root.user.name + " Lovelace";
+                root.users[0].age = root.users[1].age + root.checkpoints[2];
+                root.checkpoints[1] = root.users[0].age;
+                if root.users[0].age == 33 {
+                    root.users[1].active = true;
+                }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(value.users[1].name, "Ada Lovelace");
+        assert_eq!(value.users[0].age, 33);
+        assert_eq!(value.checkpoints, [1, 33, 3]);
+        assert!(value.users[1].active);
+    }
+
+    #[test]
     fn applies_custom_host_intrinsics() {
         let mut value = state();
         let mut intrinsics = FableIntrinsics::standard();
@@ -3320,6 +3639,32 @@ mod tests {
 
         assert_eq!(value.user.name, "root.user.age=17");
         assert!(value.user.active);
+    }
+
+    #[test]
+    fn applies_host_intrinsics_to_indexed_paths() {
+        let mut value = state();
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics
+            .add_field_string_unary("describe_indexed_field", describe_indexed_field)
+            .unwrap();
+        intrinsics
+            .add_field_mut_unary("rewrite_field", rewrite_field)
+            .unwrap();
+
+        FablePlan::<State>::compile_with_intrinsics(
+            r#"
+                root.users[0].name = describe_indexed_field(root.users[1].age);
+                rewrite_field(root.users[1].name);
+            "#,
+            &intrinsics,
+        )
+        .unwrap()
+        .apply(&mut value)
+        .unwrap();
+
+        assert_eq!(value.users[0].name, "root.users[1].age=30");
+        assert_eq!(value.users[1].name, "GRACE!");
     }
 
     #[test]
@@ -3403,6 +3748,21 @@ mod tests {
             FableError::Unsupported {
                 feature
             } if feature == "writing Str"
+        ));
+    }
+
+    #[test]
+    fn reports_indexed_path_out_of_bounds() {
+        let mut value = state();
+        let err = apply(&mut value, "root.users[5].age = 1").unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::IndexOutOfBounds {
+                path,
+                index: 5,
+                len: 2,
+            } if path == "root.users[5]"
         ));
     }
 
@@ -3637,14 +3997,14 @@ mod tests {
     }
 
     #[test]
-    fn reports_unsupported_index_lowering() {
-        let err = compile_err("root.users[0].name = \"Ada\"");
+    fn rejects_dynamic_index_paths() {
+        let err = compile_err("root.users[root.visits].name = \"Ada\"");
 
         assert!(matches!(
             err,
             FableError::Unsupported {
                 feature
-            } if feature == "index paths"
+            } if feature == "dynamic index paths"
         ));
     }
 
@@ -3681,6 +4041,13 @@ mod tests {
 
     fn describe_field(field: FableField<'_>) -> Result<String, FableError> {
         assert_eq!(field.path(), "root.user.age");
+        assert!(field.shape().is_type::<i32>());
+        assert_eq!(field.scalar(), ScalarType::I32);
+        Ok(format!("{}={}", field.path(), field.read_i128()?))
+    }
+
+    fn describe_indexed_field(field: FableField<'_>) -> Result<String, FableError> {
+        assert_eq!(field.path(), "root.users[1].age");
         assert!(field.shape().is_type::<i32>());
         assert_eq!(field.scalar(), ScalarType::I32);
         Ok(format!("{}={}", field.path(), field.read_i128()?))
