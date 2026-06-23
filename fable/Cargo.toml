@@ -15,3 +15,11 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 cstree.workspace = true
+facet-core.workspace = true
+weavy.workspace = true
+
+[dev-dependencies]
+facet = { path = "../facet" }
+
+[lints]
+workspace = true
