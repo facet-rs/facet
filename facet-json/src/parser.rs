@@ -389,6 +389,42 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[inline]
+    fn try_consume_ordered_field_prefix(
+        &mut self,
+        expected: &str,
+        require_comma: bool,
+    ) -> Result<Option<Span>, ParseError> {
+        match (require_comma, self.state.stack.last()) {
+            (false, Some(ContextState::Object(ObjectState::KeyOrEnd)))
+            | (true, Some(ContextState::Object(ObjectState::CommaOrEnd))) => {}
+            _ => return Ok(None),
+        }
+
+        let expected_bytes = expected.as_bytes();
+        let span = if let [expected] = expected_bytes {
+            self.scanner
+                .try_consume_one_byte_field_name_colon(self.input, *expected, require_comma)
+        } else {
+            self.scanner.try_consume_exact_field_name_colon(
+                self.input,
+                expected_bytes,
+                require_comma,
+            )
+        }
+        .map_err(scan_error_to_parse_error)?;
+
+        if let Some(span) = span {
+            self.state.last_token_start = span.offset as usize;
+            self.state.scanner_pos = self.scanner.pos();
+            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                *state = ObjectState::Value;
+            }
+        }
+
+        Ok(span)
+    }
+
+    #[inline]
     fn try_consume_i32_number(&mut self) -> Result<Option<(Span, i32)>, ParseError> {
         let value = self
             .scanner
@@ -1080,6 +1116,23 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    pub(crate) fn consume_array_object_start_fast(&mut self) -> Result<Span, ParseError> {
+        if self.state.event_peek.is_some() {
+            return self.consume_object_start();
+        }
+
+        match self.state.stack.last() {
+            Some(ContextState::Array(ArrayState::ValueOrEnd)) => {
+                self.consume_direct_array_object_start(false)
+            }
+            Some(ContextState::Array(ArrayState::CommaOrEnd)) => {
+                self.consume_direct_array_object_start(true)
+            }
+            _ => self.consume_object_start_fast(),
+        }
+    }
+
     pub(crate) fn consume_array_start_fast(&mut self) -> Result<Span, ParseError> {
         if self.state.event_peek.is_some() {
             return self.consume_array_start();
@@ -1100,6 +1153,31 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 }
             }
             _ => self.consume_array_start(),
+        }
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    fn consume_direct_array_object_start(
+        &mut self,
+        require_comma: bool,
+    ) -> Result<Span, ParseError> {
+        if let Some(span) = self
+            .scanner
+            .try_consume_array_object_start(self.input, require_comma)
+            .map_err(scan_error_to_parse_error)?
+        {
+            if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
+                *state = ArrayState::ValueOrEnd;
+            }
+            self.state.last_token_start = span.offset as usize;
+            self.state.scanner_pos = self.scanner.pos();
+            self.state.root_started = true;
+            self.state
+                .stack
+                .push(ContextState::Object(ObjectState::KeyOrEnd));
+            Ok(span)
+        } else {
+            self.consume_object_start_fast()
         }
     }
 
@@ -1447,7 +1525,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn try_consume_ordered_i32_object_fields(
         &mut self,
         expected: &[&str],
@@ -1462,37 +1540,44 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
 
         let save = self.save_ordered_i32_object_probe();
-        let matched = self.try_consume_ordered_i32_object_fields_inner(expected, spans, values)?;
+        let mut consume =
+            |_: &JsonParser<'de, TRUSTED_UTF8>, index: usize, span: Span, value: i32| {
+                spans[index] = span;
+                values[index] = value;
+                Ok::<(), ParseError>(())
+            };
+        let matched = self.try_consume_ordered_i32_object_fields_inner(expected, &mut consume)?;
         if !matched {
             self.restore_ordered_i32_object_probe(save);
         }
         Ok(matched)
     }
 
-    #[inline(never)]
+    #[inline]
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
-    pub(crate) fn try_consume_ordered_i32_object(
+    pub(crate) fn try_consume_ordered_i32_object_with<E, W>(
         &mut self,
         expected: &[&str],
-        spans: &mut [Span],
-        values: &mut [i32],
-    ) -> Result<bool, ParseError> {
-        debug_assert_eq!(expected.len(), spans.len());
-        debug_assert_eq!(expected.len(), values.len());
-
+        mut consume: W,
+    ) -> Result<bool, E>
+    where
+        E: From<ParseError>,
+        W: FnMut(&JsonParser<'de, TRUSTED_UTF8>, usize, Span, i32) -> Result<(), E>,
+    {
         if expected.is_empty() || self.state.event_peek.is_some() {
             return Ok(false);
         }
 
         let save = self.save_ordered_object_probe();
-        self.consume_object_start_fast()?;
-        let matched = self.try_consume_ordered_i32_object_fields_inner(expected, spans, values)?;
+        self.consume_array_object_start_fast().map_err(E::from)?;
+        let matched = self.try_consume_ordered_i32_object_fields_inner(expected, &mut consume)?;
         if !matched {
             self.restore_ordered_object_probe(save);
         }
         Ok(matched)
     }
 
+    #[inline]
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     pub(crate) fn try_consume_ordered_scalar_object_with<E, W>(
         &mut self,
@@ -1513,7 +1598,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
 
         let save = self.save_ordered_object_probe();
-        self.consume_object_start_fast().map_err(E::from)?;
+        self.consume_array_object_start_fast().map_err(E::from)?;
         let matched = self.try_consume_ordered_scalar_object_inner(expected, &mut consume)?;
         if !matched {
             self.restore_ordered_object_probe(save);
@@ -1531,12 +1616,12 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         self.restore_ordered_object_probe(save);
     }
 
-    #[inline(never)]
+    #[inline]
     fn save_ordered_i32_object_probe(&self) -> OrderedObjectProbeSave {
         self.save_ordered_object_probe()
     }
 
-    #[inline(never)]
+    #[inline]
     fn save_ordered_object_probe(&self) -> OrderedObjectProbeSave {
         OrderedObjectProbeSave {
             scanner: self.scanner.clone(),
@@ -1571,50 +1656,12 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         self.state.scanner_pos = save.scanner_pos;
     }
 
-    #[inline(never)]
-    fn try_consume_ordered_i32_object_fields_inner(
-        &mut self,
-        expected: &[&str],
-        spans: &mut [Span],
-        values: &mut [i32],
-    ) -> Result<bool, ParseError> {
-        for (index, expected) in expected.iter().copied().enumerate() {
-            if index > 0 {
-                if self.determine_action() != NextAction::ObjectComma {
-                    return Ok(false);
-                }
-                if self.consume_punctuation_token(b',')?.is_none() {
-                    return Ok(false);
-                }
-                if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
-                    *state = ObjectState::KeyOrEnd;
-                } else {
-                    return Ok(false);
-                }
-            }
-
-            if self.determine_action() != NextAction::ObjectKey {
-                return Ok(false);
-            }
-
-            let Some(span) = self.try_consume_exact_string_token(expected)? else {
-                return Ok(false);
-            };
-            self.expect_colon_token()?;
-            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
-                *state = ObjectState::Value;
-            } else {
-                return Ok(false);
-            }
-
-            let Some((_, value)) = self.try_consume_i32_number()? else {
-                return Ok(false);
-            };
-            spans[index] = span;
-            values[index] = value;
-        }
-
-        if self.determine_action() != NextAction::ObjectComma {
+    #[inline]
+    fn consume_ordered_object_end(&mut self) -> Result<bool, ParseError> {
+        if !matches!(
+            self.state.stack.last(),
+            Some(ContextState::Object(ObjectState::CommaOrEnd))
+        ) {
             return Ok(false);
         }
         if self.consume_punctuation_token(b'}')?.is_none() {
@@ -1625,7 +1672,34 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         Ok(true)
     }
 
-    #[inline(never)]
+    #[inline]
+    fn try_consume_ordered_i32_object_fields_inner<E, W>(
+        &mut self,
+        expected: &[&str],
+        consume: &mut W,
+    ) -> Result<bool, E>
+    where
+        E: From<ParseError>,
+        W: FnMut(&JsonParser<'de, TRUSTED_UTF8>, usize, Span, i32) -> Result<(), E>,
+    {
+        for (index, expected) in expected.iter().copied().enumerate() {
+            let Some(span) = self
+                .try_consume_ordered_field_prefix(expected, index > 0)
+                .map_err(E::from)?
+            else {
+                return Ok(false);
+            };
+
+            let Some((_, value)) = self.try_consume_i32_number().map_err(E::from)? else {
+                return Ok(false);
+            };
+            consume(self, index, span, value)?;
+        }
+
+        self.consume_ordered_object_end().map_err(E::from)
+    }
+
+    #[inline]
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     fn try_consume_ordered_scalar_object_inner<E, W>(
         &mut self,
@@ -1642,40 +1716,12 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         ) -> Result<(), E>,
     {
         for (index, expected) in expected.iter().copied().enumerate() {
-            if index > 0 {
-                if self.determine_action() != NextAction::ObjectComma {
-                    return Ok(false);
-                }
-                if self
-                    .consume_punctuation_token(b',')
-                    .map_err(E::from)?
-                    .is_none()
-                {
-                    return Ok(false);
-                }
-                if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
-                    *state = ObjectState::KeyOrEnd;
-                } else {
-                    return Ok(false);
-                }
-            }
-
-            if self.determine_action() != NextAction::ObjectKey {
-                return Ok(false);
-            }
-
             let Some(span) = self
-                .try_consume_exact_string_token(expected)
+                .try_consume_ordered_field_prefix(expected, index > 0)
                 .map_err(E::from)?
             else {
                 return Ok(false);
             };
-            self.expect_colon_token().map_err(E::from)?;
-            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
-                *state = ObjectState::Value;
-            } else {
-                return Ok(false);
-            }
 
             let token = self.consume_spanned_token().map_err(E::from)?;
             self.validate_scalar_token(&token, "scalar")
@@ -1685,19 +1731,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             consume(self, index, span, token)?;
         }
 
-        if self.determine_action() != NextAction::ObjectComma {
-            return Ok(false);
-        }
-        if self
-            .consume_punctuation_token(b'}')
-            .map_err(E::from)?
-            .is_none()
-        {
-            return Ok(false);
-        }
-        self.state.stack.pop();
-        self.finish_value_in_parent();
-        Ok(true)
+        self.consume_ordered_object_end().map_err(E::from)
     }
 
     pub(crate) fn consume_null_if_next(&mut self) -> Result<bool, ParseError> {
@@ -1754,7 +1788,22 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             }
             NextAction::ArrayComma => match self.peek_significant_byte()? {
                 Some((_, b']')) => self.consume_array_end_token(),
-                Some((comma_pos, b',')) if self.significant_after_is(comma_pos + 1, b']')? => {
+                Some((comma_pos, b',')) => {
+                    match self.input.get(comma_pos + 1) {
+                        Some(b']') => {}
+                        Some(b' ' | b'\t' | b'\n' | b'\r') => {
+                            if !self.significant_after_is(comma_pos + 1, b']')? {
+                                return Ok(false);
+                            }
+                        }
+                        Some(b'/') if self.scanner.allows_comments() => {
+                            if !self.significant_after_is(comma_pos + 1, b']')? {
+                                return Ok(false);
+                            }
+                        }
+                        _ => return Ok(false),
+                    }
+
                     self.consume_comma_token()?;
                     if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
                         *state = ArrayState::ValueOrEnd;
