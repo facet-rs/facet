@@ -7,7 +7,7 @@ picante exists because the "[salsa](https://salsa-rs.netlify.app/) model" is ext
 
 ## The Problem
 
-Consider a static site generator like [dodeca](https://dodeca.dev). Building a site involves:
+Consider a static site generator like [dodeca](https://dodeca.bearcove.eu). Building a site involves:
 
 ```
 SourceFile → parse_file → build_tree → render_page → all_rendered_html → build_site
@@ -52,7 +52,7 @@ Your application defines domain-specific queries on top of this stack.
 
 ## Real-World Example: dodeca
 
-Here's how these layers work together in [dodeca](https://dodeca.dev):
+Here's how these layers work together in [dodeca](https://dodeca.bearcove.eu):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

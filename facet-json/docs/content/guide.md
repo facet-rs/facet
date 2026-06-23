@@ -1,20 +1,21 @@
 +++
-title = "JSON guide"
+title = "JSON"
+description = "Serialize and deserialize Facet values as JSON, with span-aware errors."
 weight = 1
 insert_anchor_links = "heading"
 +++
 
-`facet-json` is the flagship format crate: derive `Facet`, then go to and from
-JSON with helpful, span-aware errors. It needs no schema declaration beyond the
-derive itself.
+`facet-json` is the main JSON format crate for facet: derive `Facet`, then
+serialize and deserialize without maintaining a second schema. Reach for it when
+JSON is your wire format, config format, fixture format, or oracle in tests.
 
-## Setup
+## Install
 
-```bash
-cargo add facet facet-json
-```
+Add `facet` and `facet-json` to your crate.
 
-```rust,noexec
+## Minimal example
+
+```rust
 use facet::Facet;
 
 #[derive(Facet, Debug, PartialEq)]
@@ -22,66 +23,85 @@ struct Person {
     name: String,
     age: u32,
 }
+
+let person = Person {
+    name: "Alice".into(),
+    age: 30,
+};
+
+let json = facet_json::to_string(&person).unwrap();
+assert_eq!(json, r#"{"name":"Alice","age":30}"#);
+
+let roundtrip: Person = facet_json::from_str(&json).unwrap();
+assert_eq!(roundtrip, person);
 ```
 
 ## Deserialize
 
-```rust,noexec
-let json = r#"{"name": "Alice", "age": 30}"#;
-let person: Person = facet_json::from_str(json)?;
-assert_eq!(person, Person { name: "Alice".into(), age: 30 });
+Use `from_str` for `&str` input and `from_slice` for bytes. When the output type
+borrows from the JSON buffer, use the borrowed variants:
+
+```rust
+use facet::Facet;
+
+#[derive(Facet, Debug, PartialEq)]
+struct BorrowedPerson<'a> {
+    name: &'a str,
+}
+
+let json = r#"{"name":"Alice"}"#;
+let person: BorrowedPerson<'_> = facet_json::from_str_borrowed(json).unwrap();
+assert_eq!(person.name, "Alice");
 ```
 
-`from_slice` does the same from `&[u8]`. For zero-copy borrowing (fields like
-`&str` or `Cow<str>` that point into the input buffer), use the borrowed
-variants:
-
-```rust,noexec
-let person: Person = facet_json::from_str_borrowed(json)?;
-// also: from_slice_borrowed
-```
+`from_slice_borrowed` does the same for `&[u8]`.
 
 ## Serialize
 
-```rust,noexec
-let person = Person { name: "Alice".into(), age: 30 };
+The compact helpers return a `String` or `Vec<u8>`. The pretty helpers use
+multi-line indentation, and the writer helpers stream directly into
+`std::io::Write`:
 
-let compact = facet_json::to_string(&person)?;        // {"name":"Alice","age":30}
-let pretty  = facet_json::to_string_pretty(&person)?; // multi-line, indented
+```rust
+use facet::Facet;
+
+#[derive(Facet)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+let point = Point { x: 1, y: 2 };
+
+let compact = facet_json::to_string(&point).unwrap();
+let pretty = facet_json::to_string_pretty(&point).unwrap();
+
+assert_eq!(compact, r#"{"x":1,"y":2}"#);
+assert!(pretty.contains('\n'));
 ```
 
-`to_vec` / `to_vec_pretty` produce `Vec<u8>`, and `to_writer_std` /
-`to_writer_std_pretty` stream straight into any `std::io::Write`.
-
-## Errors point at the input
-
-facet-json deserialization errors carry the location in the source, so a typo
-or type mismatch tells you *where*:
-
-```text
-expected u32, found string
-  at line 1, column 26
-```
-
-No `unwrap()` needed in real code — propagate the error with `?` and print it.
-
-## Controlling output
-
-`to_string_with_options` / `to_vec_with_options` take `SerializeOptions`, which
-controls indentation and how byte slices are rendered (raw array vs. hex). See
-the [docs.rs reference](https://docs.rs/facet-json) for the full surface.
+For lower-level control, `to_string_with_options`, `to_vec_with_options`, and
+`to_writer_std_with_options` take `SerializeOptions`, which controls indentation
+and byte rendering.
 
 ## Attributes
 
-JSON honors the common facet attributes — `rename`, `rename_all`, `skip`,
-`default`, `transparent`, `flatten`, enum tagging — plus `opaque` / `proxy` for
-types that don't implement `Facet`. The complete catalog with per-format support
-is in the [Attributes reference](/reference/) and the
-[Format matrix](/reference/format-crate-matrix/).
+`facet-json` honors the common facet attributes such as `rename`, `rename_all`,
+`skip`, `default`, `transparent`, `flatten`, and enum tagging. It also supports
+`opaque` and `proxy` for types that need a format-specific representation. The
+complete catalog lives in the [attributes reference](/reference/) and
+[format matrix](/reference/format-crate-matrix/).
+
+## Errors
+
+Deserialization errors carry source locations, so malformed JSON and type
+mismatches can point back to the input that caused them. In application code,
+propagate the error with `?` and let your diagnostic layer decide how much
+context to show.
 
 ## Related
 
-- [Type Support](/guide/type-support/) — using `Uuid`, `DateTime`, paths, etc.
-- [facet-validate](/facet-validate/guide/) — reject bad data *during* parsing
-- [Schema codegen](/guide/schema-codegen/) — generate TS/Zod/JSON Schema from the same type
-- [Ecosystem](/ecosystem/) — every other format crate
+- [facet-validate](/facet-validate/guide/) — attach constraints that deserializers can enforce
+- [facet-pretty](/facet-pretty/guide/) — inspect parsed values without deriving `Debug`
+- [figue](/figue/guide/) — build CLI and config structs from the same kind of shape
+- [Ecosystem](/ecosystem/) — every other facet crate

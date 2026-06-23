@@ -1,104 +1,106 @@
 +++
-title = "CLI & config"
+title = "CLI and config"
+description = "Build typed CLI arguments, environment variables, and config files from one Facet type."
 weight = 1
 insert_anchor_links = "heading"
 +++
 
-[`figue`](https://docs.rs/figue) (formerly `facet-args`) builds a typed CLI,
-environment-variable reader, and config-file loader from one `#[derive(Facet)]`
-struct. One type, one layered source of truth.
+`figue` turns a `Facet` type into a small, typed interface for command-line
+arguments, environment variables, config files, and defaults. Reach for it when
+you want one Rust shape to describe how an app is configured, from quick CLIs to
+layered service configuration.
 
-## Setup
+## Install
 
-```bash
-cargo add facet figue
-```
+Add `facet` and `figue` to your crate.
 
-## A minimal CLI
+## Minimal example
 
-```rust,noexec
+```rust
 use facet::Facet;
 use figue::{self as args, FigueBuiltins};
 
 #[derive(Facet, Debug)]
-struct Args {
-    /// Enable verbose output
+struct Cli {
+    /// Enable more detailed output
     #[facet(args::named, args::short = 'v', default)]
     verbose: bool,
 
-    /// Input file to process
+    /// File to process
     #[facet(args::positional)]
     input: String,
 
-    /// --help / --version / shell completions
+    /// Adds --help, --version, and --completions
     #[facet(flatten)]
     builtins: FigueBuiltins,
 }
 
-fn main() {
-    let args: Args = figue::from_std_args().unwrap();
-    println!("processing {} (verbose={})", args.input, args.verbose);
-}
+let cli: Cli = figue::from_slice(&["--verbose", "input.txt"]).unwrap();
+assert!(cli.verbose);
+assert_eq!(cli.input, "input.txt");
 ```
 
-`from_std_args()` reads the real process arguments; `from_slice(&["..."])`
-takes them explicitly, which is what you use in tests. The doc comment on each
-field becomes its `--help` text automatically.
+Use `figue::from_std_args()` for the real process arguments, and
+`figue::from_slice(&["..."])` when you want the input to be explicit in tests or
+examples. Field doc comments become help text, so the type stays useful to both
+the compiler and the person at the terminal.
 
-## The attribute vocabulary
+## Attribute vocabulary
 
-Attributes live in the `args::` namespace (via `use figue as args;`):
+Attributes live in the `args::` namespace when you import
+`figue::{self as args, ...}`:
 
 | Attribute | Effect |
 |-----------|--------|
 | `args::positional` | Bare positional argument |
 | `args::named` | `--flag` style option |
-| `args::short = 'v'` | Add a short alias (`-v`) |
-| `args::counted` | Count repeats (`-vvv` → 3) |
+| `args::short = 'v'` | Add a short alias such as `-v` |
+| `args::counted` | Count repeats such as `-vvv` |
 | `args::subcommand` | Enum field selects a subcommand |
 | `args::config` | Field is a layered config struct |
-| `args::env_prefix = "MYAPP"` | Read env vars for that config |
-| `rename` / `default` / `flatten` | As elsewhere in facet |
+| `args::env_prefix = "MYAPP"` | Read environment variables for that config |
+| `rename`, `default`, `flatten` | Common facet attributes |
 
-`FigueBuiltins` contributes `--help`, `--version`, `--completions <shell>`, and
-JSON-schema export, so you don't hand-roll them.
+`FigueBuiltins` contributes the standard help, version, completion, and schema
+switches, so the everyday CLI niceties stay boring in the best way.
 
 ## Layered configuration
 
-For real apps, merge CLI flags over environment variables over config-file
-values over defaults:
+For applications that need more than CLI parsing, build a driver. CLI values can
+sit on top of environment variables, config files, and Rust defaults:
 
-```rust,noexec
-use figue::{builder, Driver};
-use figue as args;
+```rust
+use facet::Facet;
+use figue::{self as args, Driver, builder};
 
 #[derive(Facet, Debug)]
-struct Config {
+struct Args {
     #[facet(args::config, args::env_prefix = "MYAPP")]
-    server: ServerConfig,
+    config: ServerConfig,
 }
 
 #[derive(Facet, Debug)]
 struct ServerConfig {
-    #[facet(default = 8080u16)]
+    #[facet(default = 8080)]
     port: u16,
+
     #[facet(default = "localhost")]
     host: String,
 }
 
-let config = builder::<Config>()?
-    .cli(|cli| cli.args(["--server.port", "3000"]))
+let config = builder::<Args>()
+    .unwrap()
+    .cli(|cli| cli.args(["--config.port", "3000"]))
     .build();
 
-let out = Driver::new(config).run().unwrap();
-assert_eq!(out.value.server.port, 3000);   // from CLI
-assert_eq!(out.value.server.host, "localhost"); // from default
+let output = Driver::new(config).run().into_result().unwrap();
+assert_eq!(output.value.config.port, 3000);
+assert_eq!(output.value.config.host, "localhost");
 ```
-
-The full surface — subcommands, completions, layering precedence — is on
-[docs.rs/figue](https://docs.rs/figue).
 
 ## Related
 
-- [facet-default](/facet-default/guide/) — richer default values
-- [Ecosystem](/ecosystem/) — the rest of the constellation
+- [facet-default](/facet-default/guide/) — derive richer `Default` impls for config structs
+- [facet-json](/facet-json/guide/) — read and write config-shaped JSON
+- [facet-error](/facet-error/guide/) — model friendly CLI and config errors
+- [Ecosystem](/ecosystem/) — the rest of the facet crates

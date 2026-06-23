@@ -7,7 +7,7 @@ insert_anchor_links = "heading"
 
 Task-oriented documentation. Each page walks you through a workflow or explains concepts in context. Read sequentially or jump to the topic you need.
 
-New here? Start with [Getting Started](@/guide/getting-started.md), then [Why facet?](@/guide/why.md).
+New here? Start with [Getting started](/guide/getting-started/), then [Why facet?](/guide/why/).
 
 **How-to, by task:**
 
@@ -17,7 +17,7 @@ New here? Start with [Getting Started](@/guide/getting-started.md), then [Why fa
 - [Custom defaults](/facet-default/guide/) — per-field defaults with `facet-default`
 - [Error types](/facet-error/guide/) — `thiserror`-style errors from doc comments
 - [Validation](/facet-validate/guide/) — reject bad data during deserialization
-- [Schema & code generation](@/guide/schema-codegen.md) — TypeScript, Zod, JSON Schema
-- [Type Support](@/guide/type-support.md) — third-party types that already implement `Facet`
+- [Schema & code generation](/guide/schema-codegen/) — TypeScript, Zod, JSON Schema
+- [Type support](/guide/type-support/) — third-party types that already implement `Facet`
 
-For the full constellation of crates, see the [Ecosystem map](@/ecosystem/_index.md).
+For the full constellation of crates, see the [Ecosystem map](/ecosystem/).

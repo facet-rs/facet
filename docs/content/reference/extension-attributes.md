@@ -1,12 +1,13 @@
 +++
 title = "Extension attributes"
+description = "Namespaced #[facet(...)] attributes defined by individual format crates, and how to define your own."
 weight = 4
 insert_anchor_links = "heading"
 +++
 
 Format crates can define their own namespaced attributes with compile-time
 validation and helpful error messages. This is the catalog; for how to design
-your own grammar, see the [Extend → Extension Attributes](@/extend/extension-attributes.md) guide.
+your own grammar, see the [Extension attributes guide](/extend/extension-attributes/).
 
 ## Using extension attributes
 
@@ -73,8 +74,8 @@ error: unknown attribute `chld`, did you mean `child`?
        available attributes: child, children, property, argument
 ```
 
-See [Extend → Extension Attributes](@/extend/extension-attributes.md) for the complete guide.
+See the [Extension attributes guide](/extend/extension-attributes/) for the complete guide.
 
 ---
 
-See also: [Container attributes](@/reference/container-attributes.md) · [Enum & variant attributes](@/reference/enum-attributes.md) · [Field attributes](@/reference/field-attributes.md)
+See also: [Container attributes](/reference/container-attributes/) · [Enum & variant attributes](/reference/enum-attributes/) · [Field attributes](/reference/field-attributes/)

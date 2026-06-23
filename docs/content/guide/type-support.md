@@ -1,16 +1,17 @@
 +++
-title = "Type Support"
+title = "Type support"
+description = "Feature flags that bring third-party types (UUID, chrono, camino, …) into the facet ecosystem."
 weight = 7
 insert_anchor_links = "heading"
 +++
 
-Facet provides `Facet` trait implementations for many popular Rust crates via feature flags. Enable the feature, and those types work seamlessly with all facet format crates.
+facet provides `Facet` trait implementations for many popular Rust crates via feature flags. Enable the feature, and those types work seamlessly with all facet format crates.
 
 > Looking for the constellation of facet *crates* (formats, codegen, CLI, …)?
-> That's the [Ecosystem map](@/ecosystem/_index.md). This page is about which
+> That's the [Ecosystem map](/ecosystem/). This page is about which
 > *types* already implement `Facet`.
 
-## Third-Party type support
+## Third-party type support
 
 Enable these features in your `Cargo.toml`:
 
@@ -39,7 +40,7 @@ facet = { version = "{{ data.versions.facet }}", features = ["uuid", "chrono"] }
 
 [^1]: `IdOrdMap` requires `std` feature
 
-### Example: uUIDs
+### Example: UUIDs
 
 ```rust,noexec
 use facet::Facet;
@@ -55,7 +56,7 @@ let json = r#"{"id": "550e8400-e29b-41d4-a716-446655440000", "name": "Alice"}"#;
 let user: User = facet_json::from_str(json)?;
 ```
 
-### Example: dateTime with chrono
+### Example: DateTime with chrono
 
 ```rust,noexec
 use facet::Facet;
@@ -243,11 +244,11 @@ let json = facet_json::to_string(&wrapper);
 let parsed: MyWrapper = facet_json::from_str(&json).unwrap();
 ```
 
-See [Container attributes → `opaque`](@/reference/container-attributes.md#opaque) and [Field attributes → `proxy`](@/reference/field-attributes.md#proxy) for details.
+See [Container attributes → `opaque`](/reference/container-attributes/#opaque) and [Field attributes → `proxy`](/reference/field-attributes/#proxy) for details.
 
 ### Third-party type you want full support for
 
-If you want a third-party type to work seamlessly with facet (like `uuid::Uuid` does), you can contribute an implementation to facet. See [Implementing Facet for third-party types](@/contribute/adding-types.md).
+If you want a third-party type to work seamlessly with facet (like `uuid::Uuid` does), you can contribute an implementation to facet. See [Implementing Facet for third-party types](/contribute/adding-types/).
 
 ## no_std support
 
@@ -262,3 +263,9 @@ Some format crates also support `no_std`:
 - `facet-json` — with `alloc` feature
 - `facet-postcard` — with `alloc` feature
 - `facet-msgpack` — with `alloc` feature
+
+## Related
+
+- [Ecosystem map](/ecosystem/) — the full constellation of facet crates
+- [JSON guide](/facet-json/guide/) — serializing types that include third-party fields
+- [Attributes reference](/reference/) — all `#[facet(...)]` attributes in one place

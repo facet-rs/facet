@@ -1,22 +1,21 @@
 +++
-title = "Pretty-printing guide"
+title = "Pretty-printing"
+description = "Render Facet values as readable structured text, including redaction for sensitive fields."
 weight = 1
 insert_anchor_links = "heading"
 +++
 
-[`facet-pretty`](https://docs.rs/facet-pretty) renders any `Facet` value as
-readable, colored, structured text — without requiring `Debug` to be derived,
-and with first-class redaction of sensitive fields.
+`facet-pretty` renders any `Facet` value as readable, structured text without
+requiring `Debug`. Reach for it when you want friendly diagnostics, snapshots,
+logs, or quick inspection with the same shape information the rest of facet uses.
 
-## Setup
+## Install
 
-```bash
-cargo add facet facet-pretty
-```
+Add `facet` and `facet-pretty` to your crate.
 
-Bring the extension trait into scope; it's implemented for every `Facet` type:
+## Minimal example
 
-```rust,noexec
+```rust
 use facet::Facet;
 use facet_pretty::FacetPretty;
 
@@ -24,76 +23,79 @@ use facet_pretty::FacetPretty;
 struct Person {
     name: String,
     age: u32,
-    address: Address,
 }
 
-#[derive(Facet)]
-struct Address {
-    street: String,
-    city: String,
-}
-
-let p = Person {
-    name: "Alice".into(),
+let person = Person {
+    name: "Alice".to_string(),
     age: 30,
-    address: Address { street: "123 Main St".into(), city: "Wonderland".into() },
 };
 
-println!("{}", p.pretty());
+let rendered = person.pretty().to_string();
+assert!(rendered.contains("Person"));
+assert!(rendered.contains("Alice"));
 ```
 
-```text
-Person {
-  name: "Alice",
-  age: 30,
-  address: Address {
-    street: "123 Main St",
-    city: "Wonderland",
-  },
-}
-```
+`.pretty()` returns a `Display` wrapper, so it works anywhere `{}` formatting
+does: diagnostics, tracing fields, test output, or a tiny debug view.
 
-`.pretty()` returns a `Display` wrapper, so it works anywhere `{}` does —
-`println!`, `tracing` fields, error messages.
+## Redaction
 
-## Redacting sensitive fields
+Mark a field `#[facet(sensitive)]` and `facet-pretty` replaces its value with
+`[REDACTED]` while keeping the field name visible:
 
-Mark a field `#[facet(sensitive)]` and pretty-printing replaces its value with a
-placeholder. The secret never reaches your logs:
+```rust
+use facet::Facet;
+use facet_pretty::FacetPretty;
 
-```rust,noexec
 #[derive(Facet)]
 struct Config {
     host: String,
+
     #[facet(sensitive)]
     api_key: String,
 }
+
+let config = Config {
+    host: "example.com".to_string(),
+    api_key: "secret".to_string(),
+};
+
+let rendered = config.pretty().to_string();
+assert!(rendered.contains("api_key"));
+assert!(rendered.contains("[REDACTED]"));
+assert!(!rendered.contains("secret"));
 ```
 
-```text
-Config {
-  host: "example.com",
-  api_key: [REDACTED],
+That makes it a good fit for operational output where secrets must never take a
+surprise stroll through the logs.
+
+## Custom output
+
+Use `PrettyPrinter` when you want explicit formatting settings:
+
+```rust
+use facet::Facet;
+use facet_pretty::{FacetPretty, PrettyPrinter};
+
+#[derive(Facet)]
+struct Point {
+    x: i32,
+    y: i32,
 }
+
+let point = Point { x: 1, y: 2 };
+let printer = PrettyPrinter::new().with_indent_size(4);
+
+let rendered = point.pretty_with(printer).to_string();
+assert!(rendered.contains("Point"));
 ```
 
-## Customizing output
-
-`.pretty_with(printer)` takes a `PrettyPrinter` for indentation and styling:
-
-```rust,noexec
-use facet_pretty::PrettyPrinter;
-
-let printer = PrettyPrinter::new().with_indent("    ");
-println!("{}", value.pretty_with(printer));
-```
-
-Why not just `#[derive(Debug)]`? Because the same `Facet` derive also gives you
-serialization, diffing, schema generation, and CLI parsing — and because
-`sensitive` redaction is enforced for free. See the
-[pretty showcase](/showcases/pretty) for live output.
+`PrettyPrinter::format(&value)` is available too, if you prefer asking the
+printer for a `String` directly.
 
 ## Related
 
-- [rediff](https://docs.rs/rediff) — structural diffing with the same no-`PartialEq` philosophy
-- [Ecosystem](/ecosystem/) — diagnostics & derive plugins
+- [facet-error](/facet-error/guide/) — derive displayable error types from doc comments
+- [facet-json](/facet-json/guide/) — serialize the same values as JSON
+- [facet-validate](/facet-validate/guide/) — reject invalid values before printing them
+- [Ecosystem](/ecosystem/) — diagnostics, derive plugins, and format crates

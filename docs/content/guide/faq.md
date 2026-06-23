@@ -1,5 +1,6 @@
 +++
 title = "FAQ"
+description = "Frequently asked questions about facet — general, usage, compatibility, and troubleshooting."
 weight = 7
 insert_anchor_links = "heading"
 +++
@@ -21,7 +22,7 @@ The key difference is in the approach:
 
 This means facet trades some speed for features: rich error diagnostics, one derive for many tools, and smaller binaries in format-heavy applications.
 
-See [Why facet?](@/guide/why.md) for a detailed comparison.
+See [Why facet?](/guide/why/) for a detailed comparison.
 
 ### Is facet faster than serde?
 
@@ -33,7 +34,7 @@ If you're serializing millions of objects per second in a hot loop, serde is the
 
 Yes. [`facet-core`](https://docs.rs/facet-core) is `no_std` compatible. Format crates typically require `alloc`.
 
-### What rust version does facet require?
+### What Rust version does facet require?
 
 facet targets the latest stable Rust. Check the CI configuration for the current MSRV (minimum supported Rust version).
 
@@ -218,7 +219,7 @@ enum Event {
 // PageView: {"type": "PageView", "id": 2, "timestamp": "...", "url": "/home"}
 ```
 
-See [Field attributes → `flatten`](@/reference/field-attributes.md#flatten) for more details.
+See [Field attributes → `flatten`](/reference/field-attributes/#flatten) for more details.
 
 ## Error handling
 
@@ -265,7 +266,7 @@ This lets you migrate incrementally or use serde for formats facet doesn't suppo
 
 ### Does facet support all serde attributes?
 
-Most common attributes have equivalents. See [Comparison with serde](@/guide/serde/_index.md) for a mapping.
+Most common attributes have equivalents. See [Comparison with serde](/guide/serde/) for a mapping.
 
 Some serde features like `#[serde(borrow)]` don't have direct equivalents due to architectural differences.
 
@@ -295,7 +296,7 @@ use facet::Facet;
 struct MyType { ... }
 ```
 
-### Compile errors mention extension attributes i'm not using
+### Compile errors mention extension attributes I'm not using
 
 Extension attributes require importing the crate with an alias:
 
@@ -329,6 +330,6 @@ struct Node {
 ## Still have questions?
 
 - Join the [Discord](https://discord.gg/JhD7CwCJ8F) to chat with the community
-- Check the [Showcases](@/showcases/_index.md) for more examples
+- Check the [Showcases](/showcases/) for more examples
 - Browse the [API documentation](https://docs.rs/facet) for detailed type information
 - Open an [issue](https://github.com/facet-rs/facet/issues) if you've found a bug

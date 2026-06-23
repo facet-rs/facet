@@ -1,9 +1,11 @@
 +++
-title = "Variance and Soundness"
+title = "Variance and soundness"
+description = "How facet tracks lifetime variance at runtime to prevent unsound reflection and lifetime laundering."
 weight = 15
+insert_anchor_links = "heading"
 +++
 
-Variance is a fundamental concept in Rust's type system that affects how lifetime parameters interact with subtyping. Facet tracks variance at runtime to enable safe reflection APIs.
+Variance is a fundamental concept in Rust's type system that affects how lifetime parameters interact with subtyping. facet tracks variance at runtime to enable safe reflection APIs.
 
 ## What is variance?
 
@@ -31,7 +33,7 @@ fn takes_mut<'a>(r: &'a mut String) {}
 
 ## Why does this matter for reflection?
 
-Facet's `Peek` type lets you read values at runtime. Without careful design, reflection could allow **lifetime laundering** — converting a value with one lifetime to a different lifetime, leading to use-after-free bugs.
+facet's `Peek` type lets you read values at runtime. Without careful design, reflection could allow **lifetime laundering** — converting a value with one lifetime to a different lifetime, leading to use-after-free bugs.
 
 ### The problem
 
@@ -113,5 +115,10 @@ let struct_variance = field1_variance.combine(field2_variance);
 
 ## Further reading
 
-- [The Rustonomicon: Subtyping and Variance](https://doc.rust-lang.org/nomicon/subtyping.html)
+- [The Rustonomicon: Subtyping and variance](https://doc.rust-lang.org/nomicon/subtyping.html)
 - [GitHub Issue #1168](https://github.com/facet-rs/facet/issues/1168) — The original soundness discussion
+
+## Related
+
+- [Dynamic values](/guide/dynamic-values/) — using `Peek` and `facet-value` safely
+- [Why facet?](/guide/why/) — the broader design philosophy

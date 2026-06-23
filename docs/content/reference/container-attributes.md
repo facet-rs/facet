@@ -1,5 +1,6 @@
 +++
 title = "Container attributes"
+description = "Every #[facet(...)] attribute that applies to a struct or enum as a whole."
 weight = 1
 insert_anchor_links = "heading"
 +++
@@ -338,14 +339,7 @@ struct Point {
 - POD is **not** an auto-trait — a struct with all POD fields is not automatically POD
 - The type author must explicitly opt in to assert there are no semantic invariants
 
-**POD vs invariants:** These attributes are mutually exclusive. If you need validation, use `invariants`; if you want unrestricted mutation, use `pod`.
-
-```rust,noexec
-// This is an error:
-#[derive(Facet)]
-#[facet(pod, invariants = validate)]  // ❌ Compile error
-struct Invalid { x: i32 }
-```
+**`pod` vs `invariants`:** These attributes are mutually exclusive — see [`invariants`](#invariants) below. If you need validation, use `invariants`; if you want unrestricted reflection-based mutation, use `pod`.
 
 **Primitives are implicitly POD:** Types like `u32`, `bool`, `f64`, and `char` are always considered POD — any value of those types is valid.
 
@@ -436,6 +430,94 @@ enum MyEnum {
 struct TupleStruct(u32, String);
 ```
 
+## `invariants`
+
+Validate type invariants when finalizing a deserialized value. The function receives `&Self` and returns `bool` — returning `false` causes deserialization to fail.
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(invariants = validate_port)]
+struct ServerConfig {
+    port: u16,
+}
+
+fn validate_port(config: &ServerConfig) -> bool {
+    config.port > 0 && config.port < 65535
+}
+```
+
+**When is it called?** The invariant function is called when finalizing a `Partial` value — that is, when `partial.build()` is called after all fields have been set. At this point the entire value is initialized and can be validated as a whole.
+
+**Method syntax:** You can also use a method on the type itself:
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(invariants = Point::is_valid)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    fn is_valid(&self) -> bool {
+        self.x >= 0 && self.y >= 0
+    }
+}
+```
+
+**Multi-field invariants:** This is where invariants really shine — validating relationships between fields:
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(invariants = Range::is_valid)]
+struct Range {
+    min: u32,
+    max: u32,
+}
+
+impl Range {
+    fn is_valid(&self) -> bool {
+        self.min <= self.max
+    }
+}
+```
+
+**With enums:** Enums don't support `invariants` directly, but you can wrap them in a struct:
+
+```rust,noexec
+#[derive(Facet)]
+#[repr(C)]
+enum RangeKind {
+    Low(u8),
+    High(u8),
+}
+
+#[derive(Facet)]
+#[facet(invariants = ValidatedRange::is_valid)]
+struct ValidatedRange {
+    range: RangeKind,
+}
+
+impl ValidatedRange {
+    fn is_valid(&self) -> bool {
+        match &self.range {
+            RangeKind::Low(v) => *v <= 50,
+            RangeKind::High(v) => *v > 50,
+        }
+    }
+}
+```
+
+**Limitation:** Invariants are only checked at the top level when building a `Partial`. Nested structs with their own invariants are not automatically re-validated inside a parent struct. Add an invariant to the parent to check nested values explicitly.
+
+**`pod` vs `invariants`:** These are mutually exclusive. `pod` asserts there are no semantic constraints; `invariants` defines what they are. Using both is a compile error:
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(pod, invariants = validate)]  // ❌ compile error
+struct Invalid { x: i32 }
+```
+
 ---
 
-See also: [Field attributes](@/reference/field-attributes.md) · [Enum & variant attributes](@/reference/enum-attributes.md) · [Extension attributes](@/reference/extension-attributes.md)
+See also: [Field attributes](/reference/field-attributes/) · [Enum & variant attributes](/reference/enum-attributes/) · [Extension attributes](/reference/extension-attributes/)

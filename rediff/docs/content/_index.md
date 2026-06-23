@@ -34,4 +34,4 @@ let actual = Config {
 assert_same!(expected, actual);
 ```
 
-Source: [`rediff`](https://github.com/facet-rs/facet/tree/main/rediff)
+Source: [`rediff`](https://github.com/bearcove/rediff)

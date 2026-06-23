@@ -1,133 +1,143 @@
 +++
 title = "Ecosystem"
+description = "A scannable map of the facet crates, tools, integrations, and adjacent projects."
 weight = 1
 insert_anchor_links = "heading"
 +++
 
 One `#[derive(Facet)]` describes your type once. Everything below reads that
-description to do something useful — serialize it, diff it, generate a schema,
-build a CLI, pretty-print it. You almost never depend on these crates directly:
-you derive `Facet`, add the crate that does the job, and call it.
+description to do something useful: serialize it, diff it, generate a schema,
+build a CLI, pretty-print it, or connect it to another system.
 
-This page is the map. Crate names link to **docs.rs**; the **Source** column
-points at the repository.
+## Start here
 
-> Looking for *which standard/third-party Rust types already implement `Facet`*
-> (`Uuid`, `DateTime`, `Utf8PathBuf`, …)? That's the
-> [Type Support](@/guide/type-support.md) page.
+- New to facet? Read the [guide](/guide/) first.
+- Need JSON? Start with [`facet-json`](/facet-json/guide/).
+- Looking for a crate? Use the tables below; local guides are linked whenever this repo has one.
+- Looking for standard and third-party Rust types that already implement `Facet`
+  (`Uuid`, `DateTime`, `Utf8PathBuf`, ...)? See [type support](/guide/type-support/).
 
-## Core & reflection
+## Core and reflection
 
-The foundation. `facet` is the one crate every user depends on; the rest is the
-machinery it re-exports.
+The foundation. `facet` is the crate most users add directly; the others provide
+the reflection machinery it re-exports or builds on.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet`](https://docs.rs/facet) | The umbrella crate — `#[derive(Facet)]` and the `Facet` trait. Start here. | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`facet-core`](https://docs.rs/facet-core) | `Shape` metadata, the `Def` tree, type-erased pointers. The vocabulary everything else speaks. | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`facet-reflect`](https://docs.rs/facet-reflect) | Build and read values of arbitrary shapes at runtime, safely — `Peek` and `Partial`. | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`facet-macros`](https://docs.rs/facet-macros) | The derive macro itself, powered by [unsynn](https://docs.rs/unsynn) for fast compiles. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet`](https://docs.rs/facet) | Umbrella crate with `#[derive(Facet)]`, the `Facet` trait, and the usual public entry points. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-core`](https://docs.rs/facet-core) | Defines `Shape`, the `Def` tree, type metadata, and pointer vocabulary for reflection. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-reflect`](https://docs.rs/facet-reflect) | Reads and builds values of arbitrary reflected shapes with `Peek` and `Partial`. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-macros`](https://docs.rs/facet-macros) | Implements the `Facet` derive macro, powered by [unsynn](https://docs.rs/unsynn). | [facet-rs/facet](https://github.com/facet-rs/facet) |
 
 ## Data formats
 
-Serialize and deserialize derived types. Same type, any format — pick the crate,
-call `to_string` / `from_str`.
+Serialize and deserialize derived types. Same Rust shape, different wire format.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-json`](https://docs.rs/facet-json) | JSON serialization and deserialization. The flagship — [start here](/facet-json/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json) |
-| [`facet-toml`](https://docs.rs/facet-toml) | TOML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-toml) |
-| [`facet-yaml`](https://docs.rs/facet-yaml) | YAML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-yaml) |
-| [`facet-msgpack`](https://docs.rs/facet-msgpack) | MessagePack binary format. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-msgpack) |
-| [`facet-postcard`](https://docs.rs/facet-postcard) | Postcard binary format. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-postcard) |
-| [`facet-csv`](https://docs.rs/facet-csv) | CSV serialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-csv) |
-| [`facet-asn1`](https://docs.rs/facet-asn1) | ASN.1 DER/BER serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-asn1) |
-| [`facet-xdr`](https://docs.rs/facet-xdr) | XDR binary format serialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-xdr) |
-| [`facet-urlencoded`](https://docs.rs/facet-urlencoded) | `application/x-www-form-urlencoded` form data. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-json`](/facet-json/guide/) | Serializes and deserializes JSON with span-aware diagnostics. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json) |
+| [`facet-toml`](https://docs.rs/facet-toml) | Serializes and deserializes TOML for Facet types. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-toml) |
+| [`facet-yaml`](https://docs.rs/facet-yaml) | Serializes and deserializes YAML for Facet types. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-yaml) |
+| [`facet-msgpack`](https://docs.rs/facet-msgpack) | Serializes and deserializes MessagePack for Facet types. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-msgpack) |
+| [`facet-postcard`](https://docs.rs/facet-postcard) | Serializes and deserializes Postcard for compact binary data. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-postcard) |
+| [`facet-csv`](https://docs.rs/facet-csv) | Serializes rows and records as CSV. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-csv) |
+| [`facet-asn1`](https://docs.rs/facet-asn1) | Serializes and deserializes ASN.1 DER/BER data. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-asn1) |
+| [`facet-xdr`](https://docs.rs/facet-xdr) | Serializes and deserializes XDR binary data. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-xdr) |
+| [`facet-urlencoded`](https://docs.rs/facet-urlencoded) | Parses and emits `application/x-www-form-urlencoded` form data. | [facet-rs/facet](https://github.com/facet-rs/facet) |
 
-### The XML family
+## XML family
 
-XML uses a tree (DOM) architecture rather than streaming, so it lives in its own
-workspace alongside formats built on top of it.
-
-| Crate | What it does | Source |
-|-------|--------------|--------|
-| [`facet-xml`](https://docs.rs/facet-xml) | XML serialization and deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-xml) |
-| [`facet-dom`](https://docs.rs/facet-dom) | Tree-based (DOM) deserializer shared by HTML and XML. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-dom) |
-| [`facet-svg`](https://docs.rs/facet-svg) | Strongly-typed SVG documents on top of `facet-xml`. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-svg) |
-| [`facet-atom`](https://docs.rs/facet-atom) | Atom Syndication Format (RFC 4287) types. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-atom) |
-
-## Schema & code generation
-
-Project your Rust types into other type systems — keep a frontend, an API
-contract, or another language in sync from one source of truth.
+XML uses a tree architecture rather than the usual streaming format path, so
+these crates live together.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-typescript`](https://docs.rs/facet-typescript) | Generate TypeScript type definitions. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-typescript) |
-| [`facet-zod`](https://github.com/facet-rs/facet/tree/main/facet-zod) | Generate [Zod](https://zod.dev) schemas (runtime validation + inferred TS types). *Unreleased — landing on crates.io soon.* | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-zod) |
-| [`facet-json-schema`](https://docs.rs/facet-json-schema) | Generate JSON Schema documents. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json-schema) |
-| [`facet-python`](https://docs.rs/facet-python) | Generate Python type definitions. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-python) |
+| [`facet-xml`](https://docs.rs/facet-xml) | Serializes and deserializes XML for Facet types. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-xml) |
+| [`facet-dom`](https://docs.rs/facet-dom) | Provides the tree-based DOM layer shared by HTML and XML support. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-dom) |
+| [`facet-svg`](https://docs.rs/facet-svg) | Models strongly typed SVG documents on top of `facet-xml`. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-svg) |
+| [`facet-atom`](https://docs.rs/facet-atom) | Models Atom Syndication Format (RFC 4287) documents. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-atom) |
 
-See the [Schema codegen guide](@/guide/schema-codegen.md) for a full-stack workflow.
+## Schema and code generation
 
-## Diagnostics & derive plugins
-
-Day-to-day ergonomics: better output, better errors, less boilerplate.
-
-| Crate | What it does | Source |
-|-------|--------------|--------|
-| [`facet-pretty`](https://docs.rs/facet-pretty) | Colored, structured pretty-printing with sensitive-field redaction. [Guide](/facet-pretty/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`rediff`](https://docs.rs/rediff) | Structural diff and pretty assertions for any `Facet` type — no `PartialEq` required. | [bearcove/rediff](https://github.com/bearcove/rediff) |
-| [`facet-default`](https://docs.rs/facet-default) | Derive `Default` with per-field custom defaults. [Guide](/facet-default/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`facet-error`](https://docs.rs/facet-error) | A `thiserror` replacement — derive `Error` from doc comments. [Guide](/facet-error/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`facet-validate`](https://docs.rs/facet-validate) | Validation attributes checked during deserialization. [Guide](/facet-validate/guide/). | [facet-rs/facet](https://github.com/facet-rs/facet) |
-
-## Configuration & CLI
+Project Rust types into other type systems so frontends, APIs, and generated
+clients stay aligned with the reflected source type.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`figue`](https://docs.rs/figue) | Type-safe CLI args, environment variables, and config files in one layered model. [Guide](/figue). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/figue) |
-| [`facet-styx`](https://docs.rs/facet-styx) | Styx serialization and deserialization for Facet types. [Guide](@/styx/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-styx) |
-| [`styx-cli`](https://docs.rs/styx-cli) | Validation, formatting, schema generation, and language server tooling for Styx. [Guide](@/styx/tools/cli.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/styx-cli) |
-| [`facet-cargo-toml`](https://docs.rs/facet-cargo-toml) | A fully-typed `Cargo.toml` / `Cargo.lock` parser. [Guide](/facet-cargo-toml). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-cargo-toml) |
-| [`rediff`](https://docs.rs/rediff) | Structural diffs and assertions for Facet values. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rediff) |
+| [`facet-typescript`](https://docs.rs/facet-typescript) | Generates TypeScript type definitions from Facet shapes. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-typescript) |
+| [`facet-zod`](https://github.com/facet-rs/facet/tree/main/facet-zod) | Generates [Zod](https://zod.dev) schemas for runtime validation and inferred TypeScript types. *Unreleased.* | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-zod) |
+| [`facet-json-schema`](https://docs.rs/facet-json-schema) | Generates JSON Schema documents from Facet shapes. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-json-schema) |
+| [`facet-python`](https://docs.rs/facet-python) | Generates Python type definitions from Facet shapes. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-python) |
+
+See the [schema codegen guide](/guide/schema-codegen/) for a full-stack workflow.
+
+## Diagnostics and derive plugins
+
+Day-to-day ergonomics: better output, better errors, and less boilerplate.
+
+| Crate | What it does | Source |
+|-------|--------------|--------|
+| [`facet-pretty`](/facet-pretty/guide/) | Pretty-prints Facet values with structure, color, and sensitive-field redaction. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`rediff`](/rediff/) | Diffs Facet values structurally and reports path-aware differences. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rediff) |
+| [`facet-default`](/facet-default/guide/) | Derives `Default` with per-field custom default values. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-error`](/facet-error/guide/) | Derives `Error` implementations from enum variants and doc comments. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-validate`](/facet-validate/guide/) | Runs validation attributes during deserialization. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+
+## Configuration and CLI
+
+Turn reflected Rust types into configuration and command-line interfaces.
+
+| Crate | What it does | Source |
+|-------|--------------|--------|
+| [`figue`](/figue/guide/) | Layers CLI args, environment variables, config files, and defaults into one typed model. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/figue) |
+| [`facet-styx`](https://docs.rs/facet-styx) | Serializes and deserializes Styx documents for Facet types. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-styx) |
+| [`styx-cli`](https://docs.rs/styx-cli) | Provides Styx validation, formatting, schema generation, and language-server tooling. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/styx-cli) |
+| [`facet-cargo-toml`](/facet-cargo-toml/) | Parses `Cargo.toml` manifests and `Cargo.lock` files into typed Rust models. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-cargo-toml) |
 
 ## Database
 
-| Crate | What it does | Source |
-|-------|--------------|--------|
-| [`rusqlite-facet`](https://docs.rs/rusqlite-facet) | Bind query parameters and map SQLite rows using Facet reflection. [Guide](/rusqlite-facet). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rusqlite-facet) |
-
-## Runtime & incremental computation
+Move between database rows and reflected Rust types without writing the same
+mapping twice.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`picante`](https://docs.rs/picante) | Tokio-first async incremental query runtime with dependency tracking, shared cache snapshots, and persistence. [Guide](@/picante/_index.md). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/picante) |
+| [`rusqlite-facet`](/rusqlite-facet/) | Binds SQLite query parameters and maps rows through Facet-reflected structs. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/rusqlite-facet) |
 
-## Web & UI
+## Runtime and incremental computation
+
+Reusable runtime pieces for incremental systems and lowered programs.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-axum`](https://docs.rs/facet-axum) | [axum](https://docs.rs/axum) extractors and responses backed by facet instead of serde. [Guide](/facet-axum). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-axum) |
-| [`facet-egui`](https://docs.rs/facet-egui) | An [egui](https://www.egui.rs) inspector/editor widget for any `Facet` type — live, type-driven UI straight from a `Shape`. *Community-maintained.* | [Erik1000/facet-egui](https://github.com/Erik1000/facet-egui) |
+| [`picante`](/picante/) | Runs Tokio-first incremental queries with memoization and dependency tracking. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/picante) |
+| [`fable`](/fable/) | Evaluates a tiny typed language over Facet-reflected Rust values. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/fable) |
+| [`weavy`](/weavy/) | Provides a lowered-program substrate for interpreters and copy-and-patch backends. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/weavy) |
+
+## Web, RPC, and UI
+
+Use Facet shapes at application boundaries: HTTP, RPC, and interactive tools.
+
+| Crate | What it does | Source |
+|-------|--------------|--------|
+| [`facet-axum`](/facet-axum/) | Adds Facet-backed extractors and responses for [axum](https://docs.rs/axum). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-axum) |
+| [`vox`](/vox/) | Provides Rust-native RPC with cross-language codegen and multiple transport backends. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/vox) |
+| [`facet-egui`](https://docs.rs/facet-egui) | Provides an [egui](https://www.egui.rs) inspector and editor widget for any `Facet` type. *Community-maintained.* | [Erik1000/facet-egui](https://github.com/Erik1000/facet-egui) |
 
 ## Building blocks
 
-Lower-level pieces you'll meet when writing your own format crate or tooling.
+Lower-level pieces you may meet while writing a format crate, integration, or
+tooling around reflection.
 
 | Crate | What it does | Source |
 |-------|--------------|--------|
-| [`facet-value`](https://docs.rs/facet-value) | A memory-efficient dynamic value type — JSON-like data plus bytes. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-value) |
-| [`facet-solver`](https://docs.rs/facet-solver) | Constraint solver that resolves type shapes from field names. | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`facet-path`](https://docs.rs/facet-path) | Path tracking for navigating nested `Facet` structures. | [facet-rs/facet](https://github.com/facet-rs/facet) |
-| [`strid`](https://docs.rs/strid) | Strongly-typed string identifiers with Facet integration. [Guide](/strid). | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/strid) |
+| [`facet-value`](https://docs.rs/facet-value) | Stores dynamic Facet values as JSON-like data plus bytes. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/facet-value) |
+| [`facet-solver`](https://docs.rs/facet-solver) | Resolves type shapes from field names and constraints. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`facet-path`](https://docs.rs/facet-path) | Tracks paths through nested Facet structures. | [facet-rs/facet](https://github.com/facet-rs/facet) |
+| [`strid`](/strid/) | Defines strongly typed string identifiers with Facet integration. | [facet-rs/facet](https://github.com/facet-rs/facet/tree/main/strid) |
 
-Writing a new format crate? The [Extend](@/extend/_index.md) section walks
-through `Peek`, `Partial`, and the format-crate architecture.
-
----
+Writing a new format crate? The [extend](/extend/) section walks through
+`Peek`, `Partial`, and the format-crate architecture.
 
 Building something facet-adjacent? Open a PR against the
-[website](https://github.com/facet-rs/facet/tree/main/docs) and we'll add it to
-the map.
+[website](https://github.com/facet-rs/facet/tree/main/docs), and we'll add it
+to the map.

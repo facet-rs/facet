@@ -11,12 +11,12 @@ weight = 2
 - dependency tracking
 - memoization
 
-In [dodeca](https://dodeca.dev), [salsa](https://salsa-rs.netlify.app/) persistence was implemented by serializing the salsa database with [postcard](https://docs.rs/postcard) and writing it to disk.
+In [dodeca](https://dodeca.bearcove.eu), [salsa](https://salsa-rs.netlify.app/) persistence was implemented by serializing the salsa database with [postcard](https://docs.rs/postcard) and writing it to disk.
 
 picante is different in a few key ways:
 
 - **tokio-first / async-first**: derived queries are `async` and single-flight.
-- **facet-based persistence**: picante avoids serde and uses [facet](https://facets.rs) + [facet-postcard](https://docs.rs/facet-postcard).
+- **facet-based persistence**: picante avoids serde and uses [facet](https://facet.rs) + [facet-postcard](https://docs.rs/facet-postcard).
 - **no durability tiers**: picante tracks dependencies precisely, so it doesn't need them.
 - **MVCC snapshots**: picante uses structural sharing for point-in-time database snapshots.
 

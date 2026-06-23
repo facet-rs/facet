@@ -1,16 +1,12 @@
 # facet-default
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-default/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-default.svg)](https://crates.io/crates/facet-default)
 [![documentation](https://docs.rs/facet-default/badge.svg)](https://docs.rs/facet-default)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-default.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-default.svg)](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT)
 
-# facet-default
-
-Derive [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html) for your types using facet's plugin system with custom field defaults.
-
-## Usage
+`facet-default` derives [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html)
+for your types through facet's plugin system, letting you supply per-field
+defaults directly in the struct definition rather than writing a manual `impl`.
 
 ```rust
 use facet::Facet;
@@ -36,14 +32,14 @@ fn default_timeout() -> std::time::Duration {
 
 ## Attributes
 
-### Field Level
+### Field level
 
-- `#[facet(default::value = literal)]` - Use a literal value (converted via `.into()`)
-- `#[facet(default::func = "path")]` - Call a function to get the default value
+- `#[facet(default::value = literal)]` — use a literal value (converted via `.into()`)
+- `#[facet(default::func = "path")]` — call a function to get the default value
 
-Fields without attributes use `Default::default()`.
-
-**Note:** For numeric literals, use type suffixes to ensure correct types (e.g., `8080u16` instead of `8080` for a `u16` field). String literals are automatically converted via `.into()`.
+Fields without attributes fall back to `Default::default()`. For numeric literals,
+include a type suffix (e.g. `8080u16`) to avoid ambiguity. String literals are
+automatically converted via `.into()`.
 
 ## Enums
 
@@ -66,26 +62,7 @@ pub enum Status {
 assert_eq!(Status::default(), Status::Pending);
 ```
 
-Enum variants with fields also work - fields use their own default attributes:
-
-```rust
-use facet::Facet;
-use facet_default as default;
-
-#[derive(Facet, Debug)]
-#[facet(derive(Default))]
-#[repr(u8)]
-pub enum Request {
-    #[facet(default::variant)]
-    Get {
-        #[facet(default::value = "/")]
-        path: String,
-        #[facet(default::value = 80u16)]
-        port: u16,
-    },
-    Post { path: String, body: String },
-}
-```
+Enum variants with fields work the same way — each field uses its own default attributes.
 
 ## Sponsors
 

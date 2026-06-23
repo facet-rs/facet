@@ -1,5 +1,6 @@
 +++
 title = "Enum & variant attributes"
+description = "Every #[facet(...)] attribute that controls how enums are tagged and how individual variants behave."
 weight = 2
 insert_anchor_links = "heading"
 +++
@@ -152,4 +153,4 @@ This will fail deserialization if the unknown variant has a non-unit payload.
 
 ---
 
-See also: [Container attributes](@/reference/container-attributes.md) · [Field attributes](@/reference/field-attributes.md) · [Extension attributes](@/reference/extension-attributes.md)
+See also: [Container attributes](/reference/container-attributes/) · [Field attributes](/reference/field-attributes/) · [Extension attributes](/reference/extension-attributes/)

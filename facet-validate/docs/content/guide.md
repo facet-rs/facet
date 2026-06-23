@@ -1,24 +1,24 @@
 +++
 title = "Validation"
+description = "Attach validation constraints to Facet fields for deserializers and builders to enforce."
 weight = 1
 insert_anchor_links = "heading"
 +++
 
-[`facet-validate`](https://docs.rs/facet-validate) adds constraint attributes
-that run **during deserialization**. Bad input is rejected at the parse site,
-and the error points at the exact location in the source.
+`facet-validate` defines validation attributes for `Facet` fields: numeric
+bounds, length checks, string checks, regexes, and custom validators. Reach for
+it when a value is only valid inside a smaller domain than its Rust type can
+express on its own.
 
-## Setup
+## Install
 
-```bash
-cargo add facet facet-validate
-cargo add facet-json --features validate
-```
+Add `facet` and `facet-validate` to your crate. Format crates and builders that
+use facet's partial-construction path can then enforce the validators while
+constructing the value.
 
-The validator hooks into the format crate, so enable the format's `validate`
-feature (shown above for `facet-json`).
+## Minimal example
 
-```rust,noexec
+```rust
 use facet::Facet;
 use facet_validate as validate;
 
@@ -28,27 +28,27 @@ struct Product {
     title: String,
 
     #[facet(validate::min = 0)]
-    price: i64,
+    price_cents: i64,
 
     #[facet(validate::email)]
     contact_email: String,
 }
 ```
 
-Parsing `{"title":"","price":-5,"contact_email":"nope"}` fails with an error
-that names the offending field and its span in the JSON — not a generic "invalid
-input".
+The attributes are stored in the type's facet shape, so validation-aware
+deserializers can reject bad input at the point where the offending field is
+read.
 
 ## Built-in constraints
 
 | Attribute | Checks |
 |-----------|--------|
 | `validate::min` / `validate::max` | Numeric bounds |
-| `validate::min_length` / `validate::max_length` | String / collection length |
-| `validate::email` | Valid email address |
-| `validate::url` | Valid HTTP(S) URL |
+| `validate::min_length` / `validate::max_length` | String or collection length |
+| `validate::email` | Email-shaped string |
+| `validate::url` | URL-shaped string |
 | `validate::regex = r"..."` | Pattern match |
-| `validate::contains = "..."` | Substring present |
+| `validate::contains = "..."` | Required substring |
 | `validate::custom = fn_name` | Your own validator |
 
 ## Custom validators
@@ -56,22 +56,30 @@ input".
 A custom validator takes a reference to the field value and returns
 `Result<(), String>`:
 
-```rust,noexec
-fn validate_positive(n: &i64) -> Result<(), String> {
-    if *n > 0 { Ok(()) } else { Err(format!("must be positive, got {n}")) }
+```rust
+use facet::Facet;
+use facet_validate as validate;
+
+fn validate_currency(s: &str) -> Result<(), String> {
+    match s {
+        "USD" | "EUR" | "GBP" => Ok(()),
+        _ => Err(format!("invalid currency code: {s}")),
+    }
 }
 
 #[derive(Facet)]
-struct Order {
-    #[facet(validate::custom = validate_positive)]
-    quantity: i64,
+struct Price {
+    #[facet(validate::custom = validate_currency)]
+    currency: String,
 }
 ```
 
-Validating at parse time means invalid values never construct a value of your
-type — the type system and the validator together keep bad data out.
+The validator message becomes the useful part of the construction error, so make
+it short and specific.
 
 ## Related
 
-- [JSON](/facet-json/guide/) — the parse path validation plugs into
-- [Ecosystem](/ecosystem/) — other derive plugins
+- [facet-json](/facet-json/guide/) — deserialize external data into facet-shaped values
+- [facet-default](/facet-default/guide/) — combine defaults with validation constraints
+- [facet-error](/facet-error/guide/) — model validation failures as typed errors when needed
+- [Ecosystem](/ecosystem/) — other facet derive plugins and format crates

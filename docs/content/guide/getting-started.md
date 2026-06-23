@@ -1,5 +1,6 @@
 +++
-title = "Getting Started"
+title = "Getting started"
+description = "Add facet to a fresh Rust project and ship your first JSON round-trip with helpful errors."
 weight = 0
 insert_anchor_links = "heading"
 +++
@@ -75,6 +76,8 @@ cargo run
 - **Rename fields:** `#[facet(rename = "serverPort")]` or `#[facet(rename_all = "camelCase")]`.
 
 ## Next steps
-- Browse the [Attributes Reference](@/reference/_index.md) for all available attributes.
-- Check the [Format Support Matrix](@/reference/format-crate-matrix/_index.md) if you use multiple formats.
-- Read the [FAQ](@/guide/faq.md) for common questions.
+
+- Browse the [Attributes reference](/reference/) for all available attributes.
+- Check the [Format support matrix](/reference/format-crate-matrix/) if you use multiple formats.
+- Read [Why facet?](/guide/why/) to understand the design philosophy.
+- Read the [FAQ](/guide/faq/) for common questions.

@@ -1,77 +1,92 @@
 +++
 title = "Error types"
+description = "Derive Display, Error, source, and From implementations from Facet error enums."
 weight = 1
 insert_anchor_links = "heading"
 +++
 
-[`facet-error`](https://docs.rs/facet-error) is a `thiserror`-style derive built
-on facet: your doc comments *are* the error messages, with field interpolation
-and an automatic `Error::source()`.
+`facet-error` is a `thiserror`-style derive built on facet: doc comments become
+error messages, fields can be interpolated, and source errors can be wired in
+with attributes. Reach for it when an error enum should be readable to humans
+and still carry the same `Facet` shape as the rest of your protocol or config.
 
-## Setup
+## Install
 
-```bash
-cargo add facet facet-error
-```
+Add `facet` and `facet-error` to your crate.
 
-```rust,noexec
+## Minimal example
+
+```rust
 use facet::Facet;
 
 #[derive(Facet, Debug)]
 #[facet(derive(Error))]
 #[repr(u8)]
-enum MyError {
-    /// something went wrong
-    Unknown,
-
-    /// invalid value: {0}
-    InvalidValue(String),
+enum ConfigError {
+    /// missing field: {0}
+    MissingField(String),
 
     /// invalid header (expected {expected}, found {found})
     InvalidHeader { expected: String, found: String },
 }
 
-let e = MyError::InvalidValue("nope".into());
-assert_eq!(e.to_string(), "invalid value: nope");
+let error = ConfigError::MissingField("host".to_string());
+assert_eq!(error.to_string(), "missing field: host");
 ```
 
-The derive generates `Display` and `Error` impls. Messages come straight from
-the doc comment on each variant:
+The derive generates `Display` and `std::error::Error`. Tuple variants
+interpolate positionally with `{0}`, `{1}`, and struct variants interpolate by
+field name, such as `{expected}`.
 
-- Tuple variants interpolate positionally: `{0}`, `{1}`.
-- Struct variants interpolate by name: `{expected}`, `{found}`.
+## Error sources
 
-## Wrapping a source error
+Use `#[facet(error::from)]` on a field to mark it as the source and generate a
+`From` impl. Use `#[facet(error::source)]` when you want `source()` chaining
+without an implicit conversion.
 
-Mark the wrapped error so `From` and `source()` are generated for you:
+```rust
+use facet::Facet;
+use facet_error as error;
+use std::{error::Error, fmt};
 
-```rust,noexec
+#[derive(Facet, Debug)]
+struct SourceError {
+    message: String,
+}
+
+impl fmt::Display for SourceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "source error: {}", self.message)
+    }
+}
+
+impl Error for SourceError {}
+
 #[derive(Facet, Debug)]
 #[facet(derive(Error))]
 #[repr(u8)]
-enum MyError {
-    /// data store disconnected
-    #[facet(error::from)]
-    Disconnect(std::io::Error),
+enum ConfigError {
+    /// config file could not be read
+    Read(#[facet(error::from)] SourceError),
 
     /// unknown error
     Unknown,
 }
 
-fn read() -> Result<String, MyError> {
-    let s = std::fs::read_to_string("config.toml")?; // io::Error → MyError
-    Ok(s)
+let error: ConfigError = SourceError {
+    message: "permission denied".to_string(),
 }
+.into();
+
+assert_eq!(error.to_string(), "config file could not be read");
 ```
 
-Use `#[facet(error::source)]` instead of `error::from` when you want
-`source()` chaining but *not* an implicit `From` conversion.
-
 Because the error type also derives `Facet`, it can be serialized,
-pretty-printed, or sent over the wire like any other facet type — handy for
-structured logging and RPC.
+pretty-printed, or sent over RPC like any other facet value.
 
 ## Related
 
-- [Ecosystem](/ecosystem/) — derive plugins overview
-- [Pretty-printing](/facet-pretty/guide/) — render errors with context
+- [facet-pretty](/facet-pretty/guide/) — render errors and context as structured text
+- [facet-json](/facet-json/guide/) — serialize facet-shaped errors when that is part of your protocol
+- [figue](/figue/guide/) — pair typed config with typed failures
+- [Ecosystem](/ecosystem/) — derive plugins and companion crates

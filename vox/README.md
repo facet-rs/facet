@@ -1,36 +1,30 @@
 # vox
 
-A Rust-native RPC protocol that's going places.
+[![crates.io](https://img.shields.io/crates/v/vox.svg)](https://crates.io/crates/vox)
+[![documentation](https://docs.rs/vox/badge.svg)](https://docs.rs/vox)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/vox.svg)](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT)
 
-And remember: vox wasn't built in a day.
-
-## What is vox?
-
-vox is a **Rust-native** RPC protocol. Rust is the lowest common denominator — there's no independent schema language. Rust traits *are* the schema:
+vox is a Rust-native RPC framework where Rust traits *are* the schema. There is
+no separate IDL, no code-generation pipeline to wire up: you define an async
+trait, annotate it with `#[vox::service]`, and get a type-safe client and
+dispatcher that serializes with [Facet](https://facet.rs). Implementations for
+TypeScript and Swift are generated from those same Rust definitions.
 
 ```rust
 #[vox::service]
 pub trait Calculator {
-    /// Infallible method — just returns a value
     async fn add(&self, a: i32, b: i32) -> i32;
-
-    /// Fallible method — returns Result<T, E>
     async fn divide(&self, a: i32, b: i32) -> Result<i32, MathError>;
 
-    /// Channels: client sends numbers, server returns sum
+    /// Client sends numbers, server returns the running sum.
     async fn sum(&self, numbers: Rx<i32>) -> i64;
 
-    /// Channels: server sends numbers to client
+    /// Server streams results back to the client.
     async fn generate(&self, count: u32, output: Tx<i32>);
-
-    /// Bidirectional channels
-    async fn transform(&self, input: Rx<String>, output: Tx<String>);
 }
 ```
 
-Implementations for other languages (TypeScript, Swift) are **generated from Rust definitions** using Rust tooling.
-
-## Implementing a Service
+## Implementing a service
 
 ```rust
 impl Calculator for MyCalculator {
@@ -39,15 +33,11 @@ impl Calculator for MyCalculator {
     }
 
     async fn divide(&self, _cx: &Context, a: i32, b: i32) -> Result<i32, MathError> {
-        if b == 0 {
-            Err(MathError::DivisionByZero)
-        } else {
-            Ok(a / b)
-        }
+        if b == 0 { Err(MathError::DivisionByZero) } else { Ok(a / b) }
     }
 
     async fn sum(&self, _cx: &Context, mut numbers: Rx<i32>) -> i64 {
-        let mut total: i64 = 0;
+        let mut total = 0i64;
         while let Some(n) = numbers.recv().await.ok().flatten() {
             total += n as i64;
         }
@@ -57,128 +47,45 @@ impl Calculator for MyCalculator {
 }
 ```
 
-## Using a Client
+## Using a client
 
 ```rust
 let client = CalculatorClient::new(connection_handle);
 
-// Simple call
 let result = client.add(2, 3).await?;
 
-// Fallible call
 match client.divide(10, 0).await? {
-    Ok(result) => println!("Result: {result}"),
-    Err(MathError::DivisionByZero) => println!("Cannot divide by zero"),
+    Ok(r)  => println!("result: {r}"),
+    Err(MathError::DivisionByZero) => println!("cannot divide by zero"),
 }
-
-// With metadata
-let result = client.add(2, 3)
-    .with_metadata(vec![("request-id".into(), "abc123".into())])
-    .await?;
-```
-
-## Middleware
-
-Middleware intercepts requests before and after the handler:
-
-```rust
-struct AuthMiddleware { /* ... */ }
-
-impl Middleware for AuthMiddleware {
-    fn pre<'a>(
-        &'a self,
-        ctx: &'a mut Context,
-        _args: SendPeek<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Rejection>> + Send + 'a>> {
-        Box::pin(async move {
-            let token = ctx.metadata().get("auth-token");
-            match validate_token(token) {
-                Ok(user) => {
-                    ctx.extensions.insert(user);
-                    Ok(())
-                }
-                Err(_) => Err(Rejection::unauthenticated("invalid token")),
-            }
-        })
-    }
-}
-
-// Add to dispatcher
-let dispatcher = CalculatorDispatcher::new(handler)
-    .with_middleware(AuthMiddleware::new());
-```
-
-## Observability
-
-Built-in OpenTelemetry integration with distributed tracing:
-
-```rust
-use vox_telemetry::{TelemetryMiddleware, OtlpExporter, TracingCaller};
-
-// Server side: export spans to Tempo/Jaeger
-let exporter = OtlpExporter::new("http://tempo:4318/v1/traces", "my-service");
-let dispatcher = CalculatorDispatcher::new(handler)
-    .with_middleware(TelemetryMiddleware::new(exporter.clone()));
-
-// Client side: automatic trace propagation
-let caller = TracingCaller::new(connection_handle, exporter);
-let client = DownstreamClient::new(caller);
-// Calls automatically inject traceparent headers
 ```
 
 ## Features
 
-- **Bidirectional RPC** — Request/response with correlation
-- **Channels** — `Tx<T>`/`Rx<T>` with credit-based flow control
-- **Service lanes** — Multiple independently routed services on one connection
-- **Transport-agnostic** — TCP and WebSocket, with QUIC/WebTransport planned
-- **Type-safe** — [Facet](https://facet.rs)-based serialization
+- **Bidirectional RPC** — request/response with correlation ids
+- **Channels** — `Tx<T>` / `Rx<T>` with credit-based flow control
+- **Service lanes** — multiple independently routed services on one connection
+- **Transport-agnostic** — TCP, WebSocket, Unix sockets, and shared-memory hub
+- **Middleware** — intercept requests for auth, tracing, rate-limiting, etc.
+- **OpenTelemetry** — built-in distributed tracing via `vox_telemetry`
 
-## Language Support
+## Language support
 
-| Language | Status |
-|----------|--------|
-| Rust | Reference implementation |
-| TypeScript | Generated client/server |
-| Swift | Generated client/server |
-
-## Transport Bindings
-
-| Transport | Framing | Status |
-|-----------|---------|--------|
-| TCP / Unix sockets | 4-byte length prefix | ✓ |
-| WebSocket | Binary frames | ✓ |
-| Shared Memory Hub | Lock-free rings | ✓ |
-| HTTP Bridge | WebSocket upgrade | ✓ |
-| QUIC / WebTransport | Native streams | Planned |
-
-## Project Structure
-
-```
-rust/           # Rust implementation
-typescript/     # TypeScript packages
-swift/          # Swift packages
-spec/           # Compliance test suite
-docs/           # Specifications
-```
-
-## Quick Start
-
-```bash
-# Run Rust compliance tests
-just rust
-
-# Run TypeScript compliance tests  
-just ts
-
-# Run all language tests
-just all
-```
+| Language   | Status                    |
+|------------|---------------------------|
+| Rust       | Reference implementation  |
+| TypeScript | Generated client/server   |
+| Swift      | Generated client/server   |
 
 ## Specification
 
-Read the [spec](https://github.com/facet-rs/facet/tree/main/vox/docs/content/spec) for the formal protocol definition.
+See the [spec](https://github.com/facet-rs/facet/tree/main/vox/docs/content/spec) for the formal protocol definition.
 
 ## License
 
-MIT OR Apache-2.0
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.

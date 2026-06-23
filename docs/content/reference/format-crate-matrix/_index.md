@@ -1,21 +1,18 @@
 +++
 title = "Format crates comparison"
+description = "Per-type and per-attribute support matrix across all facet format and serialization crates."
 weight = 2
 +++
 
-This document tracks feature parity across all facet format crates.
+Per-type and per-attribute support across every facet format crate. Cells link to the test names that back each entry — hover to see them.
 
-Legend:
-- ✅ = Fully supported with tests
-- 🟡 = Partial support or untested
-- 🚫 = Not supported
-- ➖ = Not applicable to this format
+**Legend:** ✅ fully supported with tests · 🟡 partial support or untested · 🚫 not supported · ➖ not applicable
 
-Note: `msgp` = `facet-msgpack`, `pcrd` = `facet-postcard` (shortened for column width)
+**Column abbreviations:** `msgp` = `facet-msgpack`, `pcrd` = `facet-postcard`
 
 ## Overview
 
-Note: S = Serialization, D = Deserialization
+S = serialization, D = deserialization.
 
 | Crate | Direction | Format Type | Parser | Showcase |
 |-------|-----------|-------------|--------|----------|

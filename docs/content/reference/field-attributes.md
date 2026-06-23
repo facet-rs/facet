@@ -1,5 +1,6 @@
 +++
 title = "Field attributes"
+description = "Every #[facet(...)] attribute that applies to individual struct fields."
 weight = 3
 insert_anchor_links = "heading"
 +++
@@ -132,7 +133,7 @@ This is more ergonomic than `skip_serializing_if` when the type already has a na
 
 ## `sensitive`
 
-Mark a field as containing sensitive data. Tools like [`facet-pretty`](https://docs.rs/facet-pretty) will redact this field in debug output.
+Mark a field as containing sensitive data. Tools like [`facet-pretty`](/facet-pretty/guide/) will redact this field in debug output.
 
 ```rust,noexec
 #[derive(Facet)]
@@ -280,90 +281,7 @@ if let Some(doc_field) = struct_def.fields.iter()
 1. Handled specially by formats that understand them (e.g., Styx emits doc comments)
 2. Ignored by formats that don't support metadata (e.g., JSON)
 
-See [`metadata_container`](@/reference/container-attributes.md#metadata-container) for complete usage examples.
-
-## `invariants`
-
-Validate type invariants after deserialization. The function takes `&self` and returns `bool` — returning `false` causes deserialization to fail.
-
-```rust,noexec
-#[derive(Facet)]
-#[facet(invariants = validate_port)]
-struct ServerConfig {
-    port: u16,
-}
-
-fn validate_port(config: &ServerConfig) -> bool {
-    config.port > 0 && config.port < 65535
-}
-```
-
-**When is it called?** The invariant function is called when finalizing a `Partial` value — that is, when `partial.build()` is called after all fields have been set. At this point, the entire value is initialized and can be validated as a whole.
-
-**Method syntax:** You can also use a method on the type itself:
-
-```rust,noexec
-#[derive(Facet)]
-#[facet(invariants = Point::is_valid)]
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-impl Point {
-    fn is_valid(&self) -> bool {
-        // Point must be in first quadrant
-        self.x >= 0 && self.y >= 0
-    }
-}
-```
-
-**Multi-field invariants:** This is where invariants really shine — validating relationships between fields:
-
-```rust,noexec
-#[derive(Facet)]
-#[facet(invariants = Range::is_valid)]
-struct Range {
-    min: u32,
-    max: u32,
-}
-
-impl Range {
-    fn is_valid(&self) -> bool {
-        self.min <= self.max
-    }
-}
-```
-
-**With enums:** Enums themselves don't support invariants directly, but you can wrap them in a struct:
-
-```rust,noexec
-#[derive(Facet)]
-#[repr(C)]
-enum RangeKind {
-    Low(u8),
-    High(u8),
-}
-
-#[derive(Facet)]
-#[facet(invariants = ValidatedRange::is_valid)]
-struct ValidatedRange {
-    range: RangeKind,
-}
-
-impl ValidatedRange {
-    fn is_valid(&self) -> bool {
-        match &self.range {
-            RangeKind::Low(v) => *v <= 50,
-            RangeKind::High(v) => *v > 50,
-        }
-    }
-}
-```
-
-**Why this matters:** Invariants are crucial for types where certain field combinations are invalid. Without them, deserialization could produce values that violate your type's assumptions, potentially leading to logic errors or — in `unsafe` code — undefined behavior.
-
-**Current limitation:** Invariants are only checked at the top level when building a `Partial`. Nested structs with their own invariants are not automatically validated when contained in a parent struct. If you need nested validation, add an invariant to the parent that explicitly checks nested values.
+See [`metadata_container`](/reference/container-attributes/#metadata-container) for complete usage examples.
 
 ## `proxy`
 
@@ -660,4 +578,4 @@ struct Config {
 
 ---
 
-See also: [Container attributes](@/reference/container-attributes.md) · [Enum & variant attributes](@/reference/enum-attributes.md) · [Extension attributes](@/reference/extension-attributes.md)
+See also: [Container attributes](/reference/container-attributes/) · [Enum & variant attributes](/reference/enum-attributes/) · [Extension attributes](/reference/extension-attributes/)

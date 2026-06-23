@@ -1,6 +1,8 @@
 +++
 title = "Why facet?"
+description = "How facet differs from serde: runtime reflection, richer diagnostics, one derive for many tools."
 weight = 1
+insert_anchor_links = "heading"
 +++
 
 facet is a reflection library for Rust. A single `#[derive(Facet)]` provides serialization, pretty-printing, diffing, CLI argument parsing, and more — all from the same type information.
@@ -130,7 +132,7 @@ facet's goal is not speed. It's expressiveness, diagnostics, and flexibility. If
 
 ## Next steps
 
-- Browse the [Showcases](/showcases/) for examples
-- Check the [format support matrix](/reference/format-crate-matrix/) for available formats
-- Read the [Guide](/guide/) to get started
+- Follow [Getting started](/guide/getting-started/) to add facet to your project
+- Browse the [Showcases](/showcases/) for real-world examples
+- Check the [Format support matrix](/reference/format-crate-matrix/) for available formats
 - Source: [github.com/facet-rs/facet](https://github.com/facet-rs/facet)

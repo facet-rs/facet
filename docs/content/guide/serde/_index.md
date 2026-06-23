@@ -1,5 +1,6 @@
 +++
 title = "Comparison with serde"
+description = "Side-by-side mapping of facet and serde derive attributes — rename, skip, flatten, defaults, and more."
 weight = 4
 insert_anchor_links = "heading"
 +++
@@ -502,3 +503,9 @@ enum Status {
 
 let status = Status::default(); // Status::Pending
 ```
+
+## Related
+
+- [Custom defaults](/facet-default/guide/) — the `facet-default` crate in depth
+- [FAQ: compatibility](/guide/faq/#compatibility) — using facet and serde on the same type
+- [Attributes reference](/reference/) — every `#[facet(...)]` attribute documented

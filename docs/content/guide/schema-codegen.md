@@ -1,5 +1,6 @@
 +++
 title = "Schema & code generation"
+description = "Project your Rust types into TypeScript interfaces, Zod schemas, and JSON Schema — one source of truth."
 weight = 11
 insert_anchor_links = "heading"
 +++
@@ -113,4 +114,4 @@ for Python projects.
 ## Related
 
 - [JSON](/facet-json/guide/) — serialize the very types you generated schemas for
-- [Ecosystem](@/ecosystem/_index.md) — the full schema & codegen group
+- [Ecosystem](/ecosystem/) — the full schema & codegen group

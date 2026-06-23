@@ -1,50 +1,28 @@
 # facet-pretty
 
-<!-- cargo-reedme: start -->
-
-<!-- cargo-reedme: info-start
-
-    Do not edit this region by hand
-    ===============================
-
-    This region was generated from Rust documentation comments by `cargo-reedme` using this command:
-
-        cargo +nightly reedme --package facet-pretty
-
-    for more info: https://github.com/nik-rev/cargo-reedme
-
-cargo-reedme: info-end -->
-
-
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-pretty/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-pretty.svg)](https://crates.io/crates/facet-pretty)
 [![documentation](https://docs.rs/facet-pretty/badge.svg)](https://docs.rs/facet-pretty)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-pretty.svg)](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Provides pretty-printing capabilities for Facet types.
-
-Example:
+`facet-pretty` adds a `.pretty()` method to any type that derives `Facet`,
+producing a colored, human-readable representation. Think `{:#?}` debug output,
+but without needing `derive(Debug)` and with richer structure.
 
 ```rust
 use facet::Facet;
 use facet_pretty::FacetPretty;
 
-#[derive(Debug, Facet)]
+#[derive(Facet)]
 struct Person {
     name: String,
     age: u32,
 }
 
-let person = Person {
-    name: "Alice".to_string(),
-    age: 30,
-};
-println!("Default pretty-printing:");
+let person = Person { name: "Alice".to_string(), age: 30 };
 println!("{}", person.pretty());
 ```
 
-Produces the output:
+Produces:
 
 ```text
 Person {
@@ -52,7 +30,8 @@ Person {
   age: 30,
 }
 ```
-### Sponsors
+
+## Sponsors
 
 Thanks to all individual sponsors:
 
@@ -68,7 +47,7 @@ Thanks to all individual sponsors:
     </picture>
 </a> </p>
 
-…along with corporate sponsors:
+...along with corporate sponsors:
 
 <p> <a href="https://aws.amazon.com">
 <picture>
@@ -87,13 +66,13 @@ Thanks to all individual sponsors:
 </picture>
 </a> </p>
 
-…without whom this work could not exist.
+...without whom this work could not exist.
 
-### Special thanks
+## Special thanks
 
 The facet logo was drawn by [Misiasart](https://misiasart.com/).
 
-### License
+## License
 
 Licensed under either of:
 
@@ -101,5 +80,3 @@ Licensed under either of:
 - MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
-
-<!-- cargo-reedme: end -->

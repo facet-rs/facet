@@ -1,16 +1,13 @@
 # facet-error
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-error/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-error.svg)](https://crates.io/crates/facet-error)
 [![documentation](https://docs.rs/facet-error/badge.svg)](https://docs.rs/facet-error)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-error.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-error.svg)](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT)
 
-# facet-error
-
-A `thiserror` replacement powered by facet reflection. This crate is a plugin for `#[derive(Facet)]` that generates `Display` and `Error` trait implementations from doc comments.
-
-## Usage
+`facet-error` is a `thiserror`-style plugin for `#[derive(Facet)]` that generates
+`Display` and `Error` implementations from doc comments. You write the error
+message once as a doc comment; `facet-error` turns it into a `Display` impl with
+field interpolation, so there's nothing else to maintain.
 
 ```rust
 use facet::Facet;
@@ -30,24 +27,10 @@ pub enum MyError {
 }
 ```
 
-This generates:
-- `impl Display for MyError` using doc comments as format strings
-- `impl Error for MyError` with proper `source()` implementation
-- Field interpolation works automatically for struct variants (e.g., `{expected}`, `{found}`)
-- Tuple variants support positional interpolation (e.g., `{0}`)
-
-## Features
-
-- **Doc-driven Display**: Doc comments become your error messages
-- **Field interpolation**: Reference struct fields by name in messages
-- **Zero boilerplate**: No manual Display or Error implementations
-- **Integration with facet**: Works seamlessly with the facet reflection system
-
-## Future Work
-
-- `#[facet(error::source)]` - mark fields as error sources
-- `#[facet(error::from)]` - generate `From` implementations
-- Support for error wrapping and transparent delegation
+This generates `impl Display for MyError` using the doc comments as format
+strings, plus `impl Error for MyError` with a proper `source()` implementation.
+Struct variants interpolate fields by name; tuple variants use positional
+`{0}`, `{1}`, etc.
 
 ## Sponsors
 

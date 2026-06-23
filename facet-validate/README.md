@@ -1,22 +1,13 @@
 # facet-validate
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-validate/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-validate.svg)](https://crates.io/crates/facet-validate)
 [![documentation](https://docs.rs/facet-validate/badge.svg)](https://docs.rs/facet-validate)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-validate.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-validate.svg)](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT)
 
-# facet-validate
-
-Field validation during deserialization for the facet ecosystem.
-
-## Features
-
-- Validation runs **during deserialization**, so errors include source spans (e.g., pointing to the exact JSON location)
-- Custom validators with meaningful error messages via `Result<(), String>`
-- Auto-deref: `fn(&str)` validators work for `String` fields
-
-## Usage
+`facet-validate` adds field validation to the facet deserialization pipeline.
+Validators run *during* deserialization, so errors carry the source span pointing
+to the exact location in the input (e.g. the offending JSON field) rather than
+surfacing after the fact.
 
 ```rust
 use facet::Facet;
@@ -37,27 +28,29 @@ struct Product {
 }
 ```
 
-## Built-in Validators
+## Built-in validators
 
-| Validator | Syntax | Applies To |
-|-----------|--------|------------|
-| `min` | `validate::min = 0` | numbers |
-| `max` | `validate::max = 100` | numbers |
-| `min_length` | `validate::min_length = 1` | String, Vec, slices |
-| `max_length` | `validate::max_length = 100` | String, Vec, slices |
-| `email` | `validate::email` | String |
-| `url` | `validate::url` | String |
-| `regex` | `validate::regex = r"..."` | String |
-| `contains` | `validate::contains = "foo"` | String |
-| `custom` | `validate::custom = fn_name` | any |
+| Validator      | Syntax                           | Applies to              |
+|----------------|----------------------------------|-------------------------|
+| `min`          | `validate::min = 0`              | numbers                 |
+| `max`          | `validate::max = 100`            | numbers                 |
+| `min_length`   | `validate::min_length = 1`       | String, Vec, slices     |
+| `max_length`   | `validate::max_length = 100`     | String, Vec, slices     |
+| `email`        | `validate::email`                | String                  |
+| `url`          | `validate::url`                  | String                  |
+| `regex`        | `validate::regex = r"..."`       | String                  |
+| `contains`     | `validate::contains = "foo"`     | String                  |
+| `custom`       | `validate::custom = fn_name`     | any                     |
+
+Auto-deref is supported: a `fn(&str)` validator works for `String` fields.
 
 ## Integration
 
-Enable the `validate` feature on `facet-json` (or other format crates):
+Enable the `validate` feature on `facet-json` (or another format crate):
 
 ```toml
 [dependencies]
-facet-json = { version = "0.41", features = ["validate"] }
+facet-json     = { version = "0.41", features = ["validate"] }
 facet-validate = "0.41"
 ```
 

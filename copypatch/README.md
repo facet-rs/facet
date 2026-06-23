@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/copypatch.svg)](https://crates.io/crates/copypatch)
 [![documentation](https://docs.rs/copypatch/badge.svg)](https://docs.rs/copypatch)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/copypatch.svg)](../../LICENSE-MIT)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/copypatch.svg)](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT)
 
 A copy-and-patch JIT works by keeping precompiled machine code for each
 operation — *stencils* — each with a hole where the branch to the next

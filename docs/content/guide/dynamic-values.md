@@ -1,10 +1,11 @@
 +++
-title = "Dynamic Values"
+title = "Dynamic values"
+description = "Two-phase deserialization, cross-type assertions, and deferred JSON parsing with facet-value."
 weight = 4
 insert_anchor_links = "heading"
 +++
 
-Facet supports dynamic, schema-less data through `facet_value::Value` — a pointer-sized type that can hold any structured data. This enables powerful patterns like two-phase deserialization, mixed static/dynamic comparisons, and deferred parsing.
+facet supports dynamic, schema-less data through `facet_value::Value` — a pointer-sized type that can hold any structured data. This enables powerful patterns like two-phase deserialization, mixed static/dynamic comparisons, and deferred parsing.
 
 ## facet-value: the dynamic value type
 
@@ -267,7 +268,9 @@ let expected = Payload { items: vec!["a".into(), "b".into(), "c".into()] };
 assert_same!(payload, expected);
 ```
 
-## Next steps
+## Related
 
-- See the [Assertions showcase](@/showcases/assert.md) for `assert_same!` examples
-- Check out [facet-value on docs.rs](https://docs.rs/facet-value) for the full API
+- [Assertions showcase](/showcases/assert/) — more `assert_same!` examples
+- [facet-value on docs.rs](https://docs.rs/facet-value) — full API reference
+- [JSON guide](/facet-json/guide/) — `RawJson` and span-aware errors in depth
+- [Variance and soundness](/guide/variance/) — why `Peek` is invariant over lifetimes
