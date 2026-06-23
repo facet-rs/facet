@@ -138,7 +138,7 @@ impl StencilLayout {
     ///
     /// The `info` pointer must remain valid for as long as the finalized native
     /// program can run. Callers typically point this at an element in an owned
-    /// metadata vector held beside [`NativeProgram`].
+    /// metadata vector held beside the finalized native program.
     pub fn emit_hostcall(&mut self, chain: Chain, info: *const HostCallInfo) -> usize {
         self.push_prog_word(chain.prog_index, info as u64);
         self.emit_stencil(stencils::HOSTCALL)
