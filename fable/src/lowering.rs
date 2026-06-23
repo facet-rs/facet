@@ -103,11 +103,11 @@ pub enum FableError {
         /// Missing field name.
         field: String,
     },
-    /// A value had the wrong runtime type for an operator or assignment.
+    /// A typed expression was used in a context that expects another type.
     TypeMismatch {
-        /// Expected runtime type.
+        /// Expected expression type.
         expected: String,
-        /// Actual runtime type.
+        /// Actual expression type.
         actual: &'static str,
     },
     /// A literal token could not be decoded.
@@ -193,7 +193,7 @@ enum FableOp {
     },
     Eval(ExprPlan),
     Branch {
-        condition: ExprPlan,
+        condition: BoolExpr,
         then_program: Program<FableOp>,
         else_program: Program<FableOp>,
     },
@@ -201,37 +201,98 @@ enum FableOp {
 
 #[derive(Debug)]
 enum ExprPlan {
-    Literal(Value),
+    Unit(UnitExpr),
+    Bool(BoolExpr),
+    Char(CharExpr),
+    String(StringExpr),
+    Number(NumberExpr),
+}
+
+impl ExprPlan {
+    fn kind_name(&self) -> &'static str {
+        match self {
+            ExprPlan::Unit(_) => "unit",
+            ExprPlan::Bool(_) => "bool",
+            ExprPlan::Char(_) => "char",
+            ExprPlan::String(_) => "string",
+            ExprPlan::Number(NumberExpr::Signed(_)) => "signed number",
+            ExprPlan::Number(NumberExpr::Unsigned(_)) => "unsigned number",
+            ExprPlan::Number(NumberExpr::Float(_)) => "float",
+        }
+    }
+}
+
+#[derive(Debug)]
+enum UnitExpr {
+    Null,
     Read(FieldPath),
-    Unary {
-        op: UnaryOp,
-        operand: Box<ExprPlan>,
-    },
-    Binary {
-        op: BinaryOp,
-        lhs: Box<ExprPlan>,
-        rhs: Box<ExprPlan>,
+}
+
+#[derive(Debug)]
+enum BoolExpr {
+    Literal(bool),
+    Read(FieldPath),
+    Not(Box<BoolExpr>),
+    And(Box<BoolExpr>, Box<BoolExpr>),
+    Or(Box<BoolExpr>, Box<BoolExpr>),
+    Eq(Box<ExprPlan>, Box<ExprPlan>),
+    Neq(Box<ExprPlan>, Box<ExprPlan>),
+    Cmp {
+        op: CmpOp,
+        lhs: Box<NumberExpr>,
+        rhs: Box<NumberExpr>,
     },
 }
 
 #[derive(Clone, Copy, Debug)]
-enum UnaryOp {
-    Not,
-    Neg,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum BinaryOp {
-    Or,
-    And,
-    Eq,
-    Neq,
+enum CmpOp {
     Lt,
     Gt,
     Le,
     Ge,
-    Add,
-    Sub,
+}
+
+#[derive(Debug)]
+enum CharExpr {
+    Read(FieldPath),
+}
+
+#[derive(Debug)]
+enum StringExpr {
+    Literal(String),
+    Read(FieldPath),
+    Add(Box<StringExpr>, Box<StringExpr>),
+}
+
+#[derive(Debug)]
+enum NumberExpr {
+    Signed(IntExpr),
+    Unsigned(UIntExpr),
+    Float(FloatExpr),
+}
+
+#[derive(Debug)]
+enum IntExpr {
+    Read(FieldPath),
+    Neg(Box<NumberExpr>),
+    Add(Box<NumberExpr>, Box<NumberExpr>),
+    Sub(Box<NumberExpr>, Box<NumberExpr>),
+}
+
+#[derive(Debug)]
+enum UIntExpr {
+    Read(FieldPath),
+    Literal(u128),
+    Add(Box<UIntExpr>, Box<UIntExpr>),
+}
+
+#[derive(Debug)]
+enum FloatExpr {
+    Read(FieldPath),
+    Literal(f64),
+    Neg(Box<NumberExpr>),
+    Add(Box<NumberExpr>, Box<NumberExpr>),
+    Sub(Box<NumberExpr>, Box<NumberExpr>),
 }
 
 #[derive(Debug)]
@@ -260,43 +321,6 @@ impl FieldPath {
 #[derive(Debug)]
 struct FieldStep {
     offset: usize,
-}
-
-#[derive(Clone, Debug)]
-enum Value {
-    Unit,
-    Null,
-    Bool(bool),
-    Char(char),
-    String(String),
-    Int(i128),
-    UInt(u128),
-    Float(f64),
-}
-
-impl Value {
-    fn kind_name(&self) -> &'static str {
-        match self {
-            Value::Unit => "unit",
-            Value::Null => "null",
-            Value::Bool(_) => "bool",
-            Value::Char(_) => "char",
-            Value::String(_) => "string",
-            Value::Int(_) => "integer",
-            Value::UInt(_) => "integer",
-            Value::Float(_) => "float",
-        }
-    }
-
-    fn into_bool(self) -> Result<bool, FableError> {
-        match self {
-            Value::Bool(value) => Ok(value),
-            other => Err(FableError::TypeMismatch {
-                expected: "bool".into(),
-                actual: other.kind_name(),
-            }),
-        }
-    }
 }
 
 struct Lowerer {
@@ -329,16 +353,16 @@ impl Lowerer {
     fn lower_stmt(&self, stmt: &Stmt) -> Result<FableOp, FableError> {
         match stmt {
             Stmt::Assign(assign) => {
-                let target = assign.target().ok_or(FableError::MalformedSyntax {
+                let target_expr = assign.target().ok_or(FableError::MalformedSyntax {
                     reason: "assignment without target expression",
                 })?;
-                let value = assign.value().ok_or(FableError::MalformedSyntax {
+                let value_expr = assign.value().ok_or(FableError::MalformedSyntax {
                     reason: "assignment without value expression",
                 })?;
-                Ok(FableOp::Assign {
-                    target: self.lower_writable_path(&target)?,
-                    value: self.lower_expr(&value)?,
-                })
+                let target = self.lower_writable_path(&target_expr)?;
+                let value = self.lower_expr(&value_expr)?;
+                validate_assignment(target.scalar, &value)?;
+                Ok(FableOp::Assign { target, value })
             }
             Stmt::Expr(expr_stmt) => {
                 let expr = expr_stmt.expr().ok_or(FableError::MalformedSyntax {
@@ -365,7 +389,7 @@ impl Lowerer {
         };
 
         Ok(FableOp::Branch {
-            condition: self.lower_expr(&condition)?,
+            condition: expect_bool_plan(self.lower_expr(&condition)?)?,
             then_program: self.lower_block(&then_block)?,
             else_program,
         })
@@ -386,22 +410,18 @@ impl Lowerer {
     fn lower_expr(&self, expr: &Expr) -> Result<ExprPlan, FableError> {
         match expr {
             Expr::Literal(literal) => self.lower_literal(literal),
-            Expr::Var(_) | Expr::Field(_) => Ok(ExprPlan::Read(self.lower_readable_path(expr)?)),
+            Expr::Var(_) | Expr::Field(_) => {
+                let path = self.lower_readable_path(expr)?;
+                path_to_expr(path)
+            }
             Expr::Paren(paren) => {
                 let expr = paren.expr().ok_or(FableError::MalformedSyntax {
                     reason: "parenthesized expression without inner expression",
                 })?;
                 self.lower_expr(&expr)
             }
-            Expr::Unary(unary) => Ok(ExprPlan::Unary {
-                op: unary_op(unary)?,
-                operand: Box::new(self.lower_unary_operand(unary)?),
-            }),
-            Expr::Binary(binary) => Ok(ExprPlan::Binary {
-                op: binary_op(binary)?,
-                lhs: Box::new(self.lower_binary_lhs(binary)?),
-                rhs: Box::new(self.lower_binary_rhs(binary)?),
-            }),
+            Expr::Unary(unary) => self.lower_unary(unary),
+            Expr::Binary(binary) => self.lower_binary(binary),
             Expr::Index(_) => Err(FableError::Unsupported {
                 feature: "index expressions".into(),
             }),
@@ -416,56 +436,96 @@ impl Lowerer {
             reason: "literal node without token",
         })?;
         let text = token.text();
-        let value = match token.kind() {
-            SyntaxKind::True => Value::Bool(true),
-            SyntaxKind::False => Value::Bool(false),
-            SyntaxKind::Null => Value::Null,
-            SyntaxKind::Int => {
-                Value::UInt(text.parse().map_err(|_| FableError::InvalidLiteral {
+        let expr = match token.kind() {
+            SyntaxKind::True => ExprPlan::Bool(BoolExpr::Literal(true)),
+            SyntaxKind::False => ExprPlan::Bool(BoolExpr::Literal(false)),
+            SyntaxKind::Null => ExprPlan::Unit(UnitExpr::Null),
+            SyntaxKind::Int => ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::Literal(
+                text.parse().map_err(|_| FableError::InvalidLiteral {
                     literal: text.to_owned(),
                     reason: "integer literal is out of range",
-                })?)
-            }
-            SyntaxKind::Float => {
-                Value::Float(text.parse().map_err(|_| FableError::InvalidLiteral {
+                })?,
+            ))),
+            SyntaxKind::Float => ExprPlan::Number(NumberExpr::Float(FloatExpr::Literal(
+                text.parse().map_err(|_| FableError::InvalidLiteral {
                     literal: text.to_owned(),
                     reason: "float literal is invalid",
-                })?)
-            }
-            SyntaxKind::Str => Value::String(decode_string(text)?),
+                })?,
+            ))),
+            SyntaxKind::Str => ExprPlan::String(StringExpr::Literal(decode_string(text)?)),
             _ => {
                 return Err(FableError::MalformedSyntax {
                     reason: "literal node contained a non-literal token",
                 });
             }
         };
-        Ok(ExprPlan::Literal(value))
+        Ok(expr)
     }
 
-    fn lower_unary_operand(&self, unary: &UnaryExpr) -> Result<ExprPlan, FableError> {
+    fn lower_unary(&self, unary: &UnaryExpr) -> Result<ExprPlan, FableError> {
         let operand = unary.operand().ok_or(FableError::MalformedSyntax {
             reason: "unary expression without operand",
         })?;
-        self.lower_expr(&operand)
+        let operand = self.lower_expr(&operand)?;
+        match unary_op(unary)? {
+            UnaryOp::Not => Ok(ExprPlan::Bool(BoolExpr::Not(Box::new(expect_bool_plan(
+                operand,
+            )?)))),
+            UnaryOp::Neg => {
+                let number = expect_number_plan(operand)?;
+                match number {
+                    NumberExpr::Float(_) => Ok(ExprPlan::Number(NumberExpr::Float(
+                        FloatExpr::Neg(Box::new(number)),
+                    ))),
+                    _ => Ok(ExprPlan::Number(NumberExpr::Signed(IntExpr::Neg(
+                        Box::new(number),
+                    )))),
+                }
+            }
+        }
     }
 
-    fn lower_binary_lhs(&self, binary: &BinaryExpr) -> Result<ExprPlan, FableError> {
+    fn lower_binary(&self, binary: &BinaryExpr) -> Result<ExprPlan, FableError> {
         let lhs = binary.lhs().ok_or(FableError::MalformedSyntax {
             reason: "binary expression without left operand",
         })?;
-        self.lower_expr(&lhs)
-    }
-
-    fn lower_binary_rhs(&self, binary: &BinaryExpr) -> Result<ExprPlan, FableError> {
         let rhs = binary.rhs().ok_or(FableError::MalformedSyntax {
             reason: "binary expression without right operand",
         })?;
-        self.lower_expr(&rhs)
+        let lhs = self.lower_expr(&lhs)?;
+        let rhs = self.lower_expr(&rhs)?;
+
+        match binary_op(binary)? {
+            BinaryOp::Or => Ok(ExprPlan::Bool(BoolExpr::Or(
+                Box::new(expect_bool_plan(lhs)?),
+                Box::new(expect_bool_plan(rhs)?),
+            ))),
+            BinaryOp::And => Ok(ExprPlan::Bool(BoolExpr::And(
+                Box::new(expect_bool_plan(lhs)?),
+                Box::new(expect_bool_plan(rhs)?),
+            ))),
+            BinaryOp::Eq => Ok(ExprPlan::Bool(BoolExpr::Eq(Box::new(lhs), Box::new(rhs)))),
+            BinaryOp::Neq => Ok(ExprPlan::Bool(BoolExpr::Neq(Box::new(lhs), Box::new(rhs)))),
+            BinaryOp::Lt => self.lower_cmp(CmpOp::Lt, lhs, rhs),
+            BinaryOp::Gt => self.lower_cmp(CmpOp::Gt, lhs, rhs),
+            BinaryOp::Le => self.lower_cmp(CmpOp::Le, lhs, rhs),
+            BinaryOp::Ge => self.lower_cmp(CmpOp::Ge, lhs, rhs),
+            BinaryOp::Add => lower_add(lhs, rhs),
+            BinaryOp::Sub => lower_sub(lhs, rhs),
+        }
+    }
+
+    fn lower_cmp(&self, op: CmpOp, lhs: ExprPlan, rhs: ExprPlan) -> Result<ExprPlan, FableError> {
+        Ok(ExprPlan::Bool(BoolExpr::Cmp {
+            op,
+            lhs: Box::new(expect_number_plan(lhs)?),
+            rhs: Box::new(expect_number_plan(rhs)?),
+        }))
     }
 
     fn lower_writable_path(&self, expr: &Expr) -> Result<FieldPath, FableError> {
         let path = self.resolve_path(expr)?;
-        ensure_writable(path.scalar, path.shape)?;
+        ensure_writable(path.scalar)?;
         Ok(path)
     }
 
@@ -510,6 +570,171 @@ impl Lowerer {
     }
 }
 
+#[derive(Clone, Copy)]
+enum UnaryOp {
+    Not,
+    Neg,
+}
+
+#[derive(Clone, Copy)]
+enum BinaryOp {
+    Or,
+    And,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    Add,
+    Sub,
+}
+
+fn lower_add(lhs: ExprPlan, rhs: ExprPlan) -> Result<ExprPlan, FableError> {
+    match (lhs, rhs) {
+        (ExprPlan::String(lhs), ExprPlan::String(rhs)) => Ok(ExprPlan::String(StringExpr::Add(
+            Box::new(lhs),
+            Box::new(rhs),
+        ))),
+        (ExprPlan::Number(lhs), ExprPlan::Number(rhs)) => {
+            Ok(ExprPlan::Number(add_numbers(lhs, rhs)))
+        }
+        (lhs, rhs) => Err(FableError::TypeMismatch {
+            expected: "two strings or two numbers".into(),
+            actual: binary_actual(lhs.kind_name(), rhs.kind_name()),
+        }),
+    }
+}
+
+fn lower_sub(lhs: ExprPlan, rhs: ExprPlan) -> Result<ExprPlan, FableError> {
+    Ok(ExprPlan::Number(sub_numbers(
+        expect_number_plan(lhs)?,
+        expect_number_plan(rhs)?,
+    )))
+}
+
+fn add_numbers(lhs: NumberExpr, rhs: NumberExpr) -> NumberExpr {
+    match (lhs, rhs) {
+        (NumberExpr::Float(lhs), rhs) => NumberExpr::Float(FloatExpr::Add(
+            Box::new(NumberExpr::Float(lhs)),
+            Box::new(rhs),
+        )),
+        (lhs, NumberExpr::Float(rhs)) => NumberExpr::Float(FloatExpr::Add(
+            Box::new(lhs),
+            Box::new(NumberExpr::Float(rhs)),
+        )),
+        (NumberExpr::Unsigned(lhs), NumberExpr::Unsigned(rhs)) => {
+            NumberExpr::Unsigned(UIntExpr::Add(Box::new(lhs), Box::new(rhs)))
+        }
+        (lhs, rhs) => NumberExpr::Signed(IntExpr::Add(Box::new(lhs), Box::new(rhs))),
+    }
+}
+
+fn sub_numbers(lhs: NumberExpr, rhs: NumberExpr) -> NumberExpr {
+    match (lhs, rhs) {
+        (NumberExpr::Float(lhs), rhs) => NumberExpr::Float(FloatExpr::Sub(
+            Box::new(NumberExpr::Float(lhs)),
+            Box::new(rhs),
+        )),
+        (lhs, NumberExpr::Float(rhs)) => NumberExpr::Float(FloatExpr::Sub(
+            Box::new(lhs),
+            Box::new(NumberExpr::Float(rhs)),
+        )),
+        (lhs, rhs) => NumberExpr::Signed(IntExpr::Sub(Box::new(lhs), Box::new(rhs))),
+    }
+}
+
+fn expect_bool_plan(expr: ExprPlan) -> Result<BoolExpr, FableError> {
+    match expr {
+        ExprPlan::Bool(expr) => Ok(expr),
+        other => Err(FableError::TypeMismatch {
+            expected: "bool".into(),
+            actual: other.kind_name(),
+        }),
+    }
+}
+
+fn expect_number_plan(expr: ExprPlan) -> Result<NumberExpr, FableError> {
+    match expr {
+        ExprPlan::Number(expr) => Ok(expr),
+        other => Err(FableError::TypeMismatch {
+            expected: "number".into(),
+            actual: other.kind_name(),
+        }),
+    }
+}
+
+fn path_to_expr(path: FieldPath) -> Result<ExprPlan, FableError> {
+    let expr = match path.scalar {
+        ScalarType::Unit => ExprPlan::Unit(UnitExpr::Read(path)),
+        ScalarType::Bool => ExprPlan::Bool(BoolExpr::Read(path)),
+        ScalarType::Char => ExprPlan::Char(CharExpr::Read(path)),
+        ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
+            ExprPlan::String(StringExpr::Read(path))
+        }
+        ScalarType::F32 | ScalarType::F64 => {
+            ExprPlan::Number(NumberExpr::Float(FloatExpr::Read(path)))
+        }
+        ScalarType::U8
+        | ScalarType::U16
+        | ScalarType::U32
+        | ScalarType::U64
+        | ScalarType::U128
+        | ScalarType::USize => ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::Read(path))),
+        ScalarType::I8
+        | ScalarType::I16
+        | ScalarType::I32
+        | ScalarType::I64
+        | ScalarType::I128
+        | ScalarType::ISize => ExprPlan::Number(NumberExpr::Signed(IntExpr::Read(path))),
+        _ => {
+            return Err(FableError::Unsupported {
+                feature: format!("reading {:?}", path.scalar),
+            });
+        }
+    };
+    Ok(expr)
+}
+
+fn validate_assignment(scalar: ScalarType, expr: &ExprPlan) -> Result<(), FableError> {
+    let ok = match scalar {
+        ScalarType::Unit => matches!(expr, ExprPlan::Unit(_)),
+        ScalarType::Bool => matches!(expr, ExprPlan::Bool(_)),
+        ScalarType::Char => matches!(expr, ExprPlan::Char(_) | ExprPlan::String(_)),
+        ScalarType::String | ScalarType::CowStr => {
+            matches!(expr, ExprPlan::String(_) | ExprPlan::Char(_))
+        }
+        ScalarType::F32
+        | ScalarType::F64
+        | ScalarType::U8
+        | ScalarType::U16
+        | ScalarType::U32
+        | ScalarType::U64
+        | ScalarType::U128
+        | ScalarType::USize
+        | ScalarType::I8
+        | ScalarType::I16
+        | ScalarType::I32
+        | ScalarType::I64
+        | ScalarType::I128
+        | ScalarType::ISize => matches!(expr, ExprPlan::Number(_)),
+        _ => {
+            return Err(FableError::Unsupported {
+                feature: format!("writing {scalar:?}"),
+            });
+        }
+    };
+
+    if ok {
+        Ok(())
+    } else {
+        Err(FableError::TypeMismatch {
+            expected: format!("value assignable to {scalar:?}"),
+            actual: expr.kind_name(),
+        })
+    }
+}
+
 struct FableInterp {
     root: PtrMut,
 }
@@ -524,12 +749,12 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
     ) -> Result<Control<'program, BlockRef, FableOp>, Self::Error> {
         match op {
             FableOp::Assign { target, value } => {
-                let value = self.eval(value)?;
                 let ptr = unsafe { target.ptr_mut(self.root) };
-                unsafe { write_scalar(target.scalar, ptr, value) }
+                unsafe { self.write_scalar(target.scalar, ptr, value) }?;
+                Ok(Control::Continue)
             }
             FableOp::Eval(expr) => {
-                self.eval(expr)?;
+                self.eval_expr(expr)?;
                 Ok(Control::Continue)
             }
             FableOp::Branch {
@@ -537,7 +762,7 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
                 then_program,
                 else_program,
             } => {
-                let condition = self.eval(condition)?.into_bool()?;
+                let condition = self.eval_bool(condition)?;
                 let program = if condition {
                     then_program.as_slice()
                 } else {
@@ -554,39 +779,452 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
 }
 
 impl FableInterp {
-    fn eval(&self, expr: &ExprPlan) -> Result<Value, FableError> {
+    fn eval_expr(&self, expr: &ExprPlan) -> Result<(), FableError> {
         match expr {
-            ExprPlan::Literal(value) => Ok(value.clone()),
-            ExprPlan::Read(path) => {
+            ExprPlan::Unit(expr) => self.eval_unit(expr),
+            ExprPlan::Bool(expr) => self.eval_bool(expr).map(drop),
+            ExprPlan::Char(expr) => self.eval_char(expr).map(drop),
+            ExprPlan::String(expr) => self.eval_string(expr).map(drop),
+            ExprPlan::Number(expr) => self.eval_number_for_effect(expr),
+        }
+    }
+
+    fn eval_unit(&self, expr: &UnitExpr) -> Result<(), FableError> {
+        match expr {
+            UnitExpr::Null => Ok(()),
+            UnitExpr::Read(path) => {
+                let _ = unsafe { path.ptr_const(self.root.as_const()) };
+                Ok(())
+            }
+        }
+    }
+
+    fn eval_bool(&self, expr: &BoolExpr) -> Result<bool, FableError> {
+        match expr {
+            BoolExpr::Literal(value) => Ok(*value),
+            BoolExpr::Read(path) => {
                 let ptr = unsafe { path.ptr_const(self.root.as_const()) };
-                unsafe { read_scalar(path.shape, path.scalar, ptr) }
+                Ok(*unsafe { ptr.get::<bool>() })
             }
-            ExprPlan::Unary { op, operand } => {
-                let operand = self.eval(operand)?;
-                eval_unary(*op, operand)
+            BoolExpr::Not(expr) => Ok(!self.eval_bool(expr)?),
+            BoolExpr::And(lhs, rhs) => {
+                if !self.eval_bool(lhs)? {
+                    return Ok(false);
+                }
+                self.eval_bool(rhs)
             }
-            ExprPlan::Binary { op, lhs, rhs } => {
-                let lhs = self.eval(lhs)?;
-                match op {
-                    BinaryOp::And => {
-                        if !lhs.into_bool()? {
-                            return Ok(Value::Bool(false));
-                        }
-                        Ok(Value::Bool(self.eval(rhs)?.into_bool()?))
-                    }
-                    BinaryOp::Or => {
-                        if lhs.into_bool()? {
-                            return Ok(Value::Bool(true));
-                        }
-                        Ok(Value::Bool(self.eval(rhs)?.into_bool()?))
-                    }
-                    _ => {
-                        let rhs = self.eval(rhs)?;
-                        eval_binary(*op, lhs, rhs)
-                    }
+            BoolExpr::Or(lhs, rhs) => {
+                if self.eval_bool(lhs)? {
+                    return Ok(true);
+                }
+                self.eval_bool(rhs)
+            }
+            BoolExpr::Eq(lhs, rhs) => self.exprs_equal(lhs, rhs),
+            BoolExpr::Neq(lhs, rhs) => Ok(!self.exprs_equal(lhs, rhs)?),
+            BoolExpr::Cmp { op, lhs, rhs } => {
+                let ordering = self.compare_numbers(lhs, rhs)?;
+                Ok(match op {
+                    CmpOp::Lt => ordering == Ordering::Less,
+                    CmpOp::Gt => ordering == Ordering::Greater,
+                    CmpOp::Le => matches!(ordering, Ordering::Less | Ordering::Equal),
+                    CmpOp::Ge => matches!(ordering, Ordering::Greater | Ordering::Equal),
+                })
+            }
+        }
+    }
+
+    fn eval_char(&self, expr: &CharExpr) -> Result<char, FableError> {
+        match expr {
+            CharExpr::Read(path) => {
+                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                Ok(*unsafe { ptr.get::<char>() })
+            }
+        }
+    }
+
+    fn eval_string(&self, expr: &StringExpr) -> Result<String, FableError> {
+        match expr {
+            StringExpr::Literal(value) => Ok(value.clone()),
+            StringExpr::Read(path) => {
+                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                unsafe { self.read_string_path(path, ptr) }
+            }
+            StringExpr::Add(lhs, rhs) => {
+                let mut lhs = self.eval_string(lhs)?;
+                lhs.push_str(&self.eval_string(rhs)?);
+                Ok(lhs)
+            }
+        }
+    }
+
+    unsafe fn read_string_path(
+        &self,
+        path: &FieldPath,
+        ptr: PtrConst,
+    ) -> Result<String, FableError> {
+        match path.scalar {
+            ScalarType::Str if path.shape.is_type::<&'static str>() => {
+                Ok((*unsafe { ptr.get::<&'static str>() }).to_owned())
+            }
+            ScalarType::String => Ok(unsafe { ptr.get::<String>() }.clone()),
+            ScalarType::CowStr => Ok(unsafe { ptr.get::<Cow<'static, str>>() }
+                .clone()
+                .into_owned()),
+            _ => Err(FableError::Unsupported {
+                feature: format!("reading {:?}", path.scalar),
+            }),
+        }
+    }
+
+    fn eval_number_for_effect(&self, expr: &NumberExpr) -> Result<(), FableError> {
+        match expr {
+            NumberExpr::Signed(expr) => self.eval_i128(expr).map(drop),
+            NumberExpr::Unsigned(expr) => self.eval_u128(expr).map(drop),
+            NumberExpr::Float(expr) => self.eval_f64(expr).map(drop),
+        }
+    }
+
+    fn eval_i128(&self, expr: &IntExpr) -> Result<i128, FableError> {
+        match expr {
+            IntExpr::Read(path) => {
+                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                unsafe { self.read_signed_path(path.scalar, ptr) }
+            }
+            IntExpr::Neg(expr) => {
+                let value = self.eval_number_as_i128(expr)?;
+                value
+                    .checked_neg()
+                    .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("-{value}")))
+            }
+            IntExpr::Add(lhs, rhs) => {
+                let lhs = self.eval_number_as_i128(lhs)?;
+                let rhs = self.eval_number_as_i128(rhs)?;
+                lhs.checked_add(rhs)
+                    .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("{lhs} + {rhs}")))
+            }
+            IntExpr::Sub(lhs, rhs) => {
+                let lhs = self.eval_number_as_i128(lhs)?;
+                let rhs = self.eval_number_as_i128(rhs)?;
+                lhs.checked_sub(rhs)
+                    .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("{lhs} - {rhs}")))
+            }
+        }
+    }
+
+    unsafe fn read_signed_path(
+        &self,
+        scalar: ScalarType,
+        ptr: PtrConst,
+    ) -> Result<i128, FableError> {
+        let value = match scalar {
+            ScalarType::I8 => (*unsafe { ptr.get::<i8>() }).into(),
+            ScalarType::I16 => (*unsafe { ptr.get::<i16>() }).into(),
+            ScalarType::I32 => (*unsafe { ptr.get::<i32>() }).into(),
+            ScalarType::I64 => (*unsafe { ptr.get::<i64>() }).into(),
+            ScalarType::I128 => *unsafe { ptr.get::<i128>() },
+            ScalarType::ISize => (*unsafe { ptr.get::<isize>() }) as i128,
+            _ => {
+                return Err(FableError::MalformedProgram {
+                    reason: "signed read path did not point to a signed scalar",
+                });
+            }
+        };
+        Ok(value)
+    }
+
+    fn eval_u128(&self, expr: &UIntExpr) -> Result<u128, FableError> {
+        match expr {
+            UIntExpr::Literal(value) => Ok(*value),
+            UIntExpr::Read(path) => {
+                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                unsafe { self.read_unsigned_path(path.scalar, ptr) }
+            }
+            UIntExpr::Add(lhs, rhs) => {
+                let lhs = self.eval_u128(lhs)?;
+                let rhs = self.eval_u128(rhs)?;
+                lhs.checked_add(rhs)
+                    .ok_or_else(|| number_out_of_range(ScalarType::U128, format!("{lhs} + {rhs}")))
+            }
+        }
+    }
+
+    unsafe fn read_unsigned_path(
+        &self,
+        scalar: ScalarType,
+        ptr: PtrConst,
+    ) -> Result<u128, FableError> {
+        let value = match scalar {
+            ScalarType::U8 => (*unsafe { ptr.get::<u8>() }).into(),
+            ScalarType::U16 => (*unsafe { ptr.get::<u16>() }).into(),
+            ScalarType::U32 => (*unsafe { ptr.get::<u32>() }).into(),
+            ScalarType::U64 => (*unsafe { ptr.get::<u64>() }).into(),
+            ScalarType::U128 => *unsafe { ptr.get::<u128>() },
+            ScalarType::USize => (*unsafe { ptr.get::<usize>() }) as u128,
+            _ => {
+                return Err(FableError::MalformedProgram {
+                    reason: "unsigned read path did not point to an unsigned scalar",
+                });
+            }
+        };
+        Ok(value)
+    }
+
+    fn eval_f64(&self, expr: &FloatExpr) -> Result<f64, FableError> {
+        match expr {
+            FloatExpr::Literal(value) => Ok(*value),
+            FloatExpr::Read(path) => {
+                let ptr = unsafe { path.ptr_const(self.root.as_const()) };
+                match path.scalar {
+                    ScalarType::F32 => Ok((*unsafe { ptr.get::<f32>() }).into()),
+                    ScalarType::F64 => Ok(*unsafe { ptr.get::<f64>() }),
+                    _ => Err(FableError::MalformedProgram {
+                        reason: "float read path did not point to a float scalar",
+                    }),
+                }
+            }
+            FloatExpr::Neg(expr) => Ok(-self.eval_number_as_f64(expr)?),
+            FloatExpr::Add(lhs, rhs) => {
+                Ok(self.eval_number_as_f64(lhs)? + self.eval_number_as_f64(rhs)?)
+            }
+            FloatExpr::Sub(lhs, rhs) => {
+                Ok(self.eval_number_as_f64(lhs)? - self.eval_number_as_f64(rhs)?)
+            }
+        }
+    }
+
+    fn eval_number_as_i128(&self, expr: &NumberExpr) -> Result<i128, FableError> {
+        match expr {
+            NumberExpr::Signed(expr) => self.eval_i128(expr),
+            NumberExpr::Unsigned(expr) => {
+                let value = self.eval_u128(expr)?;
+                i128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::I128, value.to_string()))
+            }
+            NumberExpr::Float(_) => Err(FableError::TypeMismatch {
+                expected: "integer".into(),
+                actual: "float",
+            }),
+        }
+    }
+
+    fn eval_number_as_u128(&self, expr: &NumberExpr) -> Result<u128, FableError> {
+        match expr {
+            NumberExpr::Unsigned(expr) => self.eval_u128(expr),
+            NumberExpr::Signed(expr) => {
+                let value = self.eval_i128(expr)?;
+                u128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string()))
+            }
+            NumberExpr::Float(_) => Err(FableError::TypeMismatch {
+                expected: "unsigned integer".into(),
+                actual: "float",
+            }),
+        }
+    }
+
+    fn eval_number_as_f64(&self, expr: &NumberExpr) -> Result<f64, FableError> {
+        match expr {
+            NumberExpr::Signed(expr) => Ok(self.eval_i128(expr)? as f64),
+            NumberExpr::Unsigned(expr) => Ok(self.eval_u128(expr)? as f64),
+            NumberExpr::Float(expr) => self.eval_f64(expr),
+        }
+    }
+
+    fn compare_numbers(&self, lhs: &NumberExpr, rhs: &NumberExpr) -> Result<Ordering, FableError> {
+        match (lhs, rhs) {
+            (NumberExpr::Float(_), _) | (_, NumberExpr::Float(_)) => {
+                compare_f64(self.eval_number_as_f64(lhs)?, self.eval_number_as_f64(rhs)?)
+            }
+            (NumberExpr::Signed(lhs), NumberExpr::Signed(rhs)) => {
+                Ok(self.eval_i128(lhs)?.cmp(&self.eval_i128(rhs)?))
+            }
+            (NumberExpr::Unsigned(lhs), NumberExpr::Unsigned(rhs)) => {
+                Ok(self.eval_u128(lhs)?.cmp(&self.eval_u128(rhs)?))
+            }
+            (NumberExpr::Signed(lhs), NumberExpr::Unsigned(rhs)) => {
+                let lhs = self.eval_i128(lhs)?;
+                let rhs = self.eval_u128(rhs)?;
+                if lhs < 0 {
+                    Ok(Ordering::Less)
+                } else {
+                    Ok((lhs as u128).cmp(&rhs))
+                }
+            }
+            (NumberExpr::Unsigned(lhs), NumberExpr::Signed(rhs)) => {
+                let lhs = self.eval_u128(lhs)?;
+                let rhs = self.eval_i128(rhs)?;
+                if rhs < 0 {
+                    Ok(Ordering::Greater)
+                } else {
+                    Ok(lhs.cmp(&(rhs as u128)))
                 }
             }
         }
+    }
+
+    fn exprs_equal(&self, lhs: &ExprPlan, rhs: &ExprPlan) -> Result<bool, FableError> {
+        match (lhs, rhs) {
+            (ExprPlan::Unit(lhs), ExprPlan::Unit(rhs)) => {
+                self.eval_unit(lhs)?;
+                self.eval_unit(rhs)?;
+                Ok(true)
+            }
+            (ExprPlan::Bool(lhs), ExprPlan::Bool(rhs)) => {
+                Ok(self.eval_bool(lhs)? == self.eval_bool(rhs)?)
+            }
+            (ExprPlan::Char(lhs), ExprPlan::Char(rhs)) => {
+                Ok(self.eval_char(lhs)? == self.eval_char(rhs)?)
+            }
+            (ExprPlan::String(lhs), ExprPlan::String(rhs)) => {
+                Ok(self.eval_string(lhs)? == self.eval_string(rhs)?)
+            }
+            (ExprPlan::Char(lhs), ExprPlan::String(rhs)) => Ok(string_is_char(
+                &self.eval_string(rhs)?,
+                self.eval_char(lhs)?,
+            )),
+            (ExprPlan::String(lhs), ExprPlan::Char(rhs)) => Ok(string_is_char(
+                &self.eval_string(lhs)?,
+                self.eval_char(rhs)?,
+            )),
+            (ExprPlan::Number(lhs), ExprPlan::Number(rhs)) => {
+                Ok(self.compare_numbers(lhs, rhs)? == Ordering::Equal)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    unsafe fn write_scalar(
+        &self,
+        scalar: ScalarType,
+        ptr: PtrMut,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        match scalar {
+            ScalarType::Unit => self.eval_unit(expect_unit_expr(expr)?)?,
+            ScalarType::Bool => {
+                *unsafe { ptr.as_mut::<bool>() } = self.eval_bool(expect_bool_expr(expr)?)?;
+            }
+            ScalarType::Char => {
+                *unsafe { ptr.as_mut::<char>() } = self.eval_char_assign(expr)?;
+            }
+            ScalarType::String => {
+                *unsafe { ptr.as_mut::<String>() } = self.eval_string_assign(expr)?;
+            }
+            ScalarType::CowStr => {
+                *unsafe { ptr.as_mut::<Cow<'static, str>>() } =
+                    Cow::Owned(self.eval_string_assign(expr)?);
+            }
+            ScalarType::F32 => {
+                *unsafe { ptr.as_mut::<f32>() } =
+                    self.eval_number_as_f64(expect_number_expr(expr)?)? as f32;
+            }
+            ScalarType::F64 => {
+                *unsafe { ptr.as_mut::<f64>() } =
+                    self.eval_number_as_f64(expect_number_expr(expr)?)?;
+            }
+            ScalarType::U8 => unsafe { self.write_unsigned::<u8>(ptr, scalar, expr) }?,
+            ScalarType::U16 => unsafe { self.write_unsigned::<u16>(ptr, scalar, expr) }?,
+            ScalarType::U32 => unsafe { self.write_unsigned::<u32>(ptr, scalar, expr) }?,
+            ScalarType::U64 => unsafe { self.write_unsigned::<u64>(ptr, scalar, expr) }?,
+            ScalarType::U128 => unsafe { self.write_unsigned::<u128>(ptr, scalar, expr) }?,
+            ScalarType::USize => unsafe { self.write_unsigned::<usize>(ptr, scalar, expr) }?,
+            ScalarType::I8 => unsafe { self.write_signed::<i8>(ptr, scalar, expr) }?,
+            ScalarType::I16 => unsafe { self.write_signed::<i16>(ptr, scalar, expr) }?,
+            ScalarType::I32 => unsafe { self.write_signed::<i32>(ptr, scalar, expr) }?,
+            ScalarType::I64 => unsafe { self.write_signed::<i64>(ptr, scalar, expr) }?,
+            ScalarType::I128 => unsafe { self.write_signed::<i128>(ptr, scalar, expr) }?,
+            ScalarType::ISize => unsafe { self.write_signed::<isize>(ptr, scalar, expr) }?,
+            _ => {
+                return Err(FableError::Unsupported {
+                    feature: format!("writing {scalar:?}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn eval_char_assign(&self, expr: &ExprPlan) -> Result<char, FableError> {
+        match expr {
+            ExprPlan::Char(expr) => self.eval_char(expr),
+            ExprPlan::String(expr) => expect_single_char(self.eval_string(expr)?),
+            other => Err(FableError::TypeMismatch {
+                expected: "char".into(),
+                actual: other.kind_name(),
+            }),
+        }
+    }
+
+    fn eval_string_assign(&self, expr: &ExprPlan) -> Result<String, FableError> {
+        match expr {
+            ExprPlan::String(expr) => self.eval_string(expr),
+            ExprPlan::Char(expr) => Ok(self.eval_char(expr)?.to_string()),
+            other => Err(FableError::TypeMismatch {
+                expected: "string".into(),
+                actual: other.kind_name(),
+            }),
+        }
+    }
+
+    unsafe fn write_unsigned<T>(
+        &self,
+        ptr: PtrMut,
+        target: ScalarType,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<u128>,
+    {
+        let value = self.eval_number_as_u128(expect_number_expr(expr)?)?;
+        let converted =
+            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
+        *unsafe { ptr.as_mut::<T>() } = converted;
+        Ok(())
+    }
+
+    unsafe fn write_signed<T>(
+        &self,
+        ptr: PtrMut,
+        target: ScalarType,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<i128>,
+    {
+        let value = self.eval_number_as_i128(expect_number_expr(expr)?)?;
+        let converted =
+            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
+        *unsafe { ptr.as_mut::<T>() } = converted;
+        Ok(())
+    }
+}
+
+fn expect_unit_expr(expr: &ExprPlan) -> Result<&UnitExpr, FableError> {
+    match expr {
+        ExprPlan::Unit(expr) => Ok(expr),
+        other => Err(FableError::TypeMismatch {
+            expected: "unit".into(),
+            actual: other.kind_name(),
+        }),
+    }
+}
+
+fn expect_bool_expr(expr: &ExprPlan) -> Result<&BoolExpr, FableError> {
+    match expr {
+        ExprPlan::Bool(expr) => Ok(expr),
+        other => Err(FableError::TypeMismatch {
+            expected: "bool".into(),
+            actual: other.kind_name(),
+        }),
+    }
+}
+
+fn expect_number_expr(expr: &ExprPlan) -> Result<&NumberExpr, FableError> {
+    match expr {
+        ExprPlan::Number(expr) => Ok(expr),
+        other => Err(FableError::TypeMismatch {
+            expected: "number".into(),
+            actual: other.kind_name(),
+        }),
     }
 }
 
@@ -736,7 +1374,7 @@ fn ensure_readable(scalar: ScalarType, shape: &'static Shape) -> Result<(), Fabl
     }
 }
 
-fn ensure_writable(scalar: ScalarType, _shape: &'static Shape) -> Result<(), FableError> {
+fn ensure_writable(scalar: ScalarType) -> Result<(), FableError> {
     match scalar {
         ScalarType::Unit
         | ScalarType::Bool
@@ -763,340 +1401,6 @@ fn ensure_writable(scalar: ScalarType, _shape: &'static Shape) -> Result<(), Fab
     }
 }
 
-unsafe fn read_scalar(
-    shape: &'static Shape,
-    scalar: ScalarType,
-    ptr: PtrConst,
-) -> Result<Value, FableError> {
-    let value = match scalar {
-        ScalarType::Unit => Value::Unit,
-        ScalarType::Bool => Value::Bool(*unsafe { ptr.get::<bool>() }),
-        ScalarType::Char => Value::Char(*unsafe { ptr.get::<char>() }),
-        ScalarType::Str if shape.is_type::<&'static str>() => {
-            Value::String((*unsafe { ptr.get::<&'static str>() }).to_owned())
-        }
-        ScalarType::String => Value::String(unsafe { ptr.get::<String>() }.clone()),
-        ScalarType::CowStr => Value::String(
-            unsafe { ptr.get::<Cow<'static, str>>() }
-                .clone()
-                .into_owned(),
-        ),
-        ScalarType::F32 => Value::Float((*unsafe { ptr.get::<f32>() }).into()),
-        ScalarType::F64 => Value::Float(*unsafe { ptr.get::<f64>() }),
-        ScalarType::U8 => Value::UInt((*unsafe { ptr.get::<u8>() }).into()),
-        ScalarType::U16 => Value::UInt((*unsafe { ptr.get::<u16>() }).into()),
-        ScalarType::U32 => Value::UInt((*unsafe { ptr.get::<u32>() }).into()),
-        ScalarType::U64 => Value::UInt((*unsafe { ptr.get::<u64>() }).into()),
-        ScalarType::U128 => Value::UInt(*unsafe { ptr.get::<u128>() }),
-        ScalarType::USize => Value::UInt((*unsafe { ptr.get::<usize>() }) as u128),
-        ScalarType::I8 => Value::Int((*unsafe { ptr.get::<i8>() }).into()),
-        ScalarType::I16 => Value::Int((*unsafe { ptr.get::<i16>() }).into()),
-        ScalarType::I32 => Value::Int((*unsafe { ptr.get::<i32>() }).into()),
-        ScalarType::I64 => Value::Int((*unsafe { ptr.get::<i64>() }).into()),
-        ScalarType::I128 => Value::Int(*unsafe { ptr.get::<i128>() }),
-        ScalarType::ISize => Value::Int((*unsafe { ptr.get::<isize>() }) as i128),
-        _ => {
-            return Err(FableError::Unsupported {
-                feature: format!("reading {scalar:?}"),
-            });
-        }
-    };
-    Ok(value)
-}
-
-unsafe fn write_scalar(
-    scalar: ScalarType,
-    ptr: PtrMut,
-    value: Value,
-) -> Result<Control<'static, BlockRef, FableOp>, FableError> {
-    match scalar {
-        ScalarType::Unit => {
-            expect_unit(value)?;
-        }
-        ScalarType::Bool => {
-            *unsafe { ptr.as_mut::<bool>() } = expect_bool(value)?;
-        }
-        ScalarType::Char => {
-            *unsafe { ptr.as_mut::<char>() } = expect_char(value)?;
-        }
-        ScalarType::String => {
-            *unsafe { ptr.as_mut::<String>() } = expect_string(value)?;
-        }
-        ScalarType::CowStr => {
-            *unsafe { ptr.as_mut::<Cow<'static, str>>() } = Cow::Owned(expect_string(value)?);
-        }
-        ScalarType::F32 => {
-            *unsafe { ptr.as_mut::<f32>() } = expect_f64(value)? as f32;
-        }
-        ScalarType::F64 => {
-            *unsafe { ptr.as_mut::<f64>() } = expect_f64(value)?;
-        }
-        ScalarType::U8 => unsafe { write_unsigned::<u8>(ptr, scalar, value) }?,
-        ScalarType::U16 => unsafe { write_unsigned::<u16>(ptr, scalar, value) }?,
-        ScalarType::U32 => unsafe { write_unsigned::<u32>(ptr, scalar, value) }?,
-        ScalarType::U64 => unsafe { write_unsigned::<u64>(ptr, scalar, value) }?,
-        ScalarType::U128 => unsafe { write_unsigned::<u128>(ptr, scalar, value) }?,
-        ScalarType::USize => unsafe { write_unsigned::<usize>(ptr, scalar, value) }?,
-        ScalarType::I8 => unsafe { write_signed::<i8>(ptr, scalar, value) }?,
-        ScalarType::I16 => unsafe { write_signed::<i16>(ptr, scalar, value) }?,
-        ScalarType::I32 => unsafe { write_signed::<i32>(ptr, scalar, value) }?,
-        ScalarType::I64 => unsafe { write_signed::<i64>(ptr, scalar, value) }?,
-        ScalarType::I128 => unsafe { write_signed::<i128>(ptr, scalar, value) }?,
-        ScalarType::ISize => unsafe { write_signed::<isize>(ptr, scalar, value) }?,
-        _ => {
-            return Err(FableError::Unsupported {
-                feature: format!("writing {scalar:?}"),
-            });
-        }
-    }
-    Ok(Control::Continue)
-}
-
-unsafe fn write_unsigned<T>(ptr: PtrMut, target: ScalarType, value: Value) -> Result<(), FableError>
-where
-    T: TryFrom<u128>,
-{
-    let source = expect_u128(value)?;
-    let converted = T::try_from(source).map_err(|_| FableError::NumberOutOfRange {
-        target,
-        value: source.to_string(),
-    })?;
-    *unsafe { ptr.as_mut::<T>() } = converted;
-    Ok(())
-}
-
-unsafe fn write_signed<T>(ptr: PtrMut, target: ScalarType, value: Value) -> Result<(), FableError>
-where
-    T: TryFrom<i128>,
-{
-    let source = expect_i128(value)?;
-    let converted = T::try_from(source).map_err(|_| FableError::NumberOutOfRange {
-        target,
-        value: source.to_string(),
-    })?;
-    *unsafe { ptr.as_mut::<T>() } = converted;
-    Ok(())
-}
-
-fn expect_unit(value: Value) -> Result<(), FableError> {
-    match value {
-        Value::Unit | Value::Null => Ok(()),
-        other => Err(FableError::TypeMismatch {
-            expected: "unit".into(),
-            actual: other.kind_name(),
-        }),
-    }
-}
-
-fn expect_bool(value: Value) -> Result<bool, FableError> {
-    match value {
-        Value::Bool(value) => Ok(value),
-        other => Err(FableError::TypeMismatch {
-            expected: "bool".into(),
-            actual: other.kind_name(),
-        }),
-    }
-}
-
-fn expect_char(value: Value) -> Result<char, FableError> {
-    match value {
-        Value::Char(value) => Ok(value),
-        Value::String(value) => {
-            let mut chars = value.chars();
-            let Some(ch) = chars.next() else {
-                return Err(FableError::TypeMismatch {
-                    expected: "single-character string".into(),
-                    actual: "empty string",
-                });
-            };
-            if chars.next().is_some() {
-                return Err(FableError::TypeMismatch {
-                    expected: "single-character string".into(),
-                    actual: "string",
-                });
-            }
-            Ok(ch)
-        }
-        other => Err(FableError::TypeMismatch {
-            expected: "char".into(),
-            actual: other.kind_name(),
-        }),
-    }
-}
-
-fn expect_string(value: Value) -> Result<String, FableError> {
-    match value {
-        Value::String(value) => Ok(value),
-        Value::Char(value) => Ok(value.to_string()),
-        other => Err(FableError::TypeMismatch {
-            expected: "string".into(),
-            actual: other.kind_name(),
-        }),
-    }
-}
-
-fn expect_f64(value: Value) -> Result<f64, FableError> {
-    match value {
-        Value::Float(value) => Ok(value),
-        Value::Int(value) => Ok(value as f64),
-        Value::UInt(value) => Ok(value as f64),
-        other => Err(FableError::TypeMismatch {
-            expected: "number".into(),
-            actual: other.kind_name(),
-        }),
-    }
-}
-
-fn expect_i128(value: Value) -> Result<i128, FableError> {
-    match value {
-        Value::Int(value) => Ok(value),
-        Value::UInt(value) => i128::try_from(value).map_err(|_| FableError::NumberOutOfRange {
-            target: ScalarType::I128,
-            value: value.to_string(),
-        }),
-        other => Err(FableError::TypeMismatch {
-            expected: "integer".into(),
-            actual: other.kind_name(),
-        }),
-    }
-}
-
-fn expect_u128(value: Value) -> Result<u128, FableError> {
-    match value {
-        Value::UInt(value) => Ok(value),
-        Value::Int(value) => u128::try_from(value).map_err(|_| FableError::NumberOutOfRange {
-            target: ScalarType::U128,
-            value: value.to_string(),
-        }),
-        other => Err(FableError::TypeMismatch {
-            expected: "unsigned integer".into(),
-            actual: other.kind_name(),
-        }),
-    }
-}
-
-fn eval_unary(op: UnaryOp, operand: Value) -> Result<Value, FableError> {
-    match op {
-        UnaryOp::Not => Ok(Value::Bool(!operand.into_bool()?)),
-        UnaryOp::Neg => {
-            match operand {
-                Value::Int(value) => value.checked_neg().map(Value::Int).ok_or_else(|| {
-                    FableError::NumberOutOfRange {
-                        target: ScalarType::I128,
-                        value: value.to_string(),
-                    }
-                }),
-                Value::UInt(value) => {
-                    let signed =
-                        i128::try_from(value).map_err(|_| FableError::NumberOutOfRange {
-                            target: ScalarType::I128,
-                            value: format!("-{value}"),
-                        })?;
-                    signed.checked_neg().map(Value::Int).ok_or_else(|| {
-                        FableError::NumberOutOfRange {
-                            target: ScalarType::I128,
-                            value: format!("-{value}"),
-                        }
-                    })
-                }
-                Value::Float(value) => Ok(Value::Float(-value)),
-                other => Err(FableError::TypeMismatch {
-                    expected: "number".into(),
-                    actual: other.kind_name(),
-                }),
-            }
-        }
-    }
-}
-
-fn eval_binary(op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, FableError> {
-    match op {
-        BinaryOp::Eq => Ok(Value::Bool(values_equal(&lhs, &rhs)?)),
-        BinaryOp::Neq => Ok(Value::Bool(!values_equal(&lhs, &rhs)?)),
-        BinaryOp::Lt => Ok(Value::Bool(compare_values(&lhs, &rhs)? == Ordering::Less)),
-        BinaryOp::Gt => Ok(Value::Bool(
-            compare_values(&lhs, &rhs)? == Ordering::Greater,
-        )),
-        BinaryOp::Le => {
-            let ordering = compare_values(&lhs, &rhs)?;
-            Ok(Value::Bool(matches!(
-                ordering,
-                Ordering::Less | Ordering::Equal
-            )))
-        }
-        BinaryOp::Ge => {
-            let ordering = compare_values(&lhs, &rhs)?;
-            Ok(Value::Bool(matches!(
-                ordering,
-                Ordering::Greater | Ordering::Equal
-            )))
-        }
-        BinaryOp::Add => eval_add(lhs, rhs),
-        BinaryOp::Sub => eval_sub(lhs, rhs),
-        BinaryOp::And | BinaryOp::Or => Err(FableError::MalformedProgram {
-            reason: "boolean connective reached eager binary evaluator",
-        }),
-    }
-}
-
-fn values_equal(lhs: &Value, rhs: &Value) -> Result<bool, FableError> {
-    match (lhs, rhs) {
-        (Value::Unit, Value::Unit) | (Value::Null, Value::Null) => Ok(true),
-        (Value::Bool(lhs), Value::Bool(rhs)) => Ok(lhs == rhs),
-        (Value::Char(lhs), Value::Char(rhs)) => Ok(lhs == rhs),
-        (Value::String(lhs), Value::String(rhs)) => Ok(lhs == rhs),
-        (Value::Char(lhs), Value::String(rhs)) | (Value::String(rhs), Value::Char(lhs)) => {
-            let mut chars = rhs.chars();
-            Ok(chars.next() == Some(*lhs) && chars.next().is_none())
-        }
-        _ if both_numeric(lhs, rhs) => Ok(compare_numbers(lhs, rhs)? == Ordering::Equal),
-        _ => Ok(false),
-    }
-}
-
-fn compare_values(lhs: &Value, rhs: &Value) -> Result<Ordering, FableError> {
-    if both_numeric(lhs, rhs) {
-        compare_numbers(lhs, rhs)
-    } else {
-        Err(FableError::TypeMismatch {
-            expected: "comparable numbers".into(),
-            actual: lhs.kind_name(),
-        })
-    }
-}
-
-fn both_numeric(lhs: &Value, rhs: &Value) -> bool {
-    matches!(lhs, Value::Int(_) | Value::UInt(_) | Value::Float(_))
-        && matches!(rhs, Value::Int(_) | Value::UInt(_) | Value::Float(_))
-}
-
-fn compare_numbers(lhs: &Value, rhs: &Value) -> Result<Ordering, FableError> {
-    match (lhs, rhs) {
-        (Value::Float(lhs), rhs) => compare_f64(*lhs, numeric_to_f64(rhs)?),
-        (lhs, Value::Float(rhs)) => compare_f64(numeric_to_f64(lhs)?, *rhs),
-        (Value::Int(lhs), Value::Int(rhs)) => Ok(lhs.cmp(rhs)),
-        (Value::UInt(lhs), Value::UInt(rhs)) => Ok(lhs.cmp(rhs)),
-        (Value::Int(lhs), Value::UInt(rhs)) => {
-            if *lhs < 0 {
-                Ok(Ordering::Less)
-            } else {
-                Ok((*lhs as u128).cmp(rhs))
-            }
-        }
-        (Value::UInt(lhs), Value::Int(rhs)) => {
-            if *rhs < 0 {
-                Ok(Ordering::Greater)
-            } else {
-                Ok(lhs.cmp(&(*rhs as u128)))
-            }
-        }
-        _ => Err(FableError::TypeMismatch {
-            expected: "number".into(),
-            actual: lhs.kind_name(),
-        }),
-    }
-}
-
 fn compare_f64(lhs: f64, rhs: f64) -> Result<Ordering, FableError> {
     lhs.partial_cmp(&rhs)
         .ok_or_else(|| FableError::TypeMismatch {
@@ -1105,60 +1409,38 @@ fn compare_f64(lhs: f64, rhs: f64) -> Result<Ordering, FableError> {
         })
 }
 
-fn numeric_to_f64(value: &Value) -> Result<f64, FableError> {
-    match value {
-        Value::Float(value) => Ok(*value),
-        Value::Int(value) => Ok(*value as f64),
-        Value::UInt(value) => Ok(*value as f64),
-        other => Err(FableError::TypeMismatch {
-            expected: "number".into(),
-            actual: other.kind_name(),
-        }),
+fn expect_single_char(value: String) -> Result<char, FableError> {
+    let mut chars = value.chars();
+    let Some(ch) = chars.next() else {
+        return Err(FableError::TypeMismatch {
+            expected: "single-character string".into(),
+            actual: "empty string",
+        });
+    };
+    if chars.next().is_some() {
+        return Err(FableError::TypeMismatch {
+            expected: "single-character string".into(),
+            actual: "string",
+        });
     }
+    Ok(ch)
 }
 
-fn eval_add(lhs: Value, rhs: Value) -> Result<Value, FableError> {
-    match (lhs, rhs) {
-        (Value::String(mut lhs), Value::String(rhs)) => {
-            lhs.push_str(&rhs);
-            Ok(Value::String(lhs))
-        }
-        (lhs, rhs) if matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_)) => {
-            Ok(Value::Float(numeric_to_f64(&lhs)? + numeric_to_f64(&rhs)?))
-        }
-        (Value::UInt(lhs), Value::UInt(rhs)) => {
-            lhs.checked_add(rhs)
-                .map(Value::UInt)
-                .ok_or_else(|| FableError::NumberOutOfRange {
-                    target: ScalarType::U128,
-                    value: format!("{lhs} + {rhs}"),
-                })
-        }
-        (lhs, rhs) => {
-            let lhs = expect_i128(lhs)?;
-            let rhs = expect_i128(rhs)?;
-            lhs.checked_add(rhs)
-                .map(Value::Int)
-                .ok_or_else(|| FableError::NumberOutOfRange {
-                    target: ScalarType::I128,
-                    value: format!("{lhs} + {rhs}"),
-                })
-        }
-    }
+fn string_is_char(value: &str, ch: char) -> bool {
+    let mut chars = value.chars();
+    chars.next() == Some(ch) && chars.next().is_none()
 }
 
-fn eval_sub(lhs: Value, rhs: Value) -> Result<Value, FableError> {
-    if matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_)) {
-        return Ok(Value::Float(numeric_to_f64(&lhs)? - numeric_to_f64(&rhs)?));
+fn number_out_of_range(target: ScalarType, value: String) -> FableError {
+    FableError::NumberOutOfRange { target, value }
+}
+
+fn binary_actual(lhs: &'static str, rhs: &'static str) -> &'static str {
+    if lhs == rhs {
+        lhs
+    } else {
+        "mixed expression types"
     }
-    let lhs = expect_i128(lhs)?;
-    let rhs = expect_i128(rhs)?;
-    lhs.checked_sub(rhs)
-        .map(Value::Int)
-        .ok_or_else(|| FableError::NumberOutOfRange {
-            target: ScalarType::I128,
-            value: format!("{lhs} - {rhs}"),
-        })
 }
 
 fn decode_string(text: &str) -> Result<String, FableError> {
@@ -1325,9 +1607,8 @@ mod tests {
     }
 
     #[test]
-    fn reports_type_mismatches_while_running() {
-        let mut value = state();
-        let err = apply(&mut value, r#"root.user.age = "old""#).unwrap_err();
+    fn reports_type_mismatches_during_lowering() {
+        let err = compile_err(r#"root.user.age = "old""#);
 
         assert!(matches!(
             err,
