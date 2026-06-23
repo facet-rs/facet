@@ -447,16 +447,10 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
         visitor: V,
     ) -> Result<V::Value> {
         let token = self.next_token();
-        if token.kind == TokenKind::At {
+        if token.kind == TokenKind::Tag {
             // Tagged enum
-            let name_token = self.next_token();
-            if name_token.kind != TokenKind::BareScalar {
-                return Err(self.error("expected variant name after @"));
-            }
-            visitor.visit_enum(EnumAccess {
-                de: self,
-                variant: name_token.text,
-            })
+            let variant = &token.text[1..];
+            visitor.visit_enum(EnumAccess { de: self, variant })
         } else if token.kind == TokenKind::BareScalar {
             // Untagged string variant
             visitor.visit_enum(EnumAccess {

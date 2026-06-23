@@ -51,6 +51,19 @@ mod tests {
         optional: Option<i32>,
     }
 
+    #[derive(Facet, Serialize, Deserialize, Debug, PartialEq, Clone)]
+    struct WithEnumeration {
+        name: String,
+        kind: Enumeration,
+    }
+
+    #[derive(Facet, Serialize, Deserialize, Debug, PartialEq, Clone)]
+    #[repr(C)]
+    enum Enumeration {
+        VariantOne,
+        VariantTwo,
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Identical output tests
     // ─────────────────────────────────────────────────────────────────────────
@@ -159,6 +172,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_identical_output_enumerations() {
+        let value = WithEnumeration {
+            name: "myapp".into(),
+            kind: Enumeration::VariantOne,
+        };
+
+        let facet_output = facet_styx::to_string(&value).unwrap();
+        let serde_output = serde_styx::to_string(&value).unwrap();
+
+        assert_eq!(
+            facet_output, serde_output,
+            "enumeration output should be identical"
+        );
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Cross-library parsing tests
     // ─────────────────────────────────────────────────────────────────────────
@@ -242,6 +271,24 @@ mod tests {
         // serde → facet
         let serde_output = serde_styx::to_string(&original).unwrap();
         let parsed_by_facet: WithSequence = facet_styx::from_str(&serde_output).unwrap();
+        assert_eq!(original, parsed_by_facet);
+    }
+
+    #[test]
+    fn test_cross_parsing_enumeration() {
+        let original = WithEnumeration {
+            name: "myapp".into(),
+            kind: Enumeration::VariantTwo,
+        };
+
+        // facet → serde
+        let facet_output = facet_styx::to_string(&original).unwrap();
+        let parsed_by_serde: WithEnumeration = serde_styx::from_str(&facet_output).unwrap();
+        assert_eq!(original, parsed_by_serde);
+
+        // serde → facet
+        let serde_output = serde_styx::to_string(&original).unwrap();
+        let parsed_by_facet: WithEnumeration = facet_styx::from_str(&serde_output).unwrap();
         assert_eq!(original, parsed_by_facet);
     }
 
