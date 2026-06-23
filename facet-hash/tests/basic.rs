@@ -1,8 +1,11 @@
 use core::hash::Hasher;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use facet::Facet;
 use facet_hash::HashPlan;
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+use facet_hash::NativeHashPlan;
 
 #[derive(Clone, Debug, Facet)]
 struct Point {
@@ -22,6 +25,19 @@ struct Person {
 struct Floaty {
     x: f64,
     y: f32,
+}
+
+#[derive(Clone, Debug, Facet)]
+struct TextScalars {
+    owned: String,
+    borrowed: &'static str,
+    cow: Cow<'static, str>,
+}
+
+#[derive(Clone, Debug, Facet)]
+struct PointArray {
+    points: [Point; 2],
+    tail: i16,
 }
 
 #[derive(Clone, Debug, Facet)]
@@ -349,4 +365,149 @@ fn unsupported_enums_fail_while_building() {
     let err = HashPlan::<Choice>::build().unwrap_err();
 
     assert!(err.to_string().contains("enum"));
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn native_plan_matches_interpreter_stream_for_scalar_struct() {
+    let plan = HashPlan::<Point>::build().unwrap();
+    let native = NativeHashPlan::<Point, RecordingHasher>::build().unwrap();
+    let value = Point { x: 10, y: -4 };
+    let mut expected = RecordingHasher::default();
+    let mut actual = RecordingHasher::default();
+
+    plan.hash(&value, &mut expected).unwrap();
+    native.hash(&value, &mut actual).unwrap();
+
+    assert_eq!(expected.bytes, actual.bytes);
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn native_plan_matches_interpreter_stream_for_nested_scalar_struct() {
+    let plan = HashPlan::<MixedScalarRuns>::build().unwrap();
+    let native = NativeHashPlan::<MixedScalarRuns, RecordingHasher>::build().unwrap();
+    let value = MixedScalarRuns {
+        a: 1,
+        point: Point { x: 2, y: 3 },
+        b: 4,
+        c: 5,
+    };
+    let mut expected = RecordingHasher::default();
+    let mut actual = RecordingHasher::default();
+
+    plan.hash(&value, &mut expected).unwrap();
+    native.hash(&value, &mut actual).unwrap();
+
+    assert_eq!(expected.bytes, actual.bytes);
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn native_plan_matches_interpreter_stream_for_text_scalars() {
+    let plan = HashPlan::<TextScalars>::build().unwrap();
+    let native = NativeHashPlan::<TextScalars, RecordingHasher>::build().unwrap();
+    let value = TextScalars {
+        owned: "Ada".to_owned(),
+        borrowed: "Grace",
+        cow: Cow::Owned("Katherine".to_owned()),
+    };
+    let mut expected = RecordingHasher::default();
+    let mut actual = RecordingHasher::default();
+
+    plan.hash(&value, &mut expected).unwrap();
+    native.hash(&value, &mut actual).unwrap();
+
+    assert_eq!(expected.bytes, actual.bytes);
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn native_plan_matches_interpreter_stream_for_root_array() {
+    let plan = HashPlan::<[u16; 4]>::build().unwrap();
+    let native = NativeHashPlan::<[u16; 4], RecordingHasher>::build().unwrap();
+    let value = [1, 1, 2, 3];
+    let mut expected = RecordingHasher::default();
+    let mut actual = RecordingHasher::default();
+
+    plan.hash(&value, &mut expected).unwrap();
+    native.hash(&value, &mut actual).unwrap();
+
+    assert_eq!(expected.bytes, actual.bytes);
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn native_plan_matches_interpreter_stream_for_array_field() {
+    let plan = HashPlan::<PointArray>::build().unwrap();
+    let native = NativeHashPlan::<PointArray, RecordingHasher>::build().unwrap();
+    let value = PointArray {
+        points: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }],
+        tail: -5,
+    };
+    let mut expected = RecordingHasher::default();
+    let mut actual = RecordingHasher::default();
+
+    plan.hash(&value, &mut expected).unwrap();
+    native.hash(&value, &mut actual).unwrap();
+
+    assert_eq!(expected.bytes, actual.bytes);
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn native_plan_hashes_floats_by_bits() {
+    let plan = HashPlan::<Floaty>::build().unwrap();
+    let native = NativeHashPlan::<Floaty, RecordingHasher>::build().unwrap();
+    let value = Floaty {
+        x: -0.0,
+        y: f32::NAN,
+    };
+    let mut expected = RecordingHasher::default();
+    let mut actual = RecordingHasher::default();
+
+    plan.hash(&value, &mut expected).unwrap();
+    native.hash(&value, &mut actual).unwrap();
+
+    assert_eq!(expected.bytes, actual.bytes);
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn native_plan_reports_code_layout_stats() {
+    let native = NativeHashPlan::<Point>::build().unwrap();
+    let stats = native.stats();
+
+    assert_eq!(stats.chain_count, 1);
+    assert_eq!(stats.scalar_count, 0);
+    assert_eq!(stats.scalar_run_count, 1);
+    assert_eq!(stats.scalar_run_field_count, 2);
+    assert_eq!(stats.const_usize_count, 0);
+    assert_eq!(stats.prog_slot_count, 1);
+    assert_eq!(stats.stencil_count, 2);
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn native_array_plan_reports_const_layout_stats() {
+    let native = NativeHashPlan::<PointArray>::build().unwrap();
+    let stats = native.stats();
+
+    assert_eq!(stats.chain_count, 1);
+    assert_eq!(stats.scalar_count, 0);
+    assert_eq!(stats.scalar_run_count, 1);
+    assert_eq!(stats.scalar_run_field_count, 6);
+    assert_eq!(stats.const_usize_count, 1);
+    assert_eq!(stats.prog_slot_count, 1);
+    assert_eq!(stats.stencil_count, 2);
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn native_plan_rejects_aggregate_fields_for_now() {
+    let Err(err) = NativeHashPlan::<Person>::build() else {
+        panic!("Person contains aggregate fields and should not compile natively yet");
+    };
+
+    assert!(err.to_string().contains("native aggregate hashing"));
 }

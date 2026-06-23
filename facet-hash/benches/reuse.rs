@@ -3,6 +3,8 @@ use core::hash::{Hash, Hasher};
 use divan::{Bencher, black_box};
 use facet::Facet;
 use facet_hash::HashPlan;
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+use facet_hash::NativeHashPlan;
 use facet_reflect::Peek;
 
 fn main() {
@@ -13,6 +15,20 @@ fn main() {
 struct Point {
     x: i32,
     y: i32,
+}
+
+#[derive(Debug, Facet, Hash)]
+struct MixedScalarRuns {
+    a: u32,
+    point: Point,
+    b: u32,
+    c: u32,
+}
+
+#[derive(Debug, Facet, Hash)]
+struct PointArray {
+    points: [Point; 2],
+    tail: i16,
 }
 
 #[derive(Debug, Facet, Hash)]
@@ -93,6 +109,14 @@ fn point_value_plan_reused(bencher: Bencher<'_, '_>) {
     bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
 }
 
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[divan::bench]
+fn point_value_native_jit(bencher: Bencher<'_, '_>) {
+    let plan = NativeHashPlan::<Point>::build().unwrap();
+    let value = Point { x: 123, y: -456 };
+    bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
 #[divan::bench]
 fn point_value_plan_build_each_time(bencher: Bencher<'_, '_>) {
     let value = Point { x: 123, y: -456 };
@@ -114,6 +138,56 @@ fn point_peek_structural_hash(bencher: Bencher<'_, '_>) {
         Peek::new(black_box(&value)).structural_hash(&mut hasher);
         black_box(hasher.finish())
     });
+}
+
+#[divan::bench]
+fn mixed_native_hash(bencher: Bencher<'_, '_>) {
+    let value = mixed_scalar_runs();
+    bencher.bench_local(|| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        black_box(&value).hash(&mut hasher);
+        black_box(hasher.finish())
+    });
+}
+
+#[divan::bench]
+fn mixed_value_plan_reused(bencher: Bencher<'_, '_>) {
+    let plan = HashPlan::<MixedScalarRuns>::build().unwrap();
+    let value = mixed_scalar_runs();
+    bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[divan::bench]
+fn mixed_value_native_jit(bencher: Bencher<'_, '_>) {
+    let plan = NativeHashPlan::<MixedScalarRuns>::build().unwrap();
+    let value = mixed_scalar_runs();
+    bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[divan::bench]
+fn point_array_native_hash(bencher: Bencher<'_, '_>) {
+    let value = point_array();
+    bencher.bench_local(|| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        black_box(&value).hash(&mut hasher);
+        black_box(hasher.finish())
+    });
+}
+
+#[divan::bench]
+fn point_array_value_plan_reused(bencher: Bencher<'_, '_>) {
+    let plan = HashPlan::<PointArray>::build().unwrap();
+    let value = point_array();
+    bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[divan::bench]
+fn point_array_value_native_jit(bencher: Bencher<'_, '_>) {
+    let plan = NativeHashPlan::<PointArray>::build().unwrap();
+    let value = point_array();
+    bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
 }
 
 #[divan::bench]
@@ -153,6 +227,18 @@ fn person_peek_structural_hash(bencher: Bencher<'_, '_>) {
 #[divan::bench]
 fn float_value_plan_reused(bencher: Bencher<'_, '_>) {
     let plan = HashPlan::<FloatPoint>::build().unwrap();
+    let value = FloatPoint {
+        x: 1.25,
+        y: -9.5,
+        z: f64::NAN,
+    };
+    bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[divan::bench]
+fn float_value_native_jit(bencher: Bencher<'_, '_>) {
+    let plan = NativeHashPlan::<FloatPoint>::build().unwrap();
     let value = FloatPoint {
         x: 1.25,
         y: -9.5,
@@ -231,6 +317,22 @@ fn hash_company_peek_structural_hash(bencher: Bencher<'_, '_>) {
         Peek::new(black_box(&value)).structural_hash(&mut hasher);
         black_box(hasher.finish())
     });
+}
+
+fn mixed_scalar_runs() -> MixedScalarRuns {
+    MixedScalarRuns {
+        a: 1,
+        point: Point { x: 2, y: 3 },
+        b: 4,
+        c: 5,
+    }
+}
+
+fn point_array() -> PointArray {
+    PointArray {
+        points: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }],
+        tail: -5,
+    }
 }
 
 fn person() -> Person {
