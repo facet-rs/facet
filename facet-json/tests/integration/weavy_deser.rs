@@ -288,6 +288,12 @@ fn weavy_jit_helpers_deserialize_through_jit_requested_plan_slot() {
 }
 
 #[test]
+fn weavy_jit_ordered_scalar_struct_replays_after_i32_cursor_mismatch() {
+    let got: Point = facet_json::from_str_weavy_jit(r#"{"x":1,"y":"2"}"#).unwrap();
+    assert_eq!(got, Point { x: 1, y: 2 });
+}
+
+#[test]
 fn weavy_jit_plan_uses_native_for_root_scalar_struct_list_when_available() {
     let plan = facet_json::JsonWeavyPlan::<Vec<Point>>::build_jit().unwrap();
     let report = plan.jit_fallback_report();

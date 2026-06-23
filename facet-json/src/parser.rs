@@ -264,6 +264,13 @@ pub(crate) struct OrderedObjectProbeSave {
     scanner_pos: usize,
 }
 
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+pub(crate) struct NativeOrderedRootCursor<'de> {
+    input: &'de [u8],
+    scanner: Scanner,
+    last_token_start: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ObjectState {
     KeyOrEnd,
@@ -1616,6 +1623,33 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         self.restore_ordered_object_probe(save);
     }
 
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    pub(crate) fn native_ordered_root_cursor(&self) -> Option<NativeOrderedRootCursor<'de>> {
+        if self.state.event_peek.is_some()
+            || !self.state.stack.is_empty()
+            || self.state.root_started
+            || self.state.root_complete
+        {
+            return None;
+        }
+
+        Some(NativeOrderedRootCursor {
+            input: self.input,
+            scanner: self.scanner.clone(),
+            last_token_start: self.state.last_token_start,
+        })
+    }
+
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    pub(crate) fn commit_native_ordered_root(&mut self, cursor: NativeOrderedRootCursor<'de>) {
+        self.scanner = cursor.scanner;
+        self.state.stack.clear();
+        self.state.root_started = true;
+        self.state.root_complete = true;
+        self.state.last_token_start = cursor.last_token_start;
+        self.state.scanner_pos = self.scanner.pos();
+    }
+
     #[inline]
     fn save_ordered_i32_object_probe(&self) -> OrderedObjectProbeSave {
         self.save_ordered_object_probe()
@@ -2374,5 +2408,139 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
         let offset = self.state.last_token_start;
         let len = self.current_offset().saturating_sub(offset);
         Some(Span::new(offset, len))
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+impl<'de> NativeOrderedRootCursor<'de> {
+    #[inline]
+    pub(crate) fn consume_root_object_start(&mut self) -> Result<bool, ParseError> {
+        self.consume_punctuation(b'{')
+    }
+
+    #[inline]
+    pub(crate) fn consume_root_array_start(&mut self) -> Result<bool, ParseError> {
+        self.consume_punctuation(b'[')
+    }
+
+    #[inline]
+    pub(crate) fn consume_array_object_start(
+        &mut self,
+        require_comma: bool,
+    ) -> Result<bool, ParseError> {
+        let span = self
+            .scanner
+            .try_consume_array_object_start(self.input, require_comma)
+            .map_err(scan_error_to_parse_error)?;
+        if let Some(span) = span {
+            self.last_token_start = span.offset as usize;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    #[inline]
+    pub(crate) fn consume_ordered_field_prefix(
+        &mut self,
+        expected: &str,
+        require_comma: bool,
+    ) -> Result<Option<Span>, ParseError> {
+        let expected = expected.as_bytes();
+        let span = if let [expected] = expected {
+            self.scanner
+                .try_consume_one_byte_field_name_colon(self.input, *expected, require_comma)
+        } else {
+            self.scanner
+                .try_consume_exact_field_name_colon(self.input, expected, require_comma)
+        }
+        .map_err(scan_error_to_parse_error)?;
+
+        if let Some(span) = span {
+            self.last_token_start = span.offset as usize;
+        }
+        Ok(span)
+    }
+
+    #[inline]
+    pub(crate) fn consume_i32(&mut self) -> Result<Option<(Span, i32)>, ParseError> {
+        let value = self
+            .scanner
+            .try_consume_i32_number(self.input)
+            .map_err(scan_error_to_parse_error)?;
+        if let Some((span, _)) = value {
+            self.last_token_start = span.offset as usize;
+        }
+        Ok(value)
+    }
+
+    #[inline]
+    pub(crate) fn consume_scalar_token(
+        &mut self,
+        expected: &'static str,
+    ) -> Result<scanner::SpannedToken, ParseError> {
+        let token = self
+            .scanner
+            .next_token(self.input)
+            .map_err(scan_error_to_parse_error)?;
+        match token.token {
+            ScanToken::Null
+            | ScanToken::True
+            | ScanToken::False
+            | ScanToken::String { .. }
+            | ScanToken::Number { .. } => {
+                self.last_token_start = token.span.offset as usize;
+                Ok(token)
+            }
+            ScanToken::Eof => Err(ParseError::new(
+                token.span,
+                DeserializeErrorKind::UnexpectedEof { expected },
+            )),
+            _ => Err(ParseError::new(
+                token.span,
+                DeserializeErrorKind::UnexpectedToken {
+                    got: format!("{:?}", token.token).into(),
+                    expected,
+                },
+            )),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn consume_object_end(&mut self) -> Result<bool, ParseError> {
+        self.consume_punctuation(b'}')
+    }
+
+    #[inline]
+    pub(crate) fn consume_array_end_if_next(
+        &mut self,
+        after_element: bool,
+    ) -> Result<bool, ParseError> {
+        let original = self.scanner.clone();
+        if self.consume_punctuation(b']')? {
+            return Ok(true);
+        }
+        self.scanner = original.clone();
+
+        if after_element {
+            if self.consume_punctuation(b',')? && self.consume_punctuation(b']')? {
+                return Ok(true);
+            }
+            self.scanner = original;
+        }
+
+        Ok(false)
+    }
+
+    #[inline]
+    fn consume_punctuation(&mut self, byte: u8) -> Result<bool, ParseError> {
+        let span = self
+            .scanner
+            .consume_punctuation(self.input, byte)
+            .map_err(scan_error_to_parse_error)?;
+        if let Some(span) = span {
+            self.last_token_start = span.offset as usize;
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
