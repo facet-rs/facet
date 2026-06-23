@@ -10,6 +10,8 @@ use core::alloc::Layout;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::str::FromStr;
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use facet_core::{
     Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, OptionDef, PointerDef, PtrMut,
@@ -297,16 +299,17 @@ where
     where
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
+        let mut slot = MaybeUninit::<T>::uninit();
+        let root = PtrUninit::from_maybe_uninit(&mut slot);
+
         #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
-        if let Some(native) = &self.native {
-            let mut slot = MaybeUninit::<T>::uninit();
-            let root = PtrUninit::from_maybe_uninit(&mut slot);
+        if let Some(native) = &self.native
+            && native.should_enter()
+        {
             native.run(parser, root)?;
             return Ok(unsafe { slot.assume_init() });
         }
 
-        let mut slot = MaybeUninit::<T>::uninit();
-        let root = PtrUninit::from_maybe_uninit(&mut slot);
         let mut interp = JsonInterp::new(parser, root);
         if let Err(err) = weavy::run_dense(&self.lowered, &mut interp) {
             return Err(run_error(err));
@@ -336,9 +339,14 @@ unsafe impl Sync for JsonNativePlan {}
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 struct JsonNativeScalarStructInfo {
     shape: &'static Shape,
+    ordered_names: Box<[&'static str]>,
     fields: Box<[ScalarFieldPlan]>,
     dispatch: Option<RawFieldDispatch>,
+    ordered_probe_skip: AtomicU8,
 }
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+const ORDERED_PROBE_BACKOFF: u8 = u8::MAX;
 
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 struct JsonNativeState {
@@ -362,10 +370,25 @@ impl JsonNativePlan {
             return Err("JSON native JIT currently supports root scalar structs only");
         };
 
+        let fields = fields.clone();
+        if fields
+            .iter()
+            .any(|field| !matches!(field.missing, MissingField::Required))
+        {
+            return Err("JSON native JIT currently supports required scalar struct fields only");
+        }
+
+        let ordered_names = fields
+            .iter()
+            .map(|field| field.name)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         let scalar_structs = vec![JsonNativeScalarStructInfo {
             shape,
-            fields: fields.clone(),
+            ordered_names,
+            fields,
             dispatch: dispatch.clone(),
+            ordered_probe_skip: AtomicU8::new(0),
         }]
         .into_boxed_slice();
         let calls = vec![weavy::jit::HostCallInfo {
@@ -386,6 +409,12 @@ impl JsonNativePlan {
             calls,
             scalar_structs,
         })
+    }
+
+    fn should_enter(&self) -> bool {
+        self.scalar_structs
+            .first()
+            .is_none_or(JsonNativeScalarStructInfo::should_enter_native)
     }
 
     fn run<const TRUSTED_UTF8: bool>(
@@ -448,10 +477,168 @@ impl JsonNativeState {
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
         let parser = unsafe { &mut *self.parser.cast::<JsonParser<'_, TRUSTED_UTF8>>() };
+        let can_probe_ordered = tiny_i32_struct_fields_are_fusible(&info.fields)
+            || info.fields.len() <= u64::BITS as usize;
+        if can_probe_ordered {
+            if self.try_read_ordered_i32_scalar_struct(parser, info)? {
+                info.record_ordered_probe(true);
+                return Ok(());
+            }
+
+            if self.try_read_ordered_scalar_struct(parser, info)? {
+                info.record_ordered_probe(true);
+                return Ok(());
+            }
+
+            info.record_ordered_probe(false);
+        }
+
+        self.read_scalar_struct_interpreted(parser, info)
+    }
+
+    fn try_read_ordered_i32_scalar_struct<const TRUSTED_UTF8: bool>(
+        &mut self,
+        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+        info: &JsonNativeScalarStructInfo,
+    ) -> Result<bool, DeserializeError> {
+        if !tiny_i32_struct_fields_are_fusible(&info.fields) {
+            return Ok(false);
+        }
+
+        let mut spans = [Span { offset: 0, len: 0 }; TINY_SCALAR_STRUCT_MAX_FIELDS];
+        let mut values = [0i32; TINY_SCALAR_STRUCT_MAX_FIELDS];
+        let len = info.fields.len();
+        if !parser.try_consume_ordered_i32_object(
+            &info.ordered_names,
+            &mut spans[..len],
+            &mut values[..len],
+        )? {
+            return Ok(false);
+        }
+
+        let mut guard = NativeScalarStructGuard::new(self.base, &info.fields);
+        for (index, field) in info.fields.iter().copied().enumerate() {
+            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+            unsafe {
+                field_ptr.put(values[index]);
+            }
+            guard.mark(index);
+        }
+        guard.finish();
+        Ok(true)
+    }
+
+    fn try_read_ordered_scalar_struct<const TRUSTED_UTF8: bool>(
+        &mut self,
+        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+        info: &JsonNativeScalarStructInfo,
+    ) -> Result<bool, DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
+        if info.fields.len() > u64::BITS as usize {
+            return Ok(false);
+        }
+
+        let mut guard = NativeScalarStructGuard::new(self.base, &info.fields);
+        let matched = parser.try_consume_ordered_scalar_object_with(
+            &info.ordered_names,
+            |parser, index, _, token| {
+                let field = &info.fields[index];
+                let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+                parser.write_scalar_input_preselected(
+                    field,
+                    field_ptr,
+                    JsonScalarInput::Raw(token),
+                )?;
+                guard.mark(index);
+                Ok::<(), DeserializeError>(())
+            },
+        )?;
+        if !matched {
+            return Ok(false);
+        }
+        guard.finish();
+        Ok(true)
+    }
+
+    fn read_scalar_struct_interpreted<const TRUSTED_UTF8: bool>(
+        &mut self,
+        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+        info: &JsonNativeScalarStructInfo,
+    ) -> Result<(), DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
         let mut interp = JsonInterp::new(parser, self.base);
         interp.read_scalar_struct(info.shape, &info.fields, info.dispatch.as_ref())?;
         interp.finish_success();
         Ok(())
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+impl JsonNativeScalarStructInfo {
+    fn should_enter_native(&self) -> bool {
+        let skip = self.ordered_probe_skip.load(Ordering::Relaxed);
+        if skip == 0 {
+            return true;
+        }
+
+        self.ordered_probe_skip
+            .store(skip.saturating_sub(1), Ordering::Relaxed);
+        false
+    }
+
+    fn record_ordered_probe(&self, matched: bool) {
+        self.ordered_probe_skip.store(
+            if matched { 0 } else { ORDERED_PROBE_BACKOFF },
+            Ordering::Relaxed,
+        );
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+struct NativeScalarStructGuard<'program> {
+    base: PtrUninit,
+    fields: &'program [ScalarFieldPlan],
+    initialized: u64,
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+impl<'program> NativeScalarStructGuard<'program> {
+    fn new(base: PtrUninit, fields: &'program [ScalarFieldPlan]) -> Self {
+        debug_assert!(fields.len() <= u64::BITS as usize);
+        Self {
+            base,
+            fields,
+            initialized: 0,
+        }
+    }
+
+    fn mark(&mut self, index: usize) {
+        self.initialized |= struct_seen_bit(index);
+    }
+
+    fn finish(self) {
+        core::mem::forget(self);
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+impl Drop for NativeScalarStructGuard<'_> {
+    fn drop(&mut self) {
+        for index in (0..self.fields.len()).rev() {
+            if (self.initialized & struct_seen_bit(index)) == 0 {
+                continue;
+            }
+
+            let field = self.fields[index];
+            let ptr = unsafe { self.base.field_init(field.offset) };
+            unsafe {
+                let _ = field.shape.call_drop_in_place(ptr);
+            }
+        }
     }
 }
 

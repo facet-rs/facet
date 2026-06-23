@@ -254,7 +254,7 @@ enum ContextState {
     Array(ArrayState),
 }
 
-struct OrderedI32ObjectProbeSave {
+struct OrderedObjectProbeSave {
     scanner: Scanner,
     stack_len: usize,
     stack_top: Option<ContextState>,
@@ -1470,8 +1470,63 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[inline(never)]
-    fn save_ordered_i32_object_probe(&self) -> OrderedI32ObjectProbeSave {
-        OrderedI32ObjectProbeSave {
+    pub(crate) fn try_consume_ordered_i32_object(
+        &mut self,
+        expected: &[&str],
+        spans: &mut [Span],
+        values: &mut [i32],
+    ) -> Result<bool, ParseError> {
+        debug_assert_eq!(expected.len(), spans.len());
+        debug_assert_eq!(expected.len(), values.len());
+
+        if expected.is_empty() || self.state.event_peek.is_some() {
+            return Ok(false);
+        }
+
+        let save = self.save_ordered_object_probe();
+        self.consume_object_start_fast()?;
+        let matched = self.try_consume_ordered_i32_object_fields_inner(expected, spans, values)?;
+        if !matched {
+            self.restore_ordered_object_probe(save);
+        }
+        Ok(matched)
+    }
+
+    pub(crate) fn try_consume_ordered_scalar_object_with<E, W>(
+        &mut self,
+        expected: &[&str],
+        mut consume: W,
+    ) -> Result<bool, E>
+    where
+        E: From<ParseError>,
+        W: FnMut(
+            &JsonParser<'de, TRUSTED_UTF8>,
+            usize,
+            Span,
+            scanner::SpannedToken,
+        ) -> Result<(), E>,
+    {
+        if expected.is_empty() || self.state.event_peek.is_some() {
+            return Ok(false);
+        }
+
+        let save = self.save_ordered_object_probe();
+        self.consume_object_start_fast().map_err(E::from)?;
+        let matched = self.try_consume_ordered_scalar_object_inner(expected, &mut consume)?;
+        if !matched {
+            self.restore_ordered_object_probe(save);
+        }
+        Ok(matched)
+    }
+
+    #[inline(never)]
+    fn save_ordered_i32_object_probe(&self) -> OrderedObjectProbeSave {
+        self.save_ordered_object_probe()
+    }
+
+    #[inline(never)]
+    fn save_ordered_object_probe(&self) -> OrderedObjectProbeSave {
+        OrderedObjectProbeSave {
             scanner: self.scanner.clone(),
             stack_len: self.state.stack.len(),
             stack_top: self.state.stack.last().cloned(),
@@ -1483,7 +1538,12 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[cold]
-    fn restore_ordered_i32_object_probe(&mut self, save: OrderedI32ObjectProbeSave) {
+    fn restore_ordered_i32_object_probe(&mut self, save: OrderedObjectProbeSave) {
+        self.restore_ordered_object_probe(save);
+    }
+
+    #[cold]
+    fn restore_ordered_object_probe(&mut self, save: OrderedObjectProbeSave) {
         self.scanner = save.scanner;
         self.state.stack.truncate(save.stack_len);
         if let Some(top) = save.stack_top {
@@ -1546,6 +1606,80 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             return Ok(false);
         }
         if self.consume_punctuation_token(b'}')?.is_none() {
+            return Ok(false);
+        }
+        self.state.stack.pop();
+        self.finish_value_in_parent();
+        Ok(true)
+    }
+
+    #[inline(never)]
+    fn try_consume_ordered_scalar_object_inner<E, W>(
+        &mut self,
+        expected: &[&str],
+        consume: &mut W,
+    ) -> Result<bool, E>
+    where
+        E: From<ParseError>,
+        W: FnMut(
+            &JsonParser<'de, TRUSTED_UTF8>,
+            usize,
+            Span,
+            scanner::SpannedToken,
+        ) -> Result<(), E>,
+    {
+        for (index, expected) in expected.iter().copied().enumerate() {
+            if index > 0 {
+                if self.determine_action() != NextAction::ObjectComma {
+                    return Ok(false);
+                }
+                if self
+                    .consume_punctuation_token(b',')
+                    .map_err(E::from)?
+                    .is_none()
+                {
+                    return Ok(false);
+                }
+                if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                    *state = ObjectState::KeyOrEnd;
+                } else {
+                    return Ok(false);
+                }
+            }
+
+            if self.determine_action() != NextAction::ObjectKey {
+                return Ok(false);
+            }
+
+            let Some(span) = self
+                .try_consume_exact_string_token(expected)
+                .map_err(E::from)?
+            else {
+                return Ok(false);
+            };
+            self.expect_colon_token().map_err(E::from)?;
+            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
+                *state = ObjectState::Value;
+            } else {
+                return Ok(false);
+            }
+
+            let token = self.consume_spanned_token().map_err(E::from)?;
+            self.validate_scalar_token(&token, "scalar")
+                .map_err(E::from)?;
+            self.state.root_started = true;
+            self.finish_value_in_parent();
+            consume(self, index, span, token)?;
+        }
+
+        if self.determine_action() != NextAction::ObjectComma {
+            return Ok(false);
+        }
+        if self
+            .consume_punctuation_token(b'}')
+            .map_err(E::from)?
+            .is_none()
+        {
             return Ok(false);
         }
         self.state.stack.pop();

@@ -513,6 +513,11 @@ fn float_point_weavy_reused_plan(bencher: Bencher) {
 }
 
 #[divan::bench]
+fn float_point_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<FloatPoint>(bencher, FLOAT_POINT_JSON);
+}
+
+#[divan::bench]
 fn float_point_serde_json(bencher: Bencher) {
     bench_serde_json::<FloatPoint>(bencher, FLOAT_POINT_JSON);
 }
@@ -607,6 +612,11 @@ fn wide_scalars_skipped_unknown_serde_json(bencher: Bencher) {
 #[divan::bench]
 fn default_scalars_missing_weavy_reused_plan(bencher: Bencher) {
     bench_weavy_reused_plan::<DefaultScalars>(bencher, DEFAULT_SCALARS_MISSING_JSON);
+}
+
+#[divan::bench]
+fn default_scalars_missing_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<DefaultScalars>(bencher, DEFAULT_SCALARS_MISSING_JSON);
 }
 
 #[divan::bench]
