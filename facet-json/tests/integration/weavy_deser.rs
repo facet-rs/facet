@@ -361,6 +361,34 @@ fn weavy_jit_scalar_struct_handles_ordered_wide_scalars() {
 }
 
 #[test]
+fn weavy_jit_ordered_wide_scalars_accept_numeric_strings() {
+    let plan = facet_json::JsonWeavyPlan::<WideScalarStruct>::build_jit().unwrap();
+    let got = plan
+        .from_str(
+            r#"{"a":"1","b":2,"c":"3","d":4,"e":"-5","f":-6,"g":"-7","h":-8,"i":"9","j":-10,"k":true,"l":"11.5"}"#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        got,
+        WideScalarStruct {
+            a: 1,
+            b: 2,
+            c: 3,
+            d: 4,
+            e: -5,
+            f: -6,
+            g: -7,
+            h: -8,
+            i: 9,
+            j: -10,
+            k: true,
+            l: 11.5,
+        }
+    );
+}
+
+#[test]
 fn weavy_jit_scalar_struct_list_handles_ordered_wide_scalars() {
     let plan = facet_json::JsonWeavyPlan::<Vec<WideScalarStruct>>::build_jit().unwrap();
     let got = plan

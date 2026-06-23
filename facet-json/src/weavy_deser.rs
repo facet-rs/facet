@@ -955,11 +955,17 @@ impl JsonNativeState {
             let Some(_span) = cursor.consume_ordered_field_prefix(expected, index > 0)? else {
                 return Ok(false);
             };
-            let token = cursor.consume_scalar_token("scalar")?;
 
             let field = &info.fields[index];
             let field_ptr = unsafe { self.base.field_uninit(field.offset) };
-            parser.write_scalar_input_preselected(field, field_ptr, JsonScalarInput::Raw(token))?;
+            if !Self::try_write_cursor_typed_scalar(cursor, field, field_ptr)? {
+                let token = cursor.consume_scalar_token("scalar")?;
+                parser.write_scalar_input_preselected(
+                    field,
+                    field_ptr,
+                    JsonScalarInput::Raw(token),
+                )?;
+            }
             guard.mark(index);
         }
 
@@ -967,6 +973,105 @@ impl JsonNativeState {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    #[inline]
+    fn try_write_cursor_typed_scalar(
+        cursor: &mut NativeOrderedRootCursor<'_>,
+        field: &ScalarFieldPlan,
+        dst: PtrUninit,
+    ) -> Result<bool, DeserializeError> {
+        match field.scalar.scalar {
+            ScalarType::Unit => {
+                if cursor.consume_null()? {
+                    unsafe {
+                        dst.put(());
+                    }
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            ScalarType::Bool => {
+                if let Some(value) = cursor.consume_bool()? {
+                    unsafe {
+                        dst.put(value);
+                    }
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            ScalarType::U8 => Self::try_write_cursor_unsigned::<u8>(cursor, dst),
+            ScalarType::U16 => Self::try_write_cursor_unsigned::<u16>(cursor, dst),
+            ScalarType::U32 => Self::try_write_cursor_unsigned::<u32>(cursor, dst),
+            ScalarType::U64 => Self::try_write_cursor_unsigned::<u64>(cursor, dst),
+            ScalarType::U128 => Self::try_write_cursor_unsigned::<u128>(cursor, dst),
+            ScalarType::USize => Self::try_write_cursor_unsigned::<usize>(cursor, dst),
+            ScalarType::I8 => Self::try_write_cursor_signed::<i8>(cursor, dst),
+            ScalarType::I16 => Self::try_write_cursor_signed::<i16>(cursor, dst),
+            ScalarType::I32 => Self::try_write_cursor_signed::<i32>(cursor, dst),
+            ScalarType::I64 => Self::try_write_cursor_signed::<i64>(cursor, dst),
+            ScalarType::I128 => Self::try_write_cursor_signed::<i128>(cursor, dst),
+            ScalarType::ISize => Self::try_write_cursor_signed::<isize>(cursor, dst),
+            ScalarType::F32 => {
+                if let Some(value) = cursor.consume_f64_number()? {
+                    unsafe {
+                        dst.put(value as f32);
+                    }
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            ScalarType::F64 => {
+                if let Some(value) = cursor.consume_f64_number()? {
+                    unsafe {
+                        dst.put(value);
+                    }
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            _ => Ok(false),
+        }
+    }
+
+    #[inline]
+    fn try_write_cursor_unsigned<T>(
+        cursor: &mut NativeOrderedRootCursor<'_>,
+        dst: PtrUninit,
+    ) -> Result<bool, DeserializeError>
+    where
+        T: TryFrom<u128>,
+    {
+        if let Some(value) = cursor.consume_unsigned_integer::<T>()? {
+            unsafe {
+                dst.put(value);
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    #[inline]
+    fn try_write_cursor_signed<T>(
+        cursor: &mut NativeOrderedRootCursor<'_>,
+        dst: PtrUninit,
+    ) -> Result<bool, DeserializeError>
+    where
+        T: TryFrom<i128>,
+    {
+        if let Some(value) = cursor.consume_signed_integer::<T>()? {
+            unsafe {
+                dst.put(value);
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     #[inline]
