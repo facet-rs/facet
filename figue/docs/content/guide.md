@@ -1,6 +1,6 @@
 +++
-title = "CLI & config (figue)"
-weight = 3
+title = "CLI & config"
+weight = 1
 insert_anchor_links = "heading"
 +++
 
@@ -100,5 +100,5 @@ The full surface — subcommands, completions, layering precedence — is on
 
 ## Related
 
-- [facet-default](@/guide/facet-default.md) — richer default values
-- [Ecosystem](@/ecosystem/_index.md) — the rest of the constellation
+- [facet-default](/guide/facet-default/) — richer default values
+- [Ecosystem](/ecosystem/) — the rest of the constellation

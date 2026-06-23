@@ -70,7 +70,7 @@ enum Status {
 assert_eq!(Status::default(), Status::Pending);
 ```
 
-This pairs naturally with [figue](@/guide/cli.md) config structs, where defaults
+This pairs naturally with [figue](/figue/guide/) config structs, where defaults
 fill in whatever the user didn't supply.
 
 ## Related

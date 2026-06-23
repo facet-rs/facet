@@ -12,7 +12,7 @@ New here? Start with [Getting Started](@/guide/getting-started.md), then [Why fa
 **How-to, by task:**
 
 - [JSON](@/guide/json.md) — serialize and deserialize with span-aware errors
-- [CLI & config](@/guide/cli.md) — typed args, env vars, and config files with figue
+- [CLI & config](/figue/guide/) — typed args, env vars, and config files with figue
 - [Pretty-printing](@/guide/pretty-printing.md) — readable, redacted, colored output
 - [Custom defaults](@/guide/facet-default.md) — per-field defaults with `facet-default`
 - [Error types](@/guide/facet-error.md) — `thiserror`-style errors from doc comments
