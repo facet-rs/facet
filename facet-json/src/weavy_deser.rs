@@ -148,6 +148,9 @@ impl JsonWeavyJitFallbackReport {
 pub struct JsonWeavyPlan<T> {
     lowered: DenseLowered<ExecOp>,
     execution: JsonWeavyExecutionMode,
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    native: Option<JsonNativePlan>,
+    jit_fallback_reason: Option<&'static str>,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -172,9 +175,33 @@ where
         execution: JsonWeavyExecutionMode,
     ) -> Result<Self, DeserializeError> {
         let symbolic = Lowering::new().lower(T::SHAPE)?;
+        let lowered = resolve_json_lowered(symbolic)?;
+        let mut jit_fallback_reason = None;
+
+        #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+        let native = if execution == JsonWeavyExecutionMode::Jit {
+            match JsonNativePlan::compile(&lowered) {
+                Ok(native) => Some(native),
+                Err(reason) => {
+                    jit_fallback_reason = Some(reason);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+        if execution == JsonWeavyExecutionMode::Jit {
+            jit_fallback_reason = Some(json_weavy_jit_fallback_reason());
+        }
+
         Ok(Self {
-            lowered: resolve_json_lowered(symbolic)?,
+            lowered,
             execution,
+            #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+            native,
+            jit_fallback_reason,
             _marker: PhantomData,
         })
     }
@@ -186,12 +213,13 @@ where
     }
 
     /// Backend currently selected for this plan.
-    ///
-    /// This returns [`JsonWeavyActiveBackend::Interpreter`] until JSON-native
-    /// stencils are wired into the JIT slot.
     #[must_use]
     pub fn active_backend(&self) -> JsonWeavyActiveBackend {
-        let _ = self;
+        #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+        if self.native.is_some() {
+            return JsonWeavyActiveBackend::NativeJit;
+        }
+
         JsonWeavyActiveBackend::Interpreter
     }
 
@@ -208,11 +236,14 @@ where
             return JsonWeavyJitFallbackReport::default();
         }
 
-        JsonWeavyJitFallbackReport {
-            records: vec![JsonWeavyJitFallbackRecord {
-                path: "$".to_string(),
-                reason: json_weavy_jit_fallback_reason(),
-            }],
+        match self.jit_fallback_reason {
+            Some(reason) => JsonWeavyJitFallbackReport {
+                records: vec![JsonWeavyJitFallbackRecord {
+                    path: "$".to_string(),
+                    reason,
+                }],
+            },
+            None => JsonWeavyJitFallbackReport::default(),
         }
     }
 
@@ -266,6 +297,14 @@ where
     where
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
+        #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+        if let Some(native) = &self.native {
+            let mut slot = MaybeUninit::<T>::uninit();
+            let root = PtrUninit::from_maybe_uninit(&mut slot);
+            native.run(parser, root)?;
+            return Ok(unsafe { slot.assume_init() });
+        }
+
         let mut slot = MaybeUninit::<T>::uninit();
         let root = PtrUninit::from_maybe_uninit(&mut slot);
         let mut interp = JsonInterp::new(parser, root);
@@ -275,6 +314,144 @@ where
         interp.finish_success();
 
         Ok(unsafe { slot.assume_init() })
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+struct JsonNativePlan {
+    native: weavy::jit::NativeProgram,
+    calls: Box<[weavy::jit::HostCallInfo]>,
+    scalar_structs: Box<[JsonNativeScalarStructInfo]>,
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+// Safety: native plans are immutable after construction; raw pointers in their
+// program stream point into `calls`/`scalar_structs`, both owned by the plan.
+unsafe impl Send for JsonNativePlan {}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+// Safety: see the `Send` impl; running a plan only mutates per-call state.
+unsafe impl Sync for JsonNativePlan {}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+struct JsonNativeScalarStructInfo {
+    shape: &'static Shape,
+    fields: Box<[ScalarFieldPlan]>,
+    dispatch: Option<RawFieldDispatch>,
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+struct JsonNativeState {
+    parser: *mut (),
+    trusted_utf8: bool,
+    base: PtrUninit,
+    error: Option<DeserializeError>,
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+impl JsonNativePlan {
+    fn compile(lowered: &DenseLowered<ExecOp>) -> Result<Self, &'static str> {
+        let [
+            JsonOp::ReadScalarStruct {
+                shape,
+                fields,
+                dispatch,
+            },
+        ] = lowered.program.as_slice()
+        else {
+            return Err("JSON native JIT currently supports root scalar structs only");
+        };
+
+        let scalar_structs = vec![JsonNativeScalarStructInfo {
+            shape,
+            fields: fields.clone(),
+            dispatch: dispatch.clone(),
+        }]
+        .into_boxed_slice();
+        let calls = vec![weavy::jit::HostCallInfo {
+            info: core::ptr::from_ref(&scalar_structs[0]).cast(),
+            call: json_native_read_scalar_struct,
+        }]
+        .into_boxed_slice();
+
+        let mut layout = weavy::jit::StencilLayout::new();
+        let root = layout.start_chain();
+        let hostcall = layout.emit_hostcall(root, core::ptr::from_ref(&calls[0]));
+        let done = layout.emit_done();
+        layout.patch_hostcall_continuation(hostcall, done);
+        let native = weavy::jit::NativeProgram::new(layout, root);
+
+        Ok(Self {
+            native,
+            calls,
+            scalar_structs,
+        })
+    }
+
+    fn run<const TRUSTED_UTF8: bool>(
+        &self,
+        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+        base: PtrUninit,
+    ) -> Result<(), DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
+        let mut state = JsonNativeState {
+            parser: (parser as *mut JsonParser<'_, TRUSTED_UTF8>).cast(),
+            trusted_utf8: TRUSTED_UTF8,
+            base,
+            error: None,
+        };
+        let mut cx = weavy::jit::HostCallCtx::new(self.native.entry_prog(), &mut state);
+        let entry = unsafe {
+            self.native
+                .entry_fn::<weavy::jit::HostCallCtx<JsonNativeState>>()
+        };
+        unsafe {
+            entry(&mut cx);
+        }
+
+        let _ = (&self.calls, &self.scalar_structs);
+        match state.error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+unsafe extern "C" fn json_native_read_scalar_struct(state: *mut (), info: *const ()) -> bool {
+    let state = unsafe { &mut *state.cast::<JsonNativeState>() };
+    let info = unsafe { &*info.cast::<JsonNativeScalarStructInfo>() };
+    let result = if state.trusted_utf8 {
+        unsafe { state.read_scalar_struct::<true>(info) }
+    } else {
+        unsafe { state.read_scalar_struct::<false>(info) }
+    };
+
+    match result {
+        Ok(()) => true,
+        Err(error) => {
+            state.error = Some(error);
+            false
+        }
+    }
+}
+
+#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+impl JsonNativeState {
+    unsafe fn read_scalar_struct<const TRUSTED_UTF8: bool>(
+        &mut self,
+        info: &JsonNativeScalarStructInfo,
+    ) -> Result<(), DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
+        let parser = unsafe { &mut *self.parser.cast::<JsonParser<'_, TRUSTED_UTF8>>() };
+        let mut interp = JsonInterp::new(parser, self.base);
+        interp.read_scalar_struct(info.shape, &info.fields, info.dispatch.as_ref())?;
+        interp.finish_success();
+        Ok(())
     }
 }
 
@@ -300,12 +477,6 @@ fn json_weavy_jit_fallback_reason() -> &'static str {
 fn json_weavy_jit_fallback_reason() -> &'static str {
     let _ = json_weavy_native_jit_available();
     "native JIT is not enabled for this build target"
-}
-
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
-fn json_weavy_jit_fallback_reason() -> &'static str {
-    let _ = json_weavy_native_jit_available();
-    "JSON native JIT stencils are not implemented yet"
 }
 
 fn run_error(err: RunError<ExecBlock, DeserializeError>) -> DeserializeError {

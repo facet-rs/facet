@@ -261,6 +261,18 @@ where
     });
 }
 
+fn bench_weavy_jit_reused_plan<T>(bencher: Bencher, json: &'static str)
+where
+    T: Facet<'static>,
+{
+    let plan = facet_json::JsonWeavyPlan::<T>::build_jit().unwrap();
+
+    bencher.bench(|| {
+        let result: T = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
 fn bench_serde_json<T>(bencher: Bencher, json: &'static str)
 where
     T: DeserializeOwned,
@@ -310,6 +322,18 @@ fn point_reused_typeplan(bencher: Bencher) {
 fn point_weavy_reused_plan(bencher: Bencher) {
     let json = POINT_JSON;
     let plan = facet_json::JsonWeavyPlan::<Point>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: Point = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
+/// Reuse Weavy JSON plan across iterations with JIT requested
+#[divan::bench]
+fn point_weavy_jit_reused_plan(bencher: Bencher) {
+    let json = POINT_JSON;
+    let plan = facet_json::JsonWeavyPlan::<Point>::build_jit().unwrap();
 
     bencher.bench(|| {
         let result: Point = black_box(plan.from_str(black_box(json)).unwrap());
@@ -537,6 +561,11 @@ fn wide_scalars_weavy_reused_plan(bencher: Bencher) {
 }
 
 #[divan::bench]
+fn wide_scalars_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_JSON);
+}
+
+#[divan::bench]
 fn wide_scalars_serde_json(bencher: Bencher) {
     bench_serde_json::<WideScalars>(bencher, WIDE_SCALARS_JSON);
 }
@@ -547,6 +576,11 @@ fn wide_scalars_out_of_order_weavy_reused_plan(bencher: Bencher) {
 }
 
 #[divan::bench]
+fn wide_scalars_out_of_order_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_OUT_OF_ORDER_JSON);
+}
+
+#[divan::bench]
 fn wide_scalars_out_of_order_serde_json(bencher: Bencher) {
     bench_serde_json::<WideScalars>(bencher, WIDE_SCALARS_OUT_OF_ORDER_JSON);
 }
@@ -554,6 +588,11 @@ fn wide_scalars_out_of_order_serde_json(bencher: Bencher) {
 #[divan::bench]
 fn wide_scalars_skipped_unknown_weavy_reused_plan(bencher: Bencher) {
     bench_weavy_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_SKIPPED_UNKNOWN_JSON);
+}
+
+#[divan::bench]
+fn wide_scalars_skipped_unknown_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan::<WideScalars>(bencher, WIDE_SCALARS_SKIPPED_UNKNOWN_JSON);
 }
 
 #[divan::bench]
