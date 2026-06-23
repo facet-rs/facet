@@ -64,7 +64,7 @@ h6 {
   }
 }
 
-// Fonts loaded from Google Fonts (Recursive)
+// Fonts loaded from Google Fonts (bearcove.eu stack: Outfit / Commissioner / Datatype)
 
 // CSS Custom Properties
 :root {
@@ -78,8 +78,9 @@ h6 {
   --link-hover: #3b82f6;    // blue-500
   --accent-color: #7c3aed;  // violet-600
 
-  --font-sans: "Recursive", system-ui, -apple-system, sans-serif;
-  --font-mono: "Recursive", monospace;
+  --font-display: "Outfit", system-ui, -apple-system, sans-serif;
+  --font-sans: "Commissioner", system-ui, -apple-system, sans-serif;
+  --font-mono: "Datatype", ui-monospace, "SF Mono", Menlo, monospace;
 
   --content-width: min(1200px, 100%);
   --spacing-sm: 0.5rem;
@@ -273,7 +274,13 @@ h3,
 h4,
 h5,
 h6 {
+  font-family: var(--font-display);
   scroll-margin-top: 6rem; // Account for sticky nav when jumping to anchors
+}
+
+// The brand wordmark reads as display type too.
+.site-nav-brand {
+  font-family: var(--font-display);
 }
 
 h1 {
