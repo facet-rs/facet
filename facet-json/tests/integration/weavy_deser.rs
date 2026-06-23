@@ -415,6 +415,54 @@ fn weavy_jit_ordered_float_scalars_replay_after_string_mismatch() {
 }
 
 #[test]
+fn weavy_jit_scalar_struct_list_handles_ordered_float_scalars() {
+    let plan = facet_json::JsonWeavyPlan::<Vec<FloatPoint>>::build_jit().unwrap();
+    let got = plan
+        .from_str(r#"[{"x":12.5,"y":-0.03125,"z":9000.125},{"x":-4.25,"y":2.5,"z":0.125}]"#)
+        .unwrap();
+
+    assert_eq!(
+        got,
+        vec![
+            FloatPoint {
+                x: 12.5,
+                y: -0.03125,
+                z: 9000.125,
+            },
+            FloatPoint {
+                x: -4.25,
+                y: 2.5,
+                z: 0.125,
+            },
+        ]
+    );
+}
+
+#[test]
+fn weavy_jit_scalar_struct_list_replays_after_float_string_mismatch() {
+    let plan = facet_json::JsonWeavyPlan::<Vec<FloatPoint>>::build_jit().unwrap();
+    let got = plan
+        .from_str(r#"[{"x":12.5,"y":-0.03125,"z":9000.125},{"x":-4.25,"y":"2.5","z":0.125}]"#)
+        .unwrap();
+
+    assert_eq!(
+        got,
+        vec![
+            FloatPoint {
+                x: 12.5,
+                y: -0.03125,
+                z: 9000.125,
+            },
+            FloatPoint {
+                x: -4.25,
+                y: 2.5,
+                z: 0.125,
+            },
+        ]
+    );
+}
+
+#[test]
 fn weavy_jit_scalar_struct_list_handles_ordered_wide_scalars() {
     let plan = facet_json::JsonWeavyPlan::<Vec<WideScalarStruct>>::build_jit().unwrap();
     let got = plan
