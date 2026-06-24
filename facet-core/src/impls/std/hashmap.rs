@@ -25,34 +25,92 @@ unsafe extern "C" fn hashmap_init_in_place_with_capacity<K, V, S: Default + Buil
     }
 }
 
-unsafe extern "C" fn hashmap_insert<K: Eq + core::hash::Hash, V>(
+unsafe extern "C" fn hashmap_insert<K: Eq + core::hash::Hash, V, S: BuildHasher>(
     ptr: PtrMut,
     key: PtrMut,
     value: PtrMut,
 ) {
-    let map = unsafe { ptr.as_mut::<HashMap<K, V>>() };
+    let map = unsafe { ptr.as_mut::<HashMap<K, V, S>>() };
     let key = unsafe { key.read::<K>() };
     let value = unsafe { value.read::<V>() };
     map.insert(key, value);
 }
 
-unsafe extern "C" fn hashmap_len<K, V>(ptr: PtrConst) -> usize {
-    unsafe { ptr.get::<HashMap<K, V>>().len() }
+unsafe extern "C" fn hashmap_insert_owned_string_key<'a, K, V, S: BuildHasher>(
+    ptr: PtrMut,
+    key: PtrMut,
+    value: PtrMut,
+) -> bool
+where
+    K: Facet<'a>,
+{
+    if K::SHAPE.id != <String as Facet>::SHAPE.id {
+        return false;
+    }
+
+    let map = unsafe { ptr.as_mut::<HashMap<String, V, S>>() };
+    let key = unsafe { key.read::<String>() };
+    let value = unsafe { value.read::<V>() };
+    map.insert(key, value);
+    true
 }
 
-unsafe extern "C" fn hashmap_contains_key<K: Eq + core::hash::Hash, V>(
+unsafe extern "C" fn hashmap_insert_borrowed_str_key<'a, K, V, S: BuildHasher>(
+    ptr: PtrMut,
+    key: PtrConst,
+    value: PtrMut,
+) -> bool
+where
+    K: Facet<'a>,
+{
+    if K::SHAPE.id != <String as Facet>::SHAPE.id {
+        return false;
+    }
+
+    let map = unsafe { ptr.as_mut::<HashMap<String, V, S>>() };
+    let key = unsafe { String::from(key.get::<str>()) };
+    let value = unsafe { value.read::<V>() };
+    map.insert(key, value);
+    true
+}
+
+unsafe extern "C" fn hashmap_insert_borrowed_str_entry<'a, K, V, S: BuildHasher>(
+    ptr: PtrMut,
+    key: PtrConst,
+    value: PtrConst,
+) -> bool
+where
+    K: Facet<'a>,
+    V: Facet<'a>,
+{
+    if K::SHAPE.id != <String as Facet>::SHAPE.id || V::SHAPE.id != <String as Facet>::SHAPE.id {
+        return false;
+    }
+
+    let map = unsafe { ptr.as_mut::<HashMap<String, String, S>>() };
+    let key = unsafe { String::from(key.get::<str>()) };
+    let value = unsafe { String::from(value.get::<str>()) };
+    map.insert(key, value);
+    true
+}
+
+unsafe extern "C" fn hashmap_len<K, V, S>(ptr: PtrConst) -> usize {
+    unsafe { ptr.get::<HashMap<K, V, S>>().len() }
+}
+
+unsafe extern "C" fn hashmap_contains_key<K: Eq + core::hash::Hash, V, S: BuildHasher>(
     ptr: PtrConst,
     key: PtrConst,
 ) -> bool {
-    unsafe { ptr.get::<HashMap<K, V>>().contains_key(key.get()) }
+    unsafe { ptr.get::<HashMap<K, V, S>>().contains_key(key.get()) }
 }
 
-unsafe extern "C" fn hashmap_get_value_ptr<K: Eq + core::hash::Hash, V>(
+unsafe extern "C" fn hashmap_get_value_ptr<K: Eq + core::hash::Hash, V, S: BuildHasher>(
     ptr: PtrConst,
     key: PtrConst,
 ) -> *const u8 {
     unsafe {
-        ptr.get::<HashMap<K, V>>()
+        ptr.get::<HashMap<K, V, S>>()
             .get(key.get())
             .map_or(core::ptr::null(), |v| {
                 NonNull::from(v).as_ptr() as *const u8
@@ -61,8 +119,6 @@ unsafe extern "C" fn hashmap_get_value_ptr<K: Eq + core::hash::Hash, V>(
 }
 
 /// Build a HashMap from a contiguous slice of (K, V) pairs.
-///
-/// This uses `from_iter` with known capacity to avoid rehashing.
 unsafe extern "C" fn hashmap_from_pair_slice<
     K: Eq + core::hash::Hash,
     V,
@@ -72,21 +128,18 @@ unsafe extern "C" fn hashmap_from_pair_slice<
     pairs_ptr: *mut u8,
     count: usize,
 ) -> PtrMut {
-    // Create an iterator that reads and moves (K, V) pairs from the buffer
     let pairs = pairs_ptr as *mut (K, V);
-    let iter = (0..count).map(|i| unsafe {
-        let pair_ptr = pairs.add(i);
-        core::ptr::read(pair_ptr)
-    });
-
-    // Build HashMap with from_iter (which uses reserve internally)
-    let map: HashMap<K, V, S> = iter.collect();
+    let mut map = HashMap::<K, V, S>::with_capacity_and_hasher(count, S::default());
+    for index in 0..count {
+        let (key, value) = unsafe { core::ptr::read(pairs.add(index)) };
+        map.insert(key, value);
+    }
     unsafe { uninit.put(map) }
 }
 
-unsafe extern "C" fn hashmap_iter_init<K, V>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn hashmap_iter_init<K, V, S>(ptr: PtrConst) -> PtrMut {
     unsafe {
-        let map = ptr.get::<HashMap<K, V>>();
+        let map = ptr.get::<HashMap<K, V, S>>();
         let iter: HashMapIterator<'_, K, V> = map.iter();
         let iter_state = Box::new(iter);
         PtrMut::new(Box::into_raw(iter_state) as *mut u8)
@@ -130,8 +183,8 @@ unsafe fn hashmap_default<K, V, S: Default + BuildHasher>(ox: crate::OxPtrUninit
     true
 }
 
-unsafe fn hashmap_is_truthy<K, V>(ptr: PtrConst) -> bool {
-    !unsafe { ptr.get::<HashMap<K, V>>().is_empty() }
+unsafe fn hashmap_is_truthy<K, V, S>(ptr: PtrConst) -> bool {
+    !unsafe { ptr.get::<HashMap<K, V, S>>().is_empty() }
 }
 
 // TODO: Debug, PartialEq, Eq for HashMap, HashSet
@@ -142,16 +195,23 @@ where
     S: 'a + Default + BuildHasher,
 {
     const SHAPE: &'static Shape = &const {
-        const fn build_map_vtable<K: Eq + core::hash::Hash, V, S: Default + BuildHasher>()
-        -> MapVTable {
+        const fn build_map_vtable<
+            'a,
+            K: Facet<'a> + Eq + core::hash::Hash,
+            V: Facet<'a>,
+            S: Default + BuildHasher,
+        >() -> MapVTable {
             MapVTable::builder()
                 .init_in_place_with_capacity(hashmap_init_in_place_with_capacity::<K, V, S>)
-                .insert(hashmap_insert::<K, V>)
-                .len(hashmap_len::<K, V>)
-                .contains_key(hashmap_contains_key::<K, V>)
-                .get_value_ptr(hashmap_get_value_ptr::<K, V>)
+                .insert(hashmap_insert::<K, V, S>)
+                .insert_borrowed_str_key(Some(hashmap_insert_borrowed_str_key::<K, V, S>))
+                .insert_borrowed_str_entry(Some(hashmap_insert_borrowed_str_entry::<K, V, S>))
+                .insert_owned_string_key(Some(hashmap_insert_owned_string_key::<K, V, S>))
+                .len(hashmap_len::<K, V, S>)
+                .contains_key(hashmap_contains_key::<K, V, S>)
+                .get_value_ptr(hashmap_get_value_ptr::<K, V, S>)
                 .iter_vtable(IterVTable {
-                    init_with_value: Some(hashmap_iter_init::<K, V>),
+                    init_with_value: Some(hashmap_iter_init::<K, V, S>),
                     next: hashmap_iter_next::<K, V>,
                     next_back: None,
                     size_hint: None,
@@ -220,7 +280,7 @@ where
                         drop_in_place: hashmap_drop::<K, V, S>,
                         default_in_place: Some(hashmap_default::<K, V, S>),
                         clone_into: None,
-                        is_truthy: Some(hashmap_is_truthy::<K, V>),
+                        is_truthy: Some(hashmap_is_truthy::<K, V, S>),
                     }
                 },
             )

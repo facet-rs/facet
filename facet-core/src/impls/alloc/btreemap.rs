@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, collections::BTreeMap};
+use alloc::{boxed::Box, collections::BTreeMap, string::String};
 
 use crate::{
     Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, OxPtrUninit, PtrConst, PtrMut, PtrUninit,
@@ -26,6 +26,70 @@ unsafe extern "C" fn btreemap_insert<K: Eq + Ord + 'static, V: 'static>(
         let v = value.read::<V>();
         map.insert(k, v);
     }
+}
+
+unsafe extern "C" fn btreemap_insert_owned_string_key<'a, K, V: 'static>(
+    ptr: PtrMut,
+    key: PtrMut,
+    value: PtrMut,
+) -> bool
+where
+    K: Facet<'a> + Eq + Ord + 'static,
+{
+    if K::SHAPE.id != <String as Facet>::SHAPE.id {
+        return false;
+    }
+
+    unsafe {
+        let map = ptr.as_mut::<BTreeMap<String, V>>();
+        let key = key.read::<String>();
+        let value = value.read::<V>();
+        map.insert(key, value);
+    }
+    true
+}
+
+unsafe extern "C" fn btreemap_insert_borrowed_str_key<'a, K, V: 'static>(
+    ptr: PtrMut,
+    key: PtrConst,
+    value: PtrMut,
+) -> bool
+where
+    K: Facet<'a> + Eq + Ord + 'static,
+{
+    if K::SHAPE.id != <String as Facet>::SHAPE.id {
+        return false;
+    }
+
+    unsafe {
+        let map = ptr.as_mut::<BTreeMap<String, V>>();
+        let key = String::from(key.get::<str>());
+        let value = value.read::<V>();
+        map.insert(key, value);
+    }
+    true
+}
+
+unsafe extern "C" fn btreemap_insert_borrowed_str_entry<'a, K, V>(
+    ptr: PtrMut,
+    key: PtrConst,
+    value: PtrConst,
+) -> bool
+where
+    K: Facet<'a> + Eq + Ord + 'static,
+    V: Facet<'a> + 'static,
+{
+    if K::SHAPE.id != <String as Facet>::SHAPE.id || V::SHAPE.id != <String as Facet>::SHAPE.id {
+        return false;
+    }
+
+    unsafe {
+        let map = ptr.as_mut::<BTreeMap<String, String>>();
+        let key = String::from(key.get::<str>());
+        let value = String::from(value.get::<str>());
+        map.insert(key, value);
+    }
+    true
 }
 
 unsafe extern "C" fn btreemap_len<K: 'static, V: 'static>(ptr: PtrConst) -> usize {
@@ -102,11 +166,11 @@ unsafe extern "C" fn btreemap_from_pair_slice<K: Eq + Ord + 'static, V: 'static>
     count: usize,
 ) -> PtrMut {
     let pairs = pairs_ptr as *mut (K, V);
-    let iter = (0..count).map(|i| unsafe {
-        let pair_ptr = pairs.add(i);
-        core::ptr::read(pair_ptr)
-    });
-    let map: BTreeMap<K, V> = iter.collect();
+    let mut map = BTreeMap::<K, V>::new();
+    for index in 0..count {
+        let (key, value) = unsafe { core::ptr::read(pairs.add(index)) };
+        map.insert(key, value);
+    }
     unsafe { uninit.put(map) }
 }
 
@@ -130,10 +194,14 @@ where
     V: Facet<'a> + 'static,
 {
     const SHAPE: &'static crate::Shape = &const {
-        const fn build_map_vtable<K: Eq + Ord + 'static, V: 'static>() -> MapVTable {
+        const fn build_map_vtable<'a, K: Facet<'a> + Eq + Ord + 'static, V: Facet<'a> + 'static>()
+        -> MapVTable {
             MapVTable::builder()
                 .init_in_place_with_capacity(btreemap_init_in_place_with_capacity::<K, V>)
                 .insert(btreemap_insert::<K, V>)
+                .insert_borrowed_str_key(Some(btreemap_insert_borrowed_str_key::<K, V>))
+                .insert_borrowed_str_entry(Some(btreemap_insert_borrowed_str_entry::<K, V>))
+                .insert_owned_string_key(Some(btreemap_insert_owned_string_key::<K, V>))
                 .len(btreemap_len::<K, V>)
                 .contains_key(btreemap_contains_key::<K, V>)
                 .get_value_ptr(btreemap_get_value_ptr::<K, V>)
