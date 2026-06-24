@@ -38,6 +38,76 @@ fn invalid_utf8_parse_error(span: Span) -> ParseError {
     )
 }
 
+fn invalid_number_parse_error(start: usize, end: usize) -> ParseError {
+    ParseError::new(
+        Span::new(start, end - start),
+        DeserializeErrorKind::UnexpectedChar {
+            ch: '?',
+            expected: "valid JSON token",
+        },
+    )
+}
+
+#[inline]
+fn validate_json_number_text(input: &[u8], start: usize, end: usize) -> Result<(), ParseError> {
+    let bytes = &input[start..end];
+    let mut pos = 0;
+
+    if bytes.get(pos).copied() == Some(b'-') {
+        pos += 1;
+        if pos == bytes.len() {
+            return Err(invalid_number_parse_error(start, end));
+        }
+    }
+
+    match bytes.get(pos).copied() {
+        Some(b'0') => {
+            pos += 1;
+            if matches!(bytes.get(pos).copied(), Some(b'0'..=b'9')) {
+                return Err(invalid_number_parse_error(start, end));
+            }
+        }
+        Some(b'1'..=b'9') => {
+            pos += 1;
+            while matches!(bytes.get(pos).copied(), Some(b'0'..=b'9')) {
+                pos += 1;
+            }
+        }
+        _ => return Err(invalid_number_parse_error(start, end)),
+    }
+
+    if bytes.get(pos).copied() == Some(b'.') {
+        pos += 1;
+        let digits_start = pos;
+        while matches!(bytes.get(pos).copied(), Some(b'0'..=b'9')) {
+            pos += 1;
+        }
+        if pos == digits_start {
+            return Err(invalid_number_parse_error(start, end));
+        }
+    }
+
+    if matches!(bytes.get(pos).copied(), Some(b'e' | b'E')) {
+        pos += 1;
+        if matches!(bytes.get(pos).copied(), Some(b'+' | b'-')) {
+            pos += 1;
+        }
+        let digits_start = pos;
+        while matches!(bytes.get(pos).copied(), Some(b'0'..=b'9')) {
+            pos += 1;
+        }
+        if pos == digits_start {
+            return Err(invalid_number_parse_error(start, end));
+        }
+    }
+
+    if pos == bytes.len() {
+        Ok(())
+    } else {
+        Err(invalid_number_parse_error(start, end))
+    }
+}
+
 #[derive(Debug, Clone)]
 struct MaterializedToken<'de> {
     kind: TokenKind<'de>,
@@ -899,121 +969,155 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         self.skip_value_start_token(first, &mut stack)?;
 
         while let Some(frame) = stack.last_mut() {
-            let token = self.consume_spanned_token()?;
             match frame {
                 SkipFrame::Object(state) => match *state {
-                    SkipObjectState::KeyOrEnd => match token.token {
-                        ScanToken::ObjectEnd => {
+                    SkipObjectState::KeyOrEnd => {
+                        if self.consume_punctuation_token(b'}')?.is_some() {
                             stack.pop();
+                            continue;
                         }
-                        ScanToken::String {
-                            start,
-                            end,
-                            has_escapes,
-                        } => {
-                            self.decode_field_key(start, end, has_escapes, token.span)?;
-                            self.expect_skip_colon_token()?;
-                            *state = SkipObjectState::Value;
+
+                        let token = self.consume_spanned_token()?;
+                        match token.token {
+                            ScanToken::String {
+                                start,
+                                end,
+                                has_escapes,
+                            } => {
+                                self.decode_field_key(start, end, has_escapes, token.span)?;
+                                self.expect_skip_colon_token()?;
+                                *state = SkipObjectState::Value;
+                            }
+                            ScanToken::Eof => {
+                                return Err(ParseError::new(
+                                    token.span,
+                                    DeserializeErrorKind::UnexpectedEof {
+                                        expected: "field key or object end",
+                                    },
+                                ));
+                            }
+                            _ => {
+                                return Err(
+                                    self.unexpected_scan_token(&token, "field key or object end")
+                                );
+                            }
                         }
-                        ScanToken::Eof => {
-                            return Err(ParseError::new(
-                                token.span,
-                                DeserializeErrorKind::UnexpectedEof {
-                                    expected: "field key or object end",
-                                },
-                            ));
+                    }
+                    SkipObjectState::Key => {
+                        let token = self.consume_spanned_token()?;
+                        match token.token {
+                            ScanToken::String {
+                                start,
+                                end,
+                                has_escapes,
+                            } => {
+                                self.decode_field_key(start, end, has_escapes, token.span)?;
+                                self.expect_skip_colon_token()?;
+                                *state = SkipObjectState::Value;
+                            }
+                            ScanToken::Eof => {
+                                return Err(ParseError::new(
+                                    token.span,
+                                    DeserializeErrorKind::UnexpectedEof {
+                                        expected: "field key",
+                                    },
+                                ));
+                            }
+                            _ => return Err(self.unexpected_scan_token(&token, "field key")),
                         }
-                        _ => {
-                            return Err(
-                                self.unexpected_scan_token(&token, "field key or object end")
-                            );
-                        }
-                    },
-                    SkipObjectState::Key => match token.token {
-                        ScanToken::String {
-                            start,
-                            end,
-                            has_escapes,
-                        } => {
-                            self.decode_field_key(start, end, has_escapes, token.span)?;
-                            self.expect_skip_colon_token()?;
-                            *state = SkipObjectState::Value;
-                        }
-                        ScanToken::Eof => {
-                            return Err(ParseError::new(
-                                token.span,
-                                DeserializeErrorKind::UnexpectedEof {
-                                    expected: "field key",
-                                },
-                            ));
-                        }
-                        _ => return Err(self.unexpected_scan_token(&token, "field key")),
-                    },
+                    }
                     SkipObjectState::Value => {
+                        let token = self.consume_spanned_token()?;
                         *state = SkipObjectState::CommaOrEnd;
                         self.skip_value_start_token(token, &mut stack)?;
                     }
-                    SkipObjectState::CommaOrEnd => match token.token {
-                        ScanToken::Comma => *state = SkipObjectState::Key,
-                        ScanToken::ObjectEnd => {
+                    SkipObjectState::CommaOrEnd => {
+                        if self.consume_punctuation_token(b',')?.is_some() {
+                            *state = SkipObjectState::Key;
+                            continue;
+                        }
+
+                        if self.consume_punctuation_token(b'}')?.is_some() {
                             stack.pop();
+                            continue;
                         }
-                        ScanToken::Eof => {
-                            return Err(ParseError::new(
-                                token.span,
-                                DeserializeErrorKind::UnexpectedEof {
-                                    expected: "',' or '}'",
-                                },
-                            ));
+
+                        let token = self.consume_spanned_token()?;
+                        match token.token {
+                            ScanToken::Eof => {
+                                return Err(ParseError::new(
+                                    token.span,
+                                    DeserializeErrorKind::UnexpectedEof {
+                                        expected: "',' or '}'",
+                                    },
+                                ));
+                            }
+                            _ => return Err(self.unexpected_scan_token(&token, "',' or '}'")),
                         }
-                        _ => return Err(self.unexpected_scan_token(&token, "',' or '}'")),
-                    },
+                    }
                 },
                 SkipFrame::Array(state) => match *state {
-                    SkipArrayState::ValueOrEnd => match token.token {
-                        ScanToken::ArrayEnd => {
+                    SkipArrayState::ValueOrEnd => {
+                        if self.consume_punctuation_token(b']')?.is_some() {
                             stack.pop();
+                            continue;
                         }
-                        ScanToken::Eof => {
-                            return Err(ParseError::new(
-                                token.span,
-                                DeserializeErrorKind::UnexpectedEof {
-                                    expected: "value or array end",
-                                },
-                            ));
+
+                        let token = self.consume_spanned_token()?;
+                        match token.token {
+                            ScanToken::Eof => {
+                                return Err(ParseError::new(
+                                    token.span,
+                                    DeserializeErrorKind::UnexpectedEof {
+                                        expected: "value or array end",
+                                    },
+                                ));
+                            }
+                            _ => {
+                                *state = SkipArrayState::CommaOrEnd;
+                                self.skip_value_start_token(token, &mut stack)?;
+                            }
                         }
-                        _ => {
-                            *state = SkipArrayState::CommaOrEnd;
-                            self.skip_value_start_token(token, &mut stack)?;
+                    }
+                    SkipArrayState::Value => {
+                        let token = self.consume_spanned_token()?;
+                        match token.token {
+                            ScanToken::Eof => {
+                                return Err(ParseError::new(
+                                    token.span,
+                                    DeserializeErrorKind::UnexpectedEof { expected: "value" },
+                                ));
+                            }
+                            _ => {
+                                *state = SkipArrayState::CommaOrEnd;
+                                self.skip_value_start_token(token, &mut stack)?;
+                            }
                         }
-                    },
-                    SkipArrayState::Value => match token.token {
-                        ScanToken::Eof => {
-                            return Err(ParseError::new(
-                                token.span,
-                                DeserializeErrorKind::UnexpectedEof { expected: "value" },
-                            ));
+                    }
+                    SkipArrayState::CommaOrEnd => {
+                        if self.consume_punctuation_token(b',')?.is_some() {
+                            *state = SkipArrayState::Value;
+                            continue;
                         }
-                        _ => {
-                            *state = SkipArrayState::CommaOrEnd;
-                            self.skip_value_start_token(token, &mut stack)?;
-                        }
-                    },
-                    SkipArrayState::CommaOrEnd => match token.token {
-                        ScanToken::Comma => *state = SkipArrayState::Value,
-                        ScanToken::ArrayEnd => {
+
+                        if self.consume_punctuation_token(b']')?.is_some() {
                             stack.pop();
+                            continue;
                         }
-                        ScanToken::Eof => {
-                            return Err(ParseError::new(
-                                token.span,
-                                DeserializeErrorKind::UnexpectedEof {
-                                    expected: "',' or ']'",
-                                },
-                            ));
+
+                        let token = self.consume_spanned_token()?;
+                        match token.token {
+                            ScanToken::Eof => {
+                                return Err(ParseError::new(
+                                    token.span,
+                                    DeserializeErrorKind::UnexpectedEof {
+                                        expected: "',' or ']'",
+                                    },
+                                ));
+                            }
+                            _ => return Err(self.unexpected_scan_token(&token, "',' or ']'")),
                         }
-                        _ => return Err(self.unexpected_scan_token(&token, "',' or ']'")),
-                    },
+                    }
                 },
             }
         }
@@ -1043,8 +1147,8 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 self.decode_string(start, end, has_escapes, token.span)?;
                 Ok(())
             }
-            ScanToken::Number { start, end, hint } => {
-                self.parse_number(start, end, hint)?;
+            ScanToken::Number { start, end, .. } => {
+                validate_json_number_text(self.input, start, end)?;
                 Ok(())
             }
             ScanToken::True | ScanToken::False | ScanToken::Null => Ok(()),
@@ -1059,6 +1163,10 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     fn expect_skip_colon_token(&mut self) -> Result<(), ParseError> {
+        if self.consume_punctuation_token(b':')?.is_some() {
+            return Ok(());
+        }
+
         let token = self.consume_spanned_token()?;
         match token.token {
             ScanToken::Colon => Ok(()),
