@@ -21,7 +21,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use facet_core::{
     Characteristic, Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, MapDef, OptionDef,
-    PointerDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
+    PointerDef, PtrConst, PtrMut, PtrUninit, ScalarType, SetDef, Shape, StructKind, Type, UserType,
 };
 use facet_format::{DeserializeError, DeserializeErrorKind, ParseError};
 use facet_reflect::Span;
@@ -61,6 +61,7 @@ enum JsonBlockId {
     Shape(&'static Shape),
     StructLoop(&'static Shape),
     ListLoop(&'static Shape),
+    SetLoop(&'static Shape),
     MapLoop(&'static Shape),
 }
 
@@ -1666,6 +1667,19 @@ enum JsonOp<Block> {
         element_layout: Layout,
         loop_id: Block,
     },
+    ReadSet {
+        set_shape: &'static Shape,
+        set: SetDef,
+        loop_id: Block,
+    },
+    SetNext {
+        set: SetDef,
+        element_program: Program<JsonOp<Block>>,
+        element_scalar: Option<ScalarType>,
+        element_option_scalar: Option<ListOptionScalar>,
+        element_layout: Layout,
+        loop_id: Block,
+    },
     ReadMap {
         map_shape: &'static Shape,
         map: MapDef,
@@ -2092,12 +2106,33 @@ impl Lowering {
                     loop_id,
                 }])
             }
+            Def::Set(set) => {
+                let element_layout = sized_layout(set.t())?;
+                let element_program = self.lower_shape(set.t())?;
+                let element_scalar = ScalarType::try_from_shape(set.t());
+                let element_option_scalar = list_option_scalar(set.t())?;
+                let loop_id = JsonBlockId::SetLoop(shape);
+                let loop_program = vec![JsonOp::SetNext {
+                    set,
+                    element_program: element_program.clone(),
+                    element_scalar,
+                    element_option_scalar,
+                    element_layout,
+                    loop_id,
+                }];
+                self.lowered.blocks.insert(loop_id, loop_program);
+                Ok(vec![JsonOp::ReadSet {
+                    set_shape: shape,
+                    set,
+                    loop_id,
+                }])
+            }
             Def::Map(map) => {
                 let Some(key_scalar) = ScalarType::try_from_shape(map.k()) else {
                     return Err(unsupported(shape, "scalar map key"));
                 };
-                if !matches!(key_scalar, ScalarType::String | ScalarType::CowStr) {
-                    return Err(unsupported(shape, "string map key"));
+                if !map_key_scalar_supported(key_scalar) {
+                    return Err(unsupported(shape, "string or integer map key"));
                 }
 
                 let key_layout = sized_layout(map.k())?;
@@ -2317,6 +2352,30 @@ fn resolve_json_op(
             element_layout,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
+        JsonOp::ReadSet {
+            set_shape,
+            set,
+            loop_id,
+        } => JsonOp::ReadSet {
+            set_shape,
+            set,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::SetNext {
+            set,
+            element_program,
+            element_scalar,
+            element_option_scalar,
+            element_layout,
+            loop_id,
+        } => JsonOp::SetNext {
+            set,
+            element_program: resolve_json_program(element_program, refs)?,
+            element_scalar,
+            element_option_scalar,
+            element_layout,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
         JsonOp::ReadMap {
             map_shape,
             map,
@@ -2421,6 +2480,26 @@ fn list_option_scalar(shape: &'static Shape) -> Result<Option<ListOptionScalar>,
     }))
 }
 
+fn map_key_scalar_supported(scalar: ScalarType) -> bool {
+    matches!(
+        scalar,
+        ScalarType::String
+            | ScalarType::CowStr
+            | ScalarType::I8
+            | ScalarType::I16
+            | ScalarType::I32
+            | ScalarType::I64
+            | ScalarType::I128
+            | ScalarType::ISize
+            | ScalarType::U8
+            | ScalarType::U16
+            | ScalarType::U32
+            | ScalarType::U64
+            | ScalarType::U128
+            | ScalarType::USize
+    )
+}
+
 fn sized_layout(shape: &'static Shape) -> Result<Layout, DeserializeError> {
     shape
         .layout
@@ -2456,6 +2535,7 @@ struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
         InlineStack<StructFrame<'program, FieldPlan<ExecBlock>, InitializedLedger<Span>>>,
     large_structs: Option<Box<LargeStructStack<'program>>>,
     lists: InlineStack<ListFrame>,
+    sets: InlineStack<SetFrame>,
     maps: InlineStack<MapFrame>,
     scratch: ScratchSession,
     success: bool,
@@ -2473,6 +2553,7 @@ where
             inline_structs: InlineStack::new(),
             large_structs: None,
             lists: InlineStack::new(),
+            sets: InlineStack::new(),
             maps: InlineStack::new(),
             scratch: ScratchSession::new(),
             success: false,
@@ -2738,12 +2819,101 @@ where
         }
     }
 
+    fn insert_set_element(&mut self, set: SetDef, scratch: &ScratchSlot) {
+        let set_ptr = self
+            .sets
+            .last()
+            .expect("set frame is present while inserting element");
+        unsafe {
+            (set.vtable.insert)(PtrMut::new(set_ptr.guard.ptr()), scratch_ptr_mut(scratch));
+        }
+    }
+
+    fn step_set_next(
+        &mut self,
+        plan: SetStepPlan<'program>,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+        loop {
+            if let Some(scalar) = plan.element_scalar {
+                let step = self.parser.next_sequence_scalar_or_end()?;
+                let JsonSequenceScalarStep::Value { value } = step else {
+                    return Ok(Control::Continue);
+                };
+
+                let scratch = self.scratch.reserve(plan.element_layout);
+                unsafe {
+                    write_scalar_input(
+                        self.parser,
+                        plan.set.t(),
+                        scalar,
+                        scratch_ptr_uninit(&scratch),
+                        value,
+                    )?;
+                }
+                self.insert_set_element(plan.set, &scratch);
+                self.scratch.release(scratch);
+                continue;
+            }
+
+            if let Some(option_scalar) = plan.element_option_scalar {
+                let step = self.parser.next_sequence_scalar_or_end()?;
+                let JsonSequenceScalarStep::Value { value } = step else {
+                    return Ok(Control::Continue);
+                };
+
+                let scratch = self.scratch.reserve(plan.element_layout);
+                if value.is_null() {
+                    unsafe {
+                        (option_scalar.option.vtable.init_none)(scratch_ptr_uninit(&scratch));
+                    }
+                } else {
+                    let inner = self.scratch.reserve(option_scalar.inner_layout);
+                    unsafe {
+                        write_scalar_input(
+                            self.parser,
+                            option_scalar.option.t(),
+                            option_scalar.scalar,
+                            scratch_ptr_uninit(&inner),
+                            value,
+                        )?;
+                        (option_scalar.option.vtable.init_some)(
+                            scratch_ptr_uninit(&scratch),
+                            scratch_ptr_mut(&inner),
+                        );
+                    }
+                    self.scratch.release(inner);
+                }
+                self.insert_set_element(plan.set, &scratch);
+                self.scratch.release(scratch);
+                continue;
+            }
+
+            if self.parser.consume_sequence_end_if_next()? {
+                return Ok(Control::Continue);
+            }
+
+            let scratch = self.scratch.reserve(plan.element_layout);
+            let old_base = self.base;
+            self.base = scratch_ptr_uninit(&scratch);
+            return Ok(call_program_or_block_then(
+                plan.element_program,
+                Continuation::InsertedSetElement {
+                    set: plan.set,
+                    old_base,
+                    scratch,
+                    loop_id: plan.loop_id,
+                },
+            ));
+        }
+    }
+
     fn insert_map_entry(
         &mut self,
         map: MapDef,
         key_scalar: ScalarType,
         key_layout: Layout,
         mut key: String,
+        key_span: Span,
         value_scratch: ScratchSlot,
     ) -> Result<(), DeserializeError> {
         let map_ptr = self
@@ -2772,8 +2942,15 @@ where
         }
 
         let key_scratch = self.scratch.reserve(key_layout);
-        let key_result =
-            unsafe { write_map_key(map.k(), key_scalar, scratch_ptr_uninit(&key_scratch), key) };
+        let key_result = unsafe {
+            write_map_key(
+                map.k(),
+                key_scalar,
+                scratch_ptr_uninit(&key_scratch),
+                key,
+                key_span,
+            )
+        };
         if let Err(err) = key_result {
             unsafe {
                 drop_shape_value(map.v() as *const Shape as *const (), value_scratch.ptr());
@@ -2801,6 +2978,7 @@ where
         key_scalar: ScalarType,
         key_layout: Layout,
         key: JsonFieldKeyInput<'de>,
+        key_span: Span,
         value_scratch: ScratchSlot,
     ) -> Result<(), DeserializeError> {
         if key_scalar == ScalarType::String
@@ -2846,7 +3024,7 @@ where
                 return Err(err.into());
             }
         };
-        self.insert_map_entry(map, key_scalar, key_layout, key, value_scratch)
+        self.insert_map_entry(map, key_scalar, key_layout, key, key_span, value_scratch)
     }
 
     fn try_insert_borrowed_str_map_entry(
@@ -2886,9 +3064,9 @@ where
         &mut self,
         plan: MapStepPlan<'program>,
     ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
-        let key_input = match self.parser.next_object_key_or_end()? {
+        let (key_input, key_span) = match self.parser.next_object_key_or_end()? {
             JsonObjectKeyStep::End => return Ok(Control::Continue),
-            JsonObjectKeyStep::Field { key, span: _ } => key,
+            JsonObjectKeyStep::Field { key, span } => (key, span),
         };
 
         if let Some(scalar) = plan.value_scalar {
@@ -2913,6 +3091,7 @@ where
                 plan.key_scalar,
                 plan.key_layout,
                 key_input,
+                key_span,
                 value_scratch,
             )?;
             return Ok(Control::CallBlock(plan.loop_id));
@@ -2933,6 +3112,7 @@ where
                 key_scalar: plan.key_scalar,
                 key_layout: plan.key_layout,
                 key,
+                key_span,
                 value_scratch,
                 old_base,
                 loop_id: plan.loop_id,
@@ -3432,6 +3612,27 @@ struct MapStepPlan<'program> {
     loop_id: ExecBlock,
 }
 
+#[derive(Clone, Copy)]
+struct SetStepPlan<'program> {
+    set: SetDef,
+    element_program: &'program [ExecOp],
+    element_scalar: Option<ScalarType>,
+    element_option_scalar: Option<ListOptionScalar>,
+    element_layout: Layout,
+    loop_id: ExecBlock,
+}
+
+struct SetFrame {
+    guard: HandleGuard,
+}
+
+impl SetFrame {
+    fn finish(mut self) -> Result<(), DeserializeError> {
+        self.guard.disarm();
+        Ok(())
+    }
+}
+
 struct MapFrame {
     guard: HandleGuard,
 }
@@ -3455,6 +3656,7 @@ impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
         }
 
         while self.maps.pop().is_some() {}
+        while self.sets.pop().is_some() {}
         while self.lists.pop().is_some() {}
     }
 }
@@ -3697,6 +3899,37 @@ where
                     },
                 ));
             },
+            JsonOp::ReadSet {
+                set_shape,
+                set,
+                loop_id,
+            } => {
+                self.parser.consume_array_start_fast()?;
+                let set_ptr = unsafe { (set.vtable.init_in_place_with_capacity)(self.base, 0) };
+                self.sets.push(SetFrame {
+                    guard: HandleGuard::new(
+                        set_ptr.as_mut_byte_ptr(),
+                        *set_shape as *const Shape as *const (),
+                        drop_shape_value,
+                    ),
+                });
+                Ok(Control::CallBlockThen(*loop_id, Continuation::FinishSet))
+            }
+            JsonOp::SetNext {
+                set,
+                element_program,
+                element_scalar,
+                element_option_scalar,
+                element_layout,
+                loop_id,
+            } => self.step_set_next(SetStepPlan {
+                set: *set,
+                element_program,
+                element_scalar: *element_scalar,
+                element_option_scalar: *element_option_scalar,
+                element_layout: *element_layout,
+                loop_id: *loop_id,
+            }),
             JsonOp::ReadMap {
                 map_shape,
                 map,
@@ -3836,6 +4069,14 @@ where
                 list.finish()?;
                 Ok(Control::Continue)
             }
+            Continuation::FinishSet => {
+                let set = self
+                    .sets
+                    .pop()
+                    .expect("set frame is present after set program");
+                set.finish()?;
+                Ok(Control::Continue)
+            }
             Continuation::FinishMap => {
                 let map = self
                     .maps
@@ -3849,11 +4090,12 @@ where
                 key_scalar,
                 key_layout,
                 key,
+                key_span,
                 value_scratch,
                 old_base,
                 loop_id,
             } => {
-                self.insert_map_entry(map, key_scalar, key_layout, key, value_scratch)?;
+                self.insert_map_entry(map, key_scalar, key_layout, key, key_span, value_scratch)?;
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
@@ -3864,6 +4106,17 @@ where
                 loop_id,
             } => {
                 self.push_list_element(list, &scratch)?;
+                self.scratch.release(scratch);
+                self.base = old_base;
+                Ok(Control::CallBlock(loop_id))
+            }
+            Continuation::InsertedSetElement {
+                set,
+                old_base,
+                scratch,
+                loop_id,
+            } => {
+                self.insert_set_element(set, &scratch);
                 self.scratch.release(scratch);
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
@@ -3924,18 +4177,26 @@ enum Continuation {
         scratch: ScratchSlot,
     },
     FinishList,
+    FinishSet,
     FinishMap,
     MapValueDone {
         map: MapDef,
         key_scalar: ScalarType,
         key_layout: Layout,
         key: String,
+        key_span: Span,
         value_scratch: ScratchSlot,
         old_base: PtrUninit,
         loop_id: ExecBlock,
     },
     PushedListElement {
         list: ListDef,
+        old_base: PtrUninit,
+        scratch: ScratchSlot,
+        loop_id: ExecBlock,
+    },
+    InsertedSetElement {
+        set: SetDef,
         old_base: PtrUninit,
         scratch: ScratchSlot,
         loop_id: ExecBlock,
@@ -4724,7 +4985,18 @@ unsafe fn write_map_key(
     scalar: ScalarType,
     dst: PtrUninit,
     key: String,
+    span: Span,
 ) -> Result<(), DeserializeError> {
+    macro_rules! write_parsed_key {
+        ($ty:ty, $expected:literal) => {{
+            let value = parse_map_key::<$ty>(&key, span, $expected)?;
+            unsafe {
+                dst.put(value);
+            }
+            Ok(())
+        }};
+    }
+
     match scalar {
         ScalarType::String => {
             unsafe {
@@ -4738,8 +5010,35 @@ unsafe fn write_map_key(
             }
             Ok(())
         }
-        _ => Err(unsupported(shape, "string map key")),
+        ScalarType::I8 => write_parsed_key!(i8, "valid integer for map key"),
+        ScalarType::I16 => write_parsed_key!(i16, "valid integer for map key"),
+        ScalarType::I32 => write_parsed_key!(i32, "valid integer for map key"),
+        ScalarType::I64 => write_parsed_key!(i64, "valid integer for map key"),
+        ScalarType::I128 => write_parsed_key!(i128, "valid integer for map key"),
+        ScalarType::ISize => write_parsed_key!(isize, "valid integer for map key"),
+        ScalarType::U8 => write_parsed_key!(u8, "valid unsigned integer for map key"),
+        ScalarType::U16 => write_parsed_key!(u16, "valid unsigned integer for map key"),
+        ScalarType::U32 => write_parsed_key!(u32, "valid unsigned integer for map key"),
+        ScalarType::U64 => write_parsed_key!(u64, "valid unsigned integer for map key"),
+        ScalarType::U128 => write_parsed_key!(u128, "valid unsigned integer for map key"),
+        ScalarType::USize => write_parsed_key!(usize, "valid unsigned integer for map key"),
+        _ => Err(unsupported(shape, "string or integer map key")),
     }
+}
+
+fn parse_map_key<T>(key: &str, span: Span, expected: &'static str) -> Result<T, DeserializeError>
+where
+    T: FromStr,
+{
+    key.parse().map_err(|_| {
+        vm_error(
+            Some(span),
+            DeserializeErrorKind::UnexpectedToken {
+                expected,
+                got: format!("string '{}'", key).into(),
+            },
+        )
+    })
 }
 
 fn write_unit_input<'de, const TRUSTED_UTF8: bool>(
