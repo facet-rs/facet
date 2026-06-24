@@ -40,7 +40,18 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install dodeca
-        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bearcove/dodeca/releases/latest/download/dodeca-installer.sh | sh
+        # Pull the binary straight from the GitHub release (GitHub's own `latest`
+        # redirect), not the installer.sh — the installer reads its version from
+        # the S3 dist mirror, whose `latest` marker lags the GitHub releases.
+        run: |
+          mkdir -p ~/.cargo/bin
+          tmp="$(mktemp -d)"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bearcove/dodeca/releases/latest/download/dodeca-x86_64-unknown-linux-gnu.tar.xz \
+            | tar -xJ -C "$tmp"
+          cp "$tmp/ddc" ~/.cargo/bin/ddc
+          chmod +x ~/.cargo/bin/ddc
+          ddc --version
 
       - name: Build website with dodeca
         run: ~/.cargo/bin/ddc build
