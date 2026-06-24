@@ -164,6 +164,28 @@ impl AdjacentTaggedEvent {
     }
 }
 
+#[derive(Debug, Facet, serde::Deserialize)]
+#[facet(untagged)]
+#[serde(untagged)]
+#[repr(u8)]
+enum UntaggedEvent {
+    Point { x: i32, y: i32 },
+    Text(String),
+    Count(u64),
+    Flag(bool),
+}
+
+impl UntaggedEvent {
+    fn checksum(&self) -> usize {
+        match self {
+            Self::Point { x, y } => (*x as usize).wrapping_add(*y as usize),
+            Self::Text(value) => value.len(),
+            Self::Count(value) => *value as usize,
+            Self::Flag(value) => usize::from(*value),
+        }
+    }
+}
+
 // =============================================================================
 // Test data
 // =============================================================================
@@ -297,6 +319,8 @@ const ADJACENT_TAGGED_JSON: &str = r#"{
         "text": "hello"
     }
 }"#;
+
+const UNTAGGED_EVENT_JSON: &str = r#"{"x": 10, "y": 20}"#;
 
 fn bench_fresh_typeplan<T>(bencher: Bencher, json: &'static str)
 where
@@ -927,6 +951,38 @@ fn adjacent_tagged_weavy_jit_reused_plan(bencher: Bencher) {
 #[divan::bench]
 fn adjacent_tagged_serde_json(bencher: Bencher) {
     bench_serde_json_observed::<AdjacentTaggedEvent>(bencher, ADJACENT_TAGGED_JSON, |value| {
+        value.checksum()
+    });
+}
+
+// =============================================================================
+// Benchmarks - untagged enums
+// =============================================================================
+
+#[divan::bench]
+fn untagged_event_reused_typeplan(bencher: Bencher) {
+    bench_reused_typeplan_observed::<UntaggedEvent>(bencher, UNTAGGED_EVENT_JSON, |value| {
+        value.checksum()
+    });
+}
+
+#[divan::bench]
+fn untagged_event_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan_observed::<UntaggedEvent>(bencher, UNTAGGED_EVENT_JSON, |value| {
+        value.checksum()
+    });
+}
+
+#[divan::bench]
+fn untagged_event_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan_observed::<UntaggedEvent>(bencher, UNTAGGED_EVENT_JSON, |value| {
+        value.checksum()
+    });
+}
+
+#[divan::bench]
+fn untagged_event_serde_json(bencher: Bencher) {
+    bench_serde_json_observed::<UntaggedEvent>(bencher, UNTAGGED_EVENT_JSON, |value| {
         value.checksum()
     });
 }

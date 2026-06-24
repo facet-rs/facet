@@ -1652,6 +1652,16 @@ enum JsonOp<Block> {
         enum_type: EnumType,
         variants: Box<[ExternalVariantPlan<Block>]>,
     },
+    ReadNumericEnum {
+        shape: &'static Shape,
+        enum_type: EnumType,
+        variants: Box<[ExternalVariantPlan<Block>]>,
+    },
+    ReadUntaggedEnum {
+        shape: &'static Shape,
+        enum_type: EnumType,
+        variants: Box<[ExternalVariantPlan<Block>]>,
+    },
     ReadTaggedEnum {
         shape: &'static Shape,
         enum_type: EnumType,
@@ -2294,12 +2304,6 @@ impl Lowering {
         shape: &'static Shape,
         enum_type: EnumType,
     ) -> Result<Program<SymbolicOp>, DeserializeError> {
-        if shape.is_numeric() {
-            return Err(unsupported(shape, "numeric enum"));
-        }
-        if shape.is_untagged() {
-            return Err(unsupported(shape, "untagged enum"));
-        }
         let tag_key = shape.get_tag_attr();
         let content_key = shape.get_content_attr();
         if tag_key.is_none() && content_key.is_some() {
@@ -2368,6 +2372,20 @@ impl Lowering {
         }
 
         let variants = variants.into_boxed_slice();
+        if shape.is_numeric() && tag_key.is_none() {
+            return Ok(vec![JsonOp::ReadNumericEnum {
+                shape,
+                enum_type,
+                variants,
+            }]);
+        }
+        if shape.is_untagged() {
+            return Ok(vec![JsonOp::ReadUntaggedEnum {
+                shape,
+                enum_type,
+                variants,
+            }]);
+        }
         match tag_key {
             Some(tag_key) => Ok(vec![JsonOp::ReadTaggedEnum {
                 shape,
@@ -2439,6 +2457,24 @@ fn resolve_json_op(
             enum_type,
             variants,
         } => JsonOp::ReadExternalEnum {
+            shape,
+            enum_type,
+            variants: resolve_external_variant_plans(variants, refs)?,
+        },
+        JsonOp::ReadNumericEnum {
+            shape,
+            enum_type,
+            variants,
+        } => JsonOp::ReadNumericEnum {
+            shape,
+            enum_type,
+            variants: resolve_external_variant_plans(variants, refs)?,
+        },
+        JsonOp::ReadUntaggedEnum {
+            shape,
+            enum_type,
+            variants,
+        } => JsonOp::ReadUntaggedEnum {
             shape,
             enum_type,
             variants: resolve_external_variant_plans(variants, refs)?,
@@ -2713,6 +2749,327 @@ fn external_other_variant(
     variants: &[ExternalVariantPlan<ExecBlock>],
 ) -> Option<&ExternalVariantPlan<ExecBlock>> {
     variants.iter().find(|variant| variant.variant.is_other())
+}
+
+fn numeric_variant(
+    variants: &[ExternalVariantPlan<ExecBlock>],
+    discriminant: i64,
+) -> Option<&ExternalVariantPlan<ExecBlock>> {
+    variants
+        .iter()
+        .find(|variant| variant.variant.discriminant == Some(discriminant))
+}
+
+fn numeric_discriminant_from_token(
+    token: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<i64, DeserializeError> {
+    match token {
+        JsonScalarToken::I64(discriminant) => Ok(discriminant),
+        JsonScalarToken::U64(discriminant) => Ok(discriminant as i64),
+        JsonScalarToken::Str(discriminant) => discriminant.parse().map_err(|_| {
+            vm_error(
+                Some(span),
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "string representing an integer (i64)",
+                    got: discriminant.into_owned().into(),
+                },
+            )
+        }),
+        other => Err(vm_error(
+            Some(span),
+            DeserializeErrorKind::Unsupported {
+                message: format!("unexpected {} scalar for numeric enum", other.kind_name()).into(),
+            },
+        )),
+    }
+}
+
+fn scalar_matches_shape(scalar: &ScalarValue<'_>, shape: &'static Shape) -> bool {
+    let Some(scalar_type) = shape.scalar_type() else {
+        return matches!(scalar, ScalarValue::Null) && matches!(shape.def, Def::Option(_));
+    };
+
+    match scalar {
+        ScalarValue::Bool(_) => matches!(scalar_type, ScalarType::Bool),
+        ScalarValue::Char(_) => matches!(scalar_type, ScalarType::Char),
+        ScalarValue::I64(value) => {
+            if matches!(
+                scalar_type,
+                ScalarType::I8
+                    | ScalarType::I16
+                    | ScalarType::I32
+                    | ScalarType::I64
+                    | ScalarType::I128
+                    | ScalarType::ISize
+            ) {
+                return true;
+            }
+
+            if *value < 0 {
+                return false;
+            }
+
+            let unsigned = *value as u64;
+            match scalar_type {
+                ScalarType::U8 => unsigned <= u8::MAX as u64,
+                ScalarType::U16 => unsigned <= u16::MAX as u64,
+                ScalarType::U32 => unsigned <= u32::MAX as u64,
+                ScalarType::U64 | ScalarType::U128 | ScalarType::USize => true,
+                _ => false,
+            }
+        }
+        ScalarValue::U64(value) => {
+            if matches!(
+                scalar_type,
+                ScalarType::U8
+                    | ScalarType::U16
+                    | ScalarType::U32
+                    | ScalarType::U64
+                    | ScalarType::U128
+                    | ScalarType::USize
+            ) {
+                return true;
+            }
+
+            if *value > i64::MAX as u64 {
+                return false;
+            }
+
+            match scalar_type {
+                ScalarType::I8 => *value <= i8::MAX as u64,
+                ScalarType::I16 => *value <= i16::MAX as u64,
+                ScalarType::I32 => *value <= i32::MAX as u64,
+                ScalarType::I64 | ScalarType::I128 | ScalarType::ISize => true,
+                _ => false,
+            }
+        }
+        ScalarValue::U128(_) => matches!(scalar_type, ScalarType::U128 | ScalarType::I128),
+        ScalarValue::I128(_) => matches!(scalar_type, ScalarType::I128 | ScalarType::U128),
+        ScalarValue::F64(_) => matches!(scalar_type, ScalarType::F32 | ScalarType::F64),
+        ScalarValue::Str(value) => {
+            if matches!(
+                scalar_type,
+                ScalarType::String | ScalarType::Str | ScalarType::CowStr | ScalarType::Char
+            ) {
+                return true;
+            }
+
+            scalar_parse_probe(shape, value.as_ref())
+        }
+        ScalarValue::Null | ScalarValue::Unit => matches!(scalar_type, ScalarType::Unit),
+        ScalarValue::Bytes(_) => false,
+        _ => false,
+    }
+}
+
+fn scalar_match_quality(scalar: &ScalarValue<'_>, shape: &'static Shape) -> Option<u8> {
+    if !scalar_matches_shape(scalar, shape) {
+        return None;
+    }
+
+    if scalar_exactly_matches_shape(scalar, shape) {
+        Some(0)
+    } else {
+        Some(1)
+    }
+}
+
+fn scalar_exactly_matches_shape(scalar: &ScalarValue<'_>, shape: &'static Shape) -> bool {
+    let scalar_type = shape.scalar_type();
+
+    match scalar {
+        ScalarValue::Bool(_) => matches!(scalar_type, Some(ScalarType::Bool)),
+        ScalarValue::Char(_) => matches!(scalar_type, Some(ScalarType::Char)),
+        ScalarValue::I64(_) | ScalarValue::U64(_) | ScalarValue::U128(_) | ScalarValue::I128(_) => {
+            matches!(
+                scalar_type,
+                Some(
+                    ScalarType::U8
+                        | ScalarType::U16
+                        | ScalarType::U32
+                        | ScalarType::U64
+                        | ScalarType::U128
+                        | ScalarType::USize
+                        | ScalarType::I8
+                        | ScalarType::I16
+                        | ScalarType::I32
+                        | ScalarType::I64
+                        | ScalarType::I128
+                        | ScalarType::ISize
+                )
+            )
+        }
+        ScalarValue::F64(_) => matches!(scalar_type, Some(ScalarType::F32 | ScalarType::F64)),
+        ScalarValue::Str(_) => matches!(
+            scalar_type,
+            Some(ScalarType::String | ScalarType::Str | ScalarType::CowStr | ScalarType::Char)
+        ),
+        ScalarValue::Null => {
+            matches!(scalar_type, Some(ScalarType::Unit))
+                || (scalar_type.is_none() && matches!(shape.def, Def::Option(_)))
+        }
+        ScalarValue::Unit => matches!(scalar_type, Some(ScalarType::Unit)),
+        ScalarValue::Bytes(_) => false,
+        _ => false,
+    }
+}
+
+fn scalar_parse_probe(shape: &'static Shape, value: &str) -> bool {
+    const PARSE_PROBE_SIZE: usize = 128;
+
+    #[repr(align(64))]
+    struct ParseProbeStorage([u8; PARSE_PROBE_SIZE]);
+
+    if !shape.vtable.has_parse() {
+        return false;
+    }
+
+    let Ok(layout) = shape.layout.sized_layout() else {
+        return false;
+    };
+
+    if layout.size() > PARSE_PROBE_SIZE
+        || layout.align() > core::mem::align_of::<ParseProbeStorage>()
+    {
+        return false;
+    }
+
+    let mut temp = MaybeUninit::<ParseProbeStorage>::uninit();
+    let temp_bytes_ptr = unsafe { core::ptr::addr_of_mut!((*temp.as_mut_ptr()).0) };
+    let temp_ptr = PtrUninit::new(temp_bytes_ptr.cast::<u8>());
+
+    if let Some(Ok(())) = unsafe { shape.call_parse(value, temp_ptr) } {
+        unsafe {
+            let _ = shape.call_drop_in_place(temp_ptr.assume_init());
+        }
+        true
+    } else {
+        false
+    }
+}
+
+fn single_field_variant_shape(variant: &ExternalVariantPlan<ExecBlock>) -> Option<&'static Shape> {
+    match variant.variant.data.kind {
+        StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => {
+            Some(variant.fields[0].shape)
+        }
+        _ => None,
+    }
+}
+
+fn untagged_scalar_variant<'a>(
+    variants: &'a [ExternalVariantPlan<ExecBlock>],
+    scalar: &ScalarValue<'_>,
+) -> Option<&'a ExternalVariantPlan<ExecBlock>> {
+    if matches!(scalar, ScalarValue::Null)
+        && let Some(variant) = variants
+            .iter()
+            .find(|variant| variant.variant.data.kind == StructKind::Unit)
+    {
+        return Some(variant);
+    }
+
+    if let ScalarValue::Str(name) = scalar
+        && let Some(variant) = variants.iter().find(|variant| {
+            variant.variant.data.kind == StructKind::Unit
+                && name.as_ref() == variant.variant.effective_name()
+        })
+    {
+        return Some(variant);
+    }
+
+    let mut best: Option<(&ExternalVariantPlan<ExecBlock>, u8)> = None;
+    for variant in variants {
+        let Some(shape) = single_field_variant_shape(variant) else {
+            continue;
+        };
+        let Some(quality) = scalar_match_quality(scalar, shape) else {
+            continue;
+        };
+        if best.is_none_or(|(_, best_quality)| quality < best_quality) {
+            best = Some((variant, quality));
+        }
+    }
+
+    if let Some((variant, _)) = best {
+        return Some(variant);
+    }
+
+    variants
+        .iter()
+        .find(|variant| single_field_variant_shape(variant).is_some())
+}
+
+fn untagged_struct_variant<'a>(
+    shape: &'static Shape,
+    variants: &'a [ExternalVariantPlan<ExecBlock>],
+    fields: &[TaggedRawField<'_>],
+) -> Result<&'a ExternalVariantPlan<ExecBlock>, DeserializeError> {
+    let mut best: Option<(&ExternalVariantPlan<ExecBlock>, usize)> = None;
+
+    for variant in variants
+        .iter()
+        .filter(|variant| variant.variant.data.kind == StructKind::Struct)
+    {
+        let required_missing = variant.fields.iter().any(|field| {
+            matches!(field.missing, MissingField::Required)
+                && !fields
+                    .iter()
+                    .any(|raw_field| field.matches_key_bytes(raw_field.name.as_ref().as_bytes()))
+        });
+        if required_missing {
+            continue;
+        }
+
+        let matched = fields
+            .iter()
+            .filter(|raw_field| {
+                variant
+                    .fields
+                    .iter()
+                    .any(|field| field.matches_key_bytes(raw_field.name.as_ref().as_bytes()))
+            })
+            .count();
+
+        if best.is_none_or(|(_, best_matched)| matched > best_matched) {
+            best = Some((variant, matched));
+        }
+    }
+
+    best.map(|(variant, _)| variant).ok_or_else(|| {
+        vm_error(
+            None,
+            DeserializeErrorKind::NoMatchingVariant {
+                enum_shape: shape,
+                input_kind: "struct",
+            },
+        )
+    })
+}
+
+fn untagged_tuple_variant<'a>(
+    shape: &'static Shape,
+    variants: &'a [ExternalVariantPlan<ExecBlock>],
+    arity: usize,
+) -> Result<&'a ExternalVariantPlan<ExecBlock>, DeserializeError> {
+    variants
+        .iter()
+        .find(|variant| {
+            matches!(
+                variant.variant.data.kind,
+                StructKind::Tuple | StructKind::TupleStruct
+            ) && variant.fields.len() == arity
+        })
+        .ok_or_else(|| {
+            vm_error(
+                None,
+                DeserializeErrorKind::NoMatchingVariant {
+                    enum_shape: shape,
+                    input_kind: "sequence",
+                },
+            )
+        })
 }
 
 unsafe fn write_enum_discriminant(
@@ -3660,6 +4017,219 @@ where
             }
             None => self.read_internal_tagged_enum(shape, enum_type, tag_key, variants),
         }
+    }
+
+    fn read_numeric_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+        variants: &'program [ExternalVariantPlan<ExecBlock>],
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        let (token, span) = self.parser.read_scalar_token()?;
+        let discriminant = numeric_discriminant_from_token(token, span)?;
+        let variant = numeric_variant(variants, discriminant).ok_or_else(|| {
+            vm_error(
+                Some(span),
+                DeserializeErrorKind::NoMatchingVariant {
+                    enum_shape: shape,
+                    input_kind: "numeric discriminant",
+                },
+            )
+        })?;
+
+        unsafe {
+            write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
+        }
+        Ok(Control::Continue)
+    }
+
+    fn collect_raw_untagged_struct_fields(
+        &mut self,
+        raw: &'de str,
+    ) -> Result<Vec<TaggedRawField<'de>>, DeserializeError> {
+        let mut parser = JsonParser::<true>::new(raw.as_bytes());
+        let fields = {
+            let mut interp: JsonInterp<'_, 'de, 'program, true> =
+                JsonInterp::<'_, 'de, 'program, true>::new(&mut parser, self.base, self.blocks);
+            let fields = interp.collect_tagged_raw_fields("untagged enum struct")?;
+            interp.finish_success();
+            fields
+        };
+        Self::ensure_raw_parser_finished(&mut parser)?;
+        Ok(fields)
+    }
+
+    fn raw_sequence_arity(raw: &'de str) -> Result<usize, DeserializeError> {
+        let mut parser = JsonParser::<true>::new(raw.as_bytes());
+        let Some(event) = parser.next_event()? else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::UnexpectedEof {
+                    expected: "sequence start",
+                },
+            ));
+        };
+        if !matches!(event.kind, ParseEventKind::SequenceStart(_)) {
+            return Err(vm_error(
+                Some(event.span),
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "sequence start",
+                    got: event.kind_name().into(),
+                },
+            ));
+        }
+
+        let mut depth = 1usize;
+        let mut arity = 0usize;
+        while depth > 0 {
+            let Some(event) = parser.next_event()? else {
+                return Err(vm_error(
+                    None,
+                    DeserializeErrorKind::UnexpectedEof {
+                        expected: "sequence item or end",
+                    },
+                ));
+            };
+
+            match event.kind {
+                ParseEventKind::SequenceStart(_) | ParseEventKind::StructStart(_) => {
+                    if depth == 1 {
+                        arity += 1;
+                    }
+                    depth += 1;
+                }
+                ParseEventKind::SequenceEnd | ParseEventKind::StructEnd => {
+                    depth = depth.saturating_sub(1);
+                }
+                ParseEventKind::Scalar(_) | ParseEventKind::VariantTag(_) => {
+                    if depth == 1 {
+                        arity += 1;
+                    }
+                }
+                ParseEventKind::FieldKey(_) | ParseEventKind::OrderedField => {}
+                _ => {}
+            }
+        }
+
+        Self::ensure_raw_parser_finished(&mut parser)?;
+        Ok(arity)
+    }
+
+    fn read_untagged_selected_variant(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        raw: &'de str,
+        span: Span,
+        captured_struct_fields: Option<&[TaggedRawField<'de>]>,
+    ) -> Result<(), DeserializeError> {
+        unsafe {
+            write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
+        }
+
+        match variant.variant.data.kind {
+            StructKind::Unit => Ok(()),
+            StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => {
+                self.read_raw_single_field_variant_payload(shape, variant, raw, span)
+            }
+            StructKind::Tuple | StructKind::TupleStruct => {
+                self.read_raw_tuple_variant_payload(shape, variant, raw)
+            }
+            StructKind::Struct => {
+                if let Some(fields) = captured_struct_fields {
+                    self.push_struct_frame(
+                        shape,
+                        &variant.fields,
+                        variant.dispatch.as_ref(),
+                        variant.tracking,
+                    );
+                    self.read_captured_struct_fields(shape, variant, fields, None)
+                } else {
+                    self.read_raw_struct_variant_payload(shape, variant, raw)
+                }
+            }
+        }
+    }
+
+    fn read_untagged_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+        variants: &'program [ExternalVariantPlan<ExecBlock>],
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        enum UntaggedInput<'de> {
+            Scalar(ScalarValue<'de>),
+            Struct,
+            Sequence,
+            Other(&'static str),
+        }
+
+        let Some(event) = self.parser.peek_event()? else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::UnexpectedEof {
+                    expected: "untagged enum",
+                },
+            ));
+        };
+
+        let span = event.span;
+        let input = match &event.kind {
+            ParseEventKind::Scalar(scalar) => UntaggedInput::Scalar(scalar.clone()),
+            ParseEventKind::StructStart(_) => UntaggedInput::Struct,
+            ParseEventKind::SequenceStart(_) => UntaggedInput::Sequence,
+            _ => UntaggedInput::Other(event.kind_name()),
+        };
+        let raw = self
+            .parser
+            .capture_raw()?
+            .ok_or_else(|| unsupported_shape_message("raw JSON capture failed"))?;
+
+        match input {
+            UntaggedInput::Scalar(scalar) => {
+                let variant = untagged_scalar_variant(variants, &scalar).ok_or_else(|| {
+                    vm_error(
+                        Some(span),
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "matching untagged variant for scalar",
+                            got: scalar.kind_name().into(),
+                        },
+                    )
+                })?;
+                self.read_untagged_selected_variant(shape, enum_type, variant, raw, span, None)?;
+            }
+            UntaggedInput::Struct => {
+                let fields = self.collect_raw_untagged_struct_fields(raw)?;
+                let variant = untagged_struct_variant(shape, variants, &fields)?;
+                self.read_untagged_selected_variant(
+                    shape,
+                    enum_type,
+                    variant,
+                    raw,
+                    span,
+                    Some(&fields),
+                )?;
+            }
+            UntaggedInput::Sequence => {
+                let arity = Self::raw_sequence_arity(raw)?;
+                let variant = untagged_tuple_variant(shape, variants, arity)?;
+                self.read_untagged_selected_variant(shape, enum_type, variant, raw, span, None)?;
+            }
+            UntaggedInput::Other(got) => {
+                return Err(vm_error(
+                    Some(span),
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "scalar, struct, or sequence for untagged enum",
+                        got: got.into(),
+                    },
+                ));
+            }
+        }
+
+        Ok(Control::Continue)
     }
 
     fn finish_external_enum_payload(
@@ -4888,6 +5458,16 @@ where
                 enum_type,
                 variants,
             } => self.read_external_enum(shape, *enum_type, variants),
+            JsonOp::ReadNumericEnum {
+                shape,
+                enum_type,
+                variants,
+            } => self.read_numeric_enum(shape, *enum_type, variants),
+            JsonOp::ReadUntaggedEnum {
+                shape,
+                enum_type,
+                variants,
+            } => self.read_untagged_enum(shape, *enum_type, variants),
             JsonOp::ReadTaggedEnum {
                 shape,
                 enum_type,
