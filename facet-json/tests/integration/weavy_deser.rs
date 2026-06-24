@@ -294,6 +294,77 @@ enum AdjacentTupleDroppy {
 }
 
 #[derive(Facet, Debug, PartialEq)]
+#[facet(is_numeric)]
+#[repr(u8)]
+enum NumericEnum {
+    A,
+    B,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(is_numeric)]
+#[repr(i16)]
+enum SignedNumericEnum {
+    Z = -1,
+    A,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+enum UntaggedEnum {
+    Point { x: i32, y: i32 },
+    Value(i64),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+enum UntaggedWithNull {
+    None,
+    Some(i32),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+enum UntaggedNewtype {
+    String(String),
+    Number(u64),
+    Bool(bool),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct UntaggedAsField {
+    name: String,
+    value: UntaggedNewtype,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+enum UntaggedUnitOnly {
+    Alpha,
+    Beta,
+    Gamma,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+enum UntaggedTuple {
+    Pair(i32, i32),
+    Triple(i32, i32, i32),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+enum UntaggedDroppy {
+    Item { item: Droppy, tail: u8 },
+}
+
+#[derive(Facet, Debug, PartialEq)]
 struct EscapedFieldName {
     quoted_key: u8,
 }
@@ -1358,6 +1429,51 @@ fn weavy_deserializes_external_other_fallback_enums() {
     assert_default_weavy_parity::<ExternalOther>(r#"{"eq-bare":"$id"}"#);
     assert_default_weavy_parity::<ExternalOther>(r#""$id""#);
     assert_default_weavy_parity::<ExternalOther>(r#"null"#);
+}
+
+#[test]
+fn weavy_deserializes_numeric_enums() {
+    assert_default_weavy_parity::<NumericEnum>(r#"1"#);
+    assert_default_weavy_parity::<NumericEnum>(r#""0""#);
+    assert_default_weavy_parity::<SignedNumericEnum>(r#"-1"#);
+    assert_default_weavy_parity::<NumericEnum>(r#"99"#);
+}
+
+#[test]
+fn weavy_deserializes_untagged_struct_and_scalar_enums() {
+    assert_default_weavy_parity::<UntaggedEnum>(r#"{"x":10,"y":20}"#);
+    assert_default_weavy_parity::<UntaggedEnum>(r#"42"#);
+    assert_default_weavy_parity::<UntaggedWithNull>(r#"null"#);
+    assert_default_weavy_parity::<UntaggedWithNull>(r#"3"#);
+}
+
+#[test]
+fn weavy_deserializes_untagged_newtype_discrimination() {
+    assert_default_weavy_parity::<UntaggedNewtype>(r#""test""#);
+    assert_default_weavy_parity::<UntaggedNewtype>(r#"42"#);
+    assert_default_weavy_parity::<UntaggedNewtype>(r#"true"#);
+}
+
+#[test]
+fn weavy_deserializes_nested_untagged_enums() {
+    assert_default_weavy_parity::<UntaggedAsField>(r#"{"name":"test","value":42}"#);
+    assert_default_weavy_parity::<UntaggedAsField>(r#"{"name":"test","value":"text"}"#);
+}
+
+#[test]
+fn weavy_deserializes_untagged_unit_and_tuple_enums() {
+    assert_default_weavy_parity::<UntaggedUnitOnly>(r#""Alpha""#);
+    assert_default_weavy_parity::<UntaggedTuple>(r#"[1,2]"#);
+    assert_default_weavy_parity::<UntaggedTuple>(r#"[1,2,3]"#);
+}
+
+#[test]
+fn weavy_drops_untagged_struct_variant_fields_after_later_error() {
+    DROPPED_LIST_ELEMENTS.store(0, Ordering::SeqCst);
+
+    facet_json::from_str_weavy::<UntaggedDroppy>(r#"{"item":{"value":1},"tail":"bad"}"#)
+        .unwrap_err();
+    assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 1);
 }
 
 #[test]
