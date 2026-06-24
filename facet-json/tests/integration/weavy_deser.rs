@@ -280,7 +280,7 @@ fn weavy_hash_map_duplicate_keys_drop_replaced_value() {
 }
 
 #[test]
-fn weavy_drops_bulk_map_pairs_after_later_value_error() {
+fn weavy_drops_map_values_after_later_value_error() {
     DROPPED_BULK_MAP_VALUES.store(0, Ordering::SeqCst);
 
     let err = facet_json::from_str_weavy::<DroppyMap>(
