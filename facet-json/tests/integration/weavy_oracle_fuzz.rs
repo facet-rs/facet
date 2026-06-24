@@ -1,10 +1,10 @@
 use facet::Facet;
 use proptest::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::OnceLock;
 
-#[derive(Facet, Clone, Debug, PartialEq)]
+#[derive(Facet, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct OraclePoint {
     x: i32,
     y: i32,
@@ -65,6 +65,14 @@ struct OracleMaybeScores {
 struct OracleMapHolder {
     names: HashMap<String, String>,
     points: HashMap<String, OraclePoint>,
+}
+
+#[derive(Facet, Clone, Debug, PartialEq)]
+struct OracleSetHolder {
+    ordered: BTreeSet<String>,
+    hashed: HashSet<u16>,
+    maybe: BTreeSet<Option<u16>>,
+    points: BTreeSet<OraclePoint>,
 }
 
 type OraclePointList = Vec<OraclePoint>;
@@ -148,6 +156,16 @@ fn map_holder_plan() -> &'static facet_json::JsonWeavyPlan<OracleMapHolder> {
 fn map_holder_jit_plan() -> &'static facet_json::JsonWeavyPlan<OracleMapHolder> {
     static PLAN: OnceLock<facet_json::JsonWeavyPlan<OracleMapHolder>> = OnceLock::new();
     PLAN.get_or_init(|| facet_json::JsonWeavyPlan::<OracleMapHolder>::build_jit().unwrap())
+}
+
+fn set_holder_plan() -> &'static facet_json::JsonWeavyPlan<OracleSetHolder> {
+    static PLAN: OnceLock<facet_json::JsonWeavyPlan<OracleSetHolder>> = OnceLock::new();
+    PLAN.get_or_init(|| facet_json::JsonWeavyPlan::<OracleSetHolder>::build().unwrap())
+}
+
+fn set_holder_jit_plan() -> &'static facet_json::JsonWeavyPlan<OracleSetHolder> {
+    static PLAN: OnceLock<facet_json::JsonWeavyPlan<OracleSetHolder>> = OnceLock::new();
+    PLAN.get_or_init(|| facet_json::JsonWeavyPlan::<OracleSetHolder>::build_jit().unwrap())
 }
 
 fn assert_str_parity<T>(
@@ -305,6 +323,21 @@ fn map_holder_strategy() -> impl Strategy<Value = OracleMapHolder> {
         .prop_map(|(names, points)| OracleMapHolder { names, points })
 }
 
+fn set_holder_strategy() -> impl Strategy<Value = OracleSetHolder> {
+    (
+        prop::collection::btree_set(small_string(), 0..8),
+        prop::collection::hash_set(any::<u16>(), 0..8),
+        prop::collection::btree_set(prop::option::of(any::<u16>()), 0..8),
+        prop::collection::btree_set(point_strategy(), 0..8),
+    )
+        .prop_map(|(ordered, hashed, maybe, points)| OracleSetHolder {
+            ordered,
+            hashed,
+            maybe,
+            points,
+        })
+}
+
 fn assert_serialized_value_parity<T>(
     value: &T,
     plan: &facet_json::JsonWeavyPlan<T>,
@@ -317,7 +350,7 @@ fn assert_serialized_value_parity<T>(
 }
 
 fn assert_shape_bank_slice_parity(selector: u8, input: &[u8]) {
-    match selector % 8 {
+    match selector % 9 {
         0 => assert_slice_parity(input, point_plan(), point_jit_plan()),
         1 => assert_slice_parity(input, wide_plan(), wide_jit_plan()),
         2 => assert_slice_parity(input, defaults_plan(), defaults_jit_plan()),
@@ -325,7 +358,8 @@ fn assert_shape_bank_slice_parity(selector: u8, input: &[u8]) {
         4 => assert_slice_parity(input, maybe_scores_plan(), maybe_scores_jit_plan()),
         5 => assert_slice_parity(input, point_list_plan(), point_list_jit_plan()),
         6 => assert_slice_parity(input, string_map_plan(), string_map_jit_plan()),
-        _ => assert_slice_parity(input, map_holder_plan(), map_holder_jit_plan()),
+        7 => assert_slice_parity(input, map_holder_plan(), map_holder_jit_plan()),
+        _ => assert_slice_parity(input, set_holder_plan(), set_holder_jit_plan()),
     }
 }
 
@@ -398,6 +432,11 @@ proptest! {
     #[test]
     fn generated_map_holders_match_all_weavy_backends(value in map_holder_strategy()) {
         assert_serialized_value_parity(&value, map_holder_plan(), map_holder_jit_plan());
+    }
+
+    #[test]
+    fn generated_set_holders_match_all_weavy_backends(value in set_holder_strategy()) {
+        assert_serialized_value_parity(&value, set_holder_plan(), set_holder_jit_plan());
     }
 
     #[test]

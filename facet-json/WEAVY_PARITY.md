@@ -48,8 +48,8 @@ We should not switch `from_str` / `from_slice` to Weavy by default until:
 | `Option<T>` | Covered | Top-level null option, absent option field, `Option<String>`, and `Vec<Option<u16>>` are covered. | Add `Option<struct>` and `Option<map>` oracle shapes. |
 | Lists / `Vec<T>` | Covered | Scalar lists, struct lists, nullable scalar lists, direct-list adoption, and drop-on-error tests are covered. | Add nested list-of-list and list-of-map oracle shapes. |
 | String-key maps | Covered | `HashMap<String, String>`, map values as vectors/structs, duplicate keys, replacement drops, and value-error drops are covered. | Add `BTreeMap` / `IndexMap` parity rows if those vtables differ materially. |
-| Non-string scalar map keys | Gap | The lowerer rejects map keys unless they are `String` or `Cow<str>`; default path has integer map-key tests. | Implement key parsing through the typed scalar writers, then add integer-key map parity tests. |
-| Sets | Gap | The Weavy lowerer has list and map branches, but no set branch. | Add set descriptors/adoption or choose an adapter boundary. |
+| Non-string scalar map keys | Partial | Weavy supports exact-width signed/unsigned integer keys with direct default-path parity tests. Float-like keys and enum unit-variant keys are still default-only. | Add float-like and enum map-key parity or split those into dedicated rows. |
+| Sets | Covered | Weavy lowers set shapes through `SetDef` init/insert vtables; direct tests and oracle-bank shapes cover `BTreeSet`, `HashSet`, nullable scalar elements, nested struct elements, duplicates, and drop-on-error. | Consider a bulk `from_slice` optimization once raw-builder ownership is explicit. |
 | Smart pointers | Partial | Pointer lowering is generic when `new_into` exists; recursive `Box<Node>` is covered. | Add `Box<T>`, `Rc<T>`, `Arc<T>`, `Box<str>`, `Rc<str>`, `Arc<str>`, and `Arc<[T]>` parity tests. |
 | Recursive shapes | Covered | `Node { child: Option<Box<Node>> }` and stats tests cover recursive block calls. | Add recursive list/map payloads when those shapes enter the oracle bank. |
 | Tuple structs, tuple values, newtypes | Gap | The lowerer rejects non-named structs. | Decide JSON shape for tuple/newtype lowering and add format-suite parity cases. |
@@ -98,9 +98,8 @@ still run through the interpreter, and that fallback must remain visible.
 1. Add explicit Weavy tests for root scalars, `rename` / `rename_all`, custom
    defaults, and representative parsed scalar-like types. These are likely
    already close to supported and reduce uncertainty cheaply.
-2. Implement non-string map keys. This is isolated, clearly tested by the
-   current default path, and pressures map-key scalar parsing without touching
-   enum dispatch yet.
+2. Extend non-string map keys beyond integers. This keeps map-key scalar
+   parsing moving before enum dispatch lands.
 3. Start enum lowering with externally tagged variants. This is the first major
    JSON-specific surface needed before `facet-json` can move away from
    `facet-format` for real.

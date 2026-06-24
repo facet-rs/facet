@@ -1,10 +1,11 @@
 use facet::Facet;
 use facet_format::DeserializeErrorKind;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DROPPED_LIST_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
+static DROPPED_SET_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
 static DROPPED_BULK_MAP_VALUES: AtomicUsize = AtomicUsize::new(0);
 static DROPPED_DUPLICATE_MAP_VALUES: AtomicUsize = AtomicUsize::new(0);
 
@@ -40,6 +41,12 @@ struct FloatPoint {
     z: f64,
 }
 
+#[derive(Facet, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct OrderedPoint {
+    x: i32,
+    y: i32,
+}
+
 #[derive(Facet, Debug, PartialEq)]
 struct Person {
     name: String,
@@ -66,8 +73,41 @@ struct MapHolder {
 }
 
 #[derive(Facet, Debug, PartialEq)]
+struct IntegerMapKeys {
+    i8s: BTreeMap<i8, String>,
+    i32s: BTreeMap<i32, String>,
+    u16s: BTreeMap<u16, String>,
+    u128s: BTreeMap<u128, String>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct SetHolder {
+    names: BTreeMap<String, String>,
+    ordered: BTreeSet<String>,
+    hashed: HashSet<u16>,
+    maybe: BTreeSet<Option<u16>>,
+    points: BTreeSet<OrderedPoint>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
 struct DroppyMap {
     items: HashMap<String, BulkMapDroppy>,
+}
+
+#[derive(Facet, Debug, Eq, Hash, PartialEq)]
+struct SetDroppy {
+    value: u8,
+}
+
+impl Drop for SetDroppy {
+    fn drop(&mut self) {
+        DROPPED_SET_ELEMENTS.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct DroppySet {
+    items: HashSet<SetDroppy>,
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -281,6 +321,55 @@ fn weavy_hash_map_duplicate_keys_keep_latest_value() {
 
     assert_eq!(got.len(), 1);
     assert_eq!(got["same"], "second");
+}
+
+#[test]
+fn weavy_deserializes_integer_map_keys_at_every_width() {
+    assert_default_weavy_parity::<IntegerMapKeys>(
+        r#"{
+            "i8s": {"-3": "a"},
+            "i32s": {"100000": "b"},
+            "u16s": {"65535": "c"},
+            "u128s": {"340282366920938463463374607431768211455": "d"}
+        }"#,
+    );
+}
+
+#[test]
+fn weavy_rejects_out_of_range_integer_map_key() {
+    let err = facet_json::from_str_weavy::<BTreeMap<i8, String>>(r#"{"300": "x"}"#)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("valid integer for map key"), "got: {err}");
+}
+
+#[test]
+fn weavy_deserializes_sets() {
+    assert_default_weavy_parity::<SetHolder>(
+        r#"{
+            "names": {"alpha": "a"},
+            "ordered": ["beta", "alpha", "alpha"],
+            "hashed": [2, 1, 2],
+            "maybe": [null, 3, null],
+            "points": [{"x": 1, "y": 2}, {"x": 0, "y": 0}, {"x": 1, "y": 2}]
+        }"#,
+    );
+}
+
+#[test]
+fn weavy_drops_set_values_after_later_element_error() {
+    DROPPED_SET_ELEMENTS.store(0, Ordering::SeqCst);
+
+    let err = facet_json::from_str_weavy::<DroppySet>(r#"{"items":[{"value":1},{"value":"bad"}]}"#)
+        .unwrap_err();
+
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::UnexpectedToken { .. }
+            | DeserializeErrorKind::InvalidValue { .. }
+            | DeserializeErrorKind::NumberOutOfRange { .. }
+    ));
+    assert_eq!(DROPPED_SET_ELEMENTS.load(Ordering::SeqCst), 1);
 }
 
 #[test]
