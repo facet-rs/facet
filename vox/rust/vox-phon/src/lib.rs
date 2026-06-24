@@ -21,7 +21,7 @@ pub use phon::api::{
     JitFallbackRecord, JitFallbackReport, JitShapeReport, MethodJitFallbackReport,
     MethodJitShapeRecord, MethodJitShapeReport, MethodJitShapeSummary, NativeJitStats,
 };
-use phon::derive::{Derived, of_shape};
+use phon::derive::{DeriveError, Derived, of_shape};
 use phon_engine::{Registry, typed};
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use phon_ir::MemOp;
@@ -73,6 +73,14 @@ fn lower_derived(type_name: &str, derived: &Derived) -> Result<Lowered, Error> {
         .map_err(|e| Error(format!("lower {type_name}: {e:?}")))
 }
 
+fn shape_name(shape: &'static Shape) -> String {
+    shape.to_string()
+}
+
+fn derive_error(shape: &'static Shape, error: DeriveError) -> Error {
+    Error(format!("derive {}: {error}", shape_name(shape)))
+}
+
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 struct NativeEncodeProgram(phon_jit::native::NativeEncode);
 
@@ -98,9 +106,9 @@ struct TypedProgram {
 
 impl TypedProgram {
     fn for_shape(shape: &'static Shape) -> Result<Self, Error> {
-        let type_name = shape.type_identifier;
-        let derived = of_shape(shape).map_err(|e| Error(format!("derive {type_name}: {e}")))?;
-        let lowered = lower_derived(type_name, &derived)?;
+        let type_name = shape_name(shape);
+        let derived = of_shape(shape).map_err(|e| derive_error(shape, e))?;
+        let lowered = lower_derived(&type_name, &derived)?;
 
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         {
@@ -390,14 +398,14 @@ pub fn method_jit_shape_report_for_shape(
 /// # Errors
 /// [`Error`] if `T` cannot be lowered, or the bytes are malformed for it.
 pub fn from_slice_borrowed<'a, T: Facet<'a>>(bytes: &'a [u8]) -> Result<T, Error> {
-    let type_name = T::SHAPE.type_identifier;
+    let type_name = shape_name(T::SHAPE);
     let program = typed_program_for_shape(T::SHAPE)?;
     let mut slot = MaybeUninit::<T>::uninit();
     // Safety: `program` was built from `T`'s descriptor; on `Ok`, decode has fully
     // initialized the slot. Borrowed fields point into `bytes`, which outlives the
     // returned `T` by the `'a` tie.
     unsafe {
-        program.decode_into(bytes, slot.as_mut_ptr().cast::<u8>(), type_name)?;
+        program.decode_into(bytes, slot.as_mut_ptr().cast::<u8>(), &type_name)?;
         Ok(slot.assume_init())
     }
 }
@@ -408,13 +416,13 @@ pub fn from_slice_borrowed<'a, T: Facet<'a>>(bytes: &'a [u8]) -> Result<T, Error
 /// # Errors
 /// [`Error`] if `T` cannot be lowered, or the bytes are malformed for it.
 pub fn from_slice<'a, T: Facet<'a>>(bytes: &[u8]) -> Result<T, Error> {
-    let type_name = T::SHAPE.type_identifier;
+    let type_name = shape_name(T::SHAPE);
     let program = typed_program_for_shape(T::SHAPE)?;
     let mut slot = MaybeUninit::<T>::uninit();
     // Safety: `program` was built from `T`'s descriptor; on `Ok`, decode has fully
     // initialized the slot.
     unsafe {
-        program.decode_into(bytes, slot.as_mut_ptr().cast::<u8>(), type_name)?;
+        program.decode_into(bytes, slot.as_mut_ptr().cast::<u8>(), &type_name)?;
         Ok(slot.assume_init())
     }
 }
@@ -672,9 +680,9 @@ mod tests {
     }
 
     fn interpreter_to_vec<'a, T: Facet<'a>>(value: &T) -> Vec<u8> {
-        let type_name = T::SHAPE.type_identifier;
+        let type_name = shape_name(T::SHAPE);
         let derived = of::<T>().expect("derive");
-        let lowered = lower_derived(type_name, &derived).expect("lower");
+        let lowered = lower_derived(&type_name, &derived).expect("lower");
         // Safety: `value` is a live `T`; `lowered` was built from `T`.
         unsafe { typed::encode_with(&lowered, (value as *const T).cast::<u8>()) }
     }

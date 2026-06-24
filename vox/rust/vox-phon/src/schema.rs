@@ -27,7 +27,7 @@ use phon_ir::MemOp;
 use phon_schema::bytes::Reader;
 use phon_schema::{Schema, SchemaId, schema_from_bytes, schema_to_bytes};
 
-use crate::Error;
+use crate::{Error, derive_error, shape_name};
 
 /// A decoded schema closure: the root type's id and every reachable composite
 /// schema. The writer's view of a type, used to build a compat decode program.
@@ -55,7 +55,7 @@ pub struct AuxiliaryRoot {
 // r[impl schema.format.self-contained]
 // r[impl schema.principles.once-per-type]
 pub fn schema_bytes<'a, T: Facet<'a>>() -> Result<Vec<u8>, Error> {
-    let d = of::<T>().map_err(|e| Error(format!("derive {}: {e}", T::SHAPE.type_identifier)))?;
+    let d = of::<T>().map_err(|e| derive_error(T::SHAPE, e))?;
     Ok(encode_bundle(d.root, &d.schemas))
 }
 
@@ -68,7 +68,7 @@ pub fn schema_bytes<'a, T: Facet<'a>>() -> Result<Vec<u8>, Error> {
 // r[impl schema.format.self-contained]
 // r[impl schema.principles.once-per-type]
 pub fn schema_bytes_for_shape(shape: &'static Shape) -> Result<Vec<u8>, Error> {
-    let d = of_shape(shape).map_err(|e| Error(format!("derive {}: {e}", shape.type_identifier)))?;
+    let d = of_shape(shape).map_err(|e| derive_error(shape, e))?;
     Ok(encode_bundle(d.root, &d.schemas))
 }
 
@@ -82,8 +82,7 @@ pub fn schema_bytes_for_shape_with_auxiliary_roots(
     shape: &'static Shape,
     auxiliary_roots: &[(&str, &'static Shape)],
 ) -> Result<Vec<u8>, Error> {
-    let primary =
-        of_shape(shape).map_err(|e| Error(format!("derive {}: {e}", shape.type_identifier)))?;
+    let primary = of_shape(shape).map_err(|e| derive_error(shape, e))?;
     let mut schemas = primary.schemas;
     let mut seen: BTreeSet<u64> = schemas.iter().map(|s| s.id.0).collect();
     let mut roots = Vec::with_capacity(auxiliary_roots.len());
@@ -92,8 +91,7 @@ pub fn schema_bytes_for_shape_with_auxiliary_roots(
         if role.is_empty() {
             return Err(Error("auxiliary schema root role must not be empty".into()));
         }
-        let derived = of_shape(aux_shape)
-            .map_err(|e| Error(format!("derive {}: {e}", aux_shape.type_identifier)))?;
+        let derived = of_shape(aux_shape).map_err(|e| derive_error(aux_shape, e))?;
         for schema in derived.schemas {
             if seen.insert(schema.id.0) {
                 schemas.push(schema);
@@ -119,7 +117,7 @@ pub fn schema_bytes_for_shape_with_auxiliary_roots(
 /// # Errors
 /// [`Error`] if the shape cannot be lowered to a phon schema.
 pub fn schema_id_for_shape(shape: &'static Shape) -> Result<SchemaId, Error> {
-    let d = of_shape(shape).map_err(|e| Error(format!("derive {}: {e}", shape.type_identifier)))?;
+    let d = of_shape(shape).map_err(|e| derive_error(shape, e))?;
     Ok(d.root)
 }
 
@@ -134,7 +132,7 @@ pub fn schema_id_for_shape(shape: &'static Shape) -> Result<SchemaId, Error> {
 pub fn recursive_schema_ids_for_shape(
     shape: &'static Shape,
 ) -> Result<std::collections::BTreeSet<u64>, Error> {
-    let d = of_shape(shape).map_err(|e| Error(format!("derive {}: {e}", shape.type_identifier)))?;
+    let d = of_shape(shape).map_err(|e| derive_error(shape, e))?;
     Ok(d.descriptor_blocks.keys().map(|id| id.0).collect())
 }
 
@@ -356,8 +354,7 @@ unsafe impl Sync for DecodeProgram {}
 pub fn build_decode_program<'a, T: Facet<'a>>(
     writer: &SchemaBundle,
 ) -> Result<DecodeProgram, Error> {
-    let reader =
-        of::<T>().map_err(|e| Error(format!("derive {}: {e}", T::SHAPE.type_identifier)))?;
+    let reader = of::<T>().map_err(|e| derive_error(T::SHAPE, e))?;
     // The registry must resolve both the writer's refs and the reader's refs.
     let mut schemas = writer.schemas.clone();
     for s in &reader.schemas {
@@ -372,7 +369,7 @@ pub fn build_decode_program<'a, T: Facet<'a>>(
         &reader.descriptor_blocks,
         &reg,
     )
-    .map_err(|e| Error(format!("lower_decode {}: {e:?}", T::SHAPE.type_identifier)))?;
+    .map_err(|e| Error(format!("lower_decode {}: {e:?}", shape_name(T::SHAPE))))?;
     Ok(DecodeProgram::new(program))
 }
 
@@ -389,11 +386,7 @@ pub fn decode_with_program<'a, T: Facet<'a>>(
     // Safety: `program` was lowered for `T`'s descriptor; on `Ok`, `decode_with`
     // fully initializes the slot. Borrowed fields point into `bytes` (the `'a` tie).
     unsafe {
-        program.decode_into(
-            bytes,
-            slot.as_mut_ptr().cast::<u8>(),
-            T::SHAPE.type_identifier,
-        )?;
+        program.decode_into(bytes, slot.as_mut_ptr().cast::<u8>(), &shape_name(T::SHAPE))?;
         Ok(slot.assume_init())
     }
 }
@@ -414,11 +407,7 @@ pub fn decode_owned_with_program<T: Facet<'static>>(
     // the descriptor is fully owned (no borrowed leaves), so the decoded value owns
     // its data and does not reference `bytes`.
     unsafe {
-        program.decode_into(
-            bytes,
-            slot.as_mut_ptr().cast::<u8>(),
-            T::SHAPE.type_identifier,
-        )?;
+        program.decode_into(bytes, slot.as_mut_ptr().cast::<u8>(), &shape_name(T::SHAPE))?;
         Ok(slot.assume_init())
     }
 }
