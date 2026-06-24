@@ -198,6 +198,10 @@ pub struct PointerThunks {
     pub borrow: unsafe extern "C" fn(ctx: *const (), pointer: *const u8) -> *const u8,
     /// Initialize `pointer` from `*value`, moving the pointee out of engine scratch.
     pub init: unsafe extern "C" fn(ctx: *const (), pointer: *mut u8, value: *mut u8),
+    /// Whether decode must keep the scratch pointee alive after `init`.
+    pub retain_decode_pointee: bool,
+    /// Drop a retained decoded pointee before its backing storage is freed.
+    pub drop_pointee: Option<unsafe extern "C" fn(ctx: *const (), value: *mut u8)>,
 }
 
 /// Type-erased operations on an opaque field, supplied by the front door,

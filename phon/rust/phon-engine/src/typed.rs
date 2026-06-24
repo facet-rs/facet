@@ -1839,6 +1839,7 @@ pub unsafe fn decode_with(lowered: &Lowered, bytes: &[u8], base: *mut u8) -> Res
     let mut interp = DecodeInterp {
         reader: Reader::new(bytes),
         base,
+        retained: Vec::new(),
     };
     match weavy::run_program(&lowered.program, &lowered.blocks, &mut interp) {
         Ok(()) => {}
@@ -1852,7 +1853,62 @@ pub unsafe fn decode_with(lowered: &Lowered, bytes: &[u8], base: *mut u8) -> Res
             interp.reader.remaining(),
         )));
     }
+    if !interp.retained.is_empty() {
+        return Err(CompactError::Unsupported(
+            "typed: decode produced retained reference pointees; use decode_with_retention",
+        ));
+    }
     Ok(())
+}
+
+/// Engine-owned decoded pointees that borrowed reference handles point at.
+///
+/// Drop this after the decoded value, so references remain valid through the
+/// value's destructor.
+#[derive(Debug, Default)]
+pub struct DecodeRetention {
+    retained: Vec<RetainedScratch>,
+}
+
+impl DecodeRetention {
+    /// Whether this decode produced any retained pointee allocations.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.retained.is_empty()
+    }
+}
+
+/// Decode compact `bytes` and return any retained pointee storage needed by
+/// decoded reference handles.
+///
+/// # Safety
+/// As [`decode_with`]. On `Ok`, the caller must keep the returned
+/// [`DecodeRetention`] alive until after the decoded value at `base` is dropped.
+pub unsafe fn decode_with_retention(
+    lowered: &Lowered,
+    bytes: &[u8],
+    base: *mut u8,
+) -> Result<DecodeRetention> {
+    let mut interp = DecodeInterp {
+        reader: Reader::new(bytes),
+        base,
+        retained: Vec::new(),
+    };
+    match weavy::run_program(&lowered.program, &lowered.blocks, &mut interp) {
+        Ok(()) => {}
+        Err(RunError::Step(err)) => return Err(err),
+        Err(RunError::MissingBlock(_)) => {
+            panic!("CallBlock references a lowered recursion block")
+        }
+    }
+    if interp.reader.remaining() != 0 {
+        return Err(CompactError::Decode(DecodeError::TrailingBytes(
+            interp.reader.remaining(),
+        )));
+    }
+    Ok(DecodeRetention {
+        retained: interp.retained,
+    })
 }
 
 /// Decode compact `bytes` into `base` and return generic Weavy runner counters.
@@ -1870,6 +1926,7 @@ pub unsafe fn decode_with_stats(
     let mut interp = DecodeInterp {
         reader: Reader::new(bytes),
         base,
+        retained: Vec::new(),
     };
     let stats = match weavy::run_program_with_stats(&lowered.program, &lowered.blocks, &mut interp)
     {
@@ -1884,12 +1941,31 @@ pub unsafe fn decode_with_stats(
             interp.reader.remaining(),
         )));
     }
+    if !interp.retained.is_empty() {
+        return Err(CompactError::Unsupported(
+            "typed: decode produced retained reference pointees; use decode_with_retention",
+        ));
+    }
     Ok(stats)
 }
 
 struct DecodeInterp<'bytes> {
     reader: Reader<'bytes>,
     base: *mut u8,
+    retained: Vec<RetainedScratch>,
+}
+
+#[derive(Debug)]
+struct RetainedScratch {
+    scratch: RawScratch,
+    ctx: *const (),
+    drop_pointee: unsafe extern "C" fn(ctx: *const (), value: *mut u8),
+}
+
+impl Drop for RetainedScratch {
+    fn drop(&mut self) {
+        unsafe { (self.drop_pointee)(self.ctx, self.scratch.ptr()) };
+    }
 }
 
 enum DecodeContinuation<'program> {
@@ -2138,6 +2214,8 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
                                 ctx: o.thunks.ctx,
                                 handle: option,
                                 init: o.thunks.init_some,
+                                retain_value: false,
+                                drop_value: None,
                             },
                         )?
                     }
@@ -2199,6 +2277,8 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
                             ctx: rs.thunks.ctx,
                             handle: result,
                             init: rs.thunks.init_ok,
+                            retain_value: false,
+                            drop_value: None,
                         },
                     )?
                 } else if idx == rs.err_wire_index {
@@ -2210,6 +2290,8 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
                             ctx: rs.thunks.ctx,
                             handle: result,
                             init: rs.thunks.init_err,
+                            retain_value: false,
+                            drop_value: None,
                         },
                     )?
                 } else {
@@ -2225,6 +2307,8 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
                     ctx: p.thunks.ctx,
                     handle: unsafe { self.base.add(p.field_offset) },
                     init: p.thunks.init,
+                    retain_value: p.thunks.retain_decode_pointee,
+                    drop_value: p.thunks.drop_pointee,
                 },
             )?,
             // r[impl compat.skip-writer-only] — consume a writer-only value's wire
@@ -2382,7 +2466,18 @@ impl<'program> Step<'program, SchemaId, MemOp> for DecodeInterp<'_> {
                 scratch,
             } => {
                 unsafe { target.initialize(scratch.ptr()) };
-                drop(scratch);
+                if target.retain_value {
+                    let drop_pointee = target.drop_value.ok_or(CompactError::Unsupported(
+                        "typed: retained decode target without drop thunk",
+                    ))?;
+                    self.retained.push(RetainedScratch {
+                        scratch,
+                        ctx: target.ctx,
+                        drop_pointee,
+                    });
+                } else {
+                    drop(scratch);
+                }
                 self.base = previous_base;
                 Ok(Control::Continue)
             }

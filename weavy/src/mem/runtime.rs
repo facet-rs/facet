@@ -625,6 +625,10 @@ pub struct InitTarget {
     pub handle: *mut u8,
     /// Move `*value` into `handle`.
     pub init: unsafe extern "C" fn(ctx: *const (), handle: *mut u8, value: *mut u8),
+    /// Whether the initialized handle borrows from `value` instead of consuming it.
+    pub retain_value: bool,
+    /// Drop a retained `value` before its backing storage is freed.
+    pub drop_value: Option<unsafe extern "C" fn(ctx: *const (), value: *mut u8)>,
 }
 
 impl InitTarget {
