@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DROPPED_LIST_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
+static DROPPED_BULK_MAP_VALUES: AtomicUsize = AtomicUsize::new(0);
+static DROPPED_DUPLICATE_MAP_VALUES: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Facet, Debug, PartialEq)]
 struct Point {
@@ -41,6 +43,33 @@ struct MapHolder {
     names: HashMap<String, String>,
     buckets: HashMap<String, Vec<u64>>,
     points: HashMap<String, Point>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct DroppyMap {
+    items: HashMap<String, BulkMapDroppy>,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct BulkMapDroppy {
+    value: u8,
+}
+
+impl Drop for BulkMapDroppy {
+    fn drop(&mut self) {
+        DROPPED_BULK_MAP_VALUES.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct DuplicateMapDroppy {
+    value: u8,
+}
+
+impl Drop for DuplicateMapDroppy {
+    fn drop(&mut self) {
+        DROPPED_DUPLICATE_MAP_VALUES.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -223,6 +252,49 @@ fn weavy_deserializes_hash_maps() {
     assert_eq!(got.buckets["empty"], Vec::<u64>::new());
     assert_eq!(got.points["origin"], Point { x: 0, y: 0 });
     assert_eq!(got.points["target"], Point { x: 5, y: 7 });
+}
+
+#[test]
+fn weavy_hash_map_duplicate_keys_keep_latest_value() {
+    let got: HashMap<String, String> =
+        facet_json::from_str_weavy(r#"{"same":"first","same":"second"}"#).unwrap();
+
+    assert_eq!(got.len(), 1);
+    assert_eq!(got["same"], "second");
+}
+
+#[test]
+fn weavy_hash_map_duplicate_keys_drop_replaced_value() {
+    DROPPED_DUPLICATE_MAP_VALUES.store(0, Ordering::SeqCst);
+
+    {
+        let got: HashMap<String, DuplicateMapDroppy> =
+            facet_json::from_str_weavy(r#"{"same":{"value":1},"same":{"value":2}}"#).unwrap();
+
+        assert_eq!(got.len(), 1);
+        assert_eq!(got["same"].value, 2);
+        assert_eq!(DROPPED_DUPLICATE_MAP_VALUES.load(Ordering::SeqCst), 1);
+    }
+
+    assert_eq!(DROPPED_DUPLICATE_MAP_VALUES.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn weavy_drops_bulk_map_pairs_after_later_value_error() {
+    DROPPED_BULK_MAP_VALUES.store(0, Ordering::SeqCst);
+
+    let err = facet_json::from_str_weavy::<DroppyMap>(
+        r#"{"items":{"kept":{"value":1},"bad":{"value":"not a u8"}}}"#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::UnexpectedToken { .. }
+            | DeserializeErrorKind::InvalidValue { .. }
+            | DeserializeErrorKind::NumberOutOfRange { .. }
+    ));
+    assert_eq!(DROPPED_BULK_MAP_VALUES.load(Ordering::SeqCst), 1);
 }
 
 fn native_jit_expected() -> bool {

@@ -1,6 +1,6 @@
 #![cfg(feature = "indexmap")]
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, string::String};
 use core::hash::BuildHasher;
 use core::ptr::NonNull;
 use indexmap::IndexMap;
@@ -35,6 +35,64 @@ unsafe extern "C" fn indexmap_insert<K: Eq + core::hash::Hash, V, S: BuildHasher
     let key = unsafe { key.read::<K>() };
     let value = unsafe { value.read::<V>() };
     map.insert(key, value);
+}
+
+unsafe extern "C" fn indexmap_insert_owned_string_key<'a, K, V, S: BuildHasher>(
+    ptr: PtrMut,
+    key: PtrMut,
+    value: PtrMut,
+) -> bool
+where
+    K: Facet<'a>,
+{
+    if K::SHAPE.id != <String as Facet>::SHAPE.id {
+        return false;
+    }
+
+    let map = unsafe { ptr.as_mut::<IndexMap<String, V, S>>() };
+    let key = unsafe { key.read::<String>() };
+    let value = unsafe { value.read::<V>() };
+    map.insert(key, value);
+    true
+}
+
+unsafe extern "C" fn indexmap_insert_borrowed_str_key<'a, K, V, S: BuildHasher>(
+    ptr: PtrMut,
+    key: PtrConst,
+    value: PtrMut,
+) -> bool
+where
+    K: Facet<'a>,
+{
+    if K::SHAPE.id != <String as Facet>::SHAPE.id {
+        return false;
+    }
+
+    let map = unsafe { ptr.as_mut::<IndexMap<String, V, S>>() };
+    let key = unsafe { String::from(key.get::<str>()) };
+    let value = unsafe { value.read::<V>() };
+    map.insert(key, value);
+    true
+}
+
+unsafe extern "C" fn indexmap_insert_borrowed_str_entry<'a, K, V, S: BuildHasher>(
+    ptr: PtrMut,
+    key: PtrConst,
+    value: PtrConst,
+) -> bool
+where
+    K: Facet<'a>,
+    V: Facet<'a>,
+{
+    if K::SHAPE.id != <String as Facet>::SHAPE.id || V::SHAPE.id != <String as Facet>::SHAPE.id {
+        return false;
+    }
+
+    let map = unsafe { ptr.as_mut::<IndexMap<String, String, S>>() };
+    let key = unsafe { String::from(key.get::<str>()) };
+    let value = unsafe { String::from(value.get::<str>()) };
+    map.insert(key, value);
+    true
 }
 
 unsafe extern "C" fn indexmap_len<K, V, S>(ptr: PtrConst) -> usize {
@@ -114,11 +172,11 @@ unsafe extern "C" fn indexmap_from_pair_slice<
     count: usize,
 ) -> PtrMut {
     let pairs = pairs_ptr as *mut (K, V);
-    let iter = (0..count).map(|i| unsafe {
-        let pair_ptr = pairs.add(i);
-        core::ptr::read(pair_ptr)
-    });
-    let map: IndexMap<K, V, S> = iter.collect();
+    let mut map = IndexMap::<K, V, S>::with_capacity_and_hasher(count, S::default());
+    for index in 0..count {
+        let (key, value) = unsafe { core::ptr::read(pairs.add(index)) };
+        map.insert(key, value);
+    }
     unsafe { uninit.put(map) }
 }
 
@@ -129,11 +187,18 @@ where
     S: 'a + Default + BuildHasher,
 {
     const SHAPE: &'static Shape = &const {
-        const fn build_map_vtable<K: Eq + core::hash::Hash, V, S: Default + BuildHasher>()
-        -> MapVTable {
+        const fn build_map_vtable<
+            'a,
+            K: Facet<'a> + Eq + core::hash::Hash,
+            V: Facet<'a>,
+            S: Default + BuildHasher,
+        >() -> MapVTable {
             MapVTable::builder()
                 .init_in_place_with_capacity(indexmap_init_in_place_with_capacity::<K, V, S>)
                 .insert(indexmap_insert::<K, V, S>)
+                .insert_borrowed_str_key(Some(indexmap_insert_borrowed_str_key::<K, V, S>))
+                .insert_borrowed_str_entry(Some(indexmap_insert_borrowed_str_entry::<K, V, S>))
+                .insert_owned_string_key(Some(indexmap_insert_owned_string_key::<K, V, S>))
                 .len(indexmap_len::<K, V, S>)
                 .contains_key(indexmap_contains_key::<K, V, S>)
                 .get_value_ptr(indexmap_get_value_ptr::<K, V, S>)

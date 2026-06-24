@@ -609,6 +609,55 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[inline]
+    pub(crate) fn field_key_unescaped_str(
+        &self,
+        key: &JsonFieldKeyInput<'de>,
+    ) -> Result<Option<&'de str>, ParseError> {
+        match key {
+            JsonFieldKeyInput::Raw {
+                start,
+                end,
+                has_escapes: false,
+                span,
+            } => self.borrow_string_no_escapes(*start, *end, *span).map(Some),
+            JsonFieldKeyInput::Raw {
+                has_escapes: true, ..
+            }
+            | JsonFieldKeyInput::Materialized(_) => Ok(None),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn scalar_input_unescaped_str<'value>(
+        &self,
+        value: &'value JsonScalarInput<'de>,
+    ) -> Result<Option<&'value str>, ParseError>
+    where
+        'de: 'value,
+    {
+        match value {
+            JsonScalarInput::Raw(scanner::SpannedToken {
+                token:
+                    ScanToken::String {
+                        start,
+                        end,
+                        has_escapes: false,
+                    },
+                span,
+            }) => self.borrow_string_no_escapes(*start, *end, *span).map(Some),
+            JsonScalarInput::Materialized(JsonScalarToken::Str(value), _) => Ok(Some(value)),
+            JsonScalarInput::Raw(scanner::SpannedToken {
+                token:
+                    ScanToken::String {
+                        has_escapes: true, ..
+                    },
+                ..
+            }) => Ok(None),
+            JsonScalarInput::Raw(_) | JsonScalarInput::Materialized(_, _) => Ok(None),
+        }
+    }
+
+    #[inline]
     pub(crate) fn field_key_matches(
         &self,
         key: &JsonFieldKeyInput<'de>,

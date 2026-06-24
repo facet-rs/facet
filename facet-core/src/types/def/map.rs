@@ -49,6 +49,47 @@ pub type MapInitInPlaceWithCapacityFn =
 /// afterwards (e.g. with [`core::mem::forget`]) but NOT dropped.
 pub type MapInsertFn = unsafe extern "C" fn(map: PtrMut, key: PtrMut, value: PtrMut);
 
+/// Insert a key-value pair when the key is available as a borrowed string.
+///
+/// Returns `true` when the value was consumed. Returning `false` means the value
+/// remains initialized at its input pointer and the caller should fall back to
+/// another insertion path.
+///
+/// # Safety
+///
+/// The `map` parameter must point to aligned, initialized memory of the correct type.
+/// `key` must point to a valid `str`. `value` must point to an initialized value
+/// of the map's value type.
+pub type MapInsertBorrowedStrKeyFn =
+    unsafe extern "C" fn(map: PtrMut, key: PtrConst, value: PtrMut) -> bool;
+
+/// Insert a key-value pair when both key and value are available as borrowed strings.
+///
+/// Returns `true` when the entry was inserted. Returning `false` means neither
+/// string was consumed and the caller should fall back to another insertion path.
+///
+/// # Safety
+///
+/// The `map` parameter must point to aligned, initialized memory of the correct type.
+/// `key` and `value` must each point to a valid `str`.
+pub type MapInsertBorrowedStrEntryFn =
+    unsafe extern "C" fn(map: PtrMut, key: PtrConst, value: PtrConst) -> bool;
+
+/// Insert a key-value pair when the key has already been decoded as an owned
+/// [`alloc::string::String`].
+///
+/// Returns `true` when the key and value were consumed. Returning `false` means the
+/// key and value remain initialized at their input pointers and the caller should
+/// fall back to [`MapInsertFn`].
+///
+/// # Safety
+///
+/// The `map` parameter must point to aligned, initialized memory of the correct type.
+/// `key` must point to an initialized [`alloc::string::String`]. `value` must point to
+/// an initialized value of the map's value type.
+pub type MapInsertOwnedStringKeyFn =
+    unsafe extern "C" fn(map: PtrMut, key: PtrMut, value: PtrMut) -> bool;
+
 /// Get the number of entries in the map
 ///
 /// # Safety
@@ -94,6 +135,15 @@ vtable_def! {
 
         /// cf. [`MapInsertFn`]
         pub insert: MapInsertFn,
+
+        /// cf. [`MapInsertBorrowedStrKeyFn`]
+        pub insert_borrowed_str_key: Option<MapInsertBorrowedStrKeyFn>,
+
+        /// cf. [`MapInsertBorrowedStrEntryFn`]
+        pub insert_borrowed_str_entry: Option<MapInsertBorrowedStrEntryFn>,
+
+        /// cf. [`MapInsertOwnedStringKeyFn`]
+        pub insert_owned_string_key: Option<MapInsertOwnedStringKeyFn>,
 
         /// cf. [`MapLenFn`]
         pub len: MapLenFn,
