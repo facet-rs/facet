@@ -329,6 +329,31 @@ fn assert_shape_bank_slice_parity(selector: u8, input: &[u8]) {
     }
 }
 
+fn split_selector(data: &[u8]) -> (u8, &[u8]) {
+    if let [selector @ b'0'..=b'9', b'\n', json @ ..] = data {
+        return (*selector - b'0', json);
+    }
+
+    (data.first().copied().unwrap_or(0), data)
+}
+
+#[test]
+fn mur_afl_timeout_replays_match_default_path() {
+    for data in [
+        &b"6\n{\"a\":1,\"d\":4,\"l\":00.5}\n"[..],
+        &b"\n{\"scores\":[1,,null,2,null]}"[..],
+        &b"\n{\"scores\":[1,null,2,,null]}"[..],
+        &b"2\n{\"a\":1,\"d\":7,\"s\":11.E}"[..],
+        &b"2\n{\"a\":1,\"d\":4,\"f\":11. }"[..],
+        &b"2\n{\"f\":0,\"d\":2,\"l\":null,\"scl222Bb\":22222}"[..],
+        &b"6\n[]a\"/1,\"?\x00:2F\"c\":2F\"c\":4M\"f\":-7\x00\x00\x00\x7f:-4,\"g\"::-4\x00\x80\x00\x00:-8,\"k\"?\x00:2F\"\x00\xf8\xff\xff\":10.}\n"[..],
+        &b"6\n{\"f\":0,\"d\":2,\"l\":00.023222222222222222222222}"[..],
+    ] {
+        let (selector, json) = split_selector(data);
+        assert_shape_bank_slice_parity(selector, json);
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 96,

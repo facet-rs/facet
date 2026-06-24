@@ -23,7 +23,7 @@ use facet_core::{
     Characteristic, Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, MapDef, OptionDef,
     PointerDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
 };
-use facet_format::{DeserializeError, DeserializeErrorKind, FormatParser, ParseError};
+use facet_format::{DeserializeError, DeserializeErrorKind, ParseError};
 use facet_reflect::Span;
 use weavy::mem::runtime::{
     HandleGuard, InitializedLedger, RawAllocError, RawArrayBuilder, ScratchSession, ScratchSlot,
@@ -1745,6 +1745,10 @@ impl ScalarPlan {
         value: JsonScalarToken<'_>,
         span: Span,
     ) -> Result<(), DeserializeError> {
+        if matches!(value, JsonScalarToken::Null) {
+            return unsafe { write_default_from_null(shape, dst, span) };
+        }
+
         if let Some(write) = self.write {
             unsafe {
                 write(shape, dst, value, span)?;
@@ -1762,6 +1766,10 @@ impl ScalarPlan {
         dst: PtrUninit,
         value: JsonScalarInput<'de>,
     ) -> Result<(), DeserializeError> {
+        if let Some(span) = scalar_input_null_span(&value) {
+            return unsafe { write_default_from_null(shape, dst, span) };
+        }
+
         match self.scalar {
             ScalarType::Unit => write_unit_input(parser, shape, dst, value),
             ScalarType::Bool => write_bool_input(parser, shape, dst, value),
@@ -1805,6 +1813,10 @@ impl<'de> ScalarInputPreselected<'de, true> for JsonParser<'de, true> {
         dst: PtrUninit,
         value: JsonScalarInput<'de>,
     ) -> Result<(), DeserializeError> {
+        if let Some(span) = scalar_input_null_span(&value) {
+            return unsafe { write_default_from_null(field.shape, dst, span) };
+        }
+
         if let Some(write) = field.input_trusted {
             return write(self, field.shape, dst, value);
         }
@@ -1821,6 +1833,10 @@ impl<'de> ScalarInputPreselected<'de, false> for JsonParser<'de, false> {
         dst: PtrUninit,
         value: JsonScalarInput<'de>,
     ) -> Result<(), DeserializeError> {
+        if let Some(span) = scalar_input_null_span(&value) {
+            return unsafe { write_default_from_null(field.shape, dst, span) };
+        }
+
         if let Some(write) = field.input_checked {
             return write(self, field.shape, dst, value);
         }
@@ -2514,7 +2530,7 @@ where
                                 },
                             ));
                         }
-                        self.parser.skip_value()?;
+                        self.parser.skip_value_strict()?;
                         continue;
                     };
                     let MatchedField {
@@ -2612,7 +2628,7 @@ where
                                 },
                             ));
                         }
-                        self.parser.skip_value()?;
+                        self.parser.skip_value_strict()?;
                         continue;
                     };
                     let MatchedField {
@@ -3177,7 +3193,7 @@ where
                     },
                 ));
             }
-            self.parser.skip_value()?;
+            self.parser.skip_value_strict()?;
             return Ok(());
         };
 
@@ -3267,7 +3283,7 @@ where
                                 },
                             ));
                         }
-                        self.parser.skip_value()?;
+                        self.parser.skip_value_strict()?;
                         continue;
                     };
 
@@ -3686,6 +3702,13 @@ where
                 map,
                 loop_id,
             } => {
+                if self.parser.consume_empty_array_if_next()? {
+                    unsafe {
+                        (map.vtable.init_in_place_with_capacity)(self.base, 0);
+                    }
+                    return Ok(Control::Continue);
+                }
+
                 self.parser.consume_object_start_fast()?;
                 let map_ptr = unsafe { (map.vtable.init_in_place_with_capacity)(self.base, 0) };
                 self.maps.push(MapFrame {
@@ -5449,6 +5472,7 @@ unsafe fn write_scalar(
                 JsonScalarToken::U64(value) => value.to_string(),
                 JsonScalarToken::I128(value) => value.to_string(),
                 JsonScalarToken::U128(value) => value.to_string(),
+                JsonScalarToken::F64(value) => value.to_string(),
                 other => return Err(type_mismatch(span, shape, other.kind_name())),
             };
             unsafe { dst.put(string) };
@@ -5617,7 +5641,7 @@ fn raw_string_or_integer_string<const TRUSTED_UTF8: bool>(
                 ParsedNumber::U64(value) => Ok(value.to_string()),
                 ParsedNumber::I128(value) => Ok(value.to_string()),
                 ParsedNumber::U128(value) => Ok(value.to_string()),
-                ParsedNumber::F64(_) => Err(type_mismatch(span, shape, "f64")),
+                ParsedNumber::F64(value) => Ok(value.to_string()),
             }
         }
         other => Err(type_mismatch(span, shape, raw_token_kind_name(&other))),
@@ -5635,7 +5659,28 @@ fn string_token_or_integer_string(
         JsonScalarToken::U64(value) => Ok(value.to_string()),
         JsonScalarToken::I128(value) => Ok(value.to_string()),
         JsonScalarToken::U128(value) => Ok(value.to_string()),
+        JsonScalarToken::F64(value) => Ok(value.to_string()),
         other => Err(type_mismatch(span, shape, other.kind_name())),
+    }
+}
+
+fn scalar_input_null_span(value: &JsonScalarInput<'_>) -> Option<Span> {
+    match value {
+        JsonScalarInput::Raw(token) if matches!(token.token, ScanToken::Null) => Some(token.span),
+        JsonScalarInput::Materialized(JsonScalarToken::Null, span) => Some(*span),
+        _ => None,
+    }
+}
+
+unsafe fn write_default_from_null(
+    shape: &'static Shape,
+    dst: PtrUninit,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    if unsafe { shape.call_default_in_place(dst) }.is_some() {
+        Ok(())
+    } else {
+        Err(type_mismatch(span, shape, "null"))
     }
 }
 
@@ -5833,6 +5878,7 @@ fn parsed_unsigned_number<const TRUSTED_UTF8: bool>(
         ParsedNumber::U128(value) => Ok(value),
         ParsedNumber::I64(value) if value >= 0 => Ok(value as u128),
         ParsedNumber::I128(value) if value >= 0 => Ok(value as u128),
+        ParsedNumber::F64(value) => f64_to_u128(value, span, target),
         other => Err(type_mismatch_name(
             span,
             target,
@@ -5855,12 +5901,25 @@ fn parsed_signed_number<const TRUSTED_UTF8: bool>(
         ParsedNumber::I128(value) => Ok(value),
         ParsedNumber::U64(value) => Ok(value as i128),
         ParsedNumber::U128(value) if value <= i128::MAX as u128 => Ok(value as i128),
+        ParsedNumber::F64(value) => f64_to_i128(value, span, target),
         other => Err(type_mismatch_name(
             span,
             target,
             parsed_number_kind_name(&other),
         )),
     }
+}
+
+fn f64_to_u128(value: f64, span: Span, target: &'static str) -> Result<u128, DeserializeError> {
+    let text = value.to_string();
+    text.parse::<u128>()
+        .map_err(|_| type_mismatch_name(span, target, "f64"))
+}
+
+fn f64_to_i128(value: f64, span: Span, target: &'static str) -> Result<i128, DeserializeError> {
+    let text = value.to_string();
+    text.parse::<i128>()
+        .map_err(|_| type_mismatch_name(span, target, "f64"))
 }
 
 fn scalar_to_f64(
@@ -5894,6 +5953,7 @@ where
         JsonScalarToken::U128(value) => value,
         JsonScalarToken::I64(value) if value >= 0 => value as u128,
         JsonScalarToken::I128(value) if value >= 0 => value as u128,
+        JsonScalarToken::F64(value) => f64_to_u128(value, span, target)?,
         JsonScalarToken::Str(value) => value
             .parse::<u128>()
             .map_err(|_| number_out_of_range(span, value.into_owned(), target))?,
@@ -5915,6 +5975,7 @@ where
         JsonScalarToken::I128(value) => value,
         JsonScalarToken::U64(value) => value as i128,
         JsonScalarToken::U128(value) if value <= i128::MAX as u128 => value as i128,
+        JsonScalarToken::F64(value) => f64_to_i128(value, span, target)?,
         JsonScalarToken::Str(value) => value
             .parse::<i128>()
             .map_err(|_| number_out_of_range(span, value.into_owned(), target))?,
