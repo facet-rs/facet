@@ -126,6 +126,44 @@ struct DefaultScalars {
     h: f64,
 }
 
+#[derive(Debug, Facet, serde::Deserialize)]
+#[facet(tag = "kind")]
+#[serde(tag = "kind")]
+#[repr(u8)]
+enum InternalTaggedEvent {
+    Created { id: u64, name: String, active: bool },
+    Deleted { id: u64, reason: String },
+}
+
+impl InternalTaggedEvent {
+    fn checksum(&self) -> usize {
+        match self {
+            Self::Created { id, name, active } => *id as usize ^ name.len() ^ usize::from(*active),
+            Self::Deleted { id, reason } => *id as usize ^ reason.len(),
+        }
+    }
+}
+
+#[derive(Debug, Facet, serde::Deserialize)]
+#[facet(tag = "kind", content = "data")]
+#[serde(tag = "kind", content = "data")]
+#[repr(u8)]
+enum AdjacentTaggedEvent {
+    Started,
+    Message { id: u64, text: String },
+    Pair(i32, i32),
+}
+
+impl AdjacentTaggedEvent {
+    fn checksum(&self) -> usize {
+        match self {
+            Self::Started => 0,
+            Self::Message { id, text } => *id as usize ^ text.len(),
+            Self::Pair(a, b) => (*a as usize).wrapping_add(*b as usize),
+        }
+    }
+}
+
 // =============================================================================
 // Test data
 // =============================================================================
@@ -245,6 +283,21 @@ const DEFAULT_SCALARS_MISSING_JSON: &str = r#"{
     "h": 11.5
 }"#;
 
+const INTERNAL_TAGGED_JSON: &str = r#"{
+    "kind": "Created",
+    "id": 42,
+    "name": "alice",
+    "active": true
+}"#;
+
+const ADJACENT_TAGGED_JSON: &str = r#"{
+    "kind": "Message",
+    "data": {
+        "id": 42,
+        "text": "hello"
+    }
+}"#;
+
 fn bench_fresh_typeplan<T>(bencher: Bencher, json: &'static str)
 where
     T: Facet<'static>,
@@ -305,6 +358,76 @@ where
 {
     bencher.bench(|| {
         let result: T = black_box(serde_json::from_str(black_box(json)).unwrap());
+        black_box(result)
+    });
+}
+
+fn bench_reused_typeplan_observed<T>(
+    bencher: Bencher,
+    json: &'static str,
+    observe: impl Fn(&T) -> usize + Sync,
+) where
+    T: Facet<'static>,
+{
+    use facet_format::FormatDeserializer;
+
+    let plan = TypePlan::<T>::build().unwrap();
+
+    bencher.bench(|| {
+        let partial = plan.partial_owned().unwrap();
+        let mut parser = JsonParser::<true>::new(black_box(json.as_bytes()));
+        let mut de = FormatDeserializer::new_owned(&mut parser);
+        let partial = de
+            .deserialize_into(partial, MetaSource::FromEvents)
+            .unwrap();
+        let result: T = partial.build().unwrap().materialize().unwrap();
+        black_box(observe(&result));
+        black_box(result)
+    });
+}
+
+fn bench_weavy_reused_plan_observed<T>(
+    bencher: Bencher,
+    json: &'static str,
+    observe: impl Fn(&T) -> usize + Sync,
+) where
+    T: Facet<'static>,
+{
+    let plan = facet_json::JsonWeavyPlan::<T>::build().unwrap();
+
+    bencher.bench(|| {
+        let result: T = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(observe(&result));
+        black_box(result)
+    });
+}
+
+fn bench_weavy_jit_reused_plan_observed<T>(
+    bencher: Bencher,
+    json: &'static str,
+    observe: impl Fn(&T) -> usize + Sync,
+) where
+    T: Facet<'static>,
+{
+    let plan = facet_json::JsonWeavyPlan::<T>::build_jit().unwrap();
+
+    bencher.bench(|| {
+        let result: T = black_box(plan.from_str(black_box(json)).unwrap());
+        black_box(observe(&result));
+        black_box(result)
+    });
+}
+
+fn bench_serde_json_observed<T>(
+    bencher: Bencher,
+    json: &'static str,
+    observe: impl Fn(&T) -> usize + Sync,
+) where
+    T: DeserializeOwned,
+{
+    bencher.bench(|| {
+        let result: T = black_box(serde_json::from_str(black_box(json)).unwrap());
+        black_box(observe(&result));
         black_box(result)
     });
 }
@@ -738,6 +861,74 @@ fn default_scalars_missing_weavy_jit_reused_plan(bencher: Bencher) {
 #[divan::bench]
 fn default_scalars_missing_serde_json(bencher: Bencher) {
     bench_serde_json::<DefaultScalars>(bencher, DEFAULT_SCALARS_MISSING_JSON);
+}
+
+// =============================================================================
+// Benchmarks - tagged enums
+// =============================================================================
+
+#[divan::bench]
+fn internal_tagged_reused_typeplan(bencher: Bencher) {
+    bench_reused_typeplan_observed::<InternalTaggedEvent>(bencher, INTERNAL_TAGGED_JSON, |value| {
+        value.checksum()
+    });
+}
+
+#[divan::bench]
+fn internal_tagged_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan_observed::<InternalTaggedEvent>(
+        bencher,
+        INTERNAL_TAGGED_JSON,
+        |value| value.checksum(),
+    );
+}
+
+#[divan::bench]
+fn internal_tagged_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan_observed::<InternalTaggedEvent>(
+        bencher,
+        INTERNAL_TAGGED_JSON,
+        |value| value.checksum(),
+    );
+}
+
+#[divan::bench]
+fn internal_tagged_serde_json(bencher: Bencher) {
+    bench_serde_json_observed::<InternalTaggedEvent>(bencher, INTERNAL_TAGGED_JSON, |value| {
+        value.checksum()
+    });
+}
+
+#[divan::bench]
+fn adjacent_tagged_reused_typeplan(bencher: Bencher) {
+    bench_reused_typeplan_observed::<AdjacentTaggedEvent>(bencher, ADJACENT_TAGGED_JSON, |value| {
+        value.checksum()
+    });
+}
+
+#[divan::bench]
+fn adjacent_tagged_weavy_reused_plan(bencher: Bencher) {
+    bench_weavy_reused_plan_observed::<AdjacentTaggedEvent>(
+        bencher,
+        ADJACENT_TAGGED_JSON,
+        |value| value.checksum(),
+    );
+}
+
+#[divan::bench]
+fn adjacent_tagged_weavy_jit_reused_plan(bencher: Bencher) {
+    bench_weavy_jit_reused_plan_observed::<AdjacentTaggedEvent>(
+        bencher,
+        ADJACENT_TAGGED_JSON,
+        |value| value.checksum(),
+    );
+}
+
+#[divan::bench]
+fn adjacent_tagged_serde_json(bencher: Bencher) {
+    bench_serde_json_observed::<AdjacentTaggedEvent>(bencher, ADJACENT_TAGGED_JSON, |value| {
+        value.checksum()
+    });
 }
 
 // =============================================================================
