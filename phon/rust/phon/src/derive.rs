@@ -146,6 +146,23 @@ pub fn of_shape(shape: &'static Shape) -> Result<Derived, DeriveError> {
             descriptor: borrowed_descriptor(shape, kind)?,
         });
     }
+    if let Some((ptr, pointee)) = reference_pointer_def(shape) {
+        let inner = of_shape(pointee)?;
+        let (size, align) = layout_of(shape)?;
+        return Ok(Derived {
+            root: inner.root,
+            schemas: inner.schemas,
+            descriptor_blocks: inner.descriptor_blocks,
+            descriptor: Descriptor {
+                schema: inner.descriptor.schema.clone(),
+                layout: Layout { size, align },
+                access: Access::Pointer(PointerAccess {
+                    pointee: Box::new(inner.descriptor),
+                    thunks: reference_pointer_thunks(ptr),
+                }),
+            },
+        });
+    }
     if let Some((ptr, pointee)) = owned_pointer_def(shape) {
         let inner = of_shape(pointee)?;
         let (size, align) = layout_of(shape)?;
@@ -319,6 +336,9 @@ impl Builder {
         // (`String`/`Vec<u8>`), so the schema id matches an owned peer's exactly.
         if let Some(kind) = borrowed_kind(shape)? {
             return Ok(SchemaRef::concrete(primitive_id(borrow_primitive(kind))));
+        }
+        if let Some((_, pointee)) = reference_pointer_def(shape) {
+            return self.ref_of(pointee);
         }
         if let Some((_, pointee)) = owned_pointer_def(shape) {
             return self.ref_of(pointee);
@@ -678,6 +698,17 @@ fn build_descriptor(
     if let Some(kind) = borrowed_kind(shape)? {
         return borrowed_descriptor(shape, kind);
     }
+    if let Some((ptr, pointee_shape)) = reference_pointer_def(shape) {
+        let pointee = build_descriptor(pointee_shape, by_shape, real_ids, rec)?;
+        return Ok(Descriptor {
+            schema: pointee.schema.clone(),
+            layout: Layout { size, align },
+            access: Access::Pointer(PointerAccess {
+                pointee: Box::new(pointee),
+                thunks: reference_pointer_thunks(ptr),
+            }),
+        });
+    }
     if let Some((ptr, pointee_shape)) = owned_pointer_def(shape) {
         let pointee = build_descriptor(pointee_shape, by_shape, real_ids, rec)?;
         return Ok(Descriptor {
@@ -944,6 +975,28 @@ fn result_def(shape: &'static Shape) -> Option<&'static ResultDef> {
         Def::Result(result_def) => Some(result_def),
         _ => None,
     }
+}
+
+/// A shared/exclusive Rust reference whose wire identity is its pointee's schema.
+/// Encode borrows through the facet pointer vtable. Decode into arbitrary `&T` is
+/// intentionally not supported; use owned reader shapes for RPC args/results.
+// r[impl descriptors.thunk-binding]
+fn reference_pointer_def(shape: &'static Shape) -> Option<(&'static PointerDef, &'static Shape)> {
+    let Def::Pointer(ptr) = &shape.def else {
+        return None;
+    };
+    if !matches!(
+        ptr.known,
+        Some(KnownPointer::SharedReference | KnownPointer::ExclusiveReference)
+    ) {
+        return None;
+    }
+    let pointee = ptr.pointee()?;
+    ptr.vtable.borrow_fn?;
+    if layout_of(shape).ok()?.0 != core::mem::size_of::<*const ()>() {
+        return None;
+    }
+    Some((ptr, pointee))
 }
 
 /// A strong owning pointer whose wire identity is the pointee's schema. The
@@ -1497,7 +1550,7 @@ unsafe extern "C" fn res_init_err(ctx: *const (), result: *mut u8, value: *mut u
 }
 
 // ============================================================================
-// Owned pointer thunks
+// Pointer thunks
 // ============================================================================
 //
 // `Box<T>`, `Rc<T>`, and `Arc<T>` are local ownership details: the wire carries
@@ -1522,10 +1575,28 @@ fn pointer_thunks(ptr: &'static PointerDef) -> PointerThunks {
         ctx: core::ptr::from_ref(ptr).cast::<()>(),
         borrow: pointer_borrow,
         init: pointer_init,
+        retain_decode_pointee: false,
+        drop_pointee: None,
     }
 }
 
-/// Borrow the pointee behind an initialized owning pointer.
+/// Build the [`PointerThunks`] for a Rust reference field/root.
+// r[impl descriptors.thunk-binding]
+fn reference_pointer_thunks(ptr: &'static PointerDef) -> PointerThunks {
+    assert!(
+        ptr.vtable.borrow_fn.is_some(),
+        "reference pointer has no borrow op; cannot encode through the typed path"
+    );
+    PointerThunks {
+        ctx: core::ptr::from_ref(ptr).cast::<()>(),
+        borrow: pointer_borrow,
+        init: reference_pointer_init,
+        retain_decode_pointee: true,
+        drop_pointee: Some(pointer_pointee_drop),
+    }
+}
+
+/// Borrow the pointee behind an initialized pointer/reference.
 ///
 /// # Safety
 /// `ctx` must be a `&'static PointerDef`; `pointer` must point to an initialized
@@ -1540,6 +1611,18 @@ unsafe extern "C" fn pointer_borrow(ctx: *const (), pointer: *const u8) -> *cons
     // Safety: `pointer` is an initialized pointer handle for this pointer def.
     let pointee = unsafe { borrow(PtrConst::new(pointer)) };
     pointee.as_byte_ptr()
+}
+
+unsafe extern "C" fn reference_pointer_init(_ctx: *const (), pointer: *mut u8, value: *mut u8) {
+    unsafe { pointer.cast::<*const u8>().write(value.cast_const()) };
+}
+
+unsafe extern "C" fn pointer_pointee_drop(ctx: *const (), value: *mut u8) {
+    let ptr = unsafe { &*ctx.cast::<PointerDef>() };
+    let Some(pointee) = ptr.pointee() else {
+        return;
+    };
+    let _ = unsafe { pointee.call_drop_in_place(PtrMut::new(value)) };
 }
 
 /// Initialize an owning pointer from a scratch-decoded pointee value.
@@ -2308,6 +2391,12 @@ mod tests {
         pairs: Vec<(String, u32)>,
     }
 
+    #[derive(Facet)]
+    struct RefStringHolder<'a> {
+        name: &'a String,
+        label: String,
+    }
+
     fn pt_object(a: u8, b: u64, c: u16, flag: bool) -> Value {
         let mut o = VObject::new();
         o.insert(VString::new("a"), Value::from(a));
@@ -2357,6 +2446,60 @@ mod tests {
             )),
             "anonymous tuples must not be emitted as numeric-field structs"
         );
+    }
+
+    #[test]
+    fn reference_field_derives_as_pointee_schema() {
+        let d = of::<RefStringHolder>().unwrap();
+        let root = d
+            .schemas
+            .iter()
+            .find(|schema| schema.id == d.root)
+            .expect("root schema should be emitted");
+        let SchemaKind::Struct { fields, .. } = &root.kind else {
+            panic!("RefStringHolder must derive as a struct schema, got {root:?}");
+        };
+        let name = fields
+            .iter()
+            .find(|field| field.name == "name")
+            .expect("name field should be present");
+        assert_eq!(
+            name.schema,
+            SchemaRef::concrete(primitive_id(Primitive::String))
+        );
+    }
+
+    #[test]
+    fn reference_tuple_typed_encoding_matches_owned_tuple() {
+        let borrowed = String::from("facet");
+        let borrowed_tuple = (&borrowed, String::from("phon"));
+        let borrowed_d = of::<(&String, String)>().unwrap();
+        let borrowed_reg = Registry::new(borrowed_d.schemas.clone());
+        let borrowed_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&borrowed_tuple).cast::<u8>(),
+                &borrowed_d.descriptor,
+                &borrowed_d.descriptor_blocks,
+                &borrowed_reg,
+            )
+        }
+        .unwrap();
+
+        let owned_tuple = (String::from("facet"), String::from("phon"));
+        let owned_d = of::<(String, String)>().unwrap();
+        let owned_reg = Registry::new(owned_d.schemas.clone());
+        let owned_bytes = unsafe {
+            typed::encode(
+                core::ptr::from_ref(&owned_tuple).cast::<u8>(),
+                &owned_d.descriptor,
+                &owned_d.descriptor_blocks,
+                &owned_reg,
+            )
+        }
+        .unwrap();
+
+        assert_eq!(borrowed_d.root, owned_d.root);
+        assert_eq!(borrowed_bytes, owned_bytes);
     }
 
     #[test]
@@ -5265,19 +5408,19 @@ mod tests {
 
     #[test]
     fn opaque_inner_program_error_uses_shape_display() {
-        let shape = <(&'static String, String) as Facet>::SHAPE;
+        let shape = <(*const u8, String) as Facet>::SHAPE;
 
         assert_eq!(shape.type_identifier, "(…)");
-        assert_eq!(shape.to_string(), "(&String, String)");
+        assert_eq!(shape.to_string(), "(*const T, String)");
 
         let panic = std::panic::catch_unwind(|| {
             let _ = inner_program(shape);
         })
-        .expect_err("&String tuple should not derive as an opaque inner program");
+        .expect_err("raw pointer tuple should not derive as an opaque inner program");
 
         let message = panic_message(&panic);
         assert!(
-            message.contains("opaque inner facet shape (&String, String) cannot be derived"),
+            message.contains("opaque inner facet shape (*const T, String) cannot be derived"),
             "opaque panic should include Shape display, got: {message}"
         );
         assert!(

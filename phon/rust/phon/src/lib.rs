@@ -607,7 +607,9 @@ pub mod api {
                 .all(|variant| decode_program_supported(&variant.payload)),
             MemOp::Map(m) => decode_program_supported(&m.key) && decode_program_supported(&m.value),
             MemOp::Result(r) => decode_program_supported(&r.ok) && decode_program_supported(&r.err),
-            MemOp::Pointer(p) => decode_program_supported(&p.pointee),
+            MemOp::Pointer(p) => {
+                !p.thunks.retain_decode_pointee && decode_program_supported(&p.pointee)
+            }
             MemOp::Opaque(_) | MemOp::Dynamic { .. } | MemOp::CallBlock { .. } => true,
         })
     }

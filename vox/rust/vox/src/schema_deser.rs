@@ -27,6 +27,18 @@ where
     vox_phon::decode_with_program::<T>(&program, bytes)
 }
 
+pub fn schema_deserialize_args_retained<'input, 'facet, T: Facet<'facet>>(
+    bytes: &'input [u8],
+    method_id: MethodId,
+    tracker: &SchemaRecvTracker,
+) -> Result<vox_phon::Decoded<T>, Error>
+where
+    'input: 'facet,
+{
+    let program = resolve_program::<T>(method_id, BindingDirection::Args, tracker)?;
+    vox_phon::decode_with_program_retained::<T>(&program, bytes)
+}
+
 /// Deserialize a response (callee → caller direction), borrowed variant.
 // r[impl schema.exchange.required]
 pub fn schema_deserialize_response_borrowed<'input, 'facet, T: Facet<'facet>>(

@@ -14,7 +14,7 @@
 //! `u32` UTF-8 byte length + bytes, followed by the auxiliary `u64` root.
 
 use std::collections::BTreeSet;
-use std::mem::MaybeUninit;
+use std::mem::{ManuallyDrop, MaybeUninit};
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use std::sync::Arc;
 
@@ -252,6 +252,33 @@ pub struct DecodeProgram {
     native: Option<Arc<NativeDecodeProgram>>,
 }
 
+pub struct Decoded<T> {
+    value: ManuallyDrop<T>,
+    retention: ManuallyDrop<typed::DecodeRetention>,
+}
+
+impl<T> Decoded<T> {
+    pub fn new(value: T, retention: typed::DecodeRetention) -> Self {
+        Self {
+            value: ManuallyDrop::new(value),
+            retention: ManuallyDrop::new(retention),
+        }
+    }
+
+    pub fn get(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T> Drop for Decoded<T> {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.value);
+            ManuallyDrop::drop(&mut self.retention);
+        }
+    }
+}
+
 impl DecodeProgram {
     fn new(lowered: Lowered) -> Self {
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -285,6 +312,25 @@ impl DecodeProgram {
         }
 
         unsafe { typed::decode_with(&self.lowered, bytes, base) }
+            .map_err(|e| Error(format!("decode {type_name}: {e:?}")))
+    }
+
+    unsafe fn decode_into_retaining(
+        &self,
+        bytes: &[u8],
+        base: *mut u8,
+        type_name: &str,
+    ) -> Result<typed::DecodeRetention, Error> {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            if let Some(native) = &self.native {
+                return unsafe { native.0.run(bytes, base) }
+                    .map(|()| typed::DecodeRetention::default())
+                    .map_err(|e| Error(format!("decode {type_name}: {e:?}")));
+            }
+        }
+
+        unsafe { typed::decode_with_retention(&self.lowered, bytes, base) }
             .map_err(|e| Error(format!("decode {type_name}: {e:?}")))
     }
 
@@ -331,7 +377,9 @@ fn decode_program_supported(program: &[MemOp]) -> bool {
             .all(|variant| decode_program_supported(&variant.payload)),
         MemOp::Map(m) => decode_program_supported(&m.key) && decode_program_supported(&m.value),
         MemOp::Result(r) => decode_program_supported(&r.ok) && decode_program_supported(&r.err),
-        MemOp::Pointer(p) => decode_program_supported(&p.pointee),
+        MemOp::Pointer(p) => {
+            !p.thunks.retain_decode_pointee && decode_program_supported(&p.pointee)
+        }
         MemOp::Opaque(_) | MemOp::Dynamic { .. } | MemOp::CallBlock { .. } => true,
     })
 }
@@ -388,6 +436,21 @@ pub fn decode_with_program<'a, T: Facet<'a>>(
     unsafe {
         program.decode_into(bytes, slot.as_mut_ptr().cast::<u8>(), &shape_name(T::SHAPE))?;
         Ok(slot.assume_init())
+    }
+}
+
+pub fn decode_with_program_retained<'a, T: Facet<'a>>(
+    program: &DecodeProgram,
+    bytes: &'a [u8],
+) -> Result<Decoded<T>, Error> {
+    let mut slot = MaybeUninit::<T>::uninit();
+    unsafe {
+        let retention = program.decode_into_retaining(
+            bytes,
+            slot.as_mut_ptr().cast::<u8>(),
+            &shape_name(T::SHAPE),
+        )?;
+        Ok(Decoded::new(slot.assume_init(), retention))
     }
 }
 

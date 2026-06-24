@@ -204,6 +204,20 @@ fn type_is_tx(ty: &Type) -> bool {
     }
 }
 
+fn type_has_reference(ty: &Type) -> bool {
+    match ty {
+        Type::Reference(_) => true,
+        Type::Tuple(TypeTuple(group)) => group
+            .content
+            .iter()
+            .any(|entry| type_has_reference(&entry.value)),
+        Type::PathWithGenerics(PathWithGenerics { args, .. }) => args.iter().any(|entry| {
+            matches!(&entry.value, GenericArgument::Type(inner) if type_has_reference(inner))
+        }),
+        Type::Path(_) => false,
+    }
+}
+
 /// For a `Tx<X>`/`Rx<X>` argument type, the element type `X`. `None` otherwise.
 ///
 /// `Tx`/`Rx` are `#[facet(opaque)]`, so their `Shape` carries no `type_params`
@@ -775,6 +789,7 @@ fn generate_dispatch_arm(
         .args()
         .map(|a| format_ident!("{}", a.name().to_snake_case()))
         .collect();
+    let args_have_reference = method.args().any(|a| type_has_reference(&a.ty));
     let destructure = match arg_names.len() {
         0 => quote! { let () = args; },
         1 => {
@@ -785,8 +800,6 @@ fn generate_dispatch_arm(
     };
 
     let _ = idx;
-
-    let args_let = quote! { let args: #args_tuple_type };
 
     let return_type = method.return_type();
     let (ok_ty_ref, err_ty_ref) = method_ok_and_err_types(&return_type);
@@ -803,6 +816,59 @@ fn generate_dispatch_arm(
     let err_ty = err_ty_ref
         .map(Type::to_token_stream)
         .unwrap_or_else(|| quote! { ::core::convert::Infallible });
+
+    let decode_args = if args_have_reference {
+        quote! {
+            let decoded_args_result = #vox::provide_channels_for_method(
+                request_call.channels.clone(),
+                #descriptor_fn_name().methods[#idx],
+                &schemas,
+                || #vox::schema_deser::schema_deserialize_args_retained::<#args_tuple_type>(
+                    args_bytes,
+                    method_id,
+                    &schemas,
+                ),
+            );
+            drop(_binder_guard);
+            let decoded_args = match decoded_args_result {
+                Ok(v) => v,
+                Err(e) => {
+                    reply
+                        .send_typed_error::<#ok_ty_dispatch, ::core::convert::Infallible>(
+                            #vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+                        )
+                        .await;
+                    return;
+                }
+            };
+            let args: #args_tuple_type = *decoded_args.get();
+        }
+    } else {
+        quote! {
+            let deser_result: ::core::result::Result<#args_tuple_type, _> = #vox::provide_channels_for_method(
+                request_call.channels.clone(),
+                #descriptor_fn_name().methods[#idx],
+                &schemas,
+                || #vox::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes,
+                    method_id,
+                    &schemas,
+                ),
+            );
+            drop(_binder_guard);
+            let args: #args_tuple_type = match deser_result {
+                Ok(v) => v,
+                Err(e) => {
+                    reply
+                        .send_typed_error::<#ok_ty_dispatch, ::core::convert::Infallible>(
+                            #vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+                        )
+                        .await;
+                    return;
+                }
+            };
+        }
+    };
 
     let context_setup = {
         quote! {
@@ -904,28 +970,7 @@ fn generate_dispatch_arm(
             // r[impl rpc.channel.binding] each handle's inline index selects its
             // ChannelId from the out-of-band `request_call.channels` list.
             let _binder_guard = reply.channel_binder().map(#vox::set_channel_binder);
-            let deser_result: ::core::result::Result<#args_tuple_type, _> = #vox::provide_channels_for_method(
-                request_call.channels.clone(),
-                #descriptor_fn_name().methods[#idx],
-                &schemas,
-                || #vox::schema_deser::schema_deserialize_args_borrowed(
-                    args_bytes,
-                    method_id,
-                    &schemas,
-                ),
-            );
-            drop(_binder_guard);
-            #args_let = match deser_result {
-                Ok(v) => v,
-                Err(e) => {
-                    reply
-                        .send_typed_error::<#ok_ty_dispatch, ::core::convert::Infallible>(
-                            #vox::VoxError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
-                        )
-                        .await;
-                    return;
-                }
-            };
+            #decode_args
             #context_setup
             #destructure
             #invoke_and_reply

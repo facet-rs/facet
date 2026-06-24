@@ -496,6 +496,8 @@ mod tests {
             ctx: core::ptr::null(),
             borrow: box_u32_borrow,
             init: box_u32_init,
+            retain_decode_pointee: false,
+            drop_pointee: None,
         }
     }
 
