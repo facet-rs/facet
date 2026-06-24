@@ -1,0 +1,26 @@
+[package]
+name = "facet-json-fuzz-afl"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[dependencies]
+afl = "0.18"
+
+[dependencies.facet]
+path = "../../facet"
+
+[dependencies.facet-json]
+path = ".."
+features = ["fast"]
+
+# Prevent this from interfering with the top-level workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "weavy_shape_bank"
+path = "src/weavy_shape_bank.rs"
+test = false
+doc = false
+bench = false

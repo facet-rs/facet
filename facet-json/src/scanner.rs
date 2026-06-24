@@ -1704,7 +1704,14 @@ fn parse_number_inner(
     }
 }
 
-#[cfg(not(feature = "lexical-parse"))]
+#[cfg(all(
+    not(feature = "lexical-parse"),
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[inline]
 fn parse_f64(buf: &[u8], start: usize, end: usize) -> Result<f64, ScanError> {
     let slice = &buf[start..end];

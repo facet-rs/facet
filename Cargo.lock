@@ -2234,6 +2234,7 @@ dependencies = [
  "lexical-parse-integer",
  "libtest-mimic",
  "mime",
+ "proptest",
  "serde",
  "serde_json",
  "smol_str",
