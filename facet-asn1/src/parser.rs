@@ -9,7 +9,7 @@ use alloc::{borrow::Cow, format, vec::Vec};
 
 use facet_format::{
     ContainerKind, DeserializeErrorKind, FormatParser, ParseError, ParseEvent, ParseEventKind,
-    SavePoint, ScalarValue,
+    SavePoint, ScalarTypeHint, ScalarValue,
 };
 use facet_reflect::Span;
 
@@ -196,8 +196,8 @@ impl<'de> Asn1Parser<'de> {
         }
     }
 
-    /// Read an integer value as i64.
-    fn read_integer(&mut self) -> Result<i64, ParseError> {
+    /// Read the bytes for an INTEGER value.
+    fn read_integer_bytes(&mut self) -> Result<&'de [u8], ParseError> {
         let (tag, bytes) = self.read_tlv()?;
         if tag != TAG_INTEGER {
             return Err(ParseError::new(
@@ -207,6 +207,12 @@ impl<'de> Asn1Parser<'de> {
                 },
             ));
         }
+        Ok(bytes)
+    }
+
+    /// Read an integer value as i64.
+    fn read_integer(&mut self) -> Result<i64, ParseError> {
+        let bytes = self.read_integer_bytes()?;
         if bytes.is_empty() {
             return Ok(0);
         }
@@ -214,6 +220,38 @@ impl<'de> Asn1Parser<'de> {
         let mut value = bytes[0] as i8 as i64;
         for &byte in &bytes[1..] {
             value = (value << 8) | (byte as i64);
+        }
+        Ok(value)
+    }
+
+    /// Read an INTEGER value for an unsigned target.
+    fn read_unsigned_integer(&mut self) -> Result<u128, ParseError> {
+        let mut bytes = self.read_integer_bytes()?;
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        if bytes[0] & 0x80 != 0 {
+            return Err(ParseError::new(
+                Span::new(self.pos, bytes.len()),
+                DeserializeErrorKind::InvalidValue {
+                    message: "negative INTEGER cannot decode as unsigned".into(),
+                },
+            ));
+        }
+        while matches!(bytes, [0, rest @ ..] if rest.first().is_some_and(|byte| byte & 0x80 == 0)) {
+            bytes = &bytes[1..];
+        }
+        if bytes.len() > 16 {
+            return Err(ParseError::new(
+                Span::new(self.pos, bytes.len()),
+                DeserializeErrorKind::InvalidValue {
+                    message: "INTEGER too large for u128".into(),
+                },
+            ));
+        }
+        let mut value = 0u128;
+        for &byte in bytes {
+            value = (value << 8) | byte as u128;
         }
         Ok(value)
     }
@@ -385,8 +423,7 @@ impl<'de> Asn1Parser<'de> {
             state.awaiting_value = false;
         }
 
-        // Clear pending scalar type hint (we don't need it for ASN.1 - types are in TLV)
-        self.pending_scalar_type = None;
+        let scalar_hint = self.pending_scalar_type.take();
 
         // Peek at the tag to determine what to parse
         let tag = self.peek_byte()?;
@@ -435,11 +472,26 @@ impl<'de> Asn1Parser<'de> {
 
             // Universal primitive INTEGER
             (CLASS_UNIVERSAL, false, 0x02) => {
-                let value = self.read_integer()?;
+                let value = match scalar_hint {
+                    Some(
+                        ScalarTypeHint::U8
+                        | ScalarTypeHint::U16
+                        | ScalarTypeHint::U32
+                        | ScalarTypeHint::U64
+                        | ScalarTypeHint::Usize,
+                    ) => {
+                        let value = self.read_unsigned_integer()?;
+                        if value <= u64::MAX as u128 {
+                            ScalarValue::U64(value as u64)
+                        } else {
+                            ScalarValue::U128(value)
+                        }
+                    }
+                    Some(ScalarTypeHint::U128) => ScalarValue::U128(self.read_unsigned_integer()?),
+                    _ => ScalarValue::I64(self.read_integer()?),
+                };
                 self.finish_value();
-                Ok(Some(
-                    self.event(ParseEventKind::Scalar(ScalarValue::I64(value))),
-                ))
+                Ok(Some(self.event(ParseEventKind::Scalar(value))))
             }
 
             // Universal primitive OCTET STRING
