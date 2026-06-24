@@ -231,6 +231,69 @@ enum ExternalOther {
 }
 
 #[derive(Facet, Debug, PartialEq)]
+#[facet(tag = "type")]
+#[repr(u8)]
+enum InternalShape {
+    Circle { radius: f64 },
+    Rectangle { width: f64, height: f64 },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(tag = "status")]
+#[repr(u8)]
+enum InternalUnit {
+    Active,
+    Inactive,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(tag = "kind", rename_all = "snake_case")]
+#[repr(u8)]
+enum InternalRenamed {
+    UserCreated { user_id: u64 },
+    UserDeleted { user_id: u64 },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(tag = "kind", content = "data")]
+#[repr(u8)]
+enum AdjacentValue {
+    Start,
+    Str(String),
+    Pair(i32, i32),
+    Block { text: String, level: u8 },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(tag = "kind", content = "data", rename_all = "snake_case")]
+#[repr(u8)]
+enum AdjacentRenamed {
+    CreateUser { name: String },
+    DeleteUser { id: u64 },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(tag = "kind")]
+#[repr(u8)]
+enum InternalDroppy {
+    Item { item: Droppy, tail: u8 },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(tag = "kind", content = "data")]
+#[repr(u8)]
+enum AdjacentDroppy {
+    Item { item: Droppy, tail: u8 },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(tag = "kind", content = "data")]
+#[repr(u8)]
+enum AdjacentTupleDroppy {
+    Pair(Droppy, u8),
+}
+
+#[derive(Facet, Debug, PartialEq)]
 struct EscapedFieldName {
     quoted_key: u8,
 }
@@ -1295,6 +1358,68 @@ fn weavy_deserializes_external_other_fallback_enums() {
     assert_default_weavy_parity::<ExternalOther>(r#"{"eq-bare":"$id"}"#);
     assert_default_weavy_parity::<ExternalOther>(r#""$id""#);
     assert_default_weavy_parity::<ExternalOther>(r#"null"#);
+}
+
+#[test]
+fn weavy_deserializes_internal_tagged_enums() {
+    assert_default_weavy_parity::<InternalShape>(r#"{"type":"Circle","radius":5.0}"#);
+    assert_default_weavy_parity::<InternalShape>(r#"{"radius":5.0,"type":"Circle"}"#);
+    assert_default_weavy_parity::<InternalShape>(
+        r#"{"type":"Rectangle","height":4.0,"width":3.0}"#,
+    );
+    assert_default_weavy_parity::<InternalUnit>(r#"{"status":"Active"}"#);
+    assert_default_weavy_parity::<InternalRenamed>(r#"{"kind":"user_created","user_id":123}"#);
+    assert_default_weavy_parity::<InternalRenamed>(r#"{"user_id":456,"kind":"user_deleted"}"#);
+    assert_default_weavy_parity::<InternalShape>(r#"{"radius":5.0}"#);
+}
+
+#[test]
+fn weavy_deserializes_adjacent_tagged_enums() {
+    assert_default_weavy_parity::<AdjacentValue>(r#"{"kind":"Start"}"#);
+    assert_default_weavy_parity::<AdjacentValue>(r#"{"kind":"Str","data":"hello"}"#);
+    assert_default_weavy_parity::<AdjacentValue>(r#"{"data":"hello","kind":"Str"}"#);
+    assert_default_weavy_parity::<AdjacentValue>(r#"{"kind":"Pair","data":[10,20]}"#);
+    assert_default_weavy_parity::<AdjacentValue>(
+        r#"{"kind":"Block","data":{"level":2,"text":"Title"}}"#,
+    );
+    assert_default_weavy_parity::<AdjacentRenamed>(
+        r#"{"kind":"create_user","data":{"name":"alice"}}"#,
+    );
+    assert_default_weavy_parity::<AdjacentRenamed>(r#"{"data":{"id":123},"kind":"delete_user"}"#);
+    assert_default_weavy_parity::<AdjacentValue>(r#"{"kind":"Str"}"#);
+}
+
+#[test]
+fn weavy_drops_internal_tagged_fields_after_later_error() {
+    DROPPED_LIST_ELEMENTS.store(0, Ordering::SeqCst);
+
+    facet_json::from_str_weavy::<InternalDroppy>(
+        r#"{"kind":"Item","item":{"value":1},"tail":"bad"}"#,
+    )
+    .unwrap_err();
+    assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn weavy_drops_adjacent_tagged_fields_after_later_error() {
+    DROPPED_LIST_ELEMENTS.store(0, Ordering::SeqCst);
+
+    facet_json::from_str_weavy::<AdjacentDroppy>(
+        r#"{"kind":"Item","data":{"item":{"value":1},"tail":"bad"}}"#,
+    )
+    .unwrap_err();
+    assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn weavy_drops_adjacent_tuple_fields_after_later_error() {
+    DROPPED_LIST_ELEMENTS.store(0, Ordering::SeqCst);
+
+    facet_json::from_str_weavy::<AdjacentTupleDroppy>(
+        r#"{"kind":"Pair","data":[{"value":1},"bad"]}"#,
+    )
+    .unwrap_err();
+    assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 1);
 }
 
 #[test]

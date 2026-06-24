@@ -31,12 +31,14 @@ use facet_reflect::Span;
 use weavy::mem::runtime::{
     HandleGuard, InitializedLedger, RawAllocError, RawArrayBuilder, ScratchSession, ScratchSlot,
 };
-use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
+use weavy::{
+    BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step, run_dense_program,
+};
 
 use crate::JsonParser;
 use crate::parser::{
-    JsonFieldKeyInput, JsonObjectKeyStep, JsonObjectOrderedI32Step, JsonObjectOrderedScalarStep,
-    JsonScalarInput, JsonScalarToken, JsonSequenceScalarStep,
+    JsonFieldKey, JsonFieldKeyInput, JsonObjectKeyStep, JsonObjectOrderedI32Step,
+    JsonObjectOrderedScalarStep, JsonScalarInput, JsonScalarToken, JsonSequenceScalarStep,
 };
 #[cfg(all(
     feature = "jit",
@@ -343,7 +345,7 @@ where
     {
         let mut slot = MaybeUninit::<T>::uninit();
         let root = PtrUninit::from_maybe_uninit(&mut slot);
-        let mut interp = JsonInterp::new(parser, root);
+        let mut interp = JsonInterp::new(parser, root, &self.lowered.blocks);
         let stats = match weavy::run_dense_with_stats(&self.lowered, &mut interp) {
             Ok(stats) => stats,
             Err(err) => return Err(run_error(err)),
@@ -377,7 +379,7 @@ where
             return Ok(unsafe { slot.assume_init() });
         }
 
-        let mut interp = JsonInterp::new(parser, root);
+        let mut interp = JsonInterp::new(parser, root, &self.lowered.blocks);
         if let Err(err) = weavy::run_dense(&self.lowered, &mut interp) {
             return Err(run_error(err));
         }
@@ -1261,7 +1263,7 @@ impl JsonNativeState {
     where
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
-        let mut interp = JsonInterp::new(parser, self.base);
+        let mut interp = JsonInterp::new(parser, self.base, &[]);
         interp.read_scalar_struct(info.shape, &info.fields, info.dispatch.as_ref())?;
         interp.finish_success();
         Ok(())
@@ -1275,7 +1277,7 @@ impl JsonNativeState {
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
         let lowered = unsafe { &*self.lowered };
-        let mut interp = JsonInterp::new(parser, self.base);
+        let mut interp = JsonInterp::new(parser, self.base, &lowered.blocks);
         if let Err(err) = weavy::run_dense(lowered, &mut interp) {
             return Err(run_error(err));
         }
@@ -1650,6 +1652,13 @@ enum JsonOp<Block> {
         enum_type: EnumType,
         variants: Box<[ExternalVariantPlan<Block>]>,
     },
+    ReadTaggedEnum {
+        shape: &'static Shape,
+        enum_type: EnumType,
+        tag_key: &'static str,
+        content_key: Option<&'static str>,
+        variants: Box<[ExternalVariantPlan<Block>]>,
+    },
     StructNext {
         shape: &'static Shape,
         loop_id: Block,
@@ -1729,6 +1738,12 @@ struct ExternalVariantPlan<Block> {
     dispatch: Option<RawFieldDispatch>,
     loop_id: Option<Block>,
     tracking: StructTracking,
+}
+
+struct TaggedRawField<'de> {
+    name: Cow<'de, str>,
+    raw: &'de str,
+    span: Span,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2285,8 +2300,10 @@ impl Lowering {
         if shape.is_untagged() {
             return Err(unsupported(shape, "untagged enum"));
         }
-        if shape.get_tag_attr().is_some() || shape.get_content_attr().is_some() {
-            return Err(unsupported(shape, "internally or adjacently tagged enum"));
+        let tag_key = shape.get_tag_attr();
+        let content_key = shape.get_content_attr();
+        if tag_key.is_none() && content_key.is_some() {
+            return Err(unsupported(shape, "enum content key without tag key"));
         }
         if enum_type.is_cow {
             return Err(unsupported(shape, "cow enum"));
@@ -2320,6 +2337,12 @@ impl Lowering {
             let fields = fields.into_boxed_slice();
             let tracking = StructTracking::for_len(fields.len());
             let dispatch = RawFieldDispatch::for_fields(&fields);
+            if tag_key.is_some()
+                && content_key.is_none()
+                && !matches!(variant.data.kind, StructKind::Unit | StructKind::Struct)
+            {
+                return Err(unsupported(shape, "internally tagged tuple enum variant"));
+            }
             let loop_id = if variant.data.kind == StructKind::Struct {
                 let loop_id = JsonBlockId::VariantStructLoop(shape, index);
                 let loop_program = vec![JsonOp::StructNext {
@@ -2344,11 +2367,21 @@ impl Lowering {
             });
         }
 
-        Ok(vec![JsonOp::ReadExternalEnum {
-            shape,
-            enum_type,
-            variants: variants.into_boxed_slice(),
-        }])
+        let variants = variants.into_boxed_slice();
+        match tag_key {
+            Some(tag_key) => Ok(vec![JsonOp::ReadTaggedEnum {
+                shape,
+                enum_type,
+                tag_key,
+                content_key,
+                variants,
+            }]),
+            None => Ok(vec![JsonOp::ReadExternalEnum {
+                shape,
+                enum_type,
+                variants,
+            }]),
+        }
     }
 }
 
@@ -2408,6 +2441,19 @@ fn resolve_json_op(
         } => JsonOp::ReadExternalEnum {
             shape,
             enum_type,
+            variants: resolve_external_variant_plans(variants, refs)?,
+        },
+        JsonOp::ReadTaggedEnum {
+            shape,
+            enum_type,
+            tag_key,
+            content_key,
+            variants,
+        } => JsonOp::ReadTaggedEnum {
+            shape,
+            enum_type,
+            tag_key,
+            content_key,
             variants: resolve_external_variant_plans(variants, refs)?,
         },
         JsonOp::StructNext {
@@ -2759,6 +2805,7 @@ fn raw_alloc_error(error: RawAllocError) -> DeserializeError {
 
 struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
     parser: &'parser mut JsonParser<'de, TRUSTED_UTF8>,
+    blocks: &'program [Program<ExecOp>],
     base: PtrUninit,
     inline_structs:
         InlineStack<StructFrame<'program, FieldPlan<ExecBlock>, InitializedLedger<Span>>>,
@@ -2775,9 +2822,14 @@ impl<'parser, 'de, 'program, const TRUSTED_UTF8: bool>
 where
     JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
 {
-    fn new(parser: &'parser mut JsonParser<'de, TRUSTED_UTF8>, base: PtrUninit) -> Self {
+    fn new(
+        parser: &'parser mut JsonParser<'de, TRUSTED_UTF8>,
+        base: PtrUninit,
+        blocks: &'program [Program<ExecOp>],
+    ) -> Self {
         Self {
             parser,
+            blocks,
             base,
             inline_structs: InlineStack::new(),
             large_structs: None,
@@ -3118,6 +3170,496 @@ where
                 got: event.kind_name().into(),
             },
         ))
+    }
+
+    fn collect_tagged_raw_fields(
+        &mut self,
+        expected: &'static str,
+    ) -> Result<Vec<TaggedRawField<'de>>, DeserializeError> {
+        let Some(event) = self.parser.peek_event()? else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::UnexpectedEof { expected },
+            ));
+        };
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
+            return Err(vm_error(
+                Some(event.span),
+                DeserializeErrorKind::UnexpectedToken {
+                    expected,
+                    got: event.kind_name().into(),
+                },
+            ));
+        }
+
+        self.parser.consume_object_start_fast()?;
+        let mut fields = Vec::new();
+        loop {
+            match self.parser.next_object_key_or_end()? {
+                JsonObjectKeyStep::End => return Ok(fields),
+                JsonObjectKeyStep::Field { key, span } => {
+                    let key = self.parser.materialize_field_key(key)?;
+                    let name = match key {
+                        JsonFieldKey::Borrowed(name) => Cow::Borrowed(name),
+                        JsonFieldKey::Decoded(name) => name,
+                    };
+                    let raw = self
+                        .parser
+                        .capture_raw()?
+                        .ok_or_else(|| unsupported_shape_message("raw JSON capture failed"))?;
+                    fields.push(TaggedRawField { name, raw, span });
+                }
+            }
+        }
+    }
+
+    fn unique_tagged_field<'fields>(
+        fields: &'fields [TaggedRawField<'de>],
+        name: &'static str,
+    ) -> Result<Option<&'fields TaggedRawField<'de>>, DeserializeError> {
+        let mut found: Option<&TaggedRawField<'de>> = None;
+        for field in fields {
+            if field.name.as_ref() != name {
+                continue;
+            }
+
+            if let Some(first) = found {
+                return Err(vm_error(
+                    Some(field.span),
+                    DeserializeErrorKind::DuplicateField {
+                        field: name.into(),
+                        first_span: Some(first.span),
+                    },
+                ));
+            }
+            found = Some(field);
+        }
+        Ok(found)
+    }
+
+    fn require_tagged_field<'fields>(
+        fields: &'fields [TaggedRawField<'de>],
+        name: &'static str,
+        shape: &'static Shape,
+    ) -> Result<&'fields TaggedRawField<'de>, DeserializeError> {
+        Self::unique_tagged_field(fields, name)?.ok_or_else(|| {
+            vm_error(
+                None,
+                DeserializeErrorKind::MissingField {
+                    field: name,
+                    container_shape: shape,
+                },
+            )
+        })
+    }
+
+    fn read_raw_tag_name(
+        field: &TaggedRawField<'de>,
+        tag_key: &'static str,
+    ) -> Result<String, DeserializeError> {
+        let mut parser = JsonParser::<true>::new(field.raw.as_bytes());
+        let (value, _span) = parser.read_scalar_token()?;
+        let JsonScalarToken::Str(value) = value else {
+            return Err(vm_error(
+                Some(field.span),
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: tag_key,
+                    got: value.kind_name().into(),
+                },
+            ));
+        };
+        Self::ensure_raw_parser_finished(&mut parser)?;
+        Ok(value.into_owned())
+    }
+
+    fn ensure_raw_parser_finished(
+        parser: &mut JsonParser<'de, true>,
+    ) -> Result<(), DeserializeError> {
+        if let Some(event) = parser.peek_event()? {
+            return Err(vm_error(
+                Some(event.span),
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "end of raw JSON value",
+                    got: event.kind_name().into(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn tagged_variant<'variants>(
+        variants: &'variants [ExternalVariantPlan<ExecBlock>],
+        tag: &str,
+        span: Span,
+    ) -> Result<&'variants ExternalVariantPlan<ExecBlock>, DeserializeError> {
+        find_external_variant(variants, tag)
+            .or_else(|| external_other_variant(variants))
+            .ok_or_else(|| {
+                vm_error(
+                    Some(span),
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "known enum variant",
+                        got: tag.to_owned().into(),
+                    },
+                )
+            })
+    }
+
+    fn struct_seen_span(&self, tracking: StructTracking, index: usize) -> Option<Span> {
+        match tracking {
+            StructTracking::Inline => {
+                let frame = self
+                    .inline_structs
+                    .last()
+                    .expect("inline struct frame is present while checking duplicate field");
+                frame.seen.get(index).copied()
+            }
+            StructTracking::Bitset | StructTracking::Heap => {
+                let frame = self
+                    .large_structs()
+                    .last()
+                    .expect("large struct frame is present while checking duplicate field");
+                frame.seen_span(index)
+            }
+        }
+    }
+
+    fn captured_variant_field<'variant>(
+        variant: &'variant ExternalVariantPlan<ExecBlock>,
+        key: &[u8],
+    ) -> Option<(usize, &'variant FieldPlan<ExecBlock>)> {
+        if let Some(dispatch) = &variant.dispatch {
+            let mut candidates = dispatch.candidates(key);
+            while candidates != 0 {
+                let index = candidates.trailing_zeros() as usize;
+                candidates &= candidates - 1;
+                let field = &variant.fields[index];
+                if field.matches_key_bytes(key) {
+                    return Some((index, field));
+                }
+            }
+            return None;
+        }
+
+        variant
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| field.matches_key_bytes(key))
+    }
+
+    fn write_raw_field_value(
+        &mut self,
+        field: &'program FieldPlan<ExecBlock>,
+        dst: PtrUninit,
+        raw: &'de str,
+    ) -> Result<(), DeserializeError> {
+        let mut parser = JsonParser::<true>::new(raw.as_bytes());
+        if let Some(scalar) = field.scalar {
+            let (value, span) = parser.read_scalar_token()?;
+            unsafe {
+                scalar.write(field.shape, dst, value, span)?;
+            }
+            Self::ensure_raw_parser_finished(&mut parser)?;
+            return Ok(());
+        }
+
+        {
+            let mut interp: JsonInterp<'_, 'de, 'program, true> =
+                JsonInterp::<'_, 'de, 'program, true>::new(&mut parser, dst, self.blocks);
+            run_dense_program(&field.program, self.blocks, &mut interp).map_err(run_error)?;
+            interp.finish_success();
+        }
+        Self::ensure_raw_parser_finished(&mut parser)
+    }
+
+    fn read_captured_struct_fields(
+        &mut self,
+        shape: &'static Shape,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        skip_key: Option<&'static str>,
+    ) -> Result<(), DeserializeError> {
+        for raw_field in fields {
+            if skip_key.is_some_and(|key| raw_field.name.as_ref() == key) {
+                continue;
+            }
+
+            let Some((index, field)) =
+                Self::captured_variant_field(variant, raw_field.name.as_ref().as_bytes())
+            else {
+                if shape.has_deny_unknown_fields_attr() {
+                    return Err(vm_error(
+                        Some(raw_field.span),
+                        DeserializeErrorKind::UnknownField {
+                            field: raw_field.name.to_string().into(),
+                            suggestion: None,
+                        },
+                    ));
+                }
+                continue;
+            };
+
+            if let Some(first_span) = self.struct_seen_span(variant.tracking, index) {
+                return Err(vm_error(
+                    Some(raw_field.span),
+                    DeserializeErrorKind::DuplicateField {
+                        field: field.name.into(),
+                        first_span: Some(first_span),
+                    },
+                ));
+            }
+
+            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+            self.write_raw_field_value(field, field_ptr, raw_field.raw)?;
+            self.mark_struct_field(variant.tracking, index, raw_field.span);
+        }
+
+        unsafe {
+            self.finish_struct_frame(variant.tracking)?;
+        }
+        Ok(())
+    }
+
+    fn read_raw_single_field_variant_payload(
+        &mut self,
+        shape: &'static Shape,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        raw: &'de str,
+        span: Span,
+    ) -> Result<(), DeserializeError> {
+        let [field] = variant.fields.as_ref() else {
+            return Err(unsupported(shape, "non-single-field enum payload"));
+        };
+
+        self.push_struct_frame(
+            shape,
+            &variant.fields,
+            variant.dispatch.as_ref(),
+            variant.tracking,
+        );
+        let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+        self.write_raw_field_value(field, field_ptr, raw)?;
+        self.mark_struct_field(variant.tracking, 0, span);
+        unsafe {
+            self.finish_struct_frame(variant.tracking)?;
+        }
+        Ok(())
+    }
+
+    fn read_raw_tuple_variant_payload(
+        &mut self,
+        shape: &'static Shape,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        raw: &'de str,
+    ) -> Result<(), DeserializeError> {
+        let mut parser = JsonParser::<true>::new(raw.as_bytes());
+        parser.consume_array_start_fast()?;
+        self.push_struct_frame(
+            shape,
+            &variant.fields,
+            variant.dispatch.as_ref(),
+            variant.tracking,
+        );
+
+        for (index, field) in variant.fields.iter().enumerate() {
+            if parser.consume_sequence_end_if_next()? {
+                return Err(vm_error(
+                    None,
+                    DeserializeErrorKind::UnexpectedEof {
+                        expected: "tuple variant element",
+                    },
+                ));
+            }
+
+            let span = parser
+                .peek_event()?
+                .map_or(Span { offset: 0, len: 0 }, |event| event.span);
+            let raw = parser
+                .capture_raw()?
+                .ok_or_else(|| unsupported_shape_message("raw JSON capture failed"))?;
+            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+            self.write_raw_field_value(field, field_ptr, raw)?;
+            self.mark_struct_field(variant.tracking, index, span);
+        }
+
+        if !parser.consume_sequence_end_if_next()? {
+            let got = match parser.peek_event()? {
+                Some(event) => event.kind_name().into(),
+                None => "end of input".into(),
+            };
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "sequence end for tuple variant",
+                    got,
+                },
+            ));
+        }
+
+        unsafe {
+            self.finish_struct_frame(variant.tracking)?;
+        }
+        Self::ensure_raw_parser_finished(&mut parser)
+    }
+
+    fn read_raw_struct_variant_payload(
+        &mut self,
+        shape: &'static Shape,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        raw: &'de str,
+    ) -> Result<(), DeserializeError> {
+        let mut parser = JsonParser::<true>::new(raw.as_bytes());
+        {
+            let mut interp: JsonInterp<'_, 'de, 'program, true> =
+                JsonInterp::<'_, 'de, 'program, true>::new(&mut parser, self.base, self.blocks);
+            let fields = interp.collect_tagged_raw_fields("struct variant payload")?;
+            interp.push_struct_frame(
+                shape,
+                &variant.fields,
+                variant.dispatch.as_ref(),
+                variant.tracking,
+            );
+            interp.read_captured_struct_fields(shape, variant, &fields, None)?;
+            interp.finish_success();
+        }
+        Self::ensure_raw_parser_finished(&mut parser)
+    }
+
+    fn consume_raw_unit_variant_payload(&mut self, raw: &'de str) -> Result<(), DeserializeError> {
+        let mut parser = JsonParser::<true>::new(raw.as_bytes());
+        {
+            let mut interp: JsonInterp<'_, 'de, 'program, true> =
+                JsonInterp::<'_, 'de, 'program, true>::new(&mut parser, self.base, self.blocks);
+            interp.consume_unit_variant_payload()?;
+            interp.finish_success();
+        }
+        Self::ensure_raw_parser_finished(&mut parser)
+    }
+
+    fn read_internal_tagged_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+        tag_key: &'static str,
+        variants: &'program [ExternalVariantPlan<ExecBlock>],
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        let fields = self.collect_tagged_raw_fields("struct for internally tagged enum")?;
+        let tag_field = Self::require_tagged_field(&fields, tag_key, shape)?;
+        let tag = Self::read_raw_tag_name(tag_field, tag_key)?;
+        let variant = Self::tagged_variant(variants, &tag, tag_field.span)?;
+
+        unsafe {
+            write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
+        }
+
+        match variant.variant.data.kind {
+            StructKind::Unit => Ok(Control::Continue),
+            StructKind::Struct => {
+                self.push_struct_frame(
+                    shape,
+                    &variant.fields,
+                    variant.dispatch.as_ref(),
+                    variant.tracking,
+                );
+                self.read_captured_struct_fields(shape, variant, &fields, Some(tag_key))?;
+                Ok(Control::Continue)
+            }
+            StructKind::Tuple | StructKind::TupleStruct => {
+                Err(unsupported(shape, "internally tagged tuple enum variant"))
+            }
+        }
+    }
+
+    fn read_adjacent_tagged_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+        tag_key: &'static str,
+        content_key: &'static str,
+        variants: &'program [ExternalVariantPlan<ExecBlock>],
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        let fields = self.collect_tagged_raw_fields("struct for adjacently tagged enum")?;
+        let tag_field = Self::require_tagged_field(&fields, tag_key, shape)?;
+        let tag = Self::read_raw_tag_name(tag_field, tag_key)?;
+        let variant = Self::tagged_variant(variants, &tag, tag_field.span)?;
+        let content = Self::unique_tagged_field(&fields, content_key)?;
+
+        unsafe {
+            write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
+        }
+
+        match variant.variant.data.kind {
+            StructKind::Unit => {
+                if let Some(content) = content {
+                    self.consume_raw_unit_variant_payload(content.raw)?;
+                }
+                Ok(Control::Continue)
+            }
+            StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => {
+                let content = content.ok_or_else(|| {
+                    vm_error(
+                        None,
+                        DeserializeErrorKind::MissingField {
+                            field: content_key,
+                            container_shape: shape,
+                        },
+                    )
+                })?;
+                self.read_raw_single_field_variant_payload(
+                    shape,
+                    variant,
+                    content.raw,
+                    content.span,
+                )?;
+                Ok(Control::Continue)
+            }
+            StructKind::Tuple | StructKind::TupleStruct => {
+                let content = content.ok_or_else(|| {
+                    vm_error(
+                        None,
+                        DeserializeErrorKind::MissingField {
+                            field: content_key,
+                            container_shape: shape,
+                        },
+                    )
+                })?;
+                self.read_raw_tuple_variant_payload(shape, variant, content.raw)?;
+                Ok(Control::Continue)
+            }
+            StructKind::Struct => {
+                let content = content.ok_or_else(|| {
+                    vm_error(
+                        None,
+                        DeserializeErrorKind::MissingField {
+                            field: content_key,
+                            container_shape: shape,
+                        },
+                    )
+                })?;
+                self.read_raw_struct_variant_payload(shape, variant, content.raw)?;
+                Ok(Control::Continue)
+            }
+        }
+    }
+
+    fn read_tagged_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+        tag_key: &'static str,
+        content_key: Option<&'static str>,
+        variants: &'program [ExternalVariantPlan<ExecBlock>],
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        match content_key {
+            Some(content_key) => {
+                self.read_adjacent_tagged_enum(shape, enum_type, tag_key, content_key, variants)
+            }
+            None => self.read_internal_tagged_enum(shape, enum_type, tag_key, variants),
+        }
     }
 
     fn finish_external_enum_payload(
@@ -4346,6 +4888,13 @@ where
                 enum_type,
                 variants,
             } => self.read_external_enum(shape, *enum_type, variants),
+            JsonOp::ReadTaggedEnum {
+                shape,
+                enum_type,
+                tag_key,
+                content_key,
+                variants,
+            } => self.read_tagged_enum(shape, *enum_type, tag_key, *content_key, variants),
             JsonOp::StructNext {
                 shape,
                 loop_id,
