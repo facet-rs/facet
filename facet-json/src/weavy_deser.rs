@@ -45,6 +45,17 @@ use crate::parser::{
 use crate::parser::{NativeArrayStep, NativeOrderedRootCursor};
 use crate::scanner::{NumberHint, ParsedNumber, SpannedToken, Token as ScanToken};
 
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+mod native_stencils {
+    include!(concat!(env!("OUT_DIR"), "/stencils.rs"));
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum JsonBlockId {
     Shape(&'static Shape),
@@ -464,6 +475,24 @@ struct JsonNativeScalarStructListInfo {
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
+const JSON_NATIVE_STATUS_OK: u64 = 0;
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+const JSON_NATIVE_STATUS_FALLBACK: u64 = 1;
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 const ORDERED_PROBE_BACKOFF: u8 = u8::MAX;
 
 #[cfg(all(
@@ -473,7 +502,12 @@ const ORDERED_PROBE_BACKOFF: u8 = u8::MAX;
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
+#[repr(C)]
 struct JsonNativeState {
+    input: *const u8,
+    input_len: usize,
+    cursor_pos: usize,
+    status: u64,
     parser: *mut (),
     lowered: *const DenseLowered<ExecOp>,
     trusted_utf8: bool,
@@ -530,8 +564,23 @@ impl JsonNativePlan {
 
         let mut layout = weavy::jit::StencilLayout::new();
         let root_chain = layout.start_chain();
+        let root_start = match &*root {
+            JsonNativeRootInfo::ScalarStruct(_) => {
+                layout.emit_stencil(native_stencils::ROOT_OBJECT_START)
+            }
+            JsonNativeRootInfo::ScalarStructList(_) => {
+                layout.emit_stencil(native_stencils::ROOT_ARRAY_START)
+            }
+        };
         let hostcall = layout.emit_hostcall(root_chain, core::ptr::from_ref(&calls[0]));
         let done = layout.emit_done();
+        let root_start_cont = match &*root {
+            JsonNativeRootInfo::ScalarStruct(_) => native_stencils::ROOT_OBJECT_START_CONT,
+            JsonNativeRootInfo::ScalarStructList(_) => native_stencils::ROOT_ARRAY_START_CONT,
+        };
+        for &rel in root_start_cont {
+            layout.patch_continuation(root_start + rel, hostcall);
+        }
         layout.patch_hostcall_continuation(hostcall, done);
         let native = weavy::jit::NativeProgram::new(layout, root_chain);
 
@@ -658,7 +707,12 @@ impl JsonNativePlan {
     where
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
+        let (input, input_len, cursor_pos) = parser.native_input_parts();
         let mut state = JsonNativeState {
+            input,
+            input_len,
+            cursor_pos,
+            status: JSON_NATIVE_STATUS_OK,
             parser: (parser as *mut JsonParser<'_, TRUSTED_UTF8>).cast(),
             lowered: lowered as *const DenseLowered<ExecOp>,
             trusted_utf8: TRUSTED_UTF8,
@@ -675,9 +729,19 @@ impl JsonNativePlan {
         }
 
         let _ = (&self.calls, &self.root);
-        match state.error {
-            Some(error) => Err(error),
-            None => Ok(()),
+        if let Some(error) = state.error {
+            return Err(error);
+        }
+        match state.status {
+            JSON_NATIVE_STATUS_OK => Ok(()),
+            JSON_NATIVE_STATUS_FALLBACK => {
+                self.root.record_ordered_probe(false);
+                state.read_interpreted(parser)
+            }
+            _ => {
+                self.root.record_ordered_probe(false);
+                state.read_interpreted(parser)
+            }
         }
     }
 }
@@ -693,9 +757,9 @@ unsafe extern "C" fn json_native_read_root(state: *mut (), info: *const ()) -> b
     let state = unsafe { &mut *state.cast::<JsonNativeState>() };
     let info = unsafe { &*info.cast::<JsonNativeRootInfo>() };
     let result = if state.trusted_utf8 {
-        unsafe { state.read_root::<true>(info) }
+        unsafe { state.read_root_after_native_start::<true>(info) }
     } else {
-        unsafe { state.read_root::<false>(info) }
+        unsafe { state.read_root_after_native_start::<false>(info) }
     };
 
     match result {
@@ -715,7 +779,7 @@ unsafe extern "C" fn json_native_read_root(state: *mut (), info: *const ()) -> b
     )
 ))]
 impl JsonNativeState {
-    unsafe fn read_root<const TRUSTED_UTF8: bool>(
+    unsafe fn read_root_after_native_start<const TRUSTED_UTF8: bool>(
         &mut self,
         info: &JsonNativeRootInfo,
     ) -> Result<(), DeserializeError>
@@ -724,15 +788,15 @@ impl JsonNativeState {
     {
         match info {
             JsonNativeRootInfo::ScalarStruct(info) => unsafe {
-                self.read_scalar_struct::<TRUSTED_UTF8>(info)
+                self.read_scalar_struct_after_object_start::<TRUSTED_UTF8>(info)
             },
             JsonNativeRootInfo::ScalarStructList(info) => unsafe {
-                self.read_scalar_struct_list::<TRUSTED_UTF8>(info)
+                self.read_scalar_struct_list_after_array_start::<TRUSTED_UTF8>(info)
             },
         }
     }
 
-    unsafe fn read_scalar_struct<const TRUSTED_UTF8: bool>(
+    unsafe fn read_scalar_struct_after_object_start<const TRUSTED_UTF8: bool>(
         &mut self,
         info: &JsonNativeScalarStructInfo,
     ) -> Result<(), DeserializeError>
@@ -742,34 +806,46 @@ impl JsonNativeState {
         let parser = unsafe { &mut *self.parser.cast::<JsonParser<'_, TRUSTED_UTF8>>() };
         let can_probe_ordered = tiny_i32_struct_fields_are_fusible(&info.fields)
             || info.fields.len() <= u64::BITS as usize;
-        if can_probe_ordered {
-            if self.try_read_cursor_i32_scalar_struct(parser, info)? {
-                info.record_ordered_probe(true);
-                return Ok(());
-            }
-
-            if self.try_read_cursor_scalar_struct(parser, info)? {
-                info.record_ordered_probe(true);
-                return Ok(());
-            }
-
-            if self.try_read_ordered_i32_scalar_struct(parser, info)? {
-                info.record_ordered_probe(true);
-                return Ok(());
-            }
-
-            if self.try_read_ordered_scalar_struct(parser, info)? {
-                info.record_ordered_probe(true);
-                return Ok(());
-            }
-
-            info.record_ordered_probe(false);
+        if !can_probe_ordered {
+            return self.read_scalar_struct_interpreted(parser, info);
         }
 
+        let Some(mut cursor) = parser.native_ordered_root_cursor_from(self.cursor_pos) else {
+            return self.read_scalar_struct_interpreted(parser, info);
+        };
+        {
+            let mut guard = NativeScalarStructGuard::new(self.base, &info.fields);
+            let matched = if tiny_i32_struct_fields_are_fusible(&info.fields) {
+                self.read_cursor_i32_scalar_struct_object_from(
+                    &mut cursor,
+                    info,
+                    &mut guard,
+                    0,
+                    None,
+                )?
+            } else {
+                self.read_cursor_scalar_struct_object_from(
+                    parser,
+                    &mut cursor,
+                    info,
+                    &mut guard,
+                    0,
+                    None,
+                )?
+            };
+            if matched {
+                info.record_ordered_probe(true);
+                guard.finish();
+                parser.commit_native_ordered_root(cursor);
+                return Ok(());
+            }
+        }
+
+        info.record_ordered_probe(false);
         self.read_scalar_struct_interpreted(parser, info)
     }
 
-    unsafe fn read_scalar_struct_list<const TRUSTED_UTF8: bool>(
+    unsafe fn read_scalar_struct_list_after_array_start<const TRUSTED_UTF8: bool>(
         &mut self,
         info: &JsonNativeScalarStructListInfo,
     ) -> Result<(), DeserializeError>
@@ -777,63 +853,38 @@ impl JsonNativeState {
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
         let parser = unsafe { &mut *self.parser.cast::<JsonParser<'_, TRUSTED_UTF8>>() };
-        if self.try_read_cursor_i32_scalar_struct_list(parser, info)? {
-            info.record_ordered_probe(true);
-            return Ok(());
-        }
+        let Some(cursor) = parser.native_ordered_root_cursor_from(self.cursor_pos) else {
+            return self.read_interpreted(parser);
+        };
 
-        if self.try_read_cursor_f64_scalar_struct_list(parser, info)? {
-            info.record_ordered_probe(true);
-            return Ok(());
-        }
-
-        if self.try_read_cursor_scalar_struct_list(parser, info)? {
-            info.record_ordered_probe(true);
-            return Ok(());
-        }
-
-        let save = parser.save_native_probe();
-        parser.consume_array_start_fast()?;
-
-        let mut builder = RawArrayBuilder::new(
-            info.element_layout,
-            info.list.t() as *const Shape as *const (),
-            drop_shape_value,
-        );
-        loop {
-            if parser.consume_sequence_end_if_next()? {
-                self.adopt_native_list(info, &mut builder)?;
+        if tiny_i32_struct_fields_are_fusible(&info.element.fields) {
+            if self.read_cursor_i32_scalar_struct_list_after_array_start(parser, info, cursor)? {
                 info.record_ordered_probe(true);
                 return Ok(());
             }
-
-            let slot = builder.next_uninit_slot().map_err(raw_alloc_error)?;
-            let old_base = self.base;
-            self.base = PtrUninit::new(slot);
-            let matched = self
-                .try_read_ordered_i32_scalar_struct(parser, &info.element)
-                .and_then(|matched| {
-                    if matched {
-                        Ok(true)
-                    } else {
-                        self.try_read_ordered_scalar_struct(parser, &info.element)
-                    }
-                });
-            self.base = old_base;
-            let matched = matched?;
-
-            if matched {
-                unsafe {
-                    builder.mark_initialized();
-                }
-                continue;
-            }
-
             info.record_ordered_probe(false);
-            drop(builder);
-            parser.restore_native_probe(save);
             return self.read_interpreted(parser);
         }
+
+        if tiny_f64_struct_fields_are_fusible(&info.element.fields) {
+            if self.read_cursor_f64_scalar_struct_list_after_array_start(parser, info, cursor)? {
+                info.record_ordered_probe(true);
+                return Ok(());
+            }
+            info.record_ordered_probe(false);
+            return self.read_interpreted(parser);
+        }
+
+        if info.element.fields.len() <= u64::BITS as usize {
+            if self.read_cursor_scalar_struct_list_after_array_start(parser, info, cursor)? {
+                info.record_ordered_probe(true);
+                return Ok(());
+            }
+            info.record_ordered_probe(false);
+            return self.read_interpreted(parser);
+        }
+
+        self.read_interpreted(parser)
     }
 
     fn adopt_native_list(
@@ -858,51 +909,12 @@ impl JsonNativeState {
     }
 
     #[inline]
-    fn try_read_cursor_i32_scalar_struct<const TRUSTED_UTF8: bool>(
+    fn read_cursor_i32_scalar_struct_list_after_array_start<'de, const TRUSTED_UTF8: bool>(
         &mut self,
-        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
-        info: &JsonNativeScalarStructInfo,
-    ) -> Result<bool, DeserializeError> {
-        if !tiny_i32_struct_fields_are_fusible(&info.fields) {
-            return Ok(false);
-        }
-
-        let Some(mut cursor) = parser.native_ordered_root_cursor() else {
-            return Ok(false);
-        };
-        if !cursor.consume_root_object_start()? {
-            return Ok(false);
-        }
-
-        let mut guard = NativeScalarStructGuard::new(self.base, &info.fields);
-        let matched =
-            self.read_cursor_i32_scalar_struct_object(&mut cursor, info, &mut guard, None)?;
-        if !matched {
-            return Ok(false);
-        }
-
-        guard.finish();
-        parser.commit_native_ordered_root(cursor);
-        Ok(true)
-    }
-
-    #[inline]
-    fn try_read_cursor_i32_scalar_struct_list<const TRUSTED_UTF8: bool>(
-        &mut self,
-        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+        parser: &mut JsonParser<'de, TRUSTED_UTF8>,
         info: &JsonNativeScalarStructListInfo,
+        mut cursor: NativeOrderedRootCursor<'de>,
     ) -> Result<bool, DeserializeError> {
-        if !tiny_i32_struct_fields_are_fusible(&info.element.fields) {
-            return Ok(false);
-        }
-
-        let Some(mut cursor) = parser.native_ordered_root_cursor() else {
-            return Ok(false);
-        };
-        if !cursor.consume_root_array_start()? {
-            return Ok(false);
-        }
-
         let mut builder = RawArrayBuilder::new(
             info.element_layout,
             info.list.t() as *const Shape as *const (),
@@ -947,22 +959,12 @@ impl JsonNativeState {
     }
 
     #[inline]
-    fn try_read_cursor_f64_scalar_struct_list<const TRUSTED_UTF8: bool>(
+    fn read_cursor_f64_scalar_struct_list_after_array_start<'de, const TRUSTED_UTF8: bool>(
         &mut self,
-        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+        parser: &mut JsonParser<'de, TRUSTED_UTF8>,
         info: &JsonNativeScalarStructListInfo,
+        mut cursor: NativeOrderedRootCursor<'de>,
     ) -> Result<bool, DeserializeError> {
-        if !tiny_f64_struct_fields_are_fusible(&info.element.fields) {
-            return Ok(false);
-        }
-
-        let Some(mut cursor) = parser.native_ordered_root_cursor() else {
-            return Ok(false);
-        };
-        if !cursor.consume_root_array_start()? {
-            return Ok(false);
-        }
-
         let mut builder = RawArrayBuilder::new(
             info.element_layout,
             info.list.t() as *const Shape as *const (),
@@ -1007,57 +1009,15 @@ impl JsonNativeState {
     }
 
     #[inline]
-    fn try_read_cursor_scalar_struct<const TRUSTED_UTF8: bool>(
+    fn read_cursor_scalar_struct_list_after_array_start<'input, const TRUSTED_UTF8: bool>(
         &mut self,
-        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
-        info: &JsonNativeScalarStructInfo,
-    ) -> Result<bool, DeserializeError>
-    where
-        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
-    {
-        if info.fields.len() > u64::BITS as usize {
-            return Ok(false);
-        }
-
-        let Some(mut cursor) = parser.native_ordered_root_cursor() else {
-            return Ok(false);
-        };
-        if !cursor.consume_root_object_start()? {
-            return Ok(false);
-        }
-
-        let mut guard = NativeScalarStructGuard::new(self.base, &info.fields);
-        let matched =
-            self.read_cursor_scalar_struct_object(parser, &mut cursor, info, &mut guard, None)?;
-        if !matched {
-            return Ok(false);
-        }
-
-        guard.finish();
-        parser.commit_native_ordered_root(cursor);
-        Ok(true)
-    }
-
-    #[inline]
-    fn try_read_cursor_scalar_struct_list<const TRUSTED_UTF8: bool>(
-        &mut self,
-        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
+        parser: &mut JsonParser<'input, TRUSTED_UTF8>,
         info: &JsonNativeScalarStructListInfo,
+        mut cursor: NativeOrderedRootCursor<'input>,
     ) -> Result<bool, DeserializeError>
     where
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
-        if info.element.fields.len() > u64::BITS as usize {
-            return Ok(false);
-        }
-
-        let Some(mut cursor) = parser.native_ordered_root_cursor() else {
-            return Ok(false);
-        };
-        if !cursor.consume_root_array_start()? {
-            return Ok(false);
-        }
-
         let mut builder = RawArrayBuilder::new(
             info.element_layout,
             info.list.t() as *const Shape as *const (),
@@ -1110,13 +1070,31 @@ impl JsonNativeState {
         guard: &mut NativeScalarStructGuard<'_>,
         array_element_object: Option<bool>,
     ) -> Result<bool, DeserializeError> {
+        self.read_cursor_i32_scalar_struct_object_from(cursor, info, guard, 0, array_element_object)
+    }
+
+    #[inline]
+    fn read_cursor_i32_scalar_struct_object_from(
+        &mut self,
+        cursor: &mut NativeOrderedRootCursor<'_>,
+        info: &JsonNativeScalarStructInfo,
+        guard: &mut NativeScalarStructGuard<'_>,
+        start_index: usize,
+        array_element_object: Option<bool>,
+    ) -> Result<bool, DeserializeError> {
         if let Some(require_comma) = array_element_object
             && !cursor.consume_array_object_start(require_comma)?
         {
             return Ok(false);
         }
 
-        for (index, expected) in info.ordered_names.iter().copied().enumerate() {
+        for (index, expected) in info
+            .ordered_names
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(start_index)
+        {
             let Some(_span) = cursor.consume_ordered_field_prefix(expected, index > 0)? else {
                 return Ok(false);
             };
@@ -1150,11 +1128,35 @@ impl JsonNativeState {
     where
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
+        self.read_cursor_scalar_struct_object_from(
+            parser,
+            cursor,
+            info,
+            guard,
+            0,
+            array_element_object,
+        )
+    }
+
+    #[inline]
+    fn read_cursor_scalar_struct_object_from<const TRUSTED_UTF8: bool>(
+        &mut self,
+        parser: &JsonParser<'_, TRUSTED_UTF8>,
+        cursor: &mut NativeOrderedRootCursor<'_>,
+        info: &JsonNativeScalarStructInfo,
+        guard: &mut NativeScalarStructGuard<'_>,
+        start_index: usize,
+        array_element_object: Option<bool>,
+    ) -> Result<bool, DeserializeError>
+    where
+        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
+    {
         if tiny_f64_struct_fields_are_fusible(&info.fields) {
-            return self.read_cursor_f64_scalar_struct_object(
+            return self.read_cursor_f64_scalar_struct_object_from(
                 cursor,
                 info,
                 guard,
+                start_index,
                 array_element_object,
             );
         }
@@ -1165,7 +1167,13 @@ impl JsonNativeState {
             return Ok(false);
         }
 
-        for (index, expected) in info.ordered_names.iter().copied().enumerate() {
+        for (index, expected) in info
+            .ordered_names
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(start_index)
+        {
             let Some(_span) = cursor.consume_ordered_field_prefix(expected, index > 0)? else {
                 return Ok(false);
             };
@@ -1197,13 +1205,31 @@ impl JsonNativeState {
         guard: &mut NativeScalarStructGuard<'_>,
         array_element_object: Option<bool>,
     ) -> Result<bool, DeserializeError> {
+        self.read_cursor_f64_scalar_struct_object_from(cursor, info, guard, 0, array_element_object)
+    }
+
+    #[inline]
+    fn read_cursor_f64_scalar_struct_object_from(
+        &mut self,
+        cursor: &mut NativeOrderedRootCursor<'_>,
+        info: &JsonNativeScalarStructInfo,
+        guard: &mut NativeScalarStructGuard<'_>,
+        start_index: usize,
+        array_element_object: Option<bool>,
+    ) -> Result<bool, DeserializeError> {
         if let Some(require_comma) = array_element_object
             && !cursor.consume_array_object_start(require_comma)?
         {
             return Ok(false);
         }
 
-        for (index, expected) in info.ordered_names.iter().copied().enumerate() {
+        for (index, expected) in info
+            .ordered_names
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(start_index)
+        {
             let Some(value) = cursor.consume_ordered_f64_field(expected, index > 0)? else {
                 return Ok(false);
             };
@@ -1219,72 +1245,6 @@ impl JsonNativeState {
         if !cursor.consume_object_end()? {
             return Ok(false);
         }
-        Ok(true)
-    }
-
-    #[inline]
-    fn try_read_ordered_i32_scalar_struct<const TRUSTED_UTF8: bool>(
-        &mut self,
-        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
-        info: &JsonNativeScalarStructInfo,
-    ) -> Result<bool, DeserializeError> {
-        if !tiny_i32_struct_fields_are_fusible(&info.fields) {
-            return Ok(false);
-        }
-
-        let mut guard = NativeScalarStructGuard::new(self.base, &info.fields);
-        let matched = parser.try_consume_ordered_i32_object_with(
-            &info.ordered_names,
-            |_, index, _, value| {
-                let field = info.fields[index];
-                let field_ptr = unsafe { self.base.field_uninit(field.offset) };
-                unsafe {
-                    field_ptr.put(value);
-                }
-                guard.mark(index);
-                Ok::<(), DeserializeError>(())
-            },
-        )?;
-        if !matched {
-            return Ok(false);
-        }
-
-        guard.finish();
-        Ok(true)
-    }
-
-    #[inline]
-    fn try_read_ordered_scalar_struct<const TRUSTED_UTF8: bool>(
-        &mut self,
-        parser: &mut JsonParser<'_, TRUSTED_UTF8>,
-        info: &JsonNativeScalarStructInfo,
-    ) -> Result<bool, DeserializeError>
-    where
-        for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
-    {
-        if info.fields.len() > u64::BITS as usize {
-            return Ok(false);
-        }
-
-        let mut guard = NativeScalarStructGuard::new(self.base, &info.fields);
-        let matched = parser.try_consume_ordered_scalar_object_with(
-            &info.ordered_names,
-            |parser, index, _, token| {
-                let field = &info.fields[index];
-                let field_ptr = unsafe { self.base.field_uninit(field.offset) };
-                parser.write_scalar_input_preselected(
-                    field,
-                    field_ptr,
-                    JsonScalarInput::Raw(token),
-                )?;
-                guard.mark(index);
-                Ok::<(), DeserializeError>(())
-            },
-        )?;
-        if !matched {
-            return Ok(false);
-        }
-        guard.finish();
         Ok(true)
     }
 
@@ -1506,6 +1466,13 @@ impl JsonNativeRootInfo {
         match self {
             Self::ScalarStruct(info) => info.should_enter_native(),
             Self::ScalarStructList(info) => info.should_enter_native(),
+        }
+    }
+
+    fn record_ordered_probe(&self, matched: bool) {
+        match self {
+            Self::ScalarStruct(info) => info.record_ordered_probe(matched),
+            Self::ScalarStructList(info) => info.record_ordered_probe(matched),
         }
     }
 }
