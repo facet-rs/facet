@@ -65,6 +65,9 @@ libtest-mimic = "0.8.1"
 smol_str = { workspace = true }
 stacker = { version = "0.1.24", default-features = false }
 
+[build-dependencies]
+copypatch = { workspace = true, features = ["build"], optional = true }
+
 [[test]]
 name = "format_suite"
 harness = false
@@ -88,7 +91,7 @@ harness = false
 [features]
 default = []
 fast = ["lexical-parse", "dep:itoa", "dep:zmij"]
-jit = ["weavy/jit"]
+jit = ["weavy/jit", "dep:copypatch"]
 lexical-parse = ["dep:lexical-parse-float", "dep:lexical-parse-integer"]
 std = []
 ci = []

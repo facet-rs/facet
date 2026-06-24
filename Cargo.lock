@@ -2218,6 +2218,7 @@ dependencies = [
  "axum-core",
  "codspeed-divan-compat",
  "compact_str",
+ "copypatch",
  "facet",
  "facet-core",
  "facet-format",

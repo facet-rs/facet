@@ -1191,29 +1191,6 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
-    #[cfg(all(
-        feature = "jit",
-        any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(target_os = "linux", target_arch = "x86_64")
-        )
-    ))]
-    pub(crate) fn consume_array_object_start_fast(&mut self) -> Result<Span, ParseError> {
-        if self.state.event_peek.is_some() {
-            return self.consume_object_start();
-        }
-
-        match self.state.stack.last() {
-            Some(ContextState::Array(ArrayState::ValueOrEnd)) => {
-                self.consume_direct_array_object_start(false)
-            }
-            Some(ContextState::Array(ArrayState::CommaOrEnd)) => {
-                self.consume_direct_array_object_start(true)
-            }
-            _ => self.consume_object_start_fast(),
-        }
-    }
-
     pub(crate) fn consume_array_start_fast(&mut self) -> Result<Span, ParseError> {
         if self.state.event_peek.is_some() {
             return self.consume_array_start();
@@ -1234,37 +1211,6 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 }
             }
             _ => self.consume_array_start(),
-        }
-    }
-
-    #[cfg(all(
-        feature = "jit",
-        any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(target_os = "linux", target_arch = "x86_64")
-        )
-    ))]
-    fn consume_direct_array_object_start(
-        &mut self,
-        require_comma: bool,
-    ) -> Result<Span, ParseError> {
-        if let Some(span) = self
-            .scanner
-            .try_consume_array_object_start(self.input, require_comma)
-            .map_err(scan_error_to_parse_error)?
-        {
-            if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
-                *state = ArrayState::ValueOrEnd;
-            }
-            self.state.last_token_start = span.offset as usize;
-            self.state.scanner_pos = self.scanner.pos();
-            self.state.root_started = true;
-            self.state
-                .stack
-                .push(ContextState::Object(ObjectState::KeyOrEnd));
-            Ok(span)
-        } else {
-            self.consume_object_start_fast()
         }
     }
 
@@ -1640,7 +1586,6 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         Ok(matched)
     }
 
-    #[inline]
     #[cfg(all(
         feature = "jit",
         any(
@@ -1648,61 +1593,8 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             all(target_os = "linux", target_arch = "x86_64")
         )
     ))]
-    pub(crate) fn try_consume_ordered_i32_object_with<E, W>(
-        &mut self,
-        expected: &[&str],
-        mut consume: W,
-    ) -> Result<bool, E>
-    where
-        E: From<ParseError>,
-        W: FnMut(&JsonParser<'de, TRUSTED_UTF8>, usize, Span, i32) -> Result<(), E>,
-    {
-        if expected.is_empty() || self.state.event_peek.is_some() {
-            return Ok(false);
-        }
-
-        let save = self.save_ordered_object_probe();
-        self.consume_array_object_start_fast().map_err(E::from)?;
-        let matched = self.try_consume_ordered_i32_object_fields_inner(expected, &mut consume)?;
-        if !matched {
-            self.restore_ordered_object_probe(save);
-        }
-        Ok(matched)
-    }
-
-    #[inline]
-    #[cfg(all(
-        feature = "jit",
-        any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(target_os = "linux", target_arch = "x86_64")
-        )
-    ))]
-    pub(crate) fn try_consume_ordered_scalar_object_with<E, W>(
-        &mut self,
-        expected: &[&str],
-        mut consume: W,
-    ) -> Result<bool, E>
-    where
-        E: From<ParseError>,
-        W: FnMut(
-            &JsonParser<'de, TRUSTED_UTF8>,
-            usize,
-            Span,
-            scanner::SpannedToken,
-        ) -> Result<(), E>,
-    {
-        if expected.is_empty() || self.state.event_peek.is_some() {
-            return Ok(false);
-        }
-
-        let save = self.save_ordered_object_probe();
-        self.consume_array_object_start_fast().map_err(E::from)?;
-        let matched = self.try_consume_ordered_scalar_object_inner(expected, &mut consume)?;
-        if !matched {
-            self.restore_ordered_object_probe(save);
-        }
-        Ok(matched)
+    pub(crate) fn native_input_parts(&self) -> (*const u8, usize, usize) {
+        (self.input.as_ptr(), self.input.len(), self.scanner.pos())
     }
 
     #[cfg(all(
@@ -1712,29 +1604,10 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             all(target_os = "linux", target_arch = "x86_64")
         )
     ))]
-    pub(crate) fn save_native_probe(&self) -> OrderedObjectProbeSave {
-        self.save_ordered_object_probe()
-    }
-
-    #[cfg(all(
-        feature = "jit",
-        any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(target_os = "linux", target_arch = "x86_64")
-        )
-    ))]
-    pub(crate) fn restore_native_probe(&mut self, save: OrderedObjectProbeSave) {
-        self.restore_ordered_object_probe(save);
-    }
-
-    #[cfg(all(
-        feature = "jit",
-        any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(target_os = "linux", target_arch = "x86_64")
-        )
-    ))]
-    pub(crate) fn native_ordered_root_cursor(&self) -> Option<NativeOrderedRootCursor<'de>> {
+    pub(crate) fn native_ordered_root_cursor_from(
+        &self,
+        scanner_pos: usize,
+    ) -> Option<NativeOrderedRootCursor<'de>> {
         if self.state.event_peek.is_some()
             || !self.state.stack.is_empty()
             || self.state.root_started
@@ -1743,9 +1616,11 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             return None;
         }
 
+        let mut scanner = self.scanner.clone();
+        scanner.set_pos(scanner_pos);
         Some(NativeOrderedRootCursor {
             input: self.input,
-            scanner: self.scanner.clone(),
+            scanner,
             last_token_start: self.state.last_token_start,
         })
     }
@@ -1844,47 +1719,6 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 return Ok(false);
             };
             consume(self, index, span, value)?;
-        }
-
-        self.consume_ordered_object_end().map_err(E::from)
-    }
-
-    #[inline]
-    #[cfg(all(
-        feature = "jit",
-        any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(target_os = "linux", target_arch = "x86_64")
-        )
-    ))]
-    fn try_consume_ordered_scalar_object_inner<E, W>(
-        &mut self,
-        expected: &[&str],
-        consume: &mut W,
-    ) -> Result<bool, E>
-    where
-        E: From<ParseError>,
-        W: FnMut(
-            &JsonParser<'de, TRUSTED_UTF8>,
-            usize,
-            Span,
-            scanner::SpannedToken,
-        ) -> Result<(), E>,
-    {
-        for (index, expected) in expected.iter().copied().enumerate() {
-            let Some(span) = self
-                .try_consume_ordered_field_prefix(expected, index > 0)
-                .map_err(E::from)?
-            else {
-                return Ok(false);
-            };
-
-            let token = self.consume_spanned_token().map_err(E::from)?;
-            self.validate_scalar_token(&token, "scalar")
-                .map_err(E::from)?;
-            self.state.root_started = true;
-            self.finish_value_in_parent();
-            consume(self, index, span, token)?;
         }
 
         self.consume_ordered_object_end().map_err(E::from)
@@ -2541,16 +2375,6 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
     )
 ))]
 impl<'de> NativeOrderedRootCursor<'de> {
-    #[inline]
-    pub(crate) fn consume_root_object_start(&mut self) -> Result<bool, ParseError> {
-        self.consume_punctuation(b'{')
-    }
-
-    #[inline]
-    pub(crate) fn consume_root_array_start(&mut self) -> Result<bool, ParseError> {
-        self.consume_punctuation(b'[')
-    }
-
     #[inline]
     pub(crate) fn consume_array_object_start(
         &mut self,
