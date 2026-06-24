@@ -872,6 +872,60 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         Ok(Span::new(start, end - start))
     }
 
+    pub(crate) fn skip_value_strict(&mut self) -> Result<(), ParseError> {
+        let first = if let Some(event) = self.state.event_peek.take() {
+            self.state.peek_start_offset = None;
+            Some(event)
+        } else {
+            self.produce_event()?
+        };
+
+        let Some(first) = first else {
+            return Err(ParseError::new(
+                Span::new(self.current_offset(), 0),
+                DeserializeErrorKind::UnexpectedEof { expected: "value" },
+            ));
+        };
+
+        let mut depth = match first.kind {
+            ParseEventKind::StructStart(_) | ParseEventKind::SequenceStart(_) => 1usize,
+            ParseEventKind::Scalar(_) => return Ok(()),
+            ParseEventKind::StructEnd
+            | ParseEventKind::SequenceEnd
+            | ParseEventKind::FieldKey(_)
+            | ParseEventKind::OrderedField
+            | _ => {
+                return Err(ParseError::new(
+                    first.span,
+                    DeserializeErrorKind::UnexpectedToken {
+                        got: first.kind_name().into(),
+                        expected: "value",
+                    },
+                ));
+            }
+        };
+
+        while depth > 0 {
+            let Some(event) = self.produce_event()? else {
+                return Err(ParseError::new(
+                    Span::new(self.current_offset(), 0),
+                    DeserializeErrorKind::UnexpectedEof { expected: "value" },
+                ));
+            };
+
+            match event.kind {
+                ParseEventKind::StructStart(_) | ParseEventKind::SequenceStart(_) => depth += 1,
+                ParseEventKind::StructEnd | ParseEventKind::SequenceEnd => depth -= 1,
+                ParseEventKind::FieldKey(_)
+                | ParseEventKind::OrderedField
+                | ParseEventKind::Scalar(_)
+                | _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
     fn skip_container(&mut self, start_kind: DelimKind) -> Result<(), ParseError> {
         let mut stack = alloc::vec![start_kind];
         while let Some(current) = stack.last().copied() {
@@ -1212,6 +1266,25 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             }
             _ => self.consume_array_start(),
         }
+    }
+
+    pub(crate) fn consume_empty_array_if_next(&mut self) -> Result<bool, ParseError> {
+        if !self.next_significant_is(b'[')? {
+            return Ok(false);
+        }
+
+        let span = self.consume_array_start_fast()?;
+        if self.consume_sequence_end_if_next()? {
+            return Ok(true);
+        }
+
+        Err(ParseError::new(
+            span,
+            DeserializeErrorKind::UnexpectedToken {
+                got: "array".into(),
+                expected: "empty array",
+            },
+        ))
     }
 
     fn consume_direct_object_start(&mut self) -> Result<Span, ParseError> {

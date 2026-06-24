@@ -1,11 +1,31 @@
 use facet::Facet;
 use facet_format::DeserializeErrorKind;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DROPPED_LIST_ELEMENTS: AtomicUsize = AtomicUsize::new(0);
 static DROPPED_BULK_MAP_VALUES: AtomicUsize = AtomicUsize::new(0);
 static DROPPED_DUPLICATE_MAP_VALUES: AtomicUsize = AtomicUsize::new(0);
+
+fn assert_default_weavy_parity<T>(json: &str)
+where
+    T: Facet<'static> + Debug + PartialEq,
+{
+    let default = facet_json::from_str::<T>(json);
+    let weavy = facet_json::from_str_weavy::<T>(json);
+
+    match (default, weavy) {
+        (Ok(default), Ok(weavy)) => assert_eq!(weavy, default),
+        (Err(_), Err(_)) => {}
+        (Ok(default), Err(err)) => {
+            panic!("Weavy rejected input accepted by default: {err:?}; expected {default:?}")
+        }
+        (Err(err), Ok(weavy)) => {
+            panic!("Weavy accepted input rejected by default: {weavy:?}; default error {err:?}")
+        }
+    }
+}
 
 #[derive(Facet, Debug, PartialEq)]
 struct Point {
@@ -788,6 +808,44 @@ fn default_and_weavy_accept_integer_values_for_string_maps() {
     assert_eq!(default["a"], "1");
     assert_eq!(default["b"], "2");
     assert_eq!(weavy, default);
+}
+
+#[test]
+fn default_and_weavy_accept_float_values_for_owned_strings() {
+    let json = r#"{"l":00.5,"wide":10000000000000001.5}"#;
+
+    let default: HashMap<String, String> = facet_json::from_str(json).unwrap();
+    let weavy: HashMap<String, String> = facet_json::from_str_weavy(json).unwrap();
+
+    assert_eq!(default["l"], "0.5");
+    assert_eq!(default["wide"], "10000000000000002");
+    assert_eq!(weavy, default);
+}
+
+#[test]
+fn default_and_weavy_default_null_scalar_values() {
+    let point: Point = facet_json::from_str(r#"{"x":null,"y":2}"#).unwrap();
+    assert_eq!(point, Point { x: 0, y: 2 });
+    assert_default_weavy_parity::<Point>(r#"{"x":null,"y":2}"#);
+
+    let person: Person =
+        facet_json::from_str(r#"{"name":null,"age":37,"favorite":null,"scores":[]}"#).unwrap();
+    assert_eq!(
+        person,
+        Person {
+            name: String::new(),
+            age: 37,
+            favorite: None,
+            scores: Vec::new(),
+        }
+    );
+    assert_default_weavy_parity::<Person>(r#"{"name":null,"age":37,"favorite":null,"scores":[]}"#);
+}
+
+#[test]
+fn default_and_weavy_match_fuzzer_invalid_unknown_values() {
+    assert_default_weavy_parity::<WideDefaultStruct>("\n{\"scores\":[1,,null,2,null]}");
+    assert_default_weavy_parity::<WideDefaultStruct>("\n{\"scores\":[1,null,2,,null]}");
 }
 
 #[test]
