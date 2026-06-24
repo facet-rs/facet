@@ -20,8 +20,8 @@ use core::str::FromStr;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use facet_core::{
-    Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, MapDef, OptionDef, PointerDef,
-    PtrConst, PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
+    Characteristic, Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, MapDef, OptionDef,
+    PointerDef, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
 };
 use facet_format::{DeserializeError, DeserializeErrorKind, FormatParser, ParseError};
 use facet_reflect::Span;
@@ -2375,17 +2375,17 @@ fn resolve_block_ref(
 }
 
 fn missing_field_action(field: &Field, container_has_default: bool) -> MissingField {
+    let field_shape = field.shape();
     match field.default {
         Some(DefaultSource::Custom(default)) => MissingField::DefaultCustom(default),
         Some(DefaultSource::FromTrait) => MissingField::DefaultTrait { explicit: true },
         Some(_) => MissingField::DefaultTrait { explicit: true },
-        None if container_has_default => MissingField::DefaultTrait { explicit: false },
-        None => match field.shape().def {
+        None => match field_shape.def {
             Def::Option(option) => MissingField::OptionNone(option),
-            Def::List(_) | Def::Map(_) | Def::Set(_) => {
+            _ if container_has_default && field_shape.is(Characteristic::Default) => {
                 MissingField::DefaultTrait { explicit: false }
             }
-            _ if field.shape().is_type::<()>() => MissingField::DefaultTrait { explicit: false },
+            _ if field_shape.is_type::<()>() => MissingField::DefaultTrait { explicit: false },
             _ => MissingField::Required,
         },
     }
@@ -4807,9 +4807,9 @@ fn write_string_input<'de, const TRUSTED_UTF8: bool>(
 ) -> Result<(), DeserializeError> {
     match value {
         JsonScalarInput::Raw(token) => {
-            let value = raw_string(parser, token, shape)?;
+            let value = raw_string_or_integer_string(parser, token, shape)?;
             unsafe {
-                dst.put(value.into_owned());
+                dst.put(value);
             }
             Ok(())
         }
@@ -5123,11 +5123,9 @@ unsafe fn write_string_token(
     value: JsonScalarToken<'_>,
     span: Span,
 ) -> Result<(), DeserializeError> {
-    let JsonScalarToken::Str(value) = value else {
-        return Err(type_mismatch(span, shape, value.kind_name()));
-    };
+    let value = string_token_or_integer_string(value, span, shape)?;
     unsafe {
-        dst.put(value.into_owned());
+        dst.put(value);
     }
     Ok(())
 }
@@ -5290,9 +5288,9 @@ unsafe fn write_scalar_raw<const TRUSTED_UTF8: bool>(
             }
         }
         ScalarType::String => {
-            let value = raw_string(parser, token, shape)?;
+            let value = raw_string_or_integer_string(parser, token, shape)?;
             unsafe {
-                dst.put(value.into_owned());
+                dst.put(value);
             }
         }
         ScalarType::CowStr => {
@@ -5447,6 +5445,10 @@ unsafe fn write_scalar(
         ScalarType::String => {
             let string = match value {
                 JsonScalarToken::Str(value) => value.into_owned(),
+                JsonScalarToken::I64(value) => value.to_string(),
+                JsonScalarToken::U64(value) => value.to_string(),
+                JsonScalarToken::I128(value) => value.to_string(),
+                JsonScalarToken::U128(value) => value.to_string(),
                 other => return Err(type_mismatch(span, shape, other.kind_name())),
             };
             unsafe { dst.put(string) };
@@ -5591,6 +5593,49 @@ fn raw_string<'de, const TRUSTED_UTF8: bool>(
             has_escapes,
         } => Ok(parser.decode_string(start, end, has_escapes, span)?),
         other => Err(type_mismatch(span, shape, raw_token_kind_name(&other))),
+    }
+}
+
+fn raw_string_or_integer_string<const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'_, TRUSTED_UTF8>,
+    token: SpannedToken,
+    shape: &'static Shape,
+) -> Result<String, DeserializeError> {
+    let span = token.span;
+    match token.token {
+        ScanToken::String {
+            start,
+            end,
+            has_escapes,
+        } => Ok(parser
+            .decode_string(start, end, has_escapes, span)?
+            .into_owned()),
+        ScanToken::Number { start, end, hint } => {
+            let number = parser.parse_number(start, end, hint)?;
+            match number {
+                ParsedNumber::I64(value) => Ok(value.to_string()),
+                ParsedNumber::U64(value) => Ok(value.to_string()),
+                ParsedNumber::I128(value) => Ok(value.to_string()),
+                ParsedNumber::U128(value) => Ok(value.to_string()),
+                ParsedNumber::F64(_) => Err(type_mismatch(span, shape, "f64")),
+            }
+        }
+        other => Err(type_mismatch(span, shape, raw_token_kind_name(&other))),
+    }
+}
+
+fn string_token_or_integer_string(
+    value: JsonScalarToken<'_>,
+    span: Span,
+    shape: &'static Shape,
+) -> Result<String, DeserializeError> {
+    match value {
+        JsonScalarToken::Str(value) => Ok(value.into_owned()),
+        JsonScalarToken::I64(value) => Ok(value.to_string()),
+        JsonScalarToken::U64(value) => Ok(value.to_string()),
+        JsonScalarToken::I128(value) => Ok(value.to_string()),
+        JsonScalarToken::U128(value) => Ok(value.to_string()),
+        other => Err(type_mismatch(span, shape, other.kind_name())),
     }
 }
 

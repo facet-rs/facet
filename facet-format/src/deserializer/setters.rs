@@ -7,6 +7,28 @@ use facet_reflect::{Partial, Span};
 
 use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, ScalarValue};
 
+fn number_out_of_range(
+    value: impl core::fmt::Display,
+    target_type: &'static str,
+) -> DeserializeError {
+    DeserializeError {
+        span: None,
+        path: None,
+        kind: DeserializeErrorKind::NumberOutOfRange {
+            value: value.to_string().into(),
+            target_type,
+        },
+    }
+}
+
+fn narrow_int<T, U>(value: U, target_type: &'static str) -> Result<T, DeserializeError>
+where
+    T: TryFrom<U>,
+    U: Copy + core::fmt::Display,
+{
+    T::try_from(value).map_err(|_| number_out_of_range(value, target_type))
+}
+
 /// Set a scalar value into a `Partial`, handling type coercion.
 ///
 /// This is a non-generic inner function that handles the core logic of `set_scalar`.
@@ -36,23 +58,22 @@ pub(crate) fn set_scalar_inner<'input, const BORROW: bool>(
         ScalarValue::I64(n) => {
             match scalar_type {
                 // Handle signed types
-                Some(ScalarType::I8) => wip = wip.set(n as i8)?,
-                Some(ScalarType::I16) => wip = wip.set(n as i16)?,
-                Some(ScalarType::I32) => wip = wip.set(n as i32)?,
+                Some(ScalarType::I8) => wip = wip.set(narrow_int::<i8, _>(n, "i8")?)?,
+                Some(ScalarType::I16) => wip = wip.set(narrow_int::<i16, _>(n, "i16")?)?,
+                Some(ScalarType::I32) => wip = wip.set(narrow_int::<i32, _>(n, "i32")?)?,
                 Some(ScalarType::I64) => wip = wip.set(n)?,
                 Some(ScalarType::I128) => wip = wip.set(n as i128)?,
-                Some(ScalarType::ISize) => wip = wip.set(n as isize)?,
+                Some(ScalarType::ISize) => wip = wip.set(narrow_int::<isize, _>(n, "isize")?)?,
                 // Handle unsigned types (I64 can fit in unsigned if non-negative)
-                Some(ScalarType::U8) => wip = wip.set(n as u8)?,
-                Some(ScalarType::U16) => wip = wip.set(n as u16)?,
-                Some(ScalarType::U32) => wip = wip.set(n as u32)?,
-                Some(ScalarType::U64) => wip = wip.set(n as u64)?,
-                Some(ScalarType::U128) => wip = wip.set(n as u128)?,
-                Some(ScalarType::USize) => wip = wip.set(n as usize)?,
+                Some(ScalarType::U8) => wip = wip.set(narrow_int::<u8, _>(n, "u8")?)?,
+                Some(ScalarType::U16) => wip = wip.set(narrow_int::<u16, _>(n, "u16")?)?,
+                Some(ScalarType::U32) => wip = wip.set(narrow_int::<u32, _>(n, "u32")?)?,
+                Some(ScalarType::U64) => wip = wip.set(narrow_int::<u64, _>(n, "u64")?)?,
+                Some(ScalarType::U128) => wip = wip.set(narrow_int::<u128, _>(n, "u128")?)?,
+                Some(ScalarType::USize) => wip = wip.set(narrow_int::<usize, _>(n, "usize")?)?,
                 // Handle floats
                 Some(ScalarType::F32) => wip = wip.set(n as f32)?,
                 Some(ScalarType::F64) => wip = wip.set(n as f64)?,
-                // Handle String - stringify the number
                 Some(ScalarType::String) => {
                     wip = wip.set(alloc::string::ToString::to_string(&n))?
                 }
@@ -62,45 +83,64 @@ pub(crate) fn set_scalar_inner<'input, const BORROW: bool>(
         ScalarValue::U64(n) => {
             match scalar_type {
                 // Handle unsigned types
-                Some(ScalarType::U8) => wip = wip.set(n as u8)?,
-                Some(ScalarType::U16) => wip = wip.set(n as u16)?,
-                Some(ScalarType::U32) => wip = wip.set(n as u32)?,
+                Some(ScalarType::U8) => wip = wip.set(narrow_int::<u8, _>(n, "u8")?)?,
+                Some(ScalarType::U16) => wip = wip.set(narrow_int::<u16, _>(n, "u16")?)?,
+                Some(ScalarType::U32) => wip = wip.set(narrow_int::<u32, _>(n, "u32")?)?,
                 Some(ScalarType::U64) => wip = wip.set(n)?,
                 Some(ScalarType::U128) => wip = wip.set(n as u128)?,
-                Some(ScalarType::USize) => wip = wip.set(n as usize)?,
+                Some(ScalarType::USize) => wip = wip.set(narrow_int::<usize, _>(n, "usize")?)?,
                 // Handle signed types (U64 can fit in signed if small enough)
-                Some(ScalarType::I8) => wip = wip.set(n as i8)?,
-                Some(ScalarType::I16) => wip = wip.set(n as i16)?,
-                Some(ScalarType::I32) => wip = wip.set(n as i32)?,
-                Some(ScalarType::I64) => wip = wip.set(n as i64)?,
+                Some(ScalarType::I8) => wip = wip.set(narrow_int::<i8, _>(n, "i8")?)?,
+                Some(ScalarType::I16) => wip = wip.set(narrow_int::<i16, _>(n, "i16")?)?,
+                Some(ScalarType::I32) => wip = wip.set(narrow_int::<i32, _>(n, "i32")?)?,
+                Some(ScalarType::I64) => wip = wip.set(narrow_int::<i64, _>(n, "i64")?)?,
                 Some(ScalarType::I128) => wip = wip.set(n as i128)?,
-                Some(ScalarType::ISize) => wip = wip.set(n as isize)?,
+                Some(ScalarType::ISize) => wip = wip.set(narrow_int::<isize, _>(n, "isize")?)?,
                 // Handle floats
                 Some(ScalarType::F32) => wip = wip.set(n as f32)?,
                 Some(ScalarType::F64) => wip = wip.set(n as f64)?,
-                // Handle String - stringify the number
                 Some(ScalarType::String) => {
                     wip = wip.set(alloc::string::ToString::to_string(&n))?
                 }
                 _ => wip = wip.set(n)?,
             }
         }
-        ScalarValue::U128(n) => {
-            match scalar_type {
-                Some(ScalarType::U128) => wip = wip.set(n)?,
-                Some(ScalarType::I128) => wip = wip.set(n as i128)?,
-                // For smaller types, truncate (caller should have used correct hint)
-                _ => wip = wip.set(n as u64)?,
-            }
-        }
-        ScalarValue::I128(n) => {
-            match scalar_type {
-                Some(ScalarType::I128) => wip = wip.set(n)?,
-                Some(ScalarType::U128) => wip = wip.set(n as u128)?,
-                // For smaller types, truncate (caller should have used correct hint)
-                _ => wip = wip.set(n as i64)?,
-            }
-        }
+        ScalarValue::U128(n) => match scalar_type {
+            Some(ScalarType::U8) => wip = wip.set(narrow_int::<u8, _>(n, "u8")?)?,
+            Some(ScalarType::U16) => wip = wip.set(narrow_int::<u16, _>(n, "u16")?)?,
+            Some(ScalarType::U32) => wip = wip.set(narrow_int::<u32, _>(n, "u32")?)?,
+            Some(ScalarType::U64) => wip = wip.set(narrow_int::<u64, _>(n, "u64")?)?,
+            Some(ScalarType::U128) => wip = wip.set(n)?,
+            Some(ScalarType::USize) => wip = wip.set(narrow_int::<usize, _>(n, "usize")?)?,
+            Some(ScalarType::I8) => wip = wip.set(narrow_int::<i8, _>(n, "i8")?)?,
+            Some(ScalarType::I16) => wip = wip.set(narrow_int::<i16, _>(n, "i16")?)?,
+            Some(ScalarType::I32) => wip = wip.set(narrow_int::<i32, _>(n, "i32")?)?,
+            Some(ScalarType::I64) => wip = wip.set(narrow_int::<i64, _>(n, "i64")?)?,
+            Some(ScalarType::I128) => wip = wip.set(narrow_int::<i128, _>(n, "i128")?)?,
+            Some(ScalarType::ISize) => wip = wip.set(narrow_int::<isize, _>(n, "isize")?)?,
+            Some(ScalarType::F32) => wip = wip.set(n as f32)?,
+            Some(ScalarType::F64) => wip = wip.set(n as f64)?,
+            Some(ScalarType::String) => wip = wip.set(alloc::string::ToString::to_string(&n))?,
+            _ => wip = wip.set(n)?,
+        },
+        ScalarValue::I128(n) => match scalar_type {
+            Some(ScalarType::I8) => wip = wip.set(narrow_int::<i8, _>(n, "i8")?)?,
+            Some(ScalarType::I16) => wip = wip.set(narrow_int::<i16, _>(n, "i16")?)?,
+            Some(ScalarType::I32) => wip = wip.set(narrow_int::<i32, _>(n, "i32")?)?,
+            Some(ScalarType::I64) => wip = wip.set(narrow_int::<i64, _>(n, "i64")?)?,
+            Some(ScalarType::I128) => wip = wip.set(n)?,
+            Some(ScalarType::ISize) => wip = wip.set(narrow_int::<isize, _>(n, "isize")?)?,
+            Some(ScalarType::U8) => wip = wip.set(narrow_int::<u8, _>(n, "u8")?)?,
+            Some(ScalarType::U16) => wip = wip.set(narrow_int::<u16, _>(n, "u16")?)?,
+            Some(ScalarType::U32) => wip = wip.set(narrow_int::<u32, _>(n, "u32")?)?,
+            Some(ScalarType::U64) => wip = wip.set(narrow_int::<u64, _>(n, "u64")?)?,
+            Some(ScalarType::U128) => wip = wip.set(narrow_int::<u128, _>(n, "u128")?)?,
+            Some(ScalarType::USize) => wip = wip.set(narrow_int::<usize, _>(n, "usize")?)?,
+            Some(ScalarType::F32) => wip = wip.set(n as f32)?,
+            Some(ScalarType::F64) => wip = wip.set(n as f64)?,
+            Some(ScalarType::String) => wip = wip.set(alloc::string::ToString::to_string(&n))?,
+            _ => wip = wip.set(n)?,
+        },
         ScalarValue::F64(n) => {
             match scalar_type {
                 Some(ScalarType::F32) => wip = wip.set(n as f32)?,
