@@ -1,5 +1,5 @@
 ---
-source: rust/vox-macros-core/src/lib.rs
+source: vox/rust/vox-macros-core/src/lib.rs
 expression: "generate(quote!\n{\n    trait WordLab\n    {\n        async fn is_short(&self, word: &str) -> bool; async fn\n        classify(&self, word: String) -> &'vox str; async fn\n        transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>)\n        -> u32;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]

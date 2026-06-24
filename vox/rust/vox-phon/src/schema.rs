@@ -254,19 +254,46 @@ pub struct DecodeProgram {
 
 pub struct Decoded<T> {
     value: ManuallyDrop<T>,
-    retention: ManuallyDrop<typed::DecodeRetention>,
+    retention: ManuallyDrop<DecodeRetention>,
+}
+
+unsafe impl<T: Send> Send for Decoded<T> {}
+
+pub struct DecodeRetention {
+    inner: typed::DecodeRetention,
+}
+
+unsafe impl Send for DecodeRetention {}
+
+impl DecodeRetention {
+    pub fn new(inner: typed::DecodeRetention) -> Self {
+        Self { inner }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
 }
 
 impl<T> Decoded<T> {
     pub fn new(value: T, retention: typed::DecodeRetention) -> Self {
         Self {
             value: ManuallyDrop::new(value),
-            retention: ManuallyDrop::new(retention),
+            retention: ManuallyDrop::new(DecodeRetention::new(retention)),
         }
     }
 
     pub fn get(&self) -> &T {
         &self.value
+    }
+
+    pub fn into_retention_and_value(self) -> (DecodeRetention, T) {
+        let mut this = ManuallyDrop::new(self);
+        unsafe {
+            let retention = ManuallyDrop::take(&mut this.retention);
+            let value = ManuallyDrop::take(&mut this.value);
+            (retention, value)
+        }
     }
 }
 

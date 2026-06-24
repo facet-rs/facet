@@ -2397,6 +2397,12 @@ mod tests {
         label: String,
     }
 
+    #[derive(Facet)]
+    struct OwnedStringHolder {
+        name: String,
+        label: String,
+    }
+
     fn pt_object(a: u8, b: u64, c: u16, flag: bool) -> Value {
         let mut o = VObject::new();
         o.insert(VString::new("a"), Value::from(a));
@@ -2500,6 +2506,67 @@ mod tests {
 
         assert_eq!(borrowed_d.root, owned_d.root);
         assert_eq!(borrowed_bytes, owned_bytes);
+    }
+
+    #[test]
+    fn reference_tuple_typed_decode_retains_pointee() {
+        let writer_value = (String::from("facet"), String::from("phon"));
+        let writer = of::<(String, String)>().unwrap();
+        let reader = of::<(&String, String)>().unwrap();
+        let reg = merged_registry(&writer, &reader);
+        let bytes = encode_writer(&writer_value, &writer, &reg);
+        let program = typed::lower_decode(
+            writer.root,
+            &reader.descriptor,
+            &reader.descriptor_blocks,
+            &reg,
+        )
+        .unwrap();
+
+        let mut slot = std::mem::MaybeUninit::<(&String, String)>::uninit();
+        let retention = unsafe {
+            typed::decode_with_retention(&program, &bytes, slot.as_mut_ptr().cast::<u8>())
+        }
+        .unwrap();
+        let decoded = unsafe { slot.assume_init() };
+
+        assert_eq!(decoded.0.as_str(), "facet");
+        assert_eq!(decoded.1, "phon");
+
+        drop(decoded);
+        drop(retention);
+    }
+
+    #[test]
+    fn reference_field_typed_decode_retains_pointee() {
+        let writer_value = OwnedStringHolder {
+            name: String::from("facet"),
+            label: String::from("phon"),
+        };
+        let writer = of::<OwnedStringHolder>().unwrap();
+        let reader = of::<RefStringHolder>().unwrap();
+        let reg = merged_registry(&writer, &reader);
+        let bytes = encode_writer(&writer_value, &writer, &reg);
+        let program = typed::lower_decode(
+            writer.root,
+            &reader.descriptor,
+            &reader.descriptor_blocks,
+            &reg,
+        )
+        .unwrap();
+
+        let mut slot = std::mem::MaybeUninit::<RefStringHolder>::uninit();
+        let retention = unsafe {
+            typed::decode_with_retention(&program, &bytes, slot.as_mut_ptr().cast::<u8>())
+        }
+        .unwrap();
+        let decoded = unsafe { slot.assume_init() };
+
+        assert_eq!(decoded.name.as_str(), "facet");
+        assert_eq!(decoded.label, "phon");
+
+        drop(decoded);
+        drop(retention);
     }
 
     #[test]

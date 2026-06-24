@@ -204,15 +204,19 @@ fn type_is_tx(ty: &Type) -> bool {
     }
 }
 
-fn type_has_reference(ty: &Type) -> bool {
+fn reference_needs_retained_decode(reference: &TypeRef) -> bool {
+    !matches!(reference.inner.as_ref(), Type::Path(path) if path.last_segment() == "str")
+}
+
+fn type_needs_retained_decode(ty: &Type) -> bool {
     match ty {
-        Type::Reference(_) => true,
+        Type::Reference(reference) => reference_needs_retained_decode(reference),
         Type::Tuple(TypeTuple(group)) => group
             .content
             .iter()
-            .any(|entry| type_has_reference(&entry.value)),
+            .any(|entry| type_needs_retained_decode(&entry.value)),
         Type::PathWithGenerics(PathWithGenerics { args, .. }) => args.iter().any(|entry| {
-            matches!(&entry.value, GenericArgument::Type(inner) if type_has_reference(inner))
+            matches!(&entry.value, GenericArgument::Type(inner) if type_needs_retained_decode(inner))
         }),
         Type::Path(_) => false,
     }
@@ -789,7 +793,7 @@ fn generate_dispatch_arm(
         .args()
         .map(|a| format_ident!("{}", a.name().to_snake_case()))
         .collect();
-    let args_have_reference = method.args().any(|a| type_has_reference(&a.ty));
+    let args_need_retained_decode = method.args().any(|a| type_needs_retained_decode(&a.ty));
     let destructure = match arg_names.len() {
         0 => quote! { let () = args; },
         1 => {
@@ -817,7 +821,7 @@ fn generate_dispatch_arm(
         .map(Type::to_token_stream)
         .unwrap_or_else(|| quote! { ::core::convert::Infallible });
 
-    let decode_args = if args_have_reference {
+    let decode_args = if args_need_retained_decode {
         quote! {
             let decoded_args_result = #vox::provide_channels_for_method(
                 request_call.channels.clone(),
@@ -841,7 +845,9 @@ fn generate_dispatch_arm(
                     return;
                 }
             };
-            let args: #args_tuple_type = *decoded_args.get();
+            let decoded_args_parts = decoded_args.into_retention_and_value();
+            let _args_retention = decoded_args_parts.0;
+            let args: #args_tuple_type = decoded_args_parts.1;
         }
     } else {
         quote! {
@@ -1348,6 +1354,41 @@ mod tests {
         assert!(output.contains("pub struct PingDispatcher"));
         assert!(output.contains("pub struct PingClient"));
         assert_eq!(output.matches("#[cfg(feature = \"runtime\")]").count(), 6);
+    }
+
+    #[test]
+    fn borrowed_str_args_use_borrowed_decode() {
+        let output = generate(quote! {
+            trait BorrowedText { async fn classify(&self, word: &str) -> bool; }
+        });
+
+        assert!(output.contains("schema_deserialize_args_borrowed"));
+        assert!(!output.contains("schema_deserialize_args_retained"));
+        assert!(!output.contains("into_retention_and_value"));
+    }
+
+    #[test]
+    fn reference_string_args_use_retained_decode() {
+        let output = generate(quote! {
+            trait ReferenceText { async fn classify(&self, word: &String) -> bool; }
+        });
+
+        assert!(output.contains("schema_deserialize_args_retained"));
+        assert!(output.contains("into_retention_and_value"));
+        assert!(output.contains("let _args_retention = decoded_args_parts.0;"));
+    }
+
+    #[test]
+    fn retained_reference_args_can_mix_with_channels() {
+        let output = generate(quote! {
+            trait ReferenceChannel {
+                async fn stream(&self, prefix: &String, output: Tx<String>) -> u32;
+            }
+        });
+
+        assert!(output.contains("schema_deserialize_args_retained"));
+        assert!(output.contains("let _args_retention = decoded_args_parts.0;"));
+        assert!(output.contains("let args: (&'_ String, Tx<String>) = decoded_args_parts.1;"));
     }
 
     #[test]

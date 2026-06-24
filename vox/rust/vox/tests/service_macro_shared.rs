@@ -1,3 +1,5 @@
+#![allow(clippy::ptr_arg)]
+
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
@@ -124,8 +126,17 @@ trait MiddlewareProbe {
     async fn inspect(&self) -> String;
 }
 
+#[allow(clippy::ptr_arg)]
+#[vox::service]
+trait ReferenceArgsProbe {
+    async fn join(&self, name: &String, version: &String) -> String;
+}
+
 #[derive(Clone)]
 struct MiddlewareProbeService;
+
+#[derive(Clone)]
+struct ReferenceArgsProbeService;
 
 #[repr(u8)]
 #[derive(Clone, Copy, facet::Facet)]
@@ -196,6 +207,13 @@ impl MiddlewareProbe for MiddlewareProbeService {
     }
 }
 
+impl ReferenceArgsProbe for ReferenceArgsProbeService {
+    async fn join(&self, name: &String, version: &String) -> String {
+        tokio::task::yield_now().await;
+        format!("{name}@{version}")
+    }
+}
+
 #[derive(Clone)]
 struct RecordingMiddleware {
     name: &'static str,
@@ -246,6 +264,11 @@ struct ArgsRecordingMiddleware {
     seen: Arc<Mutex<Vec<(i32, i32)>>>,
 }
 
+#[derive(Clone)]
+struct ReferenceArgsRecordingMiddleware {
+    seen: Arc<Mutex<Vec<(String, String)>>>,
+}
+
 impl vox::ServerMiddleware for ArgsRecordingMiddleware {
     fn pre<'a>(&'a self, request: vox::ServerRequest<'_>) -> vox::BoxMiddlewareFuture<'a> {
         let tuple = request
@@ -263,6 +286,32 @@ impl vox::ServerMiddleware for ArgsRecordingMiddleware {
             .get::<i32>()
             .expect("second adder arg should be i32");
         record_args(&self.seen, (a, b));
+        Box::pin(async {})
+    }
+}
+
+impl vox::ServerMiddleware for ReferenceArgsRecordingMiddleware {
+    fn pre<'a>(&'a self, request: vox::ServerRequest<'_>) -> vox::BoxMiddlewareFuture<'a> {
+        let tuple = request
+            .args()
+            .into_tuple()
+            .expect("reference args should be exposed as a tuple");
+        let name = tuple
+            .field(0)
+            .expect("first reference arg should exist")
+            .get::<&String>()
+            .expect("first reference arg should be &String")
+            .to_string();
+        let version = tuple
+            .field(1)
+            .expect("second reference arg should exist")
+            .get::<&String>()
+            .expect("second reference arg should be &String")
+            .to_string();
+        self.seen
+            .lock()
+            .expect("reference args mutex poisoned")
+            .push((name, version));
         Box::pin(async {})
     }
 }
@@ -576,6 +625,67 @@ pub async fn run_server_request_peek_end_to_end<L>(
 
     let seen = seen.lock().expect("args mutex poisoned").clone();
     assert_eq!(seen, vec![(20, 22)]);
+
+    server_task.abort();
+}
+
+pub async fn run_reference_string_args_end_to_end<L>(
+    message_conduit_pair: impl FnOnce() -> (MessageConduit<L>, MessageConduit<L>),
+) where
+    L: Link + Send + 'static,
+    L::Tx: Send + 'static,
+    L::Rx: Send + 'static,
+{
+    let (client_conduit, server_conduit) = message_conduit_pair();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+
+    let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_seen = Arc::clone(&seen);
+    let server_task = tokio::task::spawn(async move {
+        let dispatcher = ReferenceArgsProbeDispatcher::new(ReferenceArgsProbeService)
+            .with_middleware(ReferenceArgsRecordingMiddleware {
+                seen: Arc::clone(&server_seen),
+            });
+        let server_caller_guard = acceptor_conduit(
+            server_conduit,
+            test_acceptor_handshake("ReferenceArgsProbe"),
+        )
+        .on_lane(dispatcher)
+        .establish_connection()
+        .await
+        .expect("server handshake failed");
+        let _ = server_ready_tx.send(());
+        let _server_caller_guard = server_caller_guard;
+        std::future::pending::<()>().await;
+    });
+
+    let client = initiator_conduit(
+        client_conduit,
+        test_initiator_handshake("ReferenceArgsProbe"),
+    )
+    .establish::<ReferenceArgsProbeClient>()
+    .await
+    .expect("client handshake failed");
+
+    server_ready_rx.await.expect("server setup failed");
+
+    let name = String::from("facet");
+    let version = String::from("0.50.0-rc.1");
+    let joined = client
+        .join(&name, &version)
+        .await
+        .expect("reference args call should succeed");
+    assert_eq!(joined, "facet@0.50.0-rc.1");
+
+    for _ in 0..32 {
+        if seen.lock().expect("reference args mutex poisoned").len() == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    let seen = seen.lock().expect("reference args mutex poisoned").clone();
+    assert_eq!(seen, vec![("facet".to_string(), "0.50.0-rc.1".to_string())]);
 
     server_task.abort();
 }
