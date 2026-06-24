@@ -2048,27 +2048,18 @@ static INNER_PROGRAMS: LazyLock<ProgramCache> =
 /// double-build just drops the extra program.
 ///
 /// # Panics
-/// If the inner type is not phon-derivable or cannot be lowered: a programming error
-/// (the inner type of an opaque field must be a phon type).
+/// If the inner shape cannot be derived or lowered: a programming error (the
+/// inner shape of an opaque field must be supported by Phon).
 fn inner_program(shape: &'static Shape) -> Arc<CachedLowered> {
     let key = core::ptr::from_ref(shape) as usize;
     if let Some(p) = INNER_PROGRAMS.0.read().unwrap().get(&key) {
         return Arc::clone(p);
     }
-    let derived = of_shape(shape).unwrap_or_else(|e| {
-        panic!(
-            "opaque inner type {} is not phon-derivable: {e}",
-            shape.type_identifier
-        )
-    });
+    let derived = of_shape(shape)
+        .unwrap_or_else(|e| panic!("opaque inner facet shape {shape} cannot be derived: {e}",));
     let reg = Registry::new(derived.schemas);
     let program = typed::lower_typed(&derived.descriptor, &derived.descriptor_blocks, &reg)
-        .unwrap_or_else(|e| {
-            panic!(
-                "opaque inner type {} cannot be lowered: {e:?}",
-                shape.type_identifier
-            )
-        });
+        .unwrap_or_else(|e| panic!("opaque inner facet shape {shape} cannot be lowered: {e:?}",));
     let program = Arc::new(CachedLowered(program));
     Arc::clone(
         INNER_PROGRAMS
@@ -5273,6 +5264,33 @@ mod tests {
     }
 
     #[test]
+    fn opaque_inner_program_error_uses_shape_display() {
+        let shape = <(&'static String, String) as Facet>::SHAPE;
+
+        assert_eq!(shape.type_identifier, "(…)");
+        assert_eq!(shape.to_string(), "(&String, String)");
+
+        let panic = std::panic::catch_unwind(|| {
+            let _ = inner_program(shape);
+        })
+        .expect_err("&String tuple should not derive as an opaque inner program");
+
+        let message = panic_message(&panic);
+        assert!(
+            message.contains("opaque inner facet shape (&String, String) cannot be derived"),
+            "opaque panic should include Shape display, got: {message}"
+        );
+        assert!(
+            !message.contains("opaque inner type (…)"),
+            "opaque panic must not use Shape::type_identifier, got: {message}"
+        );
+        assert!(
+            !message.contains("phon-derivable"),
+            "opaque panic should use facet-derived wording, got: {message}"
+        );
+    }
+
+    #[test]
     fn derived_opaque_field_roundtrips_and_matches_bytes_oracle() {
         let d = of::<Envelope>().unwrap();
         let reg = Registry::new(d.schemas.clone());
@@ -5380,6 +5398,16 @@ mod tests {
         }
         .unwrap();
         assert_eq!(unsafe { islot.assume_init() }, inner);
+    }
+
+    fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
+        if let Some(message) = panic.downcast_ref::<String>() {
+            message.clone()
+        } else if let Some(message) = panic.downcast_ref::<&'static str>() {
+            (*message).to_string()
+        } else {
+            "<non-string panic>".to_string()
+        }
     }
 
     // r[verify exec.jit-optional]
