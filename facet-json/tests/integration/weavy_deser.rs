@@ -191,6 +191,14 @@ enum ExternalNewtype {
 
 #[derive(Facet, Debug, PartialEq)]
 #[repr(u8)]
+enum ExternalTuple {
+    Empty,
+    Pair(String, i32),
+    Triple(bool, f64, String),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
 enum ExternalStruct {
     Empty,
     Record {
@@ -204,6 +212,22 @@ enum ExternalStruct {
 #[repr(u8)]
 enum ExternalDroppy {
     Item { item: Droppy, tail: u8 },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum ExternalTupleDroppy {
+    Pair(Droppy, u8),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "kebab-case")]
+#[repr(u8)]
+enum ExternalOther {
+    Null,
+    Gt(Vec<String>),
+    #[facet(other)]
+    EqBare(Option<String>),
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -1231,6 +1255,14 @@ fn weavy_deserializes_external_newtype_enums() {
 }
 
 #[test]
+fn weavy_deserializes_external_tuple_enums() {
+    assert_default_weavy_parity::<ExternalTuple>(r#"{"Pair":["test",42]}"#);
+    assert_default_weavy_parity::<ExternalTuple>(r#"{"Triple":[true,1.5,"ok"]}"#);
+    assert_default_weavy_parity::<ExternalTuple>(r#"{"Pair":["test"]}"#);
+    assert_default_weavy_parity::<ExternalTuple>(r#"{"Pair":["test",42,true]}"#);
+}
+
+#[test]
 fn weavy_deserializes_external_struct_enums() {
     assert_default_weavy_parity::<ExternalStruct>(
         r#"{"Record":{"name":"Ada","age":37,"favorite":null}}"#,
@@ -1245,6 +1277,24 @@ fn weavy_drops_external_struct_variant_fields_after_later_error() {
     facet_json::from_str_weavy::<ExternalDroppy>(r#"{"Item":{"item":{"value":1},"tail":"bad"}}"#)
         .unwrap_err();
     assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn weavy_drops_external_tuple_variant_fields_after_later_error() {
+    DROPPED_LIST_ELEMENTS.store(0, Ordering::SeqCst);
+
+    facet_json::from_str_weavy::<ExternalTupleDroppy>(r#"{"Pair":[{"value":1},"bad"]}"#)
+        .unwrap_err();
+    assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn weavy_deserializes_external_other_fallback_enums() {
+    assert_default_weavy_parity::<ExternalOther>(r#"{"gt":["$value"]}"#);
+    assert_default_weavy_parity::<ExternalOther>(r#"{"custom":"$id"}"#);
+    assert_default_weavy_parity::<ExternalOther>(r#"{"eq-bare":"$id"}"#);
+    assert_default_weavy_parity::<ExternalOther>(r#""$id""#);
+    assert_default_weavy_parity::<ExternalOther>(r#"null"#);
 }
 
 #[test]
