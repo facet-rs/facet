@@ -26,8 +26,7 @@ use facet_core::{
 use facet_format::{DeserializeError, DeserializeErrorKind, FormatParser, ParseError};
 use facet_reflect::Span;
 use weavy::mem::runtime::{
-    HandleGuard, InitializedLedger, RawAllocError, RawArrayBuilder, RawPairBuilder, RawPairSlot,
-    ScratchSession, ScratchSlot,
+    HandleGuard, InitializedLedger, RawAllocError, RawArrayBuilder, ScratchSession, ScratchSlot,
 };
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
@@ -1703,19 +1702,9 @@ enum JsonOp<Block> {
     ReadMap {
         map_shape: &'static Shape,
         map: MapDef,
-        bulk_adopt: bool,
         loop_id: Block,
     },
     MapNext {
-        map: MapDef,
-        key_scalar: ScalarType,
-        key_layout: Layout,
-        value_program: Program<JsonOp<Block>>,
-        value_scalar: Option<ScalarPlan>,
-        value_layout: Layout,
-        loop_id: Block,
-    },
-    MapNextBulk {
         map: MapDef,
         key_scalar: ScalarType,
         key_layout: Layout,
@@ -2132,34 +2121,20 @@ impl Lowering {
                 let value_layout = sized_layout(map.v())?;
                 let value_program = self.lower_shape(map.v())?;
                 let value_scalar = ScalarType::try_from_shape(map.v()).map(ScalarPlan::new);
-                let bulk_adopt = json_bulk_map_adoption_enabled(map, value_scalar);
                 let loop_id = JsonBlockId::MapLoop(shape);
-                let loop_program = if bulk_adopt {
-                    vec![JsonOp::MapNextBulk {
-                        map,
-                        key_scalar,
-                        key_layout,
-                        value_program: value_program.clone(),
-                        value_scalar,
-                        value_layout,
-                        loop_id,
-                    }]
-                } else {
-                    vec![JsonOp::MapNext {
-                        map,
-                        key_scalar,
-                        key_layout,
-                        value_program: value_program.clone(),
-                        value_scalar,
-                        value_layout,
-                        loop_id,
-                    }]
-                };
+                let loop_program = vec![JsonOp::MapNext {
+                    map,
+                    key_scalar,
+                    key_layout,
+                    value_program: value_program.clone(),
+                    value_scalar,
+                    value_layout,
+                    loop_id,
+                }];
                 self.lowered.blocks.insert(loop_id, loop_program);
                 Ok(vec![JsonOp::ReadMap {
                     map_shape: shape,
                     map,
-                    bulk_adopt,
                     loop_id,
                 }])
             }
@@ -2362,12 +2337,10 @@ fn resolve_json_op(
         JsonOp::ReadMap {
             map_shape,
             map,
-            bulk_adopt,
             loop_id,
         } => JsonOp::ReadMap {
             map_shape,
             map,
-            bulk_adopt,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
         JsonOp::MapNext {
@@ -2379,23 +2352,6 @@ fn resolve_json_op(
             value_layout,
             loop_id,
         } => JsonOp::MapNext {
-            map,
-            key_scalar,
-            key_layout,
-            value_program: resolve_json_program(value_program, refs)?,
-            value_scalar,
-            value_layout,
-            loop_id: resolve_block_ref(loop_id, refs)?,
-        },
-        JsonOp::MapNextBulk {
-            map,
-            key_scalar,
-            key_layout,
-            value_program,
-            value_scalar,
-            value_layout,
-            loop_id,
-        } => JsonOp::MapNextBulk {
             map,
             key_scalar,
             key_layout,
@@ -2489,40 +2445,6 @@ fn sized_layout(shape: &'static Shape) -> Result<Layout, DeserializeError> {
         .map_err(|_| unsupported(shape, "unsized shape"))
 }
 
-#[cold]
-#[inline(never)]
-fn map_pair_layout(map: MapDef, map_shape: &'static Shape) -> Result<Layout, DeserializeError> {
-    let key_layout = sized_layout(map.k())?;
-    let value_layout = sized_layout(map.v())?;
-    let pair_stride = map.vtable.pair_stride;
-    let value_offset = map.vtable.value_offset_in_pair;
-    let value_end = value_offset
-        .checked_add(value_layout.size())
-        .ok_or_else(|| {
-            invalid_layout_value(map_shape, "map pair value offset overflows pair stride")
-        })?;
-    if key_layout.size() > pair_stride
-        || (value_layout.size() != 0 && value_offset < key_layout.size())
-        || value_end > pair_stride
-        || !value_offset.is_multiple_of(value_layout.align())
-    {
-        return Err(invalid_layout_value(
-            map_shape,
-            "map pair vtable layout is inconsistent with key/value shapes",
-        ));
-    }
-
-    Layout::from_size_align(pair_stride, key_layout.align().max(value_layout.align())).map_err(
-        |_| invalid_layout_value(map_shape, "map pair vtable layout has invalid alignment"),
-    )
-}
-
-#[cold]
-#[inline(never)]
-fn json_bulk_map_adoption_enabled(_map: MapDef, _value_scalar: Option<ScalarPlan>) -> bool {
-    false
-}
-
 fn unsupported(shape: &'static Shape, what: &'static str) -> DeserializeError {
     vm_error(
         None,
@@ -2542,15 +2464,6 @@ fn raw_alloc_error(error: RawAllocError) -> DeserializeError {
             },
         ),
     }
-}
-
-fn invalid_layout_value(shape: &'static Shape, message: &'static str) -> DeserializeError {
-    vm_error(
-        None,
-        DeserializeErrorKind::InvalidValue {
-            message: format!("{message} for {shape}").into(),
-        },
-    )
 }
 
 struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
@@ -2842,71 +2755,6 @@ where
         }
     }
 
-    #[cold]
-    #[inline(never)]
-    fn direct_map_pair_slot(&mut self) -> Result<Option<RawPairSlot>, DeserializeError> {
-        let frame = self
-            .maps
-            .last_mut()
-            .expect("map frame is present while decoding entry");
-        let MapFrame::Adopt { builder, .. } = frame else {
-            return Ok(None);
-        };
-        builder
-            .next_uninit_pair()
-            .map(Some)
-            .map_err(raw_alloc_error)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn direct_map_pair_value(&self, slot: RawPairSlot) -> PtrUninit {
-        let frame = self
-            .maps
-            .last()
-            .expect("map frame is present while decoding entry value");
-        let MapFrame::Adopt { builder, .. } = frame else {
-            unreachable!("only direct-adopt maps expose pair value slots");
-        };
-        PtrUninit::new(builder.value_ptr(slot))
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn finish_direct_map_pair(
-        &mut self,
-        map: MapDef,
-        key_scalar: ScalarType,
-        key: String,
-        slot: RawPairSlot,
-    ) -> Result<(), DeserializeError> {
-        let frame = self
-            .maps
-            .last_mut()
-            .expect("map frame is present after direct entry initialization");
-        let MapFrame::Adopt { builder, .. } = frame else {
-            unreachable!("only direct-adopt maps finish direct pairs");
-        };
-        let key_result = unsafe {
-            write_map_key(
-                map.k(),
-                key_scalar,
-                PtrUninit::new(builder.key_ptr(slot)),
-                key,
-            )
-        };
-        if let Err(err) = key_result {
-            unsafe {
-                builder.drop_unmarked_value(slot);
-            }
-            return Err(err);
-        }
-        unsafe {
-            builder.mark_initialized();
-        }
-        Ok(())
-    }
-
     fn insert_map_entry(
         &mut self,
         map: MapDef,
@@ -2919,10 +2767,7 @@ where
             .maps
             .last()
             .expect("map frame is present while inserting entry");
-        let MapFrame::Insert { guard } = map_ptr else {
-            unreachable!("bulk-adopt maps do not use map insertion");
-        };
-        let map_ptr = PtrMut::new(guard.ptr());
+        let map_ptr = PtrMut::new(map_ptr.guard.ptr());
 
         if key_scalar == ScalarType::String
             && map.k().is_type::<String>()
@@ -2985,12 +2830,9 @@ where
                         .maps
                         .last()
                         .expect("map frame is present while inserting entry");
-                    let MapFrame::Insert { guard } = map_ptr else {
-                        unreachable!("bulk-adopt maps do not use map insertion");
-                    };
                     let consumed = unsafe {
                         insert_borrowed_str_key(
-                            PtrMut::new(guard.ptr()),
+                            PtrMut::new(map_ptr.guard.ptr()),
                             PtrConst::new(key as *const str),
                             scratch_ptr_mut(&value_scratch),
                         )
@@ -3047,12 +2889,9 @@ where
             .maps
             .last()
             .expect("map frame is present while inserting entry");
-        let MapFrame::Insert { guard } = map_ptr else {
-            unreachable!("bulk-adopt maps do not use map insertion");
-        };
         let consumed = unsafe {
             insert_borrowed_str_entry(
-                PtrMut::new(guard.ptr()),
+                PtrMut::new(map_ptr.guard.ptr()),
                 PtrConst::new(key as *const str),
                 PtrConst::new(value as *const str),
             )
@@ -3111,49 +2950,7 @@ where
                 key_scalar: plan.key_scalar,
                 key_layout: plan.key_layout,
                 key,
-                value: MapValueTarget::Scratch(value_scratch),
-                old_base,
-                loop_id: plan.loop_id,
-            },
-        ))
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn step_map_next_bulk(
-        &mut self,
-        plan: MapStepPlan<'program>,
-    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
-        let key = match self.parser.next_object_key_or_end()? {
-            JsonObjectKeyStep::End => return Ok(Control::Continue),
-            JsonObjectKeyStep::Field { key, span: _ } => {
-                self.parser.materialize_field_key(key)?.as_str().to_owned()
-            }
-        };
-
-        let slot = self
-            .direct_map_pair_slot()?
-            .expect("bulk map frame is present while decoding entry");
-        let value_ptr = self.direct_map_pair_value(slot);
-        if let Some(scalar) = plan.value_scalar {
-            let value = self.parser.read_current_scalar_input()?;
-            unsafe {
-                scalar.write_input(&*self.parser, plan.map.v(), value_ptr, value)?;
-            }
-            self.finish_direct_map_pair(plan.map, plan.key_scalar, key, slot)?;
-            return Ok(Control::CallBlock(plan.loop_id));
-        }
-
-        let old_base = self.base;
-        self.base = value_ptr;
-        Ok(call_program_or_block_then(
-            plan.value_program,
-            Continuation::MapValueDone {
-                map: plan.map,
-                key_scalar: plan.key_scalar,
-                key_layout: plan.key_layout,
-                key,
-                value: MapValueTarget::Pair(slot),
+                value_scratch,
                 old_base,
                 loop_id: plan.loop_id,
             },
@@ -3652,42 +3449,14 @@ struct MapStepPlan<'program> {
     loop_id: ExecBlock,
 }
 
-enum MapFrame {
-    Insert {
-        guard: HandleGuard,
-    },
-    Adopt {
-        map_shape: &'static Shape,
-        map: MapDef,
-        map_ptr: PtrUninit,
-        builder: RawPairBuilder,
-    },
+struct MapFrame {
+    guard: HandleGuard,
 }
 
 impl MapFrame {
-    fn finish(self) -> Result<(), DeserializeError> {
-        match self {
-            Self::Insert { mut guard } => {
-                guard.disarm();
-                Ok(())
-            }
-            Self::Adopt {
-                map_shape,
-                map,
-                map_ptr,
-                mut builder,
-            } => {
-                let from_pair_slice = map
-                    .vtable
-                    .from_pair_slice
-                    .ok_or_else(|| unsupported(map_shape, "map from_pair_slice"))?;
-                unsafe {
-                    from_pair_slice(map_ptr, builder.ptr(), builder.len());
-                }
-                builder.adopt();
-                Ok(())
-            }
-        }
+    fn finish(mut self) -> Result<(), DeserializeError> {
+        self.guard.disarm();
+        Ok(())
     }
 }
 
@@ -3948,34 +3717,17 @@ where
             JsonOp::ReadMap {
                 map_shape,
                 map,
-                bulk_adopt,
                 loop_id,
             } => {
                 self.parser.consume_object_start_fast()?;
-                if *bulk_adopt {
-                    self.maps.push(MapFrame::Adopt {
-                        map_shape,
-                        map: *map,
-                        map_ptr: self.base,
-                        builder: RawPairBuilder::new(
-                            map_pair_layout(*map, map_shape)?,
-                            map.vtable.value_offset_in_pair,
-                            map.k() as *const Shape as *const (),
-                            drop_shape_value,
-                            map.v() as *const Shape as *const (),
-                            drop_shape_value,
-                        ),
-                    });
-                } else {
-                    let map_ptr = unsafe { (map.vtable.init_in_place_with_capacity)(self.base, 0) };
-                    self.maps.push(MapFrame::Insert {
-                        guard: HandleGuard::new(
-                            map_ptr.as_mut_byte_ptr(),
-                            *map_shape as *const Shape as *const (),
-                            drop_shape_value,
-                        ),
-                    });
-                }
+                let map_ptr = unsafe { (map.vtable.init_in_place_with_capacity)(self.base, 0) };
+                self.maps.push(MapFrame {
+                    guard: HandleGuard::new(
+                        map_ptr.as_mut_byte_ptr(),
+                        *map_shape as *const Shape as *const (),
+                        drop_shape_value,
+                    ),
+                });
                 Ok(Control::CallBlockThen(*loop_id, Continuation::FinishMap))
             }
             JsonOp::MapNext {
@@ -3987,23 +3739,6 @@ where
                 value_layout,
                 loop_id,
             } => self.step_map_next(MapStepPlan {
-                map: *map,
-                key_scalar: *key_scalar,
-                key_layout: *key_layout,
-                value_program,
-                value_scalar: *value_scalar,
-                value_layout: *value_layout,
-                loop_id: *loop_id,
-            }),
-            JsonOp::MapNextBulk {
-                map,
-                key_scalar,
-                key_layout,
-                value_program,
-                value_scalar,
-                value_layout,
-                loop_id,
-            } => self.step_map_next_bulk(MapStepPlan {
                 map: *map,
                 key_scalar: *key_scalar,
                 key_layout: *key_layout,
@@ -4124,18 +3859,11 @@ where
                 key_scalar,
                 key_layout,
                 key,
-                value,
+                value_scratch,
                 old_base,
                 loop_id,
             } => {
-                match value {
-                    MapValueTarget::Scratch(value_scratch) => {
-                        self.insert_map_entry(map, key_scalar, key_layout, key, value_scratch)?;
-                    }
-                    MapValueTarget::Pair(slot) => {
-                        self.finish_direct_map_pair(map, key_scalar, key, slot)?;
-                    }
-                }
+                self.insert_map_entry(map, key_scalar, key_layout, key, value_scratch)?;
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
@@ -4212,7 +3940,7 @@ enum Continuation {
         key_scalar: ScalarType,
         key_layout: Layout,
         key: String,
-        value: MapValueTarget,
+        value_scratch: ScratchSlot,
         old_base: PtrUninit,
         loop_id: ExecBlock,
     },
@@ -4232,11 +3960,6 @@ enum Continuation {
         old_base: PtrUninit,
         scratch: ScratchSlot,
     },
-}
-
-enum MapValueTarget {
-    Scratch(ScratchSlot),
-    Pair(RawPairSlot),
 }
 
 struct MatchedField<'program, Field> {
