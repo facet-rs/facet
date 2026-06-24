@@ -166,6 +166,47 @@ struct Node {
 }
 
 #[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum ExternalUnit {
+    Active,
+    Inactive,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum ExternalRenamed {
+    #[facet(rename = "enabled")]
+    Active,
+    #[facet(rename = "disabled")]
+    Inactive,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum ExternalNewtype {
+    Empty,
+    Some(i32),
+    Point(Point),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum ExternalStruct {
+    Empty,
+    Record {
+        name: String,
+        age: u8,
+        favorite: Option<String>,
+    },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum ExternalDroppy {
+    Item { item: Droppy, tail: u8 },
+}
+
+#[derive(Facet, Debug, PartialEq)]
 struct EscapedFieldName {
     quoted_key: u8,
 }
@@ -1174,6 +1215,36 @@ fn weavy_deserializes_recursive_pointer_shape() {
     let child = node.child.as_deref().unwrap();
     assert_eq!(child.id, 2);
     assert!(child.child.is_none());
+}
+
+#[test]
+fn weavy_deserializes_external_unit_enums() {
+    assert_default_weavy_parity::<ExternalUnit>(r#""Active""#);
+    assert_default_weavy_parity::<ExternalUnit>(r#"{"Inactive":{}}"#);
+    assert_default_weavy_parity::<ExternalRenamed>(r#""enabled""#);
+}
+
+#[test]
+fn weavy_deserializes_external_newtype_enums() {
+    assert_default_weavy_parity::<ExternalNewtype>(r#"{"Some":99}"#);
+    assert_default_weavy_parity::<ExternalNewtype>(r#"{"Point":{"x":10,"y":20}}"#);
+}
+
+#[test]
+fn weavy_deserializes_external_struct_enums() {
+    assert_default_weavy_parity::<ExternalStruct>(
+        r#"{"Record":{"name":"Ada","age":37,"favorite":null}}"#,
+    );
+    assert_default_weavy_parity::<ExternalStruct>(r#"{"Record":{"age":37,"name":"Ada"}}"#);
+}
+
+#[test]
+fn weavy_drops_external_struct_variant_fields_after_later_error() {
+    DROPPED_LIST_ELEMENTS.store(0, Ordering::SeqCst);
+
+    facet_json::from_str_weavy::<ExternalDroppy>(r#"{"Item":{"item":{"value":1},"tail":"bad"}}"#)
+        .unwrap_err();
+    assert_eq!(DROPPED_LIST_ELEMENTS.load(Ordering::SeqCst), 1);
 }
 
 #[test]
