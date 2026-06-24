@@ -739,6 +739,58 @@ fn weavy_rejects_duplicate_field_after_ordered_match() {
 }
 
 #[test]
+fn default_and_weavy_reject_duplicate_defaulted_fields() {
+    let json = r#"{"a":1,"a":2}"#;
+
+    let err = facet_json::from_str::<WideDefaultStruct>(json).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::DuplicateField { ref field, .. } if field == "a"
+    ));
+
+    let err = facet_json::from_str_weavy::<WideDefaultStruct>(json).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::DuplicateField { ref field, .. } if field == "a"
+    ));
+}
+
+#[test]
+fn default_and_weavy_reject_out_of_range_numeric_narrowing() {
+    let json = r#"{"a":1111}"#;
+
+    let err = facet_json::from_str::<WideDefaultStruct>(json).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::NumberOutOfRange {
+            target_type: "u8",
+            ..
+        }
+    ));
+
+    let err = facet_json::from_str_weavy::<WideDefaultStruct>(json).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::NumberOutOfRange {
+            target_type: "u8",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn default_and_weavy_accept_integer_values_for_string_maps() {
+    let json = r#"{"a":1,"b":2}"#;
+
+    let default: HashMap<String, String> = facet_json::from_str(json).unwrap();
+    let weavy: HashMap<String, String> = facet_json::from_str_weavy(json).unwrap();
+
+    assert_eq!(default["a"], "1");
+    assert_eq!(default["b"], "2");
+    assert_eq!(weavy, default);
+}
+
+#[test]
 fn weavy_deserializes_wide_scalar_struct() {
     let got: WideScalarStruct = facet_json::from_str_weavy(
         r#"{"a":1,"b":2,"c":3,"d":4,"e":-5,"f":-6,"g":-7,"h":-8,"i":9,"j":-10,"k":true,"l":11.5}"#,
@@ -907,8 +959,9 @@ fn weavy_deserializes_top_level_null_option() {
 }
 
 #[test]
-fn weavy_defaults_absent_option_and_vec_fields() {
-    let person: Person = facet_json::from_str_weavy(r#"{"name":"Ada","age":37}"#).unwrap();
+fn weavy_defaults_absent_option_field() {
+    let person: Person =
+        facet_json::from_str_weavy(r#"{"name":"Ada","age":37,"scores":[]}"#).unwrap();
     assert_eq!(
         person,
         Person {
@@ -918,6 +971,52 @@ fn weavy_defaults_absent_option_and_vec_fields() {
             scores: Vec::new(),
         }
     );
+}
+
+#[test]
+fn default_and_weavy_require_absent_vec_fields() {
+    let json = r#"{"name":"Ada","age":37}"#;
+
+    let err = facet_json::from_str::<Person>(json).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::MissingField {
+            field: "scores",
+            ..
+        }
+    ));
+
+    let err = facet_json::from_str_weavy::<Person>(json).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::MissingField {
+            field: "scores",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn default_and_weavy_require_absent_map_fields() {
+    let json = r#"{"names":{}}"#;
+
+    let err = facet_json::from_str::<MapHolder>(json).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::MissingField {
+            field: "buckets",
+            ..
+        }
+    ));
+
+    let err = facet_json::from_str_weavy::<MapHolder>(json).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        DeserializeErrorKind::MissingField {
+            field: "buckets",
+            ..
+        }
+    ));
 }
 
 #[test]

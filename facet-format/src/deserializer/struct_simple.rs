@@ -110,6 +110,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let deny_unknown_fields = wip.struct_plan().unwrap().deny_unknown_fields;
 
         let mut ordered_field_index = 0usize;
+        let mut seen_fields = vec![None; struct_def.fields.len()];
 
         loop {
             let event = self.expect_event("value")?;
@@ -148,6 +149,19 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                     // Look up field by name/alias using precomputed TypePlan lookup
                     if let Some(idx) = lookup_field(&wip, struct_def, key_name) {
+                        if let Some(first_span) = seen_fields[idx] {
+                            return Err(self.mk_err(
+                                &wip,
+                                DeserializeErrorKind::DuplicateField {
+                                    field: struct_def.fields[idx]
+                                        .effective_name()
+                                        .to_owned()
+                                        .into(),
+                                    first_span: Some(first_span),
+                                },
+                            ));
+                        }
+                        seen_fields[idx] = Some(self.last_span);
                         trace!(
                             idx,
                             field_name = struct_def.fields[idx].name,
