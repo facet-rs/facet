@@ -53,11 +53,11 @@ We should not switch `from_str` / `from_slice` to Weavy by default until:
 | Smart pointers | Partial | Pointer lowering is generic when `new_into` exists; recursive `Box<Node>` is covered. | Add `Box<T>`, `Rc<T>`, `Arc<T>`, `Box<str>`, `Rc<str>`, `Arc<str>`, and `Arc<[T]>` parity tests. |
 | Recursive shapes | Covered | `Node { child: Option<Box<Node>> }` and stats tests cover recursive block calls. | Add recursive list/map payloads when those shapes enter the oracle bank. |
 | Tuple structs, tuple values, newtypes | Gap | The lowerer rejects non-named structs. | Decide JSON shape for tuple/newtype lowering and add format-suite parity cases. |
-| Enums: externally tagged | Partial | Weavy lowers `repr(int)` external unit, renamed unit, newtype, and struct variants, with payload cleanup coverage. Multi-field tuple variants, `#[facet(other)]`, cow-like enums, and non-`repr(int)` enums still stay default-only. | Add tuple payload arrays next, then fallback/cow handling after the enum guard machinery is broader. |
+| Enums: externally tagged | Partial | Weavy lowers `repr(int)` external unit, renamed unit, newtype, multi-field tuple, struct, and simple `#[facet(other)]` fallback variants, with payload cleanup coverage. Cow-like enums, tag/content-capturing fallbacks, and non-`repr(int)` enums still stay default-only. | Add cow/fallback metadata handling after the enum guard machinery is broader. |
 | Enums: internally tagged | Gap | Default path covers internal tags, nested internal tags, rename rules, and flatten inside variants. | Implement after basic enum dispatch exists; preserve tag-order-independent matching. |
 | Enums: adjacently tagged | Gap | Default path covers `tag` + `content` layouts and rename rules. | Implement after internal/external dispatch machinery is reusable. |
 | Enums: untagged and mixed tagged/untagged | Gap | Default path has untagged and mixed tagged/untagged tests. | Needs replayable candidate decoding and rollback semantics in Weavy. |
-| `#[facet(other)]` fallback variants | Gap | Default path has unknown-tag fallback tests. | Add after tagged enum dispatch can preserve unknown tag payloads. |
+| `#[facet(other)]` fallback variants | Partial | Simple single-field external fallbacks decode unknown object tags and bare payloads through Weavy. Tag/content-capturing fallback metadata remains default-only. | Add metadata-bearing fallback variants when the Weavy path can preserve variant tags as values. |
 | Flattened fields and flattened maps | Gap | The lowerer rejects flattened fields; default path has struct flatten, optional flatten, nested flatten maps, and flattened enum cases. | Implement object-field routing before or alongside enum work. |
 | Skipped deserialize fields | Gap | The lowerer rejects skipped fields with flattened fields. | Add missing-field synthesis that respects skip-deserializing policy. |
 | Proxies and format-specific proxies | Gap | The lowerer rejects container and format proxies. Default path has field/container/json-specific proxy tests. | Decide whether proxy lowering goes through Weavy child programs or an adapter call. |
@@ -100,5 +100,5 @@ still run through the interpreter, and that fallback must remain visible.
    already close to supported and reduce uncertainty cheaply.
 2. Extend non-string map keys beyond integers. This keeps map-key scalar
    parsing moving before enum dispatch lands.
-3. Continue enum lowering with externally tagged tuple payload arrays, then use
-   the same guard machinery for internally and adjacently tagged variants.
+3. Continue enum lowering by using the same guard machinery for internally and
+   adjacently tagged variants.

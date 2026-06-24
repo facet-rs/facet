@@ -2294,12 +2294,11 @@ impl Lowering {
 
         let mut variants = Vec::with_capacity(enum_type.variants.len());
         for (index, variant) in enum_type.variants.iter().enumerate() {
-            if variant.is_other() {
-                return Err(unsupported(shape, "other enum variant"));
-            }
-
             let mut fields = Vec::with_capacity(variant.data.fields.len());
             for field in variant.data.fields {
+                if variant.is_other() && (field.is_variant_tag() || field.is_variant_content()) {
+                    return Err(unsupported(shape, "other enum variant tag/content fields"));
+                }
                 if field.should_skip_deserializing() || field.is_flattened() {
                     return Err(unsupported(
                         shape,
@@ -2319,14 +2318,6 @@ impl Lowering {
             }
 
             let fields = fields.into_boxed_slice();
-            if matches!(
-                variant.data.kind,
-                StructKind::Tuple | StructKind::TupleStruct
-            ) && fields.len() > 1
-            {
-                return Err(unsupported(shape, "multi-field tuple enum variant"));
-            }
-
             let tracking = StructTracking::for_len(fields.len());
             let dispatch = RawFieldDispatch::for_fields(&fields);
             let loop_id = if variant.data.kind == StructKind::Struct {
@@ -2645,7 +2636,7 @@ fn find_external_variant<S: AsRef<str>>(
     let name = name.as_ref();
     variants
         .iter()
-        .find(|variant| variant.variant.effective_name() == name)
+        .find(|variant| !variant.variant.is_other() && variant.variant.effective_name() == name)
 }
 
 fn find_external_variant_input<'program, 'de, const TRUSTED_UTF8: bool>(
@@ -2654,21 +2645,28 @@ fn find_external_variant_input<'program, 'de, const TRUSTED_UTF8: bool>(
     key: &JsonFieldKeyInput<'de>,
 ) -> Result<Option<&'program ExternalVariantPlan<ExecBlock>>, ParseError> {
     if let Some(key) = parser.field_key_unescaped_bytes(key) {
-        return Ok(variants
-            .iter()
-            .find(|variant| variant.variant.effective_name().as_bytes() == key));
+        return Ok(variants.iter().find(|variant| {
+            !variant.variant.is_other() && variant.variant.effective_name().as_bytes() == key
+        }));
     }
 
     variants
         .iter()
         .find_map(
             |variant| match parser.field_key_matches(key, variant.variant.effective_name()) {
-                Ok(true) => Some(Ok(variant)),
+                Ok(true) if !variant.variant.is_other() => Some(Ok(variant)),
                 Ok(false) => None,
+                Ok(true) => None,
                 Err(err) => Some(Err(err)),
             },
         )
         .transpose()
+}
+
+fn external_other_variant(
+    variants: &[ExternalVariantPlan<ExecBlock>],
+) -> Option<&ExternalVariantPlan<ExecBlock>> {
+    variants.iter().find(|variant| variant.variant.is_other())
 }
 
 unsafe fn write_enum_discriminant(
@@ -2811,7 +2809,8 @@ where
         shape: &'static Shape,
         loop_id: ExecBlock,
         raw_field_dispatch: bool,
-    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
         loop {
             match self.parser.next_object_key_or_end()? {
                 JsonObjectKeyStep::End => return Ok(Control::Continue),
@@ -2909,7 +2908,8 @@ where
         loop_id: ExecBlock,
         raw_field_dispatch: bool,
         tracking: StructTracking,
-    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
         loop {
             match self.parser.next_object_key_or_end()? {
                 JsonObjectKeyStep::End => return Ok(Control::Continue),
@@ -3120,12 +3120,153 @@ where
         ))
     }
 
+    fn finish_external_enum_payload(
+        &mut self,
+        tracking: StructTracking,
+        close_object: bool,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        if close_object {
+            self.consume_external_enum_object_end()?;
+        }
+        unsafe {
+            self.finish_struct_frame(tracking)?;
+        }
+        Ok(Control::Continue)
+    }
+
+    fn read_external_enum_single_field_payload(
+        &mut self,
+        shape: &'static Shape,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        span: Span,
+        close_object: bool,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        let [field] = variant.fields.as_ref() else {
+            return Err(unsupported(shape, "non-single-field enum fallback payload"));
+        };
+
+        self.push_struct_frame(
+            shape,
+            &variant.fields,
+            variant.dispatch.as_ref(),
+            variant.tracking,
+        );
+        let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+        if let Some(scalar) = field.scalar {
+            let (value, value_span) = self.parser.read_scalar_token()?;
+            unsafe {
+                scalar.write(field.shape, field_ptr, value, value_span)?;
+            }
+            self.mark_struct_field(variant.tracking, 0, span);
+            return self.finish_external_enum_payload(variant.tracking, close_object);
+        }
+
+        let old_base = self.base;
+        self.base = field_ptr;
+        Ok(call_program_or_block_then(
+            &field.program,
+            Continuation::ExternalEnumSingleField {
+                tracking: variant.tracking,
+                index: 0,
+                span,
+                old_base,
+                close_object,
+            },
+        ))
+    }
+
+    fn read_external_enum_tuple_payload(
+        &mut self,
+        shape: &'static Shape,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        self.parser.consume_array_start_fast()?;
+        self.push_struct_frame(
+            shape,
+            &variant.fields,
+            variant.dispatch.as_ref(),
+            variant.tracking,
+        );
+        self.read_external_enum_tuple_next(&variant.fields, variant.tracking, 0, true)
+    }
+
+    fn read_external_enum_tuple_next(
+        &mut self,
+        fields: &'program [FieldPlan<ExecBlock>],
+        tracking: StructTracking,
+        mut next_index: usize,
+        close_object: bool,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        loop {
+            let Some(field) = fields.get(next_index) else {
+                if self.parser.consume_sequence_end_if_next()? {
+                    return self.finish_external_enum_payload(tracking, close_object);
+                }
+
+                let got = match self.parser.peek_event()? {
+                    Some(event) => event.kind_name().into(),
+                    None => "end of input".into(),
+                };
+                return Err(vm_error(
+                    None,
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "sequence end for tuple variant",
+                        got,
+                    },
+                ));
+            };
+
+            if self.parser.consume_sequence_end_if_next()? {
+                return Err(vm_error(
+                    None,
+                    DeserializeErrorKind::UnexpectedEof {
+                        expected: "tuple variant element",
+                    },
+                ));
+            }
+
+            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+            if let Some(scalar) = field.scalar {
+                let (value, span) = self.parser.read_scalar_token()?;
+                unsafe {
+                    scalar.write(field.shape, field_ptr, value, span)?;
+                }
+                self.mark_struct_field(tracking, next_index, span);
+                next_index += 1;
+                continue;
+            }
+
+            let span = self
+                .parser
+                .peek_event()?
+                .map_or(Span { offset: 0, len: 0 }, |event| event.span);
+            let old_base = self.base;
+            self.base = field_ptr;
+            return Ok(call_program_or_block_then(
+                &field.program,
+                Continuation::ExternalEnumTupleField {
+                    tracking,
+                    fields,
+                    index: next_index,
+                    span,
+                    old_base,
+                    close_object,
+                },
+            ));
+        }
+    }
+
     fn read_external_enum(
         &mut self,
         shape: &'static Shape,
         enum_type: EnumType,
         variants: &'program [ExternalVariantPlan<ExecBlock>],
-    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
         let Some(event) = self.parser.peek_event()? else {
             return Err(vm_error(
                 None,
@@ -3135,32 +3276,56 @@ where
 
         match &event.kind {
             ParseEventKind::Scalar(ScalarValue::Str(_)) => {
-                let (value, span) = self.parser.read_scalar_token()?;
-                let JsonScalarToken::Str(variant_name) = value else {
-                    unreachable!("peeked scalar string must read back as scalar string");
+                let ParseEventKind::Scalar(ScalarValue::Str(variant_name)) = &event.kind else {
+                    unreachable!("matched scalar string");
                 };
-                let Some(variant) = find_external_variant(variants, &variant_name) else {
+                if let Some(variant) = find_external_variant(variants, variant_name) {
+                    let (value, span) = self.parser.read_scalar_token()?;
+                    let JsonScalarToken::Str(variant_name) = value else {
+                        unreachable!("peeked scalar string must read back as scalar string");
+                    };
+                    if variant.variant.data.kind != StructKind::Unit {
+                        return Err(vm_error(
+                            Some(span),
+                            DeserializeErrorKind::UnexpectedToken {
+                                expected: "externally tagged enum object for payload variant",
+                                got: variant_name.into_owned().into(),
+                            },
+                        ));
+                    }
+                    unsafe {
+                        write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
+                    }
+                    return Ok(Control::Continue);
+                }
+                let Some(variant) = external_other_variant(variants) else {
                     return Err(vm_error(
-                        Some(span),
+                        Some(event.span),
                         DeserializeErrorKind::UnexpectedToken {
                             expected: "known enum variant",
-                            got: variant_name.into_owned().into(),
+                            got: variant_name.to_string().into(),
                         },
                     ));
                 };
-                if variant.variant.data.kind != StructKind::Unit {
-                    return Err(vm_error(
-                        Some(span),
-                        DeserializeErrorKind::UnexpectedToken {
-                            expected: "externally tagged enum object for payload variant",
-                            got: variant_name.into_owned().into(),
-                        },
-                    ));
-                }
                 unsafe {
                     write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
                 }
-                Ok(Control::Continue)
+                self.read_external_enum_single_field_payload(shape, variant, event.span, false)
+            }
+            ParseEventKind::Scalar(_) => {
+                let Some(variant) = external_other_variant(variants) else {
+                    return Err(vm_error(
+                        Some(event.span),
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "string or struct for enum",
+                            got: event.kind_name().into(),
+                        },
+                    ));
+                };
+                unsafe {
+                    write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
+                }
+                self.read_external_enum_single_field_payload(shape, variant, event.span, false)
             }
             ParseEventKind::StructStart(_) => {
                 self.parser.consume_object_start_fast()?;
@@ -3176,8 +3341,13 @@ where
                     ));
                 };
 
-                let Some(variant) = find_external_variant_input(self.parser, variants, &key)?
-                else {
+                let variant = if let Some(variant) =
+                    find_external_variant_input(self.parser, variants, &key)?
+                {
+                    variant
+                } else if let Some(variant) = external_other_variant(variants) {
+                    variant
+                } else {
                     let key = self.parser.materialize_field_key(key)?;
                     return Err(vm_error(
                         Some(span),
@@ -3199,37 +3369,7 @@ where
                         Ok(Control::Continue)
                     }
                     StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => {
-                        let field = &variant.fields[0];
-                        self.push_struct_frame(
-                            shape,
-                            &variant.fields,
-                            variant.dispatch.as_ref(),
-                            variant.tracking,
-                        );
-                        let field_ptr = unsafe { self.base.field_uninit(field.offset) };
-                        if let Some(scalar) = field.scalar {
-                            let (value, value_span) = self.parser.read_scalar_token()?;
-                            unsafe {
-                                scalar.write(field.shape, field_ptr, value, value_span)?;
-                            }
-                            self.mark_struct_field(variant.tracking, 0, span);
-                            self.consume_external_enum_object_end()?;
-                            unsafe {
-                                self.finish_struct_frame(variant.tracking)?;
-                            }
-                            return Ok(Control::Continue);
-                        }
-
-                        let old_base = self.base;
-                        self.base = field_ptr;
-                        Ok(call_program_or_block_then(
-                            &field.program,
-                            Continuation::ExternalEnumNewtype {
-                                tracking: variant.tracking,
-                                span,
-                                old_base,
-                            },
-                        ))
+                        self.read_external_enum_single_field_payload(shape, variant, span, true)
                     }
                     StructKind::Struct => {
                         self.parser.consume_object_start_fast()?;
@@ -3250,7 +3390,7 @@ where
                         ))
                     }
                     StructKind::Tuple | StructKind::TupleStruct => {
-                        Err(unsupported(shape, "multi-field tuple enum variant"))
+                        self.read_external_enum_tuple_payload(shape, variant)
                     }
                 }
             }
@@ -3326,7 +3466,8 @@ where
     fn step_set_next(
         &mut self,
         plan: SetStepPlan<'program>,
-    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
         loop {
             if let Some(scalar) = plan.element_scalar {
                 let step = self.parser.next_sequence_scalar_or_end()?;
@@ -3557,7 +3698,8 @@ where
     fn step_map_next(
         &mut self,
         plan: MapStepPlan<'program>,
-    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
         let (key_input, key_span) = match self.parser.next_object_key_or_end()? {
             JsonObjectKeyStep::End => return Ok(Control::Continue),
             JsonObjectKeyStep::Field { key, span } => (key, span),
@@ -3619,7 +3761,8 @@ where
         list: ListDef,
         scalar: ScalarType,
         element_layout: Layout,
-    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
         match scalar {
             ScalarType::U8 => {
                 self.list_next_scalar_with(list, element_layout, write_u8_input::<TRUSTED_UTF8>)
@@ -3671,7 +3814,7 @@ where
         list: ListDef,
         element_layout: Layout,
         mut write: W,
-    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError>
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
     where
         W: FnMut(
             &JsonParser<'de, TRUSTED_UTF8>,
@@ -4161,7 +4304,7 @@ where
     JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
 {
     type Error = DeserializeError;
-    type Continuation = Continuation;
+    type Continuation = Continuation<'program>;
 
     fn step(
         &mut self,
@@ -4504,18 +4647,28 @@ where
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
-            Continuation::ExternalEnumNewtype {
+            Continuation::ExternalEnumSingleField {
                 tracking,
+                index,
                 span,
                 old_base,
+                close_object,
             } => {
-                self.mark_struct_field(tracking, 0, span);
+                self.mark_struct_field(tracking, index, span);
                 self.base = old_base;
-                self.consume_external_enum_object_end()?;
-                unsafe {
-                    self.finish_struct_frame(tracking)?;
-                }
-                Ok(Control::Continue)
+                self.finish_external_enum_payload(tracking, close_object)
+            }
+            Continuation::ExternalEnumTupleField {
+                tracking,
+                fields,
+                index,
+                span,
+                old_base,
+                close_object,
+            } => {
+                self.mark_struct_field(tracking, index, span);
+                self.base = old_base;
+                self.read_external_enum_tuple_next(fields, tracking, index + 1, close_object)
             }
             Continuation::ExternalEnumStruct { tracking } => {
                 self.consume_external_enum_object_end()?;
@@ -4627,15 +4780,15 @@ where
 
 fn call_program_or_block_then<'program>(
     program: &'program [ExecOp],
-    continuation: Continuation,
-) -> Control<'program, ExecBlock, ExecOp, Continuation> {
+    continuation: Continuation<'program>,
+) -> Control<'program, ExecBlock, ExecOp, Continuation<'program>> {
     match program {
         [JsonOp::CallBlock(block)] => Control::CallBlockThen(*block, continuation),
         _ => Control::CallProgramThen(program, continuation),
     }
 }
 
-enum Continuation {
+enum Continuation<'program> {
     FinishStruct {
         tracking: StructTracking,
     },
@@ -4646,10 +4799,20 @@ enum Continuation {
         old_base: PtrUninit,
         loop_id: ExecBlock,
     },
-    ExternalEnumNewtype {
+    ExternalEnumSingleField {
         tracking: StructTracking,
+        index: usize,
         span: Span,
         old_base: PtrUninit,
+        close_object: bool,
+    },
+    ExternalEnumTupleField {
+        tracking: StructTracking,
+        fields: &'program [FieldPlan<ExecBlock>],
+        index: usize,
+        span: Span,
+        old_base: PtrUninit,
+        close_object: bool,
     },
     ExternalEnumStruct {
         tracking: StructTracking,
