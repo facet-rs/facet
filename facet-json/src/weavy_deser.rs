@@ -20,10 +20,13 @@ use core::str::FromStr;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use facet_core::{
-    Characteristic, Def, DefaultInPlaceFn, DefaultSource, Facet, Field, ListDef, MapDef, OptionDef,
-    PointerDef, PtrConst, PtrMut, PtrUninit, ScalarType, SetDef, Shape, StructKind, Type, UserType,
+    Characteristic, Def, DefaultInPlaceFn, DefaultSource, EnumRepr, EnumType, Facet, Field,
+    ListDef, MapDef, OptionDef, PointerDef, PtrConst, PtrMut, PtrUninit, ScalarType, SetDef, Shape,
+    StructKind, Type, UserType, Variant,
 };
-use facet_format::{DeserializeError, DeserializeErrorKind, ParseError};
+use facet_format::{
+    DeserializeError, DeserializeErrorKind, FormatParser, ParseError, ParseEventKind, ScalarValue,
+};
 use facet_reflect::Span;
 use weavy::mem::runtime::{
     HandleGuard, InitializedLedger, RawAllocError, RawArrayBuilder, ScratchSession, ScratchSlot,
@@ -60,6 +63,7 @@ mod native_stencils {
 enum JsonBlockId {
     Shape(&'static Shape),
     StructLoop(&'static Shape),
+    VariantStructLoop(&'static Shape, usize),
     ListLoop(&'static Shape),
     SetLoop(&'static Shape),
     MapLoop(&'static Shape),
@@ -1641,6 +1645,11 @@ enum JsonOp<Block> {
         dispatch: Option<RawFieldDispatch>,
         loop_id: Block,
     },
+    ReadExternalEnum {
+        shape: &'static Shape,
+        enum_type: EnumType,
+        variants: Box<[ExternalVariantPlan<Block>]>,
+    },
     StructNext {
         shape: &'static Shape,
         loop_id: Block,
@@ -1710,6 +1719,16 @@ struct FieldPlan<Block> {
     program: Program<JsonOp<Block>>,
     scalar: Option<ScalarPlan>,
     missing: MissingField,
+}
+
+#[derive(Clone, Debug)]
+struct ExternalVariantPlan<Block> {
+    index: usize,
+    variant: &'static Variant,
+    fields: Box<[FieldPlan<Block>]>,
+    dispatch: Option<RawFieldDispatch>,
+    loop_id: Option<Block>,
+    tracking: StructTracking,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2172,6 +2191,7 @@ impl Lowering {
                 }])
             }
             _ => match shape.ty {
+                Type::User(UserType::Enum(enum_type)) => self.lower_external_enum(shape, enum_type),
                 Type::User(UserType::Struct(struct_type)) => {
                     if struct_type.kind != StructKind::Struct {
                         return Err(unsupported(shape, "non-named struct"));
@@ -2253,6 +2273,92 @@ impl Lowering {
             },
         }
     }
+
+    fn lower_external_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+    ) -> Result<Program<SymbolicOp>, DeserializeError> {
+        if shape.is_numeric() {
+            return Err(unsupported(shape, "numeric enum"));
+        }
+        if shape.is_untagged() {
+            return Err(unsupported(shape, "untagged enum"));
+        }
+        if shape.get_tag_attr().is_some() || shape.get_content_attr().is_some() {
+            return Err(unsupported(shape, "internally or adjacently tagged enum"));
+        }
+        if enum_type.is_cow {
+            return Err(unsupported(shape, "cow enum"));
+        }
+
+        let mut variants = Vec::with_capacity(enum_type.variants.len());
+        for (index, variant) in enum_type.variants.iter().enumerate() {
+            if variant.is_other() {
+                return Err(unsupported(shape, "other enum variant"));
+            }
+
+            let mut fields = Vec::with_capacity(variant.data.fields.len());
+            for field in variant.data.fields {
+                if field.should_skip_deserializing() || field.is_flattened() {
+                    return Err(unsupported(
+                        shape,
+                        "skipped or flattened enum variant fields",
+                    ));
+                }
+                let field_shape = field.shape();
+                fields.push(FieldPlan {
+                    name: field.effective_name(),
+                    alias: field.alias,
+                    offset: field.offset,
+                    shape: field_shape,
+                    program: self.lower_shape(field_shape)?,
+                    scalar: ScalarType::try_from_shape(field_shape).map(ScalarPlan::new),
+                    missing: missing_field_action(field, false),
+                });
+            }
+
+            let fields = fields.into_boxed_slice();
+            if matches!(
+                variant.data.kind,
+                StructKind::Tuple | StructKind::TupleStruct
+            ) && fields.len() > 1
+            {
+                return Err(unsupported(shape, "multi-field tuple enum variant"));
+            }
+
+            let tracking = StructTracking::for_len(fields.len());
+            let dispatch = RawFieldDispatch::for_fields(&fields);
+            let loop_id = if variant.data.kind == StructKind::Struct {
+                let loop_id = JsonBlockId::VariantStructLoop(shape, index);
+                let loop_program = vec![JsonOp::StructNext {
+                    shape,
+                    loop_id,
+                    raw_field_dispatch: true,
+                    tracking,
+                }];
+                self.lowered.blocks.insert(loop_id, loop_program);
+                Some(loop_id)
+            } else {
+                None
+            };
+
+            variants.push(ExternalVariantPlan {
+                index,
+                variant,
+                fields,
+                dispatch,
+                loop_id,
+                tracking,
+            });
+        }
+
+        Ok(vec![JsonOp::ReadExternalEnum {
+            shape,
+            enum_type,
+            variants: variants.into_boxed_slice(),
+        }])
+    }
 }
 
 fn resolve_json_lowered(
@@ -2303,6 +2409,15 @@ fn resolve_json_op(
             fields: resolve_field_plans(fields, refs)?,
             dispatch,
             loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::ReadExternalEnum {
+            shape,
+            enum_type,
+            variants,
+        } => JsonOp::ReadExternalEnum {
+            shape,
+            enum_type,
+            variants: resolve_external_variant_plans(variants, refs)?,
         },
         JsonOp::StructNext {
             shape,
@@ -2414,6 +2529,29 @@ fn resolve_json_op(
     })
 }
 
+fn resolve_external_variant_plans(
+    variants: Box<[ExternalVariantPlan<BlockId>]>,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<Box<[ExternalVariantPlan<ExecBlock>]>, DeserializeError> {
+    variants
+        .into_vec()
+        .into_iter()
+        .map(|variant| {
+            Ok(ExternalVariantPlan {
+                index: variant.index,
+                variant: variant.variant,
+                fields: resolve_field_plans(variant.fields, refs)?,
+                dispatch: variant.dispatch,
+                loop_id: variant
+                    .loop_id
+                    .map(|block| resolve_block_ref(block, refs))
+                    .transpose()?,
+                tracking: variant.tracking,
+            })
+        })
+        .collect()
+}
+
 fn resolve_field_plans(
     fields: Box<[FieldPlan<BlockId>]>,
     refs: &BTreeMap<BlockId, ExecBlock>,
@@ -2498,6 +2636,99 @@ fn map_key_scalar_supported(scalar: ScalarType) -> bool {
             | ScalarType::U128
             | ScalarType::USize
     )
+}
+
+fn find_external_variant<S: AsRef<str>>(
+    variants: &[ExternalVariantPlan<ExecBlock>],
+    name: S,
+) -> Option<&ExternalVariantPlan<ExecBlock>> {
+    let name = name.as_ref();
+    variants
+        .iter()
+        .find(|variant| variant.variant.effective_name() == name)
+}
+
+fn find_external_variant_input<'program, 'de, const TRUSTED_UTF8: bool>(
+    parser: &JsonParser<'de, TRUSTED_UTF8>,
+    variants: &'program [ExternalVariantPlan<ExecBlock>],
+    key: &JsonFieldKeyInput<'de>,
+) -> Result<Option<&'program ExternalVariantPlan<ExecBlock>>, ParseError> {
+    if let Some(key) = parser.field_key_unescaped_bytes(key) {
+        return Ok(variants
+            .iter()
+            .find(|variant| variant.variant.effective_name().as_bytes() == key));
+    }
+
+    variants
+        .iter()
+        .find_map(
+            |variant| match parser.field_key_matches(key, variant.variant.effective_name()) {
+                Ok(true) => Some(Ok(variant)),
+                Ok(false) => None,
+                Err(err) => Some(Err(err)),
+            },
+        )
+        .transpose()
+}
+
+unsafe fn write_enum_discriminant(
+    shape: &'static Shape,
+    enum_type: EnumType,
+    variant: &'static Variant,
+    dst: PtrUninit,
+) -> Result<(), DeserializeError> {
+    let Some(discriminant) = variant.discriminant else {
+        return Err(unsupported(shape, "enum variant without discriminant"));
+    };
+
+    unsafe {
+        match enum_type.enum_repr {
+            EnumRepr::Rust => return Err(unsupported(shape, "Rust enum repr")),
+            EnumRepr::RustNPO => return Err(unsupported(shape, "RustNPO enum repr")),
+            EnumRepr::U8 => {
+                let ptr = dst.as_mut_byte_ptr();
+                *ptr = discriminant as u8;
+            }
+            EnumRepr::U16 => {
+                let ptr = dst.as_mut_byte_ptr() as *mut u16;
+                *ptr = discriminant as u16;
+            }
+            EnumRepr::U32 => {
+                let ptr = dst.as_mut_byte_ptr() as *mut u32;
+                *ptr = discriminant as u32;
+            }
+            EnumRepr::U64 => {
+                let ptr = dst.as_mut_byte_ptr() as *mut u64;
+                *ptr = discriminant as u64;
+            }
+            EnumRepr::USize => {
+                let ptr = dst.as_mut_byte_ptr() as *mut usize;
+                *ptr = discriminant as usize;
+            }
+            EnumRepr::I8 => {
+                let ptr = dst.as_mut_byte_ptr() as *mut i8;
+                *ptr = discriminant as i8;
+            }
+            EnumRepr::I16 => {
+                let ptr = dst.as_mut_byte_ptr() as *mut i16;
+                *ptr = discriminant as i16;
+            }
+            EnumRepr::I32 => {
+                let ptr = dst.as_mut_byte_ptr() as *mut i32;
+                *ptr = discriminant as i32;
+            }
+            EnumRepr::I64 => {
+                let ptr = dst.as_mut_byte_ptr() as *mut i64;
+                *ptr = discriminant;
+            }
+            EnumRepr::ISize => {
+                let ptr = dst.as_mut_byte_ptr() as *mut isize;
+                *ptr = discriminant as isize;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn sized_layout(shape: &'static Shape) -> Result<Layout, DeserializeError> {
@@ -2767,6 +2998,269 @@ where
                     ));
                 }
             }
+        }
+    }
+
+    fn push_struct_frame(
+        &mut self,
+        shape: &'static Shape,
+        fields: &'program [FieldPlan<ExecBlock>],
+        dispatch: Option<&'program RawFieldDispatch>,
+        tracking: StructTracking,
+    ) {
+        let base = self.base;
+        match tracking {
+            StructTracking::Inline => {
+                self.inline_structs
+                    .push(StructFrame::new(shape, base, fields, dispatch));
+            }
+            StructTracking::Bitset | StructTracking::Heap => {
+                self.large_structs_mut()
+                    .push(LargeStructFrameSlot::new(shape, base, fields, dispatch));
+            }
+        }
+    }
+
+    fn mark_struct_field(&mut self, tracking: StructTracking, index: usize, span: Span) {
+        match tracking {
+            StructTracking::Inline => {
+                let frame = self
+                    .inline_structs
+                    .last_mut()
+                    .expect("inline struct frame is present after field program");
+                frame.mark_seen(index, span);
+            }
+            StructTracking::Bitset | StructTracking::Heap => {
+                let frame = self
+                    .large_structs_mut()
+                    .last_mut()
+                    .expect("large struct frame is present after field program");
+                frame.mark(index, span);
+            }
+        }
+    }
+
+    unsafe fn finish_struct_frame(
+        &mut self,
+        tracking: StructTracking,
+    ) -> Result<(), DeserializeError> {
+        match tracking {
+            StructTracking::Inline => {
+                let frame = self
+                    .inline_structs
+                    .pop()
+                    .expect("inline struct frame is present after struct program");
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+            }
+            StructTracking::Bitset | StructTracking::Heap => {
+                let frame = self
+                    .large_structs_mut()
+                    .pop()
+                    .expect("large struct frame is present after struct program");
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn consume_external_enum_object_end(&mut self) -> Result<(), DeserializeError> {
+        if self.parser.consume_object_end_if_next()? {
+            return Ok(());
+        }
+
+        match self.parser.next_object_key_or_end()? {
+            JsonObjectKeyStep::End => Ok(()),
+            JsonObjectKeyStep::Field { key, span } => {
+                let key = self.parser.materialize_field_key(key)?;
+                Err(vm_error(
+                    Some(span),
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "struct end after enum variant",
+                        got: format!("field key `{}`", key.as_str()).into(),
+                    },
+                ))
+            }
+        }
+    }
+
+    fn consume_unit_variant_payload(&mut self) -> Result<(), DeserializeError> {
+        let Some(event) = self.parser.peek_event()? else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::UnexpectedEof {
+                    expected: "unit enum variant payload",
+                },
+            ));
+        };
+
+        if matches!(event.kind, ParseEventKind::StructStart(_)) {
+            self.parser.consume_object_start_fast()?;
+            if self.parser.consume_object_end_if_next()? {
+                return Ok(());
+            }
+            return Err(vm_error(
+                Some(event.span),
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "empty struct for unit variant",
+                    got: "non-empty struct".into(),
+                },
+            ));
+        }
+
+        Err(vm_error(
+            Some(event.span),
+            DeserializeErrorKind::UnexpectedToken {
+                expected: "empty object for unit variant",
+                got: event.kind_name().into(),
+            },
+        ))
+    }
+
+    fn read_external_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+        variants: &'program [ExternalVariantPlan<ExecBlock>],
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation>, DeserializeError> {
+        let Some(event) = self.parser.peek_event()? else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::UnexpectedEof { expected: "enum" },
+            ));
+        };
+
+        match &event.kind {
+            ParseEventKind::Scalar(ScalarValue::Str(_)) => {
+                let (value, span) = self.parser.read_scalar_token()?;
+                let JsonScalarToken::Str(variant_name) = value else {
+                    unreachable!("peeked scalar string must read back as scalar string");
+                };
+                let Some(variant) = find_external_variant(variants, &variant_name) else {
+                    return Err(vm_error(
+                        Some(span),
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "known enum variant",
+                            got: variant_name.into_owned().into(),
+                        },
+                    ));
+                };
+                if variant.variant.data.kind != StructKind::Unit {
+                    return Err(vm_error(
+                        Some(span),
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "externally tagged enum object for payload variant",
+                            got: variant_name.into_owned().into(),
+                        },
+                    ));
+                }
+                unsafe {
+                    write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
+                }
+                Ok(Control::Continue)
+            }
+            ParseEventKind::StructStart(_) => {
+                self.parser.consume_object_start_fast()?;
+                let JsonObjectKeyStep::Field { key, span } =
+                    self.parser.next_object_key_or_end()?
+                else {
+                    return Err(vm_error(
+                        Some(event.span),
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "variant name",
+                            got: "empty object".into(),
+                        },
+                    ));
+                };
+
+                let Some(variant) = find_external_variant_input(self.parser, variants, &key)?
+                else {
+                    let key = self.parser.materialize_field_key(key)?;
+                    return Err(vm_error(
+                        Some(span),
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "known enum variant",
+                            got: key.as_str().to_string().into(),
+                        },
+                    ));
+                };
+
+                unsafe {
+                    write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
+                }
+
+                match variant.variant.data.kind {
+                    StructKind::Unit => {
+                        self.consume_unit_variant_payload()?;
+                        self.consume_external_enum_object_end()?;
+                        Ok(Control::Continue)
+                    }
+                    StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => {
+                        let field = &variant.fields[0];
+                        self.push_struct_frame(
+                            shape,
+                            &variant.fields,
+                            variant.dispatch.as_ref(),
+                            variant.tracking,
+                        );
+                        let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+                        if let Some(scalar) = field.scalar {
+                            let (value, value_span) = self.parser.read_scalar_token()?;
+                            unsafe {
+                                scalar.write(field.shape, field_ptr, value, value_span)?;
+                            }
+                            self.mark_struct_field(variant.tracking, 0, span);
+                            self.consume_external_enum_object_end()?;
+                            unsafe {
+                                self.finish_struct_frame(variant.tracking)?;
+                            }
+                            return Ok(Control::Continue);
+                        }
+
+                        let old_base = self.base;
+                        self.base = field_ptr;
+                        Ok(call_program_or_block_then(
+                            &field.program,
+                            Continuation::ExternalEnumNewtype {
+                                tracking: variant.tracking,
+                                span,
+                                old_base,
+                            },
+                        ))
+                    }
+                    StructKind::Struct => {
+                        self.parser.consume_object_start_fast()?;
+                        self.push_struct_frame(
+                            shape,
+                            &variant.fields,
+                            variant.dispatch.as_ref(),
+                            variant.tracking,
+                        );
+                        let loop_id = variant
+                            .loop_id
+                            .expect("struct enum variant has a lowered loop");
+                        Ok(Control::CallBlockThen(
+                            loop_id,
+                            Continuation::ExternalEnumStruct {
+                                tracking: variant.tracking,
+                            },
+                        ))
+                    }
+                    StructKind::Tuple | StructKind::TupleStruct => {
+                        Err(unsupported(shape, "multi-field tuple enum variant"))
+                    }
+                }
+            }
+            other => Err(vm_error(
+                Some(event.span),
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "string or struct for enum",
+                    got: other.kind_name().into(),
+                },
+            )),
         }
     }
 
@@ -3698,23 +4192,17 @@ where
             } => {
                 self.parser.consume_object_start_fast()?;
                 let tracking = StructTracking::for_len(fields.len());
-                let base = self.base;
-                match tracking {
-                    StructTracking::Inline => self.inline_structs.push(StructFrame::new(
-                        shape,
-                        base,
-                        fields,
-                        dispatch.as_ref(),
-                    )),
-                    StructTracking::Bitset | StructTracking::Heap => self.large_structs_mut().push(
-                        LargeStructFrameSlot::new(shape, base, fields, dispatch.as_ref()),
-                    ),
-                }
+                self.push_struct_frame(shape, fields, dispatch.as_ref(), tracking);
                 Ok(Control::CallBlockThen(
                     *loop_id,
                     Continuation::FinishStruct { tracking },
                 ))
             }
+            JsonOp::ReadExternalEnum {
+                shape,
+                enum_type,
+                variants,
+            } => self.read_external_enum(shape, *enum_type, variants),
             JsonOp::StructNext {
                 shape,
                 loop_id,
@@ -4000,25 +4488,8 @@ where
     ) -> Result<Control<'program, ExecBlock, ExecOp, Self::Continuation>, Self::Error> {
         match continuation {
             Continuation::FinishStruct { tracking } => {
-                match tracking {
-                    StructTracking::Inline => {
-                        let frame = self
-                            .inline_structs
-                            .pop()
-                            .expect("inline struct frame is present after struct program");
-                        unsafe {
-                            frame.fill_missing_fields()?;
-                        }
-                    }
-                    StructTracking::Bitset | StructTracking::Heap => {
-                        let frame = self
-                            .large_structs_mut()
-                            .pop()
-                            .expect("large struct frame is present after struct program");
-                        unsafe {
-                            frame.fill_missing_fields()?;
-                        }
-                    }
+                unsafe {
+                    self.finish_struct_frame(tracking)?;
                 }
                 Ok(Control::Continue)
             }
@@ -4029,24 +4500,29 @@ where
                 old_base,
                 loop_id,
             } => {
-                match tracking {
-                    StructTracking::Inline => {
-                        let frame = self
-                            .inline_structs
-                            .last_mut()
-                            .expect("inline struct frame is present after field program");
-                        frame.mark_seen(index, span);
-                    }
-                    StructTracking::Bitset | StructTracking::Heap => {
-                        let frame = self
-                            .large_structs_mut()
-                            .last_mut()
-                            .expect("large struct frame is present after field program");
-                        frame.mark(index, span);
-                    }
-                }
+                self.mark_struct_field(tracking, index, span);
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
+            }
+            Continuation::ExternalEnumNewtype {
+                tracking,
+                span,
+                old_base,
+            } => {
+                self.mark_struct_field(tracking, 0, span);
+                self.base = old_base;
+                self.consume_external_enum_object_end()?;
+                unsafe {
+                    self.finish_struct_frame(tracking)?;
+                }
+                Ok(Control::Continue)
+            }
+            Continuation::ExternalEnumStruct { tracking } => {
+                self.consume_external_enum_object_end()?;
+                unsafe {
+                    self.finish_struct_frame(tracking)?;
+                }
+                Ok(Control::Continue)
             }
             Continuation::OptionSome {
                 option,
@@ -4169,6 +4645,14 @@ enum Continuation {
         span: Span,
         old_base: PtrUninit,
         loop_id: ExecBlock,
+    },
+    ExternalEnumNewtype {
+        tracking: StructTracking,
+        span: Span,
+        old_base: PtrUninit,
+    },
+    ExternalEnumStruct {
+        tracking: StructTracking,
     },
     OptionSome {
         option: OptionDef,
