@@ -1030,18 +1030,17 @@ impl TypePlanBuilder {
         field_proxies: Option<FieldProxies>,
     ) -> Result<NodeId, AllocError> {
         let type_id = shape.id;
+        let is_plain_node = field_proxies.is_none();
 
         // Reuse an already-built node when no field-level proxy makes this call
         // site distinct. Without this, types reachable via N distinct
         // non-cyclic paths are rebuilt N times which explodes combinatorially.
-        if field_proxies.is_none()
-            && let Some(&idx) = self.finished.get(&type_id)
-        {
+        if is_plain_node && let Some(&idx) = self.finished.get(&type_id) {
             return Ok(idx);
         }
 
         // Check if we're currently building this type (cycle detected)
-        if self.building.contains(&type_id) {
+        if is_plain_node && self.building.contains(&type_id) {
             // Create a BackRef node with just the TypeId - resolved later via lookup
             let backref_node = TypePlanNode {
                 shape,
@@ -1057,7 +1056,9 @@ impl TypePlanBuilder {
         }
 
         // Mark this type as being built (for cycle detection)
-        self.building.insert(type_id);
+        if is_plain_node {
+            self.building.insert(type_id);
+        }
 
         // Build proxy nodes for ALL proxies (generic + all format-specific)
         let (proxies, has_container_proxy, has_field_proxy) =
@@ -1084,8 +1085,10 @@ impl TypePlanBuilder {
         let idx = self.nodes.alloc(node);
 
         // Done building - move from building set to finished map
-        self.building.remove(&type_id);
-        self.finished.insert(type_id, idx);
+        if is_plain_node {
+            self.building.remove(&type_id);
+            self.finished.insert(type_id, idx);
+        }
 
         Ok(idx)
     }
