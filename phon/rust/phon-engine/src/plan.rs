@@ -27,8 +27,8 @@ use phon_schema::{
 };
 
 use phon_ir::ir::{
-    CanonicalEnumArm, CanonicalProgram, CanonicalValueProgram, ControlOp, EnumArm, Op, Program,
-    ValueIntrinsic, ValueProgram, WeavyOp,
+    CanonicalEnumArm, CanonicalProgram, CanonicalValueProgram, ControlOp, ValueIntrinsic,
+    ValueProgram, WeavyOp, value_lowered_from_canonical,
 };
 
 use crate::compact::{self, CompactError, Registry, Resolved};
@@ -580,84 +580,15 @@ fn add_ref_targets(r: &SchemaRef, out: &mut Vec<SchemaId>) {
 // Lowering the plan to the linear IR
 // ============================================================================
 
-/// Flatten a built plan's `Node` tree into a linear [`Program`]. Every
-/// type-directed decision the tree encodes is resolved here, once; what the
-/// interpreter runs carries only data-directed control flow. A struct of structs
-/// of scalars lowers to a single branch-free run of ops.
+/// Flatten a built plan into the legacy dynamic-value [`ValueProgram`].
+///
+/// Canonical Weavy IR is the source of truth; this projects it back into the old
+/// public value IR for callers that still inspect that form.
 // r[impl ir.two-forms]
 #[must_use]
 pub fn lower(plan: &Plan) -> ValueProgram {
-    let mut out = Vec::new();
-    lower_node(&plan.root, &mut out);
-    let blocks = plan
-        .blocks
-        .iter()
-        .map(|(id, node)| (*id, lower_subtree(node)))
-        .collect();
-    ValueProgram {
-        program: out,
-        blocks,
-    }
-}
-
-fn lower_subtree(node: &Node) -> Program {
-    let mut out = Vec::new();
-    lower_node(node, &mut out);
-    out
-}
-
-/// Append the ops for `node`. A complete node nets one value on the stack.
-fn lower_node(node: &Node, out: &mut Program) {
-    match node {
-        Node::Scalar(p) => out.push(Op::Scalar(*p)),
-        Node::Dynamic => out.push(Op::Dynamic),
-        Node::CallBlock(schema) => out.push(Op::CallBlock { schema: *schema }),
-        Node::Struct(sp) => lower_struct(sp, out),
-        Node::Enum(by_index) => {
-            let mut arms: Vec<EnumArm> = by_index
-                .iter()
-                .map(|(idx, vp)| EnumArm {
-                    writer_index: *idx,
-                    reader_name: vp.reader.clone(),
-                    payload: lower_payload(&vp.payload),
-                })
-                .collect();
-            // Deterministic order; the interpreter dispatches by writer_index.
-            arms.sort_by_key(|a| a.writer_index);
-            out.push(Op::Enum { arms });
-        }
-        Node::Tuple(nodes) => {
-            for n in nodes {
-                lower_node(n, out);
-            }
-            out.push(Op::Array { count: nodes.len() });
-        }
-        Node::Seq {
-            set,
-            element,
-            min_wire,
-        } => out.push(Op::Seq {
-            set: *set,
-            min_wire: *min_wire,
-            body: lower_subtree(element),
-        }),
-        Node::Map { key, value } => out.push(Op::Map {
-            key: lower_subtree(key),
-            value: lower_subtree(value),
-        }),
-        Node::Array {
-            element,
-            dims,
-            min_wire,
-        } => out.push(Op::FixedArray {
-            dimensions: dims.clone(),
-            min_wire: *min_wire,
-            body: lower_subtree(element),
-        }),
-        Node::Option(element) => out.push(Op::Option {
-            some: lower_subtree(element),
-        }),
-    }
+    value_lowered_from_canonical(lower_canonical(plan))
+        .expect("canonical PHON value lowering must project to legacy value IR")
 }
 
 /// Flatten a built plan directly into canonical Weavy IR.
@@ -778,47 +709,6 @@ fn lower_canonical_payload(payload: &Payload) -> CanonicalProgram {
             }));
         }
         Payload::Struct(sp) => lower_canonical_struct(sp, &mut out),
-    }
-    out
-}
-
-/// Each writer field in wire order (a matched field's value, or a skip for a
-/// writer-only one), then a null per reader-only default, then assemble the
-/// object. The `keys` track the stack values the `Object` op will name.
-///
-/// A field that is itself a fixed structure splices its ops inline here (via
-/// `lower_node`); only dynamic-length and branching children become sub-programs.
-// r[impl ir.inlining]
-fn lower_struct(sp: &StructPlan, out: &mut Program) {
-    let mut keys = Vec::new();
-    for step in &sp.steps {
-        match step {
-            Step::Take { reader, node } => {
-                lower_node(node, out);
-                keys.push(reader.clone());
-            }
-            Step::Skip(writer_ref) => out.push(Op::Skip(writer_ref.clone())),
-        }
-    }
-    for name in &sp.defaults {
-        out.push(Op::Null);
-        keys.push(name.clone());
-    }
-    out.push(Op::Object { keys });
-}
-
-fn lower_payload(payload: &Payload) -> Program {
-    let mut out = Vec::new();
-    match payload {
-        Payload::Unit => out.push(Op::Null),
-        Payload::Newtype(node) => lower_node(node, &mut out),
-        Payload::Tuple(nodes) => {
-            for n in nodes {
-                lower_node(n, &mut out);
-            }
-            out.push(Op::Array { count: nodes.len() });
-        }
-        Payload::Struct(sp) => lower_struct(sp, &mut out),
     }
     out
 }
@@ -972,6 +862,7 @@ fn exec_payload(
 mod tests {
     use super::*;
     use crate::compact;
+    use phon_ir::ir::Op;
     use phon_schema::{Schema, primitive_id};
 
     fn prim(p: Primitive) -> SchemaRef {

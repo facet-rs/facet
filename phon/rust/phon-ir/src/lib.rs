@@ -27,9 +27,9 @@ pub use ir::{
     BorrowOp, BorrowThunks, ByteValidator, BytesOp, CanonicalEnumArm, CanonicalEnumOp,
     CanonicalEnumVariantOp, CanonicalMapOp, CanonicalMemError, CanonicalMemLowered,
     CanonicalMemProgram, CanonicalOptionOp, CanonicalPointerOp, CanonicalProgram,
-    CanonicalResultOp, CanonicalSeqOp, CanonicalSetOp, CanonicalValueProgram, DefaultOp,
-    DefaultThunk, EffectContract, EffectOrdering, EffectResource, EffectStats, EnumArm, EnumOp,
-    EnumVariantOp, Lowered, LoweredEffectStats, LoweredMemProgramStats, MapOp, MapThunks,
+    CanonicalResultOp, CanonicalSeqOp, CanonicalSetOp, CanonicalValueError, CanonicalValueProgram,
+    DefaultOp, DefaultThunk, EffectContract, EffectOrdering, EffectResource, EffectStats, EnumArm,
+    EnumOp, EnumVariantOp, Lowered, LoweredEffectStats, LoweredMemProgramStats, MapOp, MapThunks,
     MemIntrinsic, MemOp, MemProgram, MemProgramStats, MemoryRegion, Op, OpaqueOp, OpaqueThunks,
     OptionOp, OptionThunks, PointerOp, PointerThunks, Program, ResourceAccess, ResourceEffect,
     ResultOp, ResultThunks, ScalarRunOp, ScalarSegment, SeqOp, SeqThunks, SetOp, SetThunks, SkipOp,
@@ -38,7 +38,8 @@ pub use ir::{
     canonical_mem_lowered_intrinsic_counts, canonical_mem_lowered_stats, canonical_mem_program,
     canonical_mem_program_effect_stats, canonical_mem_program_stats, canonical_program,
     canonical_value_program, lowered_mem_program_stats, mem_lowered_from_canonical,
-    mem_program_from_canonical, mem_program_stats,
+    mem_program_from_canonical, mem_program_stats, value_lowered_from_canonical,
+    value_program_from_canonical,
 };
 
 /// Thunk bindings: resolving thunk names to process-local function pointers

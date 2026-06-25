@@ -246,6 +246,70 @@ pub fn canonical_value_program(lowered: &ValueProgram) -> CanonicalValueProgram 
     }
 }
 
+/// Canonical-to-legacy dynamic-value conversion failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CanonicalValueError {
+    /// Canonical `return` has no legacy [`Op`] equivalent.
+    Return,
+    /// Legacy [`Op::CallBlock`] cannot represent a base-relative block call.
+    NonzeroBaseOffset,
+    /// Canonical control operations other than block calls are not legacy value ops.
+    Control,
+    /// Canonical typed-memory operations are not dynamic-value ops.
+    Memory,
+    /// Canonical initialization operations are not dynamic-value ops.
+    Init,
+    /// Canonical aggregate operations are not dynamic-value ops.
+    Aggregate,
+    /// A future canonical op variant is not representable in legacy value IR.
+    Unknown,
+}
+
+impl core::fmt::Display for CanonicalValueError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Return => write!(f, "canonical return has no Op equivalent"),
+            Self::NonzeroBaseOffset => {
+                write!(f, "canonical block call base offset has no Op equivalent")
+            }
+            Self::Control => write!(f, "canonical control op has no Op equivalent"),
+            Self::Memory => write!(f, "canonical memory op has no Op equivalent"),
+            Self::Init => write!(f, "canonical init op has no Op equivalent"),
+            Self::Aggregate => write!(f, "canonical aggregate op has no Op equivalent"),
+            Self::Unknown => write!(f, "unknown canonical op has no Op equivalent"),
+        }
+    }
+}
+
+impl std::error::Error for CanonicalValueError {}
+
+/// Convert canonical PHON dynamic-value IR back into the legacy public [`Op`]
+/// form.
+///
+/// This is a compatibility projection for callers still inspecting the old
+/// value IR. New execution and analysis should consume [`CanonicalProgram`]
+/// directly.
+pub fn value_program_from_canonical(
+    program: CanonicalProgram,
+) -> Result<Program, CanonicalValueError> {
+    program.into_iter().map(value_op_from_canonical).collect()
+}
+
+/// Convert canonical lowered PHON dynamic-value IR back into the legacy public
+/// [`ValueProgram`] form.
+pub fn value_lowered_from_canonical(
+    lowered: CanonicalValueProgram,
+) -> Result<ValueProgram, CanonicalValueError> {
+    let program = value_program_from_canonical(lowered.program)?;
+    let blocks = lowered
+        .blocks
+        .into_iter()
+        .map(|(id, block)| Ok((id, value_program_from_canonical(block)?)))
+        .collect::<Result<_, CanonicalValueError>>()?;
+    Ok(ValueProgram { program, blocks })
+}
+
 fn canonical_op(op: &Op) -> ValueOp {
     match op {
         Op::CallBlock { schema } => WeavyOp::Control(ControlOp::CallBlock {
@@ -301,6 +365,72 @@ fn canonical_intrinsic(op: &Op) -> ValueIntrinsic {
                 .collect(),
         },
     }
+}
+
+fn value_op_from_canonical(op: ValueOp) -> Result<Op, CanonicalValueError> {
+    Ok(match op {
+        WeavyOp::Control(ControlOp::CallBlock { block, base_offset }) => {
+            if base_offset != 0 {
+                return Err(CanonicalValueError::NonzeroBaseOffset);
+            }
+            Op::CallBlock { schema: block }
+        }
+        WeavyOp::Control(ControlOp::Return) => return Err(CanonicalValueError::Return),
+        WeavyOp::Control(_) => return Err(CanonicalValueError::Control),
+        WeavyOp::Memory(_) => return Err(CanonicalValueError::Memory),
+        WeavyOp::Init(_) => return Err(CanonicalValueError::Init),
+        WeavyOp::Aggregate(_) => return Err(CanonicalValueError::Aggregate),
+        WeavyOp::Intrinsic(intrinsic) => return value_op_from_intrinsic(intrinsic),
+        _ => return Err(CanonicalValueError::Unknown),
+    })
+}
+
+fn value_op_from_intrinsic(intrinsic: ValueIntrinsic) -> Result<Op, CanonicalValueError> {
+    Ok(match intrinsic {
+        ValueIntrinsic::Scalar(p) => Op::Scalar(p),
+        ValueIntrinsic::Dynamic => Op::Dynamic,
+        ValueIntrinsic::Null => Op::Null,
+        ValueIntrinsic::Skip(writer_ref) => Op::Skip(writer_ref),
+        ValueIntrinsic::Object { keys } => Op::Object { keys },
+        ValueIntrinsic::Array { count } => Op::Array { count },
+        ValueIntrinsic::Seq {
+            set,
+            min_wire,
+            body,
+        } => Op::Seq {
+            set,
+            min_wire,
+            body: value_program_from_canonical(body)?,
+        },
+        ValueIntrinsic::Map { key, value } => Op::Map {
+            key: value_program_from_canonical(key)?,
+            value: value_program_from_canonical(value)?,
+        },
+        ValueIntrinsic::FixedArray {
+            dimensions,
+            min_wire,
+            body,
+        } => Op::FixedArray {
+            dimensions,
+            min_wire,
+            body: value_program_from_canonical(body)?,
+        },
+        ValueIntrinsic::Option { some } => Op::Option {
+            some: value_program_from_canonical(some)?,
+        },
+        ValueIntrinsic::Enum { arms } => Op::Enum {
+            arms: arms
+                .into_iter()
+                .map(|arm| {
+                    Ok(EnumArm {
+                        writer_index: arm.writer_index,
+                        reader_name: arm.reader_name,
+                        payload: value_program_from_canonical(arm.payload)?,
+                    })
+                })
+                .collect::<Result<_, CanonicalValueError>>()?,
+        },
+    })
 }
 
 /// A lowered *typed* program: the memory side of the IR. Where [`Program`] builds
@@ -407,4 +537,72 @@ pub fn skip(r: &mut Reader, op: &SkipOp) -> Result<(), DecodeError> {
 #[must_use]
 pub fn fuse(program: MemProgram) -> MemProgram {
     weavy::mem::fuse(program)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn canonical_value_projection_preserves_nested_legacy_ops() {
+        let legacy = ValueProgram {
+            program: vec![
+                Op::Seq {
+                    set: true,
+                    min_wire: 1,
+                    body: vec![Op::Option {
+                        some: vec![Op::Scalar(Primitive::U8)],
+                    }],
+                },
+                Op::CallBlock {
+                    schema: SchemaId(9),
+                },
+            ],
+            blocks: BTreeMap::from([(SchemaId(9), vec![Op::Null])]),
+        };
+
+        let projected = value_lowered_from_canonical(canonical_value_program(&legacy)).unwrap();
+
+        match projected.program.as_slice() {
+            [
+                Op::Seq {
+                    set,
+                    min_wire,
+                    body,
+                },
+                Op::CallBlock { schema },
+            ] => {
+                assert!(*set);
+                assert_eq!(*min_wire, 1);
+                assert_eq!(*schema, SchemaId(9));
+                match body.as_slice() {
+                    [Op::Option { some }] => match some.as_slice() {
+                        [Op::Scalar(Primitive::U8)] => {}
+                        other => panic!("unexpected option payload: {other:?}"),
+                    },
+                    other => panic!("unexpected sequence body: {other:?}"),
+                }
+            }
+            other => panic!("unexpected projected program: {other:?}"),
+        }
+        match projected.blocks.get(&SchemaId(9)).map(Vec::as_slice) {
+            Some([Op::Null]) => {}
+            other => panic!("unexpected projected block: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn canonical_value_projection_rejects_non_legacy_control() {
+        let err = value_program_from_canonical(vec![WeavyOp::Control(ControlOp::Return)])
+            .expect_err("return should not project to legacy value IR");
+        assert_eq!(err, CanonicalValueError::Return);
+
+        let err = value_program_from_canonical(vec![WeavyOp::Control(ControlOp::CallBlock {
+            block: SchemaId(1),
+            base_offset: 4,
+        })])
+        .expect_err("offset block call should not project to legacy value IR");
+        assert_eq!(err, CanonicalValueError::NonzeroBaseOffset);
+    }
 }
