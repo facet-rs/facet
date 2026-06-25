@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-rc.2](https://github.com/facet-rs/facet/compare/rusqlite-facet-v2.0.0-rc.1...rusqlite-facet-v2.0.0-rc.2) - 2026-06-25
+
+### Other
+
+- extract ecosystem crate sections into their own subsites
+
 ## [1.0.1](https://github.com/bearcove/moire/compare/rusqlite-facet-v1.0.0...rusqlite-facet-v1.0.1) - 2026-04-15
 
 ### Other

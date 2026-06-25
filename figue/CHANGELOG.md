@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0-rc.2](https://github.com/facet-rs/facet/compare/figue-v5.0.0-rc.1...figue-v5.0.0-rc.2) - 2026-06-25
+
+### Other
+
+- content-quality pass across the ecosystem (consistency, structure, friendliness)
+- fix cross-references between migrated guides (point at new subsite routes)
+- move the CLI guide from facet/guide into figue's subsite
+- extract ecosystem crate sections into their own subsites
+- give the vendored products their own subsites
+
 ## [4.0.4](https://github.com/bearcove/figue/compare/figue-v4.0.3...figue-v4.0.4) - 2026-06-01
 
 ### Other

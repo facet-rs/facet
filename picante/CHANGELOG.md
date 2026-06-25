@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-rc.2](https://github.com/facet-rs/facet/compare/picante-v3.0.0-rc.1...picante-v3.0.0-rc.2) - 2026-06-25
+
+### Other
+
+- Relax Picante stress test timeout
+
 ## [2.0.1](https://github.com/bearcove/picante/compare/picante-v2.0.0...picante-v2.0.1) - 2026-06-01
 
 ### Fixed

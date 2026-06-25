@@ -1,6 +1,6 @@
 [package]
 name = "dibs-db-schema"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 edition = "2024"
 rust-version.workspace = true
 authors = ["Amos Wenger <amos@bearcove.eu>"]
@@ -15,8 +15,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 chrono.workspace = true
-dibs-jsonb = { version = "0.2.0-rc.1", path = "../dibs-jsonb" }
-dibs-sql = { version = "0.2.0-rc.1", path = "../dibs-sql" }
+dibs-jsonb = { version = "0.2.0-rc.2", path = "../dibs-jsonb" }
+dibs-sql = { version = "0.2.0-rc.2", path = "../dibs-sql" }
 facet = { workspace = true, features = ["uuid", "chrono", "rust_decimal", "jiff02"] }
 indexmap.workspace = true
 inventory.workspace = true
