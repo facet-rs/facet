@@ -1636,6 +1636,23 @@ fn run_error(err: RunError<ExecBlock, DeserializeError>) -> DeserializeError {
     }
 }
 
+fn single_program_op<'program>(
+    blocks: &'program [Program<ExecOp>],
+    program: &'program Program<ExecOp>,
+) -> Option<&'program ExecOp> {
+    let mut current = program;
+    for _ in 0..=blocks.len() {
+        match current.as_slice() {
+            [JsonOp::CallBlock(block)] => {
+                current = blocks.get(block.index())?;
+            }
+            [op] => return Some(op),
+            _ => return None,
+        }
+    }
+    None
+}
+
 #[derive(Clone, Debug)]
 enum JsonOp<Block> {
     CallBlock(Block),
@@ -1700,6 +1717,11 @@ enum JsonOp<Block> {
         shape: &'static Shape,
         enum_type: EnumType,
         variants: Box<[ExternalVariantPlan<Block>]>,
+    },
+    ReadCowEnum {
+        shape: &'static Shape,
+        enum_type: EnumType,
+        owned_variant: Box<ExternalVariantPlan<Block>>,
     },
     ReadTaggedEnum {
         shape: &'static Shape,
@@ -1779,8 +1801,7 @@ enum JsonOp<Block> {
     },
     MapNext {
         map: MapDef,
-        key_scalar: ScalarType,
-        key_layout: Layout,
+        key_plan: MapKeyPlan,
         value_program: Program<JsonOp<Block>>,
         value_scalar: Option<ScalarPlan>,
         value_layout: Layout,
@@ -1824,6 +1845,52 @@ struct FieldPlan<Block> {
 }
 
 #[derive(Clone, Debug)]
+struct MetadataKeyField {
+    name: &'static str,
+    alias: Option<&'static str>,
+    offset: usize,
+    shape: &'static Shape,
+    metadata: Option<&'static str>,
+    missing: MissingField,
+}
+
+#[derive(Clone, Debug)]
+enum MapKeyPlan {
+    Scalar {
+        shape: &'static Shape,
+        scalar: ScalarType,
+        layout: Layout,
+    },
+    MetadataContainer {
+        shape: &'static Shape,
+        layout: Layout,
+        fields: Box<[MetadataKeyField]>,
+        dispatch: Option<RawFieldDispatch>,
+        value_index: usize,
+        value: Box<MapKeyPlan>,
+    },
+}
+
+impl MapKeyPlan {
+    fn layout(&self) -> Layout {
+        match self {
+            Self::Scalar { layout, .. } | Self::MetadataContainer { layout, .. } => *layout,
+        }
+    }
+
+    fn is_exact_string(&self) -> bool {
+        matches!(
+            self,
+            Self::Scalar {
+                shape,
+                scalar: ScalarType::String,
+                ..
+            } if shape.is_type::<String>()
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
 struct FlattenStructPlan<Block> {
     fields: Box<[FieldPlan<Block>]>,
     direct_indices: Box<[usize]>,
@@ -1849,13 +1916,24 @@ enum FlattenKind<Block> {
     },
     ExternalEnum {
         enum_type: EnumType,
+        tag_key: Option<&'static str>,
+        content_key: Option<&'static str>,
         variants: Box<[ExternalVariantPlan<Block>]>,
     },
     OptionExternalEnum {
         option: OptionDef,
         inner_layout: Layout,
         enum_type: EnumType,
+        tag_key: Option<&'static str>,
+        content_key: Option<&'static str>,
         variants: Box<[ExternalVariantPlan<Block>]>,
+    },
+    Map {
+        map: MapDef,
+        key_plan: MapKeyPlan,
+        value_program: Program<JsonOp<Block>>,
+        value_scalar: Option<ScalarPlan>,
+        value_layout: Layout,
     },
 }
 
@@ -1867,6 +1945,7 @@ struct ExternalVariantPlan<Block> {
     dispatch: Option<RawFieldDispatch>,
     loop_id: Option<Block>,
     tracking: StructTracking,
+    flatten: Option<FlattenStructPlan<Block>>,
 }
 
 struct TaggedRawField<'de> {
@@ -1883,7 +1962,17 @@ type FlattenVariantSelection<'fields, 'de, 'program> = (
 
 struct FlattenExternalEnumRef<'program> {
     enum_type: EnumType,
+    tag_key: Option<&'static str>,
+    content_key: Option<&'static str>,
     variants: &'program [ExternalVariantPlan<ExecBlock>],
+}
+
+struct FlattenMapRef<'program> {
+    map: MapDef,
+    key_plan: &'program MapKeyPlan,
+    value_program: &'program [ExecOp],
+    value_scalar: Option<ScalarPlan>,
+    value_layout: Layout,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2119,6 +2208,33 @@ trait StructFieldPlan {
 }
 
 impl<Block> StructFieldPlan for FieldPlan<Block> {
+    #[inline(always)]
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    #[inline(always)]
+    fn alias(&self) -> Option<&'static str> {
+        self.alias
+    }
+
+    #[inline(always)]
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    #[inline(always)]
+    fn shape(&self) -> &'static Shape {
+        self.shape
+    }
+
+    #[inline(always)]
+    fn missing(&self) -> MissingField {
+        self.missing
+    }
+}
+
+impl StructFieldPlan for MetadataKeyField {
     #[inline(always)]
     fn name(&self) -> &'static str {
         self.name
@@ -2381,22 +2497,14 @@ impl Lowering {
                 }])
             }
             Def::Map(map) => {
-                let Some(key_scalar) = ScalarType::try_from_shape(map.k()) else {
-                    return Err(unsupported(shape, "scalar map key"));
-                };
-                if !map_key_scalar_supported(key_scalar) {
-                    return Err(unsupported(shape, "string or integer map key"));
-                }
-
-                let key_layout = sized_layout(map.k())?;
+                let key_plan = self.lower_map_key_plan(map.k())?;
                 let value_layout = sized_layout(map.v())?;
                 let value_program = self.lower_shape(map.v())?;
                 let value_scalar = ScalarType::try_from_shape(map.v()).map(ScalarPlan::new);
                 let loop_id = JsonBlockId::MapLoop(shape);
                 let loop_program = vec![JsonOp::MapNext {
                     map,
-                    key_scalar,
-                    key_layout,
+                    key_plan,
                     value_program: value_program.clone(),
                     value_scalar,
                     value_layout,
@@ -2607,6 +2715,73 @@ impl Lowering {
         ))
     }
 
+    fn lower_map_key_plan(
+        &mut self,
+        shape: &'static Shape,
+    ) -> Result<MapKeyPlan, DeserializeError> {
+        if let Some(scalar) = ScalarType::try_from_shape(shape) {
+            if !map_key_scalar_supported(scalar) {
+                return Err(unsupported(shape, "string or integer map key"));
+            }
+
+            return Ok(MapKeyPlan::Scalar {
+                shape,
+                scalar,
+                layout: sized_layout(shape)?,
+            });
+        }
+
+        if shape.is_metadata_container()
+            && let Type::User(UserType::Struct(struct_type)) = shape.ty
+        {
+            let mut fields = Vec::with_capacity(struct_type.fields.len());
+            let mut value_index = None;
+            let mut value_plan = None;
+            let container_has_default = shape.has_default_attr();
+
+            for field in struct_type.fields {
+                let index = fields.len();
+                let field_shape = field.shape();
+                if field.metadata_kind().is_none() {
+                    if value_index.is_some() {
+                        return Err(unsupported(
+                            shape,
+                            "metadata map key with multiple value fields",
+                        ));
+                    }
+                    value_index = Some(index);
+                    value_plan = Some(Box::new(self.lower_map_key_plan(field_shape)?));
+                }
+
+                fields.push(MetadataKeyField {
+                    name: field.effective_name(),
+                    alias: field.alias,
+                    offset: field.offset,
+                    shape: field_shape,
+                    metadata: field.metadata_kind(),
+                    missing: missing_field_action(field, container_has_default),
+                });
+            }
+
+            let Some(value_index) = value_index else {
+                return Err(unsupported(shape, "metadata map key without value field"));
+            };
+            let value = value_plan.expect("metadata map key value plan is present");
+            let fields = fields.into_boxed_slice();
+            let dispatch = RawFieldDispatch::for_fields(fields.as_ref());
+            return Ok(MapKeyPlan::MetadataContainer {
+                shape,
+                layout: sized_layout(shape)?,
+                fields,
+                dispatch,
+                value_index,
+                value,
+            });
+        }
+
+        Err(unsupported(shape, "scalar or metadata container map key"))
+    }
+
     fn lower_tuple_struct(
         &mut self,
         shape: &'static Shape,
@@ -2651,12 +2826,28 @@ impl Lowering {
             return Err(unsupported(shape, "non-record flattened struct"));
         }
 
-        let container_has_default = shape.has_default_attr();
-        let mut fields = Vec::with_capacity(struct_type.fields.len());
+        self.lower_flatten_field_plan(shape, struct_type.fields, shape.has_default_attr())
+    }
+
+    fn lower_flatten_variant_plan(
+        &mut self,
+        shape: &'static Shape,
+        fields: &'static [Field],
+    ) -> Result<FlattenStructPlan<BlockId>, DeserializeError> {
+        self.lower_flatten_field_plan(shape, fields, false)
+    }
+
+    fn lower_flatten_field_plan(
+        &mut self,
+        shape: &'static Shape,
+        source_fields: &'static [Field],
+        container_has_default: bool,
+    ) -> Result<FlattenStructPlan<BlockId>, DeserializeError> {
+        let mut fields = Vec::with_capacity(source_fields.len());
         let mut direct_indices = Vec::new();
         let mut flattened = Vec::new();
 
-        for field in struct_type.fields {
+        for field in source_fields {
             let field_shape = field.shape();
             let field_index = fields.len();
 
@@ -2722,10 +2913,22 @@ impl Lowering {
                     option,
                     inner_layout,
                     enum_type,
+                    tag_key: inner.get_tag_attr(),
+                    content_key: inner.get_content_attr(),
                     variants: self.lower_external_enum_variants(inner, enum_type, true)?,
                 }),
                 _ => Err(unsupported(shape, "optional flattened non-struct/non-enum")),
             };
+        }
+
+        if let Def::Map(map) = shape.def {
+            return Ok(FlattenKind::Map {
+                map,
+                key_plan: self.lower_map_key_plan(map.k())?,
+                value_program: self.lower_shape(map.v())?,
+                value_scalar: ScalarType::try_from_shape(map.v()).map(ScalarPlan::new),
+                value_layout: sized_layout(map.v())?,
+            });
         }
 
         match shape.ty {
@@ -2734,6 +2937,8 @@ impl Lowering {
             }),
             Type::User(UserType::Enum(enum_type)) => Ok(FlattenKind::ExternalEnum {
                 enum_type,
+                tag_key: shape.get_tag_attr(),
+                content_key: shape.get_content_attr(),
                 variants: self.lower_external_enum_variants(shape, enum_type, true)?,
             }),
             _ => Err(unsupported(shape, "flattened non-struct/non-enum")),
@@ -2744,47 +2949,60 @@ impl Lowering {
         &mut self,
         shape: &'static Shape,
         enum_type: EnumType,
-        flattened: bool,
+        _flattened: bool,
     ) -> Result<Box<[ExternalVariantPlan<BlockId>]>, DeserializeError> {
         if enum_type.is_cow {
             return Err(unsupported(shape, "cow enum"));
         }
-        if flattened && (shape.get_tag_attr().is_some() || shape.get_content_attr().is_some()) {
-            return Err(unsupported(shape, "tagged flattened enum"));
-        }
 
         let mut variants = Vec::with_capacity(enum_type.variants.len());
         for (index, variant) in enum_type.variants.iter().enumerate() {
-            let mut fields = Vec::with_capacity(variant.data.fields.len());
-            for field in variant.data.fields {
-                if variant.is_other() && (field.is_variant_tag() || field.is_variant_content()) {
-                    return Err(unsupported(shape, "other enum variant tag/content fields"));
-                }
-                if field.should_skip_deserializing() || field.is_flattened() {
-                    return Err(unsupported(
-                        shape,
-                        "skipped or flattened enum variant fields",
-                    ));
-                }
-                let field_shape = field.shape();
-                let (program, scalar) = self.lower_field_value(field)?;
-                fields.push(FieldPlan {
-                    name: field.effective_name(),
-                    alias: field.alias,
-                    offset: field.offset,
-                    shape: field_shape,
-                    program,
-                    scalar,
-                    missing: missing_field_action(field, false),
-                });
-            }
+            let flatten = if variant.data.kind == StructKind::Struct
+                && variant.data.fields.iter().any(Field::is_flattened)
+            {
+                Some(self.lower_flatten_variant_plan(shape, variant.data.fields)?)
+            } else {
+                None
+            };
 
-            let fields = fields.into_boxed_slice();
+            let fields = if let Some(flatten) = &flatten {
+                flatten.fields.clone()
+            } else {
+                let mut fields = Vec::with_capacity(variant.data.fields.len());
+                for field in variant.data.fields {
+                    if variant.is_other() && (field.is_variant_tag() || field.is_variant_content())
+                    {
+                        return Err(unsupported(shape, "other enum variant tag/content fields"));
+                    }
+                    if field.should_skip_deserializing() || field.is_flattened() {
+                        return Err(unsupported(
+                            shape,
+                            "skipped or flattened enum variant fields",
+                        ));
+                    }
+                    let field_shape = field.shape();
+                    let (program, scalar) = self.lower_field_value(field)?;
+                    fields.push(FieldPlan {
+                        name: field.effective_name(),
+                        alias: field.alias,
+                        offset: field.offset,
+                        shape: field_shape,
+                        program,
+                        scalar,
+                        missing: missing_field_action(field, false),
+                    });
+                }
+                fields.into_boxed_slice()
+            };
             let tracking = StructTracking::for_len(fields.len());
             let dispatch = RawFieldDispatch::for_fields(&fields);
             if shape.get_tag_attr().is_some()
                 && shape.get_content_attr().is_none()
                 && !matches!(variant.data.kind, StructKind::Unit | StructKind::Struct)
+                && !(matches!(
+                    variant.data.kind,
+                    StructKind::Tuple | StructKind::TupleStruct
+                ) && fields.len() == 1)
             {
                 return Err(unsupported(shape, "internally tagged tuple enum variant"));
             }
@@ -2809,10 +3027,59 @@ impl Lowering {
                 dispatch,
                 loop_id,
                 tracking,
+                flatten,
             });
         }
 
         Ok(variants.into_boxed_slice())
+    }
+
+    fn lower_cow_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+    ) -> Result<Program<SymbolicOp>, DeserializeError> {
+        let owned_variant = enum_type
+            .owned_variant()
+            .ok_or_else(|| unsupported(shape, "cow enum without Owned variant"))?;
+        let index = enum_type
+            .variants
+            .iter()
+            .position(|variant| variant.name == owned_variant.name)
+            .ok_or_else(|| unsupported(shape, "cow enum Owned variant index"))?;
+
+        let [field] = owned_variant.data.fields else {
+            return Err(unsupported(shape, "cow enum without single Owned field"));
+        };
+        if field.should_skip_deserializing() || field.is_flattened() {
+            return Err(unsupported(shape, "skipped or flattened cow enum field"));
+        }
+
+        let field_shape = field.shape();
+        let (program, scalar) = self.lower_field_value(field)?;
+        let fields = Box::new([FieldPlan {
+            name: field.effective_name(),
+            alias: field.alias,
+            offset: field.offset,
+            shape: field_shape,
+            program,
+            scalar,
+            missing: missing_field_action(field, false),
+        }]);
+
+        Ok(vec![JsonOp::ReadCowEnum {
+            shape,
+            enum_type,
+            owned_variant: Box::new(ExternalVariantPlan {
+                index,
+                variant: owned_variant,
+                dispatch: RawFieldDispatch::for_fields(fields.as_ref()),
+                loop_id: None,
+                tracking: StructTracking::for_len(fields.len()),
+                fields,
+                flatten: None,
+            }),
+        }])
     }
 
     fn lower_external_enum(
@@ -2820,6 +3087,10 @@ impl Lowering {
         shape: &'static Shape,
         enum_type: EnumType,
     ) -> Result<Program<SymbolicOp>, DeserializeError> {
+        if enum_type.is_cow {
+            return self.lower_cow_enum(shape, enum_type);
+        }
+
         let tag_key = shape.get_tag_attr();
         let content_key = shape.get_content_attr();
         if tag_key.is_none() && content_key.is_some() {
@@ -2979,6 +3250,15 @@ fn resolve_json_op(
             enum_type,
             variants: resolve_external_variant_plans(variants, refs)?,
         },
+        JsonOp::ReadCowEnum {
+            shape,
+            enum_type,
+            owned_variant,
+        } => JsonOp::ReadCowEnum {
+            shape,
+            enum_type,
+            owned_variant: Box::new(resolve_external_variant_plan(*owned_variant, refs)?),
+        },
         JsonOp::ReadTaggedEnum {
             shape,
             enum_type,
@@ -3121,16 +3401,14 @@ fn resolve_json_op(
         },
         JsonOp::MapNext {
             map,
-            key_scalar,
-            key_layout,
+            key_plan,
             value_program,
             value_scalar,
             value_layout,
             loop_id,
         } => JsonOp::MapNext {
             map,
-            key_scalar,
-            key_layout,
+            key_plan,
             value_program: resolve_json_program(value_program, refs)?,
             value_scalar,
             value_layout,
@@ -3230,21 +3508,42 @@ fn resolve_flatten_kind(
         },
         FlattenKind::ExternalEnum {
             enum_type,
+            tag_key,
+            content_key,
             variants,
         } => FlattenKind::ExternalEnum {
             enum_type,
+            tag_key,
+            content_key,
             variants: resolve_external_variant_plans(variants, refs)?,
         },
         FlattenKind::OptionExternalEnum {
             option,
             inner_layout,
             enum_type,
+            tag_key,
+            content_key,
             variants,
         } => FlattenKind::OptionExternalEnum {
             option,
             inner_layout,
             enum_type,
+            tag_key,
+            content_key,
             variants: resolve_external_variant_plans(variants, refs)?,
+        },
+        FlattenKind::Map {
+            map,
+            key_plan,
+            value_program,
+            value_scalar,
+            value_layout,
+        } => FlattenKind::Map {
+            map,
+            key_plan,
+            value_program: resolve_json_program(value_program, refs)?,
+            value_scalar,
+            value_layout,
         },
     })
 }
@@ -3256,20 +3555,29 @@ fn resolve_external_variant_plans(
     variants
         .into_vec()
         .into_iter()
-        .map(|variant| {
-            Ok(ExternalVariantPlan {
-                index: variant.index,
-                variant: variant.variant,
-                fields: resolve_field_plans(variant.fields, refs)?,
-                dispatch: variant.dispatch,
-                loop_id: variant
-                    .loop_id
-                    .map(|block| resolve_block_ref(block, refs))
-                    .transpose()?,
-                tracking: variant.tracking,
-            })
-        })
+        .map(|variant| resolve_external_variant_plan(variant, refs))
         .collect()
+}
+
+fn resolve_external_variant_plan(
+    variant: ExternalVariantPlan<BlockId>,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<ExternalVariantPlan<ExecBlock>, DeserializeError> {
+    Ok(ExternalVariantPlan {
+        index: variant.index,
+        variant: variant.variant,
+        fields: resolve_field_plans(variant.fields, refs)?,
+        dispatch: variant.dispatch,
+        loop_id: variant
+            .loop_id
+            .map(|block| resolve_block_ref(block, refs))
+            .transpose()?,
+        tracking: variant.tracking,
+        flatten: variant
+            .flatten
+            .map(|plan| resolve_flatten_struct_plan(plan, refs))
+            .transpose()?,
+    })
 }
 
 fn resolve_field_plans(
@@ -3377,6 +3685,18 @@ fn find_external_variant<S: AsRef<str>>(
     variants
         .iter()
         .find(|variant| !variant.variant.is_other() && variant.variant.effective_name() == name)
+}
+
+fn find_tagged_variant<S: AsRef<str>>(
+    variants: &[ExternalVariantPlan<ExecBlock>],
+    name: S,
+) -> Option<&ExternalVariantPlan<ExecBlock>> {
+    let name = name.as_ref();
+    variants.iter().find(|variant| {
+        !variant.variant.is_other()
+            && !variant.variant.has_builtin_attr("untagged")
+            && variant.variant.effective_name() == name
+    })
 }
 
 fn find_external_variant_input<'program, 'de, const TRUSTED_UTF8: bool>(
@@ -3664,7 +3984,8 @@ fn untagged_struct_variant<'a>(
     variants: &'a [ExternalVariantPlan<ExecBlock>],
     fields: &[TaggedRawField<'_>],
 ) -> Result<&'a ExternalVariantPlan<ExecBlock>, DeserializeError> {
-    let mut best: Option<(&ExternalVariantPlan<ExecBlock>, usize)> = None;
+    let mut best: Option<(&ExternalVariantPlan<ExecBlock>, usize, usize)> = None;
+    let mut structural_best: Option<(&ExternalVariantPlan<ExecBlock>, usize, usize)> = None;
 
     for variant in variants
         .iter()
@@ -3680,30 +4001,62 @@ fn untagged_struct_variant<'a>(
             continue;
         }
 
-        let matched = fields
-            .iter()
-            .filter(|raw_field| {
-                variant
-                    .fields
-                    .iter()
-                    .any(|field| field.matches_key_bytes(raw_field.name.as_ref().as_bytes()))
-            })
-            .count();
+        let mut matched = 0usize;
+        let mut quality = 0usize;
+        let mut viable = true;
+        for raw_field in fields {
+            let Some(field) = variant
+                .fields
+                .iter()
+                .find(|field| field.matches_key_bytes(raw_field.name.as_ref().as_bytes()))
+            else {
+                continue;
+            };
+            matched += 1;
 
-        if best.is_none_or(|(_, best_matched)| matched > best_matched) {
-            best = Some((variant, matched));
+            if ScalarType::try_from_shape(field.shape).is_none() {
+                continue;
+            }
+
+            let Some(scalar) = raw_scalar_value(raw_field.raw)? else {
+                viable = false;
+                break;
+            };
+            let Some(field_quality) = scalar_match_quality(&scalar, field.shape) else {
+                viable = false;
+                break;
+            };
+            quality += usize::from(field_quality);
+        }
+
+        if structural_best.is_none_or(|(_, best_matched, best_quality)| {
+            matched > best_matched || (matched == best_matched && quality < best_quality)
+        }) {
+            structural_best = Some((variant, matched, quality));
+        }
+
+        if !viable {
+            continue;
+        }
+
+        if best.is_none_or(|(_, best_matched, best_quality)| {
+            matched > best_matched || (matched == best_matched && quality < best_quality)
+        }) {
+            best = Some((variant, matched, quality));
         }
     }
 
-    best.map(|(variant, _)| variant).ok_or_else(|| {
-        vm_error(
-            None,
-            DeserializeErrorKind::NoMatchingVariant {
-                enum_shape: shape,
-                input_kind: "struct",
-            },
-        )
-    })
+    best.or(structural_best)
+        .map(|(variant, _, _)| variant)
+        .ok_or_else(|| {
+            vm_error(
+                None,
+                DeserializeErrorKind::NoMatchingVariant {
+                    enum_shape: shape,
+                    input_kind: "struct",
+                },
+            )
+        })
 }
 
 fn untagged_tuple_variant<'a>(
@@ -3717,7 +4070,8 @@ fn untagged_tuple_variant<'a>(
             matches!(
                 variant.variant.data.kind,
                 StructKind::Tuple | StructKind::TupleStruct
-            ) && variant.fields.len() == arity
+            ) && (variant.fields.len() == arity
+                || single_field_array_arity(variant).is_some_and(|len| len == arity))
         })
         .ok_or_else(|| {
             vm_error(
@@ -3728,6 +4082,85 @@ fn untagged_tuple_variant<'a>(
                 },
             )
         })
+}
+
+fn field_plan_match_score(
+    fields: &[FieldPlan<ExecBlock>],
+    raw_fields: &[TaggedRawField<'_>],
+) -> Result<Option<(usize, usize)>, DeserializeError> {
+    let mut matched = 0usize;
+    let mut quality = 0usize;
+
+    for raw_field in raw_fields {
+        let Some(field) = fields
+            .iter()
+            .find(|field| field.matches_key_bytes(raw_field.name.as_ref().as_bytes()))
+        else {
+            continue;
+        };
+        matched += 1;
+
+        if ScalarType::try_from_shape(field.shape).is_none() {
+            continue;
+        }
+
+        let Some(scalar) = raw_scalar_value(raw_field.raw)? else {
+            return Ok(None);
+        };
+        let Some(field_quality) = scalar_match_quality(&scalar, field.shape) else {
+            return Ok(None);
+        };
+        quality += usize::from(field_quality);
+    }
+
+    Ok((matched > 0).then_some((matched, quality)))
+}
+
+fn scalar_field_plan_match_score(
+    fields: &[ScalarFieldPlan],
+    raw_fields: &[TaggedRawField<'_>],
+) -> Result<Option<(usize, usize)>, DeserializeError> {
+    let mut matched = 0usize;
+    let mut quality = 0usize;
+
+    for raw_field in raw_fields {
+        let Some(field) = fields
+            .iter()
+            .find(|field| field.matches_key_bytes(raw_field.name.as_ref().as_bytes()))
+        else {
+            continue;
+        };
+        matched += 1;
+
+        let Some(scalar) = raw_scalar_value(raw_field.raw)? else {
+            return Ok(None);
+        };
+        let Some(field_quality) = scalar_match_quality(&scalar, field.shape) else {
+            return Ok(None);
+        };
+        quality += usize::from(field_quality);
+    }
+
+    Ok((matched > 0).then_some((matched, quality)))
+}
+
+fn single_field_array_arity(variant: &ExternalVariantPlan<ExecBlock>) -> Option<usize> {
+    let shape = single_field_variant_shape(variant)?;
+    match shape.def {
+        Def::Array(array) => Some(array.n),
+        _ => None,
+    }
+}
+
+fn raw_scalar_value(raw: &str) -> Result<Option<ScalarValue<'_>>, DeserializeError> {
+    let mut parser = JsonParser::<true>::new(raw.as_bytes());
+    let Some(event) = parser.peek_event()? else {
+        return Ok(None);
+    };
+    match event.kind {
+        ParseEventKind::Scalar(scalar) => Ok(Some(scalar)),
+        _ => Ok(None),
+    }
 }
 
 unsafe fn write_enum_discriminant(
@@ -3805,6 +4238,21 @@ fn unsupported(shape: &'static Shape, what: &'static str) -> DeserializeError {
                 .into(),
         },
     )
+}
+
+fn validate_completed_shape(
+    shape: &'static Shape,
+    base: PtrUninit,
+) -> Result<(), DeserializeError> {
+    if let Some(Err(message)) = unsafe { shape.call_invariants(base.assume_init().as_const()) } {
+        return Err(vm_error(
+            None,
+            DeserializeErrorKind::InvalidValue {
+                message: message.into(),
+            },
+        ));
+    }
+    Ok(())
 }
 
 fn raw_alloc_error(error: RawAllocError) -> DeserializeError {
@@ -4502,6 +4950,24 @@ where
         }
     }
 
+    fn collect_tagged_raw_fields_from_raw(
+        raw: &'de str,
+        expected: &'static str,
+    ) -> Result<Vec<TaggedRawField<'de>>, DeserializeError> {
+        let mut parser = JsonParser::<true>::new(raw.as_bytes());
+        let fields = {
+            let mut interp: JsonInterp<'_, 'de, 'program, true> =
+                JsonInterp::<'_, 'de, 'program, true>::new(
+                    &mut parser,
+                    PtrUninit::new(core::ptr::null_mut::<u8>()),
+                    &[],
+                );
+            interp.collect_tagged_raw_fields(expected)?
+        };
+        Self::ensure_raw_parser_finished(&mut parser)?;
+        Ok(fields)
+    }
+
     fn unique_tagged_field<'fields>(
         fields: &'fields [TaggedRawField<'de>],
         name: &'static str,
@@ -4613,13 +5079,6 @@ where
         }
     }
 
-    fn captured_variant_field<'variant>(
-        variant: &'variant ExternalVariantPlan<ExecBlock>,
-        key: &[u8],
-    ) -> Option<(usize, &'variant FieldPlan<ExecBlock>)> {
-        Self::captured_struct_field(&variant.fields, variant.dispatch.as_ref(), key)
-    }
-
     fn captured_struct_field<'fields>(
         fields: &'fields [FieldPlan<ExecBlock>],
         dispatch: Option<&RawFieldDispatch>,
@@ -4640,6 +5099,31 @@ where
 
         fields
             .iter()
+            .enumerate()
+            .find(|(_, field)| field.matches_key_bytes(key))
+    }
+
+    fn captured_scalar_field(
+        fields: &[ScalarFieldPlan],
+        dispatch: Option<&RawFieldDispatch>,
+        key: &[u8],
+    ) -> Option<(usize, ScalarFieldPlan)> {
+        if let Some(dispatch) = dispatch {
+            let mut candidates = dispatch.candidates(key);
+            while candidates != 0 {
+                let index = candidates.trailing_zeros() as usize;
+                candidates &= candidates - 1;
+                let field = fields[index];
+                if field.matches_key_bytes(key) {
+                    return Some((index, field));
+                }
+            }
+            return None;
+        }
+
+        fields
+            .iter()
+            .copied()
             .enumerate()
             .find(|(_, field)| field.matches_key_bytes(key))
     }
@@ -4667,10 +5151,28 @@ where
             FlattenKind::Struct { plan } | FlattenKind::OptionStruct { plan, .. } => {
                 Self::flatten_struct_matches_key(plan, key)
             }
-            FlattenKind::ExternalEnum { variants, .. }
-            | FlattenKind::OptionExternalEnum { variants, .. } => variants.iter().any(|variant| {
-                !variant.variant.is_other() && variant.variant.effective_name().as_bytes() == key
-            }),
+            FlattenKind::ExternalEnum {
+                tag_key, variants, ..
+            }
+            | FlattenKind::OptionExternalEnum {
+                tag_key, variants, ..
+            } => {
+                if let Some(tag_key) = tag_key {
+                    tag_key.as_bytes() == key
+                        || variants.iter().any(|variant| {
+                            variant
+                                .fields
+                                .iter()
+                                .any(|field| field.matches_key_bytes(key))
+                        })
+                } else {
+                    variants.iter().any(|variant| {
+                        !variant.variant.is_other()
+                            && variant.variant.effective_name().as_bytes() == key
+                    })
+                }
+            }
+            FlattenKind::Map { .. } => true,
         }
     }
 
@@ -4699,21 +5201,52 @@ where
         Self::ensure_raw_parser_finished(&mut parser)
     }
 
-    fn read_captured_struct_fields(
+    fn write_raw_map_value(
+        &mut self,
+        value_shape: &'static Shape,
+        value_program: &'program [ExecOp],
+        value_scalar: Option<ScalarPlan>,
+        dst: PtrUninit,
+        raw: &'de str,
+    ) -> Result<(), DeserializeError> {
+        let mut parser = JsonParser::<true>::new(raw.as_bytes());
+        if let Some(scalar) = value_scalar {
+            let (value, span) = parser.read_scalar_token()?;
+            unsafe {
+                scalar.write(value_shape, dst, value, span)?;
+            }
+            Self::ensure_raw_parser_finished(&mut parser)?;
+            return Ok(());
+        }
+
+        {
+            let mut interp: JsonInterp<'_, 'de, 'program, true> =
+                JsonInterp::<'_, 'de, 'program, true>::new(&mut parser, dst, self.blocks);
+            run_dense_program(value_program, self.blocks, &mut interp).map_err(run_error)?;
+            interp.finish_success();
+        }
+        Self::ensure_raw_parser_finished(&mut parser)
+    }
+
+    fn read_captured_record_fields(
         &mut self,
         shape: &'static Shape,
-        variant: &'program ExternalVariantPlan<ExecBlock>,
+        record_fields: &'program [FieldPlan<ExecBlock>],
+        dispatch: Option<&RawFieldDispatch>,
+        tracking: StructTracking,
         fields: &[TaggedRawField<'de>],
-        skip_key: Option<&'static str>,
+        skip_keys: &[&'static str],
     ) -> Result<(), DeserializeError> {
         for raw_field in fields {
-            if skip_key.is_some_and(|key| raw_field.name.as_ref() == key) {
+            if skip_keys.iter().any(|key| raw_field.name.as_ref() == *key) {
                 continue;
             }
 
-            let Some((index, field)) =
-                Self::captured_variant_field(variant, raw_field.name.as_ref().as_bytes())
-            else {
+            let Some((index, field)) = Self::captured_struct_field(
+                record_fields,
+                dispatch,
+                raw_field.name.as_ref().as_bytes(),
+            ) else {
                 if shape.has_deny_unknown_fields_attr() {
                     return Err(vm_error(
                         Some(raw_field.span),
@@ -4726,7 +5259,7 @@ where
                 continue;
             };
 
-            if let Some(first_span) = self.struct_seen_span(variant.tracking, index) {
+            if let Some(first_span) = self.struct_seen_span(tracking, index) {
                 return Err(vm_error(
                     Some(raw_field.span),
                     DeserializeErrorKind::DuplicateField {
@@ -4738,12 +5271,123 @@ where
 
             let field_ptr = unsafe { self.base.field_uninit(field.offset) };
             self.write_raw_field_value(field, field_ptr, raw_field.raw)?;
-            self.mark_struct_field(variant.tracking, index, raw_field.span);
+            self.mark_struct_field(tracking, index, raw_field.span);
         }
 
         unsafe {
-            self.finish_struct_frame(variant.tracking)?;
+            self.finish_struct_frame(tracking)?;
         }
+        Ok(())
+    }
+
+    fn read_captured_variant_fields(
+        &mut self,
+        shape: &'static Shape,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        skip_keys: &[&'static str],
+    ) -> Result<(), DeserializeError> {
+        self.read_captured_record_fields(
+            shape,
+            &variant.fields,
+            variant.dispatch.as_ref(),
+            variant.tracking,
+            fields,
+            skip_keys,
+        )
+    }
+
+    fn read_captured_scalar_struct(
+        &mut self,
+        shape: &'static Shape,
+        fields: &'program [ScalarFieldPlan],
+        dispatch: Option<&'program RawFieldDispatch>,
+        raw_fields: &[TaggedRawField<'de>],
+        skip_keys: &[&'static str],
+    ) -> Result<(), DeserializeError> {
+        match StructTracking::for_len(fields.len()) {
+            StructTracking::Inline => {
+                let mut frame = StructFrame::<ScalarFieldPlan, InitializedLedger<Span>>::new(
+                    shape, self.base, fields, dispatch,
+                );
+                self.read_captured_scalar_struct_frame(shape, &mut frame, raw_fields, skip_keys)?;
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+            }
+            StructTracking::Bitset => {
+                let mut frame = StructFrame::<ScalarFieldPlan, BitsetStructSeen>::new(
+                    shape, self.base, fields, dispatch,
+                );
+                self.read_captured_scalar_struct_frame(shape, &mut frame, raw_fields, skip_keys)?;
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+            }
+            StructTracking::Heap => {
+                let mut frame = StructFrame::<ScalarFieldPlan, HeapStructSeen>::new(
+                    shape, self.base, fields, dispatch,
+                );
+                self.read_captured_scalar_struct_frame(shape, &mut frame, raw_fields, skip_keys)?;
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn read_captured_scalar_struct_frame<Seen: StructSeenStore>(
+        &mut self,
+        shape: &'static Shape,
+        frame: &mut StructFrame<'program, ScalarFieldPlan, Seen>,
+        raw_fields: &[TaggedRawField<'de>],
+        skip_keys: &[&'static str],
+    ) -> Result<(), DeserializeError> {
+        for raw_field in raw_fields {
+            if skip_keys.iter().any(|key| raw_field.name.as_ref() == *key) {
+                continue;
+            }
+
+            let Some((index, field)) = Self::captured_scalar_field(
+                frame.fields,
+                frame.dispatch,
+                raw_field.name.as_ref().as_bytes(),
+            ) else {
+                if shape.has_deny_unknown_fields_attr() {
+                    return Err(vm_error(
+                        Some(raw_field.span),
+                        DeserializeErrorKind::UnknownField {
+                            field: raw_field.name.to_string().into(),
+                            suggestion: None,
+                        },
+                    ));
+                }
+                continue;
+            };
+
+            if let Some(first_span) = frame.seen.get(index) {
+                return Err(vm_error(
+                    Some(raw_field.span),
+                    DeserializeErrorKind::DuplicateField {
+                        field: field.name.into(),
+                        first_span: Some(first_span),
+                    },
+                ));
+            }
+
+            let mut parser = JsonParser::<true>::new(raw_field.raw.as_bytes());
+            let (value, value_span) = parser.read_scalar_token()?;
+            let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
+            unsafe {
+                field
+                    .scalar
+                    .write(field.shape, field_ptr, value, value_span)?;
+            }
+            Self::ensure_raw_parser_finished(&mut parser)?;
+            frame.mark_seen(index, raw_field.span);
+        }
+
         Ok(())
     }
 
@@ -4806,6 +5450,16 @@ where
         }
 
         for flattened in &plan.flattened {
+            if matches!(flattened.kind, FlattenKind::Map { .. }) {
+                continue;
+            }
+            matched += self.read_flatten_field(shape, plan, flattened, fields, claimed)?;
+        }
+
+        for flattened in &plan.flattened {
+            if !matches!(flattened.kind, FlattenKind::Map { .. }) {
+                continue;
+            }
             matched += self.read_flatten_field(shape, plan, flattened, fields, claimed)?;
         }
 
@@ -4824,14 +5478,28 @@ where
         match &flattened.kind {
             FlattenKind::Struct { plan } => {
                 let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+                let span =
+                    Self::first_unclaimed_flatten_kind_match_span(&flattened.kind, fields, claimed);
+                if span.is_none()
+                    && field.shape.is(Characteristic::Default)
+                    && unsafe { field.shape.call_default_in_place(field_ptr) }.is_some()
+                {
+                    self.mark_flatten_parent_field(
+                        parent.tracking,
+                        flattened.field_index,
+                        field,
+                        Span::default(),
+                    )?;
+                    return Ok(0);
+                }
+
                 let old_base = self.base;
                 self.base = field_ptr;
                 let result =
                     self.read_flatten_struct_from_fields(field.shape, plan, fields, claimed, false);
                 self.base = old_base;
                 let matched = result?;
-                let span = Self::first_flatten_kind_match_span(&flattened.kind, fields)
-                    .unwrap_or_default();
+                let span = span.unwrap_or_default();
                 self.mark_flatten_parent_field(
                     parent.tracking,
                     flattened.field_index,
@@ -4874,6 +5542,8 @@ where
             }
             FlattenKind::ExternalEnum {
                 enum_type,
+                tag_key,
+                content_key,
                 variants,
             } => self.read_flatten_external_enum_field(
                 parent,
@@ -4881,6 +5551,8 @@ where
                 field,
                 FlattenExternalEnumRef {
                     enum_type: *enum_type,
+                    tag_key: *tag_key,
+                    content_key: *content_key,
                     variants,
                 },
                 fields,
@@ -4890,25 +5562,29 @@ where
                 option,
                 inner_layout,
                 enum_type,
+                tag_key,
+                content_key,
                 variants,
             } => {
-                let Some((raw_index, raw_field, variant)) =
-                    self.select_flatten_external_variant(variants, fields, claimed)?
-                else {
-                    return Ok(0);
-                };
-
                 let scratch = self.scratch.reserve(*inner_layout);
                 let old_base = self.base;
                 self.base = scratch_ptr_uninit(&scratch);
-                let result = self.read_flatten_external_variant_payload(
+                let result = self.read_flatten_enum_value(
                     option.t(),
-                    *enum_type,
-                    variant,
-                    raw_field,
+                    FlattenExternalEnumRef {
+                        enum_type: *enum_type,
+                        tag_key: *tag_key,
+                        content_key: *content_key,
+                        variants,
+                    },
+                    fields,
+                    claimed,
                 );
                 self.base = old_base;
-                result?;
+                let Some((matched, span)) = result? else {
+                    self.scratch.release(scratch);
+                    return Ok(0);
+                };
                 unsafe {
                     (option.vtable.init_some)(
                         self.base.field_uninit(field.offset),
@@ -4917,16 +5593,96 @@ where
                 }
                 self.scratch.release(scratch);
 
-                claimed[raw_index] = Some(raw_field.span);
                 self.mark_flatten_parent_field(
                     parent.tracking,
                     flattened.field_index,
                     field,
-                    raw_field.span,
+                    span,
                 )?;
-                Ok(1)
+                Ok(matched)
             }
+            FlattenKind::Map {
+                map,
+                key_plan,
+                value_program,
+                value_scalar,
+                value_layout,
+            } => self.read_flatten_map_field(
+                parent,
+                flattened.field_index,
+                field,
+                FlattenMapRef {
+                    map: *map,
+                    key_plan,
+                    value_program,
+                    value_scalar: *value_scalar,
+                    value_layout: *value_layout,
+                },
+                fields,
+                claimed,
+            ),
         }
+    }
+
+    fn read_flatten_map_field(
+        &mut self,
+        parent: &'program FlattenStructPlan<ExecBlock>,
+        field_index: usize,
+        field: &'program FieldPlan<ExecBlock>,
+        map_ref: FlattenMapRef<'program>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+    ) -> Result<usize, DeserializeError> {
+        if let Some(first_span) = self.struct_seen_span(parent.tracking, field_index) {
+            return Err(vm_error(
+                Some(first_span),
+                DeserializeErrorKind::DuplicateField {
+                    field: field.name.into(),
+                    first_span: Some(first_span),
+                },
+            ));
+        }
+
+        let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+        let map_ptr = unsafe { (map_ref.map.vtable.init_in_place_with_capacity)(field_ptr, 0) };
+        let span = fields
+            .iter()
+            .enumerate()
+            .find(|(index, _)| claimed[*index].is_none())
+            .map_or_else(Span::default, |(_, raw_field)| raw_field.span);
+        self.mark_struct_field(parent.tracking, field_index, span);
+
+        let mut matched = 0usize;
+        for (raw_index, raw_field) in fields.iter().enumerate() {
+            if claimed[raw_index].is_some() {
+                continue;
+            }
+
+            let value_scratch = self.scratch.reserve(map_ref.value_layout);
+            let write_result = self.write_raw_map_value(
+                map_ref.map.v(),
+                map_ref.value_program,
+                map_ref.value_scalar,
+                scratch_ptr_uninit(&value_scratch),
+                raw_field.raw,
+            );
+            if let Err(err) = write_result {
+                self.scratch.release(value_scratch);
+                return Err(err);
+            }
+            self.insert_map_entry_into(
+                map_ref.map,
+                map_ptr,
+                map_ref.key_plan,
+                raw_field.name.to_string(),
+                raw_field.span,
+                value_scratch,
+            )?;
+            claimed[raw_index] = Some(raw_field.span);
+            matched += 1;
+        }
+
+        Ok(matched)
     }
 
     fn read_flatten_external_enum_field(
@@ -4938,27 +5694,408 @@ where
         fields: &[TaggedRawField<'de>],
         claimed: &mut [Option<Span>],
     ) -> Result<usize, DeserializeError> {
-        let Some((raw_index, raw_field, variant)) =
-            self.select_flatten_external_variant(enum_ref.variants, fields, claimed)?
-        else {
-            return Ok(0);
-        };
-
         let field_ptr = unsafe { self.base.field_uninit(field.offset) };
         let old_base = self.base;
         self.base = field_ptr;
-        let result = self.read_flatten_external_variant_payload(
-            field.shape,
-            enum_ref.enum_type,
-            variant,
-            raw_field,
-        );
+        let result = self.read_flatten_enum_value(field.shape, enum_ref, fields, claimed);
         self.base = old_base;
-        result?;
+        let Some((matched, span)) = result? else {
+            return Ok(0);
+        };
 
-        claimed[raw_index] = Some(raw_field.span);
-        self.mark_flatten_parent_field(parent.tracking, field_index, field, raw_field.span)?;
-        Ok(1)
+        self.mark_flatten_parent_field(parent.tracking, field_index, field, span)?;
+        Ok(matched)
+    }
+
+    fn read_flatten_enum_value(
+        &mut self,
+        shape: &'static Shape,
+        enum_ref: FlattenExternalEnumRef<'program>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+    ) -> Result<Option<(usize, Span)>, DeserializeError> {
+        if enum_ref.content_key.is_some() {
+            return Err(unsupported(shape, "adjacently tagged flattened enum"));
+        }
+
+        match enum_ref.tag_key {
+            Some(tag_key) => {
+                self.read_flatten_internal_enum_value(shape, enum_ref, tag_key, fields, claimed)
+            }
+            None => {
+                let Some((raw_index, raw_field, variant)) =
+                    self.select_flatten_external_variant(enum_ref.variants, fields, claimed)?
+                else {
+                    return Ok(None);
+                };
+
+                self.read_flatten_external_variant_payload(
+                    shape,
+                    enum_ref.enum_type,
+                    variant,
+                    raw_field,
+                )?;
+                claimed[raw_index] = Some(raw_field.span);
+                Ok(Some((1, raw_field.span)))
+            }
+        }
+    }
+
+    fn read_flatten_internal_enum_value(
+        &mut self,
+        shape: &'static Shape,
+        enum_ref: FlattenExternalEnumRef<'program>,
+        tag_key: &'static str,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+    ) -> Result<Option<(usize, Span)>, DeserializeError> {
+        let Some((tag_index, tag_field)) =
+            self.select_flatten_internal_tag_field(fields, claimed, tag_key)?
+        else {
+            return Ok(None);
+        };
+
+        let tag = Self::read_raw_tag_name(tag_field, tag_key)?;
+        let variant = find_tagged_variant(enum_ref.variants, &tag)
+            .or_else(|| external_other_variant(enum_ref.variants))
+            .ok_or_else(|| {
+                vm_error(
+                    Some(tag_field.span),
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "known enum variant",
+                        got: tag.into(),
+                    },
+                )
+            })?;
+
+        unsafe {
+            write_enum_discriminant(shape, enum_ref.enum_type, variant.variant, self.base)?;
+        }
+        claimed[tag_index] = Some(tag_field.span);
+
+        let mut skip_tag_keys = vec![tag_key];
+        let matched = match variant.variant.data.kind {
+            StructKind::Unit => 0,
+            StructKind::Struct => {
+                if let Some(plan) = &variant.flatten {
+                    self.read_flatten_struct_from_fields(shape, plan, fields, claimed, false)?
+                } else {
+                    self.push_struct_frame(
+                        shape,
+                        &variant.fields,
+                        variant.dispatch.as_ref(),
+                        variant.tracking,
+                    );
+                    self.read_flatten_captured_variant_fields(
+                        variant,
+                        fields,
+                        claimed,
+                        &skip_tag_keys,
+                    )?
+                }
+            }
+            StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => self
+                .read_flatten_internal_newtype_variant_payload(
+                    shape,
+                    variant,
+                    fields,
+                    claimed,
+                    &mut skip_tag_keys,
+                    tag_field.span,
+                )?,
+            StructKind::Tuple | StructKind::TupleStruct => {
+                return Err(unsupported(
+                    shape,
+                    "internally tagged multi-field tuple enum variant",
+                ));
+            }
+        };
+
+        Ok(Some((matched + 1, tag_field.span)))
+    }
+
+    fn select_flatten_internal_tag_field<'fields>(
+        &self,
+        fields: &'fields [TaggedRawField<'de>],
+        claimed: &[Option<Span>],
+        tag_key: &'static str,
+    ) -> Result<Option<(usize, &'fields TaggedRawField<'de>)>, DeserializeError> {
+        let mut selected: Option<(usize, &TaggedRawField<'de>)> = None;
+        for (index, raw_field) in fields.iter().enumerate() {
+            if raw_field.name.as_ref() != tag_key {
+                continue;
+            }
+            self.ensure_flatten_raw_unclaimed(raw_field, claimed[index])?;
+            if let Some((_, first)) = selected {
+                return Err(Self::duplicate_flatten_field(raw_field, first.span));
+            }
+            selected = Some((index, raw_field));
+        }
+        Ok(selected)
+    }
+
+    fn read_flatten_captured_variant_fields(
+        &mut self,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+        skip_keys: &[&'static str],
+    ) -> Result<usize, DeserializeError> {
+        self.read_flatten_captured_record_fields(
+            &variant.fields,
+            variant.dispatch.as_ref(),
+            variant.tracking,
+            fields,
+            claimed,
+            skip_keys,
+        )
+    }
+
+    fn read_flatten_captured_record_fields(
+        &mut self,
+        record_fields: &'program [FieldPlan<ExecBlock>],
+        dispatch: Option<&RawFieldDispatch>,
+        tracking: StructTracking,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+        skip_keys: &[&'static str],
+    ) -> Result<usize, DeserializeError> {
+        let mut matched = 0usize;
+        for (raw_index, raw_field) in fields.iter().enumerate() {
+            if skip_keys.iter().any(|key| raw_field.name.as_ref() == *key) {
+                continue;
+            }
+
+            let Some((index, field)) = Self::captured_struct_field(
+                record_fields,
+                dispatch,
+                raw_field.name.as_ref().as_bytes(),
+            ) else {
+                continue;
+            };
+            self.ensure_flatten_raw_unclaimed(raw_field, claimed[raw_index])?;
+
+            if let Some(first_span) = self.struct_seen_span(tracking, index) {
+                return Err(Self::duplicate_flatten_field(raw_field, first_span));
+            }
+
+            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+            self.write_raw_field_value(field, field_ptr, raw_field.raw)?;
+            self.mark_struct_field(tracking, index, raw_field.span);
+            claimed[raw_index] = Some(raw_field.span);
+            matched += 1;
+        }
+
+        unsafe {
+            self.finish_struct_frame(tracking)?;
+        }
+        Ok(matched)
+    }
+
+    fn read_flatten_captured_scalar_struct(
+        &mut self,
+        shape: &'static Shape,
+        fields: &'program [ScalarFieldPlan],
+        dispatch: Option<&'program RawFieldDispatch>,
+        raw_fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+        skip_keys: &[&'static str],
+    ) -> Result<usize, DeserializeError> {
+        match StructTracking::for_len(fields.len()) {
+            StructTracking::Inline => {
+                let mut frame = StructFrame::<ScalarFieldPlan, InitializedLedger<Span>>::new(
+                    shape, self.base, fields, dispatch,
+                );
+                let matched = self.read_flatten_captured_scalar_struct_frame(
+                    &mut frame, raw_fields, claimed, skip_keys,
+                )?;
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+                Ok(matched)
+            }
+            StructTracking::Bitset => {
+                let mut frame = StructFrame::<ScalarFieldPlan, BitsetStructSeen>::new(
+                    shape, self.base, fields, dispatch,
+                );
+                let matched = self.read_flatten_captured_scalar_struct_frame(
+                    &mut frame, raw_fields, claimed, skip_keys,
+                )?;
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+                Ok(matched)
+            }
+            StructTracking::Heap => {
+                let mut frame = StructFrame::<ScalarFieldPlan, HeapStructSeen>::new(
+                    shape, self.base, fields, dispatch,
+                );
+                let matched = self.read_flatten_captured_scalar_struct_frame(
+                    &mut frame, raw_fields, claimed, skip_keys,
+                )?;
+                unsafe {
+                    frame.fill_missing_fields()?;
+                }
+                Ok(matched)
+            }
+        }
+    }
+
+    fn read_flatten_captured_scalar_struct_frame<Seen: StructSeenStore>(
+        &mut self,
+        frame: &mut StructFrame<'program, ScalarFieldPlan, Seen>,
+        raw_fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+        skip_keys: &[&'static str],
+    ) -> Result<usize, DeserializeError> {
+        let mut matched = 0usize;
+        for (raw_index, raw_field) in raw_fields.iter().enumerate() {
+            if skip_keys.iter().any(|key| raw_field.name.as_ref() == *key) {
+                continue;
+            }
+
+            let Some((index, field)) = Self::captured_scalar_field(
+                frame.fields,
+                frame.dispatch,
+                raw_field.name.as_ref().as_bytes(),
+            ) else {
+                continue;
+            };
+            self.ensure_flatten_raw_unclaimed(raw_field, claimed[raw_index])?;
+
+            if let Some(first_span) = frame.seen.get(index) {
+                return Err(Self::duplicate_flatten_field(raw_field, first_span));
+            }
+
+            let mut parser = JsonParser::<true>::new(raw_field.raw.as_bytes());
+            let (value, value_span) = parser.read_scalar_token()?;
+            let field_ptr = unsafe { frame.base.field_uninit(field.offset) };
+            unsafe {
+                field
+                    .scalar
+                    .write(field.shape, field_ptr, value, value_span)?;
+            }
+            Self::ensure_raw_parser_finished(&mut parser)?;
+            frame.mark_seen(index, raw_field.span);
+            claimed[raw_index] = Some(raw_field.span);
+            matched += 1;
+        }
+        Ok(matched)
+    }
+
+    fn read_flatten_internal_newtype_variant_payload(
+        &mut self,
+        shape: &'static Shape,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+        skip_tag_keys: &mut Vec<&'static str>,
+        span: Span,
+    ) -> Result<usize, DeserializeError> {
+        let [field] = variant.fields.as_ref() else {
+            return Err(unsupported(
+                shape,
+                "non-single-field internally tagged enum payload",
+            ));
+        };
+
+        self.push_struct_frame(
+            shape,
+            &variant.fields,
+            variant.dispatch.as_ref(),
+            variant.tracking,
+        );
+        let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+        let old_base = self.base;
+        self.base = field_ptr;
+        let result =
+            self.read_flatten_internal_newtype_field(field, fields, claimed, skip_tag_keys);
+        self.base = old_base;
+        let matched = result?;
+        self.mark_struct_field(variant.tracking, 0, span);
+        unsafe {
+            self.finish_struct_frame(variant.tracking)?;
+        }
+        Ok(matched)
+    }
+
+    fn read_flatten_internal_newtype_field(
+        &mut self,
+        field: &'program FieldPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+        skip_tag_keys: &mut Vec<&'static str>,
+    ) -> Result<usize, DeserializeError> {
+        match single_program_op(self.blocks, &field.program) {
+            Some(JsonOp::ReadTaggedEnum {
+                shape,
+                enum_type,
+                tag_key,
+                content_key: None,
+                variants,
+            }) => {
+                if skip_tag_keys.iter().any(|key| key == tag_key) {
+                    return Err(unsupported(
+                        shape,
+                        "nested internally tagged enums with the same tag key",
+                    ));
+                }
+                let enum_ref = FlattenExternalEnumRef {
+                    enum_type: *enum_type,
+                    tag_key: Some(*tag_key),
+                    content_key: None,
+                    variants,
+                };
+                let Some((matched, _span)) = self
+                    .read_flatten_internal_enum_value(shape, enum_ref, tag_key, fields, claimed)?
+                else {
+                    return Err(vm_error(
+                        None,
+                        DeserializeErrorKind::MissingField {
+                            field: tag_key,
+                            container_shape: shape,
+                        },
+                    ));
+                };
+                Ok(matched)
+            }
+            Some(JsonOp::ReadStruct {
+                shape,
+                fields: record_fields,
+                dispatch,
+                ..
+            }) => {
+                let tracking = StructTracking::for_len(record_fields.len());
+                self.push_struct_frame(shape, record_fields, dispatch.as_ref(), tracking);
+                self.read_flatten_captured_record_fields(
+                    record_fields,
+                    dispatch.as_ref(),
+                    tracking,
+                    fields,
+                    claimed,
+                    skip_tag_keys,
+                )
+            }
+            Some(JsonOp::ReadScalarStruct {
+                shape,
+                fields: scalar_fields,
+                dispatch,
+            }) => self.read_flatten_captured_scalar_struct(
+                shape,
+                scalar_fields,
+                dispatch.as_ref(),
+                fields,
+                claimed,
+                skip_tag_keys,
+            ),
+            Some(JsonOp::ReadFlattenStruct { shape, plan }) => {
+                self.read_flatten_struct_from_fields(shape, plan, fields, claimed, false)
+            }
+            _ => Err(unsupported(
+                field.shape,
+                "internally tagged enum newtype payload",
+            )),
+        }
     }
 
     fn select_flatten_external_variant<'fields>(
@@ -5064,6 +6201,21 @@ where
                 Self::flatten_kind_matches_key(kind, raw_field.name.as_ref().as_bytes())
             })
             .map(|raw_field| raw_field.span)
+    }
+
+    fn first_unclaimed_flatten_kind_match_span(
+        kind: &FlattenKind<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &[Option<Span>],
+    ) -> Option<Span> {
+        fields
+            .iter()
+            .enumerate()
+            .find(|(index, raw_field)| {
+                claimed[*index].is_none()
+                    && Self::flatten_kind_matches_key(kind, raw_field.name.as_ref().as_bytes())
+            })
+            .map(|(_, raw_field)| raw_field.span)
     }
 
     fn ensure_flatten_raw_unclaimed(
@@ -5183,13 +6335,24 @@ where
             let mut interp: JsonInterp<'_, 'de, 'program, true> =
                 JsonInterp::<'_, 'de, 'program, true>::new(&mut parser, self.base, self.blocks);
             let fields = interp.collect_tagged_raw_fields("struct variant payload")?;
-            interp.push_struct_frame(
-                shape,
-                &variant.fields,
-                variant.dispatch.as_ref(),
-                variant.tracking,
-            );
-            interp.read_captured_struct_fields(shape, variant, &fields, None)?;
+            if let Some(plan) = &variant.flatten {
+                let mut claimed = vec![None; fields.len()];
+                interp.read_flatten_struct_from_fields(
+                    shape,
+                    plan,
+                    &fields,
+                    &mut claimed,
+                    false,
+                )?;
+            } else {
+                interp.push_struct_frame(
+                    shape,
+                    &variant.fields,
+                    variant.dispatch.as_ref(),
+                    variant.tracking,
+                );
+                interp.read_captured_variant_fields(shape, variant, &fields, &[])?;
+            }
             interp.finish_success();
         }
         Self::ensure_raw_parser_finished(&mut parser)
@@ -5206,6 +6369,179 @@ where
         Self::ensure_raw_parser_finished(&mut parser)
     }
 
+    fn read_internal_tagged_newtype_variant_payload(
+        &mut self,
+        shape: &'static Shape,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        skip_tag_keys: &mut Vec<&'static str>,
+        span: Span,
+    ) -> Result<(), DeserializeError> {
+        let [field] = variant.fields.as_ref() else {
+            return Err(unsupported(
+                shape,
+                "non-single-field internally tagged enum payload",
+            ));
+        };
+
+        self.push_struct_frame(
+            shape,
+            &variant.fields,
+            variant.dispatch.as_ref(),
+            variant.tracking,
+        );
+        let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+        let old_base = self.base;
+        self.base = field_ptr;
+        let result = self.read_internal_tagged_newtype_field(field, fields, skip_tag_keys);
+        self.base = old_base;
+        result?;
+        self.mark_struct_field(variant.tracking, 0, span);
+        unsafe {
+            self.finish_struct_frame(variant.tracking)?;
+        }
+        Ok(())
+    }
+
+    fn read_internal_tagged_newtype_field(
+        &mut self,
+        field: &'program FieldPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        skip_tag_keys: &mut Vec<&'static str>,
+    ) -> Result<(), DeserializeError> {
+        match single_program_op(self.blocks, &field.program) {
+            Some(JsonOp::ReadTaggedEnum {
+                shape,
+                enum_type,
+                tag_key,
+                content_key: None,
+                variants,
+            }) => {
+                if skip_tag_keys.iter().any(|key| key == tag_key) {
+                    return Err(unsupported(
+                        shape,
+                        "nested internally tagged enums with the same tag key",
+                    ));
+                }
+
+                let tag_field = Self::require_tagged_field(fields, tag_key, shape)?;
+                let tag = Self::read_raw_tag_name(tag_field, tag_key)?;
+                let variant = Self::tagged_variant(variants, &tag, tag_field.span)?;
+
+                unsafe {
+                    write_enum_discriminant(shape, *enum_type, variant.variant, self.base)?;
+                }
+
+                skip_tag_keys.push(*tag_key);
+                let result = match variant.variant.data.kind {
+                    StructKind::Unit => Ok(()),
+                    StructKind::Struct => {
+                        self.push_struct_frame(
+                            shape,
+                            &variant.fields,
+                            variant.dispatch.as_ref(),
+                            variant.tracking,
+                        );
+                        self.read_captured_variant_fields(shape, variant, fields, skip_tag_keys)
+                    }
+                    StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => {
+                        self.read_internal_tagged_newtype_variant_payload(
+                            shape,
+                            variant,
+                            fields,
+                            skip_tag_keys,
+                            tag_field.span,
+                        )
+                    }
+                    StructKind::Tuple | StructKind::TupleStruct => Err(unsupported(
+                        shape,
+                        "internally tagged multi-field tuple enum variant",
+                    )),
+                };
+                skip_tag_keys.pop();
+                result
+            }
+            Some(JsonOp::ReadStruct {
+                shape,
+                fields: record_fields,
+                dispatch,
+                ..
+            }) => {
+                let tracking = StructTracking::for_len(record_fields.len());
+                self.push_struct_frame(shape, record_fields, dispatch.as_ref(), tracking);
+                self.read_captured_record_fields(
+                    shape,
+                    record_fields,
+                    dispatch.as_ref(),
+                    tracking,
+                    fields,
+                    skip_tag_keys,
+                )
+            }
+            Some(JsonOp::ReadScalarStruct {
+                shape,
+                fields: scalar_fields,
+                dispatch,
+            }) => self.read_captured_scalar_struct(
+                shape,
+                scalar_fields,
+                dispatch.as_ref(),
+                fields,
+                skip_tag_keys,
+            ),
+            _ => Err(unsupported(
+                field.shape,
+                "internally tagged enum newtype payload",
+            )),
+        }
+    }
+
+    fn untagged_fallback_variant<'variants>(
+        &self,
+        variants: &'variants [ExternalVariantPlan<ExecBlock>],
+        fields: &[TaggedRawField<'de>],
+    ) -> Result<Option<&'variants ExternalVariantPlan<ExecBlock>>, DeserializeError> {
+        let mut best: Option<(&ExternalVariantPlan<ExecBlock>, usize, usize)> = None;
+
+        for variant in variants
+            .iter()
+            .filter(|variant| variant.variant.has_builtin_attr("untagged"))
+        {
+            let score = match variant.variant.data.kind {
+                StructKind::Unit => Some((0, 0)),
+                StructKind::Struct => field_plan_match_score(&variant.fields, fields)?,
+                StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => {
+                    let [field] = variant.fields.as_ref() else {
+                        unreachable!("checked single-field variant");
+                    };
+                    match single_program_op(self.blocks, &field.program) {
+                        Some(JsonOp::ReadStruct {
+                            fields: record_fields,
+                            ..
+                        }) => field_plan_match_score(record_fields, fields)?,
+                        Some(JsonOp::ReadScalarStruct {
+                            fields: scalar_fields,
+                            ..
+                        }) => scalar_field_plan_match_score(scalar_fields, fields)?,
+                        _ => None,
+                    }
+                }
+                StructKind::Tuple | StructKind::TupleStruct => None,
+            };
+
+            let Some((matched, quality)) = score else {
+                continue;
+            };
+            if best.is_none_or(|(_, best_matched, best_quality)| {
+                matched > best_matched || (matched == best_matched && quality < best_quality)
+            }) {
+                best = Some((variant, matched, quality));
+            }
+        }
+
+        Ok(best.map(|(variant, _, _)| variant))
+    }
+
     fn read_internal_tagged_enum(
         &mut self,
         shape: &'static Shape,
@@ -5214,10 +6550,39 @@ where
         variants: &'program [ExternalVariantPlan<ExecBlock>],
     ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
     {
-        let fields = self.collect_tagged_raw_fields("struct for internally tagged enum")?;
-        let tag_field = Self::require_tagged_field(&fields, tag_key, shape)?;
-        let tag = Self::read_raw_tag_name(tag_field, tag_key)?;
-        let variant = Self::tagged_variant(variants, &tag, tag_field.span)?;
+        let raw = self
+            .parser
+            .capture_raw()?
+            .ok_or_else(|| unsupported_shape_message("raw JSON capture failed"))?;
+        let fields =
+            Self::collect_tagged_raw_fields_from_raw(raw, "struct for internally tagged enum")?;
+        let tag_field = Self::unique_tagged_field(&fields, tag_key)?;
+        let mut selected_untagged = false;
+        let (variant, span) = if let Some(tag_field) = tag_field {
+            let tag = Self::read_raw_tag_name(tag_field, tag_key)?;
+            if let Some(variant) = find_tagged_variant(variants, &tag) {
+                (variant, tag_field.span)
+            } else if let Some(variant) = self.untagged_fallback_variant(variants, &fields)? {
+                selected_untagged = true;
+                (variant, tag_field.span)
+            } else {
+                (
+                    Self::tagged_variant(variants, &tag, tag_field.span)?,
+                    tag_field.span,
+                )
+            }
+        } else if let Some(variant) = self.untagged_fallback_variant(variants, &fields)? {
+            selected_untagged = true;
+            (variant, Span::default())
+        } else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::MissingField {
+                    field: tag_key,
+                    container_shape: shape,
+                },
+            ));
+        };
 
         unsafe {
             write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
@@ -5226,18 +6591,53 @@ where
         match variant.variant.data.kind {
             StructKind::Unit => Ok(Control::Continue),
             StructKind::Struct => {
-                self.push_struct_frame(
-                    shape,
-                    &variant.fields,
-                    variant.dispatch.as_ref(),
-                    variant.tracking,
-                );
-                self.read_captured_struct_fields(shape, variant, &fields, Some(tag_key))?;
+                let skip_keys: &[&'static str] = if selected_untagged { &[] } else { &[tag_key] };
+                if let Some(plan) = &variant.flatten {
+                    let mut claimed = vec![None; fields.len()];
+                    if !selected_untagged {
+                        for (index, field) in fields.iter().enumerate() {
+                            if field.name.as_ref() == tag_key {
+                                claimed[index] = Some(field.span);
+                            }
+                        }
+                    }
+                    self.read_flatten_struct_from_fields(
+                        shape,
+                        plan,
+                        &fields,
+                        &mut claimed,
+                        false,
+                    )?;
+                } else {
+                    self.push_struct_frame(
+                        shape,
+                        &variant.fields,
+                        variant.dispatch.as_ref(),
+                        variant.tracking,
+                    );
+                    self.read_captured_variant_fields(shape, variant, &fields, skip_keys)?;
+                }
                 Ok(Control::Continue)
             }
-            StructKind::Tuple | StructKind::TupleStruct => {
-                Err(unsupported(shape, "internally tagged tuple enum variant"))
+            StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => {
+                let mut skip_tag_keys = if selected_untagged {
+                    Vec::new()
+                } else {
+                    vec![tag_key]
+                };
+                self.read_internal_tagged_newtype_variant_payload(
+                    shape,
+                    variant,
+                    &fields,
+                    &mut skip_tag_keys,
+                    span,
+                )?;
+                Ok(Control::Continue)
             }
+            StructKind::Tuple | StructKind::TupleStruct => Err(unsupported(
+                shape,
+                "internally tagged multi-field tuple enum variant",
+            )),
         }
     }
 
@@ -5356,6 +6756,23 @@ where
         Ok(Control::Continue)
     }
 
+    fn read_cow_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+        owned_variant: &'program ExternalVariantPlan<ExecBlock>,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        let span = self
+            .parser
+            .peek_event()?
+            .map_or(Span { offset: 0, len: 0 }, |event| event.span);
+        unsafe {
+            write_enum_discriminant(shape, enum_type, owned_variant.variant, self.base)?;
+        }
+        self.read_external_enum_single_field_payload(shape, owned_variant, span, false)
+    }
+
     fn collect_raw_untagged_struct_fields(
         &mut self,
         raw: &'de str,
@@ -5451,13 +6868,25 @@ where
             }
             StructKind::Struct => {
                 if let Some(fields) = captured_struct_fields {
-                    self.push_struct_frame(
-                        shape,
-                        &variant.fields,
-                        variant.dispatch.as_ref(),
-                        variant.tracking,
-                    );
-                    self.read_captured_struct_fields(shape, variant, fields, None)
+                    if let Some(plan) = &variant.flatten {
+                        let mut claimed = vec![None; fields.len()];
+                        self.read_flatten_struct_from_fields(
+                            shape,
+                            plan,
+                            fields,
+                            &mut claimed,
+                            false,
+                        )
+                        .map(|_| ())
+                    } else {
+                        self.push_struct_frame(
+                            shape,
+                            &variant.fields,
+                            variant.dispatch.as_ref(),
+                            variant.tracking,
+                        );
+                        self.read_captured_variant_fields(shape, variant, fields, &[])
+                    }
                 } else {
                     self.read_raw_struct_variant_payload(shape, variant, raw)
                 }
@@ -5796,22 +7225,31 @@ where
                         self.read_external_enum_single_field_payload(shape, variant, span, true)
                     }
                     StructKind::Struct => {
-                        self.parser.consume_object_start_fast()?;
-                        self.push_struct_frame(
-                            shape,
-                            &variant.fields,
-                            variant.dispatch.as_ref(),
-                            variant.tracking,
-                        );
-                        let loop_id = variant
-                            .loop_id
-                            .expect("struct enum variant has a lowered loop");
-                        Ok(Control::CallBlockThen(
-                            loop_id,
-                            Continuation::ExternalEnumStruct {
-                                tracking: variant.tracking,
-                            },
-                        ))
+                        if variant.flatten.is_some() {
+                            let raw = self.parser.capture_raw()?.ok_or_else(|| {
+                                unsupported_shape_message("raw JSON capture failed")
+                            })?;
+                            self.read_raw_struct_variant_payload(shape, variant, raw)?;
+                            self.consume_external_enum_object_end()?;
+                            Ok(Control::Continue)
+                        } else {
+                            self.parser.consume_object_start_fast()?;
+                            self.push_struct_frame(
+                                shape,
+                                &variant.fields,
+                                variant.dispatch.as_ref(),
+                                variant.tracking,
+                            );
+                            let loop_id = variant
+                                .loop_id
+                                .expect("struct enum variant has a lowered loop");
+                            Ok(Control::CallBlockThen(
+                                loop_id,
+                                Continuation::ExternalEnumStruct {
+                                    tracking: variant.tracking,
+                                },
+                            ))
+                        }
                     }
                     StructKind::Tuple | StructKind::TupleStruct => {
                         self.read_external_enum_tuple_payload(shape, variant)
@@ -6281,9 +7719,8 @@ where
     fn insert_map_entry(
         &mut self,
         map: MapDef,
-        key_scalar: ScalarType,
-        key_layout: Layout,
-        mut key: String,
+        key_plan: &MapKeyPlan,
+        key: String,
         key_span: Span,
         value_scratch: ScratchSlot,
     ) -> Result<(), DeserializeError> {
@@ -6292,9 +7729,19 @@ where
             .last()
             .expect("map frame is present while inserting entry");
         let map_ptr = PtrMut::new(map_ptr.guard.ptr());
+        self.insert_map_entry_into(map, map_ptr, key_plan, key, key_span, value_scratch)
+    }
 
-        if key_scalar == ScalarType::String
-            && map.k().is_type::<String>()
+    fn insert_map_entry_into(
+        &mut self,
+        map: MapDef,
+        map_ptr: PtrMut,
+        key_plan: &MapKeyPlan,
+        mut key: String,
+        key_span: Span,
+        value_scratch: ScratchSlot,
+    ) -> Result<(), DeserializeError> {
+        if key_plan.is_exact_string()
             && let Some(insert_owned_string_key) = map.vtable.insert_owned_string_key
         {
             let mut owned_key = ManuallyDrop::new(key);
@@ -6312,15 +7759,9 @@ where
             key = ManuallyDrop::into_inner(owned_key);
         }
 
-        let key_scratch = self.scratch.reserve(key_layout);
+        let key_scratch = self.scratch.reserve(key_plan.layout());
         let key_result = unsafe {
-            write_map_key(
-                map.k(),
-                key_scalar,
-                scratch_ptr_uninit(&key_scratch),
-                key,
-                key_span,
-            )
+            write_map_key_plan(key_plan, scratch_ptr_uninit(&key_scratch), key, key_span)
         };
         if let Err(err) = key_result {
             unsafe {
@@ -6346,14 +7787,12 @@ where
     fn insert_map_entry_input(
         &mut self,
         map: MapDef,
-        key_scalar: ScalarType,
-        key_layout: Layout,
+        key_plan: &MapKeyPlan,
         key: JsonFieldKeyInput<'de>,
         key_span: Span,
         value_scratch: ScratchSlot,
     ) -> Result<(), DeserializeError> {
-        if key_scalar == ScalarType::String
-            && map.k().is_type::<String>()
+        if key_plan.is_exact_string()
             && let Some(insert_borrowed_str_key) = map.vtable.insert_borrowed_str_key
         {
             match self.parser.field_key_unescaped_str(&key) {
@@ -6395,7 +7834,7 @@ where
                 return Err(err.into());
             }
         };
-        self.insert_map_entry(map, key_scalar, key_layout, key, key_span, value_scratch)
+        self.insert_map_entry(map, key_plan, key, key_span, value_scratch)
     }
 
     fn try_insert_borrowed_str_map_entry(
@@ -6444,6 +7883,7 @@ where
         if let Some(scalar) = plan.value_scalar {
             let value = self.parser.read_current_scalar_input()?;
             if scalar.scalar == ScalarType::String
+                && plan.key_plan.is_exact_string()
                 && self.try_insert_borrowed_str_map_entry(plan.map, &key_input, &value)?
             {
                 return Ok(Control::CallBlock(plan.loop_id));
@@ -6460,8 +7900,7 @@ where
             }
             self.insert_map_entry_input(
                 plan.map,
-                plan.key_scalar,
-                plan.key_layout,
+                plan.key_plan,
                 key_input,
                 key_span,
                 value_scratch,
@@ -6481,8 +7920,7 @@ where
             plan.value_program,
             Continuation::MapValueDone {
                 map: plan.map,
-                key_scalar: plan.key_scalar,
-                key_layout: plan.key_layout,
+                key_plan: plan.key_plan,
                 key,
                 key_span,
                 value_scratch,
@@ -6631,6 +8069,7 @@ where
     ) -> Result<(), DeserializeError> {
         let mut frame = TinyScalarStructFrame::new(shape, base, fields);
         if self.try_read_fused_tiny_i32_struct_fields(&mut frame)? {
+            validate_completed_shape(shape, base)?;
             core::mem::forget(frame);
             return Ok(());
         }
@@ -6682,6 +8121,7 @@ where
         }
 
         if frame.all_initialized() {
+            validate_completed_shape(shape, base)?;
             core::mem::forget(frame);
         } else {
             unsafe {
@@ -7258,8 +8698,7 @@ impl Drop for PointerSliceFrame {
 #[derive(Clone, Copy)]
 struct MapStepPlan<'program> {
     map: MapDef,
-    key_scalar: ScalarType,
-    key_layout: Layout,
+    key_plan: &'program MapKeyPlan,
     value_program: &'program [ExecOp],
     value_scalar: Option<ScalarPlan>,
     value_layout: Layout,
@@ -7456,6 +8895,11 @@ where
                 enum_type,
                 variants,
             } => self.read_untagged_enum(shape, *enum_type, variants),
+            JsonOp::ReadCowEnum {
+                shape,
+                enum_type,
+                owned_variant,
+            } => self.read_cow_enum(shape, *enum_type, owned_variant),
             JsonOp::ReadTaggedEnum {
                 shape,
                 enum_type,
@@ -7743,16 +9187,14 @@ where
             }
             JsonOp::MapNext {
                 map,
-                key_scalar,
-                key_layout,
+                key_plan,
                 value_program,
                 value_scalar,
                 value_layout,
                 loop_id,
             } => self.step_map_next(MapStepPlan {
                 map: *map,
-                key_scalar: *key_scalar,
-                key_layout: *key_layout,
+                key_plan,
                 value_program,
                 value_scalar: *value_scalar,
                 value_layout: *value_layout,
@@ -7999,15 +9441,14 @@ where
             }
             Continuation::MapValueDone {
                 map,
-                key_scalar,
-                key_layout,
+                key_plan,
                 key,
                 key_span,
                 value_scratch,
                 old_base,
                 loop_id,
             } => {
-                self.insert_map_entry(map, key_scalar, key_layout, key, key_span, value_scratch)?;
+                self.insert_map_entry(map, key_plan, key, key_span, value_scratch)?;
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
@@ -8169,8 +9610,7 @@ enum Continuation<'program> {
     FinishMap,
     MapValueDone {
         map: MapDef,
-        key_scalar: ScalarType,
-        key_layout: Layout,
+        key_plan: &'program MapKeyPlan,
         key: String,
         key_span: Span,
         value_scratch: ScratchSlot,
@@ -8632,6 +10072,7 @@ impl<'program> TinyScalarStructFrame<'program> {
                 }
             }
         }
+        validate_completed_shape(self.shape, self.base)?;
         core::mem::forget(self);
         Ok(())
     }
@@ -8895,6 +10336,7 @@ where
                 }
             }
         }
+        validate_completed_shape(self.shape, self.base)?;
         core::mem::forget(self);
         Ok(())
     }
@@ -9024,6 +10466,92 @@ unsafe fn write_map_key(
         ScalarType::USize => write_parsed_key!(usize, "valid unsigned integer for map key"),
         _ => Err(unsupported(shape, "string or integer map key")),
     }
+}
+
+unsafe fn write_map_key_plan(
+    plan: &MapKeyPlan,
+    dst: PtrUninit,
+    key: String,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    match plan {
+        MapKeyPlan::Scalar { shape, scalar, .. } => unsafe {
+            write_map_key(shape, *scalar, dst, key, span)
+        },
+        MapKeyPlan::MetadataContainer { .. } => unsafe {
+            write_metadata_container_map_key(plan, dst, key, span)
+        },
+    }
+}
+
+unsafe fn write_metadata_container_map_key(
+    plan: &MapKeyPlan,
+    dst: PtrUninit,
+    key: String,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    let MapKeyPlan::MetadataContainer {
+        shape,
+        fields,
+        dispatch,
+        value_index,
+        value,
+        ..
+    } = plan
+    else {
+        unreachable!("metadata map key writer only accepts metadata key plans");
+    };
+
+    let mut frame = StructFrame::<MetadataKeyField, InitializedLedger<Span>>::new(
+        shape,
+        dst,
+        fields,
+        dispatch.as_ref(),
+    );
+    let value_field = &fields[*value_index];
+    unsafe {
+        write_map_key_plan(
+            value.as_ref(),
+            dst.field_uninit(value_field.offset),
+            key,
+            span,
+        )?;
+    }
+    frame.mark_seen(*value_index, span);
+
+    for (index, field) in fields.iter().enumerate() {
+        if index == *value_index || frame.seen.is_initialized(index) {
+            continue;
+        }
+        if field.metadata == Some("span")
+            && unsafe { write_metadata_span(field.shape, dst.field_uninit(field.offset), span) }
+        {
+            frame.mark_seen(index, span);
+        }
+    }
+
+    unsafe { frame.fill_missing_fields() }
+}
+
+unsafe fn write_metadata_span(shape: &'static Shape, dst: PtrUninit, span: Span) -> bool {
+    if shape.is_type::<Span>() {
+        unsafe {
+            dst.put(span);
+        }
+        return true;
+    }
+
+    if let Def::Option(option) = shape.def
+        && option.t().is_type::<Span>()
+    {
+        let mut span = span;
+        unsafe {
+            (option.vtable.init_some)(dst, PtrMut::new((&mut span as *mut Span).cast::<u8>()));
+        }
+        return true;
+    }
+
+    false
 }
 
 fn parse_map_key<T>(key: &str, span: Span, expected: &'static str) -> Result<T, DeserializeError>
