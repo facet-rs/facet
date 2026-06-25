@@ -1,5 +1,4 @@
-//! Azure DevOps-shaped reproduction: opaque/proxy enum works as a value, but
-//! not as a JSON map key.
+//! Azure DevOps-shaped reproduction: opaque/proxy enum should work as a map key.
 
 use facet::Facet;
 use facet_json::from_str;
@@ -60,7 +59,6 @@ fn azure_devops_opaque_proxy_enum_deserializes_from_json_string() {
 }
 
 #[test]
-#[ignore = "Facet currently treats the JSON object key as an enum variant name instead of using the String proxy"]
 fn azure_devops_opaque_proxy_enum_deserializes_as_hash_map_key() {
     let json = r#"{"aad.user":{"display_name":"Ada"}}"#;
 
