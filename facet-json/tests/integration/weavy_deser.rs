@@ -66,6 +66,37 @@ struct TransparentHolder {
 }
 
 #[derive(Facet, Debug, PartialEq)]
+struct TupleHolder {
+    triple: (String, i32, bool),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct NestedTupleHolder {
+    outer: ((i32, i32), (String, bool)),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct EmptyTupleHolder {
+    name: String,
+    empty: (),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct SingleElementTupleHolder {
+    name: String,
+    single: (i32,),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct TwoFieldTupleStruct(i32, String);
+
+#[derive(Facet, Debug, PartialEq)]
+struct EmptyTupleStruct();
+
+#[derive(Facet, Debug, PartialEq)]
+struct UnitStruct;
+
+#[derive(Facet, Debug, PartialEq)]
 #[facet(transparent)]
 struct TransparentScores(Vec<Option<u16>>);
 
@@ -546,6 +577,22 @@ fn weavy_deserializes_transparent_wrappers() {
     assert_default_weavy_parity::<TransparentHolder>(r#"{"id":7,"label":"sensor"}"#);
     assert_default_weavy_parity::<TransparentScores>("[1,null,2]");
     assert_default_weavy_parity::<OuterTransparent>("99");
+}
+
+#[test]
+fn weavy_deserializes_tuple_structures() {
+    assert_default_weavy_parity::<(String, i32, bool)>(r#"["hello",42,true]"#);
+    assert_default_weavy_parity::<(String, i32, bool)>(r#"{"0":"hello","1":42,"2":true}"#);
+    assert_default_weavy_parity::<TupleHolder>(r#"{"triple":["hello",42,true]}"#);
+    assert_default_weavy_parity::<NestedTupleHolder>(r#"{"outer":[[1,2],["test",true]]}"#);
+    assert_default_weavy_parity::<EmptyTupleHolder>(r#"{"name":"test","empty":[]}"#);
+    assert_default_weavy_parity::<EmptyTupleHolder>(r#"{"name":"test","empty":null}"#);
+    assert_default_weavy_parity::<SingleElementTupleHolder>(r#"{"name":"test","single":[42]}"#);
+    assert_default_weavy_parity::<TwoFieldTupleStruct>(r#"[7,"seven"]"#);
+    assert_default_weavy_parity::<EmptyTupleStruct>(r#"[]"#);
+    assert_default_weavy_parity::<EmptyTupleStruct>(r#"{}"#);
+    assert_default_weavy_parity::<EmptyTupleStruct>(r#"null"#);
+    assert_default_weavy_parity::<UnitStruct>(r#"{}"#);
 }
 
 #[test]
