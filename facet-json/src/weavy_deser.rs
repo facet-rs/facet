@@ -1682,6 +1682,10 @@ enum JsonOp<Block> {
         dispatch: Option<RawFieldDispatch>,
         loop_id: Block,
     },
+    ReadFlattenStruct {
+        shape: &'static Shape,
+        plan: FlattenStructPlan<Block>,
+    },
     ReadExternalEnum {
         shape: &'static Shape,
         enum_type: EnumType,
@@ -1820,6 +1824,42 @@ struct FieldPlan<Block> {
 }
 
 #[derive(Clone, Debug)]
+struct FlattenStructPlan<Block> {
+    fields: Box<[FieldPlan<Block>]>,
+    direct_indices: Box<[usize]>,
+    flattened: Box<[FlattenFieldPlan<Block>]>,
+    tracking: StructTracking,
+}
+
+#[derive(Clone, Debug)]
+struct FlattenFieldPlan<Block> {
+    field_index: usize,
+    kind: FlattenKind<Block>,
+}
+
+#[derive(Clone, Debug)]
+enum FlattenKind<Block> {
+    Struct {
+        plan: FlattenStructPlan<Block>,
+    },
+    OptionStruct {
+        option: OptionDef,
+        inner_layout: Layout,
+        plan: FlattenStructPlan<Block>,
+    },
+    ExternalEnum {
+        enum_type: EnumType,
+        variants: Box<[ExternalVariantPlan<Block>]>,
+    },
+    OptionExternalEnum {
+        option: OptionDef,
+        inner_layout: Layout,
+        enum_type: EnumType,
+        variants: Box<[ExternalVariantPlan<Block>]>,
+    },
+}
+
+#[derive(Clone, Debug)]
 struct ExternalVariantPlan<Block> {
     index: usize,
     variant: &'static Variant,
@@ -1833,6 +1873,17 @@ struct TaggedRawField<'de> {
     name: Cow<'de, str>,
     raw: &'de str,
     span: Span,
+}
+
+type FlattenVariantSelection<'fields, 'de, 'program> = (
+    usize,
+    &'fields TaggedRawField<'de>,
+    &'program ExternalVariantPlan<ExecBlock>,
+);
+
+struct FlattenExternalEnumRef<'program> {
+    enum_type: EnumType,
+    variants: &'program [ExternalVariantPlan<ExecBlock>],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2421,10 +2472,16 @@ impl Lowering {
                         StructKind::Struct => {}
                     }
 
+                    if struct_type.fields.iter().any(Field::is_flattened) {
+                        return Ok(vec![JsonOp::ReadFlattenStruct {
+                            shape,
+                            plan: self.lower_flatten_struct_plan(shape, struct_type)?,
+                        }]);
+                    }
+
                     let container_has_default = shape.has_default_attr();
                     let all_scalar = struct_type.fields.iter().all(|field| {
-                        !field.is_flattened()
-                            && field.effective_proxy(Some(JSON_FORMAT_NAMESPACE)).is_none()
+                        field.effective_proxy(Some(JSON_FORMAT_NAMESPACE)).is_none()
                             && !is_empty_tuple_shape(field.shape())
                             && ScalarType::try_from_shape(field.shape()).is_some()
                     });
@@ -2432,9 +2489,6 @@ impl Lowering {
                     if all_scalar {
                         let mut fields = Vec::with_capacity(struct_type.fields.len());
                         for field in struct_type.fields {
-                            if field.is_flattened() {
-                                return Err(unsupported(shape, "flattened fields"));
-                            }
                             let field_shape = field.shape();
                             let scalar = ScalarType::try_from_shape(field_shape)
                                 .expect("scalar-only struct field has scalar type");
@@ -2459,9 +2513,6 @@ impl Lowering {
 
                     let mut fields = Vec::with_capacity(struct_type.fields.len());
                     for field in struct_type.fields {
-                        if field.is_flattened() {
-                            return Err(unsupported(shape, "flattened fields"));
-                        }
                         let field_shape = field.shape();
                         let (program, scalar) = self.lower_field_value(field)?;
                         fields.push(FieldPlan {
@@ -2588,18 +2639,118 @@ impl Lowering {
         }])
     }
 
-    fn lower_external_enum(
+    fn lower_flatten_struct_plan(
+        &mut self,
+        shape: &'static Shape,
+        struct_type: facet_core::StructType,
+    ) -> Result<FlattenStructPlan<BlockId>, DeserializeError> {
+        if shape.is_transparent() {
+            return Err(unsupported(shape, "transparent flattened struct"));
+        }
+        if struct_type.kind != StructKind::Struct {
+            return Err(unsupported(shape, "non-record flattened struct"));
+        }
+
+        let container_has_default = shape.has_default_attr();
+        let mut fields = Vec::with_capacity(struct_type.fields.len());
+        let mut direct_indices = Vec::new();
+        let mut flattened = Vec::new();
+
+        for field in struct_type.fields {
+            let field_shape = field.shape();
+            let field_index = fields.len();
+
+            if field.is_flattened() {
+                if field.should_skip_deserializing() {
+                    return Err(unsupported(shape, "skipped flattened field"));
+                }
+                if field.effective_proxy(Some(JSON_FORMAT_NAMESPACE)).is_some() {
+                    return Err(unsupported(shape, "proxy flattened field"));
+                }
+
+                fields.push(FieldPlan {
+                    name: field.effective_name(),
+                    alias: field.alias,
+                    offset: field.offset,
+                    shape: field_shape,
+                    program: Vec::new(),
+                    scalar: None,
+                    missing: missing_field_action(field, container_has_default),
+                });
+                flattened.push(FlattenFieldPlan {
+                    field_index,
+                    kind: self.lower_flatten_kind(field_shape)?,
+                });
+            } else {
+                let (program, scalar) = self.lower_field_value(field)?;
+                fields.push(FieldPlan {
+                    name: field.effective_name(),
+                    alias: field.alias,
+                    offset: field.offset,
+                    shape: field_shape,
+                    program,
+                    scalar,
+                    missing: missing_field_action(field, container_has_default),
+                });
+                direct_indices.push(field_index);
+            }
+        }
+
+        let fields = fields.into_boxed_slice();
+        Ok(FlattenStructPlan {
+            tracking: StructTracking::for_len(fields.len()),
+            fields,
+            direct_indices: direct_indices.into_boxed_slice(),
+            flattened: flattened.into_boxed_slice(),
+        })
+    }
+
+    fn lower_flatten_kind(
+        &mut self,
+        shape: &'static Shape,
+    ) -> Result<FlattenKind<BlockId>, DeserializeError> {
+        if let Def::Option(option) = shape.def {
+            let inner = option.t();
+            let inner_layout = sized_layout(inner)?;
+            return match inner.ty {
+                Type::User(UserType::Struct(struct_type)) => Ok(FlattenKind::OptionStruct {
+                    option,
+                    inner_layout,
+                    plan: self.lower_flatten_struct_plan(inner, struct_type)?,
+                }),
+                Type::User(UserType::Enum(enum_type)) => Ok(FlattenKind::OptionExternalEnum {
+                    option,
+                    inner_layout,
+                    enum_type,
+                    variants: self.lower_external_enum_variants(inner, enum_type, true)?,
+                }),
+                _ => Err(unsupported(shape, "optional flattened non-struct/non-enum")),
+            };
+        }
+
+        match shape.ty {
+            Type::User(UserType::Struct(struct_type)) => Ok(FlattenKind::Struct {
+                plan: self.lower_flatten_struct_plan(shape, struct_type)?,
+            }),
+            Type::User(UserType::Enum(enum_type)) => Ok(FlattenKind::ExternalEnum {
+                enum_type,
+                variants: self.lower_external_enum_variants(shape, enum_type, true)?,
+            }),
+            _ => Err(unsupported(shape, "flattened non-struct/non-enum")),
+        }
+    }
+
+    fn lower_external_enum_variants(
         &mut self,
         shape: &'static Shape,
         enum_type: EnumType,
-    ) -> Result<Program<SymbolicOp>, DeserializeError> {
-        let tag_key = shape.get_tag_attr();
-        let content_key = shape.get_content_attr();
-        if tag_key.is_none() && content_key.is_some() {
-            return Err(unsupported(shape, "enum content key without tag key"));
-        }
+        flattened: bool,
+    ) -> Result<Box<[ExternalVariantPlan<BlockId>]>, DeserializeError> {
         if enum_type.is_cow {
             return Err(unsupported(shape, "cow enum"));
+        }
+        if flattened && (shape.get_tag_attr().is_some() || shape.get_content_attr().is_some()) {
+            return Err(unsupported(shape, "tagged flattened enum"));
         }
 
         let mut variants = Vec::with_capacity(enum_type.variants.len());
@@ -2631,8 +2782,8 @@ impl Lowering {
             let fields = fields.into_boxed_slice();
             let tracking = StructTracking::for_len(fields.len());
             let dispatch = RawFieldDispatch::for_fields(&fields);
-            if tag_key.is_some()
-                && content_key.is_none()
+            if shape.get_tag_attr().is_some()
+                && shape.get_content_attr().is_none()
                 && !matches!(variant.data.kind, StructKind::Unit | StructKind::Struct)
             {
                 return Err(unsupported(shape, "internally tagged tuple enum variant"));
@@ -2661,7 +2812,20 @@ impl Lowering {
             });
         }
 
-        let variants = variants.into_boxed_slice();
+        Ok(variants.into_boxed_slice())
+    }
+
+    fn lower_external_enum(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+    ) -> Result<Program<SymbolicOp>, DeserializeError> {
+        let tag_key = shape.get_tag_attr();
+        let content_key = shape.get_content_attr();
+        if tag_key.is_none() && content_key.is_some() {
+            return Err(unsupported(shape, "enum content key without tag key"));
+        }
+        let variants = self.lower_external_enum_variants(shape, enum_type, false)?;
         if shape.is_numeric() && tag_key.is_none() {
             return Ok(vec![JsonOp::ReadNumericEnum {
                 shape,
@@ -2783,6 +2947,10 @@ fn resolve_json_op(
             fields: resolve_field_plans(fields, refs)?,
             dispatch,
             loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::ReadFlattenStruct { shape, plan } => JsonOp::ReadFlattenStruct {
+            shape,
+            plan: resolve_flatten_struct_plan(plan, refs)?,
         },
         JsonOp::ReadExternalEnum {
             shape,
@@ -3011,6 +3179,72 @@ fn resolve_json_op(
             element_option_scalar,
             element_layout,
             loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+    })
+}
+
+fn resolve_flatten_struct_plan(
+    plan: FlattenStructPlan<BlockId>,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<FlattenStructPlan<ExecBlock>, DeserializeError> {
+    Ok(FlattenStructPlan {
+        fields: resolve_field_plans(plan.fields, refs)?,
+        direct_indices: plan.direct_indices,
+        flattened: resolve_flatten_field_plans(plan.flattened, refs)?,
+        tracking: plan.tracking,
+    })
+}
+
+fn resolve_flatten_field_plans(
+    fields: Box<[FlattenFieldPlan<BlockId>]>,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<Box<[FlattenFieldPlan<ExecBlock>]>, DeserializeError> {
+    fields
+        .into_vec()
+        .into_iter()
+        .map(|field| {
+            Ok(FlattenFieldPlan {
+                field_index: field.field_index,
+                kind: resolve_flatten_kind(field.kind, refs)?,
+            })
+        })
+        .collect()
+}
+
+fn resolve_flatten_kind(
+    kind: FlattenKind<BlockId>,
+    refs: &BTreeMap<BlockId, ExecBlock>,
+) -> Result<FlattenKind<ExecBlock>, DeserializeError> {
+    Ok(match kind {
+        FlattenKind::Struct { plan } => FlattenKind::Struct {
+            plan: resolve_flatten_struct_plan(plan, refs)?,
+        },
+        FlattenKind::OptionStruct {
+            option,
+            inner_layout,
+            plan,
+        } => FlattenKind::OptionStruct {
+            option,
+            inner_layout,
+            plan: resolve_flatten_struct_plan(plan, refs)?,
+        },
+        FlattenKind::ExternalEnum {
+            enum_type,
+            variants,
+        } => FlattenKind::ExternalEnum {
+            enum_type,
+            variants: resolve_external_variant_plans(variants, refs)?,
+        },
+        FlattenKind::OptionExternalEnum {
+            option,
+            inner_layout,
+            enum_type,
+            variants,
+        } => FlattenKind::OptionExternalEnum {
+            option,
+            inner_layout,
+            enum_type,
+            variants: resolve_external_variant_plans(variants, refs)?,
         },
     })
 }
@@ -4383,12 +4617,20 @@ where
         variant: &'variant ExternalVariantPlan<ExecBlock>,
         key: &[u8],
     ) -> Option<(usize, &'variant FieldPlan<ExecBlock>)> {
-        if let Some(dispatch) = &variant.dispatch {
+        Self::captured_struct_field(&variant.fields, variant.dispatch.as_ref(), key)
+    }
+
+    fn captured_struct_field<'fields>(
+        fields: &'fields [FieldPlan<ExecBlock>],
+        dispatch: Option<&RawFieldDispatch>,
+        key: &[u8],
+    ) -> Option<(usize, &'fields FieldPlan<ExecBlock>)> {
+        if let Some(dispatch) = dispatch {
             let mut candidates = dispatch.candidates(key);
             while candidates != 0 {
                 let index = candidates.trailing_zeros() as usize;
                 candidates &= candidates - 1;
-                let field = &variant.fields[index];
+                let field = &fields[index];
                 if field.matches_key_bytes(key) {
                     return Some((index, field));
                 }
@@ -4396,11 +4638,40 @@ where
             return None;
         }
 
-        variant
-            .fields
+        fields
             .iter()
             .enumerate()
             .find(|(_, field)| field.matches_key_bytes(key))
+    }
+
+    fn flatten_direct_field<'plan>(
+        plan: &'plan FlattenStructPlan<ExecBlock>,
+        key: &[u8],
+    ) -> Option<(usize, &'plan FieldPlan<ExecBlock>)> {
+        plan.direct_indices.iter().copied().find_map(|index| {
+            let field = &plan.fields[index];
+            field.matches_key_bytes(key).then_some((index, field))
+        })
+    }
+
+    fn flatten_struct_matches_key(plan: &FlattenStructPlan<ExecBlock>, key: &[u8]) -> bool {
+        Self::flatten_direct_field(plan, key).is_some()
+            || plan
+                .flattened
+                .iter()
+                .any(|field| Self::flatten_kind_matches_key(&field.kind, key))
+    }
+
+    fn flatten_kind_matches_key(kind: &FlattenKind<ExecBlock>, key: &[u8]) -> bool {
+        match kind {
+            FlattenKind::Struct { plan } | FlattenKind::OptionStruct { plan, .. } => {
+                Self::flatten_struct_matches_key(plan, key)
+            }
+            FlattenKind::ExternalEnum { variants, .. }
+            | FlattenKind::OptionExternalEnum { variants, .. } => variants.iter().any(|variant| {
+                !variant.variant.is_other() && variant.variant.effective_name().as_bytes() == key
+            }),
+        }
     }
 
     fn write_raw_field_value(
@@ -4474,6 +4745,349 @@ where
             self.finish_struct_frame(variant.tracking)?;
         }
         Ok(())
+    }
+
+    fn read_flatten_struct(
+        &mut self,
+        shape: &'static Shape,
+        plan: &'program FlattenStructPlan<ExecBlock>,
+    ) -> Result<(), DeserializeError> {
+        let fields = self.collect_tagged_raw_fields("struct with flattened fields")?;
+        let mut claimed = vec![None; fields.len()];
+        self.read_flatten_struct_from_fields(shape, plan, &fields, &mut claimed, true)?;
+        Ok(())
+    }
+
+    fn read_flatten_struct_from_fields(
+        &mut self,
+        shape: &'static Shape,
+        plan: &'program FlattenStructPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+        reject_unknowns: bool,
+    ) -> Result<usize, DeserializeError> {
+        self.push_struct_frame(shape, &plan.fields, None, plan.tracking);
+        let matched = self.read_flatten_struct_contents(shape, plan, fields, claimed);
+        if matched.is_ok() && reject_unknowns {
+            self.reject_unclaimed_flatten_fields(shape, fields, claimed)?;
+        }
+        let matched = matched?;
+        unsafe {
+            self.finish_struct_frame(plan.tracking)?;
+        }
+        Ok(matched)
+    }
+
+    fn read_flatten_struct_contents(
+        &mut self,
+        shape: &'static Shape,
+        plan: &'program FlattenStructPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+    ) -> Result<usize, DeserializeError> {
+        let mut matched = 0usize;
+        for (raw_index, raw_field) in fields.iter().enumerate() {
+            let Some((field_index, field)) =
+                Self::flatten_direct_field(plan, raw_field.name.as_ref().as_bytes())
+            else {
+                continue;
+            };
+
+            self.ensure_flatten_raw_unclaimed(raw_field, claimed[raw_index])?;
+            if let Some(first_span) = self.struct_seen_span(plan.tracking, field_index) {
+                return Err(Self::duplicate_flatten_field(raw_field, first_span));
+            }
+
+            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+            self.write_raw_field_value(field, field_ptr, raw_field.raw)?;
+            self.mark_struct_field(plan.tracking, field_index, raw_field.span);
+            claimed[raw_index] = Some(raw_field.span);
+            matched += 1;
+        }
+
+        for flattened in &plan.flattened {
+            matched += self.read_flatten_field(shape, plan, flattened, fields, claimed)?;
+        }
+
+        Ok(matched)
+    }
+
+    fn read_flatten_field(
+        &mut self,
+        _shape: &'static Shape,
+        parent: &'program FlattenStructPlan<ExecBlock>,
+        flattened: &'program FlattenFieldPlan<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+    ) -> Result<usize, DeserializeError> {
+        let field = &parent.fields[flattened.field_index];
+        match &flattened.kind {
+            FlattenKind::Struct { plan } => {
+                let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+                let old_base = self.base;
+                self.base = field_ptr;
+                let result =
+                    self.read_flatten_struct_from_fields(field.shape, plan, fields, claimed, false);
+                self.base = old_base;
+                let matched = result?;
+                let span = Self::first_flatten_kind_match_span(&flattened.kind, fields)
+                    .unwrap_or_default();
+                self.mark_flatten_parent_field(
+                    parent.tracking,
+                    flattened.field_index,
+                    field,
+                    span,
+                )?;
+                Ok(matched)
+            }
+            FlattenKind::OptionStruct {
+                option,
+                inner_layout,
+                plan,
+            } => {
+                let Some(span) = Self::first_flatten_kind_match_span(&flattened.kind, fields)
+                else {
+                    return Ok(0);
+                };
+
+                let scratch = self.scratch.reserve(*inner_layout);
+                let old_base = self.base;
+                self.base = scratch_ptr_uninit(&scratch);
+                let result =
+                    self.read_flatten_struct_from_fields(option.t(), plan, fields, claimed, false);
+                self.base = old_base;
+                let matched = result?;
+                unsafe {
+                    (option.vtable.init_some)(
+                        self.base.field_uninit(field.offset),
+                        scratch_ptr_mut(&scratch),
+                    );
+                }
+                self.scratch.release(scratch);
+                self.mark_flatten_parent_field(
+                    parent.tracking,
+                    flattened.field_index,
+                    field,
+                    span,
+                )?;
+                Ok(matched)
+            }
+            FlattenKind::ExternalEnum {
+                enum_type,
+                variants,
+            } => self.read_flatten_external_enum_field(
+                parent,
+                flattened.field_index,
+                field,
+                FlattenExternalEnumRef {
+                    enum_type: *enum_type,
+                    variants,
+                },
+                fields,
+                claimed,
+            ),
+            FlattenKind::OptionExternalEnum {
+                option,
+                inner_layout,
+                enum_type,
+                variants,
+            } => {
+                let Some((raw_index, raw_field, variant)) =
+                    self.select_flatten_external_variant(variants, fields, claimed)?
+                else {
+                    return Ok(0);
+                };
+
+                let scratch = self.scratch.reserve(*inner_layout);
+                let old_base = self.base;
+                self.base = scratch_ptr_uninit(&scratch);
+                let result = self.read_flatten_external_variant_payload(
+                    option.t(),
+                    *enum_type,
+                    variant,
+                    raw_field,
+                );
+                self.base = old_base;
+                result?;
+                unsafe {
+                    (option.vtable.init_some)(
+                        self.base.field_uninit(field.offset),
+                        scratch_ptr_mut(&scratch),
+                    );
+                }
+                self.scratch.release(scratch);
+
+                claimed[raw_index] = Some(raw_field.span);
+                self.mark_flatten_parent_field(
+                    parent.tracking,
+                    flattened.field_index,
+                    field,
+                    raw_field.span,
+                )?;
+                Ok(1)
+            }
+        }
+    }
+
+    fn read_flatten_external_enum_field(
+        &mut self,
+        parent: &'program FlattenStructPlan<ExecBlock>,
+        field_index: usize,
+        field: &'program FieldPlan<ExecBlock>,
+        enum_ref: FlattenExternalEnumRef<'program>,
+        fields: &[TaggedRawField<'de>],
+        claimed: &mut [Option<Span>],
+    ) -> Result<usize, DeserializeError> {
+        let Some((raw_index, raw_field, variant)) =
+            self.select_flatten_external_variant(enum_ref.variants, fields, claimed)?
+        else {
+            return Ok(0);
+        };
+
+        let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+        let old_base = self.base;
+        self.base = field_ptr;
+        let result = self.read_flatten_external_variant_payload(
+            field.shape,
+            enum_ref.enum_type,
+            variant,
+            raw_field,
+        );
+        self.base = old_base;
+        result?;
+
+        claimed[raw_index] = Some(raw_field.span);
+        self.mark_flatten_parent_field(parent.tracking, field_index, field, raw_field.span)?;
+        Ok(1)
+    }
+
+    fn select_flatten_external_variant<'fields>(
+        &self,
+        variants: &'program [ExternalVariantPlan<ExecBlock>],
+        fields: &'fields [TaggedRawField<'de>],
+        claimed: &[Option<Span>],
+    ) -> Result<Option<FlattenVariantSelection<'fields, 'de, 'program>>, DeserializeError> {
+        let mut selected: Option<FlattenVariantSelection<'fields, 'de, 'program>> = None;
+        for (raw_index, raw_field) in fields.iter().enumerate() {
+            let Some(variant) = find_external_variant(variants, raw_field.name.as_ref()) else {
+                continue;
+            };
+            self.ensure_flatten_raw_unclaimed(raw_field, claimed[raw_index])?;
+            if let Some((_, first, _)) = selected {
+                return Err(Self::duplicate_flatten_field(raw_field, first.span));
+            }
+            selected = Some((raw_index, raw_field, variant));
+        }
+        Ok(selected)
+    }
+
+    fn read_flatten_external_variant_payload(
+        &mut self,
+        shape: &'static Shape,
+        enum_type: EnumType,
+        variant: &'program ExternalVariantPlan<ExecBlock>,
+        raw_field: &TaggedRawField<'de>,
+    ) -> Result<(), DeserializeError> {
+        unsafe {
+            write_enum_discriminant(shape, enum_type, variant.variant, self.base)?;
+        }
+
+        match variant.variant.data.kind {
+            StructKind::Unit => self.consume_raw_unit_variant_payload(raw_field.raw),
+            StructKind::Tuple | StructKind::TupleStruct if variant.fields.len() == 1 => self
+                .read_raw_single_field_variant_payload(
+                    shape,
+                    variant,
+                    raw_field.raw,
+                    raw_field.span,
+                ),
+            StructKind::Tuple | StructKind::TupleStruct => {
+                self.read_raw_tuple_variant_payload(shape, variant, raw_field.raw)
+            }
+            StructKind::Struct => {
+                self.read_raw_struct_variant_payload(shape, variant, raw_field.raw)
+            }
+        }
+    }
+
+    fn mark_flatten_parent_field(
+        &mut self,
+        tracking: StructTracking,
+        field_index: usize,
+        field: &FieldPlan<ExecBlock>,
+        span: Span,
+    ) -> Result<(), DeserializeError> {
+        if let Some(first_span) = self.struct_seen_span(tracking, field_index) {
+            return Err(vm_error(
+                Some(span),
+                DeserializeErrorKind::DuplicateField {
+                    field: field.name.into(),
+                    first_span: Some(first_span),
+                },
+            ));
+        }
+        self.mark_struct_field(tracking, field_index, span);
+        Ok(())
+    }
+
+    fn reject_unclaimed_flatten_fields(
+        &self,
+        shape: &'static Shape,
+        fields: &[TaggedRawField<'de>],
+        claimed: &[Option<Span>],
+    ) -> Result<(), DeserializeError> {
+        if !shape.has_deny_unknown_fields_attr() {
+            return Ok(());
+        }
+
+        for (raw_field, claimed) in fields.iter().zip(claimed.iter()) {
+            if claimed.is_none() {
+                return Err(vm_error(
+                    Some(raw_field.span),
+                    DeserializeErrorKind::UnknownField {
+                        field: raw_field.name.to_string().into(),
+                        suggestion: None,
+                    },
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn first_flatten_kind_match_span(
+        kind: &FlattenKind<ExecBlock>,
+        fields: &[TaggedRawField<'de>],
+    ) -> Option<Span> {
+        fields
+            .iter()
+            .find(|raw_field| {
+                Self::flatten_kind_matches_key(kind, raw_field.name.as_ref().as_bytes())
+            })
+            .map(|raw_field| raw_field.span)
+    }
+
+    fn ensure_flatten_raw_unclaimed(
+        &self,
+        raw_field: &TaggedRawField<'de>,
+        claimed: Option<Span>,
+    ) -> Result<(), DeserializeError> {
+        if let Some(first_span) = claimed {
+            return Err(Self::duplicate_flatten_field(raw_field, first_span));
+        }
+        Ok(())
+    }
+
+    fn duplicate_flatten_field(
+        raw_field: &TaggedRawField<'de>,
+        first_span: Span,
+    ) -> DeserializeError {
+        vm_error(
+            Some(raw_field.span),
+            DeserializeErrorKind::DuplicateField {
+                field: raw_field.name.to_string().into(),
+                first_span: Some(first_span),
+            },
+        )
     }
 
     fn read_raw_single_field_variant_payload(
@@ -6822,6 +7436,10 @@ where
                     *loop_id,
                     Continuation::FinishStruct { tracking },
                 ))
+            }
+            JsonOp::ReadFlattenStruct { shape, plan } => {
+                self.read_flatten_struct(shape, plan)?;
+                Ok(Control::Continue)
             }
             JsonOp::ReadExternalEnum {
                 shape,
