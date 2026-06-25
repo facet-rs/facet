@@ -1273,7 +1273,12 @@ impl JsonNativeState {
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
         let mut interp = JsonInterp::new(parser, self.base, &[]);
-        interp.read_scalar_struct(info.shape, &info.fields, info.dispatch.as_ref())?;
+        interp.read_scalar_struct(
+            info.shape,
+            &info.fields,
+            info.dispatch.as_ref(),
+            info.shape.vtable.has_invariants(),
+        )?;
         interp.finish_success();
         Ok(())
     }
@@ -1695,7 +1700,18 @@ enum JsonOp<Block> {
         fields: Box<[ScalarFieldPlan]>,
         dispatch: Option<RawFieldDispatch>,
     },
+    ReadScalarStructValidate {
+        shape: &'static Shape,
+        fields: Box<[ScalarFieldPlan]>,
+        dispatch: Option<RawFieldDispatch>,
+    },
     ReadStruct {
+        shape: &'static Shape,
+        fields: Box<[FieldPlan<Block>]>,
+        dispatch: Option<RawFieldDispatch>,
+        loop_id: Block,
+    },
+    ReadStructValidate {
         shape: &'static Shape,
         fields: Box<[FieldPlan<Block>]>,
         dispatch: Option<RawFieldDispatch>,
@@ -1703,7 +1719,7 @@ enum JsonOp<Block> {
     },
     ReadFlattenStruct {
         shape: &'static Shape,
-        plan: FlattenStructPlan<Block>,
+        plan: Box<FlattenStructPlan<Block>>,
     },
     ReadExternalEnum {
         shape: &'static Shape,
@@ -1909,12 +1925,12 @@ struct FlattenFieldPlan<Block> {
 #[derive(Clone, Debug)]
 enum FlattenKind<Block> {
     Struct {
-        plan: FlattenStructPlan<Block>,
+        plan: Box<FlattenStructPlan<Block>>,
     },
     OptionStruct {
         option: OptionDef,
         inner_layout: Layout,
-        plan: FlattenStructPlan<Block>,
+        plan: Box<FlattenStructPlan<Block>>,
     },
     ExternalEnum {
         enum_type: EnumType,
@@ -1932,7 +1948,7 @@ enum FlattenKind<Block> {
     },
     Map {
         map: MapDef,
-        key_plan: MapKeyPlan,
+        key_plan: Box<MapKeyPlan>,
         value_program: Program<JsonOp<Block>>,
         value_scalar: Option<ScalarPlan>,
         value_layout: Layout,
@@ -1947,7 +1963,7 @@ struct ExternalVariantPlan<Block> {
     dispatch: Option<RawFieldDispatch>,
     loop_id: Option<Block>,
     tracking: StructTracking,
-    flatten: Option<FlattenStructPlan<Block>>,
+    flatten: Option<Box<FlattenStructPlan<Block>>>,
 }
 
 struct TaggedRawField<'de> {
@@ -2585,7 +2601,7 @@ impl Lowering {
                     if struct_type.fields.iter().any(Field::is_flattened) {
                         return Ok(vec![JsonOp::ReadFlattenStruct {
                             shape,
-                            plan: self.lower_flatten_struct_plan(shape, struct_type)?,
+                            plan: Box::new(self.lower_flatten_struct_plan(shape, struct_type)?),
                         }]);
                     }
 
@@ -2614,9 +2630,17 @@ impl Lowering {
                             });
                         }
                         let dispatch = RawFieldDispatch::for_fields(&fields);
+                        let fields = fields.into_boxed_slice();
+                        if shape.vtable.has_invariants() {
+                            return Ok(vec![JsonOp::ReadScalarStructValidate {
+                                shape,
+                                fields,
+                                dispatch,
+                            }]);
+                        }
                         return Ok(vec![JsonOp::ReadScalarStruct {
                             shape,
-                            fields: fields.into_boxed_slice(),
+                            fields,
                             dispatch,
                         }]);
                     }
@@ -2646,6 +2670,14 @@ impl Lowering {
                         tracking,
                     }];
                     self.lowered.blocks.insert(loop_id, loop_program);
+                    if shape.vtable.has_invariants() {
+                        return Ok(vec![JsonOp::ReadStructValidate {
+                            shape,
+                            fields,
+                            dispatch,
+                            loop_id,
+                        }]);
+                    }
                     Ok(vec![JsonOp::ReadStruct {
                         shape,
                         fields,
@@ -2909,7 +2941,7 @@ impl Lowering {
                 Type::User(UserType::Struct(struct_type)) => Ok(FlattenKind::OptionStruct {
                     option,
                     inner_layout,
-                    plan: self.lower_flatten_struct_plan(inner, struct_type)?,
+                    plan: Box::new(self.lower_flatten_struct_plan(inner, struct_type)?),
                 }),
                 Type::User(UserType::Enum(enum_type)) => Ok(FlattenKind::OptionExternalEnum {
                     option,
@@ -2926,7 +2958,7 @@ impl Lowering {
         if let Def::Map(map) = shape.def {
             return Ok(FlattenKind::Map {
                 map,
-                key_plan: self.lower_map_key_plan(map.k())?,
+                key_plan: Box::new(self.lower_map_key_plan(map.k())?),
                 value_program: self.lower_shape(map.v())?,
                 value_scalar: ScalarType::try_from_shape(map.v()).map(ScalarPlan::new),
                 value_layout: sized_layout(map.v())?,
@@ -2935,7 +2967,7 @@ impl Lowering {
 
         match shape.ty {
             Type::User(UserType::Struct(struct_type)) => Ok(FlattenKind::Struct {
-                plan: self.lower_flatten_struct_plan(shape, struct_type)?,
+                plan: Box::new(self.lower_flatten_struct_plan(shape, struct_type)?),
             }),
             Type::User(UserType::Enum(enum_type)) => Ok(FlattenKind::ExternalEnum {
                 enum_type,
@@ -2962,7 +2994,9 @@ impl Lowering {
             let flatten = if variant.data.kind == StructKind::Struct
                 && variant.data.fields.iter().any(Field::is_flattened)
             {
-                Some(self.lower_flatten_variant_plan(shape, variant.data.fields)?)
+                Some(Box::new(
+                    self.lower_flatten_variant_plan(shape, variant.data.fields)?,
+                ))
             } else {
                 None
             };
@@ -3210,6 +3244,15 @@ fn resolve_json_op(
             fields,
             dispatch,
         },
+        JsonOp::ReadScalarStructValidate {
+            shape,
+            fields,
+            dispatch,
+        } => JsonOp::ReadScalarStructValidate {
+            shape,
+            fields,
+            dispatch,
+        },
         JsonOp::ReadStruct {
             shape,
             fields,
@@ -3221,9 +3264,20 @@ fn resolve_json_op(
             dispatch,
             loop_id: resolve_block_ref(loop_id, refs)?,
         },
+        JsonOp::ReadStructValidate {
+            shape,
+            fields,
+            dispatch,
+            loop_id,
+        } => JsonOp::ReadStructValidate {
+            shape,
+            fields: resolve_field_plans(fields, refs)?,
+            dispatch,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
         JsonOp::ReadFlattenStruct { shape, plan } => JsonOp::ReadFlattenStruct {
             shape,
-            plan: resolve_flatten_struct_plan(plan, refs)?,
+            plan: Box::new(resolve_flatten_struct_plan(*plan, refs)?),
         },
         JsonOp::ReadExternalEnum {
             shape,
@@ -3497,7 +3551,7 @@ fn resolve_flatten_kind(
 ) -> Result<FlattenKind<ExecBlock>, DeserializeError> {
     Ok(match kind {
         FlattenKind::Struct { plan } => FlattenKind::Struct {
-            plan: resolve_flatten_struct_plan(plan, refs)?,
+            plan: Box::new(resolve_flatten_struct_plan(*plan, refs)?),
         },
         FlattenKind::OptionStruct {
             option,
@@ -3506,7 +3560,7 @@ fn resolve_flatten_kind(
         } => FlattenKind::OptionStruct {
             option,
             inner_layout,
-            plan: resolve_flatten_struct_plan(plan, refs)?,
+            plan: Box::new(resolve_flatten_struct_plan(*plan, refs)?),
         },
         FlattenKind::ExternalEnum {
             enum_type,
@@ -3577,7 +3631,7 @@ fn resolve_external_variant_plan(
         tracking: variant.tracking,
         flatten: variant
             .flatten
-            .map(|plan| resolve_flatten_struct_plan(plan, refs))
+            .map(|plan| resolve_flatten_struct_plan(*plan, refs).map(Box::new))
             .transpose()?,
     })
 }
@@ -4258,14 +4312,12 @@ fn unsupported(shape: &'static Shape, what: &'static str) -> DeserializeError {
     )
 }
 
+#[cold]
+#[inline(never)]
 fn validate_completed_shape(
     shape: &'static Shape,
     base: PtrUninit,
 ) -> Result<(), DeserializeError> {
-    if !shape.vtable.has_invariants() {
-        return Ok(());
-    }
-
     if let Some(Err(message)) = unsafe { shape.call_invariants(base.assume_init().as_const()) } {
         return Err(vm_error(
             None,
@@ -4625,7 +4677,7 @@ where
         };
 
         self.push_struct_frame(shape, fields, None, tracking);
-        self.read_tuple_struct_next(fields, tracking, 0, mode)
+        self.read_tuple_struct_next(fields, tracking, 0, mode, shape.vtable.has_invariants())
     }
 
     fn read_tuple_struct_next(
@@ -4634,6 +4686,7 @@ where
         tracking: StructTracking,
         mut next_index: usize,
         mode: TupleContainerMode,
+        validate: bool,
     ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
     {
         loop {
@@ -4642,7 +4695,7 @@ where
                     TupleContainerMode::Sequence => {
                         if self.parser.consume_sequence_end_if_next()? {
                             unsafe {
-                                self.finish_struct_frame(tracking)?;
+                                self.finish_struct_frame_with_validation(tracking, validate)?;
                             }
                             return Ok(Control::Continue);
                         }
@@ -4661,7 +4714,7 @@ where
                     TupleContainerMode::Object => match self.parser.next_object_key_or_end()? {
                         JsonObjectKeyStep::End => {
                             unsafe {
-                                self.finish_struct_frame(tracking)?;
+                                self.finish_struct_frame_with_validation(tracking, validate)?;
                             }
                             return Ok(Control::Continue);
                         }
@@ -4726,6 +4779,7 @@ where
                     index: next_index,
                     old_base,
                     mode,
+                    validate,
                 },
             ));
         }
@@ -4855,6 +4909,21 @@ where
         &mut self,
         tracking: StructTracking,
     ) -> Result<(), DeserializeError> {
+        unsafe { self.finish_struct_frame_with_validation(tracking, true) }
+    }
+
+    unsafe fn finish_struct_frame_unchecked(
+        &mut self,
+        tracking: StructTracking,
+    ) -> Result<(), DeserializeError> {
+        unsafe { self.finish_struct_frame_with_validation(tracking, false) }
+    }
+
+    unsafe fn finish_struct_frame_with_validation(
+        &mut self,
+        tracking: StructTracking,
+        validate: bool,
+    ) -> Result<(), DeserializeError> {
         match tracking {
             StructTracking::Inline => {
                 let frame = self
@@ -4862,7 +4931,7 @@ where
                     .pop()
                     .expect("inline struct frame is present after struct program");
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(validate)?;
                 }
             }
             StructTracking::Bitset | StructTracking::Heap => {
@@ -4871,7 +4940,7 @@ where
                     .pop()
                     .expect("large struct frame is present after struct program");
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(validate)?;
                 }
             }
         }
@@ -5297,7 +5366,7 @@ where
         }
 
         unsafe {
-            self.finish_struct_frame(tracking)?;
+            self.finish_struct_frame_with_validation(tracking, shape.vtable.has_invariants())?;
         }
         Ok(())
     }
@@ -5334,7 +5403,7 @@ where
                 );
                 self.read_captured_scalar_struct_frame(shape, &mut frame, raw_fields, skip_keys)?;
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(shape.vtable.has_invariants())?;
                 }
             }
             StructTracking::Bitset => {
@@ -5343,7 +5412,7 @@ where
                 );
                 self.read_captured_scalar_struct_frame(shape, &mut frame, raw_fields, skip_keys)?;
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(shape.vtable.has_invariants())?;
                 }
             }
             StructTracking::Heap => {
@@ -5352,7 +5421,7 @@ where
                 );
                 self.read_captured_scalar_struct_frame(shape, &mut frame, raw_fields, skip_keys)?;
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(shape.vtable.has_invariants())?;
                 }
             }
         }
@@ -5809,6 +5878,7 @@ where
                         variant.tracking,
                     );
                     self.read_flatten_captured_variant_fields(
+                        shape,
                         variant,
                         fields,
                         claimed,
@@ -5858,15 +5928,16 @@ where
 
     fn read_flatten_captured_variant_fields(
         &mut self,
+        shape: &'static Shape,
         variant: &'program ExternalVariantPlan<ExecBlock>,
         fields: &[TaggedRawField<'de>],
         claimed: &mut [Option<Span>],
         skip_keys: &[&'static str],
     ) -> Result<usize, DeserializeError> {
         self.read_flatten_captured_record_fields(
+            shape,
             &variant.fields,
             variant.dispatch.as_ref(),
-            variant.tracking,
             fields,
             claimed,
             skip_keys,
@@ -5875,13 +5946,14 @@ where
 
     fn read_flatten_captured_record_fields(
         &mut self,
+        shape: &'static Shape,
         record_fields: &'program [FieldPlan<ExecBlock>],
         dispatch: Option<&RawFieldDispatch>,
-        tracking: StructTracking,
         fields: &[TaggedRawField<'de>],
         claimed: &mut [Option<Span>],
         skip_keys: &[&'static str],
     ) -> Result<usize, DeserializeError> {
+        let tracking = StructTracking::for_len(record_fields.len());
         let mut matched = 0usize;
         for (raw_index, raw_field) in fields.iter().enumerate() {
             if skip_keys.iter().any(|key| raw_field.name.as_ref() == *key) {
@@ -5909,7 +5981,7 @@ where
         }
 
         unsafe {
-            self.finish_struct_frame(tracking)?;
+            self.finish_struct_frame_with_validation(tracking, shape.vtable.has_invariants())?;
         }
         Ok(matched)
     }
@@ -5932,7 +6004,7 @@ where
                     &mut frame, raw_fields, claimed, skip_keys,
                 )?;
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(shape.vtable.has_invariants())?;
                 }
                 Ok(matched)
             }
@@ -5944,7 +6016,7 @@ where
                     &mut frame, raw_fields, claimed, skip_keys,
                 )?;
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(shape.vtable.has_invariants())?;
                 }
                 Ok(matched)
             }
@@ -5956,7 +6028,7 @@ where
                     &mut frame, raw_fields, claimed, skip_keys,
                 )?;
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(shape.vtable.has_invariants())?;
                 }
                 Ok(matched)
             }
@@ -6086,19 +6158,31 @@ where
                 fields: record_fields,
                 dispatch,
                 ..
+            })
+            | Some(JsonOp::ReadStructValidate {
+                shape,
+                fields: record_fields,
+                dispatch,
+                ..
             }) => {
                 let tracking = StructTracking::for_len(record_fields.len());
                 self.push_struct_frame(shape, record_fields, dispatch.as_ref(), tracking);
                 self.read_flatten_captured_record_fields(
+                    shape,
                     record_fields,
                     dispatch.as_ref(),
-                    tracking,
                     fields,
                     claimed,
                     skip_tag_keys,
                 )
             }
             Some(JsonOp::ReadScalarStruct {
+                shape,
+                fields: scalar_fields,
+                dispatch,
+                ..
+            })
+            | Some(JsonOp::ReadScalarStructValidate {
                 shape,
                 fields: scalar_fields,
                 dispatch,
@@ -6489,6 +6573,12 @@ where
                 fields: record_fields,
                 dispatch,
                 ..
+            })
+            | Some(JsonOp::ReadStructValidate {
+                shape,
+                fields: record_fields,
+                dispatch,
+                ..
             }) => {
                 let tracking = StructTracking::for_len(record_fields.len());
                 self.push_struct_frame(shape, record_fields, dispatch.as_ref(), tracking);
@@ -6502,6 +6592,12 @@ where
                 )
             }
             Some(JsonOp::ReadScalarStruct {
+                shape,
+                fields: scalar_fields,
+                dispatch,
+                ..
+            })
+            | Some(JsonOp::ReadScalarStructValidate {
                 shape,
                 fields: scalar_fields,
                 dispatch,
@@ -6542,8 +6638,16 @@ where
                         Some(JsonOp::ReadStruct {
                             fields: record_fields,
                             ..
+                        })
+                        | Some(JsonOp::ReadStructValidate {
+                            fields: record_fields,
+                            ..
                         }) => field_plan_match_score(record_fields, fields)?,
                         Some(JsonOp::ReadScalarStruct {
+                            fields: scalar_fields,
+                            ..
+                        })
+                        | Some(JsonOp::ReadScalarStructValidate {
                             fields: scalar_fields,
                             ..
                         }) => scalar_field_plan_match_score(scalar_fields, fields)?,
@@ -7051,13 +7155,14 @@ where
         &mut self,
         tracking: StructTracking,
         close_object: bool,
+        validate: bool,
     ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
     {
         if close_object {
             self.consume_external_enum_object_end()?;
         }
         unsafe {
-            self.finish_struct_frame(tracking)?;
+            self.finish_struct_frame_with_validation(tracking, validate)?;
         }
         Ok(Control::Continue)
     }
@@ -7087,7 +7192,11 @@ where
                 scalar.write(field.shape, field_ptr, value, value_span)?;
             }
             self.mark_struct_field(variant.tracking, 0, span);
-            return self.finish_external_enum_payload(variant.tracking, close_object);
+            return self.finish_external_enum_payload(
+                variant.tracking,
+                close_object,
+                shape.vtable.has_invariants(),
+            );
         }
 
         let old_base = self.base;
@@ -7100,6 +7209,7 @@ where
                 span,
                 old_base,
                 close_object,
+                validate: shape.vtable.has_invariants(),
             },
         ))
     }
@@ -7117,7 +7227,13 @@ where
             variant.dispatch.as_ref(),
             variant.tracking,
         );
-        self.read_external_enum_tuple_next(&variant.fields, variant.tracking, 0, true)
+        self.read_external_enum_tuple_next(
+            &variant.fields,
+            variant.tracking,
+            0,
+            true,
+            shape.vtable.has_invariants(),
+        )
     }
 
     fn read_external_enum_tuple_next(
@@ -7126,12 +7242,13 @@ where
         tracking: StructTracking,
         mut next_index: usize,
         close_object: bool,
+        validate: bool,
     ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
     {
         loop {
             let Some(field) = fields.get(next_index) else {
                 if self.parser.consume_sequence_end_if_next()? {
-                    return self.finish_external_enum_payload(tracking, close_object);
+                    return self.finish_external_enum_payload(tracking, close_object, validate);
                 }
 
                 let got = match self.parser.peek_event()? {
@@ -7182,6 +7299,7 @@ where
                     span,
                     old_base,
                     close_object,
+                    validate,
                 },
             ));
         }
@@ -7321,6 +7439,7 @@ where
                                 loop_id,
                                 Continuation::ExternalEnumStruct {
                                     tracking: variant.tracking,
+                                    validate: shape.vtable.has_invariants(),
                                 },
                             ))
                         }
@@ -8096,11 +8215,12 @@ where
         shape: &'static Shape,
         fields: &'program [ScalarFieldPlan],
         dispatch: Option<&'program RawFieldDispatch>,
+        validate: bool,
     ) -> Result<(), DeserializeError> {
         self.parser.consume_object_start_fast()?;
         let base = self.base;
         if fields.len() <= TINY_SCALAR_STRUCT_MAX_FIELDS {
-            return self.read_tiny_scalar_struct_fields(shape, base, fields);
+            return self.read_tiny_scalar_struct_fields(shape, base, fields, validate);
         }
 
         match StructTracking::for_len(fields.len()) {
@@ -8110,7 +8230,7 @@ where
                 );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(validate)?;
                 }
             }
             StructTracking::Bitset => {
@@ -8119,7 +8239,7 @@ where
                 );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(validate)?;
                 }
             }
             StructTracking::Heap => {
@@ -8128,7 +8248,7 @@ where
                 );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
-                    frame.fill_missing_fields()?;
+                    frame.fill_missing_fields(validate)?;
                 }
             }
         }
@@ -8140,10 +8260,13 @@ where
         shape: &'static Shape,
         base: PtrUninit,
         fields: &'program [ScalarFieldPlan],
+        validate: bool,
     ) -> Result<(), DeserializeError> {
         let mut frame = TinyScalarStructFrame::new(shape, base, fields);
         if self.try_read_fused_tiny_i32_struct_fields(&mut frame)? {
-            validate_completed_shape(shape, base)?;
+            if validate {
+                validate_completed_shape(shape, base)?;
+            }
             core::mem::forget(frame);
             return Ok(());
         }
@@ -8195,11 +8318,13 @@ where
         }
 
         if frame.all_initialized() {
-            validate_completed_shape(shape, base)?;
+            if validate {
+                validate_completed_shape(shape, base)?;
+            }
             core::mem::forget(frame);
         } else {
             unsafe {
-                frame.fill_missing_fields()?;
+                frame.fill_missing_fields(validate)?;
             }
         }
         Ok(())
@@ -8933,10 +9058,32 @@ where
                 fields,
                 dispatch,
             } => {
-                self.read_scalar_struct(shape, fields, dispatch.as_ref())?;
+                self.read_scalar_struct(shape, fields, dispatch.as_ref(), false)?;
+                Ok(Control::Continue)
+            }
+            JsonOp::ReadScalarStructValidate {
+                shape,
+                fields,
+                dispatch,
+            } => {
+                self.read_scalar_struct(shape, fields, dispatch.as_ref(), true)?;
                 Ok(Control::Continue)
             }
             JsonOp::ReadStruct {
+                shape,
+                fields,
+                dispatch,
+                loop_id,
+            } => {
+                self.parser.consume_object_start_fast()?;
+                let tracking = StructTracking::for_len(fields.len());
+                self.push_struct_frame(shape, fields, dispatch.as_ref(), tracking);
+                Ok(Control::CallBlockThen(
+                    *loop_id,
+                    Continuation::FinishStructUnchecked { tracking },
+                ))
+            }
+            JsonOp::ReadStructValidate {
                 shape,
                 fields,
                 dispatch,
@@ -9380,6 +9527,12 @@ where
                 }
                 Ok(Control::Continue)
             }
+            Continuation::FinishStructUnchecked { tracking } => {
+                unsafe {
+                    self.finish_struct_frame_unchecked(tracking)?;
+                }
+                Ok(Control::Continue)
+            }
             Continuation::FieldDone {
                 tracking,
                 index,
@@ -9397,10 +9550,11 @@ where
                 index,
                 old_base,
                 mode,
+                validate,
             } => {
                 self.mark_struct_field(tracking, index, Span { offset: 0, len: 0 });
                 self.base = old_base;
-                self.read_tuple_struct_next(fields, tracking, index + 1, mode)
+                self.read_tuple_struct_next(fields, tracking, index + 1, mode, validate)
             }
             Continuation::ExternalEnumSingleField {
                 tracking,
@@ -9408,10 +9562,11 @@ where
                 span,
                 old_base,
                 close_object,
+                validate,
             } => {
                 self.mark_struct_field(tracking, index, span);
                 self.base = old_base;
-                self.finish_external_enum_payload(tracking, close_object)
+                self.finish_external_enum_payload(tracking, close_object, validate)
             }
             Continuation::ExternalEnumTupleField {
                 tracking,
@@ -9420,15 +9575,22 @@ where
                 span,
                 old_base,
                 close_object,
+                validate,
             } => {
                 self.mark_struct_field(tracking, index, span);
                 self.base = old_base;
-                self.read_external_enum_tuple_next(fields, tracking, index + 1, close_object)
+                self.read_external_enum_tuple_next(
+                    fields,
+                    tracking,
+                    index + 1,
+                    close_object,
+                    validate,
+                )
             }
-            Continuation::ExternalEnumStruct { tracking } => {
+            Continuation::ExternalEnumStruct { tracking, validate } => {
                 self.consume_external_enum_object_end()?;
                 unsafe {
-                    self.finish_struct_frame(tracking)?;
+                    self.finish_struct_frame_with_validation(tracking, validate)?;
                 }
                 Ok(Control::Continue)
             }
@@ -9624,6 +9786,9 @@ enum Continuation<'program> {
     FinishStruct {
         tracking: StructTracking,
     },
+    FinishStructUnchecked {
+        tracking: StructTracking,
+    },
     FieldDone {
         tracking: StructTracking,
         index: usize,
@@ -9637,6 +9802,7 @@ enum Continuation<'program> {
         index: usize,
         old_base: PtrUninit,
         mode: TupleContainerMode,
+        validate: bool,
     },
     ExternalEnumSingleField {
         tracking: StructTracking,
@@ -9644,6 +9810,7 @@ enum Continuation<'program> {
         span: Span,
         old_base: PtrUninit,
         close_object: bool,
+        validate: bool,
     },
     ExternalEnumTupleField {
         tracking: StructTracking,
@@ -9652,9 +9819,11 @@ enum Continuation<'program> {
         span: Span,
         old_base: PtrUninit,
         close_object: bool,
+        validate: bool,
     },
     ExternalEnumStruct {
         tracking: StructTracking,
+        validate: bool,
     },
     OptionSome {
         option: OptionDef,
@@ -9968,10 +10137,10 @@ impl<'program> LargeStructFrameSlot<'program> {
         }
     }
 
-    unsafe fn fill_missing_fields(self) -> Result<(), DeserializeError> {
+    unsafe fn fill_missing_fields(self, validate: bool) -> Result<(), DeserializeError> {
         match self {
-            Self::Bitset(frame) => unsafe { frame.fill_missing_fields() },
-            Self::Heap(frame) => unsafe { frame.fill_missing_fields() },
+            Self::Bitset(frame) => unsafe { frame.fill_missing_fields(validate) },
+            Self::Heap(frame) => unsafe { frame.fill_missing_fields(validate) },
         }
     }
 }
@@ -10091,7 +10260,7 @@ impl<'program> TinyScalarStructFrame<'program> {
             .find(|(_, field)| field.matches_key_bytes(key))
     }
 
-    unsafe fn fill_missing_fields(mut self) -> Result<(), DeserializeError> {
+    unsafe fn fill_missing_fields(mut self, validate: bool) -> Result<(), DeserializeError> {
         for (index, field) in self.fields.iter().copied().enumerate() {
             if self.is_initialized(index) {
                 continue;
@@ -10146,7 +10315,9 @@ impl<'program> TinyScalarStructFrame<'program> {
                 }
             }
         }
-        validate_completed_shape(self.shape, self.base)?;
+        if validate {
+            validate_completed_shape(self.shape, self.base)?;
+        }
         core::mem::forget(self);
         Ok(())
     }
@@ -10355,7 +10526,7 @@ where
         }
     }
 
-    unsafe fn fill_missing_fields(mut self) -> Result<(), DeserializeError> {
+    unsafe fn fill_missing_fields(mut self, validate: bool) -> Result<(), DeserializeError> {
         for (index, field) in self.fields.iter().enumerate() {
             if self.seen.is_initialized(index) {
                 continue;
@@ -10410,7 +10581,9 @@ where
                 }
             }
         }
-        validate_completed_shape(self.shape, self.base)?;
+        if validate {
+            validate_completed_shape(self.shape, self.base)?;
+        }
         core::mem::forget(self);
         Ok(())
     }
@@ -10604,7 +10777,7 @@ unsafe fn write_metadata_container_map_key(
         }
     }
 
-    unsafe { frame.fill_missing_fields() }
+    unsafe { frame.fill_missing_fields(shape.vtable.has_invariants()) }
 }
 
 unsafe fn write_metadata_span(shape: &'static Shape, dst: PtrUninit, span: Span) -> bool {
