@@ -7,6 +7,243 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-cargo-toml-v0.50.0-rc.1...facet-cargo-toml-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- extract ecosystem crate sections into their own subsites
+- Remove stale Cranelift JIT remnants
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-hash-v0.0.0...facet-hash-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- add READMEs for fable, weavy, copypatch, facet-hash; fable+weavy subsites include theirs
+- Add native JIT hash plans
+- Plan scalar field runs in facet-hash
+- Fast-path scalar children in facet-hash
+- Inline acyclic facet-hash plans
+- Run facet-hash on canonical Weavy IR
+- Add derived Hash benchmark comparisons
+- Add Weavy-backed facet-hash crate
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-validate-v0.50.0-rc.1...facet-validate-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- content-quality pass across the ecosystem (consistency, structure, friendliness)
+- migrate facet-default/error/validate guides into their own subsites
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/rediff-v0.50.0-rc.1...rediff-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- content-quality pass across the ecosystem (consistency, structure, friendliness)
+- extract ecosystem crate sections into their own subsites
+- give the vendored products their own subsites
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-json-schema-v0.50.0-rc.1...facet-json-schema-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- Fix facet-json-schema proxy test clippy
+- check for field-level proxy before resolving shape
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-asn1-v0.50.0-rc.1...facet-asn1-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- Fix facet-format CI regressions
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-axum-v0.50.0-rc.1...facet-axum-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- extract ecosystem crate sections into their own subsites
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-yaml-v0.50.0-rc.1...facet-yaml-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-singularize-v0.50.0-rc.1...facet-singularize-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-toml-v0.50.0-rc.1...facet-toml-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-postcard-v0.50.0-rc.1...facet-postcard-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- Remove stale Cranelift JIT remnants
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-value-v0.50.0-rc.1...facet-value-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-msgpack-v0.50.0-rc.1...facet-msgpack-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- Remove stale Cranelift JIT remnants
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-json-v0.50.0-rc.1...facet-json-v0.50.0-rc.2) - 2026-06-25
+
+### Added
+
+- *(facet-json)* support maps in weavy deser
+- *(facet-json)* specialize scalar struct list JIT roots
+- *(facet-json)* specialize ordered scalar JIT roots
+- *(facet-json)* run scalar structs through Weavy JIT
+- *(facet-json)* expose Weavy JIT mode
+- *(facet-json)* add opt-in weavy deserializer
+
+### Fixed
+
+- *(facet-json)* cfg-gate native parser probes
+- *(facet-json)* unwind direct list structs before buffers
+
+### Other
+
+- Trim facet-json Weavy parity cold paths
+- Trim facet-json Weavy hot frames
+- Recover facet-json Weavy fast paths
+- Close facet-json Weavy parity gaps
+- Parameterize facet-json integration backend tests
+- Support flattened fields in facet-json Weavy
+- Expand facet-json Weavy parity
+- Run facet-json format suite against Weavy
+- Support tuple structs in Weavy deserialization
+- Support Weavy transparent and proxy deser
+- Support numeric and untagged enums in facet-json Weavy
+- Benchmark Weavy tagged enum deserialization
+- Expand Weavy tagged enum deserialization
+- Expand Weavy external enum deserialization
+- Add Weavy external enum deserialization
+- Expand facet-json Weavy parity
+- Document facet-json Weavy parity grid
+- Speed up strict skipped JSON values
+- Recover fast strict JSON skip path
+- Fix more facet-json Weavy fuzz parity gaps
+- Fix facet-json Weavy oracle parity gaps
+- Add facet-json Weavy fuzz oracle
+- Move JSON root scanner step into native JIT
+- Remove inactive Weavy map bulk path
+- Speed up Weavy map insertion
+- content-quality pass across the ecosystem (consistency, structure, friendliness)
+- fix cross-references between migrated guides (point at new subsite routes)
+- stand up facet-json + facet-pretty subsites, migrate their guides
+- *(facet-json)* streamline native scalar struct lists
+- Speed up Weavy f64 cursor parsing
+- Add Linux x86_64 Weavy native JIT support
+- *(facet-json)* precompute native scalar readers
+- *(facet-json)* specialize native cursor scalars
+- *(facet-json)* scan ordered native roots with a cursor
+- *(facet-json)* speed up ordered native JIT probes
+- Add raw field dispatch to JSON Weavy deser
+- Fuse tiny i32 Weavy struct decode
+- Fast-path Weavy container starts
+- Fast-path ordered i32 scalar structs
+- Fast-path tiny Weavy scalar structs
+- Preselect Weavy scalar input writers
+- Speed up Weavy scalar token handling
+- Fast-path ordered Weavy scalar structs
+- Fuse Weavy scalar struct decoding
+- Speed up Weavy container starts
+- Specialize Weavy struct field tracking
+- Remove fake streaming state from JSON scanner
+- Speed up Weavy JSON field dispatch
+- *(facet-json)* preselect Weavy scalar field writers
+- *(facet-json)* specialize Weavy integer list scalars
+- *(facet-json)* write Weavy scalars from raw tokens
+- *(facet-json)* fuse Weavy scalar list parsing
+- *(facet-json)* adopt Weavy list buffers directly
+- *(facet-json)* drain scalar list elements in Weavy
+- *(facet-json)* decode scalar options inline in Weavy
+- *(facet-json)* skip duplicate check on ordered Weavy fields
+- *(facet-json)* drain Weavy scalar fields in object loop
+- *(facet-json)* fast path ordered Weavy fields
+- *(facet-json)* read Weavy field keys directly
+- *(facet-json)* let weavy read scalar tokens directly
+- *(weavy)* tighten json runner bookkeeping
+- *(facet-json)* fuse weavy scalar child paths
+- *(facet-json)* read weavy inputs directly from parser
+- *(facet-json)* avoid event peeks in weavy loops
+- *(weavy)* run dense block programs
+- *(facet-json)* reuse weavy scratch slots
+- *(weavy)* share typed-memory runtime guards
+- Lower recursive stack test default depth
+- Remove facet-json VM experiment
+- Speed up facet-json VM parsing
+- Reduce facet-json VM dispatch overhead
+- Speed up facet-json VM struct hot path
+- Add serde_json VM benchmark comparisons
+- Cache reusable facet-json VM plans
+- Add facet-json VM deserialization benchmarks
+- Add opt-in facet-json deserialization VM
+- Lower facet-json type plans to bytecode
+- Add weavy lowered program substrate
+- Relax recursive stack CI threshold
+- Fix recursive stack test clippy warnings
+- Measure recursive facet-json stack usage
+
+## [0.2.0](https://github.com/facet-rs/facet/compare/weavy-v0.1.0...weavy-v0.2.0) - 2026-06-25
+
+### Added
+
+- *(facet-json)* run scalar structs through Weavy JIT
+- add opt-in Weavy runner stats
+- *(weavy)* group scalar record copies
+
+### Fixed
+
+- *(weavy)* avoid cfg-gated rustdoc link
+
+### Other
+
+- Move Fable plans onto canonical Weavy IR
+- Support Phon reference pointer shapes
+- Remove inactive Weavy map bulk path
+- Speed up Weavy map insertion
+- content-quality pass across the ecosystem (consistency, structure, friendliness)
+- add READMEs for fable, weavy, copypatch, facet-hash; fable+weavy subsites include theirs
+- give the vendored products their own subsites
+- Add Linux x86_64 Weavy native JIT support
+- Inline native JIT program accessors
+- Extract native JIT program substrate to weavy
+- Run facet-hash on canonical Weavy IR
+- Add Weavy intrinsic effect contracts
+- Route PHON typed memory through canonical Weavy IR
+- Add canonical Weavy IR skeleton
+- Extract copy-patch JIT substrate into Weavy
+- *(facet-json)* adopt Weavy list buffers directly
+- *(weavy)* cut runner frame overhead
+- *(weavy)* tighten json runner bookkeeping
+- *(weavy)* run dense block programs
+- *(facet-json)* reuse weavy scratch slots
+- *(weavy)* share typed-memory runtime guards
+- Aggregate PHON JIT shape reports by surface
+- Report PHON JIT program shape stats
+- Add record byte ownership metadata
+- Move PHON memory lowering helpers into weavy
+
+## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-core-v0.50.0-rc.1...facet-core-v0.50.0-rc.2) - 2026-06-25
+
+### Other
+
+- Speed up Weavy map insertion
+- Remove stale Cranelift JIT remnants
+
 ## [0.50.0-rc.1](https://github.com/facet-rs/facet/compare/facet-urlencoded-v0.46.4...facet-urlencoded-v0.50.0-rc.1) - 2026-05-26
 
 ### Added

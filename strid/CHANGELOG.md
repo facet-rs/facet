@@ -4,6 +4,13 @@ The format of this changelog is based on [Keep a Changelog](https://keepachangel
 
 ## [Unreleased]
 
+## [11.0.0-rc.2](https://github.com/facet-rs/facet/compare/strid-v11.0.0-rc.1...strid-v11.0.0-rc.2) - 2026-06-25
+
+### Other
+
+- extract ecosystem crate sections into their own subsites
+- give the vendored products their own subsites
+
 ## [0.4.0] - 2023-05-26
 
 - BREAKING: Providing a custom override for the borrowed form name has changed from `ref` to

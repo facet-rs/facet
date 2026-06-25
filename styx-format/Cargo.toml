@@ -1,6 +1,6 @@
 [package]
 name = "styx-format"
-version = "5.0.0-rc.1"
+version = "5.0.0-rc.2"
 edition.workspace = true
 rust-version.workspace = true
 description = "Core formatting and parsing utilities for Styx"

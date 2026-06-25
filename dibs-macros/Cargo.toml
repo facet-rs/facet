@@ -1,6 +1,6 @@
 [package]
 name = "dibs-macros"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 edition = "2024"
 rust-version.workspace = true
 authors = ["Amos Wenger <amos@bearcove.eu>"]

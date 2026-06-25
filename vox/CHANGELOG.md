@@ -4,6 +4,12 @@ All notable changes to Vox are documented here.
 
 ## [Unreleased]
 
+## [0.10.0-rc.3](https://github.com/facet-rs/facet/compare/vox-codegen-v0.10.0-rc.2...vox-codegen-v0.10.0-rc.3) - 2026-06-25
+
+### Other
+
+- updated the following local packages: facet-core, facet, phon-schema, phon-ir, phon-engine, phon, vox-phon, vox-types, phon-codegen
+
 ## [0.10.0-rc.2](https://github.com/facet-rs/facet/compare/vox-codegen-v0.10.0-rc.1...vox-codegen-v0.10.0-rc.2) - 2026-06-22
 
 ### Other

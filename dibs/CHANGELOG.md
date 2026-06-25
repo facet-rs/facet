@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-rc.2](https://github.com/facet-rs/facet/compare/dibs-cli-v0.2.0-rc.1...dibs-cli-v0.2.0-rc.2) - 2026-06-25
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.1.1](https://github.com/bearcove/dibs/compare/dibs-v0.1.0...dibs-v0.1.1) - 2026-06-02
 
 ### Other
