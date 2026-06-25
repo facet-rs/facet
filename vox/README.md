@@ -4,7 +4,7 @@
 [![documentation](https://docs.rs/vox/badge.svg)](https://docs.rs/vox)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/vox.svg)](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT)
 
-vox (formerly **roam**) is a Rust-native RPC framework where Rust traits *are*
+vox is a Rust-native RPC framework where Rust traits *are*
 the schema. There is
 no separate IDL, no code-generation pipeline to wire up: you define an async
 trait, annotate it with `#[vox::service]`, and get a type-safe client and

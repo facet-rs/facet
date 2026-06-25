@@ -48,9 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - unified TUI with schema/diff/migrations tabs, dotenvy support
 - use dibs.styx config file with facet-styx
 - generate Rust migration files instead of SQL
-- wire migrate and status commands to roam service
-- wire dibs CLI to spawn db crate via roam
-- add roam service API for CLI-to-db-crate communication
+- wire migrate and status commands to Vox service
+- wire dibs CLI to spawn db crate via Vox
+- add Vox service API for CLI-to-db-crate communication
 - add schema diff command and integration tests
 - add schema introspection and diff infrastructure
 - auto-detect Zed terminal and open in Zed
@@ -67,9 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(lsp)* recognize shorthand param refs in unused param detection
 - *(lsp)* inlay hints for numeric literals and expand test coverage
-- *(dibs-cli)* remove sample tables and use roam for schema command
+- *(dibs-cli)* remove sample tables and use Vox for schema command
 - respect db.crate config for migrations directory
-- update for roam Context parameter changes
+- update for Vox Context parameter changes
 - clippy warnings (needless borrows, manual_strip)
 - formatting and comment out local styx patch for CI
 - *(codegen)* use closure param for first column in relation mapping

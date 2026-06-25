@@ -5228,7 +5228,7 @@ export interface TestbedCaller {
    */
   helixTraceServiceSurface(): Promise<HelixTraceServiceSurface>;
   /**
-   * Tracey daemon status query, mirrored from the current roam
+   * Tracey daemon status query, mirrored from the current Vox
    * `TraceyDaemon::status` migration surface.
    */
   traceyStatus(): Promise<TraceyStatusResponse>;
@@ -5241,7 +5241,7 @@ export interface TestbedCaller {
   /** Tracey unmapped-code query. */
   traceyUnmapped(req: TraceyUnmappedRequest): Promise<TraceyUnmappedResponse>;
   /**
-   * Tracey rule detail query, mirrored from the current roam
+   * Tracey rule detail query, mirrored from the current Vox
    * `TraceyDaemon::rule` migration surface.
    */
   traceyRule(ruleId: TraceyRuleId): Promise<TraceyRuleInfo | null>;
@@ -5278,7 +5278,7 @@ export interface TestbedCaller {
   /** Tracey daemon shutdown notification. */
   traceyShutdown(): Promise<void>;
   /**
-   * Tracey validation query, mirrored from the current roam
+   * Tracey validation query, mirrored from the current Vox
    * `TraceyDaemon::validate` migration surface.
    */
   traceyValidate(req: TraceyValidateRequest): Promise<TraceyValidationResult>;
@@ -6679,7 +6679,7 @@ export class TestbedClient implements TestbedCaller {
   }
 
   /**
-   * Tracey daemon status query, mirrored from the current roam
+   * Tracey daemon status query, mirrored from the current Vox
    * `TraceyDaemon::status` migration surface.
    */
   async traceyStatus(): Promise<TraceyStatusResponse> {
@@ -6742,7 +6742,7 @@ export class TestbedClient implements TestbedCaller {
   }
 
   /**
-   * Tracey rule detail query, mirrored from the current roam
+   * Tracey rule detail query, mirrored from the current Vox
    * `TraceyDaemon::rule` migration surface.
    */
   async traceyRule(ruleId: TraceyRuleId): Promise<TraceyRuleInfo | null> {
@@ -6970,7 +6970,7 @@ export class TestbedClient implements TestbedCaller {
   }
 
   /**
-   * Tracey validation query, mirrored from the current roam
+   * Tracey validation query, mirrored from the current Vox
    * `TraceyDaemon::validate` migration surface.
    */
   async traceyValidate(req: TraceyValidateRequest): Promise<TraceyValidationResult> {

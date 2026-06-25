@@ -953,7 +953,7 @@ Verified in the Vox checkout during the bridge audit:
   mutation roots `tracey_forward`, `tracey_reverse`, `tracey_file`,
   `tracey_spec_content`, `tracey_search`, `tracey_update_file_range`,
   `tracey_config_add_exclude`, and `tracey_config_add_include`, now pass the
-  focused 64-case Vox spec matrix. This covers the current roam-to-Vox
+  focused 64-case Vox spec matrix. This covers the current Vox
   migration target shape:
   `RuleId`, `usize` counts and source locations as fixed-width wire integers,
   validation enum/options/vectors, uncovered/untested/stale/unmapped rule
@@ -1066,7 +1066,7 @@ closure:
   1.0 gate.
   Tracey migration generated bridge coverage now mirrors the
   current LSP, core/control, dashboard/query-model, and config mutation surface
-  from the current roam protocol.
+  from the current Vox protocol.
   Hotmeal payload roots and the exact callback-style `subscribe` / `on_event`
   service shape are covered as generated bridge smoke roots.
 - External values such as `vox::Fd` now have explicit Rust transport and
@@ -1584,9 +1584,8 @@ gap.
 
 ### Tracey
 
-In the current `~/tracey` checkout, `tracey-proto` uses `roam`, not Vox. It is
-still a useful migration target because it has the shape of a large
-dashboard/LSP service.
+The Tracey protocol surface is still a useful Vox migration target because it
+has the shape of a large dashboard/LSP service.
 
 Expected migration shapes:
 
@@ -1602,7 +1601,7 @@ Tracey should be used as a future generated-service breadth target, not as proof
 of current Vox coverage.
 
 Tracey migration fixture work should model the target Vox service from the
-current roam protocol shapes. The point is to cover dashboard/LSP breadth and a
+current Vox protocol shapes. The point is to cover dashboard/LSP breadth and a
 `Tx<DataUpdate>` style subscription, not to claim the current Tracey checkout is
 already a Vox consumer.
 
@@ -1840,7 +1839,7 @@ Create Phon/Vox fixture definitions extracted from real consumer protocols:
    metadata.
 6. Helix fixture: representative trace query and subscription payloads.
 7. Hotmeal fixture: browser live reload smoke surface.
-8. Tracey migration fixture: current roam proto shape represented as the target
+8. Tracey migration fixture: current Vox proto shape represented as the target
    Vox service surface.
 
 Fixtures should live close to the Phon/Vox integration tests and be generated
