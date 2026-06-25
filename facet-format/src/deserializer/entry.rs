@@ -1333,17 +1333,15 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?meta, "deserialize_map_key");
 
-        if matches!(wip.deser_strategy(), Some(DeserStrategy::ContainerProxy)) {
-            let format_ns = self.parser.format_namespace();
-            let (next_wip, began_proxy) =
-                wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
-            if began_proxy {
-                return Ok(next_wip
-                    .with(|w| self.deserialize_map_key(w, key, meta))?
-                    .end()?);
-            }
-            wip = next_wip;
+        let format_ns = self.parser.format_namespace();
+        let (next_wip, began_proxy) =
+            wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
+        if began_proxy {
+            return Ok(next_wip
+                .with(|w| self.deserialize_map_key(w, key, meta))?
+                .end()?);
         }
+        wip = next_wip;
 
         // Handle metadata containers (like `Documented<T>` or `ObjectKey`): populate metadata and recurse into value
         if shape.is_metadata_container() {
