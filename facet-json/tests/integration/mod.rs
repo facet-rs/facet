@@ -1,6 +1,7 @@
 #[path = "backend_historical.rs"]
 pub(crate) mod json_backend;
 
+mod azure_devops_adjacent_raw_json_other_repro;
 mod flatten_defaults;
 mod flatten_in_externally_tagged_enum;
 mod format_specific_proxy;
@@ -36,6 +37,7 @@ mod out_of_order;
 mod raw_json;
 mod recursive_stack;
 mod rename;
+mod simple_untagged_other_repro;
 mod smolstr_flatten_map;
 mod string_like_map_keys;
 mod tagging;
