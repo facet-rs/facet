@@ -29,8 +29,9 @@
 use phon_schema::bytes::{Reader, skip_pad};
 use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 pub use weavy::ir::{
-    EffectContract, EffectOrdering, EffectResource, EffectStats, LoweredEffectStats, MemoryRegion,
-    ResourceAccess, ResourceEffect, TypedMemoryAccess, TypedMemoryEffect,
+    ControlOp, EffectContract, EffectOrdering, EffectResource, EffectStats, IntrinsicDescriptor,
+    IntrinsicOp, LoweredEffectStats, MemoryRegion, ResourceAccess, ResourceEffect,
+    TypedMemoryAccess, TypedMemoryEffect, WeavyOp,
 };
 pub use weavy::mem::{
     BorrowOp, BorrowThunks, ByteValidator, BytesOp, CanonicalEnumOp, CanonicalEnumVariantOp,
@@ -124,6 +125,182 @@ pub struct EnumArm {
     pub writer_index: u32,
     pub reader_name: String,
     pub payload: Program,
+}
+
+/// A canonical dynamic-value program whose control and domain work are split
+/// through [`weavy::ir::WeavyOp`].
+pub type CanonicalProgram = weavy::ir::WeavyProgram<SchemaId, ValueIntrinsic>;
+
+/// A canonical dynamic-value lowered program with recursive schema blocks.
+pub type CanonicalValueProgram = weavy::ir::WeavyLowered<SchemaId, ValueIntrinsic>;
+
+/// One executable canonical dynamic-value op.
+pub type ValueOp = WeavyOp<SchemaId, ValueIntrinsic>;
+
+/// PHON dynamic-value work that remains domain-specific inside canonical Weavy IR.
+#[derive(Clone, Debug)]
+pub enum ValueIntrinsic {
+    Scalar(Primitive),
+    Dynamic,
+    Null,
+    Skip(SchemaRef),
+    Object {
+        keys: Vec<String>,
+    },
+    Array {
+        count: usize,
+    },
+    Seq {
+        set: bool,
+        min_wire: usize,
+        body: CanonicalProgram,
+    },
+    Map {
+        key: CanonicalProgram,
+        value: CanonicalProgram,
+    },
+    FixedArray {
+        dimensions: Vec<u64>,
+        min_wire: usize,
+        body: CanonicalProgram,
+    },
+    Option {
+        some: CanonicalProgram,
+    },
+    Enum {
+        arms: Vec<CanonicalEnumArm>,
+    },
+}
+
+/// One canonical dynamic-value enum arm.
+#[derive(Clone, Debug)]
+pub struct CanonicalEnumArm {
+    pub writer_index: u32,
+    pub reader_name: String,
+    pub payload: CanonicalProgram,
+}
+
+impl IntrinsicOp for ValueIntrinsic {
+    fn descriptor(&self) -> IntrinsicDescriptor {
+        IntrinsicDescriptor {
+            dialect: "phon.value",
+            name: match self {
+                Self::Scalar(_) => "scalar",
+                Self::Dynamic => "dynamic",
+                Self::Null => "null",
+                Self::Skip(_) => "skip",
+                Self::Object { .. } => "object",
+                Self::Array { .. } => "array",
+                Self::Seq { .. } => "seq",
+                Self::Map { .. } => "map",
+                Self::FixedArray { .. } => "fixed_array",
+                Self::Option { .. } => "option",
+                Self::Enum { .. } => "enum",
+            },
+        }
+    }
+
+    fn effect(&self) -> EffectContract {
+        match self {
+            Self::Null | Self::Object { .. } | Self::Array { .. } => value_stack_effect(),
+            Self::Scalar(_)
+            | Self::Dynamic
+            | Self::Skip(_)
+            | Self::Seq { .. }
+            | Self::Map { .. }
+            | Self::FixedArray { .. }
+            | Self::Option { .. }
+            | Self::Enum { .. } => wire_value_stack_effect(),
+        }
+    }
+}
+
+fn value_stack_effect() -> EffectContract {
+    EffectContract::new()
+        .write_resource(EffectResource::SideChannel("phon.value_stack"))
+        .may_fail()
+        .may_allocate()
+}
+
+fn wire_value_stack_effect() -> EffectContract {
+    value_stack_effect().advance_resource(EffectResource::Input("phon.wire"))
+}
+
+/// Convert the legacy public dynamic-value program form into canonical Weavy IR.
+#[must_use]
+pub fn canonical_program(program: &Program) -> CanonicalProgram {
+    program.iter().map(canonical_op).collect()
+}
+
+/// Convert the legacy public lowered dynamic-value program form into canonical
+/// Weavy IR.
+#[must_use]
+pub fn canonical_value_program(lowered: &ValueProgram) -> CanonicalValueProgram {
+    CanonicalValueProgram {
+        program: canonical_program(&lowered.program),
+        blocks: lowered
+            .blocks
+            .iter()
+            .map(|(id, program)| (*id, canonical_program(program)))
+            .collect(),
+    }
+}
+
+fn canonical_op(op: &Op) -> ValueOp {
+    match op {
+        Op::CallBlock { schema } => WeavyOp::Control(ControlOp::CallBlock {
+            block: *schema,
+            base_offset: 0,
+        }),
+        _ => WeavyOp::Intrinsic(canonical_intrinsic(op)),
+    }
+}
+
+fn canonical_intrinsic(op: &Op) -> ValueIntrinsic {
+    match op {
+        Op::Scalar(p) => ValueIntrinsic::Scalar(*p),
+        Op::Dynamic => ValueIntrinsic::Dynamic,
+        Op::CallBlock { .. } => unreachable!("block calls lower to canonical control ops"),
+        Op::Null => ValueIntrinsic::Null,
+        Op::Skip(writer_ref) => ValueIntrinsic::Skip(writer_ref.clone()),
+        Op::Object { keys } => ValueIntrinsic::Object { keys: keys.clone() },
+        Op::Array { count } => ValueIntrinsic::Array { count: *count },
+        Op::Seq {
+            set,
+            min_wire,
+            body,
+        } => ValueIntrinsic::Seq {
+            set: *set,
+            min_wire: *min_wire,
+            body: canonical_program(body),
+        },
+        Op::Map { key, value } => ValueIntrinsic::Map {
+            key: canonical_program(key),
+            value: canonical_program(value),
+        },
+        Op::FixedArray {
+            dimensions,
+            min_wire,
+            body,
+        } => ValueIntrinsic::FixedArray {
+            dimensions: dimensions.clone(),
+            min_wire: *min_wire,
+            body: canonical_program(body),
+        },
+        Op::Option { some } => ValueIntrinsic::Option {
+            some: canonical_program(some),
+        },
+        Op::Enum { arms } => ValueIntrinsic::Enum {
+            arms: arms
+                .iter()
+                .map(|arm| CanonicalEnumArm {
+                    writer_index: arm.writer_index,
+                    reader_name: arm.reader_name.clone(),
+                    payload: canonical_program(&arm.payload),
+                })
+                .collect(),
+        },
+    }
 }
 
 /// A lowered *typed* program: the memory side of the IR. Where [`Program`] builds

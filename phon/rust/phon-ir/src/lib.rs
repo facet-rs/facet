@@ -24,18 +24,20 @@ pub use descriptor::{
 pub mod ir;
 
 pub use ir::{
-    BorrowOp, BorrowThunks, ByteValidator, BytesOp, CanonicalEnumOp, CanonicalEnumVariantOp,
-    CanonicalMapOp, CanonicalMemError, CanonicalMemLowered, CanonicalMemProgram, CanonicalOptionOp,
-    CanonicalPointerOp, CanonicalResultOp, CanonicalSeqOp, CanonicalSetOp, DefaultOp, DefaultThunk,
-    EffectContract, EffectOrdering, EffectResource, EffectStats, EnumArm, EnumOp, EnumVariantOp,
-    Lowered, LoweredEffectStats, LoweredMemProgramStats, MapOp, MapThunks, MemIntrinsic, MemOp,
-    MemProgram, MemProgramStats, MemoryRegion, Op, OpaqueOp, OpaqueThunks, OptionOp, OptionThunks,
-    PointerOp, PointerThunks, Program, ResourceAccess, ResourceEffect, ResultOp, ResultThunks,
-    ScalarRunOp, ScalarSegment, SeqOp, SeqThunks, SetOp, SetThunks, SkipOp, TypedMemoryAccess,
-    TypedMemoryEffect, ValueProgram, canonical_mem_intrinsic_counts, canonical_mem_lowered,
-    canonical_mem_lowered_effect_stats, canonical_mem_lowered_intrinsic_counts,
-    canonical_mem_lowered_stats, canonical_mem_program, canonical_mem_program_effect_stats,
-    canonical_mem_program_stats, lowered_mem_program_stats, mem_lowered_from_canonical,
+    BorrowOp, BorrowThunks, ByteValidator, BytesOp, CanonicalEnumArm, CanonicalEnumOp,
+    CanonicalEnumVariantOp, CanonicalMapOp, CanonicalMemError, CanonicalMemLowered,
+    CanonicalMemProgram, CanonicalOptionOp, CanonicalPointerOp, CanonicalProgram,
+    CanonicalResultOp, CanonicalSeqOp, CanonicalSetOp, CanonicalValueProgram, DefaultOp,
+    DefaultThunk, EffectContract, EffectOrdering, EffectResource, EffectStats, EnumArm, EnumOp,
+    EnumVariantOp, Lowered, LoweredEffectStats, LoweredMemProgramStats, MapOp, MapThunks,
+    MemIntrinsic, MemOp, MemProgram, MemProgramStats, MemoryRegion, Op, OpaqueOp, OpaqueThunks,
+    OptionOp, OptionThunks, PointerOp, PointerThunks, Program, ResourceAccess, ResourceEffect,
+    ResultOp, ResultThunks, ScalarRunOp, ScalarSegment, SeqOp, SeqThunks, SetOp, SetThunks, SkipOp,
+    TypedMemoryAccess, TypedMemoryEffect, ValueIntrinsic, ValueOp, ValueProgram,
+    canonical_mem_intrinsic_counts, canonical_mem_lowered, canonical_mem_lowered_effect_stats,
+    canonical_mem_lowered_intrinsic_counts, canonical_mem_lowered_stats, canonical_mem_program,
+    canonical_mem_program_effect_stats, canonical_mem_program_stats, canonical_program,
+    canonical_value_program, lowered_mem_program_stats, mem_lowered_from_canonical,
     mem_program_from_canonical, mem_program_stats,
 };
 

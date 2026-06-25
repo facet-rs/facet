@@ -17,10 +17,14 @@
 use std::collections::{BTreeMap, HashSet};
 
 use facet_value::{VArray, VObject, VString, Value};
-use phon_ir::ir::{Op, Program, ValueProgram};
+use phon_ir::ir::{
+    CanonicalProgram, CanonicalValueProgram, Program, ValueIntrinsic, ValueOp, ValueProgram,
+    canonical_program, canonical_value_program,
+};
 use phon_schema::SchemaId;
 use phon_schema::bytes::Reader;
 use phon_schema::{DecodeError, read_value};
+use weavy::ir::{ControlOp, WeavyOp};
 use weavy::{Control, RunError, RunStats, Step};
 
 use crate::compact::{self, CompactError, Registry};
@@ -45,7 +49,9 @@ pub struct RunReport {
 // r[impl exec.interpreter-baseline]
 // r[impl ir.total]
 pub fn run(program: &Program, bytes: &[u8], reg: &Registry) -> Result<Value> {
-    run_program(program, bytes, reg, &Default::default())
+    let program = canonical_program(program);
+    let blocks = BTreeMap::new();
+    run_program(&program, bytes, reg, &blocks)
 }
 
 /// Run a lowered program and return generic Weavy runner counters.
@@ -53,7 +59,9 @@ pub fn run(program: &Program, bytes: &[u8], reg: &Registry) -> Result<Value> {
 /// # Errors
 /// [`CompactError`] for malformed input or a writer-only enum variant.
 pub fn run_with_stats(program: &Program, bytes: &[u8], reg: &Registry) -> Result<RunReport> {
-    run_program_with_stats(program, bytes, reg, &Default::default())
+    let program = canonical_program(program);
+    let blocks = BTreeMap::new();
+    run_program_with_stats(&program, bytes, reg, &blocks)
 }
 
 /// Run a lowered dynamic-value program with its recursive block registry.
@@ -62,6 +70,20 @@ pub fn run_with_stats(program: &Program, bytes: &[u8], reg: &Registry) -> Result
 /// [`CompactError`] for malformed input, missing recursion blocks, or a
 /// writer-only enum variant.
 pub fn run_lowered(lowered: &ValueProgram, bytes: &[u8], reg: &Registry) -> Result<Value> {
+    let lowered = canonical_value_program(lowered);
+    run_canonical_lowered(&lowered, bytes, reg)
+}
+
+/// Run a canonical dynamic-value program with its recursive block registry.
+///
+/// # Errors
+/// [`CompactError`] for malformed input, missing recursion blocks, or a
+/// writer-only enum variant.
+pub fn run_canonical_lowered(
+    lowered: &CanonicalValueProgram,
+    bytes: &[u8],
+    reg: &Registry,
+) -> Result<Value> {
     run_program(&lowered.program, bytes, reg, &lowered.blocks)
 }
 
@@ -75,14 +97,28 @@ pub fn run_lowered_with_stats(
     bytes: &[u8],
     reg: &Registry,
 ) -> Result<RunReport> {
+    let lowered = canonical_value_program(lowered);
+    run_canonical_lowered_with_stats(&lowered, bytes, reg)
+}
+
+/// Run a canonical dynamic-value program and return generic Weavy runner counters.
+///
+/// # Errors
+/// [`CompactError`] for malformed input, missing recursion blocks, or a
+/// writer-only enum variant.
+pub fn run_canonical_lowered_with_stats(
+    lowered: &CanonicalValueProgram,
+    bytes: &[u8],
+    reg: &Registry,
+) -> Result<RunReport> {
     run_program_with_stats(&lowered.program, bytes, reg, &lowered.blocks)
 }
 
 fn run_program(
-    program: &Program,
+    program: &CanonicalProgram,
     bytes: &[u8],
     reg: &Registry,
-    blocks: &BTreeMap<SchemaId, Program>,
+    blocks: &BTreeMap<SchemaId, CanonicalProgram>,
 ) -> Result<Value> {
     let mut interp = Interp {
         reader: Reader::new(bytes),
@@ -99,10 +135,10 @@ fn run_program(
 }
 
 fn run_program_with_stats(
-    program: &Program,
+    program: &CanonicalProgram,
     bytes: &[u8],
     reg: &Registry,
-    blocks: &BTreeMap<SchemaId, Program>,
+    blocks: &BTreeMap<SchemaId, CanonicalProgram>,
 ) -> Result<RunReport> {
     let mut interp = Interp {
         reader: Reader::new(bytes),
@@ -146,25 +182,25 @@ enum Continuation<'program> {
     Seq {
         remaining: usize,
         set: bool,
-        body: &'program Program,
+        body: &'program CanonicalProgram,
         values: VArray,
         seen: Option<HashSet<Value>>,
     },
     FixedArray {
         remaining: u64,
-        body: &'program Program,
+        body: &'program CanonicalProgram,
         values: VArray,
     },
     MapKey {
         remaining: usize,
-        key: &'program Program,
-        value: &'program Program,
+        key: &'program CanonicalProgram,
+        value: &'program CanonicalProgram,
         object: VObject,
     },
     MapValue {
         remaining: usize,
-        key: &'program Program,
-        value: &'program Program,
+        key: &'program CanonicalProgram,
+        value: &'program CanonicalProgram,
         object: VObject,
         pending_key: VString,
     },
@@ -173,111 +209,34 @@ enum Continuation<'program> {
     },
 }
 
-impl<'program> Step<'program, SchemaId, Op> for Interp<'_, '_> {
+impl<'program> Step<'program, SchemaId, ValueOp> for Interp<'_, '_> {
     type Error = CompactError;
     type Continuation = Continuation<'program>;
 
     fn step(
         &mut self,
-        op: &'program Op,
-    ) -> Result<Control<'program, SchemaId, Op, Self::Continuation>> {
+        op: &'program ValueOp,
+    ) -> Result<Control<'program, SchemaId, ValueOp, Self::Continuation>> {
         Ok(match op {
-            Op::Scalar(p) => {
-                self.stack
-                    .push(compact::decode_primitive(&mut self.reader, *p)?);
-                Control::Continue
-            }
-            Op::Dynamic => {
-                self.stack.push(read_value(&mut self.reader)?);
-                Control::Continue
-            }
-            Op::CallBlock { schema } => Control::CallBlock(*schema),
-            Op::Null => {
-                self.stack.push(Value::NULL);
-                Control::Continue
-            }
-            Op::Skip(writer_ref) => {
-                // Walk the writer-only field by its own schema and drop it.
-                compact::decode_ref(&mut self.reader, writer_ref, self.reg, 0)?;
-                Control::Continue
-            }
-            Op::Object { keys } => {
-                let vals = self.stack.split_off(self.stack.len() - keys.len());
-                let mut obj = VObject::new();
-                for (k, v) in keys.iter().zip(vals) {
-                    obj.insert(VString::new(k), v);
+            WeavyOp::Control(ControlOp::CallBlock { block, base_offset }) => {
+                if *base_offset != 0 {
+                    return Err(CompactError::Decode(DecodeError::Malformed(
+                        "dynamic value block call used nonzero base offset",
+                    )));
                 }
-                self.stack.push(obj.into());
-                Control::Continue
+                Control::CallBlock(*block)
             }
-            Op::Array { count } => {
-                let vals = self.stack.split_off(self.stack.len() - count);
-                let mut arr = VArray::new();
-                for v in vals {
-                    arr.push(v);
-                }
-                self.stack.push(arr.into());
-                Control::Continue
+            WeavyOp::Control(ControlOp::Return) => Control::Return,
+            WeavyOp::Memory(_) | WeavyOp::Init(_) | WeavyOp::Aggregate(_) => {
+                return Err(CompactError::Decode(DecodeError::Malformed(
+                    "dynamic value program used typed-memory op",
+                )));
             }
-            Op::Seq {
-                set,
-                min_wire,
-                body,
-            } => {
-                let remaining = self.reader.read_len(*min_wire)?;
-                let continuation = Continuation::Seq {
-                    remaining,
-                    set: *set,
-                    body,
-                    values: VArray::new(),
-                    seen: if *set { Some(HashSet::new()) } else { None },
-                };
-                self.call_repeated(body, continuation, remaining)
-            }
-            Op::Map { key, value } => {
-                let remaining = self.reader.read_len(1)?;
-                let continuation = Continuation::MapKey {
-                    remaining,
-                    key,
-                    value,
-                    object: VObject::new(),
-                };
-                self.call_repeated(key, continuation, remaining)
-            }
-            Op::FixedArray {
-                dimensions,
-                min_wire,
-                body,
-            } => {
-                let count = compact::product(dimensions)?;
-                compact::check_fixed_count(count, *min_wire, self.reader.remaining())?;
-                let continuation = Continuation::FixedArray {
-                    remaining: count,
-                    body,
-                    values: VArray::new(),
-                };
-                self.call_repeated(body, continuation, count)
-            }
-            Op::Option { some } => match self.reader.read_u8()? {
-                0 => {
-                    self.stack.push(Value::NULL);
-                    Control::Continue
-                }
-                1 => Control::CallProgram(some),
-                b => return Err(CompactError::Decode(DecodeError::InvalidBool(b))),
-            },
-            Op::Enum { arms } => {
-                let idx = self.reader.read_u32()?;
-                let arm = arms
-                    .iter()
-                    .find(|a| a.writer_index == idx)
-                    .ok_or(CompactError::WriterOnlyVariant(idx))?;
-                Control::CallProgramThen(
-                    &arm.payload,
-                    Continuation::EnumPayload {
-                        reader_name: &arm.reader_name,
-                    },
-                )
+            WeavyOp::Intrinsic(op) => return self.step_intrinsic(op),
+            _ => {
+                return Err(CompactError::Decode(DecodeError::Malformed(
+                    "dynamic value program used unknown canonical op",
+                )));
             }
         })
     }
@@ -285,7 +244,7 @@ impl<'program> Step<'program, SchemaId, Op> for Interp<'_, '_> {
     fn after_return(
         &mut self,
         continuation: Self::Continuation,
-    ) -> Result<Control<'program, SchemaId, Op, Self::Continuation>> {
+    ) -> Result<Control<'program, SchemaId, ValueOp, Self::Continuation>> {
         match continuation {
             Continuation::Seq {
                 mut remaining,
@@ -399,6 +358,112 @@ impl<'program> Step<'program, SchemaId, Op> for Interp<'_, '_> {
 }
 
 impl Interp<'_, '_> {
+    fn step_intrinsic<'program>(
+        &mut self,
+        op: &'program ValueIntrinsic,
+    ) -> Result<Control<'program, SchemaId, ValueOp, Continuation<'program>>> {
+        Ok(match op {
+            ValueIntrinsic::Scalar(p) => {
+                self.stack
+                    .push(compact::decode_primitive(&mut self.reader, *p)?);
+                Control::Continue
+            }
+            ValueIntrinsic::Dynamic => {
+                self.stack.push(read_value(&mut self.reader)?);
+                Control::Continue
+            }
+            ValueIntrinsic::Null => {
+                self.stack.push(Value::NULL);
+                Control::Continue
+            }
+            ValueIntrinsic::Skip(writer_ref) => {
+                // Walk the writer-only field by its own schema and drop it.
+                compact::decode_ref(&mut self.reader, writer_ref, self.reg, 0)?;
+                Control::Continue
+            }
+            ValueIntrinsic::Object { keys } => {
+                let vals = self.stack.split_off(self.stack.len() - keys.len());
+                let mut obj = VObject::new();
+                for (k, v) in keys.iter().zip(vals) {
+                    obj.insert(VString::new(k), v);
+                }
+                self.stack.push(obj.into());
+                Control::Continue
+            }
+            ValueIntrinsic::Array { count } => {
+                let vals = self.stack.split_off(self.stack.len() - count);
+                let mut arr = VArray::new();
+                for v in vals {
+                    arr.push(v);
+                }
+                self.stack.push(arr.into());
+                Control::Continue
+            }
+            ValueIntrinsic::Seq {
+                set,
+                min_wire,
+                body,
+            } => {
+                let remaining = self.reader.read_len(*min_wire)?;
+                let continuation = Continuation::Seq {
+                    remaining,
+                    set: *set,
+                    body,
+                    values: VArray::new(),
+                    seen: if *set { Some(HashSet::new()) } else { None },
+                };
+                self.call_repeated(body, continuation, remaining)
+            }
+            ValueIntrinsic::Map { key, value } => {
+                let remaining = self.reader.read_len(1)?;
+                let continuation = Continuation::MapKey {
+                    remaining,
+                    key,
+                    value,
+                    object: VObject::new(),
+                };
+                self.call_repeated(key, continuation, remaining)
+            }
+            ValueIntrinsic::FixedArray {
+                dimensions,
+                min_wire,
+                body,
+            } => {
+                let count = compact::product(dimensions)?;
+                compact::check_fixed_count(count, *min_wire, self.reader.remaining())?;
+                let continuation = Continuation::FixedArray {
+                    remaining: count,
+                    body,
+                    values: VArray::new(),
+                };
+                self.call_repeated(body, continuation, count)
+            }
+            ValueIntrinsic::Option { some } => match self.reader.read_u8()? {
+                0 => {
+                    self.stack.push(Value::NULL);
+                    Control::Continue
+                }
+                1 => Control::CallProgram(some),
+                b => return Err(CompactError::Decode(DecodeError::InvalidBool(b))),
+            },
+            ValueIntrinsic::Enum { arms } => {
+                let idx = self.reader.read_u32()?;
+                let arm = arms
+                    .iter()
+                    .find(|a| a.writer_index == idx)
+                    .ok_or(CompactError::WriterOnlyVariant(idx))?;
+                Control::CallProgramThen(
+                    &arm.payload,
+                    Continuation::EnumPayload {
+                        reader_name: &arm.reader_name,
+                    },
+                )
+            }
+        })
+    }
+}
+
+impl Interp<'_, '_> {
     fn pop_value(&mut self, message: &'static str) -> Result<Value> {
         self.stack
             .pop()
@@ -407,10 +472,10 @@ impl Interp<'_, '_> {
 
     fn call_repeated<'program, N>(
         &mut self,
-        body: &'program Program,
+        body: &'program CanonicalProgram,
         continuation: Continuation<'program>,
         remaining: N,
-    ) -> Control<'program, SchemaId, Op, Continuation<'program>>
+    ) -> Control<'program, SchemaId, ValueOp, Continuation<'program>>
     where
         N: PartialEq + From<u8>,
     {
@@ -436,6 +501,7 @@ impl Interp<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phon_ir::ir::Op;
     use phon_schema::{Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, primitive_id};
 
     fn prim(p: Primitive) -> SchemaRef {
@@ -464,6 +530,30 @@ mod tests {
         assert_eq!(report.stats.return_count, 1);
         assert_eq!(report.stats.continuation_resume_count, 0);
         assert_eq!(report.stats.max_frame_depth, 1);
+    }
+
+    #[test]
+    fn canonical_lowered_runs_recursive_block_calls() {
+        let reg = Registry::new([]);
+        let lowered = ValueProgram {
+            program: vec![Op::CallBlock {
+                schema: SchemaId(42),
+            }],
+            blocks: BTreeMap::from([(SchemaId(42), vec![Op::Scalar(Primitive::U8)])]),
+        };
+
+        let canonical = canonical_value_program(&lowered);
+        match canonical.program.as_slice() {
+            [WeavyOp::Control(ControlOp::CallBlock { block, base_offset })] => {
+                assert_eq!(*block, SchemaId(42));
+                assert_eq!(*base_offset, 0);
+            }
+            other => panic!("unexpected canonical program: {other:?}"),
+        }
+
+        let got = run_canonical_lowered(&canonical, &[7], &reg).unwrap();
+
+        assert_eq!(got, Value::from(7u8));
     }
 
     /// Same-schema roundtrip (`writer == reader`): encode with the compact codec,

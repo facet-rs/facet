@@ -24,7 +24,10 @@ pub use plan::Plan;
 
 pub mod interp;
 
-pub use interp::{RunReport, run, run_lowered, run_lowered_with_stats, run_with_stats};
+pub use interp::{
+    RunReport, run, run_canonical_lowered, run_canonical_lowered_with_stats, run_lowered,
+    run_lowered_with_stats, run_with_stats,
+};
 
 pub mod typed;
 
