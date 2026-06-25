@@ -21,6 +21,6 @@ my-app-db = { path = "../my-app-db" }
 
 [dev-dependencies]
 dockside = { path = "../../../dockside" }
-tokio.workspace = true
+tokio = { workspace = true, features = ["macros"] }
 tokio-postgres.workspace = true
 dibs = { path = "../../../dibs" }

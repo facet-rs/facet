@@ -558,11 +558,7 @@ fn generate_query_body(
     if params.is_empty() {
         block.line("let rows = client.query(SQL, &[]).await?;");
     } else {
-        let params_str = params
-            .iter()
-            .map(|p| p.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let params_str = bind_param_list(params.iter().map(|p| p.as_str()));
         block.line(format!(
             "let rows = client.query(SQL, &[{}]).await?;",
             params_str
@@ -988,7 +984,7 @@ fn generate_raw_query_body(query: &Select, raw_sql: &str) -> Block {
     if let Some(params) = &query.params {
         let param_names: Vec<&str> = params.iter().map(|(meta, _)| meta.value.as_str()).collect();
         if !param_names.is_empty() {
-            let params_str = param_names.join(", ");
+            let params_str = bind_param_list(param_names);
             block.line(format!(
                 "let rows = client.query(SQL, &[{}]).await?;",
                 params_str
@@ -1044,6 +1040,7 @@ fn param_type_to_function_arg_rust(ty: &dibs_query_schema::ParamType) -> String 
     use dibs_query_schema::ParamType;
     match ty {
         ParamType::String | ParamType::Jsonb => "str".to_string(),
+        ParamType::Bytes => "[u8]".to_string(),
         _ => param_type_to_rust(ty),
     }
 }
@@ -1056,6 +1053,18 @@ fn add_params_to_function(func: &mut Function, params: Option<&Params>) {
             func.arg(param_name, format!("&{}", rust_ty));
         }
     }
+}
+
+fn bind_param_expr(param_name: &str) -> String {
+    format!("&{param_name}")
+}
+
+fn bind_param_list<'a>(params: impl IntoIterator<Item = &'a str>) -> String {
+    params
+        .into_iter()
+        .map(bind_param_expr)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Helper to format a Block to a String.
@@ -1572,11 +1581,7 @@ fn generate_mutation_body(
         if params.is_empty() {
             block.line("let affected = client.execute(SQL, &[]).await?;");
         } else {
-            let params_str = params
-                .iter()
-                .map(|p| p.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let params_str = bind_param_list(params.iter().map(|p| p.as_str()));
             block.line(format!(
                 "let affected = client.execute(SQL, &[{}]).await?;",
                 params_str
@@ -1588,11 +1593,7 @@ fn generate_mutation_body(
         if params.is_empty() {
             block.line("let rows = client.query(SQL, &[]).await?;");
         } else {
-            let params_str = params
-                .iter()
-                .map(|p| p.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let params_str = bind_param_list(params.iter().map(|p| p.as_str()));
             block.line(format!(
                 "let rows = client.query(SQL, &[{}]).await?;",
                 params_str

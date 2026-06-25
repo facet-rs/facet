@@ -108,6 +108,10 @@ ProductByHandle @select{
 
     assert!(code.code.contains("handle: &str"));
     assert!(!code.code.contains("handle: &String"));
+    assert!(
+        code.code
+            .contains("let rows = client.query(SQL, &[&handle]).await?;")
+    );
     // Uses direct struct construction for Option-returning queries
     assert!(code.code.contains("Ok(None)"));
     assert!(code.code.contains("ProductByHandleResult {"));
@@ -222,7 +226,31 @@ CreateEvent @insert{
     assert!(code.code.contains("event_type: &str"));
     assert!(code.code.contains("payload: &str"));
     assert!(!code.code.contains("payload: &String"));
+    assert!(
+        code.code
+            .contains("let affected = client.execute(SQL, &[&event_type, &payload]).await?;")
+    );
     assert!(code.code.contains("$2::text::jsonb"));
+}
+
+#[test]
+fn test_generate_bytes_param_takes_slice() {
+    let source = r#"
+CreatePasskey @insert{
+  params { user_id @int, credential_id @bytes, public_key @bytes }
+  into passkey
+  values { user_id $user_id, credential_id $credential_id, public_key $public_key }
+}
+"#;
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
+
+    assert!(code.code.contains("credential_id: &[u8]"));
+    assert!(code.code.contains("public_key: &[u8]"));
+    assert!(!code.code.contains("credential_id: &Vec<u8>"));
+    assert!(code.code.contains(
+        "let affected = client.execute(SQL, &[&user_id, &credential_id, &public_key]).await?;"
+    ));
 }
 
 #[test]
@@ -614,6 +642,10 @@ CreateUser @insert{
     assert!(code.code.contains("email: &str"));
     assert!(!code.code.contains("name: &String"));
     assert!(!code.code.contains("email: &String"));
+    assert!(
+        code.code
+            .contains("let rows = client.query(SQL, &[&name, &email]).await?;")
+    );
     assert!(code.code.contains("INSERT INTO"));
     assert!(code.code.contains("RETURNING"));
     assert!(
@@ -653,6 +685,10 @@ UpsertProduct @upsert{
     assert!(code.code.contains("pub async fn upsert_product"));
     assert!(code.code.contains("id: &Uuid"));
     assert!(code.code.contains("name: &str"));
+    assert!(
+        code.code
+            .contains("let rows = client.query(SQL, &[&id, &name, &price]).await?;")
+    );
     assert!(code.code.contains("ON CONFLICT"));
     assert!(code.code.contains("DO UPDATE SET"));
 }
@@ -683,6 +719,10 @@ UpdateUserEmail @update{
     assert!(code.code.contains("pub struct UpdateUserEmailResult"));
     assert!(code.code.contains("pub async fn update_user_email"));
     assert!(code.code.contains("email: &str"));
+    assert!(
+        code.code
+            .contains("let rows = client.query(SQL, &[&email, &id]).await?;")
+    );
     assert!(code.code.contains("UPDATE"));
     assert!(code.code.contains("SET"));
     assert!(code.code.contains("WHERE"));
