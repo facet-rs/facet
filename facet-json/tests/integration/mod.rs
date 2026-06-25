@@ -1,6 +1,7 @@
 #[path = "backend_historical.rs"]
 pub(crate) mod json_backend;
 
+mod field_proxy_untagged_bool_repro;
 mod flatten_defaults;
 mod flatten_in_externally_tagged_enum;
 mod format_specific_proxy;
