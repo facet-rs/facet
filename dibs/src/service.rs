@@ -192,6 +192,10 @@ impl DibsServiceImpl {
 }
 
 impl DibsService for DibsServiceImpl {
+    async fn dibs_version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_string()
+    }
+
     async fn schema(&self) -> SchemaInfo {
         let schema = crate::schema::collect_schema();
         schema_to_info(&schema)

@@ -466,6 +466,9 @@ pub struct DeleteRequest {
 /// Implemented by the user's db crate, called by the dibs CLI.
 #[service]
 pub trait DibsService {
+    /// Report the Dibs crate version linked into the db service binary.
+    async fn dibs_version(&self) -> String;
+
     /// Get the schema defined in Rust code.
     async fn schema(&self) -> SchemaInfo;
 

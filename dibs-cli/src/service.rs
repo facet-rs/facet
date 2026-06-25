@@ -19,6 +19,8 @@ use tokio::net::TcpListener;
 use tokio::process::Command as TokioCommand;
 use tracing::info;
 
+const CLI_DIBS_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// A connection to the dibs service.
 pub struct ServiceConnection {
     /// The typed vox client for making calls.
@@ -118,6 +120,7 @@ pub async fn connect_to_service(db_config: &DbConfig) -> Result<ServiceConnectio
         .establish::<DibsServiceClient>()
         .await
         .map_err(|e| ServiceError::Connection(format!("Vox handshake failed: {}", e)))?;
+    validate_service_version(&client).await?;
 
     Ok(ServiceConnection {
         client,
@@ -216,6 +219,7 @@ impl BuildProcess {
                     .map_err(|e| {
                         ServiceError::Connection(format!("Vox handshake failed: {}", e))
                     })?;
+                validate_service_version(&client).await?;
 
                 // Get binary mtime
                 let binary_mtime = self
@@ -351,4 +355,53 @@ pub async fn start_service(db_config: &DbConfig) -> Result<BuildProcess, Service
         binary_path,
         migrations_dir,
     })
+}
+
+async fn validate_service_version(client: &DibsServiceClient) -> Result<(), ServiceError> {
+    let service_version = client.dibs_version().await.map_err(|e| {
+        ServiceError::Connection(format!(
+            "Failed to read db service Dibs version; the service binary may have been built with an incompatible Dibs protocol: {e}"
+        ))
+    })?;
+
+    check_service_version(&service_version)?;
+
+    info!(
+        cli_version = CLI_DIBS_VERSION,
+        service_version, "Dibs CLI and db service versions match"
+    );
+    Ok(())
+}
+
+fn check_service_version(service_version: &str) -> Result<(), ServiceError> {
+    if service_version != CLI_DIBS_VERSION {
+        return Err(ServiceError::Connection(format!(
+            "Dibs CLI version {CLI_DIBS_VERSION} does not match db service Dibs version {service_version}; rebuild the db crate or use a matching dibs binary"
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CLI_DIBS_VERSION, ServiceError, check_service_version};
+
+    #[test]
+    fn accepts_matching_service_version() {
+        check_service_version(CLI_DIBS_VERSION).unwrap();
+    }
+
+    #[test]
+    fn rejects_mismatched_service_version() {
+        let err = check_service_version("0.0.0-different").unwrap_err();
+
+        let ServiceError::Connection(message) = err else {
+            panic!("expected connection error");
+        };
+        assert!(message.contains("Dibs CLI version"));
+        assert!(message.contains(CLI_DIBS_VERSION));
+        assert!(message.contains("db service Dibs version 0.0.0-different"));
+        assert!(message.contains("rebuild the db crate"));
+    }
 }
