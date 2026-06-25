@@ -199,7 +199,7 @@ fn make_big() -> Big {
 fn test_roundtrip_89_fields() {
     let big = make_big();
     let big_json = facet_json::to_string(&big).unwrap();
-    let big_back: Big = facet_json::from_str(&big_json).unwrap();
+    let big_back: Big = super::json_backend::from_str(&big_json).unwrap();
     assert_eq!(big, big_back);
 }
 

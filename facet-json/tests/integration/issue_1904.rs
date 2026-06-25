@@ -4,8 +4,8 @@
 //! extra fields in the JSON (that belong to other variants or are unknown)
 //! should be ignored rather than causing parse failures.
 
+use super::json_backend::from_str;
 use facet::Facet;
-use facet_json::from_str;
 use facet_testhelpers::test;
 
 #[derive(Facet, Clone, Debug, PartialEq, PartialOrd)]

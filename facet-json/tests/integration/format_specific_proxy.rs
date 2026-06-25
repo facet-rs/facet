@@ -2,8 +2,9 @@
 //!
 //! This tests the `#[facet(json::proxy = ...)]` syntax for format-specific proxy types.
 
+use super::json_backend::from_str;
 use facet::Facet;
-use facet_json::{from_str, to_string};
+use facet_json::to_string;
 use facet_testhelpers::test;
 
 /// A proxy type that formats values as hex strings.

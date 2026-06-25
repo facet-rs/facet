@@ -8,8 +8,8 @@
 
 use std::collections::BTreeMap;
 
+use super::json_backend::from_str;
 use facet::Facet;
-use facet_json::from_str;
 
 #[derive(Facet, Debug, PartialEq)]
 struct Keys {

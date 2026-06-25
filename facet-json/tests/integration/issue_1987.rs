@@ -27,10 +27,10 @@ enum ThreeThenTwo {
 fn test_issue_1987_two_element_array_matches_two_element_variant() {
     let input = r#"[1,5]"#;
 
-    let a: TwoThenThree = facet_json::from_str(input).unwrap();
+    let a: TwoThenThree = super::json_backend::from_str(input).unwrap();
     assert_eq!(a, TwoThenThree::MinMaxList([1, 5]));
 
-    let b: ThreeThenTwo = facet_json::from_str(input).unwrap();
+    let b: ThreeThenTwo = super::json_backend::from_str(input).unwrap();
     assert_eq!(b, ThreeThenTwo::MinMaxList([1, 5]));
 }
 
@@ -38,9 +38,9 @@ fn test_issue_1987_two_element_array_matches_two_element_variant() {
 fn test_issue_1987_three_element_array_matches_three_element_variant() {
     let input = r#"[1,5,1]"#;
 
-    let a: TwoThenThree = facet_json::from_str(input).unwrap();
+    let a: TwoThenThree = super::json_backend::from_str(input).unwrap();
     assert_eq!(a, TwoThenThree::MinMaxStepList([1, 5, 1]));
 
-    let b: ThreeThenTwo = facet_json::from_str(input).unwrap();
+    let b: ThreeThenTwo = super::json_backend::from_str(input).unwrap();
     assert_eq!(b, ThreeThenTwo::MinMaxStepList([1, 5, 1]));
 }

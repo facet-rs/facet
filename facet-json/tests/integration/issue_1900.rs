@@ -6,9 +6,10 @@
 //! The Borrowed/Owned distinction is an implementation detail for memory
 //! management, not part of the data model.
 
+use super::json_backend::from_str;
 use compact_str::CompactString;
 use facet::Facet;
-use facet_json::{from_str, to_string};
+use facet_json::to_string;
 use facet_testhelpers::test;
 
 /// Example from the issue - a cow-like enum using CompactString

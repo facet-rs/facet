@@ -7,8 +7,9 @@
 //! The Borrowed/Owned distinction is purely an implementation detail for memory
 //! management and should not appear in the serialized output.
 
+use super::json_backend::from_str;
 use facet::Facet;
-use facet_json::{from_str, to_string};
+use facet_json::to_string;
 use facet_testhelpers::test;
 
 /// A cow-like enum that can hold either a borrowed or owned string.

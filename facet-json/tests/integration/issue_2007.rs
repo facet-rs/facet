@@ -28,7 +28,7 @@ pub struct Outer {
 #[test]
 fn test_single_flattened_tagged_enum_deserialize() {
     let json_single = r#"{"type":"TypeA","value":42.0}"#;
-    let single: Outer = facet_json::from_str(json_single).expect("single should work");
+    let single: Outer = super::json_backend::from_str(json_single).expect("single should work");
     assert!(matches!(single.tagged, Tagged::TypeA(_)));
 
     if let Tagged::TypeA(inner) = &single.tagged {
@@ -39,7 +39,7 @@ fn test_single_flattened_tagged_enum_deserialize() {
 #[test]
 fn test_vec_flattened_tagged_enum_deserialize() {
     let json_vec = r#"[{"type":"TypeA","value":42.0},{"type":"TypeB","value":99.0}]"#;
-    let vec_result: Result<Vec<Outer>, _> = facet_json::from_str(json_vec);
+    let vec_result: Result<Vec<Outer>, _> = super::json_backend::from_str(json_vec);
     assert!(
         vec_result.is_ok(),
         "Vec deserialization should work but fails with: {:?}",
@@ -64,7 +64,7 @@ fn test_vec_flattened_tagged_enum_deserialize() {
 #[test]
 fn test_two_elements_same_variant() {
     let json = r#"[{"type":"TypeA","value":1.0},{"type":"TypeA","value":2.0}]"#;
-    let result: Result<Vec<Outer>, _> = facet_json::from_str(json);
+    let result: Result<Vec<Outer>, _> = super::json_backend::from_str(json);
     assert!(
         result.is_ok(),
         "Two elements with same variant should work but fails with: {:?}",
@@ -76,7 +76,7 @@ fn test_two_elements_same_variant() {
 #[test]
 fn test_single_element_in_vec() {
     let json = r#"[{"type":"TypeA","value":1.0}]"#;
-    let result: Result<Vec<Outer>, _> = facet_json::from_str(json);
+    let result: Result<Vec<Outer>, _> = super::json_backend::from_str(json);
     assert!(
         result.is_ok(),
         "Single element in Vec should work but fails with: {:?}",
@@ -126,7 +126,7 @@ pub struct OuterStruct {
 #[test]
 fn test_struct_variant_in_vec() {
     let json = r#"[{"type":"TypeA","value":1.0}]"#;
-    let result: Result<Vec<OuterStruct>, _> = facet_json::from_str(json);
+    let result: Result<Vec<OuterStruct>, _> = super::json_backend::from_str(json);
     assert!(
         result.is_ok(),
         "Struct variant in Vec should work but fails with: {:?}",
@@ -147,7 +147,7 @@ fn test_roundtrip_vec_flattened_tagged_enum() {
 
     let json = facet_json::to_string(&original).expect("serialization should work");
     let deserialized: Vec<Outer> =
-        facet_json::from_str(&json).expect("deserialization should work");
+        super::json_backend::from_str(&json).expect("deserialization should work");
 
     assert_eq!(original, deserialized);
 }

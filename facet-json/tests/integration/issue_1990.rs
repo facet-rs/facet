@@ -23,13 +23,13 @@ enum IntegerFirst {
 
 #[test]
 fn number_input_selects_integer_variant() {
-    let parsed: StringFirst = facet_json::from_str(r#"{"x":1,"y":2}"#).unwrap();
+    let parsed: StringFirst = super::json_backend::from_str(r#"{"x":1,"y":2}"#).unwrap();
     assert_eq!(parsed, StringFirst::Integer { x: 1, y: 2 });
 }
 
 #[test]
 fn numeric_strings_select_string_variant() {
-    let parsed: IntegerFirst = facet_json::from_str(r#"{"x":"1","y":"2"}"#).unwrap();
+    let parsed: IntegerFirst = super::json_backend::from_str(r#"{"x":"1","y":"2"}"#).unwrap();
     assert_eq!(
         parsed,
         IntegerFirst::Stringer {
@@ -41,7 +41,7 @@ fn numeric_strings_select_string_variant() {
 
 #[test]
 fn non_numeric_strings_still_select_string_variant() {
-    let parsed: IntegerFirst = facet_json::from_str(r#"{"x":"abc","y":"def"}"#).unwrap();
+    let parsed: IntegerFirst = super::json_backend::from_str(r#"{"x":"abc","y":"def"}"#).unwrap();
     assert_eq!(
         parsed,
         IntegerFirst::Stringer {
