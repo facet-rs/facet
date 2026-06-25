@@ -1009,6 +1009,64 @@ mod tests {
     }
 
     #[test]
+    fn test_roundtrip_with_defaulted_optional_collections() {
+        use std::collections::HashMap;
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            #[facet(default)]
+            features: Option<Vec<String>>,
+            #[facet(default)]
+            tables: Option<HashMap<String, Vec<String>>>,
+        }
+
+        let schema_str = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema_str}");
+
+        assert!(
+            schema_str.contains("@default(@ @optional(@seq(@string)))"),
+            "defaulted optional vec schema should attach nested tag payloads. Got:\n{schema_str}",
+        );
+        assert!(
+            schema_str.contains("@optional(@map(@string @seq(@string)))"),
+            "defaulted optional map schema should attach nested tag payloads. Got:\n{schema_str}",
+        );
+        assert!(
+            !schema_str.contains("@optional (")
+                && !schema_str.contains("@seq (")
+                && !schema_str.contains("@map ("),
+            "tag payloads must not be detached by whitespace. Got:\n{schema_str}",
+        );
+
+        let parsed: SchemaFile =
+            crate::from_str(&schema_str).expect("failed to parse generated schema");
+
+        let root_schema = parsed.schema.get(&None).expect("missing root schema");
+        let Schema::Object(obj) = root_schema else {
+            panic!("expected root schema to be Object, got {:?}", root_schema);
+        };
+
+        let features_schema = obj
+            .0
+            .get(&Documented::new(ObjectKey::named("features")))
+            .expect("missing features field");
+        assert!(
+            matches!(features_schema, Schema::Default(_)),
+            "features should be Default, got {features_schema:?}",
+        );
+
+        let tables_schema = obj
+            .0
+            .get(&Documented::new(ObjectKey::named("tables")))
+            .expect("missing tables field");
+        assert!(
+            matches!(tables_schema, Schema::Default(_)),
+            "tables should be Default, got {tables_schema:?}",
+        );
+    }
+
+    #[test]
     fn test_schema_uses_at_for_root_key() {
         #[derive(Facet)]
         #[allow(dead_code)]

@@ -223,12 +223,17 @@ impl FormatSerializer for StyxSerializer {
     type Error = StyxSerializeError;
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
+        let is_after_tag = self.just_wrote_tag;
         let is_root = self.at_root;
-        trace!(is_root, "begin_struct");
+        trace!(is_root, is_after_tag, "begin_struct");
         self.at_root = false;
         self.just_wrote_tag = false;
-        self.writer.clear_skip_before_value();
-        self.writer.begin_struct(is_root);
+        if is_after_tag {
+            self.writer.begin_struct_after_tag(false);
+        } else {
+            self.writer.clear_skip_before_value();
+            self.writer.begin_struct(is_root);
+        }
         Ok(())
     }
 
@@ -322,11 +327,16 @@ impl FormatSerializer for StyxSerializer {
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
-        trace!("begin_seq");
+        let is_after_tag = self.just_wrote_tag;
+        trace!(is_after_tag, "begin_seq");
         self.at_root = false;
         self.just_wrote_tag = false;
-        self.writer.clear_skip_before_value();
-        self.writer.begin_seq();
+        if is_after_tag {
+            self.writer.begin_seq_after_tag();
+        } else {
+            self.writer.clear_skip_before_value();
+            self.writer.begin_seq();
+        }
         Ok(())
     }
 
@@ -710,10 +720,15 @@ impl FormatSerializer for CompactStyxSerializer {
     type Error = StyxSerializeError;
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
+        let is_after_tag = self.just_wrote_tag;
         // Never treat as root in compact mode
         self.just_wrote_tag = false;
-        self.writer.clear_skip_before_value();
-        self.writer.begin_struct(false);
+        if is_after_tag {
+            self.writer.begin_struct_after_tag(false);
+        } else {
+            self.writer.clear_skip_before_value();
+            self.writer.begin_struct(false);
+        }
         Ok(())
     }
 
@@ -728,9 +743,14 @@ impl FormatSerializer for CompactStyxSerializer {
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
+        let is_after_tag = self.just_wrote_tag;
         self.just_wrote_tag = false;
-        self.writer.clear_skip_before_value();
-        self.writer.begin_seq();
+        if is_after_tag {
+            self.writer.begin_seq_after_tag();
+        } else {
+            self.writer.clear_skip_before_value();
+            self.writer.begin_seq();
+        }
         Ok(())
     }
 

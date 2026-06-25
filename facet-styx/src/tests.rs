@@ -536,6 +536,35 @@ fn test_map_schema_spacing() {
     );
 }
 
+#[test]
+fn test_tagged_schema_payloads_are_attached() {
+    use crate::schema_types::{
+        DefaultSchema, Documented, OptionalSchema, RawStyx, Schema, SeqSchema,
+    };
+
+    let optional_schema = Schema::Optional(OptionalSchema((Documented::new(Box::new(
+        Schema::String(None),
+    )),)));
+    let optional_output = to_string(&optional_schema).unwrap();
+    assert_eq!(optional_output.trim(), "@optional(@string)");
+    let _: Schema = from_str_expr(&optional_output).unwrap();
+
+    let default_schema = Schema::Default(DefaultSchema((
+        RawStyx::new("@"),
+        Documented::new(Box::new(Schema::Optional(OptionalSchema((
+            Documented::new(Box::new(Schema::Seq(SeqSchema((Documented::new(
+                Box::new(Schema::String(None)),
+            ),))))),
+        ))))),
+    )));
+    let default_output = to_string(&default_schema).unwrap();
+    assert!(
+        default_output.contains("@optional(@seq(@string))"),
+        "expected attached nested tag payloads, got: {default_output}",
+    );
+    let _: Schema = from_str_expr(&default_output).unwrap();
+}
+
 /// Test that Documented<String> works as a flattened map key (baseline).
 #[test]
 fn test_documented_as_flattened_map_key() {
