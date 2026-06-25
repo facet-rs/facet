@@ -6,8 +6,9 @@
 //! 2. Any unknown tag (including the variant's own name) falls back to this variant
 //! 3. The fallback path handles deserialization differently (e.g., captures the tag)
 
+use super::json_backend::from_str;
 use facet::Facet;
-use facet_json::{from_str, to_string};
+use facet_json::to_string;
 use facet_testhelpers::test;
 
 #[derive(Facet, Debug, PartialEq)]

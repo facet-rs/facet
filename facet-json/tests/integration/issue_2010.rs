@@ -49,7 +49,7 @@ fn tag_before_fields() {
         }
     }"#;
 
-    let outer: Outer = facet_json::from_str(json).expect("tag before fields should work");
+    let outer: Outer = super::json_backend::from_str(json).expect("tag before fields should work");
     assert_eq!(
         outer.container.items.as_ref().unwrap()["x"].inner,
         Inner::TypeB {
@@ -74,7 +74,7 @@ fn fields_before_tag() {
         }
     }"#;
 
-    let outer: Outer = facet_json::from_str(json).expect("fields before tag should work");
+    let outer: Outer = super::json_backend::from_str(json).expect("fields before tag should work");
     assert_eq!(
         outer.container.items.as_ref().unwrap()["x"].inner,
         Inner::TypeB {

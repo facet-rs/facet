@@ -44,7 +44,7 @@ impl From<&Option<Arc<HashMap<(String, String), f64>>>> for Proxy {
 #[test]
 fn test_repro_1236() {
     let json = r#"{"corr":[["a","b",0.95]]}"#;
-    let d: Data = facet_json::from_str(json).unwrap();
+    let d: Data = super::json_backend::from_str(json).unwrap();
     assert!(d.corr.is_some());
     let corr = d.corr.as_ref().unwrap();
     assert_eq!(corr.get(&("a".to_string(), "b".to_string())), Some(&0.95));
@@ -65,7 +65,7 @@ fn test_newtype_scalar_roundtrip() {
     let json = facet_json::to_string(&value).unwrap();
     assert_eq!(json, "42");
 
-    let parsed: ScalarNewtype = facet_json::from_str(&json).unwrap();
+    let parsed: ScalarNewtype = super::json_backend::from_str(&json).unwrap();
     assert_eq!(parsed, value);
 }
 
@@ -80,7 +80,7 @@ fn test_newtype_vec_roundtrip() {
     let json = facet_json::to_string(&value).unwrap();
     assert_eq!(json, "[1,2,3]");
 
-    let parsed: VecNewtype = facet_json::from_str(&json).unwrap();
+    let parsed: VecNewtype = super::json_backend::from_str(&json).unwrap();
     assert_eq!(parsed, value);
 }
 
@@ -91,7 +91,7 @@ fn test_newtype_empty_vec_roundtrip() {
     let json = facet_json::to_string(&value).unwrap();
     assert_eq!(json, "[]");
 
-    let parsed: VecNewtype = facet_json::from_str(&json).unwrap();
+    let parsed: VecNewtype = super::json_backend::from_str(&json).unwrap();
     assert_eq!(parsed, value);
 }
 
@@ -110,7 +110,7 @@ fn test_nested_newtypes_roundtrip() {
     let json = facet_json::to_string(&value).unwrap();
     assert_eq!(json, "42");
 
-    let parsed: OuterNewtype = facet_json::from_str(&json).unwrap();
+    let parsed: OuterNewtype = super::json_backend::from_str(&json).unwrap();
     assert_eq!(parsed, value);
 }
 
@@ -121,7 +121,7 @@ fn test_plain_tuple_not_transparent() {
     let json = facet_json::to_string(&value).unwrap();
     assert_eq!(json, "[42]");
 
-    let parsed: (i32,) = facet_json::from_str(&json).unwrap();
+    let parsed: (i32,) = super::json_backend::from_str(&json).unwrap();
     assert_eq!(parsed, value);
 }
 
@@ -135,7 +135,7 @@ fn test_multi_field_tuple_struct_not_transparent() {
     let json = facet_json::to_string(&value).unwrap();
     assert_eq!(json, "[1,2]");
 
-    let parsed: TwoFieldTuple = facet_json::from_str(&json).unwrap();
+    let parsed: TwoFieldTuple = super::json_backend::from_str(&json).unwrap();
     assert_eq!(parsed, value);
 }
 
@@ -150,6 +150,6 @@ fn test_newtype_containing_tuple_roundtrip() {
     let json = facet_json::to_string(&value).unwrap();
     assert_eq!(json, "[1,2]");
 
-    let parsed: TupleNewtype = facet_json::from_str(&json).unwrap();
+    let parsed: TupleNewtype = super::json_backend::from_str(&json).unwrap();
     assert_eq!(parsed, value);
 }

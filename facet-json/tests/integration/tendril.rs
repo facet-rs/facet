@@ -33,7 +33,7 @@ fn str_tendril_serialize() {
 #[test]
 fn str_tendril_deserialize() {
     let json = r#"{"title":"Hello","body":"World"}"#;
-    let doc: Document = facet_json::from_str(json).expect("should deserialize");
+    let doc: Document = super::json_backend::from_str(json).expect("should deserialize");
 
     assert_eq!(&*doc.title, "Hello");
     assert_eq!(&*doc.body, "World");
@@ -47,7 +47,7 @@ fn str_tendril_roundtrip() {
     };
 
     let json = facet_json::to_string(&original).expect("should serialize");
-    let restored: Document = facet_json::from_str(&json).expect("should deserialize");
+    let restored: Document = super::json_backend::from_str(&json).expect("should deserialize");
 
     assert_eq!(original, restored);
 }
@@ -66,7 +66,7 @@ fn atomic_str_tendril_serialize() {
 #[test]
 fn atomic_str_tendril_deserialize() {
     let json = r#"{"title":"Hello","body":"World"}"#;
-    let doc: AtomicDocument = facet_json::from_str(json).expect("should deserialize");
+    let doc: AtomicDocument = super::json_backend::from_str(json).expect("should deserialize");
 
     assert_eq!(&*doc.title, "Hello");
     assert_eq!(&*doc.body, "World");
@@ -80,7 +80,8 @@ fn atomic_str_tendril_roundtrip() {
     };
 
     let json = facet_json::to_string(&original).expect("should serialize");
-    let restored: AtomicDocument = facet_json::from_str(&json).expect("should deserialize");
+    let restored: AtomicDocument =
+        super::json_backend::from_str(&json).expect("should deserialize");
 
     assert_eq!(&*original.title, &*restored.title);
     assert_eq!(&*original.body, &*restored.body);
@@ -96,6 +97,6 @@ fn str_tendril_empty_string() {
     let json = facet_json::to_string(&doc).expect("should serialize");
     assert_eq!(json, r#"{"title":"","body":""}"#);
 
-    let restored: Document = facet_json::from_str(&json).expect("should deserialize");
+    let restored: Document = super::json_backend::from_str(&json).expect("should deserialize");
     assert_eq!(doc, restored);
 }

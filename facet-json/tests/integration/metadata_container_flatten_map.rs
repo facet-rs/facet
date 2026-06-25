@@ -41,7 +41,7 @@ struct SpannedMap {
 #[test]
 fn metadata_container_as_flattened_map_key_deserialize() {
     let json = r#"{"foo": "bar", "baz": "qux"}"#;
-    let result: SpannedMap = facet_json::from_str(json).expect("should deserialize");
+    let result: SpannedMap = super::json_backend::from_str(json).expect("should deserialize");
 
     assert_eq!(result.items.len(), 2);
 

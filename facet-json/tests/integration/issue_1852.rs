@@ -29,10 +29,10 @@ fn test_two_arrays_scientific_crlf() {
     );
     let json_lf = json_crlf.replace("\r\n", "\n");
 
-    let result_lf: Result<TwoVecs, _> = facet_json::from_str(&json_lf);
+    let result_lf: Result<TwoVecs, _> = super::json_backend::from_str(&json_lf);
     assert!(result_lf.is_ok(), "LF version should work");
 
-    let result_crlf: Result<TwoVecs, _> = facet_json::from_str(json_crlf);
+    let result_crlf: Result<TwoVecs, _> = super::json_backend::from_str(json_crlf);
     assert!(
         result_crlf.is_ok(),
         "CRLF version should also work: {:?}",
@@ -97,10 +97,10 @@ fn test_facet_crlf_scientific_notation_bug() {
     );
     let json_lf = json_crlf.replace("\r\n", "\n");
 
-    let result_lf: Result<Container, _> = facet_json::from_str(&json_lf);
+    let result_lf: Result<Container, _> = super::json_backend::from_str(&json_lf);
     assert!(result_lf.is_ok(), "LF version should work");
 
-    let result_crlf: Result<Container, _> = facet_json::from_str(json_crlf);
+    let result_crlf: Result<Container, _> = super::json_backend::from_str(json_crlf);
     assert!(
         result_crlf.is_ok(),
         "CRLF version should also work: {:?}",

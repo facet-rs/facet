@@ -1,8 +1,8 @@
 //! Test for flattened fields in externally-tagged enum struct variants.
 //! See https://github.com/facet-rs/facet/issues/1921
 
+use super::json_backend::from_str;
 use facet::Facet;
-use facet_json::from_str;
 use facet_testhelpers::test;
 
 #[derive(Facet, Debug, PartialEq, Default)]

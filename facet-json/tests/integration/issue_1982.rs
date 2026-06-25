@@ -3,8 +3,9 @@
 //! `#[facet(flatten)]` on an externally-tagged enum field must not duplicate
 //! the variant key during serialization.
 
+use super::json_backend::from_str as from_json;
 use facet::Facet;
-use facet_json::{from_str as from_json, to_string as to_json};
+use facet_json::to_string as to_json;
 use facet_testhelpers::test;
 
 #[derive(Facet, Debug, PartialEq)]

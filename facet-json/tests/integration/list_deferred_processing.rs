@@ -40,7 +40,7 @@ fn vec_flattened_tagged_enum_fields_in_order() {
     ]"#;
 
     let items: Vec<FlattenedItem> =
-        facet_json::from_str(json).expect("fields in order should work");
+        super::json_backend::from_str(json).expect("fields in order should work");
     assert_eq!(items.len(), 2);
     assert_eq!(
         items[0],
@@ -68,7 +68,7 @@ fn vec_flattened_tagged_enum_fields_out_of_order() {
     ]"#;
 
     let items: Vec<FlattenedItem> =
-        facet_json::from_str(json).expect("fields out of order should work");
+        super::json_backend::from_str(json).expect("fields out of order should work");
     assert_eq!(items.len(), 2);
     assert_eq!(
         items[0],
@@ -94,7 +94,8 @@ fn vec_flattened_tagged_enum_tag_last() {
         {"x": 2.0, "y": 3.0, "name": "second", "type": "VariantB"}
     ]"#;
 
-    let items: Vec<FlattenedItem> = facet_json::from_str(json).expect("tag last should work");
+    let items: Vec<FlattenedItem> =
+        super::json_backend::from_str(json).expect("tag last should work");
     assert_eq!(items.len(), 2);
 }
 
@@ -123,7 +124,7 @@ fn hashmap_of_vec_flattened_tagged_enum() {
     }"#;
 
     let container: NestedContainer =
-        facet_json::from_str(json).expect("nested HashMap<String, Vec<...>> should work");
+        super::json_backend::from_str(json).expect("nested HashMap<String, Vec<...>> should work");
     assert_eq!(container.groups.len(), 2);
     assert_eq!(container.groups["group1"].len(), 2);
     assert_eq!(container.groups["group2"].len(), 1);
@@ -153,7 +154,7 @@ fn nested_vec_of_vec_flattened_tagged_enum() {
         ]
     }"#;
 
-    let matrix: Matrix = facet_json::from_str(json).expect("Vec<Vec<...>> should work");
+    let matrix: Matrix = super::json_backend::from_str(json).expect("Vec<Vec<...>> should work");
     assert_eq!(matrix.rows.len(), 2);
     assert_eq!(matrix.rows[0].len(), 2);
     assert_eq!(matrix.rows[1].len(), 1);
@@ -193,7 +194,8 @@ fn large_vec_flattened_tagged_enum() {
     }
     let json = format!("[{}]", elements.join(","));
 
-    let items: Vec<FlattenedItem> = facet_json::from_str(&json).expect("large Vec should work");
+    let items: Vec<FlattenedItem> =
+        super::json_backend::from_str(&json).expect("large Vec should work");
     assert_eq!(items.len(), 100);
 
     // Verify a few elements
@@ -235,7 +237,7 @@ fn vec_with_optional_fields() {
     ]"#;
 
     let items: Vec<ItemWithOptionalFields> =
-        facet_json::from_str(json).expect("Vec with optional fields should work");
+        super::json_backend::from_str(json).expect("Vec with optional fields should work");
     assert_eq!(items.len(), 3);
     assert_eq!(items[0].optional_name, Some("has_name".into()));
     assert_eq!(items[0].optional_count, None);
@@ -282,7 +284,7 @@ fn vec_with_two_flattened_enums() {
     ]"#;
 
     let items: Vec<ItemWithTwoFlattened> =
-        facet_json::from_str(json).expect("Vec with two flattened enums should work");
+        super::json_backend::from_str(json).expect("Vec with two flattened enums should work");
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].id, "first");
     assert_eq!(items[1].id, "second");
@@ -321,7 +323,7 @@ fn deeply_nested_vec_option_vec() {
     }"#;
 
     let nested: DeepNested =
-        facet_json::from_str(json).expect("deeply nested structure should work");
+        super::json_backend::from_str(json).expect("deeply nested structure should work");
     assert_eq!(nested.wrappers.len(), 3);
     assert_eq!(nested.wrappers[0].items.as_ref().unwrap().len(), 1);
     assert!(nested.wrappers[1].items.is_none());
@@ -355,7 +357,7 @@ fn vec_externally_tagged_enum() {
     ]"#;
 
     let items: Vec<ItemWithExternallyTagged> =
-        facet_json::from_str(json).expect("externally tagged enum in Vec should work");
+        super::json_backend::from_str(json).expect("externally tagged enum in Vec should work");
     assert_eq!(items.len(), 2);
 }
 
@@ -366,7 +368,8 @@ fn vec_externally_tagged_enum() {
 #[test]
 fn empty_vec() {
     let json = r#"[]"#;
-    let items: Vec<FlattenedItem> = facet_json::from_str(json).expect("empty Vec should work");
+    let items: Vec<FlattenedItem> =
+        super::json_backend::from_str(json).expect("empty Vec should work");
     assert!(items.is_empty());
 }
 
@@ -374,7 +377,7 @@ fn empty_vec() {
 fn single_element_vec_tag_last() {
     let json = r#"[{"value": 1.0, "name": "only", "type": "VariantA"}]"#;
     let items: Vec<FlattenedItem> =
-        facet_json::from_str(json).expect("single element Vec should work");
+        super::json_backend::from_str(json).expect("single element Vec should work");
     assert_eq!(items.len(), 1);
 }
 
@@ -397,6 +400,6 @@ fn roundtrip_vec_flattened_tagged_enum() {
 
     let json = facet_json::to_string(&original).expect("serialization should work");
     let deserialized: Vec<FlattenedItem> =
-        facet_json::from_str(&json).expect("deserialization should work");
+        super::json_backend::from_str(&json).expect("deserialization should work");
     assert_eq!(original, deserialized);
 }

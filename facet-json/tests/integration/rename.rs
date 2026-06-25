@@ -2,8 +2,9 @@
 
 #![allow(non_snake_case)]
 
+use super::json_backend::from_str;
 use facet::Facet;
-use facet_json::{from_str, to_vec};
+use facet_json::to_vec;
 use facet_testhelpers::test;
 
 // =============================================================================

@@ -2,8 +2,8 @@
 //!
 //! Untagged enum struct variants must error on missing required fields.
 
+use super::json_backend::from_str;
 use facet::Facet;
-use facet_json::from_str;
 use facet_testhelpers::test;
 
 #[derive(Debug, Facet, PartialEq)]

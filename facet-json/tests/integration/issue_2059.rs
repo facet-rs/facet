@@ -18,10 +18,12 @@ fn nested_struct_invariants_are_enforced() {
         point.x >= 0 && point.y >= 0
     }
 
-    let ok: TopLevel = facet_json::from_str(r#"{ "point": { "x": 5, "y": 12 } }"#).unwrap();
+    let ok: TopLevel =
+        super::json_backend::from_str(r#"{ "point": { "x": 5, "y": 12 } }"#).unwrap();
     assert_eq!(ok.point.x, 5);
     assert_eq!(ok.point.y, 12);
 
-    let bad: Result<TopLevel, _> = facet_json::from_str(r#"{ "point": { "x": -25, "y": 12 } }"#);
+    let bad: Result<TopLevel, _> =
+        super::json_backend::from_str(r#"{ "point": { "x": -25, "y": 12 } }"#);
     assert!(bad.is_err());
 }
