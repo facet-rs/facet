@@ -1,6 +1,8 @@
 #[path = "backend_historical.rs"]
 pub(crate) mod json_backend;
 
+mod azure_devops_descriptor_map_key_repro;
+mod azure_devops_descriptor_map_key_working_pattern;
 mod flatten_defaults;
 mod flatten_in_externally_tagged_enum;
 mod format_specific_proxy;
