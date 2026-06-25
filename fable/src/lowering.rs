@@ -8,7 +8,11 @@ use std::ptr::copy_nonoverlapping;
 use facet_core::{
     Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
 };
-use weavy::{BlockRef, Control, DenseLowered, Program, RunError, RunStats, Step};
+use weavy::ir::{
+    ControlOp, DenseWeavyLowered, DenseWeavyProgram, EffectContract, EffectResource,
+    IntrinsicDescriptor, IntrinsicOp, MemoryRegion, TypedMemoryAccess, WeavyOp,
+};
+use weavy::{BlockRef, Control, RunError, RunStats, Step};
 
 use crate::SyntaxKind;
 use crate::ast::{
@@ -41,9 +45,13 @@ pub struct FableTransformPlan<Input, Output> {
 /// This is the lower-level form used by transform/debug-shell style callers
 /// that expose more than one typed root to a script.
 pub struct FableRootPlan {
-    lowered: DenseLowered<FableOp>,
+    lowered: FableLowered,
     roots: Box<[FableRootSpec]>,
 }
+
+type FableLowered = DenseWeavyLowered<FableIntrinsic>;
+type FableProgram = DenseWeavyProgram<FableIntrinsic>;
+type FableWeavyOp = WeavyOp<BlockRef, FableIntrinsic>;
 
 /// Access policy for a Fable root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -555,9 +563,10 @@ impl FableRootPlan {
         })?;
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_root(&root)?;
+        let blocks = lowerer.into_blocks();
 
         Ok(Self {
-            lowered: DenseLowered::new(program, Vec::new()),
+            lowered: FableLowered::new(program, blocks),
             roots: roots.into(),
         })
     }
@@ -981,7 +990,7 @@ impl fmt::Display for FableError {
 impl std::error::Error for FableError {}
 
 #[derive(Debug)]
-enum FableOp {
+enum FableIntrinsic {
     Let {
         local: LocalRef,
         value: ExprPlan,
@@ -993,9 +1002,51 @@ enum FableOp {
     Eval(ExprPlan),
     Branch {
         condition: BoolExpr,
-        then_program: Program<FableOp>,
-        else_program: Program<FableOp>,
+        then_block: BlockRef,
+        else_block: Option<BlockRef>,
     },
+}
+
+impl IntrinsicOp for FableIntrinsic {
+    fn descriptor(&self) -> IntrinsicDescriptor {
+        IntrinsicDescriptor {
+            dialect: "fable",
+            name: match self {
+                FableIntrinsic::Let { .. } => "let",
+                FableIntrinsic::Assign { .. } => "assign",
+                FableIntrinsic::Eval(_) => "eval",
+                FableIntrinsic::Branch { .. } => "branch",
+            },
+        }
+    }
+
+    fn effect(&self) -> EffectContract {
+        match self {
+            FableIntrinsic::Let { .. } => EffectContract::new()
+                .write_resource(EffectResource::SideChannel("fable.locals"))
+                .may_fail()
+                .may_allocate()
+                .calls_user_code(),
+            FableIntrinsic::Assign { .. } => EffectContract::new()
+                .typed_memory(MemoryRegion::unknown(), TypedMemoryAccess::Overwrite)
+                .may_fail()
+                .may_allocate()
+                .calls_user_code(),
+            FableIntrinsic::Eval(_) => EffectContract::new()
+                .read_resource(EffectResource::SideChannel("fable.locals"))
+                .may_fail()
+                .may_allocate()
+                .calls_user_code(),
+            FableIntrinsic::Branch { .. } => EffectContract::new()
+                .read_resource(EffectResource::SideChannel("fable.locals"))
+                .may_fail()
+                .calls_user_code(),
+        }
+    }
+}
+
+fn fable_op(intrinsic: FableIntrinsic) -> FableWeavyOp {
+    WeavyOp::Intrinsic(intrinsic)
 }
 
 #[derive(Debug)]
@@ -1480,6 +1531,7 @@ struct Lowerer<'intrinsics> {
     scopes: Vec<BTreeMap<String, LocalRef>>,
     locals: LocalAllocator,
     type_shapes: Vec<&'static Shape>,
+    blocks: Vec<FableProgram>,
 }
 
 impl<'intrinsics> Lowerer<'intrinsics> {
@@ -1494,14 +1546,19 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             scopes: vec![BTreeMap::new()],
             locals: LocalAllocator::default(),
             type_shapes,
+            blocks: Vec::new(),
         }
     }
 
-    fn lower_root(&mut self, root: &ast::Root) -> Result<Program<FableOp>, FableError> {
+    fn into_blocks(self) -> Vec<FableProgram> {
+        self.blocks
+    }
+
+    fn lower_root(&mut self, root: &ast::Root) -> Result<FableProgram, FableError> {
         self.lower_statements(root.statements())
     }
 
-    fn lower_block(&mut self, block: &Block) -> Result<Program<FableOp>, FableError> {
+    fn lower_block(&mut self, block: &Block) -> Result<FableProgram, FableError> {
         self.scopes.push(BTreeMap::new());
         let result = self.lower_statements(block.statements());
         self.scopes.pop();
@@ -1511,7 +1568,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     fn lower_statements(
         &mut self,
         statements: impl IntoIterator<Item = Stmt>,
-    ) -> Result<Program<FableOp>, FableError> {
+    ) -> Result<FableProgram, FableError> {
         let mut program = Vec::new();
         for stmt in statements {
             program.push(self.lower_stmt(&stmt)?);
@@ -1519,7 +1576,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         Ok(program)
     }
 
-    fn lower_stmt(&mut self, stmt: &Stmt) -> Result<FableOp, FableError> {
+    fn lower_stmt(&mut self, stmt: &Stmt) -> Result<FableWeavyOp, FableError> {
         match stmt {
             Stmt::Assign(assign) => {
                 let target_expr = assign.target().ok_or(FableError::MalformedSyntax {
@@ -1531,7 +1588,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 let target = self.lower_writable_path(&target_expr)?;
                 let value = self.lower_expr(&value_expr)?;
                 validate_assignment(target.scalar, target.shape, &value)?;
-                Ok(FableOp::Assign { target, value })
+                Ok(fable_op(FableIntrinsic::Assign { target, value }))
             }
             Stmt::Let(let_stmt) => {
                 let name = let_stmt.name().ok_or(FableError::MalformedSyntax {
@@ -1542,49 +1599,60 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 })?;
                 let value = self.lower_expr(&value_expr)?;
                 let local = self.declare_local(name, &value)?;
-                Ok(FableOp::Let { local, value })
+                Ok(fable_op(FableIntrinsic::Let { local, value }))
             }
             Stmt::Expr(expr_stmt) => {
                 let expr = expr_stmt.expr().ok_or(FableError::MalformedSyntax {
                     reason: "expression statement without expression",
                 })?;
-                Ok(FableOp::Eval(self.lower_expr(&expr)?))
+                Ok(fable_op(FableIntrinsic::Eval(self.lower_expr(&expr)?)))
             }
             Stmt::If(if_stmt) => self.lower_if(if_stmt),
         }
     }
 
-    fn lower_if(&mut self, if_stmt: &IfStmt) -> Result<FableOp, FableError> {
+    fn lower_if(&mut self, if_stmt: &IfStmt) -> Result<FableWeavyOp, FableError> {
         let condition = if_stmt.condition().ok_or(FableError::MalformedSyntax {
             reason: "if statement without condition",
         })?;
-        let then_block = if_stmt.then_block().ok_or(FableError::MalformedSyntax {
+        let condition = expect_bool_plan(self.lower_expr(&condition)?)?;
+        let then_ast_block = if_stmt.then_block().ok_or(FableError::MalformedSyntax {
             reason: "if statement without then block",
         })?;
 
-        let else_program = if let Some(else_clause) = if_stmt.else_clause() {
+        let else_block = if let Some(else_clause) = if_stmt.else_clause() {
             self.lower_else(&else_clause)?
         } else {
-            Vec::new()
+            None
         };
+        let then_program = self.lower_block(&then_ast_block)?;
+        let then_block = self.push_block(then_program);
 
-        Ok(FableOp::Branch {
-            condition: expect_bool_plan(self.lower_expr(&condition)?)?,
-            then_program: self.lower_block(&then_block)?,
-            else_program,
-        })
+        Ok(fable_op(FableIntrinsic::Branch {
+            condition,
+            then_block,
+            else_block,
+        }))
     }
 
-    fn lower_else(&mut self, else_clause: &ElseClause) -> Result<Program<FableOp>, FableError> {
+    fn lower_else(&mut self, else_clause: &ElseClause) -> Result<Option<BlockRef>, FableError> {
         if let Some(if_stmt) = else_clause.if_stmt() {
-            Ok(vec![self.lower_if(&if_stmt)?])
+            let program = vec![self.lower_if(&if_stmt)?];
+            Ok(Some(self.push_block(program)))
         } else if let Some(block) = else_clause.block() {
-            self.lower_block(&block)
+            let program = self.lower_block(&block)?;
+            Ok(Some(self.push_block(program)))
         } else {
             Err(FableError::MalformedSyntax {
                 reason: "else clause without if statement or block",
             })
         }
+    }
+
+    fn push_block(&mut self, program: FableProgram) -> BlockRef {
+        let block = BlockRef::new(self.blocks.len());
+        self.blocks.push(program);
+        block
     }
 
     fn lower_expr(&mut self, expr: &Expr) -> Result<ExprPlan, FableError> {
@@ -2764,20 +2832,48 @@ struct FableInterp {
     locals: LocalSlots,
 }
 
-impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
+impl<'program> Step<'program, BlockRef, FableWeavyOp> for FableInterp {
     type Error = FableError;
     type Continuation = ();
 
     fn step(
         &mut self,
-        op: &'program FableOp,
-    ) -> Result<Control<'program, BlockRef, FableOp>, Self::Error> {
+        op: &'program FableWeavyOp,
+    ) -> Result<Control<'program, BlockRef, FableWeavyOp>, Self::Error> {
         match op {
-            FableOp::Let { local, value } => {
+            WeavyOp::Control(ControlOp::CallBlock { block, base_offset }) => {
+                if *base_offset != 0 {
+                    return Err(FableError::MalformedProgram {
+                        reason: "Fable canonical block calls must use base offset 0",
+                    });
+                }
+                Ok(Control::CallBlock(*block))
+            }
+            WeavyOp::Control(ControlOp::Return) => Ok(Control::Return),
+            WeavyOp::Memory(_) | WeavyOp::Init(_) | WeavyOp::Aggregate(_) => {
+                Err(FableError::MalformedProgram {
+                    reason: "Fable cannot execute canonical typed-memory ops yet",
+                })
+            }
+            WeavyOp::Intrinsic(intrinsic) => self.step_intrinsic(intrinsic),
+            _ => Err(FableError::MalformedProgram {
+                reason: "Fable cannot execute this canonical Weavy op",
+            }),
+        }
+    }
+}
+
+impl FableInterp {
+    fn step_intrinsic<'program>(
+        &mut self,
+        intrinsic: &'program FableIntrinsic,
+    ) -> Result<Control<'program, BlockRef, FableWeavyOp>, FableError> {
+        match intrinsic {
+            FableIntrinsic::Let { local, value } => {
                 self.init_local(*local, value)?;
                 Ok(Control::Continue)
             }
-            FableOp::Assign { target, value } => {
+            FableIntrinsic::Assign { target, value } => {
                 let ptr = self.path_ptr_mut(target)?;
                 if let Some(scalar) = target.scalar {
                     unsafe { self.write_scalar(scalar, ptr, value) }?;
@@ -2786,25 +2882,22 @@ impl<'program> Step<'program, BlockRef, FableOp> for FableInterp {
                 }
                 Ok(Control::Continue)
             }
-            FableOp::Eval(expr) => {
+            FableIntrinsic::Eval(expr) => {
                 self.eval_expr(expr)?;
                 Ok(Control::Continue)
             }
-            FableOp::Branch {
+            FableIntrinsic::Branch {
                 condition,
-                then_program,
-                else_program,
+                then_block,
+                else_block,
             } => {
                 let condition = self.eval_bool(condition)?;
-                let program = if condition {
-                    then_program.as_slice()
+                if condition {
+                    Ok(Control::CallBlock(*then_block))
+                } else if let Some(block) = else_block {
+                    Ok(Control::CallBlock(*block))
                 } else {
-                    else_program.as_slice()
-                };
-                if program.is_empty() {
                     Ok(Control::Continue)
-                } else {
-                    Ok(Control::CallProgram(program))
                 }
             }
         }
@@ -4345,6 +4438,10 @@ fn decode_string(text: &str) -> Result<String, FableError> {
 #[cfg(test)]
 mod tests {
     use facet::Facet;
+    use weavy::ir::{
+        IntrinsicDescriptor, dense_lowered_effect_stats, dense_lowered_intrinsic_counts,
+        dense_lowered_program_stats,
+    };
 
     use super::*;
 
@@ -4524,6 +4621,78 @@ mod tests {
     }
 
     #[test]
+    fn exposes_compiled_root_program_as_canonical_weavy_ir() {
+        let roots = [
+            FableRootSpec::read_only::<TransformInput>("in"),
+            FableRootSpec::read_write::<TransformOutput>("out"),
+        ];
+        let plan = FableRootPlan::compile(
+            r#"
+                let full = in.first_name + " " + in.last_name;
+                out.name = full;
+
+                if in.deleted {
+                    out.status = "archived";
+                } else {
+                    out.status = "active";
+                }
+            "#,
+            &roots,
+        )
+        .unwrap();
+
+        let shape = dense_lowered_program_stats(&plan.lowered);
+        assert_eq!(shape.block_count, 2);
+        assert_eq!(shape.root.op_count, 3);
+        assert_eq!(shape.blocks.op_count, 2);
+        assert_eq!(shape.total.intrinsic_op_count, 5);
+        assert_eq!(shape.total.control_op_count, 0);
+        assert_eq!(shape.total.memory_op_count, 0);
+
+        let counts = dense_lowered_intrinsic_counts(&plan.lowered);
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "fable",
+                name: "let",
+            }],
+            1
+        );
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "fable",
+                name: "assign",
+            }],
+            3
+        );
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "fable",
+                name: "branch",
+            }],
+            1
+        );
+
+        let effects = dense_lowered_effect_stats(&plan.lowered);
+        assert_eq!(effects.total.intrinsic_op_count, 5);
+        assert_eq!(effects.total.typed_memory_overwrite_count, 3);
+        assert!(effects.total.side_channel_count >= 2);
+        assert_eq!(effects.total.barrier_count, 5);
+
+        let input = transform_input();
+        let mut output = transform_output();
+        {
+            let mut values = [
+                FableRootValue::read_only("in", &input),
+                FableRootValue::read_write("out", &mut output),
+            ];
+            plan.apply(&mut values).unwrap();
+        }
+
+        assert_eq!(output.name, "Ada Lovelace");
+        assert_eq!(output.status, "active");
+    }
+
+    #[test]
     fn applies_typed_transform_plan() {
         let plan = FableTransformPlan::<TransformInput, TransformOutput>::compile(
             r#"
@@ -4679,7 +4848,7 @@ mod tests {
     }
 
     #[test]
-    fn else_if_uses_inline_child_programs() {
+    fn else_if_uses_dense_child_blocks() {
         let mut value = state();
 
         apply(
