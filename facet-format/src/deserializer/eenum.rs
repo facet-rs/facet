@@ -1358,20 +1358,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Step 1: Probe to find the tag value (handles out-of-order fields)
         let evidence = self.collect_evidence()?;
 
-        // Step 2: Consume StructStart
-        let event = self.expect_event("value")?;
-        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
-            return Err(self.mk_err(
-                &wip,
-                DeserializeErrorKind::UnexpectedToken {
-                    expected: "struct for adjacently tagged enum",
-                    got: event.kind_name().into(),
-                },
-            ));
-        }
-
-        // Step 3: Select the variant
-        // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
+        // Step 2: Select the variant before consuming the object. Unknown
+        // `#[facet(other)]` variants may need the whole adjacent object as their
+        // payload, for example `Other(RawJson)`.
         let enum_def = match &wip.shape().ty {
             Type::User(UserType::Enum(e)) => e,
             _ => {
@@ -1383,6 +1372,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ));
             }
         };
+
+        let enum_plan = wip.enum_plan().unwrap();
 
         if wip.shape().is_numeric() {
             let discriminant = find_tag_discriminant(&evidence, tag_key).ok_or_else(|| {
@@ -1407,8 +1398,39 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     )
                 })?
                 .to_string();
-            let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
-            wip = wip.select_variant_named(actual_variant)?;
+
+            if enum_plan.variant_lookup.find(&variant_name).is_some() {
+                let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
+                wip = wip.select_variant_named(actual_variant)?;
+            } else if let Some(other_idx) = enum_plan.other_variant_idx {
+                wip = wip.select_nth_variant(other_idx)?;
+                return self.deserialize_adjacent_other_variant(
+                    wip,
+                    tag_key,
+                    content_key,
+                    Some(&variant_name),
+                );
+            } else {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::UnknownVariant {
+                        enum_shape: wip.shape(),
+                        variant: variant_name.into(),
+                    },
+                ));
+            }
+        }
+
+        // Step 3: Consume StructStart for known variants.
+        let event = self.expect_event("value")?;
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "struct for adjacently tagged enum",
+                    got: event.kind_name().into(),
+                },
+            ));
         }
 
         // Step 4: Process fields in any order
@@ -1469,6 +1491,109 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     },
                 ));
             }
+        }
+
+        Ok(wip)
+    }
+    fn deserialize_adjacent_other_variant(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        tag_key: &'static str,
+        content_key: &'static str,
+        captured_tag: Option<&str>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
+            span: Some(self.last_span),
+            path: Some(wip.path()),
+            kind: DeserializeErrorKind::UnexpectedToken {
+                expected: "selected variant",
+                got: "no variant selected".into(),
+            },
+        })?;
+
+        let variant_fields = variant.data.fields;
+        let tag_field_idx = variant_fields.iter().position(|f| f.is_variant_tag());
+        let content_field_idx = variant_fields.iter().position(|f| f.is_variant_content());
+
+        if tag_field_idx.is_none() && content_field_idx.is_none() {
+            return self.deserialize_enum_variant_content(wip);
+        }
+
+        if let Some(idx) = tag_field_idx {
+            wip = wip.begin_nth_field(idx)?;
+            match captured_tag {
+                Some(tag) => {
+                    wip = self.set_string_value(wip, Cow::Owned(tag.to_owned()))?;
+                }
+                None => {
+                    wip = wip.set_default()?;
+                }
+            }
+            wip = wip.end()?;
+        }
+
+        let event = self.expect_event("value")?;
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "struct for adjacently tagged #[facet(other)] enum variant",
+                    got: event.kind_name().into(),
+                },
+            ));
+        }
+
+        let mut content_seen = false;
+        loop {
+            let event = self.expect_event("value")?;
+            match event.kind {
+                ParseEventKind::StructEnd => break,
+                ParseEventKind::FieldKey(key) => {
+                    let key_name = match key.name() {
+                        Some(name) => name.as_ref(),
+                        None => {
+                            self.skip_value()?;
+                            continue;
+                        }
+                    };
+
+                    if key_name == tag_key {
+                        self.skip_value()?;
+                    } else if key_name == content_key {
+                        if let Some(idx) = content_field_idx {
+                            wip = wip
+                                .begin_nth_field(idx)?
+                                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
+                                .end()?;
+                            content_seen = true;
+                        } else {
+                            self.skip_value()?;
+                        }
+                    } else {
+                        self.skip_value()?;
+                    }
+                }
+                other => {
+                    return Err(DeserializeError {
+                        span: Some(self.last_span),
+                        path: Some(wip.path()),
+                        kind: DeserializeErrorKind::UnexpectedToken {
+                            expected: "field key or struct end",
+                            got: other.kind_name().into(),
+                        },
+                    });
+                }
+            }
+        }
+
+        if content_field_idx.is_some() && !content_seen {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::MissingField {
+                    field: content_key,
+                    container_shape: wip.shape(),
+                },
+            ));
         }
 
         Ok(wip)
