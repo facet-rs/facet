@@ -26,12 +26,14 @@
 //!
 //! Spec: "The intermediate representation" (`r[ir.*]`).
 
+use std::collections::BTreeMap;
+
 use phon_schema::bytes::{Reader, skip_pad};
 use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 pub use weavy::ir::{
     ControlOp, EffectContract, EffectOrdering, EffectResource, EffectStats, IntrinsicDescriptor,
-    IntrinsicOp, LoweredEffectStats, MemoryRegion, ResourceAccess, ResourceEffect,
-    TypedMemoryAccess, TypedMemoryEffect, WeavyOp,
+    IntrinsicOp, LoweredEffectStats, LoweredProgramStats, MemoryRegion, ProgramStats,
+    ResourceAccess, ResourceEffect, TypedMemoryAccess, TypedMemoryEffect, WeavyOp,
 };
 pub use weavy::mem::{
     BorrowOp, BorrowThunks, ByteValidator, BytesOp, CanonicalEnumOp, CanonicalEnumVariantOp,
@@ -246,6 +248,93 @@ pub fn canonical_value_program(lowered: &ValueProgram) -> CanonicalValueProgram 
     }
 }
 
+/// Count a canonical PHON dynamic-value program, recursively entering value
+/// intrinsics with nested child programs.
+#[must_use]
+pub fn canonical_value_program_stats(program: &[ValueOp]) -> ProgramStats {
+    let mut stats = weavy::ir::program_stats(program);
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            add_canonical_value_intrinsic_stats(intrinsic, &mut stats);
+        }
+    }
+    stats
+}
+
+/// Count a canonical PHON dynamic-value lowered program and its block table.
+#[must_use]
+pub fn canonical_value_lowered_stats(lowered: &CanonicalValueProgram) -> LoweredProgramStats {
+    let root = canonical_value_program_stats(&lowered.program);
+    let mut blocks = ProgramStats::default();
+    for block in lowered.blocks.values() {
+        blocks.accumulate(canonical_value_program_stats(block));
+    }
+    let mut total = root;
+    total.accumulate(blocks);
+
+    let mut stats = LoweredProgramStats::default();
+    stats.root = root;
+    stats.blocks = blocks;
+    stats.total = total;
+    stats.block_count = lowered.blocks.len();
+    stats
+}
+
+/// Count PHON dynamic-value intrinsic descriptors in a canonical program,
+/// including nested child programs.
+#[must_use]
+pub fn canonical_value_intrinsic_counts(
+    program: &[ValueOp],
+) -> BTreeMap<IntrinsicDescriptor, usize> {
+    let mut counts = weavy::ir::intrinsic_counts(program);
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            add_canonical_value_intrinsic_counts(intrinsic, &mut counts);
+        }
+    }
+    counts
+}
+
+/// Count PHON dynamic-value intrinsic descriptors in a canonical lowered
+/// program and its block table.
+#[must_use]
+pub fn canonical_value_lowered_intrinsic_counts(
+    lowered: &CanonicalValueProgram,
+) -> BTreeMap<IntrinsicDescriptor, usize> {
+    let mut counts = canonical_value_intrinsic_counts(&lowered.program);
+    for block in lowered.blocks.values() {
+        for (descriptor, count) in canonical_value_intrinsic_counts(block) {
+            *counts.entry(descriptor).or_default() += count;
+        }
+    }
+    counts
+}
+
+/// Count canonical PHON dynamic-value effects, recursively entering value
+/// intrinsics with nested child programs.
+#[must_use]
+pub fn canonical_value_program_effect_stats(program: &[ValueOp]) -> EffectStats {
+    let mut stats = weavy::ir::effect_stats(program);
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            add_canonical_value_intrinsic_effect_stats(intrinsic, &mut stats);
+        }
+    }
+    stats
+}
+
+/// Count canonical PHON dynamic-value effects in a lowered program and its
+/// block table.
+#[must_use]
+pub fn canonical_value_lowered_effect_stats(lowered: &CanonicalValueProgram) -> LoweredEffectStats {
+    let root = canonical_value_program_effect_stats(&lowered.program);
+    let mut blocks = EffectStats::default();
+    for block in lowered.blocks.values() {
+        blocks.accumulate(canonical_value_program_effect_stats(block));
+    }
+    LoweredEffectStats::new(root, blocks, lowered.blocks.len())
+}
+
 /// Canonical-to-legacy dynamic-value conversion failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -433,6 +522,96 @@ fn value_op_from_intrinsic(intrinsic: ValueIntrinsic) -> Result<Op, CanonicalVal
     })
 }
 
+fn add_canonical_value_intrinsic_stats(intrinsic: &ValueIntrinsic, stats: &mut ProgramStats) {
+    match intrinsic {
+        ValueIntrinsic::Seq { body, .. } | ValueIntrinsic::FixedArray { body, .. } => {
+            stats.accumulate(canonical_value_program_stats(body));
+        }
+        ValueIntrinsic::Map { key, value } => {
+            stats.accumulate(canonical_value_program_stats(key));
+            stats.accumulate(canonical_value_program_stats(value));
+        }
+        ValueIntrinsic::Option { some } => {
+            stats.accumulate(canonical_value_program_stats(some));
+        }
+        ValueIntrinsic::Enum { arms } => {
+            for arm in arms {
+                stats.accumulate(canonical_value_program_stats(&arm.payload));
+            }
+        }
+        ValueIntrinsic::Scalar(_)
+        | ValueIntrinsic::Dynamic
+        | ValueIntrinsic::Null
+        | ValueIntrinsic::Skip(_)
+        | ValueIntrinsic::Object { .. }
+        | ValueIntrinsic::Array { .. } => {}
+    }
+}
+
+fn add_canonical_value_intrinsic_counts(
+    intrinsic: &ValueIntrinsic,
+    counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
+) {
+    match intrinsic {
+        ValueIntrinsic::Seq { body, .. } | ValueIntrinsic::FixedArray { body, .. } => {
+            add_canonical_value_program_intrinsic_counts(body, counts);
+        }
+        ValueIntrinsic::Map { key, value } => {
+            add_canonical_value_program_intrinsic_counts(key, counts);
+            add_canonical_value_program_intrinsic_counts(value, counts);
+        }
+        ValueIntrinsic::Option { some } => {
+            add_canonical_value_program_intrinsic_counts(some, counts);
+        }
+        ValueIntrinsic::Enum { arms } => {
+            for arm in arms {
+                add_canonical_value_program_intrinsic_counts(&arm.payload, counts);
+            }
+        }
+        ValueIntrinsic::Scalar(_)
+        | ValueIntrinsic::Dynamic
+        | ValueIntrinsic::Null
+        | ValueIntrinsic::Skip(_)
+        | ValueIntrinsic::Object { .. }
+        | ValueIntrinsic::Array { .. } => {}
+    }
+}
+
+fn add_canonical_value_intrinsic_effect_stats(intrinsic: &ValueIntrinsic, stats: &mut EffectStats) {
+    match intrinsic {
+        ValueIntrinsic::Seq { body, .. } | ValueIntrinsic::FixedArray { body, .. } => {
+            stats.accumulate(canonical_value_program_effect_stats(body));
+        }
+        ValueIntrinsic::Map { key, value } => {
+            stats.accumulate(canonical_value_program_effect_stats(key));
+            stats.accumulate(canonical_value_program_effect_stats(value));
+        }
+        ValueIntrinsic::Option { some } => {
+            stats.accumulate(canonical_value_program_effect_stats(some));
+        }
+        ValueIntrinsic::Enum { arms } => {
+            for arm in arms {
+                stats.accumulate(canonical_value_program_effect_stats(&arm.payload));
+            }
+        }
+        ValueIntrinsic::Scalar(_)
+        | ValueIntrinsic::Dynamic
+        | ValueIntrinsic::Null
+        | ValueIntrinsic::Skip(_)
+        | ValueIntrinsic::Object { .. }
+        | ValueIntrinsic::Array { .. } => {}
+    }
+}
+
+fn add_canonical_value_program_intrinsic_counts(
+    program: &[ValueOp],
+    counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
+) {
+    for (descriptor, count) in canonical_value_intrinsic_counts(program) {
+        *counts.entry(descriptor).or_default() += count;
+    }
+}
+
 /// A lowered *typed* program: the memory side of the IR. Where [`Program`] builds
 /// a dynamic `facet_value::Value` on a stack, a `MemProgram` moves bytes between
 /// the wire and a value's in-memory layout, at offsets the descriptor supplies
@@ -604,5 +783,90 @@ mod tests {
         })])
         .expect_err("offset block call should not project to legacy value IR");
         assert_eq!(err, CanonicalValueError::NonzeroBaseOffset);
+    }
+
+    #[test]
+    fn canonical_value_analysis_enters_nested_intrinsic_programs() {
+        let program = vec![
+            WeavyOp::Intrinsic(ValueIntrinsic::Seq {
+                set: false,
+                min_wire: 1,
+                body: vec![WeavyOp::Intrinsic(ValueIntrinsic::Scalar(Primitive::U8))],
+            }),
+            WeavyOp::Intrinsic(ValueIntrinsic::Map {
+                key: vec![WeavyOp::Intrinsic(ValueIntrinsic::Scalar(
+                    Primitive::String,
+                ))],
+                value: vec![WeavyOp::Intrinsic(ValueIntrinsic::Option {
+                    some: vec![WeavyOp::Intrinsic(ValueIntrinsic::Dynamic)],
+                })],
+            }),
+            WeavyOp::Intrinsic(ValueIntrinsic::Enum {
+                arms: vec![CanonicalEnumArm {
+                    writer_index: 7,
+                    reader_name: "Ready".to_string(),
+                    payload: vec![WeavyOp::Intrinsic(ValueIntrinsic::Null)],
+                }],
+            }),
+        ];
+
+        let stats = canonical_value_program_stats(&program);
+        assert_eq!(stats.op_count, 8);
+        assert_eq!(stats.intrinsic_op_count, 8);
+
+        let counts = canonical_value_intrinsic_counts(&program);
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "phon.value",
+                name: "scalar",
+            }],
+            2
+        );
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "phon.value",
+                name: "option",
+            }],
+            1
+        );
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "phon.value",
+                name: "null",
+            }],
+            1
+        );
+
+        let effects = canonical_value_program_effect_stats(&program);
+        assert_eq!(effects.op_count, 8);
+        assert_eq!(effects.intrinsic_op_count, 8);
+        assert_eq!(effects.side_channel_count, 8);
+        assert_eq!(effects.input_advance_count, 7);
+
+        let lowered = CanonicalValueProgram {
+            program: vec![WeavyOp::Control(ControlOp::CallBlock {
+                block: SchemaId(99),
+                base_offset: 0,
+            })],
+            blocks: BTreeMap::from([(SchemaId(99), program)]),
+        };
+        let lowered_stats = canonical_value_lowered_stats(&lowered);
+        assert_eq!(lowered_stats.root.op_count, 1);
+        assert_eq!(lowered_stats.blocks.op_count, 8);
+        assert_eq!(lowered_stats.total.op_count, 9);
+        assert_eq!(lowered_stats.block_count, 1);
+
+        let lowered_effects = canonical_value_lowered_effect_stats(&lowered);
+        assert_eq!(lowered_effects.total.op_count, 9);
+        assert_eq!(lowered_effects.total.side_channel_count, 8);
+
+        let lowered_counts = canonical_value_lowered_intrinsic_counts(&lowered);
+        assert_eq!(
+            lowered_counts[&IntrinsicDescriptor {
+                dialect: "phon.value",
+                name: "scalar",
+            }],
+            2
+        );
     }
 }
