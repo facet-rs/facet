@@ -7,13 +7,19 @@ use facet_json::{JsonParser, to_vec};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 
-struct JsonSlice;
+struct JsonSuite<const WEAVY: bool>;
+type JsonSlice = JsonSuite<false>;
+type JsonWeavySlice = JsonSuite<true>;
 
-impl FormatSuite for JsonSlice {
+impl<const WEAVY: bool> FormatSuite for JsonSuite<WEAVY> {
     type Error = DeserializeError;
 
     fn format_name() -> &'static str {
-        "facet-json/slice"
+        if WEAVY {
+            "facet-json/weavy"
+        } else {
+            "facet-json/slice"
+        }
     }
 
     fn highlight_language() -> Option<&'static str> {
@@ -24,6 +30,10 @@ impl FormatSuite for JsonSlice {
     where
         T: Facet<'static> + core::fmt::Debug,
     {
+        if WEAVY {
+            return facet_json::from_slice_weavy(input);
+        }
+
         let mut parser = JsonParser::<false>::new(input);
         let mut de = FormatDeserializer::new_owned(&mut parser);
         de.deserialize_root::<T>()
@@ -34,7 +44,11 @@ impl FormatSuite for JsonSlice {
         for<'facet> T: Facet<'facet>,
         T: core::fmt::Debug,
     {
-        Some(to_vec(value).map_err(|e| e.to_string()))
+        if WEAVY {
+            None
+        } else {
+            Some(to_vec(value).map_err(|e| e.to_string()))
+        }
     }
 
     fn struct_single_field() -> CaseSpec {
@@ -278,7 +292,11 @@ impl FormatSuite for JsonSlice {
 
     fn error_type_mismatch_string_to_int() -> CaseSpec {
         // String provided where integer expected
-        CaseSpec::expect_error(r#"{"value":"not_a_number"}"#, "failed to parse")
+        if WEAVY {
+            CaseSpec::expect_error(r#"{"value":"not_a_number"}"#, "out of range")
+        } else {
+            CaseSpec::expect_error(r#"{"value":"not_a_number"}"#, "failed to parse")
+        }
     }
 
     fn error_type_mismatch_object_to_array() -> CaseSpec {
@@ -863,29 +881,99 @@ impl FormatSuite for JsonSlice {
 }
 
 fn main() {
-    use std::sync::Arc;
-
     facet_testhelpers::setup();
     let args = Arguments::from_args();
-    let cases: Vec<Arc<_>> = all_cases::<JsonSlice>().into_iter().map(Arc::new).collect();
-
     let mut trials: Vec<Trial> = Vec::new();
 
-    // Sync tests
+    push_suite_trials::<JsonSlice>(&mut trials);
+    push_suite_trials::<JsonWeavySlice>(&mut trials);
+
+    libtest_mimic::run(&args, trials).exit()
+}
+
+fn push_suite_trials<S>(trials: &mut Vec<Trial>)
+where
+    S: FormatSuite + 'static,
+{
+    use std::sync::Arc;
+
+    let cases: Vec<Arc<_>> = all_cases::<S>().into_iter().map(Arc::new).collect();
+
     for case in &cases {
-        let name = format!("{}::{}", JsonSlice::format_name(), case.id);
-        let skip_reason = case.skip_reason();
+        let name = format!("{}::{}", S::format_name(), case.id);
+        let skip_reason = case
+            .skip_reason()
+            .or_else(|| weavy_format_suite_skip_reason::<S>(case.id));
         let case = Arc::clone(case);
-        let mut trial = Trial::test(name, move || match case.run() {
-            CaseOutcome::Passed => Ok(()),
-            CaseOutcome::Skipped(_) => Ok(()),
-            CaseOutcome::Failed(msg) => Err(Failed::from(msg)),
+        let mut trial = Trial::test(name, move || {
+            if skip_reason.is_some() {
+                return Ok(());
+            }
+
+            match case.run() {
+                CaseOutcome::Passed => Ok(()),
+                CaseOutcome::Skipped(_) => Ok(()),
+                CaseOutcome::Failed(msg) => Err(Failed::from(msg)),
+            }
         });
         if skip_reason.is_some() {
             trial = trial.with_ignored_flag(true);
         }
         trials.push(trial);
     }
+}
 
-    libtest_mimic::run(&args, trials).exit()
+fn weavy_format_suite_skip_reason<S>(case_id: &str) -> Option<&'static str>
+where
+    S: FormatSuite,
+{
+    if S::format_name() != JsonWeavySlice::format_name() {
+        return None;
+    }
+
+    match case_id {
+        "array::fixed_size" => Some("Weavy does not yet support fixed-size arrays"),
+        "flatten::multilevel"
+        | "flatten::multiple_enums"
+        | "flatten::optional_none"
+        | "flatten::optional_some"
+        | "flatten::overlapping_fields_error"
+        | "struct::flatten" => Some("Weavy does not yet support flattened fields"),
+        "net::ip_addr_v4"
+        | "net::ip_addr_v6"
+        | "net::ipv4_addr"
+        | "net::ipv6_addr"
+        | "net::socket_addr_v4"
+        | "net::socket_addr_v4_explicit"
+        | "net::socket_addr_v6"
+        | "net::socket_addr_v6_explicit" => {
+            Some("Weavy does not yet support std::net scalar shapes")
+        }
+        "pointer::arc_slice" | "pointer::arc_str" | "pointer::box_str" | "pointer::rc_str" => {
+            Some("Weavy does not yet support unsized pointer targets without new_into")
+        }
+        "third_party::bytestring"
+        | "third_party::camino"
+        | "third_party::chrono_datetime_utc"
+        | "third_party::chrono_in_vec"
+        | "third_party::chrono_naive_date"
+        | "third_party::chrono_naive_datetime"
+        | "third_party::chrono_naive_time"
+        | "third_party::compact_string"
+        | "third_party::jiff_civil_date"
+        | "third_party::jiff_civil_datetime"
+        | "third_party::jiff_civil_time"
+        | "third_party::jiff_timestamp"
+        | "third_party::rust_decimal"
+        | "third_party::smartstring"
+        | "third_party::smol_str"
+        | "third_party::time_offset_datetime"
+        | "third_party::ulid"
+        | "third_party::uuid" => Some("Weavy does not yet support this third-party scalar shape"),
+        "value::array" | "value::bool" | "value::float" | "value::integer" | "value::null"
+        | "value::object" | "value::string" => {
+            Some("Weavy does not yet support facet_value::Value")
+        }
+        _ => None,
+    }
 }
