@@ -658,6 +658,27 @@ where
     }
 }
 
+/// Count the canonical IR shape for a dense lowered program and its block table.
+#[must_use]
+pub fn dense_lowered_program_stats<Intrinsic>(
+    lowered: &DenseWeavyLowered<Intrinsic>,
+) -> LoweredProgramStats {
+    let root = program_stats(&lowered.program);
+    let mut blocks = ProgramStats::default();
+    for block in &lowered.blocks {
+        blocks.accumulate(program_stats(block));
+    }
+    let mut total = root;
+    total.accumulate(blocks);
+
+    LoweredProgramStats {
+        root,
+        blocks,
+        total,
+        block_count: lowered.blocks.len(),
+    }
+}
+
 /// Return the conservative effect contract for one canonical op.
 #[must_use]
 pub fn op_effect<Block, Intrinsic>(op: &WeavyOp<Block, Intrinsic>) -> EffectContract
@@ -707,6 +728,22 @@ where
         total,
         block_count: lowered.blocks.len(),
     }
+}
+
+/// Count effect contracts for a dense canonical lowered program and its block table.
+#[must_use]
+pub fn dense_lowered_effect_stats<Intrinsic>(
+    lowered: &DenseWeavyLowered<Intrinsic>,
+) -> LoweredEffectStats
+where
+    Intrinsic: IntrinsicOp,
+{
+    let root = effect_stats(&lowered.program);
+    let mut blocks = EffectStats::default();
+    for block in &lowered.blocks {
+        blocks.accumulate(effect_stats(block));
+    }
+    LoweredEffectStats::new(root, blocks, lowered.blocks.len())
 }
 
 fn add_program_stats<Block, Intrinsic>(
@@ -989,6 +1026,21 @@ where
     counts
 }
 
+/// Count intrinsic descriptors in a dense lowered canonical program.
+#[must_use]
+pub fn dense_lowered_intrinsic_counts<Intrinsic>(
+    lowered: &DenseWeavyLowered<Intrinsic>,
+) -> BTreeMap<IntrinsicDescriptor, usize>
+where
+    Intrinsic: IntrinsicOp,
+{
+    let mut counts = intrinsic_counts(&lowered.program);
+    for block in &lowered.blocks {
+        add_intrinsic_counts(block, &mut counts);
+    }
+    counts
+}
+
 fn add_intrinsic_counts<Block, Intrinsic>(
     program: &[WeavyOp<Block, Intrinsic>],
     counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
@@ -1191,6 +1243,48 @@ mod tests {
         assert_eq!(stats.total.op_count, 3);
         assert_eq!(stats.total.scalar_copy_count, 2);
         assert_eq!(stats.total.block_call_count, 1);
+    }
+
+    #[test]
+    fn dense_lowered_stats_include_blocks() {
+        let lowered = DenseLowered::new(
+            vec![WeavyOp::<BlockRef, _>::Intrinsic(TestIntrinsic::ReadI32)],
+            vec![
+                vec![WeavyOp::Intrinsic(TestIntrinsic::HashField)],
+                vec![scalar(0)],
+            ],
+        );
+
+        let shape = dense_lowered_program_stats(&lowered);
+        assert_eq!(shape.block_count, 2);
+        assert_eq!(shape.root.op_count, 1);
+        assert_eq!(shape.blocks.op_count, 2);
+        assert_eq!(shape.total.op_count, 3);
+        assert_eq!(shape.total.intrinsic_op_count, 2);
+        assert_eq!(shape.total.scalar_copy_count, 1);
+
+        let effects = dense_lowered_effect_stats(&lowered);
+        assert_eq!(effects.block_count, 2);
+        assert_eq!(effects.total.intrinsic_op_count, 2);
+        assert_eq!(effects.total.typed_memory_read_count, 2);
+        assert_eq!(effects.total.typed_memory_initialize_count, 2);
+        assert_eq!(effects.total.sink_write_count, 2);
+
+        let counts = dense_lowered_intrinsic_counts(&lowered);
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "json",
+                name: "read_i32",
+            }],
+            1
+        );
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "hash",
+                name: "feed_field",
+            }],
+            1
+        );
     }
 
     #[test]
