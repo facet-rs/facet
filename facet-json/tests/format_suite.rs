@@ -932,48 +932,12 @@ where
     }
 
     match case_id {
-        "array::fixed_size" => Some("Weavy does not yet support fixed-size arrays"),
         "flatten::multilevel"
         | "flatten::multiple_enums"
         | "flatten::optional_none"
         | "flatten::optional_some"
         | "flatten::overlapping_fields_error"
         | "struct::flatten" => Some("Weavy does not yet support flattened fields"),
-        "net::ip_addr_v4"
-        | "net::ip_addr_v6"
-        | "net::ipv4_addr"
-        | "net::ipv6_addr"
-        | "net::socket_addr_v4"
-        | "net::socket_addr_v4_explicit"
-        | "net::socket_addr_v6"
-        | "net::socket_addr_v6_explicit" => {
-            Some("Weavy does not yet support std::net scalar shapes")
-        }
-        "pointer::arc_slice" | "pointer::arc_str" | "pointer::box_str" | "pointer::rc_str" => {
-            Some("Weavy does not yet support unsized pointer targets without new_into")
-        }
-        "third_party::bytestring"
-        | "third_party::camino"
-        | "third_party::chrono_datetime_utc"
-        | "third_party::chrono_in_vec"
-        | "third_party::chrono_naive_date"
-        | "third_party::chrono_naive_datetime"
-        | "third_party::chrono_naive_time"
-        | "third_party::compact_string"
-        | "third_party::jiff_civil_date"
-        | "third_party::jiff_civil_datetime"
-        | "third_party::jiff_civil_time"
-        | "third_party::jiff_timestamp"
-        | "third_party::rust_decimal"
-        | "third_party::smartstring"
-        | "third_party::smol_str"
-        | "third_party::time_offset_datetime"
-        | "third_party::ulid"
-        | "third_party::uuid" => Some("Weavy does not yet support this third-party scalar shape"),
-        "value::array" | "value::bool" | "value::float" | "value::integer" | "value::null"
-        | "value::object" | "value::string" => {
-            Some("Weavy does not yet support facet_value::Value")
-        }
         _ => None,
     }
 }

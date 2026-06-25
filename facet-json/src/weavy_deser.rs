@@ -3,7 +3,9 @@ use alloc::{
     boxed::Box,
     collections::BTreeMap,
     format,
+    rc::Rc,
     string::{String, ToString},
+    sync::Arc,
     vec::Vec,
 };
 use core::alloc::Layout;
@@ -20,9 +22,10 @@ use core::str::FromStr;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use facet_core::{
-    Characteristic, Def, DefaultInPlaceFn, DefaultSource, EnumRepr, EnumType, Facet, Field,
-    ListDef, MapDef, OptionDef, PointerDef, ProxyDef, PtrConst, PtrMut, PtrUninit, ScalarType,
-    SetDef, Shape, StructKind, Type, UserType, Variant,
+    ArrayDef, Characteristic, Def, DefaultInPlaceFn, DefaultSource, DynamicValueDef, EnumRepr,
+    EnumType, Facet, Field, KnownPointer, ListDef, MapDef, OptionDef, PointerDef, ProxyDef,
+    PtrConst, PtrMut, PtrUninit, ScalarType, SetDef, Shape, StructKind, TryFromOutcome, Type,
+    UserType, Variant,
 };
 use facet_format::{
     DeserializeError, DeserializeErrorKind, FormatParser, ParseError, ParseEventKind, ScalarValue,
@@ -66,7 +69,10 @@ enum JsonBlockId {
     Shape(&'static Shape),
     StructLoop(&'static Shape),
     VariantStructLoop(&'static Shape, usize),
+    ArrayLoop(&'static Shape),
+    DynamicLoop(&'static Shape),
     ListLoop(&'static Shape),
+    PointerSliceLoop(&'static Shape),
     SetLoop(&'static Shape),
     MapLoop(&'static Shape),
 }
@@ -1637,6 +1643,15 @@ enum JsonOp<Block> {
         shape: &'static Shape,
         scalar: ScalarPlan,
     },
+    ReadParsedScalar {
+        shape: &'static Shape,
+    },
+    ReadBuilderShape {
+        shape: &'static Shape,
+        builder_shape: &'static Shape,
+        builder_layout: Layout,
+        builder_program: Program<JsonOp<Block>>,
+    },
     ReadTransparent {
         field_offset: usize,
         field_shape: &'static Shape,
@@ -1701,6 +1716,31 @@ enum JsonOp<Block> {
         some_scalar: Option<ScalarPlan>,
         inner_layout: Layout,
     },
+    ReadArray {
+        array_shape: &'static Shape,
+        array: ArrayDef,
+        element_layout: Layout,
+        loop_id: Block,
+    },
+    ArrayNext {
+        array: ArrayDef,
+        element_program: Program<JsonOp<Block>>,
+        element_scalar: Option<ScalarType>,
+        element_option_scalar: Option<ListOptionScalar>,
+        element_layout: Layout,
+        loop_id: Block,
+    },
+    ReadDynamicValue {
+        dynamic_shape: &'static Shape,
+        dynamic: DynamicValueDef,
+        loop_id: Block,
+    },
+    DynamicNext {
+        dynamic_shape: &'static Shape,
+        dynamic_layout: Layout,
+        value_program: Program<JsonOp<Block>>,
+        loop_id: Block,
+    },
     ReadList {
         list_shape: &'static Shape,
         list: ListDef,
@@ -1746,6 +1786,25 @@ enum JsonOp<Block> {
         pointer: PointerDef,
         pointee_program: Program<JsonOp<Block>>,
         pointee_layout: Layout,
+    },
+    ReadPointerString {
+        pointer_shape: &'static Shape,
+        pointer: PointerDef,
+    },
+    ReadPointerSlice {
+        pointer_shape: &'static Shape,
+        pointer: PointerDef,
+        pointer_layout: Layout,
+        element_layout: Layout,
+        loop_id: Block,
+    },
+    PointerSliceNext {
+        pointer: PointerDef,
+        element_program: Program<JsonOp<Block>>,
+        element_scalar: Option<ScalarType>,
+        element_option_scalar: Option<ListOptionScalar>,
+        element_layout: Layout,
+        loop_id: Block,
     },
 }
 
@@ -2138,6 +2197,36 @@ impl Lowering {
             }]);
         }
 
+        if let Some(builder_shape) = shape.builder_shape
+            && shape.vtable.has_try_from()
+        {
+            let builder_layout = sized_layout(builder_shape)?;
+            let builder_program = self.lower_shape(builder_shape)?;
+            return Ok(vec![JsonOp::ReadBuilderShape {
+                shape,
+                builder_shape,
+                builder_layout,
+                builder_program,
+            }]);
+        }
+
+        if let Some(inner_shape) = shape.inner
+            && shape.vtable.has_try_from()
+        {
+            let builder_layout = sized_layout(inner_shape)?;
+            let builder_program = self.lower_shape(inner_shape)?;
+            return Ok(vec![JsonOp::ReadBuilderShape {
+                shape,
+                builder_shape: inner_shape,
+                builder_layout,
+                builder_program,
+            }]);
+        }
+
+        if matches!(shape.def, Def::Scalar) && shape.inner.is_none() && shape.vtable.has_parse() {
+            return Ok(vec![JsonOp::ReadParsedScalar { shape }]);
+        }
+
         match shape.def {
             Def::Option(option) => {
                 let inner_layout = sized_layout(option.t())?;
@@ -2148,6 +2237,45 @@ impl Lowering {
                     some_program,
                     some_scalar,
                     inner_layout,
+                }])
+            }
+            Def::Array(array) => {
+                let element_layout = sized_layout(array.t())?;
+                let element_program = self.lower_shape(array.t())?;
+                let element_scalar = ScalarType::try_from_shape(array.t());
+                let element_option_scalar = list_option_scalar(array.t())?;
+                let loop_id = JsonBlockId::ArrayLoop(shape);
+                let loop_program = vec![JsonOp::ArrayNext {
+                    array,
+                    element_program: element_program.clone(),
+                    element_scalar,
+                    element_option_scalar,
+                    element_layout,
+                    loop_id,
+                }];
+                self.lowered.blocks.insert(loop_id, loop_program);
+                Ok(vec![JsonOp::ReadArray {
+                    array_shape: shape,
+                    array,
+                    element_layout,
+                    loop_id,
+                }])
+            }
+            Def::DynamicValue(dynamic) => {
+                let dynamic_layout = sized_layout(shape)?;
+                let value_program = vec![JsonOp::CallBlock(JsonBlockId::Shape(shape))];
+                let loop_id = JsonBlockId::DynamicLoop(shape);
+                let loop_program = vec![JsonOp::DynamicNext {
+                    dynamic_shape: shape,
+                    dynamic_layout,
+                    value_program: value_program.clone(),
+                    loop_id,
+                }];
+                self.lowered.blocks.insert(loop_id, loop_program);
+                Ok(vec![JsonOp::ReadDynamicValue {
+                    dynamic_shape: shape,
+                    dynamic,
+                    loop_id,
                 }])
             }
             Def::List(list) => {
@@ -2235,6 +2363,40 @@ impl Lowering {
                     .pointee()
                     .ok_or_else(|| unsupported(shape, "opaque pointer"))?;
                 if pointer.vtable.new_into_fn.is_none() {
+                    if pointer_to_str(pointer) {
+                        return Ok(vec![JsonOp::ReadPointerString {
+                            pointer_shape: shape,
+                            pointer,
+                        }]);
+                    }
+
+                    if pointer.vtable.slice_builder_vtable.is_some()
+                        && let Def::Slice(slice) = pointee.def
+                    {
+                        let pointer_layout = sized_layout(shape)?;
+                        let element_layout = sized_layout(slice.t())?;
+                        let element_program = self.lower_shape(slice.t())?;
+                        let element_scalar = ScalarType::try_from_shape(slice.t());
+                        let element_option_scalar = list_option_scalar(slice.t())?;
+                        let loop_id = JsonBlockId::PointerSliceLoop(shape);
+                        let loop_program = vec![JsonOp::PointerSliceNext {
+                            pointer,
+                            element_program: element_program.clone(),
+                            element_scalar,
+                            element_option_scalar,
+                            element_layout,
+                            loop_id,
+                        }];
+                        self.lowered.blocks.insert(loop_id, loop_program);
+                        return Ok(vec![JsonOp::ReadPointerSlice {
+                            pointer_shape: shape,
+                            pointer,
+                            pointer_layout,
+                            element_layout,
+                            loop_id,
+                        }]);
+                    }
+
                     return Err(unsupported(shape, "pointer without new_into"));
                 }
                 let pointee_layout = sized_layout(pointee)?;
@@ -2560,6 +2722,18 @@ fn resolve_json_op(
     Ok(match op {
         JsonOp::CallBlock(block) => JsonOp::CallBlock(resolve_block_ref(block, refs)?),
         JsonOp::ReadScalar { shape, scalar } => JsonOp::ReadScalar { shape, scalar },
+        JsonOp::ReadParsedScalar { shape } => JsonOp::ReadParsedScalar { shape },
+        JsonOp::ReadBuilderShape {
+            shape,
+            builder_shape,
+            builder_layout,
+            builder_program,
+        } => JsonOp::ReadBuilderShape {
+            shape,
+            builder_shape,
+            builder_layout,
+            builder_program: resolve_json_program(builder_program, refs)?,
+        },
         JsonOp::ReadTransparent {
             field_offset,
             field_shape,
@@ -2672,6 +2846,52 @@ fn resolve_json_op(
             some_scalar,
             inner_layout,
         },
+        JsonOp::ReadArray {
+            array_shape,
+            array,
+            element_layout,
+            loop_id,
+        } => JsonOp::ReadArray {
+            array_shape,
+            array,
+            element_layout,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::ArrayNext {
+            array,
+            element_program,
+            element_scalar,
+            element_option_scalar,
+            element_layout,
+            loop_id,
+        } => JsonOp::ArrayNext {
+            array,
+            element_program: resolve_json_program(element_program, refs)?,
+            element_scalar,
+            element_option_scalar,
+            element_layout,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::ReadDynamicValue {
+            dynamic_shape,
+            dynamic,
+            loop_id,
+        } => JsonOp::ReadDynamicValue {
+            dynamic_shape,
+            dynamic,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::DynamicNext {
+            dynamic_shape,
+            dynamic_layout,
+            value_program,
+            loop_id,
+        } => JsonOp::DynamicNext {
+            dynamic_shape,
+            dynamic_layout,
+            value_program: resolve_json_program(value_program, refs)?,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
         JsonOp::ReadList {
             list_shape,
             list,
@@ -2756,6 +2976,41 @@ fn resolve_json_op(
             pointer,
             pointee_program: resolve_json_program(pointee_program, refs)?,
             pointee_layout,
+        },
+        JsonOp::ReadPointerString {
+            pointer_shape,
+            pointer,
+        } => JsonOp::ReadPointerString {
+            pointer_shape,
+            pointer,
+        },
+        JsonOp::ReadPointerSlice {
+            pointer_shape,
+            pointer,
+            pointer_layout,
+            element_layout,
+            loop_id,
+        } => JsonOp::ReadPointerSlice {
+            pointer_shape,
+            pointer,
+            pointer_layout,
+            element_layout,
+            loop_id: resolve_block_ref(loop_id, refs)?,
+        },
+        JsonOp::PointerSliceNext {
+            pointer,
+            element_program,
+            element_scalar,
+            element_option_scalar,
+            element_layout,
+            loop_id,
+        } => JsonOp::PointerSliceNext {
+            pointer,
+            element_program: resolve_json_program(element_program, refs)?,
+            element_scalar,
+            element_option_scalar,
+            element_layout,
+            loop_id: resolve_block_ref(loop_id, refs)?,
         },
     })
 }
@@ -3336,7 +3591,10 @@ struct JsonInterp<'parser, 'de, 'program, const TRUSTED_UTF8: bool> {
     inline_structs:
         InlineStack<StructFrame<'program, FieldPlan<ExecBlock>, InitializedLedger<Span>>>,
     large_structs: Option<Box<LargeStructStack<'program>>>,
+    arrays: InlineStack<ArrayFrame>,
+    dynamic_values: InlineStack<DynamicFrame>,
     lists: InlineStack<ListFrame>,
+    pointer_slices: InlineStack<PointerSliceFrame>,
     sets: InlineStack<SetFrame>,
     maps: InlineStack<MapFrame>,
     scratch: ScratchSession,
@@ -3359,7 +3617,10 @@ where
             base,
             inline_structs: InlineStack::new(),
             large_structs: None,
+            arrays: InlineStack::new(),
+            dynamic_values: InlineStack::new(),
             lists: InlineStack::new(),
+            pointer_slices: InlineStack::new(),
             sets: InlineStack::new(),
             maps: InlineStack::new(),
             scratch: ScratchSession::new(),
@@ -3811,6 +4072,78 @@ where
                     message: message.into(),
                 },
             )),
+        }
+    }
+
+    fn finish_builder_shape(
+        &mut self,
+        shape: &'static Shape,
+        builder_shape: &'static Shape,
+        target_ptr: PtrUninit,
+        scratch: ScratchSlot,
+    ) -> Result<(), DeserializeError> {
+        let builder_ptr = unsafe { scratch_ptr_uninit(&scratch).assume_init().as_const() };
+        let outcome = unsafe { shape.call_try_from(builder_shape, builder_ptr, target_ptr) };
+
+        match outcome {
+            Some(TryFromOutcome::Converted) => {
+                self.scratch.release(scratch);
+                Ok(())
+            }
+            Some(TryFromOutcome::Failed(message)) => {
+                self.scratch.release(scratch);
+                Err(vm_error(
+                    None,
+                    DeserializeErrorKind::InvalidValue { message },
+                ))
+            }
+            Some(TryFromOutcome::Unsupported) | Some(_) | None => {
+                unsafe {
+                    drop_shape_value(builder_shape as *const Shape as *const (), scratch.ptr());
+                }
+                self.scratch.release(scratch);
+                Err(unsupported(shape, "builder-shape conversion"))
+            }
+        }
+    }
+
+    fn array_slot_or_finish(&mut self) -> Result<ArraySlot, DeserializeError> {
+        let frame = self
+            .arrays
+            .last()
+            .expect("array frame is present while decoding element");
+        if let Some(slot) = frame.next_slot() {
+            return Ok(ArraySlot::Slot(slot));
+        }
+
+        if self.parser.consume_sequence_end_if_next()? {
+            return Ok(ArraySlot::Done);
+        }
+
+        let Some(event) = self.parser.peek_event()? else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::UnexpectedEof {
+                    expected: "array end",
+                },
+            ));
+        };
+        Err(vm_error(
+            Some(event.span),
+            DeserializeErrorKind::UnexpectedToken {
+                expected: "array end",
+                got: event.kind_name().into(),
+            },
+        ))
+    }
+
+    unsafe fn mark_array_element_initialized(&mut self) {
+        let frame = self
+            .arrays
+            .last_mut()
+            .expect("array frame is present after element initialization");
+        unsafe {
+            frame.mark_initialized();
         }
     }
 
@@ -4905,6 +5238,318 @@ where
         Ok(())
     }
 
+    fn push_pointer_slice_element(
+        &mut self,
+        scratch: &ScratchSlot,
+    ) -> Result<(), DeserializeError> {
+        let frame = self
+            .pointer_slices
+            .last_mut()
+            .expect("pointer slice frame is present while pushing element");
+        frame.push(scratch)
+    }
+
+    fn step_array_next(
+        &mut self,
+        array: ArrayDef,
+        element_program: &'program [ExecOp],
+        element_scalar: Option<ScalarType>,
+        element_option_scalar: Option<ListOptionScalar>,
+        loop_id: ExecBlock,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        loop {
+            if let Some(scalar) = element_scalar {
+                let slot = match self.array_slot_or_finish()? {
+                    ArraySlot::Slot(slot) => slot,
+                    ArraySlot::Done => return Ok(Control::Continue),
+                };
+                match self.parser.next_sequence_scalar_or_end()? {
+                    JsonSequenceScalarStep::Value { value } => {
+                        unsafe {
+                            write_scalar_input(self.parser, array.t(), scalar, slot, value)?;
+                            self.mark_array_element_initialized();
+                        }
+                        continue;
+                    }
+                    JsonSequenceScalarStep::End => {
+                        return Err(fixed_array_length_error(array, self.current_array_len()));
+                    }
+                }
+            }
+
+            if let Some(option_scalar) = element_option_scalar {
+                let slot = match self.array_slot_or_finish()? {
+                    ArraySlot::Slot(slot) => slot,
+                    ArraySlot::Done => return Ok(Control::Continue),
+                };
+                match self.parser.next_sequence_scalar_or_end()? {
+                    JsonSequenceScalarStep::Value { value } => {
+                        if value.is_null() {
+                            unsafe {
+                                (option_scalar.option.vtable.init_none)(slot);
+                                self.mark_array_element_initialized();
+                            }
+                        } else {
+                            let inner = self.scratch.reserve(option_scalar.inner_layout);
+                            unsafe {
+                                write_scalar_input(
+                                    self.parser,
+                                    option_scalar.option.t(),
+                                    option_scalar.scalar,
+                                    scratch_ptr_uninit(&inner),
+                                    value,
+                                )?;
+                                (option_scalar.option.vtable.init_some)(
+                                    slot,
+                                    scratch_ptr_mut(&inner),
+                                );
+                                self.mark_array_element_initialized();
+                            }
+                            self.scratch.release(inner);
+                        }
+                        continue;
+                    }
+                    JsonSequenceScalarStep::End => {
+                        return Err(fixed_array_length_error(array, self.current_array_len()));
+                    }
+                }
+            }
+
+            let slot = match self.array_slot_or_finish()? {
+                ArraySlot::Slot(slot) => slot,
+                ArraySlot::Done => return Ok(Control::Continue),
+            };
+            let old_base = self.base;
+            self.base = slot;
+            return Ok(call_program_or_block_then(
+                element_program,
+                Continuation::ArrayElement { old_base, loop_id },
+            ));
+        }
+    }
+
+    fn current_array_len(&self) -> usize {
+        self.arrays
+            .last()
+            .expect("array frame is present")
+            .initialized
+    }
+
+    fn read_dynamic_value(
+        &mut self,
+        dynamic_shape: &'static Shape,
+        dynamic: DynamicValueDef,
+        loop_id: ExecBlock,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        let Some(event) = self.parser.peek_event()? else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::UnexpectedEof {
+                    expected: "dynamic value",
+                },
+            ));
+        };
+
+        match event.kind {
+            ParseEventKind::Scalar(_) => {
+                let (value, span) = self.parser.read_scalar_token()?;
+                unsafe {
+                    write_dynamic_scalar(dynamic, self.base, value, span)?;
+                }
+                Ok(Control::Continue)
+            }
+            ParseEventKind::SequenceStart(_) => {
+                self.parser.consume_array_start_fast()?;
+                unsafe {
+                    (dynamic.vtable.begin_array)(self.base);
+                }
+                self.dynamic_values
+                    .push(DynamicFrame::array(dynamic_shape, dynamic, self.base));
+                Ok(Control::CallBlockThen(
+                    loop_id,
+                    Continuation::FinishDynamicValue,
+                ))
+            }
+            ParseEventKind::StructStart(_) => {
+                self.parser.consume_object_start_fast()?;
+                unsafe {
+                    (dynamic.vtable.begin_object)(self.base);
+                }
+                self.dynamic_values
+                    .push(DynamicFrame::object(dynamic_shape, dynamic, self.base));
+                Ok(Control::CallBlockThen(
+                    loop_id,
+                    Continuation::FinishDynamicValue,
+                ))
+            }
+            other => Err(vm_error(
+                Some(event.span),
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "scalar, array, or object",
+                    got: other.kind_name().into(),
+                },
+            )),
+        }
+    }
+
+    fn step_dynamic_next(
+        &mut self,
+        dynamic_shape: &'static Shape,
+        dynamic_layout: Layout,
+        value_program: &'program [ExecOp],
+        loop_id: ExecBlock,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        match self.dynamic_values.last() {
+            Some(DynamicFrame::Array { .. }) => {
+                if self.parser.consume_sequence_end_if_next()? {
+                    return Ok(Control::Continue);
+                }
+
+                let scratch = self.scratch.reserve(dynamic_layout);
+                let old_base = self.base;
+                self.base = scratch_ptr_uninit(&scratch);
+                Ok(call_program_or_block_then(
+                    value_program,
+                    Continuation::DynamicArrayElement {
+                        old_base,
+                        scratch,
+                        loop_id,
+                    },
+                ))
+            }
+            Some(DynamicFrame::Object { .. }) => {
+                let (key, _span) = match self.parser.next_object_key_or_end()? {
+                    JsonObjectKeyStep::End => return Ok(Control::Continue),
+                    JsonObjectKeyStep::Field { key, span } => {
+                        let key = self.parser.materialize_field_key(key)?.as_str().to_string();
+                        (key, span)
+                    }
+                };
+
+                let scratch = self.scratch.reserve(dynamic_layout);
+                let old_base = self.base;
+                self.base = scratch_ptr_uninit(&scratch);
+                Ok(call_program_or_block_then(
+                    value_program,
+                    Continuation::DynamicObjectEntry {
+                        key,
+                        old_base,
+                        scratch,
+                        loop_id,
+                    },
+                ))
+            }
+            None => Err(unsupported(dynamic_shape, "dynamic value frame")),
+        }
+    }
+
+    fn push_dynamic_array_element(
+        &mut self,
+        scratch: &ScratchSlot,
+    ) -> Result<(), DeserializeError> {
+        self.dynamic_values
+            .last_mut()
+            .expect("dynamic array frame is present while pushing element")
+            .push_array_element(scratch)
+    }
+
+    fn insert_dynamic_object_entry(
+        &mut self,
+        key: &str,
+        scratch: &ScratchSlot,
+    ) -> Result<(), DeserializeError> {
+        self.dynamic_values
+            .last_mut()
+            .expect("dynamic object frame is present while inserting entry")
+            .insert_object_entry(key, scratch)
+    }
+
+    fn step_pointer_slice_next(
+        &mut self,
+        pointer: PointerDef,
+        element_program: &'program [ExecOp],
+        element_scalar: Option<ScalarType>,
+        element_option_scalar: Option<ListOptionScalar>,
+        element_layout: Layout,
+        loop_id: ExecBlock,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        loop {
+            if let Some(scalar) = element_scalar {
+                let step = self.parser.next_sequence_scalar_or_end()?;
+                let JsonSequenceScalarStep::Value { value } = step else {
+                    return Ok(Control::Continue);
+                };
+
+                let scratch = self.scratch.reserve(element_layout);
+                unsafe {
+                    write_scalar_input(
+                        self.parser,
+                        pointer_slice_element_shape(pointer)?,
+                        scalar,
+                        scratch_ptr_uninit(&scratch),
+                        value,
+                    )?;
+                }
+                self.push_pointer_slice_element(&scratch)?;
+                self.scratch.release(scratch);
+                continue;
+            }
+
+            if let Some(option_scalar) = element_option_scalar {
+                let step = self.parser.next_sequence_scalar_or_end()?;
+                let JsonSequenceScalarStep::Value { value } = step else {
+                    return Ok(Control::Continue);
+                };
+
+                let scratch = self.scratch.reserve(element_layout);
+                if value.is_null() {
+                    unsafe {
+                        (option_scalar.option.vtable.init_none)(scratch_ptr_uninit(&scratch));
+                    }
+                } else {
+                    let inner = self.scratch.reserve(option_scalar.inner_layout);
+                    unsafe {
+                        write_scalar_input(
+                            self.parser,
+                            option_scalar.option.t(),
+                            option_scalar.scalar,
+                            scratch_ptr_uninit(&inner),
+                            value,
+                        )?;
+                        (option_scalar.option.vtable.init_some)(
+                            scratch_ptr_uninit(&scratch),
+                            scratch_ptr_mut(&inner),
+                        );
+                    }
+                    self.scratch.release(inner);
+                }
+                self.push_pointer_slice_element(&scratch)?;
+                self.scratch.release(scratch);
+                continue;
+            }
+
+            if self.parser.consume_sequence_end_if_next()? {
+                return Ok(Control::Continue);
+            }
+
+            let scratch = self.scratch.reserve(element_layout);
+            let old_base = self.base;
+            self.base = scratch_ptr_uninit(&scratch);
+            return Ok(call_program_or_block_then(
+                element_program,
+                Continuation::PointerSliceElement {
+                    old_base,
+                    scratch,
+                    loop_id,
+                },
+            ));
+        }
+    }
+
     fn direct_list_slot(&mut self) -> Result<Option<PtrUninit>, DeserializeError> {
         let frame = self
             .lists
@@ -5672,6 +6317,209 @@ impl<T> InlineStack<T> {
     }
 }
 
+enum ArraySlot {
+    Slot(PtrUninit),
+    Done,
+}
+
+struct ArrayFrame {
+    array_shape: &'static Shape,
+    element_shape: &'static Shape,
+    base: PtrUninit,
+    count: usize,
+    stride: usize,
+    initialized: usize,
+}
+
+impl ArrayFrame {
+    fn new(
+        array_shape: &'static Shape,
+        array: ArrayDef,
+        base: PtrUninit,
+        element_layout: Layout,
+    ) -> Self {
+        Self {
+            array_shape,
+            element_shape: array.t(),
+            base,
+            count: array.n,
+            stride: element_layout.size(),
+            initialized: 0,
+        }
+    }
+
+    fn next_slot(&self) -> Option<PtrUninit> {
+        (self.initialized < self.count).then(|| {
+            let ptr = unsafe {
+                self.base
+                    .as_mut_byte_ptr()
+                    .add(self.initialized * self.stride)
+            };
+            PtrUninit::new(ptr)
+        })
+    }
+
+    unsafe fn mark_initialized(&mut self) {
+        debug_assert!(self.initialized < self.count);
+        self.initialized += 1;
+    }
+
+    fn finish(self) -> Result<(), DeserializeError> {
+        if self.initialized == self.count {
+            core::mem::forget(self);
+            return Ok(());
+        }
+
+        Err(vm_error(
+            None,
+            DeserializeErrorKind::InvalidValue {
+                message: format!(
+                    "expected array of length {}, got {} while deserializing {}",
+                    self.count, self.initialized, self.array_shape
+                )
+                .into(),
+            },
+        ))
+    }
+}
+
+impl Drop for ArrayFrame {
+    fn drop(&mut self) {
+        for index in (0..self.initialized).rev() {
+            let ptr = unsafe { self.base.as_mut_byte_ptr().add(index * self.stride) };
+            unsafe {
+                let _ = self.element_shape.call_drop_in_place(PtrMut::new(ptr));
+            }
+        }
+    }
+}
+
+enum DynamicFrame {
+    Array {
+        dynamic_shape: &'static Shape,
+        dynamic: DynamicValueDef,
+        ptr: PtrUninit,
+        active: bool,
+    },
+    Object {
+        dynamic_shape: &'static Shape,
+        dynamic: DynamicValueDef,
+        ptr: PtrUninit,
+        active: bool,
+    },
+}
+
+impl DynamicFrame {
+    fn array(dynamic_shape: &'static Shape, dynamic: DynamicValueDef, ptr: PtrUninit) -> Self {
+        Self::Array {
+            dynamic_shape,
+            dynamic,
+            ptr,
+            active: true,
+        }
+    }
+
+    fn object(dynamic_shape: &'static Shape, dynamic: DynamicValueDef, ptr: PtrUninit) -> Self {
+        Self::Object {
+            dynamic_shape,
+            dynamic,
+            ptr,
+            active: true,
+        }
+    }
+
+    fn finish(mut self) {
+        match &mut self {
+            Self::Array {
+                dynamic,
+                ptr,
+                active,
+                ..
+            } => {
+                if let Some(end_array) = dynamic.vtable.end_array {
+                    unsafe {
+                        end_array((*ptr).assume_init());
+                    }
+                }
+                *active = false;
+            }
+            Self::Object {
+                dynamic,
+                ptr,
+                active,
+                ..
+            } => {
+                if let Some(end_object) = dynamic.vtable.end_object {
+                    unsafe {
+                        end_object((*ptr).assume_init());
+                    }
+                }
+                *active = false;
+            }
+        }
+        core::mem::forget(self);
+    }
+
+    fn push_array_element(&mut self, scratch: &ScratchSlot) -> Result<(), DeserializeError> {
+        let Self::Array { dynamic, ptr, .. } = self else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::InvalidValue {
+                    message: "dynamic object frame cannot accept an array element".into(),
+                },
+            ));
+        };
+        unsafe {
+            (dynamic.vtable.push_array_element)(ptr.assume_init(), scratch_ptr_mut(scratch));
+        }
+        Ok(())
+    }
+
+    fn insert_object_entry(
+        &mut self,
+        key: &str,
+        scratch: &ScratchSlot,
+    ) -> Result<(), DeserializeError> {
+        let Self::Object { dynamic, ptr, .. } = self else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::InvalidValue {
+                    message: "dynamic array frame cannot accept an object entry".into(),
+                },
+            ));
+        };
+        unsafe {
+            (dynamic.vtable.insert_object_entry)(ptr.assume_init(), key, scratch_ptr_mut(scratch));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for DynamicFrame {
+    fn drop(&mut self) {
+        let (dynamic_shape, ptr, active) = match self {
+            Self::Array {
+                dynamic_shape,
+                ptr,
+                active,
+                ..
+            }
+            | Self::Object {
+                dynamic_shape,
+                ptr,
+                active,
+                ..
+            } => (*dynamic_shape, *ptr, *active),
+        };
+
+        if active {
+            unsafe {
+                let _ = dynamic_shape.call_drop_in_place(ptr.assume_init());
+            }
+        }
+    }
+}
+
 enum ListFrame {
     Push {
         guard: HandleGuard,
@@ -5710,6 +6558,84 @@ impl ListFrame {
                 }
                 builder.adopt();
                 Ok(())
+            }
+        }
+    }
+}
+
+struct PointerSliceFrame {
+    pointer_shape: &'static Shape,
+    pointer: PointerDef,
+    pointer_layout: Layout,
+    pointer_ptr: PtrUninit,
+    builder: PtrMut,
+    active: bool,
+}
+
+impl PointerSliceFrame {
+    fn new(
+        pointer_shape: &'static Shape,
+        pointer: PointerDef,
+        pointer_layout: Layout,
+        pointer_ptr: PtrUninit,
+    ) -> Result<Self, DeserializeError> {
+        let vtable = pointer
+            .vtable
+            .slice_builder_vtable
+            .ok_or_else(|| unsupported(pointer_shape, "pointer slice builder"))?;
+        Ok(Self {
+            pointer_shape,
+            pointer,
+            pointer_layout,
+            pointer_ptr,
+            builder: (vtable.new_fn)(),
+            active: true,
+        })
+    }
+
+    fn push(&mut self, scratch: &ScratchSlot) -> Result<(), DeserializeError> {
+        let vtable = self
+            .pointer
+            .vtable
+            .slice_builder_vtable
+            .ok_or_else(|| unsupported(self.pointer_shape, "pointer slice builder"))?;
+        unsafe {
+            (vtable.push_fn)(self.builder, scratch_ptr_mut(scratch));
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<(), DeserializeError> {
+        let vtable = self
+            .pointer
+            .vtable
+            .slice_builder_vtable
+            .ok_or_else(|| unsupported(self.pointer_shape, "pointer slice builder"))?;
+        let pointer_ptr = unsafe { (vtable.convert_fn)(self.builder) };
+        self.active = false;
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                pointer_ptr.as_byte_ptr(),
+                self.pointer_ptr.as_mut_byte_ptr(),
+                self.pointer_layout.size(),
+            );
+            if self.pointer_layout.size() != 0 {
+                alloc::alloc::dealloc(pointer_ptr.as_byte_ptr() as *mut u8, self.pointer_layout);
+            }
+        }
+        core::mem::forget(self);
+        Ok(())
+    }
+}
+
+impl Drop for PointerSliceFrame {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        if let Some(vtable) = self.pointer.vtable.slice_builder_vtable {
+            unsafe {
+                (vtable.free_fn)(self.builder);
             }
         }
     }
@@ -5769,8 +6695,11 @@ impl<const TRUSTED_UTF8: bool> Drop for JsonInterp<'_, '_, '_, TRUSTED_UTF8> {
             while large_structs.pop().is_some() {}
         }
 
+        while self.arrays.pop().is_some() {}
+        while self.dynamic_values.pop().is_some() {}
         while self.maps.pop().is_some() {}
         while self.sets.pop().is_some() {}
+        while self.pointer_slices.pop().is_some() {}
         while self.lists.pop().is_some() {}
     }
 }
@@ -5795,6 +6724,33 @@ where
                     scalar.write(shape, self.base, value, span)?;
                 }
                 Ok(Control::Continue)
+            }
+            JsonOp::ReadParsedScalar { shape } => {
+                let (value, span) = self.parser.read_scalar_token()?;
+                unsafe {
+                    write_parsed_scalar(shape, self.base, value, span)?;
+                }
+                Ok(Control::Continue)
+            }
+            JsonOp::ReadBuilderShape {
+                shape,
+                builder_shape,
+                builder_layout,
+                builder_program,
+            } => {
+                let scratch = self.scratch.reserve(*builder_layout);
+                let target_ptr = self.base;
+                self.base = scratch_ptr_uninit(&scratch);
+                Ok(call_program_or_block_then(
+                    builder_program,
+                    Continuation::BuilderShape {
+                        shape,
+                        builder_shape,
+                        target_ptr,
+                        old_base: target_ptr,
+                        scratch,
+                    },
+                ))
             }
             JsonOp::ReadTransparent {
                 field_offset,
@@ -5938,6 +6894,46 @@ where
                     },
                 ))
             }
+            JsonOp::ReadArray {
+                array_shape,
+                array,
+                element_layout,
+                loop_id,
+            } => {
+                self.parser.consume_array_start_fast()?;
+                self.arrays.push(ArrayFrame::new(
+                    array_shape,
+                    *array,
+                    self.base,
+                    *element_layout,
+                ));
+                Ok(Control::CallBlockThen(*loop_id, Continuation::FinishArray))
+            }
+            JsonOp::ArrayNext {
+                array,
+                element_program,
+                element_scalar,
+                element_option_scalar,
+                element_layout: _,
+                loop_id,
+            } => self.step_array_next(
+                *array,
+                element_program,
+                *element_scalar,
+                *element_option_scalar,
+                *loop_id,
+            ),
+            JsonOp::ReadDynamicValue {
+                dynamic_shape,
+                dynamic,
+                loop_id,
+            } => self.read_dynamic_value(dynamic_shape, *dynamic, *loop_id),
+            JsonOp::DynamicNext {
+                dynamic_shape,
+                dynamic_layout,
+                value_program,
+                loop_id,
+            } => self.step_dynamic_next(dynamic_shape, *dynamic_layout, value_program, *loop_id),
             JsonOp::ReadList {
                 list_shape,
                 list,
@@ -6165,6 +7161,50 @@ where
                     },
                 ))
             }
+            JsonOp::ReadPointerString {
+                pointer_shape,
+                pointer,
+            } => {
+                let (value, span) = self.parser.read_scalar_token()?;
+                unsafe {
+                    write_pointer_string(pointer_shape, *pointer, self.base, value, span)?;
+                }
+                Ok(Control::Continue)
+            }
+            JsonOp::ReadPointerSlice {
+                pointer_shape,
+                pointer,
+                pointer_layout,
+                element_layout: _,
+                loop_id,
+            } => {
+                self.parser.consume_array_start_fast()?;
+                self.pointer_slices.push(PointerSliceFrame::new(
+                    pointer_shape,
+                    *pointer,
+                    *pointer_layout,
+                    self.base,
+                )?);
+                Ok(Control::CallBlockThen(
+                    *loop_id,
+                    Continuation::FinishPointerSlice,
+                ))
+            }
+            JsonOp::PointerSliceNext {
+                pointer,
+                element_program,
+                element_scalar,
+                element_option_scalar,
+                element_layout,
+                loop_id,
+            } => self.step_pointer_slice_next(
+                *pointer,
+                element_program,
+                *element_scalar,
+                *element_option_scalar,
+                *element_layout,
+                *loop_id,
+            ),
         }
     }
 
@@ -6184,6 +7224,18 @@ where
                 scratch,
             } => {
                 let result = self.finish_proxy(proxy, target_ptr, scratch);
+                self.base = old_base;
+                result?;
+                Ok(Control::Continue)
+            }
+            Continuation::BuilderShape {
+                shape,
+                builder_shape,
+                target_ptr,
+                old_base,
+                scratch,
+            } => {
+                let result = self.finish_builder_shape(shape, builder_shape, target_ptr, scratch);
                 self.base = old_base;
                 result?;
                 Ok(Control::Continue)
@@ -6259,6 +7311,50 @@ where
                 self.base = old_base;
                 Ok(Control::Continue)
             }
+            Continuation::FinishArray => {
+                let array = self
+                    .arrays
+                    .pop()
+                    .expect("array frame is present after array program");
+                array.finish()?;
+                Ok(Control::Continue)
+            }
+            Continuation::ArrayElement { old_base, loop_id } => {
+                unsafe {
+                    self.mark_array_element_initialized();
+                }
+                self.base = old_base;
+                Ok(Control::CallBlock(loop_id))
+            }
+            Continuation::FinishDynamicValue => {
+                let dynamic = self
+                    .dynamic_values
+                    .pop()
+                    .expect("dynamic frame is present after dynamic program");
+                dynamic.finish();
+                Ok(Control::Continue)
+            }
+            Continuation::DynamicArrayElement {
+                old_base,
+                scratch,
+                loop_id,
+            } => {
+                self.push_dynamic_array_element(&scratch)?;
+                self.scratch.release(scratch);
+                self.base = old_base;
+                Ok(Control::CallBlock(loop_id))
+            }
+            Continuation::DynamicObjectEntry {
+                key,
+                old_base,
+                scratch,
+                loop_id,
+            } => {
+                self.insert_dynamic_object_entry(&key, &scratch)?;
+                self.scratch.release(scratch);
+                self.base = old_base;
+                Ok(Control::CallBlock(loop_id))
+            }
             Continuation::FinishList => {
                 let list = self
                     .lists
@@ -6326,6 +7422,24 @@ where
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
+            Continuation::FinishPointerSlice => {
+                let pointer_slice = self
+                    .pointer_slices
+                    .pop()
+                    .expect("pointer slice frame is present after slice program");
+                pointer_slice.finish()?;
+                Ok(Control::Continue)
+            }
+            Continuation::PointerSliceElement {
+                old_base,
+                scratch,
+                loop_id,
+            } => {
+                self.push_pointer_slice_element(&scratch)?;
+                self.scratch.release(scratch);
+                self.base = old_base;
+                Ok(Control::CallBlock(loop_id))
+            }
             Continuation::Pointer {
                 pointer,
                 pointer_ptr,
@@ -6363,6 +7477,13 @@ enum Continuation<'program> {
     },
     Proxy {
         proxy: &'static ProxyDef,
+        target_ptr: PtrUninit,
+        old_base: PtrUninit,
+        scratch: ScratchSlot,
+    },
+    BuilderShape {
+        shape: &'static Shape,
+        builder_shape: &'static Shape,
         target_ptr: PtrUninit,
         old_base: PtrUninit,
         scratch: ScratchSlot,
@@ -6408,6 +7529,23 @@ enum Continuation<'program> {
         old_base: PtrUninit,
         scratch: ScratchSlot,
     },
+    FinishArray,
+    ArrayElement {
+        old_base: PtrUninit,
+        loop_id: ExecBlock,
+    },
+    FinishDynamicValue,
+    DynamicArrayElement {
+        old_base: PtrUninit,
+        scratch: ScratchSlot,
+        loop_id: ExecBlock,
+    },
+    DynamicObjectEntry {
+        key: String,
+        old_base: PtrUninit,
+        scratch: ScratchSlot,
+        loop_id: ExecBlock,
+    },
     FinishList,
     FinishSet,
     FinishMap,
@@ -6435,6 +7573,12 @@ enum Continuation<'program> {
     },
     DirectListElement {
         old_base: PtrUninit,
+        loop_id: ExecBlock,
+    },
+    FinishPointerSlice,
+    PointerSliceElement {
+        old_base: PtrUninit,
+        scratch: ScratchSlot,
         loop_id: ExecBlock,
     },
     Pointer {
@@ -7954,6 +9098,14 @@ unsafe fn write_scalar_raw<const TRUSTED_UTF8: bool>(
                 None => return Err(unsupported(shape, "parsed scalar")),
             }
         }
+        _ if shape.vtable.has_parse() => {
+            let value = raw_string(parser, token, shape)?;
+            match unsafe { shape.call_parse(value.as_ref(), dst) } {
+                Some(Ok(())) => {}
+                Some(Err(err)) => return Err(invalid_value(span, format!("{err}"))),
+                None => return Err(unsupported(shape, "parsed scalar")),
+            }
+        }
         _ => {
             return Err(vm_error(
                 Some(span),
@@ -8087,6 +9239,16 @@ unsafe fn write_scalar(
         | ScalarType::IpAddr
         | ScalarType::Ipv4Addr
         | ScalarType::Ipv6Addr => {
+            let JsonScalarToken::Str(value) = value else {
+                return Err(type_mismatch(span, shape, value.kind_name()));
+            };
+            match unsafe { shape.call_parse(value.as_ref(), dst) } {
+                Some(Ok(())) => {}
+                Some(Err(err)) => return Err(invalid_value(span, format!("{err}"))),
+                None => return Err(unsupported(shape, "parsed scalar")),
+            }
+        }
+        _ if shape.vtable.has_parse() => {
             let JsonScalarToken::Str(value) = value else {
                 return Err(type_mismatch(span, shape, value.kind_name()));
             };
@@ -8457,6 +9619,123 @@ fn f64_to_i128(value: f64, span: Span, target: &'static str) -> Result<i128, Des
     let text = value.to_string();
     text.parse::<i128>()
         .map_err(|_| type_mismatch_name(span, target, "f64"))
+}
+
+unsafe fn write_parsed_scalar(
+    shape: &'static Shape,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    let JsonScalarToken::Str(value) = value else {
+        return Err(type_mismatch(span, shape, value.kind_name()));
+    };
+    match unsafe { shape.call_parse(value.as_ref(), dst) } {
+        Some(Ok(())) => Ok(()),
+        Some(Err(err)) => Err(invalid_value(span, format!("{err}"))),
+        None => Err(unsupported(shape, "parsed scalar")),
+    }
+}
+
+unsafe fn write_dynamic_scalar(
+    dynamic: DynamicValueDef,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    unsafe {
+        match value {
+            JsonScalarToken::Null => (dynamic.vtable.set_null)(dst),
+            JsonScalarToken::Bool(value) => (dynamic.vtable.set_bool)(dst, value),
+            JsonScalarToken::Str(value) => (dynamic.vtable.set_str)(dst, value.as_ref()),
+            JsonScalarToken::U64(value) => (dynamic.vtable.set_u64)(dst, value),
+            JsonScalarToken::I64(value) => (dynamic.vtable.set_i64)(dst, value),
+            JsonScalarToken::U128(value) => {
+                let value = value.to_string();
+                (dynamic.vtable.set_str)(dst, value.as_str());
+            }
+            JsonScalarToken::I128(value) => {
+                let value = value.to_string();
+                (dynamic.vtable.set_str)(dst, value.as_str());
+            }
+            JsonScalarToken::F64(value) => {
+                if !(dynamic.vtable.set_f64)(dst, value) {
+                    return Err(vm_error(
+                        Some(span),
+                        DeserializeErrorKind::InvalidValue {
+                            message: "f64 value is not representable in dynamic value".into(),
+                        },
+                    ));
+                }
+            }
+            JsonScalarToken::Other => {
+                return Err(vm_error(
+                    Some(span),
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "JSON scalar",
+                        got: "scalar".into(),
+                    },
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+unsafe fn write_pointer_string(
+    pointer_shape: &'static Shape,
+    pointer: PointerDef,
+    dst: PtrUninit,
+    value: JsonScalarToken<'_>,
+    span: Span,
+) -> Result<(), DeserializeError> {
+    let JsonScalarToken::Str(value) = value else {
+        return Err(type_mismatch(span, pointer_shape, value.kind_name()));
+    };
+
+    match pointer.known {
+        Some(KnownPointer::Box) => unsafe {
+            dst.put::<Box<str>>(value.into_owned().into_boxed_str());
+            Ok(())
+        },
+        Some(KnownPointer::Rc) => unsafe {
+            dst.put::<Rc<str>>(Rc::from(value.as_ref()));
+            Ok(())
+        },
+        Some(KnownPointer::Arc) => unsafe {
+            dst.put::<Arc<str>>(Arc::from(value.as_ref()));
+            Ok(())
+        },
+        _ => Err(unsupported(pointer_shape, "string pointer construction")),
+    }
+}
+
+fn pointer_to_str(pointer: PointerDef) -> bool {
+    pointer.pointee().is_some_and(|shape| *shape == *str::SHAPE)
+        && matches!(
+            pointer.known,
+            Some(KnownPointer::Box | KnownPointer::Rc | KnownPointer::Arc)
+        )
+}
+
+fn pointer_slice_element_shape(pointer: PointerDef) -> Result<&'static Shape, DeserializeError> {
+    let pointee = pointer
+        .pointee()
+        .ok_or_else(|| unsupported_shape_message("opaque pointer"))?;
+    let Def::Slice(slice) = pointee.def else {
+        return Err(unsupported_shape_message("pointer target is not a slice"));
+    };
+    Ok(slice.t())
+}
+
+fn fixed_array_length_error(array: ArrayDef, got: usize) -> DeserializeError {
+    vm_error(
+        None,
+        DeserializeErrorKind::InvalidValue {
+            message: format!("expected array of length {}, got {got}", array.n).into(),
+        },
+    )
 }
 
 fn scalar_to_f64(
