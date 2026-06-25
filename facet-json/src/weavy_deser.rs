@@ -1648,6 +1648,14 @@ enum JsonOp<Block> {
         proxy_layout: Layout,
         proxy_program: Program<JsonOp<Block>>,
     },
+    ReadUnitStruct {
+        shape: &'static Shape,
+    },
+    ReadTupleStruct {
+        shape: &'static Shape,
+        fields: Box<[FieldPlan<Block>]>,
+        tracking: StructTracking,
+    },
     ReadScalarStruct {
         shape: &'static Shape,
         fields: Box<[ScalarFieldPlan]>,
@@ -2117,6 +2125,12 @@ impl Lowering {
             return self.lower_proxy(shape, proxy);
         }
 
+        if is_empty_tuple_shape(shape)
+            && let Type::User(UserType::Struct(struct_type)) = shape.ty
+        {
+            return self.lower_tuple_struct(shape, struct_type);
+        }
+
         if let Some(scalar) = ScalarType::try_from_shape(shape) {
             return Ok(vec![JsonOp::ReadScalar {
                 shape,
@@ -2237,14 +2251,19 @@ impl Lowering {
                     if shape.is_transparent() {
                         return self.lower_transparent_struct(shape, struct_type);
                     }
-                    if struct_type.kind != StructKind::Struct {
-                        return Err(unsupported(shape, "non-named struct"));
+                    match struct_type.kind {
+                        StructKind::Unit => return Ok(vec![JsonOp::ReadUnitStruct { shape }]),
+                        StructKind::Tuple | StructKind::TupleStruct => {
+                            return self.lower_tuple_struct(shape, struct_type);
+                        }
+                        StructKind::Struct => {}
                     }
 
                     let container_has_default = shape.has_default_attr();
                     let all_scalar = struct_type.fields.iter().all(|field| {
                         !field.is_flattened()
                             && field.effective_proxy(Some(JSON_FORMAT_NAMESPACE)).is_none()
+                            && !is_empty_tuple_shape(field.shape())
                             && ScalarType::try_from_shape(field.shape()).is_some()
                     });
 
@@ -2369,8 +2388,42 @@ impl Lowering {
 
         Ok((
             self.lower_shape(field_shape)?,
-            ScalarType::try_from_shape(field_shape).map(ScalarPlan::new),
+            (!is_empty_tuple_shape(field_shape))
+                .then(|| ScalarType::try_from_shape(field_shape).map(ScalarPlan::new))
+                .flatten(),
         ))
+    }
+
+    fn lower_tuple_struct(
+        &mut self,
+        shape: &'static Shape,
+        struct_type: facet_core::StructType,
+    ) -> Result<Program<SymbolicOp>, DeserializeError> {
+        let mut fields = Vec::with_capacity(struct_type.fields.len());
+        for field in struct_type.fields {
+            if field.should_skip_deserializing() || field.is_flattened() {
+                return Err(unsupported(shape, "skipped or flattened tuple fields"));
+            }
+            let field_shape = field.shape();
+            let (program, scalar) = self.lower_field_value(field)?;
+            fields.push(FieldPlan {
+                name: field.effective_name(),
+                alias: field.alias,
+                offset: field.offset,
+                shape: field_shape,
+                program,
+                scalar,
+                missing: missing_field_action(field, false),
+            });
+        }
+
+        let fields = fields.into_boxed_slice();
+        let tracking = StructTracking::for_len(fields.len());
+        Ok(vec![JsonOp::ReadTupleStruct {
+            shape,
+            fields,
+            tracking,
+        }])
     }
 
     fn lower_external_enum(
@@ -2526,6 +2579,16 @@ fn resolve_json_op(
             proxy,
             proxy_layout,
             proxy_program: resolve_json_program(proxy_program, refs)?,
+        },
+        JsonOp::ReadUnitStruct { shape } => JsonOp::ReadUnitStruct { shape },
+        JsonOp::ReadTupleStruct {
+            shape,
+            fields,
+            tracking,
+        } => JsonOp::ReadTupleStruct {
+            shape,
+            fields: resolve_field_plans(fields, refs)?,
+            tracking,
         },
         JsonOp::ReadScalarStruct {
             shape,
@@ -2773,6 +2836,14 @@ fn missing_field_action(field: &Field, container_has_default: bool) -> MissingFi
             _ => MissingField::Required,
         },
     }
+}
+
+fn is_empty_tuple_shape(shape: &'static Shape) -> bool {
+    matches!(
+        shape.ty,
+        Type::User(UserType::Struct(struct_type))
+            if struct_type.kind == StructKind::Tuple && struct_type.fields.is_empty()
+    )
 }
 
 fn list_option_scalar(shape: &'static Shape) -> Result<Option<ListOptionScalar>, DeserializeError> {
@@ -3525,6 +3596,173 @@ where
                 self.large_structs_mut()
                     .push(LargeStructFrameSlot::new(shape, base, fields, dispatch));
             }
+        }
+    }
+
+    fn read_unit_struct(&mut self, shape: &'static Shape) -> Result<(), DeserializeError> {
+        self.parser.consume_object_start_fast()?;
+        loop {
+            match self.parser.next_object_key_or_end()? {
+                JsonObjectKeyStep::End => return Ok(()),
+                JsonObjectKeyStep::Field { key, span } => {
+                    let key = self.parser.materialize_field_key(key)?;
+                    if shape.has_deny_unknown_fields_attr() {
+                        return Err(vm_error(
+                            Some(span),
+                            DeserializeErrorKind::UnknownField {
+                                field: key.as_str().to_owned().into(),
+                                suggestion: None,
+                            },
+                        ));
+                    }
+                    self.parser.skip_value_strict()?;
+                }
+            }
+        }
+    }
+
+    fn read_tuple_struct(
+        &mut self,
+        shape: &'static Shape,
+        fields: &'program [FieldPlan<ExecBlock>],
+        tracking: StructTracking,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        if fields.is_empty() && self.parser.consume_null_if_next()? {
+            return Ok(Control::Continue);
+        }
+
+        let Some(event) = self.parser.peek_event()? else {
+            return Err(vm_error(
+                None,
+                DeserializeErrorKind::UnexpectedEof { expected: "tuple" },
+            ));
+        };
+
+        let mode = match event.kind {
+            ParseEventKind::SequenceStart(_) => {
+                self.parser.consume_array_start_fast()?;
+                TupleContainerMode::Sequence
+            }
+            ParseEventKind::StructStart(_) => {
+                self.parser.consume_object_start_fast()?;
+                TupleContainerMode::Object
+            }
+            _ => {
+                return Err(vm_error(
+                    Some(event.span),
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "sequence or object start for tuple",
+                        got: event.kind_name().into(),
+                    },
+                ));
+            }
+        };
+
+        self.push_struct_frame(shape, fields, None, tracking);
+        self.read_tuple_struct_next(fields, tracking, 0, mode)
+    }
+
+    fn read_tuple_struct_next(
+        &mut self,
+        fields: &'program [FieldPlan<ExecBlock>],
+        tracking: StructTracking,
+        mut next_index: usize,
+        mode: TupleContainerMode,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Continuation<'program>>, DeserializeError>
+    {
+        loop {
+            let Some(field) = fields.get(next_index) else {
+                match mode {
+                    TupleContainerMode::Sequence => {
+                        if self.parser.consume_sequence_end_if_next()? {
+                            unsafe {
+                                self.finish_struct_frame(tracking)?;
+                            }
+                            return Ok(Control::Continue);
+                        }
+                        let got = match self.parser.peek_event()? {
+                            Some(event) => event.kind_name().into(),
+                            None => "end of input".into(),
+                        };
+                        return Err(vm_error(
+                            None,
+                            DeserializeErrorKind::UnexpectedToken {
+                                expected: "sequence end for tuple",
+                                got,
+                            },
+                        ));
+                    }
+                    TupleContainerMode::Object => match self.parser.next_object_key_or_end()? {
+                        JsonObjectKeyStep::End => {
+                            unsafe {
+                                self.finish_struct_frame(tracking)?;
+                            }
+                            return Ok(Control::Continue);
+                        }
+                        JsonObjectKeyStep::Field { span, .. } => {
+                            return Err(vm_error(
+                                Some(span),
+                                DeserializeErrorKind::UnexpectedToken {
+                                    expected: "object end for tuple",
+                                    got: "field key".into(),
+                                },
+                            ));
+                        }
+                    },
+                }
+            };
+
+            let span = match mode {
+                TupleContainerMode::Sequence => {
+                    if self.parser.consume_sequence_end_if_next()? {
+                        return Err(vm_error(
+                            None,
+                            DeserializeErrorKind::UnexpectedEof {
+                                expected: "tuple element",
+                            },
+                        ));
+                    }
+                    self.parser
+                        .peek_event()?
+                        .map_or(Span { offset: 0, len: 0 }, |event| event.span)
+                }
+                TupleContainerMode::Object => match self.parser.next_object_key_or_end()? {
+                    JsonObjectKeyStep::End => {
+                        return Err(vm_error(
+                            None,
+                            DeserializeErrorKind::UnexpectedEof {
+                                expected: "tuple element",
+                            },
+                        ));
+                    }
+                    JsonObjectKeyStep::Field { span, .. } => span,
+                },
+            };
+
+            let field_ptr = unsafe { self.base.field_uninit(field.offset) };
+            if let Some(scalar) = field.scalar {
+                let (value, value_span) = self.parser.read_scalar_token()?;
+                unsafe {
+                    scalar.write(field.shape, field_ptr, value, value_span)?;
+                }
+                self.mark_struct_field(tracking, next_index, span);
+                next_index += 1;
+                continue;
+            }
+
+            let old_base = self.base;
+            self.base = field_ptr;
+            return Ok(call_program_or_block_then(
+                &field.program,
+                Continuation::TupleFieldDone {
+                    tracking,
+                    fields,
+                    index: next_index,
+                    old_base,
+                    mode,
+                },
+            ));
         }
     }
 
@@ -5598,6 +5836,15 @@ where
                     },
                 ))
             }
+            JsonOp::ReadUnitStruct { shape } => {
+                self.read_unit_struct(shape)?;
+                Ok(Control::Continue)
+            }
+            JsonOp::ReadTupleStruct {
+                shape,
+                fields,
+                tracking,
+            } => self.read_tuple_struct(shape, fields, *tracking),
             JsonOp::ReadScalarStruct {
                 shape,
                 fields,
@@ -5958,6 +6205,17 @@ where
                 self.base = old_base;
                 Ok(Control::CallBlock(loop_id))
             }
+            Continuation::TupleFieldDone {
+                tracking,
+                fields,
+                index,
+                old_base,
+                mode,
+            } => {
+                self.mark_struct_field(tracking, index, Span { offset: 0, len: 0 });
+                self.base = old_base;
+                self.read_tuple_struct_next(fields, tracking, index + 1, mode)
+            }
             Continuation::ExternalEnumSingleField {
                 tracking,
                 index,
@@ -6119,6 +6377,13 @@ enum Continuation<'program> {
         old_base: PtrUninit,
         loop_id: ExecBlock,
     },
+    TupleFieldDone {
+        tracking: StructTracking,
+        fields: &'program [FieldPlan<ExecBlock>],
+        index: usize,
+        old_base: PtrUninit,
+        mode: TupleContainerMode,
+    },
     ExternalEnumSingleField {
         tracking: StructTracking,
         index: usize,
@@ -6239,6 +6504,12 @@ enum StructTracking {
     Inline,
     Bitset,
     Heap,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TupleContainerMode {
+    Sequence,
+    Object,
 }
 
 impl StructTracking {
