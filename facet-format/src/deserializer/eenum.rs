@@ -1373,7 +1373,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
         };
 
-        let enum_plan = wip.enum_plan().unwrap();
+        let enum_plan = wip.enum_plan().ok_or_else(|| {
+            self.mk_err(
+                &wip,
+                DeserializeErrorKind::Unsupported {
+                    message: "missing enum plan for adjacently tagged enum".into(),
+                },
+            )
+        })?;
 
         if wip.shape().is_numeric() {
             let discriminant = find_tag_discriminant(&evidence, tag_key).ok_or_else(|| {
