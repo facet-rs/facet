@@ -426,6 +426,22 @@ pub trait IntrinsicOp {
     }
 }
 
+/// Intrinsic hook for nested child programs.
+///
+/// Some domain intrinsics carry executable child programs inside their payload:
+/// a sequence element body, an option payload, a map key/value pair, and so on.
+/// Flat helpers such as [`program_stats`] count only the explicit outer op
+/// stream. The `*_with_intrinsic_children` helpers also enter programs exposed
+/// through this trait.
+pub trait IntrinsicChildren<Block>: IntrinsicOp {
+    /// Visit each child program owned by this intrinsic.
+    fn visit_child_programs<'a>(&'a self, _visit: &mut dyn FnMut(&'a [WeavyOp<Block, Self>]))
+    where
+        Self: Sized,
+    {
+    }
+}
+
 /// Error while resolving symbolic canonical block ids into dense refs.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -634,6 +650,20 @@ pub fn program_stats<Block, Intrinsic>(program: &[WeavyOp<Block, Intrinsic>]) ->
     stats
 }
 
+/// Count the canonical IR shape for one program, recursively entering child
+/// programs exposed by intrinsics.
+#[must_use]
+pub fn program_stats_with_intrinsic_children<Block, Intrinsic>(
+    program: &[WeavyOp<Block, Intrinsic>],
+) -> ProgramStats
+where
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    let mut stats = ProgramStats::default();
+    add_program_stats_with_intrinsic_children(program, &mut stats);
+    stats
+}
+
 /// Count the canonical IR shape for a lowered program and its block table.
 #[must_use]
 pub fn lowered_program_stats<Block, Intrinsic>(
@@ -658,6 +688,32 @@ where
     }
 }
 
+/// Count the canonical IR shape for a lowered program and its block table,
+/// recursively entering child programs exposed by intrinsics.
+#[must_use]
+pub fn lowered_program_stats_with_intrinsic_children<Block, Intrinsic>(
+    lowered: &WeavyLowered<Block, Intrinsic>,
+) -> LoweredProgramStats
+where
+    Block: Ord,
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    let root = program_stats_with_intrinsic_children(&lowered.program);
+    let mut blocks = ProgramStats::default();
+    for block in lowered.blocks.values() {
+        blocks.accumulate(program_stats_with_intrinsic_children(block));
+    }
+    let mut total = root;
+    total.accumulate(blocks);
+
+    LoweredProgramStats {
+        root,
+        blocks,
+        total,
+        block_count: lowered.blocks.len(),
+    }
+}
+
 /// Count the canonical IR shape for a dense lowered program and its block table.
 #[must_use]
 pub fn dense_lowered_program_stats<Intrinsic>(
@@ -667,6 +723,31 @@ pub fn dense_lowered_program_stats<Intrinsic>(
     let mut blocks = ProgramStats::default();
     for block in &lowered.blocks {
         blocks.accumulate(program_stats(block));
+    }
+    let mut total = root;
+    total.accumulate(blocks);
+
+    LoweredProgramStats {
+        root,
+        blocks,
+        total,
+        block_count: lowered.blocks.len(),
+    }
+}
+
+/// Count the canonical IR shape for a dense lowered program and its block table,
+/// recursively entering child programs exposed by intrinsics.
+#[must_use]
+pub fn dense_lowered_program_stats_with_intrinsic_children<Intrinsic>(
+    lowered: &DenseWeavyLowered<Intrinsic>,
+) -> LoweredProgramStats
+where
+    Intrinsic: IntrinsicChildren<BlockRef>,
+{
+    let root = program_stats_with_intrinsic_children(&lowered.program);
+    let mut blocks = ProgramStats::default();
+    for block in &lowered.blocks {
+        blocks.accumulate(program_stats_with_intrinsic_children(block));
     }
     let mut total = root;
     total.accumulate(blocks);
@@ -705,6 +786,20 @@ where
     stats
 }
 
+/// Count effect contracts for one canonical program, recursively entering child
+/// programs exposed by intrinsics.
+#[must_use]
+pub fn effect_stats_with_intrinsic_children<Block, Intrinsic>(
+    program: &[WeavyOp<Block, Intrinsic>],
+) -> EffectStats
+where
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    let mut stats = EffectStats::default();
+    add_effect_stats_with_intrinsic_children(program, &mut stats);
+    stats
+}
+
 /// Count effect contracts for a canonical lowered program and its block table.
 #[must_use]
 pub fn lowered_effect_stats<Block, Intrinsic>(
@@ -730,6 +825,24 @@ where
     }
 }
 
+/// Count effect contracts for a canonical lowered program and its block table,
+/// recursively entering child programs exposed by intrinsics.
+#[must_use]
+pub fn lowered_effect_stats_with_intrinsic_children<Block, Intrinsic>(
+    lowered: &WeavyLowered<Block, Intrinsic>,
+) -> LoweredEffectStats
+where
+    Block: Ord,
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    let root = effect_stats_with_intrinsic_children(&lowered.program);
+    let mut blocks = EffectStats::default();
+    for block in lowered.blocks.values() {
+        blocks.accumulate(effect_stats_with_intrinsic_children(block));
+    }
+    LoweredEffectStats::new(root, blocks, lowered.blocks.len())
+}
+
 /// Count effect contracts for a dense canonical lowered program and its block table.
 #[must_use]
 pub fn dense_lowered_effect_stats<Intrinsic>(
@@ -742,6 +855,23 @@ where
     let mut blocks = EffectStats::default();
     for block in &lowered.blocks {
         blocks.accumulate(effect_stats(block));
+    }
+    LoweredEffectStats::new(root, blocks, lowered.blocks.len())
+}
+
+/// Count effect contracts for a dense canonical lowered program and its block
+/// table, recursively entering child programs exposed by intrinsics.
+#[must_use]
+pub fn dense_lowered_effect_stats_with_intrinsic_children<Intrinsic>(
+    lowered: &DenseWeavyLowered<Intrinsic>,
+) -> LoweredEffectStats
+where
+    Intrinsic: IntrinsicChildren<BlockRef>,
+{
+    let root = effect_stats_with_intrinsic_children(&lowered.program);
+    let mut blocks = EffectStats::default();
+    for block in &lowered.blocks {
+        blocks.accumulate(effect_stats_with_intrinsic_children(block));
     }
     LoweredEffectStats::new(root, blocks, lowered.blocks.len())
 }
@@ -760,6 +890,22 @@ fn add_program_stats<Block, Intrinsic>(
             WeavyOp::Intrinsic(_) => {
                 stats.intrinsic_op_count += 1;
             }
+        }
+    }
+}
+
+fn add_program_stats_with_intrinsic_children<Block, Intrinsic>(
+    program: &[WeavyOp<Block, Intrinsic>],
+    stats: &mut ProgramStats,
+) where
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    add_program_stats(program, stats);
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            intrinsic.visit_child_programs(&mut |child| {
+                add_program_stats_with_intrinsic_children(child, stats);
+            });
         }
     }
 }
@@ -911,6 +1057,22 @@ fn add_effect_stats<Block, Intrinsic>(
     }
 }
 
+fn add_effect_stats_with_intrinsic_children<Block, Intrinsic>(
+    program: &[WeavyOp<Block, Intrinsic>],
+    stats: &mut EffectStats,
+) where
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    add_effect_stats(program, stats);
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            intrinsic.visit_child_programs(&mut |child| {
+                add_effect_stats_with_intrinsic_children(child, stats);
+            });
+        }
+    }
+}
+
 fn add_contract_stats(contract: &EffectContract, stats: &mut EffectStats) {
     if contract.opaque {
         stats.opaque_count += 1;
@@ -1010,6 +1172,20 @@ where
     counts
 }
 
+/// Count intrinsic descriptors in one canonical program, recursively entering
+/// child programs exposed by intrinsics.
+#[must_use]
+pub fn intrinsic_counts_with_intrinsic_children<Block, Intrinsic>(
+    program: &[WeavyOp<Block, Intrinsic>],
+) -> BTreeMap<IntrinsicDescriptor, usize>
+where
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    let mut counts = BTreeMap::new();
+    add_intrinsic_counts_with_intrinsic_children(program, &mut counts);
+    counts
+}
+
 /// Count intrinsic descriptors in a lowered canonical program.
 #[must_use]
 pub fn lowered_intrinsic_counts<Block, Intrinsic>(
@@ -1022,6 +1198,23 @@ where
     let mut counts = intrinsic_counts(&lowered.program);
     for block in lowered.blocks.values() {
         add_intrinsic_counts(block, &mut counts);
+    }
+    counts
+}
+
+/// Count intrinsic descriptors in a lowered canonical program, recursively
+/// entering child programs exposed by intrinsics.
+#[must_use]
+pub fn lowered_intrinsic_counts_with_intrinsic_children<Block, Intrinsic>(
+    lowered: &WeavyLowered<Block, Intrinsic>,
+) -> BTreeMap<IntrinsicDescriptor, usize>
+where
+    Block: Ord,
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    let mut counts = intrinsic_counts_with_intrinsic_children(&lowered.program);
+    for block in lowered.blocks.values() {
+        add_intrinsic_counts_with_intrinsic_children(block, &mut counts);
     }
     counts
 }
@@ -1041,6 +1234,22 @@ where
     counts
 }
 
+/// Count intrinsic descriptors in a dense lowered canonical program,
+/// recursively entering child programs exposed by intrinsics.
+#[must_use]
+pub fn dense_lowered_intrinsic_counts_with_intrinsic_children<Intrinsic>(
+    lowered: &DenseWeavyLowered<Intrinsic>,
+) -> BTreeMap<IntrinsicDescriptor, usize>
+where
+    Intrinsic: IntrinsicChildren<BlockRef>,
+{
+    let mut counts = intrinsic_counts_with_intrinsic_children(&lowered.program);
+    for block in &lowered.blocks {
+        add_intrinsic_counts_with_intrinsic_children(block, &mut counts);
+    }
+    counts
+}
+
 fn add_intrinsic_counts<Block, Intrinsic>(
     program: &[WeavyOp<Block, Intrinsic>],
     counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
@@ -1054,6 +1263,22 @@ fn add_intrinsic_counts<Block, Intrinsic>(
     }
 }
 
+fn add_intrinsic_counts_with_intrinsic_children<Block, Intrinsic>(
+    program: &[WeavyOp<Block, Intrinsic>],
+    counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
+) where
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    add_intrinsic_counts(program, counts);
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            intrinsic.visit_child_programs(&mut |child| {
+                add_intrinsic_counts_with_intrinsic_children(child, counts);
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,6 +1287,7 @@ mod tests {
     enum TestIntrinsic {
         ReadI32,
         HashField,
+        Nested(Vec<WeavyOp<(), TestIntrinsic>>),
     }
 
     impl IntrinsicOp for TestIntrinsic {
@@ -1074,6 +1300,10 @@ mod tests {
                 TestIntrinsic::HashField => IntrinsicDescriptor {
                     dialect: "hash",
                     name: "feed_field",
+                },
+                TestIntrinsic::Nested(_) => IntrinsicDescriptor {
+                    dialect: "test",
+                    name: "nested",
                 },
             }
         }
@@ -1091,6 +1321,17 @@ mod tests {
                 TestIntrinsic::HashField => EffectContract::new()
                     .typed_memory(MemoryRegion::base_relative(4, 8), TypedMemoryAccess::Read)
                     .write_resource(EffectResource::Sink("hash")),
+                TestIntrinsic::Nested(_) => {
+                    EffectContract::new().write_resource(EffectResource::SideChannel("test.nested"))
+                }
+            }
+        }
+    }
+
+    impl IntrinsicChildren<()> for TestIntrinsic {
+        fn visit_child_programs<'a>(&'a self, visit: &mut dyn FnMut(&'a [WeavyOp<(), Self>])) {
+            if let TestIntrinsic::Nested(program) = self {
+                visit(program);
             }
         }
     }
@@ -1372,5 +1613,51 @@ mod tests {
         assert_eq!(stats.typed_memory_read_count, 1);
         assert_eq!(stats.typed_memory_initialize_count, 1);
         assert_eq!(stats.opaque_count, 0);
+    }
+
+    #[test]
+    fn intrinsic_child_helpers_enter_nested_programs() {
+        let child = vec![
+            WeavyOp::<(), _>::Intrinsic(TestIntrinsic::ReadI32),
+            WeavyOp::Intrinsic(TestIntrinsic::HashField),
+        ];
+        let program = vec![WeavyOp::Intrinsic(TestIntrinsic::Nested(child))];
+
+        let flat = program_stats(&program);
+        assert_eq!(flat.op_count, 1);
+        assert_eq!(flat.intrinsic_op_count, 1);
+
+        let recursive = program_stats_with_intrinsic_children(&program);
+        assert_eq!(recursive.op_count, 3);
+        assert_eq!(recursive.intrinsic_op_count, 3);
+
+        let effects = effect_stats_with_intrinsic_children(&program);
+        assert_eq!(effects.op_count, 3);
+        assert_eq!(effects.input_advance_count, 1);
+        assert_eq!(effects.sink_write_count, 1);
+        assert_eq!(effects.side_channel_count, 1);
+
+        let counts = intrinsic_counts_with_intrinsic_children(&program);
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "test",
+                name: "nested",
+            }],
+            1
+        );
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "json",
+                name: "read_i32",
+            }],
+            1
+        );
+        assert_eq!(
+            counts[&IntrinsicDescriptor {
+                dialect: "hash",
+                name: "feed_field",
+            }],
+            1
+        );
     }
 }

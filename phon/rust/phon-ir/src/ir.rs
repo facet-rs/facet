@@ -31,9 +31,9 @@ use std::collections::BTreeMap;
 use phon_schema::bytes::{Reader, skip_pad};
 use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 pub use weavy::ir::{
-    ControlOp, EffectContract, EffectOrdering, EffectResource, EffectStats, IntrinsicDescriptor,
-    IntrinsicOp, LoweredEffectStats, LoweredProgramStats, MemoryRegion, ProgramStats,
-    ResourceAccess, ResourceEffect, TypedMemoryAccess, TypedMemoryEffect, WeavyOp,
+    ControlOp, EffectContract, EffectOrdering, EffectResource, EffectStats, IntrinsicChildren,
+    IntrinsicDescriptor, IntrinsicOp, LoweredEffectStats, LoweredProgramStats, MemoryRegion,
+    ProgramStats, ResourceAccess, ResourceEffect, TypedMemoryAccess, TypedMemoryEffect, WeavyOp,
 };
 pub use weavy::mem::{
     BorrowOp, BorrowThunks, ByteValidator, BytesOp, CanonicalEnumOp, CanonicalEnumVariantOp,
@@ -217,6 +217,32 @@ impl IntrinsicOp for ValueIntrinsic {
     }
 }
 
+impl IntrinsicChildren<SchemaId> for ValueIntrinsic {
+    fn visit_child_programs<'a>(&'a self, visit: &mut dyn FnMut(&'a [WeavyOp<SchemaId, Self>])) {
+        match self {
+            ValueIntrinsic::Seq { body, .. } | ValueIntrinsic::FixedArray { body, .. } => {
+                visit(body);
+            }
+            ValueIntrinsic::Map { key, value } => {
+                visit(key);
+                visit(value);
+            }
+            ValueIntrinsic::Option { some } => visit(some),
+            ValueIntrinsic::Enum { arms } => {
+                for arm in arms {
+                    visit(&arm.payload);
+                }
+            }
+            ValueIntrinsic::Scalar(_)
+            | ValueIntrinsic::Dynamic
+            | ValueIntrinsic::Null
+            | ValueIntrinsic::Skip(_)
+            | ValueIntrinsic::Object { .. }
+            | ValueIntrinsic::Array { .. } => {}
+        }
+    }
+}
+
 fn value_stack_effect() -> EffectContract {
     EffectContract::new()
         .write_resource(EffectResource::SideChannel("phon.value_stack"))
@@ -252,32 +278,13 @@ pub fn canonical_value_program(lowered: &ValueProgram) -> CanonicalValueProgram 
 /// intrinsics with nested child programs.
 #[must_use]
 pub fn canonical_value_program_stats(program: &[ValueOp]) -> ProgramStats {
-    let mut stats = weavy::ir::program_stats(program);
-    for op in program {
-        if let WeavyOp::Intrinsic(intrinsic) = op {
-            add_canonical_value_intrinsic_stats(intrinsic, &mut stats);
-        }
-    }
-    stats
+    weavy::ir::program_stats_with_intrinsic_children(program)
 }
 
 /// Count a canonical PHON dynamic-value lowered program and its block table.
 #[must_use]
 pub fn canonical_value_lowered_stats(lowered: &CanonicalValueProgram) -> LoweredProgramStats {
-    let root = canonical_value_program_stats(&lowered.program);
-    let mut blocks = ProgramStats::default();
-    for block in lowered.blocks.values() {
-        blocks.accumulate(canonical_value_program_stats(block));
-    }
-    let mut total = root;
-    total.accumulate(blocks);
-
-    let mut stats = LoweredProgramStats::default();
-    stats.root = root;
-    stats.blocks = blocks;
-    stats.total = total;
-    stats.block_count = lowered.blocks.len();
-    stats
+    weavy::ir::lowered_program_stats_with_intrinsic_children(lowered)
 }
 
 /// Count PHON dynamic-value intrinsic descriptors in a canonical program,
@@ -286,13 +293,7 @@ pub fn canonical_value_lowered_stats(lowered: &CanonicalValueProgram) -> Lowered
 pub fn canonical_value_intrinsic_counts(
     program: &[ValueOp],
 ) -> BTreeMap<IntrinsicDescriptor, usize> {
-    let mut counts = weavy::ir::intrinsic_counts(program);
-    for op in program {
-        if let WeavyOp::Intrinsic(intrinsic) = op {
-            add_canonical_value_intrinsic_counts(intrinsic, &mut counts);
-        }
-    }
-    counts
+    weavy::ir::intrinsic_counts_with_intrinsic_children(program)
 }
 
 /// Count PHON dynamic-value intrinsic descriptors in a canonical lowered
@@ -301,38 +302,21 @@ pub fn canonical_value_intrinsic_counts(
 pub fn canonical_value_lowered_intrinsic_counts(
     lowered: &CanonicalValueProgram,
 ) -> BTreeMap<IntrinsicDescriptor, usize> {
-    let mut counts = canonical_value_intrinsic_counts(&lowered.program);
-    for block in lowered.blocks.values() {
-        for (descriptor, count) in canonical_value_intrinsic_counts(block) {
-            *counts.entry(descriptor).or_default() += count;
-        }
-    }
-    counts
+    weavy::ir::lowered_intrinsic_counts_with_intrinsic_children(lowered)
 }
 
 /// Count canonical PHON dynamic-value effects, recursively entering value
 /// intrinsics with nested child programs.
 #[must_use]
 pub fn canonical_value_program_effect_stats(program: &[ValueOp]) -> EffectStats {
-    let mut stats = weavy::ir::effect_stats(program);
-    for op in program {
-        if let WeavyOp::Intrinsic(intrinsic) = op {
-            add_canonical_value_intrinsic_effect_stats(intrinsic, &mut stats);
-        }
-    }
-    stats
+    weavy::ir::effect_stats_with_intrinsic_children(program)
 }
 
 /// Count canonical PHON dynamic-value effects in a lowered program and its
 /// block table.
 #[must_use]
 pub fn canonical_value_lowered_effect_stats(lowered: &CanonicalValueProgram) -> LoweredEffectStats {
-    let root = canonical_value_program_effect_stats(&lowered.program);
-    let mut blocks = EffectStats::default();
-    for block in lowered.blocks.values() {
-        blocks.accumulate(canonical_value_program_effect_stats(block));
-    }
-    LoweredEffectStats::new(root, blocks, lowered.blocks.len())
+    weavy::ir::lowered_effect_stats_with_intrinsic_children(lowered)
 }
 
 /// Canonical-to-legacy dynamic-value conversion failure.
@@ -520,96 +504,6 @@ fn value_op_from_intrinsic(intrinsic: ValueIntrinsic) -> Result<Op, CanonicalVal
                 .collect::<Result<_, CanonicalValueError>>()?,
         },
     })
-}
-
-fn add_canonical_value_intrinsic_stats(intrinsic: &ValueIntrinsic, stats: &mut ProgramStats) {
-    match intrinsic {
-        ValueIntrinsic::Seq { body, .. } | ValueIntrinsic::FixedArray { body, .. } => {
-            stats.accumulate(canonical_value_program_stats(body));
-        }
-        ValueIntrinsic::Map { key, value } => {
-            stats.accumulate(canonical_value_program_stats(key));
-            stats.accumulate(canonical_value_program_stats(value));
-        }
-        ValueIntrinsic::Option { some } => {
-            stats.accumulate(canonical_value_program_stats(some));
-        }
-        ValueIntrinsic::Enum { arms } => {
-            for arm in arms {
-                stats.accumulate(canonical_value_program_stats(&arm.payload));
-            }
-        }
-        ValueIntrinsic::Scalar(_)
-        | ValueIntrinsic::Dynamic
-        | ValueIntrinsic::Null
-        | ValueIntrinsic::Skip(_)
-        | ValueIntrinsic::Object { .. }
-        | ValueIntrinsic::Array { .. } => {}
-    }
-}
-
-fn add_canonical_value_intrinsic_counts(
-    intrinsic: &ValueIntrinsic,
-    counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
-) {
-    match intrinsic {
-        ValueIntrinsic::Seq { body, .. } | ValueIntrinsic::FixedArray { body, .. } => {
-            add_canonical_value_program_intrinsic_counts(body, counts);
-        }
-        ValueIntrinsic::Map { key, value } => {
-            add_canonical_value_program_intrinsic_counts(key, counts);
-            add_canonical_value_program_intrinsic_counts(value, counts);
-        }
-        ValueIntrinsic::Option { some } => {
-            add_canonical_value_program_intrinsic_counts(some, counts);
-        }
-        ValueIntrinsic::Enum { arms } => {
-            for arm in arms {
-                add_canonical_value_program_intrinsic_counts(&arm.payload, counts);
-            }
-        }
-        ValueIntrinsic::Scalar(_)
-        | ValueIntrinsic::Dynamic
-        | ValueIntrinsic::Null
-        | ValueIntrinsic::Skip(_)
-        | ValueIntrinsic::Object { .. }
-        | ValueIntrinsic::Array { .. } => {}
-    }
-}
-
-fn add_canonical_value_intrinsic_effect_stats(intrinsic: &ValueIntrinsic, stats: &mut EffectStats) {
-    match intrinsic {
-        ValueIntrinsic::Seq { body, .. } | ValueIntrinsic::FixedArray { body, .. } => {
-            stats.accumulate(canonical_value_program_effect_stats(body));
-        }
-        ValueIntrinsic::Map { key, value } => {
-            stats.accumulate(canonical_value_program_effect_stats(key));
-            stats.accumulate(canonical_value_program_effect_stats(value));
-        }
-        ValueIntrinsic::Option { some } => {
-            stats.accumulate(canonical_value_program_effect_stats(some));
-        }
-        ValueIntrinsic::Enum { arms } => {
-            for arm in arms {
-                stats.accumulate(canonical_value_program_effect_stats(&arm.payload));
-            }
-        }
-        ValueIntrinsic::Scalar(_)
-        | ValueIntrinsic::Dynamic
-        | ValueIntrinsic::Null
-        | ValueIntrinsic::Skip(_)
-        | ValueIntrinsic::Object { .. }
-        | ValueIntrinsic::Array { .. } => {}
-    }
-}
-
-fn add_canonical_value_program_intrinsic_counts(
-    program: &[ValueOp],
-    counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
-) {
-    for (descriptor, count) in canonical_value_intrinsic_counts(program) {
-        *counts.entry(descriptor).or_default() += count;
-    }
 }
 
 /// A lowered *typed* program: the memory side of the IR. Where [`Program`] builds

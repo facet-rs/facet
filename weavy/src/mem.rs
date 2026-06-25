@@ -10,8 +10,8 @@ pub mod runtime;
 use std::collections::BTreeMap;
 
 use crate::ir::{
-    ControlOp, EffectContract, EffectResource, IntrinsicDescriptor, IntrinsicOp, MemoryOp,
-    MemoryRegion, TypedMemoryAccess, WeavyLowered, WeavyOp, WeavyProgram,
+    ControlOp, EffectContract, EffectResource, IntrinsicChildren, IntrinsicDescriptor, IntrinsicOp,
+    MemoryOp, MemoryRegion, TypedMemoryAccess, WeavyLowered, WeavyOp, WeavyProgram,
 };
 
 /// A type-erased "write this field's default in place" operation, supplied by
@@ -1214,6 +1214,37 @@ impl<BlockId> IntrinsicOp for MemIntrinsic<BlockId> {
     }
 }
 
+impl<BlockId> IntrinsicChildren<BlockId> for MemIntrinsic<BlockId> {
+    fn visit_child_programs<'a>(&'a self, visit: &mut dyn FnMut(&'a [WeavyOp<BlockId, Self>])) {
+        match self {
+            MemIntrinsic::Sequence(op) => visit(&op.element),
+            MemIntrinsic::Set(op) => visit(&op.element),
+            MemIntrinsic::Option(op) => visit(&op.some),
+            MemIntrinsic::Enum(op) => {
+                for variant in &op.variants {
+                    visit(&variant.payload);
+                }
+            }
+            MemIntrinsic::Map(op) => {
+                visit(&op.key);
+                visit(&op.value);
+            }
+            MemIntrinsic::Result(op) => {
+                visit(&op.ok);
+                visit(&op.err);
+            }
+            MemIntrinsic::Pointer(op) => visit(&op.pointee),
+            MemIntrinsic::NativeInt { .. }
+            | MemIntrinsic::Bytes(_)
+            | MemIntrinsic::Borrow(_)
+            | MemIntrinsic::Dynamic { .. }
+            | MemIntrinsic::SkipWire(_)
+            | MemIntrinsic::Default(_)
+            | MemIntrinsic::Opaque(_) => {}
+        }
+    }
+}
+
 fn stream_memory_effect(offset: usize, size: usize) -> EffectContract {
     EffectContract::new()
         .read_resource(EffectResource::Input("wire"))
@@ -1360,13 +1391,7 @@ where
 pub fn canonical_mem_program_stats<BlockId>(
     program: &[WeavyOp<BlockId, MemIntrinsic<BlockId>>],
 ) -> crate::ir::ProgramStats {
-    let mut stats = crate::ir::program_stats(program);
-    for op in program {
-        if let WeavyOp::Intrinsic(intrinsic) = op {
-            add_canonical_mem_intrinsic_stats(intrinsic, &mut stats);
-        }
-    }
-    stats
+    crate::ir::program_stats_with_intrinsic_children(program)
 }
 
 /// Count a canonical typed-memory lowered program, recursively entering mem intrinsics.
@@ -1377,20 +1402,7 @@ pub fn canonical_mem_lowered_stats<BlockId>(
 where
     BlockId: Ord,
 {
-    let root = canonical_mem_program_stats(&lowered.program);
-    let mut blocks = crate::ir::ProgramStats::default();
-    for block in lowered.blocks.values() {
-        blocks.accumulate(canonical_mem_program_stats(block));
-    }
-    let mut total = root;
-    total.accumulate(blocks);
-
-    crate::ir::LoweredProgramStats {
-        root,
-        blocks,
-        total,
-        block_count: lowered.blocks.len(),
-    }
+    crate::ir::lowered_program_stats_with_intrinsic_children(lowered)
 }
 
 /// Count mem intrinsic descriptors in a canonical program, including nested children.
@@ -1398,13 +1410,7 @@ where
 pub fn canonical_mem_intrinsic_counts<BlockId>(
     program: &[WeavyOp<BlockId, MemIntrinsic<BlockId>>],
 ) -> BTreeMap<IntrinsicDescriptor, usize> {
-    let mut counts = crate::ir::intrinsic_counts(program);
-    for op in program {
-        if let WeavyOp::Intrinsic(intrinsic) = op {
-            add_canonical_mem_intrinsic_counts(intrinsic, &mut counts);
-        }
-    }
-    counts
+    crate::ir::intrinsic_counts_with_intrinsic_children(program)
 }
 
 /// Count mem intrinsic descriptors in a canonical lowered program.
@@ -1415,13 +1421,7 @@ pub fn canonical_mem_lowered_intrinsic_counts<BlockId>(
 where
     BlockId: Ord,
 {
-    let mut counts = canonical_mem_intrinsic_counts(&lowered.program);
-    for block in lowered.blocks.values() {
-        for (descriptor, count) in canonical_mem_intrinsic_counts(block) {
-            *counts.entry(descriptor).or_default() += count;
-        }
-    }
-    counts
+    crate::ir::lowered_intrinsic_counts_with_intrinsic_children(lowered)
 }
 
 /// Count canonical typed-memory effects, recursively entering mem intrinsics.
@@ -1429,13 +1429,7 @@ where
 pub fn canonical_mem_program_effect_stats<BlockId>(
     program: &[WeavyOp<BlockId, MemIntrinsic<BlockId>>],
 ) -> crate::ir::EffectStats {
-    let mut stats = crate::ir::effect_stats(program);
-    for op in program {
-        if let WeavyOp::Intrinsic(intrinsic) = op {
-            add_canonical_mem_intrinsic_effect_stats(intrinsic, &mut stats);
-        }
-    }
-    stats
+    crate::ir::effect_stats_with_intrinsic_children(program)
 }
 
 /// Count canonical typed-memory effects in a lowered program.
@@ -1446,20 +1440,7 @@ pub fn canonical_mem_lowered_effect_stats<BlockId>(
 where
     BlockId: Ord,
 {
-    let root = canonical_mem_program_effect_stats(&lowered.program);
-    let mut blocks = crate::ir::EffectStats::default();
-    for block in lowered.blocks.values() {
-        blocks.accumulate(canonical_mem_program_effect_stats(block));
-    }
-    let mut total = root;
-    total.accumulate(blocks);
-
-    crate::ir::LoweredEffectStats {
-        root,
-        blocks,
-        total,
-        block_count: lowered.blocks.len(),
-    }
+    crate::ir::lowered_effect_stats_with_intrinsic_children(lowered)
 }
 
 fn canonical_mem_op<BlockId>(op: MemOp<BlockId>) -> WeavyOp<BlockId, MemIntrinsic<BlockId>> {
@@ -1692,119 +1673,6 @@ fn mem_op_from_intrinsic<BlockId>(
         MemIntrinsic::Default(op) => MemOp::Default(op),
         MemIntrinsic::Opaque(op) => MemOp::Opaque(op),
     })
-}
-
-fn add_canonical_mem_intrinsic_stats<BlockId>(
-    intrinsic: &MemIntrinsic<BlockId>,
-    stats: &mut crate::ir::ProgramStats,
-) {
-    match intrinsic {
-        MemIntrinsic::Sequence(op) => stats.accumulate(canonical_mem_program_stats(&op.element)),
-        MemIntrinsic::Set(op) => stats.accumulate(canonical_mem_program_stats(&op.element)),
-        MemIntrinsic::Option(op) => stats.accumulate(canonical_mem_program_stats(&op.some)),
-        MemIntrinsic::Enum(op) => {
-            for variant in &op.variants {
-                stats.accumulate(canonical_mem_program_stats(&variant.payload));
-            }
-        }
-        MemIntrinsic::Map(op) => {
-            stats.accumulate(canonical_mem_program_stats(&op.key));
-            stats.accumulate(canonical_mem_program_stats(&op.value));
-        }
-        MemIntrinsic::Result(op) => {
-            stats.accumulate(canonical_mem_program_stats(&op.ok));
-            stats.accumulate(canonical_mem_program_stats(&op.err));
-        }
-        MemIntrinsic::Pointer(op) => stats.accumulate(canonical_mem_program_stats(&op.pointee)),
-        MemIntrinsic::NativeInt { .. }
-        | MemIntrinsic::Bytes(_)
-        | MemIntrinsic::Borrow(_)
-        | MemIntrinsic::Dynamic { .. }
-        | MemIntrinsic::SkipWire(_)
-        | MemIntrinsic::Default(_)
-        | MemIntrinsic::Opaque(_) => {}
-    }
-}
-
-fn add_canonical_mem_intrinsic_counts<BlockId>(
-    intrinsic: &MemIntrinsic<BlockId>,
-    counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
-) {
-    match intrinsic {
-        MemIntrinsic::Sequence(op) => {
-            add_canonical_mem_program_intrinsic_counts(&op.element, counts)
-        }
-        MemIntrinsic::Set(op) => add_canonical_mem_program_intrinsic_counts(&op.element, counts),
-        MemIntrinsic::Option(op) => add_canonical_mem_program_intrinsic_counts(&op.some, counts),
-        MemIntrinsic::Enum(op) => {
-            for variant in &op.variants {
-                add_canonical_mem_program_intrinsic_counts(&variant.payload, counts);
-            }
-        }
-        MemIntrinsic::Map(op) => {
-            add_canonical_mem_program_intrinsic_counts(&op.key, counts);
-            add_canonical_mem_program_intrinsic_counts(&op.value, counts);
-        }
-        MemIntrinsic::Result(op) => {
-            add_canonical_mem_program_intrinsic_counts(&op.ok, counts);
-            add_canonical_mem_program_intrinsic_counts(&op.err, counts);
-        }
-        MemIntrinsic::Pointer(op) => {
-            add_canonical_mem_program_intrinsic_counts(&op.pointee, counts)
-        }
-        MemIntrinsic::NativeInt { .. }
-        | MemIntrinsic::Bytes(_)
-        | MemIntrinsic::Borrow(_)
-        | MemIntrinsic::Dynamic { .. }
-        | MemIntrinsic::SkipWire(_)
-        | MemIntrinsic::Default(_)
-        | MemIntrinsic::Opaque(_) => {}
-    }
-}
-
-fn add_canonical_mem_intrinsic_effect_stats<BlockId>(
-    intrinsic: &MemIntrinsic<BlockId>,
-    stats: &mut crate::ir::EffectStats,
-) {
-    match intrinsic {
-        MemIntrinsic::Sequence(op) => {
-            stats.accumulate(canonical_mem_program_effect_stats(&op.element))
-        }
-        MemIntrinsic::Set(op) => stats.accumulate(canonical_mem_program_effect_stats(&op.element)),
-        MemIntrinsic::Option(op) => stats.accumulate(canonical_mem_program_effect_stats(&op.some)),
-        MemIntrinsic::Enum(op) => {
-            for variant in &op.variants {
-                stats.accumulate(canonical_mem_program_effect_stats(&variant.payload));
-            }
-        }
-        MemIntrinsic::Map(op) => {
-            stats.accumulate(canonical_mem_program_effect_stats(&op.key));
-            stats.accumulate(canonical_mem_program_effect_stats(&op.value));
-        }
-        MemIntrinsic::Result(op) => {
-            stats.accumulate(canonical_mem_program_effect_stats(&op.ok));
-            stats.accumulate(canonical_mem_program_effect_stats(&op.err));
-        }
-        MemIntrinsic::Pointer(op) => {
-            stats.accumulate(canonical_mem_program_effect_stats(&op.pointee))
-        }
-        MemIntrinsic::NativeInt { .. }
-        | MemIntrinsic::Bytes(_)
-        | MemIntrinsic::Borrow(_)
-        | MemIntrinsic::Dynamic { .. }
-        | MemIntrinsic::SkipWire(_)
-        | MemIntrinsic::Default(_)
-        | MemIntrinsic::Opaque(_) => {}
-    }
-}
-
-fn add_canonical_mem_program_intrinsic_counts<BlockId>(
-    program: &[WeavyOp<BlockId, MemIntrinsic<BlockId>>],
-    counts: &mut BTreeMap<IntrinsicDescriptor, usize>,
-) {
-    for (descriptor, count) in canonical_mem_intrinsic_counts(program) {
-        *counts.entry(descriptor).or_default() += count;
-    }
 }
 
 /// Errors from shape-only lowering helpers.
