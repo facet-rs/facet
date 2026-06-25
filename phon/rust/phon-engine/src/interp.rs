@@ -18,8 +18,10 @@ use std::collections::{BTreeMap, HashSet};
 
 use facet_value::{VArray, VObject, VString, Value};
 use phon_ir::ir::{
-    CanonicalProgram, CanonicalValueProgram, Program, ValueIntrinsic, ValueOp, ValueProgram,
-    canonical_program, canonical_value_program,
+    CanonicalProgram, CanonicalValueProgram, IntrinsicDescriptor, LoweredEffectStats,
+    LoweredProgramStats, Program, ValueIntrinsic, ValueOp, ValueProgram, canonical_program,
+    canonical_value_lowered_effect_stats, canonical_value_lowered_intrinsic_counts,
+    canonical_value_lowered_stats, canonical_value_program,
 };
 use phon_schema::SchemaId;
 use phon_schema::bytes::Reader;
@@ -39,6 +41,20 @@ type Result<T> = core::result::Result<T, CompactError>;
 pub struct RunReport {
     pub value: Value,
     pub stats: RunStats,
+}
+
+/// Decoded value plus execution counters and canonical PHON value-IR diagnostics.
+///
+/// Unlike [`RunReport`], this carries the static lowered-program shape as well
+/// as the dynamic Weavy runner counters. Use it when comparing a PHON value plan
+/// against other Weavy consumers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrRunReport {
+    pub value: Value,
+    pub run_stats: RunStats,
+    pub program_stats: LoweredProgramStats,
+    pub effect_stats: LoweredEffectStats,
+    pub intrinsic_counts: BTreeMap<IntrinsicDescriptor, usize>,
 }
 
 /// Run a lowered program against `bytes`, producing the decoded value and
@@ -62,6 +78,20 @@ pub fn run_with_stats(program: &Program, bytes: &[u8], reg: &Registry) -> Result
     let program = canonical_program(program);
     let blocks = BTreeMap::new();
     run_program_with_stats(&program, bytes, reg, &blocks)
+}
+
+/// Run a lowered program and return both runner counters and canonical value-IR
+/// diagnostics.
+///
+/// # Errors
+/// [`CompactError`] for malformed input or a writer-only enum variant.
+pub fn run_with_ir_report(program: &Program, bytes: &[u8], reg: &Registry) -> Result<IrRunReport> {
+    let program = canonical_program(program);
+    let lowered = CanonicalValueProgram {
+        program,
+        blocks: BTreeMap::new(),
+    };
+    run_canonical_lowered_with_ir_report(&lowered, bytes, reg)
 }
 
 /// Run a lowered dynamic-value program with its recursive block registry.
@@ -101,6 +131,21 @@ pub fn run_lowered_with_stats(
     run_canonical_lowered_with_stats(&lowered, bytes, reg)
 }
 
+/// Run a lowered dynamic-value program and return both runner counters and
+/// canonical value-IR diagnostics.
+///
+/// # Errors
+/// [`CompactError`] for malformed input, missing recursion blocks, or a
+/// writer-only enum variant.
+pub fn run_lowered_with_ir_report(
+    lowered: &ValueProgram,
+    bytes: &[u8],
+    reg: &Registry,
+) -> Result<IrRunReport> {
+    let lowered = canonical_value_program(lowered);
+    run_canonical_lowered_with_ir_report(&lowered, bytes, reg)
+}
+
 /// Run a canonical dynamic-value program and return generic Weavy runner counters.
 ///
 /// # Errors
@@ -112,6 +157,28 @@ pub fn run_canonical_lowered_with_stats(
     reg: &Registry,
 ) -> Result<RunReport> {
     run_program_with_stats(&lowered.program, bytes, reg, &lowered.blocks)
+}
+
+/// Run a canonical dynamic-value program and return both runner counters and
+/// canonical value-IR diagnostics.
+///
+/// # Errors
+/// [`CompactError`] for malformed input, missing recursion blocks, or a
+/// writer-only enum variant.
+pub fn run_canonical_lowered_with_ir_report(
+    lowered: &CanonicalValueProgram,
+    bytes: &[u8],
+    reg: &Registry,
+) -> Result<IrRunReport> {
+    let RunReport { value, stats } =
+        run_program_with_stats(&lowered.program, bytes, reg, &lowered.blocks)?;
+    Ok(IrRunReport {
+        value,
+        run_stats: stats,
+        program_stats: canonical_value_lowered_stats(lowered),
+        effect_stats: canonical_value_lowered_effect_stats(lowered),
+        intrinsic_counts: canonical_value_lowered_intrinsic_counts(lowered),
+    })
 }
 
 fn run_program(
@@ -554,6 +621,37 @@ mod tests {
         let got = run_canonical_lowered(&canonical, &[7], &reg).unwrap();
 
         assert_eq!(got, Value::from(7u8));
+    }
+
+    #[test]
+    fn lowered_ir_report_includes_static_shape_and_runner_counters() {
+        let reg = Registry::new([]);
+        let lowered = ValueProgram {
+            program: vec![Op::CallBlock {
+                schema: SchemaId(42),
+            }],
+            blocks: BTreeMap::from([(SchemaId(42), vec![Op::Scalar(Primitive::U8)])]),
+        };
+
+        let report = run_lowered_with_ir_report(&lowered, &[7], &reg).unwrap();
+
+        assert_eq!(report.value, Value::from(7u8));
+        assert_eq!(report.run_stats.block_call_count, 1);
+        assert_eq!(report.program_stats.root.op_count, 1);
+        assert_eq!(report.program_stats.root.block_call_count, 1);
+        assert_eq!(report.program_stats.blocks.op_count, 1);
+        assert_eq!(report.program_stats.total.op_count, 2);
+        assert_eq!(report.program_stats.block_count, 1);
+        assert_eq!(report.effect_stats.total.op_count, 2);
+        assert_eq!(report.effect_stats.total.input_advance_count, 1);
+        assert_eq!(report.effect_stats.total.side_channel_count, 1);
+        assert_eq!(
+            report.intrinsic_counts[&IntrinsicDescriptor {
+                dialect: "phon.value",
+                name: "scalar",
+            }],
+            1
+        );
     }
 
     /// Same-schema roundtrip (`writer == reader`): encode with the compact codec,
