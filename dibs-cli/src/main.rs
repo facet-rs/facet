@@ -1411,10 +1411,10 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 
 fn run_generate_from_diff(config: &Config, name: &str) {
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    rt.block_on(run_generate_from_diff_via_roam(config, name));
+    rt.block_on(run_generate_from_diff_via_vox(config, name));
 }
 
-async fn run_generate_from_diff_via_roam(config: &Config, name: &str) {
+async fn run_generate_from_diff_via_vox(config: &Config, name: &str) {
     use dibs_proto::DiffRequest;
     #[allow(unused_imports)]
     use owo_colors::OwoColorize as _;

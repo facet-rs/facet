@@ -508,13 +508,7 @@ fn generate_select_function(
     // Allow clone_on_copy since we generate .clone() calls on parent IDs that might be Copy types
     func.attr("allow(clippy::clone_on_copy)");
 
-    if let Some(params) = &query.params {
-        for (param_name_meta, param_type) in &params.params {
-            let param_name = &param_name_meta.value;
-            let rust_ty = param_type_to_rust(param_type);
-            func.arg(param_name, format!("&{}", rust_ty));
-        }
-    }
+    add_params_to_function(&mut func, query.params.as_ref());
 
     func.ret(&return_ty);
     func.bound("C", "tokio_postgres::GenericClient");
@@ -1046,6 +1040,24 @@ fn param_type_to_rust(ty: &dibs_query_schema::ParamType) -> String {
     }
 }
 
+fn param_type_to_function_arg_rust(ty: &dibs_query_schema::ParamType) -> String {
+    use dibs_query_schema::ParamType;
+    match ty {
+        ParamType::String | ParamType::Jsonb => "str".to_string(),
+        _ => param_type_to_rust(ty),
+    }
+}
+
+fn add_params_to_function(func: &mut Function, params: Option<&Params>) {
+    if let Some(params) = params {
+        for (param_name_meta, param_type) in &params.params {
+            let param_name = param_name_meta.value.as_str();
+            let rust_ty = param_type_to_function_arg_rust(param_type);
+            func.arg(param_name, format!("&{}", rust_ty));
+        }
+    }
+}
+
 /// Helper to format a Block to a String.
 fn block_to_string(block: &Block) -> String {
     let mut output = String::new();
@@ -1135,13 +1147,7 @@ fn generate_insert_code(
     func.generic("C");
     func.arg("client", "&C");
 
-    if let Some(params) = &insert.params {
-        for (param_name_meta, param_type) in &params.params {
-            let param_name = param_name_meta.value.as_str();
-            let rust_ty = param_type_to_rust(param_type);
-            func.arg(param_name, format!("&{}", rust_ty));
-        }
-    }
+    add_params_to_function(&mut func, insert.params.as_ref());
 
     func.ret(&return_ty);
     func.bound("C", "tokio_postgres::GenericClient");
@@ -1194,13 +1200,7 @@ fn generate_upsert_code(
     func.generic("C");
     func.arg("client", "&C");
 
-    if let Some(params) = &upsert.params {
-        for (param_name_meta, param_type) in &params.params {
-            let param_name = param_name_meta.value.as_str();
-            let rust_ty = param_type_to_rust(param_type);
-            func.arg(param_name, format!("&{}", rust_ty));
-        }
-    }
+    add_params_to_function(&mut func, upsert.params.as_ref());
 
     func.ret(&return_ty);
     func.bound("C", "tokio_postgres::GenericClient");
@@ -1456,13 +1456,7 @@ fn generate_update_code(
     func.generic("C");
     func.arg("client", "&C");
 
-    if let Some(params) = &update.params {
-        for (param_name_meta, param_type) in &params.params {
-            let param_name = param_name_meta.value.as_str();
-            let rust_ty = param_type_to_rust(param_type);
-            func.arg(param_name, format!("&{}", rust_ty));
-        }
-    }
+    add_params_to_function(&mut func, update.params.as_ref());
 
     func.ret(&return_ty);
     func.bound("C", "tokio_postgres::GenericClient");
@@ -1516,13 +1510,7 @@ fn generate_delete_code(
     func.generic("C");
     func.arg("client", "&C");
 
-    if let Some(params) = &delete.params {
-        for (param_name_meta, param_type) in &params.params {
-            let param_name = param_name_meta.value.as_str();
-            let rust_ty = param_type_to_rust(param_type);
-            func.arg(param_name, format!("&{}", rust_ty));
-        }
-    }
+    add_params_to_function(&mut func, delete.params.as_ref());
 
     func.ret(&return_ty);
     func.bound("C", "tokio_postgres::GenericClient");

@@ -474,7 +474,7 @@ pub trait Testbed {
     /// query return families as one generated bridge root.
     async fn helix_trace_service_surface(&self) -> HelixTraceServiceSurface;
 
-    /// Tracey daemon status query, mirrored from the current roam
+    /// Tracey daemon status query, mirrored from the current Vox
     /// `TraceyDaemon::status` migration surface.
     async fn tracey_status(&self) -> TraceyStatusResponse;
 
@@ -490,7 +490,7 @@ pub trait Testbed {
     /// Tracey unmapped-code query.
     async fn tracey_unmapped(&self, req: TraceyUnmappedRequest) -> TraceyUnmappedResponse;
 
-    /// Tracey rule detail query, mirrored from the current roam
+    /// Tracey rule detail query, mirrored from the current Vox
     /// `TraceyDaemon::rule` migration surface.
     async fn tracey_rule(&self, rule_id: TraceyRuleId) -> Option<TraceyRuleInfo>;
 
@@ -557,7 +557,7 @@ pub trait Testbed {
     /// Tracey daemon shutdown notification.
     async fn tracey_shutdown(&self);
 
-    /// Tracey validation query, mirrored from the current roam
+    /// Tracey validation query, mirrored from the current Vox
     /// `TraceyDaemon::validate` migration surface.
     async fn tracey_validate(&self, req: TraceyValidateRequest) -> TraceyValidationResult;
 

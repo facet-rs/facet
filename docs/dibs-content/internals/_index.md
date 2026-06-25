@@ -67,7 +67,7 @@ Most dibs commands follow the same steps:
 
 ## Architecture
 
-Your "db crate" is a small process that speaks <abbr title="Remote Procedure Call">RPC</abbr> to the CLI (via [Roam](https://github.com/bearcove/roam)):
+Your "db crate" is a small process that speaks <abbr title="Remote Procedure Call">RPC</abbr> to the CLI (via [Vox](/vox/)):
 
 <div class="flow flow-vertical">
   <div class="flow-step">

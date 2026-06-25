@@ -3,7 +3,7 @@
 Protocol definitions for dibs service communication.
 
 This crate defines the RPC protocol used by the dibs CLI to communicate with
-database crates via roam. Includes:
+database crates via Vox. Includes:
 - Service trait definitions
 - Request/response types
 - Error types

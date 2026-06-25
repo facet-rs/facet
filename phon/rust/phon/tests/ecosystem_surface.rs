@@ -2879,7 +2879,7 @@ struct HotmealLiveReloadFixture {
 }
 
 // Migration target for /Users/amos/tracey/crates/tracey-proto/src/lib.rs.
-// The current roam DTOs use usize in several fields; this target Vox fixture
+// The current Vox DTOs use usize in several fields; this target Vox fixture
 // uses fixed-width integers because phon schemas are cross-language.
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 struct TraceyRuleId {

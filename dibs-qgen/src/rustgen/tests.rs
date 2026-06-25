@@ -106,7 +106,8 @@ ProductByHandle @select{
     )]);
     let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
-    assert!(code.code.contains("handle: &String"));
+    assert!(code.code.contains("handle: &str"));
+    assert!(!code.code.contains("handle: &String"));
     // Uses direct struct construction for Option-returning queries
     assert!(code.code.contains("Ok(None)"));
     assert!(code.code.contains("ProductByHandleResult {"));
@@ -199,11 +200,29 @@ TrendingProducts @select{
     // Raw SQL queries don't need schema - types come from explicit `returns` clause
     let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
-    assert!(code.code.contains("locale: &String"));
+    assert!(code.code.contains("locale: &str"));
     assert!(code.code.contains("days: &i64"));
     assert!(code.code.contains("pub id: i64"));
     assert!(code.code.contains("pub title: String"));
     assert!(code.code.contains("SELECT id, title FROM products"));
+}
+
+#[test]
+fn test_generate_jsonb_param_takes_str() {
+    let source = r#"
+CreateEvent @insert{
+  params { event_type @string, payload @jsonb }
+  into events
+  values { event_type $event_type, payload $payload }
+}
+"#;
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
+
+    assert!(code.code.contains("event_type: &str"));
+    assert!(code.code.contains("payload: &str"));
+    assert!(!code.code.contains("payload: &String"));
+    assert!(code.code.contains("$2::text::jsonb"));
 }
 
 #[test]
@@ -591,8 +610,10 @@ CreateUser @insert{
 
     assert!(code.code.contains("pub struct CreateUserResult"));
     assert!(code.code.contains("pub async fn create_user"));
-    assert!(code.code.contains("name: &String"));
-    assert!(code.code.contains("email: &String"));
+    assert!(code.code.contains("name: &str"));
+    assert!(code.code.contains("email: &str"));
+    assert!(!code.code.contains("name: &String"));
+    assert!(!code.code.contains("email: &String"));
     assert!(code.code.contains("INSERT INTO"));
     assert!(code.code.contains("RETURNING"));
     assert!(
@@ -631,6 +652,7 @@ UpsertProduct @upsert{
     assert!(code.code.contains("pub struct UpsertProductResult"));
     assert!(code.code.contains("pub async fn upsert_product"));
     assert!(code.code.contains("id: &Uuid"));
+    assert!(code.code.contains("name: &str"));
     assert!(code.code.contains("ON CONFLICT"));
     assert!(code.code.contains("DO UPDATE SET"));
 }
@@ -660,6 +682,7 @@ UpdateUserEmail @update{
 
     assert!(code.code.contains("pub struct UpdateUserEmailResult"));
     assert!(code.code.contains("pub async fn update_user_email"));
+    assert!(code.code.contains("email: &str"));
     assert!(code.code.contains("UPDATE"));
     assert!(code.code.contains("SET"));
     assert!(code.code.contains("WHERE"));

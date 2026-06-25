@@ -1,16 +1,16 @@
-//! Test for roam-wire Message enum pattern.
+//! Test for vox-wire Message enum pattern.
 //!
-//! This reproduces the failure seen in roam where decoding a Message::Goodbye
+//! This reproduces the failure seen in Vox where decoding a Message::Goodbye
 //! fails with "got struct start, expected field key, ordered field, or struct end".
 //!
-//! IMPORTANT: roam-wire types only derive Facet, NOT serde. This means facet-postcard
+//! IMPORTANT: vox-wire types only derive Facet, NOT serde. This means facet-postcard
 //! uses the pure Facet deserialization path, not the serde compatibility path.
 
 use facet::Facet;
 use facet_postcard::{from_slice, to_vec};
 
 // ============================================================================
-// Types that ONLY derive Facet (matching roam-wire exactly)
+// Types that ONLY derive Facet (matching vox-wire exactly)
 // ============================================================================
 
 /// Newtype for connection ID (Facet only, no serde).
@@ -28,7 +28,7 @@ pub struct RequestId(pub u64);
 #[repr(transparent)]
 pub struct MethodId(pub u64);
 
-/// Simplified Hello enum matching roam-wire (Facet only).
+/// Simplified Hello enum matching vox-wire (Facet only).
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum Hello {
@@ -58,7 +58,7 @@ pub enum MetadataValue {
 /// Metadata is a list of (key, value, flags) tuples.
 pub type Metadata = Vec<(String, MetadataValue, u64)>;
 
-/// Simplified Message enum matching roam-wire structure (Facet only).
+/// Simplified Message enum matching vox-wire structure (Facet only).
 /// The key is having multiple struct variants with different field counts.
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
@@ -199,12 +199,12 @@ fn test_message_goodbye_roundtrip() {
     assert_eq!(decoded, msg);
 }
 
-/// Test decoding exact bytes from roam failure
+/// Test decoding exact bytes from Vox failure
 #[test]
 fn test_decode_exact_goodbye_bytes() {
     facet_testhelpers::setup();
 
-    // These are the exact bytes that failed in roam:
+    // These are the exact bytes that failed in Vox:
     // 04 = variant 4 (Goodbye)
     // 00 = conn_id varint (0)
     // 14 = string length varint (20)
@@ -348,7 +348,7 @@ fn test_transparent_newtype_in_struct() {
 }
 
 /// Test transparent newtype as first field in enum struct variant
-/// This is the exact pattern that was failing in roam-wire
+/// This is the exact pattern that was failing in vox-wire
 #[test]
 fn test_transparent_newtype_first_field_in_enum_struct_variant() {
     facet_testhelpers::setup();
@@ -592,10 +592,10 @@ fn test_nested_enum_with_transparent_newtypes() {
 }
 
 // ============================================================================
-// Full roam-wire Message enum with typed IDs (matching actual roam-wire)
+// Full vox-wire Message enum with typed IDs (matching actual vox-wire)
 // ============================================================================
 
-/// Full Message enum matching roam-wire exactly, with typed ID fields.
+/// Full Message enum matching vox-wire exactly, with typed ID fields.
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum FullMessage {

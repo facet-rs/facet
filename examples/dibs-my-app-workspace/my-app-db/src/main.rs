@@ -1,7 +1,7 @@
 //! Database service binary for my-app (ecommerce).
 //!
 //! Usage:
-//!   my-app-db          - Run the dibs service (connects back to CLI via roam)
+//!   my-app-db          - Run the dibs service (connects back to CLI via Vox)
 //!   my-app-db seed     - Seed the database with sample data (~2000 products)
 
 use my_app_db::{Product, ProductSource, ProductTranslation, ProductVariant, VariantPrice};
