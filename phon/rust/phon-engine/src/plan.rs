@@ -26,7 +26,10 @@ use phon_schema::{
     read_value,
 };
 
-use phon_ir::ir::{EnumArm, Op, Program, ValueProgram};
+use phon_ir::ir::{
+    CanonicalEnumArm, CanonicalProgram, CanonicalValueProgram, ControlOp, EnumArm, Op, Program,
+    ValueIntrinsic, ValueProgram, WeavyOp,
+};
 
 use crate::compact::{self, CompactError, Registry, Resolved};
 use crate::compat::{self, FieldMatch, VariantMatch, incompatible};
@@ -213,8 +216,8 @@ pub fn decode_via_ir(
     reg: &Registry,
 ) -> Result<Value> {
     let plan = build_plan(writer_root, reader_root, reg)?;
-    let program = lower(&plan);
-    crate::interp::run_lowered(&program, bytes, reg)
+    let program = lower_canonical(&plan);
+    crate::interp::run_canonical_lowered(&program, bytes, reg)
 }
 
 // ============================================================================
@@ -657,6 +660,128 @@ fn lower_node(node: &Node, out: &mut Program) {
     }
 }
 
+/// Flatten a built plan directly into canonical Weavy IR.
+///
+/// This is the producer-side form consumed by the current interpreter and by
+/// later shared Weavy analysis/backends. [`lower`] stays as the legacy public
+/// dynamic-value IR surface.
+// r[impl ir.two-forms]
+#[must_use]
+pub fn lower_canonical(plan: &Plan) -> CanonicalValueProgram {
+    let mut out = Vec::new();
+    lower_canonical_node(&plan.root, &mut out);
+    let blocks = plan
+        .blocks
+        .iter()
+        .map(|(id, node)| (*id, lower_canonical_subtree(node)))
+        .collect();
+    CanonicalValueProgram {
+        program: out,
+        blocks,
+    }
+}
+
+fn lower_canonical_subtree(node: &Node) -> CanonicalProgram {
+    let mut out = Vec::new();
+    lower_canonical_node(node, &mut out);
+    out
+}
+
+fn lower_canonical_node(node: &Node, out: &mut CanonicalProgram) {
+    match node {
+        Node::Scalar(p) => out.push(WeavyOp::Intrinsic(ValueIntrinsic::Scalar(*p))),
+        Node::Dynamic => out.push(WeavyOp::Intrinsic(ValueIntrinsic::Dynamic)),
+        Node::CallBlock(schema) => out.push(WeavyOp::Control(ControlOp::CallBlock {
+            block: *schema,
+            base_offset: 0,
+        })),
+        Node::Struct(sp) => lower_canonical_struct(sp, out),
+        Node::Enum(by_index) => {
+            let mut arms: Vec<CanonicalEnumArm> = by_index
+                .iter()
+                .map(|(idx, vp)| CanonicalEnumArm {
+                    writer_index: *idx,
+                    reader_name: vp.reader.clone(),
+                    payload: lower_canonical_payload(&vp.payload),
+                })
+                .collect();
+            arms.sort_by_key(|a| a.writer_index);
+            out.push(WeavyOp::Intrinsic(ValueIntrinsic::Enum { arms }));
+        }
+        Node::Tuple(nodes) => {
+            for n in nodes {
+                lower_canonical_node(n, out);
+            }
+            out.push(WeavyOp::Intrinsic(ValueIntrinsic::Array {
+                count: nodes.len(),
+            }));
+        }
+        Node::Seq {
+            set,
+            element,
+            min_wire,
+        } => out.push(WeavyOp::Intrinsic(ValueIntrinsic::Seq {
+            set: *set,
+            min_wire: *min_wire,
+            body: lower_canonical_subtree(element),
+        })),
+        Node::Map { key, value } => out.push(WeavyOp::Intrinsic(ValueIntrinsic::Map {
+            key: lower_canonical_subtree(key),
+            value: lower_canonical_subtree(value),
+        })),
+        Node::Array {
+            element,
+            dims,
+            min_wire,
+        } => out.push(WeavyOp::Intrinsic(ValueIntrinsic::FixedArray {
+            dimensions: dims.clone(),
+            min_wire: *min_wire,
+            body: lower_canonical_subtree(element),
+        })),
+        Node::Option(element) => out.push(WeavyOp::Intrinsic(ValueIntrinsic::Option {
+            some: lower_canonical_subtree(element),
+        })),
+    }
+}
+
+fn lower_canonical_struct(sp: &StructPlan, out: &mut CanonicalProgram) {
+    let mut keys = Vec::new();
+    for step in &sp.steps {
+        match step {
+            Step::Take { reader, node } => {
+                lower_canonical_node(node, out);
+                keys.push(reader.clone());
+            }
+            Step::Skip(writer_ref) => {
+                out.push(WeavyOp::Intrinsic(ValueIntrinsic::Skip(writer_ref.clone())))
+            }
+        }
+    }
+    for name in &sp.defaults {
+        out.push(WeavyOp::Intrinsic(ValueIntrinsic::Null));
+        keys.push(name.clone());
+    }
+    out.push(WeavyOp::Intrinsic(ValueIntrinsic::Object { keys }));
+}
+
+fn lower_canonical_payload(payload: &Payload) -> CanonicalProgram {
+    let mut out = Vec::new();
+    match payload {
+        Payload::Unit => out.push(WeavyOp::Intrinsic(ValueIntrinsic::Null)),
+        Payload::Newtype(node) => lower_canonical_node(node, &mut out),
+        Payload::Tuple(nodes) => {
+            for n in nodes {
+                lower_canonical_node(n, &mut out);
+            }
+            out.push(WeavyOp::Intrinsic(ValueIntrinsic::Array {
+                count: nodes.len(),
+            }));
+        }
+        Payload::Struct(sp) => lower_canonical_struct(sp, &mut out),
+    }
+    out
+}
+
 /// Each writer field in wire order (a matched field's value, or a skip for a
 /// writer-only one), then a null per reader-only default, then assemble the
 /// object. The `keys` track the stack values the `Object` op will name.
@@ -897,6 +1022,54 @@ mod tests {
             "IR interpreter disagreed with recursive exec"
         );
         recursive
+    }
+
+    #[test]
+    fn lower_canonical_emits_weavy_block_calls_directly() {
+        let node = schema(
+            1,
+            SchemaKind::Struct {
+                name: "Node".to_string(),
+                fields: vec![field("child", SchemaRef::concrete(SchemaId(2)), false)],
+            },
+        );
+        let child = schema(
+            2,
+            SchemaKind::Option {
+                element: SchemaRef::concrete(SchemaId(1)),
+            },
+        );
+        let reg = Registry::new([node, child]);
+        let plan = build_plan(SchemaId(1), SchemaId(1), &reg).unwrap();
+
+        let canonical = lower_canonical(&plan);
+        match canonical.program.as_slice() {
+            [WeavyOp::Control(ControlOp::CallBlock { block, base_offset })] => {
+                assert_eq!(*block, SchemaId(1));
+                assert_eq!(*base_offset, 0);
+            }
+            other => panic!("unexpected canonical root program: {other:?}"),
+        }
+        let option_block = canonical
+            .blocks
+            .get(&SchemaId(2))
+            .expect("recursive option block should be lowered");
+        match option_block.as_slice() {
+            [WeavyOp::Intrinsic(ValueIntrinsic::Option { some })] => match some.as_slice() {
+                [WeavyOp::Control(ControlOp::CallBlock { block, base_offset })] => {
+                    assert_eq!(*block, SchemaId(1));
+                    assert_eq!(*base_offset, 0);
+                }
+                other => panic!("unexpected option payload program: {other:?}"),
+            },
+            other => panic!("unexpected recursive option block: {other:?}"),
+        }
+
+        let legacy = lower(&plan);
+        match legacy.program.as_slice() {
+            [Op::CallBlock { schema }] => assert_eq!(*schema, SchemaId(1)),
+            other => panic!("unexpected legacy root program: {other:?}"),
+        }
     }
 
     // r[verify compat.field-matching]
