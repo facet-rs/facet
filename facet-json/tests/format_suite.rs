@@ -406,10 +406,12 @@ impl<const WEAVY: bool> FormatSuite for JsonSuite<WEAVY> {
 
     fn flatten_overlapping_fields_error() -> CaseSpec {
         // Two flattened structs both have a "shared" field - should error
-        CaseSpec::expect_error(
-            r#"{"field_a":"a","field_b":"b","shared":1}"#,
-            "Duplicate field",
-        )
+        let expected = if WEAVY {
+            "duplicate field"
+        } else {
+            "Duplicate field"
+        };
+        CaseSpec::expect_error(r#"{"field_a":"a","field_b":"b","shared":1}"#, expected)
     }
 
     fn flatten_multilevel() -> CaseSpec {
@@ -923,7 +925,7 @@ where
     }
 }
 
-fn weavy_format_suite_skip_reason<S>(case_id: &str) -> Option<&'static str>
+fn weavy_format_suite_skip_reason<S>(_case_id: &str) -> Option<&'static str>
 where
     S: FormatSuite,
 {
@@ -931,13 +933,5 @@ where
         return None;
     }
 
-    match case_id {
-        "flatten::multilevel"
-        | "flatten::multiple_enums"
-        | "flatten::optional_none"
-        | "flatten::optional_some"
-        | "flatten::overlapping_fields_error"
-        | "struct::flatten" => Some("Weavy does not yet support flattened fields"),
-        _ => None,
-    }
+    None
 }
