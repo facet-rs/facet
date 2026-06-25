@@ -29,6 +29,16 @@ enum Authorization {
 }
 
 #[derive(Debug, Facet)]
+#[facet(tag = "scheme", content = "parameters")]
+#[repr(C)]
+enum AuthorizationContentOnlyOther {
+    ServicePrincipal(ServicePrincipalParameters),
+    UsernamePassword(UsernamePasswordParameters),
+    #[facet(other)]
+    Other(#[facet(content)] RawJson<'static>),
+}
+
+#[derive(Debug, Facet)]
 #[facet(rename_all = "camelCase")]
 struct ServicePrincipalParameters {
     service_principal_id: String,
@@ -93,4 +103,37 @@ fn test_issue_2342_unknown_adjacent_tagged_variant_falls_back_to_raw_json() {
         panic!("expected Authorization::Other");
     };
     assert_eq!(raw.as_str(), json);
+}
+
+#[test]
+fn test_issue_2342_content_only_other_enum_still_deserializes_known_variants() {
+    let service_principal_json = r#"{"scheme":"ServicePrincipal","parameters":{"servicePrincipalId":"spn","tenantId":"tenant"}}"#;
+    let parsed: AuthorizationContentOnlyOther = from_str(service_principal_json).unwrap();
+
+    let AuthorizationContentOnlyOther::ServicePrincipal(parameters) = parsed else {
+        panic!("expected AuthorizationContentOnlyOther::ServicePrincipal");
+    };
+    assert_eq!(parameters.service_principal_id, "spn");
+    assert_eq!(parameters.tenant_id, "tenant");
+
+    let username_password_json =
+        r#"{"scheme":"UsernamePassword","parameters":{"username":"user","password":"secret"}}"#;
+    let parsed: AuthorizationContentOnlyOther = from_str(username_password_json).unwrap();
+
+    let AuthorizationContentOnlyOther::UsernamePassword(parameters) = parsed else {
+        panic!("expected AuthorizationContentOnlyOther::UsernamePassword");
+    };
+    assert_eq!(parameters.username, "user");
+    assert_eq!(parameters.password, "secret");
+}
+#[test]
+fn test_issue_2342_unknown_adjacent_tagged_variant_can_fall_back_to_content_raw_json() {
+    let json = r#"{"scheme":"Token","parameters":{"token":"redacted"}}"#;
+
+    let parsed: AuthorizationContentOnlyOther = from_str(json).unwrap();
+
+    let AuthorizationContentOnlyOther::Other(raw) = parsed else {
+        panic!("expected AuthorizationContentOnlyOther::Other");
+    };
+    assert_eq!(raw.as_str(), r#"{"token":"redacted"}"#);
 }
