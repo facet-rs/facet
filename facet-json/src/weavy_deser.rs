@@ -1273,12 +1273,7 @@ impl JsonNativeState {
         for<'de> JsonParser<'de, TRUSTED_UTF8>: ScalarInputPreselected<'de, TRUSTED_UTF8>,
     {
         let mut interp = JsonInterp::new(parser, self.base, &[]);
-        interp.read_scalar_struct(
-            info.shape,
-            &info.fields,
-            info.dispatch.as_ref(),
-            info.shape.vtable.has_invariants(),
-        )?;
+        interp.read_scalar_struct(info.shape, &info.fields, info.dispatch.as_ref())?;
         interp.finish_success();
         Ok(())
     }
@@ -1699,14 +1694,12 @@ enum JsonOp<Block> {
         shape: &'static Shape,
         fields: Box<[ScalarFieldPlan]>,
         dispatch: Option<RawFieldDispatch>,
-        validate_invariants: bool,
     },
     ReadStruct {
         shape: &'static Shape,
         fields: Box<[FieldPlan<Block>]>,
         dispatch: Option<RawFieldDispatch>,
         loop_id: Block,
-        validate_invariants: bool,
     },
     ReadFlattenStruct {
         shape: &'static Shape,
@@ -2625,7 +2618,6 @@ impl Lowering {
                             shape,
                             fields: fields.into_boxed_slice(),
                             dispatch,
-                            validate_invariants: shape.vtable.has_invariants(),
                         }]);
                     }
 
@@ -2659,7 +2651,6 @@ impl Lowering {
                         fields,
                         dispatch,
                         loop_id,
-                        validate_invariants: shape.vtable.has_invariants(),
                     }])
                 }
                 _ => Err(unsupported(shape, "shape")),
@@ -3214,25 +3205,21 @@ fn resolve_json_op(
             shape,
             fields,
             dispatch,
-            validate_invariants,
         } => JsonOp::ReadScalarStruct {
             shape,
             fields,
             dispatch,
-            validate_invariants,
         },
         JsonOp::ReadStruct {
             shape,
             fields,
             dispatch,
             loop_id,
-            validate_invariants,
         } => JsonOp::ReadStruct {
             shape,
             fields: resolve_field_plans(fields, refs)?,
             dispatch,
             loop_id: resolve_block_ref(loop_id, refs)?,
-            validate_invariants,
         },
         JsonOp::ReadFlattenStruct { shape, plan } => JsonOp::ReadFlattenStruct {
             shape,
@@ -4275,6 +4262,10 @@ fn validate_completed_shape(
     shape: &'static Shape,
     base: PtrUninit,
 ) -> Result<(), DeserializeError> {
+    if !shape.vtable.has_invariants() {
+        return Ok(());
+    }
+
     if let Some(Err(message)) = unsafe { shape.call_invariants(base.assume_init().as_const()) } {
         return Err(vm_error(
             None,
@@ -4560,43 +4551,15 @@ where
         dispatch: Option<&'program RawFieldDispatch>,
         tracking: StructTracking,
     ) {
-        self.push_struct_frame_with_validation(
-            shape,
-            fields,
-            dispatch,
-            tracking,
-            shape.vtable.has_invariants(),
-        );
-    }
-
-    fn push_struct_frame_with_validation(
-        &mut self,
-        shape: &'static Shape,
-        fields: &'program [FieldPlan<ExecBlock>],
-        dispatch: Option<&'program RawFieldDispatch>,
-        tracking: StructTracking,
-        validate_invariants: bool,
-    ) {
         let base = self.base;
         match tracking {
             StructTracking::Inline => {
-                self.inline_structs.push(StructFrame::new_with_validation(
-                    shape,
-                    base,
-                    fields,
-                    dispatch,
-                    validate_invariants,
-                ));
+                self.inline_structs
+                    .push(StructFrame::new(shape, base, fields, dispatch));
             }
             StructTracking::Bitset | StructTracking::Heap => {
                 self.large_structs_mut()
-                    .push(LargeStructFrameSlot::new_with_validation(
-                        shape,
-                        base,
-                        fields,
-                        dispatch,
-                        validate_invariants,
-                    ));
+                    .push(LargeStructFrameSlot::new(shape, base, fields, dispatch));
             }
         }
     }
@@ -8133,50 +8096,35 @@ where
         shape: &'static Shape,
         fields: &'program [ScalarFieldPlan],
         dispatch: Option<&'program RawFieldDispatch>,
-        validate_invariants: bool,
     ) -> Result<(), DeserializeError> {
         self.parser.consume_object_start_fast()?;
         let base = self.base;
         if fields.len() <= TINY_SCALAR_STRUCT_MAX_FIELDS {
-            return self.read_tiny_scalar_struct_fields(shape, base, fields, validate_invariants);
+            return self.read_tiny_scalar_struct_fields(shape, base, fields);
         }
 
         match StructTracking::for_len(fields.len()) {
             StructTracking::Inline => {
-                let mut frame =
-                    StructFrame::<ScalarFieldPlan, InitializedLedger<Span>>::new_with_validation(
-                        shape,
-                        base,
-                        fields,
-                        dispatch,
-                        validate_invariants,
-                    );
+                let mut frame = StructFrame::<ScalarFieldPlan, InitializedLedger<Span>>::new(
+                    shape, base, fields, dispatch,
+                );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
                     frame.fill_missing_fields()?;
                 }
             }
             StructTracking::Bitset => {
-                let mut frame =
-                    StructFrame::<ScalarFieldPlan, BitsetStructSeen>::new_with_validation(
-                        shape,
-                        base,
-                        fields,
-                        dispatch,
-                        validate_invariants,
-                    );
+                let mut frame = StructFrame::<ScalarFieldPlan, BitsetStructSeen>::new(
+                    shape, base, fields, dispatch,
+                );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
                     frame.fill_missing_fields()?;
                 }
             }
             StructTracking::Heap => {
-                let mut frame = StructFrame::<ScalarFieldPlan, HeapStructSeen>::new_with_validation(
-                    shape,
-                    base,
-                    fields,
-                    dispatch,
-                    validate_invariants,
+                let mut frame = StructFrame::<ScalarFieldPlan, HeapStructSeen>::new(
+                    shape, base, fields, dispatch,
                 );
                 self.read_scalar_struct_fields(shape, &mut frame)?;
                 unsafe {
@@ -8192,14 +8140,10 @@ where
         shape: &'static Shape,
         base: PtrUninit,
         fields: &'program [ScalarFieldPlan],
-        validate_invariants: bool,
     ) -> Result<(), DeserializeError> {
-        let mut frame =
-            TinyScalarStructFrame::new_with_validation(shape, base, fields, validate_invariants);
+        let mut frame = TinyScalarStructFrame::new(shape, base, fields);
         if self.try_read_fused_tiny_i32_struct_fields(&mut frame)? {
-            if validate_invariants {
-                validate_completed_shape(shape, base)?;
-            }
+            validate_completed_shape(shape, base)?;
             core::mem::forget(frame);
             return Ok(());
         }
@@ -8251,9 +8195,7 @@ where
         }
 
         if frame.all_initialized() {
-            if validate_invariants {
-                validate_completed_shape(shape, base)?;
-            }
+            validate_completed_shape(shape, base)?;
             core::mem::forget(frame);
         } else {
             unsafe {
@@ -8990,9 +8932,8 @@ where
                 shape,
                 fields,
                 dispatch,
-                validate_invariants,
             } => {
-                self.read_scalar_struct(shape, fields, dispatch.as_ref(), *validate_invariants)?;
+                self.read_scalar_struct(shape, fields, dispatch.as_ref())?;
                 Ok(Control::Continue)
             }
             JsonOp::ReadStruct {
@@ -9000,17 +8941,10 @@ where
                 fields,
                 dispatch,
                 loop_id,
-                validate_invariants,
             } => {
                 self.parser.consume_object_start_fast()?;
                 let tracking = StructTracking::for_len(fields.len());
-                self.push_struct_frame_with_validation(
-                    shape,
-                    fields,
-                    dispatch.as_ref(),
-                    tracking,
-                    *validate_invariants,
-                );
+                self.push_struct_frame(shape, fields, dispatch.as_ref(), tracking);
                 Ok(Control::CallBlockThen(
                     *loop_id,
                     Continuation::FinishStruct { tracking },
@@ -9827,7 +9761,6 @@ struct TinyScalarStructFrame<'program> {
     shape: &'static Shape,
     base: PtrUninit,
     fields: &'program [ScalarFieldPlan],
-    validate_invariants: bool,
     initialized: u8,
     spans: [Span; TINY_SCALAR_STRUCT_MAX_FIELDS],
     next_field: usize,
@@ -9838,7 +9771,6 @@ struct StructFrame<'program, Field: StructFieldPlan, Seen: StructSeenStore> {
     base: PtrUninit,
     fields: &'program [Field],
     dispatch: Option<&'program RawFieldDispatch>,
-    validate_invariants: bool,
     seen: Seen,
     next_field: usize,
 }
@@ -9987,29 +9919,16 @@ impl StructSeenStore for HeapStructSeen {
 }
 
 impl<'program> LargeStructFrameSlot<'program> {
-    fn new_with_validation(
+    fn new(
         shape: &'static Shape,
         base: PtrUninit,
         fields: &'program [FieldPlan<ExecBlock>],
         dispatch: Option<&'program RawFieldDispatch>,
-        validate_invariants: bool,
     ) -> Self {
         if fields.len() <= u64::BITS as usize {
-            Self::Bitset(StructFrame::new_with_validation(
-                shape,
-                base,
-                fields,
-                dispatch,
-                validate_invariants,
-            ))
+            Self::Bitset(StructFrame::new(shape, base, fields, dispatch))
         } else {
-            Self::Heap(StructFrame::new_with_validation(
-                shape,
-                base,
-                fields,
-                dispatch,
-                validate_invariants,
-            ))
+            Self::Heap(StructFrame::new(shape, base, fields, dispatch))
         }
     }
 
@@ -10062,18 +9981,12 @@ fn struct_seen_bit(index: usize) -> u64 {
 }
 
 impl<'program> TinyScalarStructFrame<'program> {
-    fn new_with_validation(
-        shape: &'static Shape,
-        base: PtrUninit,
-        fields: &'program [ScalarFieldPlan],
-        validate_invariants: bool,
-    ) -> Self {
+    fn new(shape: &'static Shape, base: PtrUninit, fields: &'program [ScalarFieldPlan]) -> Self {
         debug_assert!(fields.len() <= TINY_SCALAR_STRUCT_MAX_FIELDS);
         Self {
             shape,
             base,
             fields,
-            validate_invariants,
             initialized: 0,
             spans: [Span { offset: 0, len: 0 }; TINY_SCALAR_STRUCT_MAX_FIELDS],
             next_field: 0,
@@ -10233,9 +10146,7 @@ impl<'program> TinyScalarStructFrame<'program> {
                 }
             }
         }
-        if self.validate_invariants {
-            validate_completed_shape(self.shape, self.base)?;
-        }
+        validate_completed_shape(self.shape, self.base)?;
         core::mem::forget(self);
         Ok(())
     }
@@ -10276,22 +10187,11 @@ where
         fields: &'program [Field],
         dispatch: Option<&'program RawFieldDispatch>,
     ) -> Self {
-        Self::new_with_validation(shape, base, fields, dispatch, shape.vtable.has_invariants())
-    }
-
-    fn new_with_validation(
-        shape: &'static Shape,
-        base: PtrUninit,
-        fields: &'program [Field],
-        dispatch: Option<&'program RawFieldDispatch>,
-        validate_invariants: bool,
-    ) -> Self {
         Self {
             shape,
             base,
             fields,
             dispatch,
-            validate_invariants,
             seen: Seen::new(fields.len()),
             next_field: 0,
         }
@@ -10510,9 +10410,7 @@ where
                 }
             }
         }
-        if self.validate_invariants {
-            validate_completed_shape(self.shape, self.base)?;
-        }
+        validate_completed_shape(self.shape, self.base)?;
         core::mem::forget(self);
         Ok(())
     }
