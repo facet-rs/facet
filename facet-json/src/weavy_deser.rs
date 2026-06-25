@@ -21,8 +21,8 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use facet_core::{
     Characteristic, Def, DefaultInPlaceFn, DefaultSource, EnumRepr, EnumType, Facet, Field,
-    ListDef, MapDef, OptionDef, PointerDef, PtrConst, PtrMut, PtrUninit, ScalarType, SetDef, Shape,
-    StructKind, Type, UserType, Variant,
+    ListDef, MapDef, OptionDef, PointerDef, ProxyDef, PtrConst, PtrMut, PtrUninit, ScalarType,
+    SetDef, Shape, StructKind, Type, UserType, Variant,
 };
 use facet_format::{
     DeserializeError, DeserializeErrorKind, FormatParser, ParseError, ParseEventKind, ScalarValue,
@@ -75,6 +75,7 @@ type BlockId = JsonBlockId;
 type ExecBlock = BlockRef;
 type SymbolicOp = JsonOp<BlockId>;
 type ExecOp = JsonOp<ExecBlock>;
+const JSON_FORMAT_NAMESPACE: &str = "json";
 
 /// Deserialize a value from a JSON string through the opt-in Weavy runner.
 pub fn from_str_weavy<T>(input: &str) -> Result<T, DeserializeError>
@@ -1636,6 +1637,17 @@ enum JsonOp<Block> {
         shape: &'static Shape,
         scalar: ScalarPlan,
     },
+    ReadTransparent {
+        field_offset: usize,
+        field_shape: &'static Shape,
+        field_program: Program<JsonOp<Block>>,
+        field_scalar: Option<ScalarPlan>,
+    },
+    ReadProxy {
+        proxy: &'static ProxyDef,
+        proxy_layout: Layout,
+        proxy_program: Program<JsonOp<Block>>,
+    },
     ReadScalarStruct {
         shape: &'static Shape,
         fields: Box<[ScalarFieldPlan]>,
@@ -2101,6 +2113,10 @@ impl Lowering {
         &mut self,
         shape: &'static Shape,
     ) -> Result<Program<SymbolicOp>, DeserializeError> {
+        if let Some(proxy) = shape.effective_proxy(Some(JSON_FORMAT_NAMESPACE)) {
+            return self.lower_proxy(shape, proxy);
+        }
+
         if let Some(scalar) = ScalarType::try_from_shape(shape) {
             return Ok(vec![JsonOp::ReadScalar {
                 shape,
@@ -2218,24 +2234,25 @@ impl Lowering {
             _ => match shape.ty {
                 Type::User(UserType::Enum(enum_type)) => self.lower_external_enum(shape, enum_type),
                 Type::User(UserType::Struct(struct_type)) => {
+                    if shape.is_transparent() {
+                        return self.lower_transparent_struct(shape, struct_type);
+                    }
                     if struct_type.kind != StructKind::Struct {
                         return Err(unsupported(shape, "non-named struct"));
                     }
-                    if shape.proxy.is_some() || !shape.format_proxies.is_empty() {
-                        return Err(unsupported(shape, "proxy"));
-                    }
 
                     let container_has_default = shape.has_default_attr();
-                    let all_scalar = struct_type
-                        .fields
-                        .iter()
-                        .all(|field| ScalarType::try_from_shape(field.shape()).is_some());
+                    let all_scalar = struct_type.fields.iter().all(|field| {
+                        !field.is_flattened()
+                            && field.effective_proxy(Some(JSON_FORMAT_NAMESPACE)).is_none()
+                            && ScalarType::try_from_shape(field.shape()).is_some()
+                    });
 
                     if all_scalar {
                         let mut fields = Vec::with_capacity(struct_type.fields.len());
                         for field in struct_type.fields {
-                            if field.should_skip_deserializing() || field.is_flattened() {
-                                return Err(unsupported(shape, "skipped or flattened fields"));
+                            if field.is_flattened() {
+                                return Err(unsupported(shape, "flattened fields"));
                             }
                             let field_shape = field.shape();
                             let scalar = ScalarType::try_from_shape(field_shape)
@@ -2261,18 +2278,18 @@ impl Lowering {
 
                     let mut fields = Vec::with_capacity(struct_type.fields.len());
                     for field in struct_type.fields {
-                        if field.should_skip_deserializing() || field.is_flattened() {
-                            return Err(unsupported(shape, "skipped or flattened fields"));
+                        if field.is_flattened() {
+                            return Err(unsupported(shape, "flattened fields"));
                         }
                         let field_shape = field.shape();
-                        let program = self.lower_shape(field_shape)?;
+                        let (program, scalar) = self.lower_field_value(field)?;
                         fields.push(FieldPlan {
                             name: field.effective_name(),
                             alias: field.alias,
                             offset: field.offset,
                             shape: field_shape,
                             program,
-                            scalar: ScalarType::try_from_shape(field_shape).map(ScalarPlan::new),
+                            scalar,
                             missing: missing_field_action(field, container_has_default),
                         });
                     }
@@ -2297,6 +2314,63 @@ impl Lowering {
                 _ => Err(unsupported(shape, "shape")),
             },
         }
+    }
+
+    fn lower_proxy(
+        &mut self,
+        target_shape: &'static Shape,
+        proxy: &'static ProxyDef,
+    ) -> Result<Program<SymbolicOp>, DeserializeError> {
+        if core::ptr::eq(target_shape, proxy.shape) {
+            return Err(unsupported(target_shape, "self-referential proxy"));
+        }
+
+        let proxy_layout = sized_layout(proxy.shape)?;
+        let proxy_program = self.lower_shape(proxy.shape)?;
+        Ok(vec![JsonOp::ReadProxy {
+            proxy,
+            proxy_layout,
+            proxy_program,
+        }])
+    }
+
+    fn lower_transparent_struct(
+        &mut self,
+        shape: &'static Shape,
+        struct_type: facet_core::StructType,
+    ) -> Result<Program<SymbolicOp>, DeserializeError> {
+        let [field] = struct_type.fields else {
+            return Err(unsupported(
+                shape,
+                "transparent struct without exactly one field",
+            ));
+        };
+        if field.should_skip_deserializing() || field.is_flattened() {
+            return Err(unsupported(shape, "skipped or flattened transparent field"));
+        }
+
+        let (field_program, field_scalar) = self.lower_field_value(field)?;
+        Ok(vec![JsonOp::ReadTransparent {
+            field_offset: field.offset,
+            field_shape: field.shape(),
+            field_program,
+            field_scalar,
+        }])
+    }
+
+    fn lower_field_value(
+        &mut self,
+        field: &'static Field,
+    ) -> Result<(Program<SymbolicOp>, Option<ScalarPlan>), DeserializeError> {
+        let field_shape = field.shape();
+        if let Some(proxy) = field.effective_proxy(Some(JSON_FORMAT_NAMESPACE)) {
+            return Ok((self.lower_proxy(field_shape, proxy)?, None));
+        }
+
+        Ok((
+            self.lower_shape(field_shape)?,
+            ScalarType::try_from_shape(field_shape).map(ScalarPlan::new),
+        ))
     }
 
     fn lower_external_enum(
@@ -2327,13 +2401,14 @@ impl Lowering {
                     ));
                 }
                 let field_shape = field.shape();
+                let (program, scalar) = self.lower_field_value(field)?;
                 fields.push(FieldPlan {
                     name: field.effective_name(),
                     alias: field.alias,
                     offset: field.offset,
                     shape: field_shape,
-                    program: self.lower_shape(field_shape)?,
-                    scalar: ScalarType::try_from_shape(field_shape).map(ScalarPlan::new),
+                    program,
+                    scalar,
                     missing: missing_field_action(field, false),
                 });
             }
@@ -2432,6 +2507,26 @@ fn resolve_json_op(
     Ok(match op {
         JsonOp::CallBlock(block) => JsonOp::CallBlock(resolve_block_ref(block, refs)?),
         JsonOp::ReadScalar { shape, scalar } => JsonOp::ReadScalar { shape, scalar },
+        JsonOp::ReadTransparent {
+            field_offset,
+            field_shape,
+            field_program,
+            field_scalar,
+        } => JsonOp::ReadTransparent {
+            field_offset,
+            field_shape,
+            field_program: resolve_json_program(field_program, refs)?,
+            field_scalar,
+        },
+        JsonOp::ReadProxy {
+            proxy,
+            proxy_layout,
+            proxy_program,
+        } => JsonOp::ReadProxy {
+            proxy,
+            proxy_layout,
+            proxy_program: resolve_json_program(proxy_program, refs)?,
+        },
         JsonOp::ReadScalarStruct {
             shape,
             fields,
@@ -2668,6 +2763,9 @@ fn missing_field_action(field: &Field, container_has_default: bool) -> MissingFi
         Some(_) => MissingField::DefaultTrait { explicit: true },
         None => match field_shape.def {
             Def::Option(option) => MissingField::OptionNone(option),
+            _ if field.should_skip_deserializing() && field_shape.is(Characteristic::Default) => {
+                MissingField::DefaultTrait { explicit: false }
+            }
             _ if container_has_default && field_shape.is(Characteristic::Default) => {
                 MissingField::DefaultTrait { explicit: false }
             }
@@ -3446,6 +3544,35 @@ where
                     .expect("large struct frame is present after field program");
                 frame.mark(index, span);
             }
+        }
+    }
+
+    fn finish_proxy(
+        &mut self,
+        proxy: &'static ProxyDef,
+        target_ptr: PtrUninit,
+        scratch: ScratchSlot,
+    ) -> Result<(), DeserializeError> {
+        let result = unsafe {
+            let proxy_ptr = scratch_ptr_uninit(&scratch).assume_init().as_const();
+            (proxy.convert_in)(proxy_ptr, target_ptr)
+        };
+        self.scratch.release(scratch);
+
+        match result {
+            Ok(ptr) if ptr.as_uninit() == target_ptr => Ok(()),
+            Ok(_) => Err(vm_error(
+                None,
+                DeserializeErrorKind::InvalidValue {
+                    message: "proxy conversion returned an unexpected pointer".into(),
+                },
+            )),
+            Err(message) => Err(vm_error(
+                None,
+                DeserializeErrorKind::InvalidValue {
+                    message: message.into(),
+                },
+            )),
         }
     }
 
@@ -5431,6 +5558,46 @@ where
                 }
                 Ok(Control::Continue)
             }
+            JsonOp::ReadTransparent {
+                field_offset,
+                field_shape,
+                field_program,
+                field_scalar,
+            } => {
+                let field_ptr = unsafe { self.base.field_uninit(*field_offset) };
+                if let Some(scalar) = field_scalar {
+                    let (value, span) = self.parser.read_scalar_token()?;
+                    unsafe {
+                        scalar.write(field_shape, field_ptr, value, span)?;
+                    }
+                    return Ok(Control::Continue);
+                }
+
+                let old_base = self.base;
+                self.base = field_ptr;
+                Ok(call_program_or_block_then(
+                    field_program,
+                    Continuation::Transparent { old_base },
+                ))
+            }
+            JsonOp::ReadProxy {
+                proxy,
+                proxy_layout,
+                proxy_program,
+            } => {
+                let scratch = self.scratch.reserve(*proxy_layout);
+                let target_ptr = self.base;
+                self.base = scratch_ptr_uninit(&scratch);
+                Ok(call_program_or_block_then(
+                    proxy_program,
+                    Continuation::Proxy {
+                        proxy,
+                        target_ptr,
+                        old_base: target_ptr,
+                        scratch,
+                    },
+                ))
+            }
             JsonOp::ReadScalarStruct {
                 shape,
                 fields,
@@ -5759,6 +5926,21 @@ where
         continuation: Self::Continuation,
     ) -> Result<Control<'program, ExecBlock, ExecOp, Self::Continuation>, Self::Error> {
         match continuation {
+            Continuation::Transparent { old_base } => {
+                self.base = old_base;
+                Ok(Control::Continue)
+            }
+            Continuation::Proxy {
+                proxy,
+                target_ptr,
+                old_base,
+                scratch,
+            } => {
+                let result = self.finish_proxy(proxy, target_ptr, scratch);
+                self.base = old_base;
+                result?;
+                Ok(Control::Continue)
+            }
             Continuation::FinishStruct { tracking } => {
                 unsafe {
                     self.finish_struct_frame(tracking)?;
@@ -5918,6 +6100,15 @@ fn call_program_or_block_then<'program>(
 }
 
 enum Continuation<'program> {
+    Transparent {
+        old_base: PtrUninit,
+    },
+    Proxy {
+        proxy: &'static ProxyDef,
+        target_ptr: PtrUninit,
+        old_base: PtrUninit,
+        scratch: ScratchSlot,
+    },
     FinishStruct {
         tracking: StructTracking,
     },

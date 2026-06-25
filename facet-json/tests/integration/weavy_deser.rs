@@ -56,6 +56,109 @@ struct Person {
 }
 
 #[derive(Facet, Debug, PartialEq)]
+#[facet(transparent)]
+struct TransparentId(u64);
+
+#[derive(Facet, Debug, PartialEq)]
+struct TransparentHolder {
+    id: TransparentId,
+    label: String,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(transparent)]
+struct TransparentScores(Vec<Option<u16>>);
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(transparent)]
+struct InnerTransparent(i32);
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(transparent)]
+struct OuterTransparent(InnerTransparent);
+
+#[derive(Facet, Clone, Debug, PartialEq)]
+#[facet(transparent)]
+struct IntAsString(String);
+
+#[derive(Facet, Clone, Debug, PartialEq)]
+#[facet(proxy = IntAsString)]
+struct ProxyInt {
+    value: i32,
+}
+
+impl TryFrom<IntAsString> for ProxyInt {
+    type Error = String;
+
+    fn try_from(proxy: IntAsString) -> Result<Self, Self::Error> {
+        proxy
+            .0
+            .parse()
+            .map(|value| Self { value })
+            .map_err(|err: core::num::ParseIntError| err.to_string())
+    }
+}
+
+impl From<&ProxyInt> for IntAsString {
+    fn from(value: &ProxyInt) -> Self {
+        Self(value.value.to_string())
+    }
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct ProxyFieldHolder {
+    label: String,
+    #[facet(proxy = IntAsString)]
+    count: i32,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct SkippedFieldHolder {
+    visible: String,
+    #[facet(skip)]
+    internal: u32,
+}
+
+impl TryFrom<IntAsString> for i32 {
+    type Error = String;
+
+    fn try_from(proxy: IntAsString) -> Result<Self, Self::Error> {
+        proxy
+            .0
+            .parse()
+            .map_err(|err: core::num::ParseIntError| err.to_string())
+    }
+}
+
+impl From<&i32> for IntAsString {
+    fn from(value: &i32) -> Self {
+        Self(value.to_string())
+    }
+}
+
+#[derive(Facet, Clone, Debug, PartialEq)]
+#[facet(transparent, proxy = IntAsString)]
+struct TransparentProxy(i32);
+
+impl TryFrom<IntAsString> for TransparentProxy {
+    type Error = String;
+
+    fn try_from(proxy: IntAsString) -> Result<Self, Self::Error> {
+        proxy
+            .0
+            .parse()
+            .map(Self)
+            .map_err(|err: core::num::ParseIntError| err.to_string())
+    }
+}
+
+impl From<&TransparentProxy> for IntAsString {
+    fn from(value: &TransparentProxy) -> Self {
+        Self(value.0.to_string())
+    }
+}
+
+#[derive(Facet, Debug, PartialEq)]
 struct MaybeScores {
     scores: Vec<Option<u16>>,
 }
@@ -435,6 +538,36 @@ struct WideDefaultStruct {
 fn weavy_deserializes_named_struct_scalars() {
     let point: Point = facet_json::from_str_weavy(r#"{"y":20,"x":10}"#).unwrap();
     assert_eq!(point, Point { x: 10, y: 20 });
+}
+
+#[test]
+fn weavy_deserializes_transparent_wrappers() {
+    assert_default_weavy_parity::<TransparentId>("42");
+    assert_default_weavy_parity::<TransparentHolder>(r#"{"id":7,"label":"sensor"}"#);
+    assert_default_weavy_parity::<TransparentScores>("[1,null,2]");
+    assert_default_weavy_parity::<OuterTransparent>("99");
+}
+
+#[test]
+fn weavy_deserializes_container_proxy() {
+    assert_default_weavy_parity::<ProxyInt>(r#""42""#);
+    assert_default_weavy_parity::<TransparentProxy>(r#""17""#);
+    assert_default_weavy_parity::<ProxyInt>(r#""not an int""#);
+}
+
+#[test]
+fn weavy_deserializes_field_proxy() {
+    assert_default_weavy_parity::<ProxyFieldHolder>(r#"{"label":"items","count":"42"}"#);
+    assert_default_weavy_parity::<ProxyFieldHolder>(r#"{"count":"not an int","label":"items"}"#);
+}
+
+#[test]
+fn weavy_defaults_missing_skipped_fields_and_decodes_present_ones() {
+    assert_default_weavy_parity::<SkippedFieldHolder>(r#"{"visible":"data"}"#);
+    assert_default_weavy_parity::<SkippedFieldHolder>(r#"{"internal":99,"visible":"data"}"#);
+    assert_default_weavy_parity::<SkippedFieldHolder>(
+        r#"{"internal":99,"internal":100,"visible":"data"}"#,
+    );
 }
 
 #[test]
