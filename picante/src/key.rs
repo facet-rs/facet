@@ -128,13 +128,8 @@ impl Key {
                 message: format!("{e:?}"),
             })
         })?;
-        let hash = if let Ok(plan) = facet_hash::HashPlan::<T>::build() {
-            plan.hash64(value).map_err(|e| {
-                Arc::new(PicanteError::Encode {
-                    what: "key hash",
-                    message: e.to_string(),
-                })
-            })?
+        let hash = if let Ok(hash) = hash_with_temp_plan(value) {
+            hash
         } else {
             stable_hash(&bytes)
         };
@@ -271,6 +266,20 @@ fn stable_hash(bytes: &[u8]) -> u64 {
     facet_hash::hash_bytes_fnv1a64(bytes)
 }
 
+fn key_hash_error(error: facet_hash::HashError) -> Arc<PicanteError> {
+    Arc::new(PicanteError::Encode {
+        what: "key hash",
+        message: error.to_string(),
+    })
+}
+
+fn hash_with_temp_plan<T>(value: &T) -> Result<u64, facet_hash::HashError>
+where
+    T: Facet<'static>,
+{
+    KeyHashPlan::<T>::build()?.hash64(value)
+}
+
 fn eq_known_key_type<T: 'static>(left: &T, right: &T) -> Option<bool> {
     let left = left as &dyn Any;
     let right = right as &dyn Any;
@@ -302,9 +311,37 @@ fn eq_known_key_type<T: 'static>(left: &T, right: &T) -> Option<bool> {
     None
 }
 
+enum KeyHashPlan<T> {
+    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    Native(facet_hash::NativeHashPlan<T>),
+    Interpreted(facet_hash::HashPlan<T>),
+}
+
+impl<T> KeyHashPlan<T>
+where
+    T: Facet<'static>,
+{
+    fn build() -> Result<Self, facet_hash::HashError> {
+        #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+        if let Ok(plan) = facet_hash::NativeHashPlan::<T>::build() {
+            return Ok(Self::Native(plan));
+        }
+
+        facet_hash::HashPlan::<T>::build().map(Self::Interpreted)
+    }
+
+    fn hash64(&self, value: &T) -> Result<u64, facet_hash::HashError> {
+        match self {
+            #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+            Self::Native(plan) => plan.hash64(value),
+            Self::Interpreted(plan) => plan.hash64(value),
+        }
+    }
+}
+
 /// Reusable key builder for one Facet key type.
 pub struct KeyFactory<T> {
-    plan: Option<facet_hash::HashPlan<T>>,
+    plan: Option<KeyHashPlan<T>>,
 }
 
 impl<T> KeyFactory<T>
@@ -314,7 +351,7 @@ where
     /// Build a key factory for `T`.
     pub fn new() -> Self {
         Self {
-            plan: facet_hash::HashPlan::<T>::build().ok(),
+            plan: KeyHashPlan::<T>::build().ok(),
         }
     }
 
@@ -333,12 +370,7 @@ where
     {
         let mut bytes = None;
         let hash = if let Some(plan) = &self.plan {
-            plan.hash64(&*value).map_err(|e| {
-                Arc::new(PicanteError::Encode {
-                    what: "key hash",
-                    message: e.to_string(),
-                })
-            })?
+            plan.hash64(&*value).map_err(key_hash_error)?
         } else {
             let encoded = encode_key_bytes(&*value)?;
             let hash = stable_hash(&encoded);
@@ -370,12 +402,7 @@ where
         })?;
         let bytes: Arc<[u8]> = bytes.into();
         let hash = if let Some(plan) = &self.plan {
-            plan.hash64(&value).map_err(|e| {
-                Arc::new(PicanteError::Encode {
-                    what: "key hash",
-                    message: e.to_string(),
-                })
-            })?
+            plan.hash64(&value).map_err(key_hash_error)?
         } else {
             stable_hash(&bytes)
         };
@@ -444,4 +471,26 @@ fn once_lock_from_option<T>(value: Option<T>) -> OnceLock<T> {
         let _ = lock.set(value);
     }
     lock
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scalar_key_hash_plan_uses_native_when_available() {
+        let plan = KeyHashPlan::<u32>::build().unwrap();
+
+        #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+        assert!(matches!(plan, KeyHashPlan::Native(_)));
+
+        #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+        assert!(matches!(plan, KeyHashPlan::Interpreted(_)));
+    }
+
+    #[test]
+    fn aggregate_key_hash_plan_falls_back_to_interpreted() {
+        let plan = KeyHashPlan::<Vec<u8>>::build().unwrap();
+        assert!(matches!(plan, KeyHashPlan::Interpreted(_)));
+    }
 }

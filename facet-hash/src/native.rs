@@ -27,6 +27,13 @@ pub struct NativeHashPlan<T, H = std::collections::hash_map::DefaultHasher> {
     _marker: PhantomData<fn() -> (T, H)>,
 }
 
+// SAFETY: the executable buffer and side tables are fully materialized before
+// the plan is returned. `hash` only reads them and uses the caller-owned hasher.
+unsafe impl<T, H> Send for NativeHashPlan<T, H> {}
+// SAFETY: the executable buffer and side tables are fully materialized before
+// the plan is returned. `hash` only reads them and uses the caller-owned hasher.
+unsafe impl<T, H> Sync for NativeHashPlan<T, H> {}
+
 impl<T, H> NativeHashPlan<T, H>
 where
     T: Facet<'static>,
