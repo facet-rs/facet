@@ -118,6 +118,29 @@ fn point_value_native_jit(bencher: Bencher<'_, '_>) {
 }
 
 #[divan::bench]
+fn byte_vec_native_hash(bencher: Bencher<'_, '_>) {
+    let value = byte_vec();
+    bencher.bench_local(|| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        black_box(&value).hash(&mut hasher);
+        black_box(hasher.finish())
+    });
+}
+
+#[divan::bench]
+fn byte_vec_helper_hash(bencher: Bencher<'_, '_>) {
+    let value = byte_vec();
+    bencher.bench_local(|| black_box(facet_hash::hash_bytes64(black_box(&value))));
+}
+
+#[divan::bench]
+fn byte_vec_value_plan_reused(bencher: Bencher<'_, '_>) {
+    let plan = HashPlan::<Vec<u8>>::build().unwrap();
+    let value = byte_vec();
+    bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[divan::bench]
 fn point_value_plan_build_each_time(bencher: Bencher<'_, '_>) {
     let value = Point { x: 123, y: -456 };
     bencher.bench_local(|| black_box(facet_hash::hash64(black_box(&value)).unwrap()));
@@ -333,6 +356,12 @@ fn point_array() -> PointArray {
         points: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }],
         tail: -5,
     }
+}
+
+fn byte_vec() -> Vec<u8> {
+    (0..4096)
+        .map(|index| (index as u8).wrapping_mul(31))
+        .collect()
 }
 
 fn person() -> Person {

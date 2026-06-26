@@ -272,7 +272,8 @@ where
                 Ok(self.emit_scalar_run(prog_index, run))
             }
             HashIntrinsic::Shape(_) => Err(unsupported(root_shape, "native structural hashing")),
-            HashIntrinsic::Option { .. }
+            HashIntrinsic::Bytes(_)
+            | HashIntrinsic::Option { .. }
             | HashIntrinsic::Result { .. }
             | HashIntrinsic::List { .. }
             | HashIntrinsic::Slice { .. }
@@ -347,7 +348,8 @@ where
                 HashIntrinsic::Shape(_) => {
                     return Err(unsupported(root_shape, "native structural hashing"));
                 }
-                HashIntrinsic::Option { .. }
+                HashIntrinsic::Bytes(_)
+                | HashIntrinsic::Option { .. }
                 | HashIntrinsic::Result { .. }
                 | HashIntrinsic::List { .. }
                 | HashIntrinsic::Slice { .. }

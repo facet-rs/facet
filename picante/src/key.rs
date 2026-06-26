@@ -147,7 +147,5 @@ pub struct Dep {
 }
 
 fn stable_hash(bytes: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
+    facet_hash::hash_bytes64(bytes)
 }

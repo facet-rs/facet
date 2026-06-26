@@ -23,6 +23,7 @@ dashmap.workspace = true
 im.workspace = true
 facet.workspace = true
 facet-core.workspace = true
+facet-hash.workspace = true
 facet-reflect.workspace = true
 facet-postcard.workspace = true
 futures-util.workspace = true

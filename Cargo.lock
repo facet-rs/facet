@@ -4712,6 +4712,7 @@ dependencies = [
  "dashmap 6.2.1",
  "facet",
  "facet-core",
+ "facet-hash",
  "facet-postcard",
  "facet-reflect",
  "futures-util",
