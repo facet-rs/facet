@@ -51,6 +51,18 @@ pub struct HashPlan<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
+/// A reusable Weavy-backed equality plan for `T`.
+///
+/// This uses the same shape lowering as [`HashPlan`] and interprets the lowered
+/// walk over two values. It gives consumers one cached typed-identity surface:
+/// hash a value with [`HashPlan`], then resolve rare hash collisions with
+/// `EqualityPlan` without falling back to ad hoc reflection code.
+#[derive(Clone, Debug)]
+pub struct EqualityPlan<T> {
+    lowered: DenseLowered<ExecOp>,
+    _marker: PhantomData<fn() -> T>,
+}
+
 impl<T> HashPlan<T>
 where
     T: Facet<'static>,
@@ -120,6 +132,44 @@ where
     }
 }
 
+impl<T> EqualityPlan<T>
+where
+    T: Facet<'static>,
+{
+    /// Lower `T::SHAPE` into value-equality bytecode.
+    pub fn build() -> Result<Self, HashError> {
+        let symbolic = Lowering::new(HashMode::Value).lower(T::SHAPE)?;
+        Ok(Self {
+            lowered: resolve_hash_lowered(symbolic)?,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Compare two values through this pre-lowered plan.
+    pub fn eq(&self, left: &T, right: &T) -> Result<bool, HashError> {
+        let left = PtrConst::new_sized(left as *const T);
+        let right = PtrConst::new_sized(right as *const T);
+        let mut interp = EqInterp::new(left, right);
+        weavy::run_dense(&self.lowered, &mut interp).map_err(eq_run_error)?;
+        Ok(interp.equal)
+    }
+
+    /// Compare two values and return Weavy runner counters.
+    pub fn eq_with_stats(&self, left: &T, right: &T) -> Result<(bool, RunStats), HashError> {
+        let left = PtrConst::new_sized(left as *const T);
+        let right = PtrConst::new_sized(right as *const T);
+        let mut interp = EqInterp::new(left, right);
+        let stats =
+            weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(eq_run_error)?;
+        Ok((interp.equal, stats))
+    }
+
+    /// Return static Weavy analysis for the lowered equality program.
+    pub fn analysis(&self) -> LoweredAnalysis {
+        hash_lowered_analysis(&self.lowered)
+    }
+}
+
 /// Hash stream shape for a [`HashPlan`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashMode {
@@ -147,6 +197,17 @@ where
     T: Facet<'static>,
 {
     HashPlan::<T>::build()?.hash64(value)
+}
+
+/// Build a temporary equality plan for `T` and compare two values.
+///
+/// Use [`EqualityPlan`] directly when comparing more than one pair of the same
+/// type.
+pub fn facet_eq<T>(left: &T, right: &T) -> Result<bool, HashError>
+where
+    T: Facet<'static>,
+{
+    EqualityPlan::<T>::build()?.eq(left, right)
 }
 
 /// Hash a raw byte sequence into a caller-supplied [`Hasher`] using the byte
@@ -239,6 +300,23 @@ fn run_error(err: RunError<ExecBlock, HashError>) -> HashError {
     match err {
         RunError::Step(err) => err,
         RunError::MissingBlock(block) => HashError::MissingBlock { block },
+    }
+}
+
+fn eq_run_error(err: RunError<ExecBlock, EqRunError>) -> HashError {
+    match err {
+        RunError::Step(EqRunError::Hash(err)) => err,
+        RunError::MissingBlock(block) => HashError::MissingBlock { block },
+    }
+}
+
+enum EqRunError {
+    Hash(HashError),
+}
+
+impl From<HashError> for EqRunError {
+    fn from(value: HashError) -> Self {
+        Self::Hash(value)
     }
 }
 
@@ -1011,6 +1089,603 @@ where
     }
 }
 
+struct EqInterp {
+    left: PtrConst,
+    right: PtrConst,
+    equal: bool,
+}
+
+impl EqInterp {
+    fn new(left: PtrConst, right: PtrConst) -> Self {
+        Self {
+            left,
+            right,
+            equal: true,
+        }
+    }
+
+    fn mark_not_equal<'program>(
+        &mut self,
+    ) -> Control<'program, ExecBlock, ExecOp, EqContinuation<'program>> {
+        self.equal = false;
+        Control::Return
+    }
+}
+
+enum EqContinuation<'program> {
+    RestoreBase {
+        left: PtrConst,
+        right: PtrConst,
+    },
+    StructFields {
+        left: PtrConst,
+        right: PtrConst,
+        fields: &'program [StructFieldPlan<ExecBlock>],
+        next_index: usize,
+    },
+    Sequence(EqSequenceState<'program>),
+    MapAfterValue {
+        left: PtrConst,
+        right: PtrConst,
+        iter: PtrMut,
+        map: MapDef,
+        value: &'program ChildPlan<ExecBlock>,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct EqSequenceState<'program> {
+    left: PtrConst,
+    right: PtrConst,
+    left_data: PtrConst,
+    right_data: PtrConst,
+    len: usize,
+    next_index: usize,
+    stride: usize,
+    element_program: &'program Program<ExecOp>,
+}
+
+impl<'program> Step<'program, ExecBlock, ExecOp> for EqInterp {
+    type Error = EqRunError;
+    type Continuation = EqContinuation<'program>;
+
+    fn step(
+        &mut self,
+        op: &'program ExecOp,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Self::Continuation>, Self::Error> {
+        if !self.equal {
+            return Ok(Control::Return);
+        }
+
+        match op {
+            WeavyOp::Control(ControlOp::CallBlock { block, base_offset }) => {
+                if *base_offset != 0 {
+                    return Err(HashError::MalformedProgram {
+                        reason: "equality block calls must not adjust base",
+                    }
+                    .into());
+                }
+                Ok(Control::CallBlock(*block))
+            }
+            WeavyOp::Control(ControlOp::Return) => Ok(Control::Return),
+            WeavyOp::Intrinsic(intrinsic) => self.step_intrinsic(intrinsic),
+            WeavyOp::Memory(_) | WeavyOp::Init(_) | WeavyOp::Aggregate(_) => {
+                Err(HashError::MalformedProgram {
+                    reason: "equality interpreter only accepts control and hash intrinsic ops",
+                }
+                .into())
+            }
+            _ => Err(HashError::MalformedProgram {
+                reason: "equality interpreter saw an unknown canonical op",
+            }
+            .into()),
+        }
+    }
+
+    fn after_return(
+        &mut self,
+        continuation: Self::Continuation,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, Self::Continuation>, Self::Error> {
+        match continuation {
+            EqContinuation::RestoreBase { left, right } => {
+                self.left = left;
+                self.right = right;
+                if self.equal {
+                    Ok(Control::Continue)
+                } else {
+                    Ok(Control::Return)
+                }
+            }
+            EqContinuation::StructFields {
+                left,
+                right,
+                fields,
+                next_index,
+            } => {
+                if self.equal {
+                    self.call_next_struct_field(left, right, fields, next_index)
+                } else {
+                    self.left = left;
+                    self.right = right;
+                    Ok(Control::Return)
+                }
+            }
+            EqContinuation::Sequence(state) => {
+                if self.equal {
+                    self.call_next_sequence(state)
+                } else {
+                    self.left = state.left;
+                    self.right = state.right;
+                    Ok(Control::Return)
+                }
+            }
+            EqContinuation::MapAfterValue {
+                left,
+                right,
+                iter,
+                map,
+                value,
+            } => {
+                if self.equal {
+                    self.call_next_map(left, right, iter, map, value)
+                } else {
+                    unsafe { (map.vtable.iter_vtable.dealloc)(iter) };
+                    self.left = left;
+                    self.right = right;
+                    Ok(Control::Return)
+                }
+            }
+        }
+    }
+}
+
+impl<'program> EqInterp {
+    fn step_intrinsic(
+        &mut self,
+        intrinsic: &'program HashIntrinsic<ExecBlock>,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, EqContinuation<'program>>, EqRunError> {
+        match intrinsic {
+            HashIntrinsic::Shape(_) => Ok(Control::Continue),
+            HashIntrinsic::Scalar { shape, scalar } => {
+                if unsafe { scalar_eq(shape, *scalar, self.left, self.right) } {
+                    Ok(Control::Continue)
+                } else {
+                    Ok(self.mark_not_equal())
+                }
+            }
+            HashIntrinsic::Struct { fields, .. } => {
+                self.call_next_struct_field(self.left, self.right, fields, 0)
+            }
+            HashIntrinsic::Option { option, some } => {
+                let left_some = unsafe { (option.vtable.is_some)(self.left) };
+                let right_some = unsafe { (option.vtable.is_some)(self.right) };
+                if left_some != right_some {
+                    return Ok(self.mark_not_equal());
+                }
+                if left_some {
+                    let left = unsafe { (option.vtable.get_value)(self.left) };
+                    let right = unsafe { (option.vtable.get_value)(self.right) };
+                    self.call_child(some, PtrConst::new_sized(left), PtrConst::new_sized(right))
+                } else {
+                    Ok(Control::Continue)
+                }
+            }
+            HashIntrinsic::Result { result, ok, err } => {
+                let left_ok = unsafe { (result.vtable.is_ok)(self.left) };
+                let right_ok = unsafe { (result.vtable.is_ok)(self.right) };
+                if left_ok != right_ok {
+                    return Ok(self.mark_not_equal());
+                }
+                if left_ok {
+                    let left = unsafe { (result.vtable.get_ok)(self.left) };
+                    let right = unsafe { (result.vtable.get_ok)(self.right) };
+                    self.call_child(ok, PtrConst::new_sized(left), PtrConst::new_sized(right))
+                } else {
+                    let left = unsafe { (result.vtable.get_err)(self.left) };
+                    let right = unsafe { (result.vtable.get_err)(self.right) };
+                    self.call_child(err, PtrConst::new_sized(left), PtrConst::new_sized(right))
+                }
+            }
+            HashIntrinsic::Bytes(source) => {
+                if unsafe { self.eq_byte_source(source)? } {
+                    Ok(Control::Continue)
+                } else {
+                    Ok(self.mark_not_equal())
+                }
+            }
+            HashIntrinsic::List {
+                list_shape,
+                list,
+                element_layout,
+                element,
+            } => {
+                let left_len = unsafe { (list.vtable.len)(self.left) };
+                let right_len = unsafe { (list.vtable.len)(self.right) };
+                if left_len != right_len {
+                    return Ok(self.mark_not_equal());
+                }
+                if left_len == 0 {
+                    return Ok(Control::Continue);
+                }
+                let as_ptr = list
+                    .vtable
+                    .as_ptr
+                    .ok_or_else(|| unsupported(list_shape, "list as_ptr"))?;
+                let left_data = unsafe { as_ptr(self.left) };
+                let right_data = unsafe { as_ptr(self.right) };
+                self.eq_or_call_sequence(
+                    left_data,
+                    right_data,
+                    left_len,
+                    element_layout.size(),
+                    element,
+                )
+            }
+            HashIntrinsic::Array {
+                array,
+                element_layout,
+                element,
+            } => {
+                if array.n == 0 {
+                    return Ok(Control::Continue);
+                }
+                let left_data = unsafe { (array.vtable.as_ptr)(self.left) };
+                let right_data = unsafe { (array.vtable.as_ptr)(self.right) };
+                self.eq_or_call_sequence(
+                    left_data,
+                    right_data,
+                    array.n,
+                    element_layout.size(),
+                    element,
+                )
+            }
+            HashIntrinsic::Slice {
+                slice,
+                element_layout,
+                element,
+            } => {
+                let left_len = unsafe { (slice.vtable.len)(self.left) };
+                let right_len = unsafe { (slice.vtable.len)(self.right) };
+                if left_len != right_len {
+                    return Ok(self.mark_not_equal());
+                }
+                if left_len == 0 {
+                    return Ok(Control::Continue);
+                }
+                let left_data = unsafe { (slice.vtable.as_ptr)(self.left) };
+                let right_data = unsafe { (slice.vtable.as_ptr)(self.right) };
+                self.eq_or_call_sequence(
+                    left_data,
+                    right_data,
+                    left_len,
+                    element_layout.size(),
+                    element,
+                )
+            }
+            HashIntrinsic::Set { set, .. } => {
+                let left_len = unsafe { (set.vtable.len)(self.left) };
+                let right_len = unsafe { (set.vtable.len)(self.right) };
+                if left_len != right_len {
+                    return Ok(self.mark_not_equal());
+                }
+                let iter_init = set
+                    .vtable
+                    .iter_vtable
+                    .init_with_value
+                    .ok_or_else(|| unsupported(set.t(), "set iterator init"))?;
+                let iter = unsafe { iter_init(self.left) };
+                self.call_next_set(iter, *set)
+            }
+            HashIntrinsic::Map { map, value, .. } => {
+                let left_len = unsafe { (map.vtable.len)(self.left) };
+                let right_len = unsafe { (map.vtable.len)(self.right) };
+                if left_len != right_len {
+                    return Ok(self.mark_not_equal());
+                }
+                let iter_init = map
+                    .vtable
+                    .iter_vtable
+                    .init_with_value
+                    .ok_or_else(|| unsupported(map.k(), "map iterator init"))?;
+                let iter = unsafe { iter_init(self.left) };
+                self.call_next_map(self.left, self.right, iter, *map, value)
+            }
+            HashIntrinsic::Pointer { pointer, pointee } => {
+                let borrow = pointer.vtable.borrow_fn.ok_or_else(|| {
+                    unsupported(
+                        pointer.pointee().expect("lowering rejects opaque pointers"),
+                        "pointer borrow",
+                    )
+                })?;
+                let left = unsafe { borrow(self.left) };
+                let right = unsafe { borrow(self.right) };
+                self.call_child(pointee, left, right)
+            }
+        }
+    }
+
+    unsafe fn eq_byte_source(&mut self, source: &ByteSource) -> Result<bool, HashError> {
+        Ok(match source {
+            ByteSource::List { list_shape, list } => {
+                let left_len = unsafe { (list.vtable.len)(self.left) };
+                let right_len = unsafe { (list.vtable.len)(self.right) };
+                if left_len != right_len {
+                    return Ok(false);
+                }
+                if left_len == 0 {
+                    return Ok(true);
+                }
+                let as_ptr = list
+                    .vtable
+                    .as_ptr
+                    .ok_or_else(|| unsupported(list_shape, "list as_ptr"))?;
+                let left_data = unsafe { as_ptr(self.left) };
+                let right_data = unsafe { as_ptr(self.right) };
+                let left =
+                    unsafe { core::slice::from_raw_parts(left_data.as_byte_ptr(), left_len) };
+                let right =
+                    unsafe { core::slice::from_raw_parts(right_data.as_byte_ptr(), right_len) };
+                left == right
+            }
+            ByteSource::Array { array } => {
+                if array.n == 0 {
+                    return Ok(true);
+                }
+                let left_data = unsafe { (array.vtable.as_ptr)(self.left) };
+                let right_data = unsafe { (array.vtable.as_ptr)(self.right) };
+                let left = unsafe { core::slice::from_raw_parts(left_data.as_byte_ptr(), array.n) };
+                let right =
+                    unsafe { core::slice::from_raw_parts(right_data.as_byte_ptr(), array.n) };
+                left == right
+            }
+            ByteSource::Slice { slice } => {
+                let left_len = unsafe { (slice.vtable.len)(self.left) };
+                let right_len = unsafe { (slice.vtable.len)(self.right) };
+                if left_len != right_len {
+                    return Ok(false);
+                }
+                if left_len == 0 {
+                    return Ok(true);
+                }
+                let left_data = unsafe { (slice.vtable.as_ptr)(self.left) };
+                let right_data = unsafe { (slice.vtable.as_ptr)(self.right) };
+                let left =
+                    unsafe { core::slice::from_raw_parts(left_data.as_byte_ptr(), left_len) };
+                let right =
+                    unsafe { core::slice::from_raw_parts(right_data.as_byte_ptr(), right_len) };
+                left == right
+            }
+        })
+    }
+
+    fn call_child(
+        &mut self,
+        child: &'program ChildPlan<ExecBlock>,
+        left_child: PtrConst,
+        right_child: PtrConst,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, EqContinuation<'program>>, EqRunError> {
+        match child {
+            ChildPlan::Scalar {
+                include_shape,
+                shape,
+                scalar,
+            } => {
+                if *include_shape {
+                    return Err(HashError::MalformedProgram {
+                        reason: "value equality child scalar should not include shape",
+                    }
+                    .into());
+                }
+                if unsafe { scalar_eq(shape, *scalar, left_child, right_child) } {
+                    Ok(Control::Continue)
+                } else {
+                    Ok(self.mark_not_equal())
+                }
+            }
+            ChildPlan::Program(program) => {
+                let left = self.left;
+                let right = self.right;
+                self.left = left_child;
+                self.right = right_child;
+                Ok(Control::CallProgramThen(
+                    program,
+                    EqContinuation::RestoreBase { left, right },
+                ))
+            }
+        }
+    }
+
+    fn eq_or_call_sequence(
+        &mut self,
+        left_data: PtrConst,
+        right_data: PtrConst,
+        len: usize,
+        stride: usize,
+        element: &'program ChildPlan<ExecBlock>,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, EqContinuation<'program>>, EqRunError> {
+        match element {
+            ChildPlan::Scalar {
+                include_shape,
+                shape,
+                scalar,
+            } => {
+                if *include_shape {
+                    return Err(HashError::MalformedProgram {
+                        reason: "value equality sequence scalar should not include shape",
+                    }
+                    .into());
+                }
+                for index in 0..len {
+                    let left = unsafe { sequence_element(left_data, index, stride) };
+                    let right = unsafe { sequence_element(right_data, index, stride) };
+                    if !unsafe { scalar_eq(shape, *scalar, left, right) } {
+                        return Ok(self.mark_not_equal());
+                    }
+                }
+                Ok(Control::Continue)
+            }
+            ChildPlan::Program(program) => self.call_next_sequence(EqSequenceState {
+                left: self.left,
+                right: self.right,
+                left_data,
+                right_data,
+                len,
+                next_index: 0,
+                stride,
+                element_program: program,
+            }),
+        }
+    }
+
+    fn call_next_sequence(
+        &mut self,
+        state: EqSequenceState<'program>,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, EqContinuation<'program>>, EqRunError> {
+        if state.next_index >= state.len {
+            self.left = state.left;
+            self.right = state.right;
+            return Ok(Control::Continue);
+        }
+
+        self.left = unsafe { sequence_element(state.left_data, state.next_index, state.stride) };
+        self.right = unsafe { sequence_element(state.right_data, state.next_index, state.stride) };
+        let next_state = EqSequenceState {
+            next_index: state.next_index + 1,
+            ..state
+        };
+        Ok(Control::CallProgramThen(
+            state.element_program,
+            EqContinuation::Sequence(next_state),
+        ))
+    }
+
+    fn call_next_struct_field(
+        &mut self,
+        left: PtrConst,
+        right: PtrConst,
+        fields: &'program [StructFieldPlan<ExecBlock>],
+        next_index: usize,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, EqContinuation<'program>>, EqRunError> {
+        let mut index = next_index;
+        while index < fields.len() {
+            match &fields[index] {
+                StructFieldPlan::ScalarRun(run) => {
+                    if !unsafe { eq_scalar_field_run(left, right, run) } {
+                        return Ok(self.mark_not_equal());
+                    }
+                    index += 1;
+                }
+                StructFieldPlan::Field(field) => {
+                    let left_field = unsafe { left.field(field.offset) };
+                    let right_field = unsafe { right.field(field.offset) };
+                    let ChildPlan::Program(program) = &field.child else {
+                        return Err(HashError::MalformedProgram {
+                            reason: "scalar struct fields must be lowered into scalar runs",
+                        }
+                        .into());
+                    };
+                    self.left = left_field;
+                    self.right = right_field;
+                    return Ok(Control::CallProgramThen(
+                        program,
+                        EqContinuation::StructFields {
+                            left,
+                            right,
+                            fields,
+                            next_index: index + 1,
+                        },
+                    ));
+                }
+            }
+        }
+
+        self.left = left;
+        self.right = right;
+        Ok(Control::Continue)
+    }
+
+    fn call_next_set(
+        &mut self,
+        iter: PtrMut,
+        set: SetDef,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, EqContinuation<'program>>, EqRunError> {
+        loop {
+            match unsafe { (set.vtable.iter_vtable.next)(iter) } {
+                Some(value) => {
+                    if !unsafe { (set.vtable.contains)(self.right, value) } {
+                        unsafe { (set.vtable.iter_vtable.dealloc)(iter) };
+                        return Ok(self.mark_not_equal());
+                    }
+                }
+                None => {
+                    unsafe { (set.vtable.iter_vtable.dealloc)(iter) };
+                    return Ok(Control::Continue);
+                }
+            }
+        }
+    }
+
+    fn call_next_map(
+        &mut self,
+        left: PtrConst,
+        right: PtrConst,
+        iter: PtrMut,
+        map: MapDef,
+        value: &'program ChildPlan<ExecBlock>,
+    ) -> Result<Control<'program, ExecBlock, ExecOp, EqContinuation<'program>>, EqRunError> {
+        loop {
+            match unsafe { (map.vtable.iter_vtable.next)(iter) } {
+                Some((key_ptr, left_value)) => {
+                    let right_value = unsafe { (map.vtable.get_value_ptr)(right, key_ptr) };
+                    if right_value.is_null() {
+                        unsafe { (map.vtable.iter_vtable.dealloc)(iter) };
+                        return Ok(self.mark_not_equal());
+                    }
+                    match value {
+                        ChildPlan::Scalar {
+                            include_shape,
+                            shape,
+                            scalar,
+                        } => {
+                            if *include_shape {
+                                return Err(HashError::MalformedProgram {
+                                    reason: "value equality map scalar should not include shape",
+                                }
+                                .into());
+                            }
+                            let right_value = PtrConst::new_sized(right_value);
+                            if !unsafe { scalar_eq(shape, *scalar, left_value, right_value) } {
+                                unsafe { (map.vtable.iter_vtable.dealloc)(iter) };
+                                return Ok(self.mark_not_equal());
+                            }
+                        }
+                        ChildPlan::Program(program) => {
+                            self.left = left_value;
+                            self.right = PtrConst::new_sized(right_value);
+                            return Ok(Control::CallProgramThen(
+                                program,
+                                EqContinuation::MapAfterValue {
+                                    left,
+                                    right,
+                                    iter,
+                                    map,
+                                    value,
+                                },
+                            ));
+                        }
+                    }
+                }
+                None => {
+                    unsafe { (map.vtable.iter_vtable.dealloc)(iter) };
+                    self.left = left;
+                    self.right = right;
+                    return Ok(Control::Continue);
+                }
+            }
+        }
+    }
+}
+
 enum HashContinuation<'program> {
     RestoreBase(PtrConst),
     StructFields {
@@ -1641,6 +2316,69 @@ where
     }
 }
 
+unsafe fn eq_scalar_field_run(left: PtrConst, right: PtrConst, run: &[ScalarFieldPlan]) -> bool {
+    for field in run {
+        let left = unsafe { left.field(field.offset) };
+        let right = unsafe { right.field(field.offset) };
+        if !unsafe { scalar_eq(field.shape, field.scalar, left, right) } {
+            return false;
+        }
+    }
+    true
+}
+
+unsafe fn scalar_eq(
+    shape: &'static Shape,
+    scalar: ScalarType,
+    left: PtrConst,
+    right: PtrConst,
+) -> bool {
+    match scalar {
+        ScalarType::Unit => true,
+        ScalarType::Bool => unsafe { left.get::<bool>() == right.get::<bool>() },
+        ScalarType::Char => unsafe { left.get::<char>() == right.get::<char>() },
+        ScalarType::Str => unsafe { str_scalar_eq(shape, left, right) },
+        ScalarType::String => unsafe { left.get::<String>() == right.get::<String>() },
+        ScalarType::CowStr => unsafe {
+            left.get::<Cow<'static, str>>() == right.get::<Cow<'static, str>>()
+        },
+        ScalarType::F32 => unsafe { left.get::<f32>().to_bits() == right.get::<f32>().to_bits() },
+        ScalarType::F64 => unsafe { left.get::<f64>().to_bits() == right.get::<f64>().to_bits() },
+        ScalarType::U8 => unsafe { left.get::<u8>() == right.get::<u8>() },
+        ScalarType::U16 => unsafe { left.get::<u16>() == right.get::<u16>() },
+        ScalarType::U32 => unsafe { left.get::<u32>() == right.get::<u32>() },
+        ScalarType::U64 => unsafe { left.get::<u64>() == right.get::<u64>() },
+        ScalarType::U128 => unsafe { left.get::<u128>() == right.get::<u128>() },
+        ScalarType::USize => unsafe { left.get::<usize>() == right.get::<usize>() },
+        ScalarType::I8 => unsafe { left.get::<i8>() == right.get::<i8>() },
+        ScalarType::I16 => unsafe { left.get::<i16>() == right.get::<i16>() },
+        ScalarType::I32 => unsafe { left.get::<i32>() == right.get::<i32>() },
+        ScalarType::I64 => unsafe { left.get::<i64>() == right.get::<i64>() },
+        ScalarType::I128 => unsafe { left.get::<i128>() == right.get::<i128>() },
+        ScalarType::ISize => unsafe { left.get::<isize>() == right.get::<isize>() },
+        ScalarType::ConstTypeId => unsafe {
+            left.get::<ConstTypeId>() == right.get::<ConstTypeId>()
+        },
+        #[cfg(feature = "net")]
+        ScalarType::SocketAddr => unsafe {
+            left.get::<core::net::SocketAddr>() == right.get::<core::net::SocketAddr>()
+        },
+        #[cfg(feature = "net")]
+        ScalarType::IpAddr => unsafe {
+            left.get::<core::net::IpAddr>() == right.get::<core::net::IpAddr>()
+        },
+        #[cfg(feature = "net")]
+        ScalarType::Ipv4Addr => unsafe {
+            left.get::<core::net::Ipv4Addr>() == right.get::<core::net::Ipv4Addr>()
+        },
+        #[cfg(feature = "net")]
+        ScalarType::Ipv6Addr => unsafe {
+            left.get::<core::net::Ipv6Addr>() == right.get::<core::net::Ipv6Addr>()
+        },
+        _ => unreachable!("unsupported scalar types are rejected while lowering"),
+    }
+}
+
 unsafe fn hash_str_scalar<H>(shape: &'static Shape, ptr: PtrConst, hasher: &mut H)
 where
     H: Hasher,
@@ -1649,6 +2387,14 @@ where
         unsafe { ptr.get::<&'static str>() }.hash(hasher);
     } else {
         unsafe { ptr.get::<str>() }.hash(hasher);
+    }
+}
+
+unsafe fn str_scalar_eq(shape: &'static Shape, left: PtrConst, right: PtrConst) -> bool {
+    if shape.is_type::<&'static str>() {
+        unsafe { left.get::<&'static str>() == right.get::<&'static str>() }
+    } else {
+        unsafe { left.get::<str>() == right.get::<str>() }
     }
 }
 

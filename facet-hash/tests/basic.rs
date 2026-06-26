@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use facet::Facet;
+use facet_hash::EqualityPlan;
 use facet_hash::HashPlan;
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 use facet_hash::NativeHashPlan;
@@ -383,6 +384,115 @@ fn hashes_floats_by_bits() {
         plan.hash64(&negative_zero).unwrap(),
         plan.hash64(&positive_zero).unwrap()
     );
+}
+
+#[test]
+fn equality_plan_compares_scalar_structs() {
+    let plan = EqualityPlan::<Point>::build().unwrap();
+
+    assert!(
+        plan.eq(&Point { x: 10, y: -4 }, &Point { x: 10, y: -4 })
+            .unwrap()
+    );
+    assert!(
+        !plan
+            .eq(&Point { x: 10, y: -4 }, &Point { x: 10, y: -5 })
+            .unwrap()
+    );
+}
+
+#[test]
+fn equality_plan_compares_nested_supported_shapes_without_partial_eq() {
+    let plan = EqualityPlan::<Nested>::build().unwrap();
+    let left = Nested {
+        people: vec![Person {
+            name: "Ada".to_owned(),
+            age: 36,
+            email: Some("ada@example.test".to_owned()),
+            scores: vec![1, 1, 2, 3, 5],
+        }],
+        points: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }],
+        label: "math".into(),
+        maybe: Ok(Some(42)),
+    };
+    let mut right = left.clone();
+
+    assert!(plan.eq(&left, &right).unwrap());
+
+    right.people[0].scores.push(8);
+    assert!(!plan.eq(&left, &right).unwrap());
+}
+
+#[test]
+fn equality_plan_compares_byte_sequences_in_bulk() {
+    let plan = EqualityPlan::<Vec<u8>>::build().unwrap();
+    let (equal, stats) = plan
+        .eq_with_stats(&vec![0, 1, 2, 3, 255], &vec![0, 1, 2, 3, 255])
+        .unwrap();
+
+    assert!(equal);
+    assert_eq!(stats.step_count, 1);
+    assert_eq!(
+        plan.analysis().intrinsic_counts[&IntrinsicDescriptor {
+            dialect: "facet-hash",
+            name: "bytes",
+        }],
+        1
+    );
+    assert!(
+        !plan
+            .eq(&vec![0, 1, 2, 3, 255], &vec![0, 1, 2, 4, 255])
+            .unwrap()
+    );
+}
+
+#[test]
+fn equality_plan_uses_map_lookup_semantics() {
+    let plan = EqualityPlan::<Collections>::build().unwrap();
+    let mut left_set = BTreeSet::new();
+    left_set.insert(1);
+    left_set.insert(2);
+    let mut left_map = BTreeMap::new();
+    left_map.insert("ada".to_owned(), 36);
+    left_map.insert("grace".to_owned(), 37);
+
+    let mut right_set = BTreeSet::new();
+    right_set.insert(2);
+    right_set.insert(1);
+    let mut right_map = BTreeMap::new();
+    right_map.insert("grace".to_owned(), 37);
+    right_map.insert("ada".to_owned(), 36);
+
+    let left = Collections {
+        set: left_set,
+        map: left_map,
+    };
+    let mut right = Collections {
+        set: right_set,
+        map: right_map,
+    };
+
+    assert!(plan.eq(&left, &right).unwrap());
+    right.map.insert("grace".to_owned(), 38);
+    assert!(!plan.eq(&left, &right).unwrap());
+}
+
+#[test]
+fn equality_plan_compares_floats_by_bits() {
+    let plan = EqualityPlan::<Floaty>::build().unwrap();
+    let negative_zero = Floaty { x: -0.0, y: -0.0 };
+    let positive_zero = Floaty { x: 0.0, y: 0.0 };
+    let nan_a = Floaty {
+        x: f64::from_bits(0x7ff8_0000_0000_0001),
+        y: f32::from_bits(0x7fc0_0001),
+    };
+    let nan_b = Floaty {
+        x: f64::from_bits(0x7ff8_0000_0000_0001),
+        y: f32::from_bits(0x7fc0_0001),
+    };
+
+    assert!(!plan.eq(&negative_zero, &positive_zero).unwrap());
+    assert!(plan.eq(&nan_a, &nan_b).unwrap());
 }
 
 #[test]

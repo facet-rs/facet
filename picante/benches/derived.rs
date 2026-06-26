@@ -48,6 +48,14 @@ struct LargeValue {
     checksum: u64,
 }
 
+#[derive(Clone, Debug, Facet)]
+struct LargeKey {
+    shard: u32,
+    label: String,
+    rows: Vec<LargeRow>,
+    flags: [u16; 4],
+}
+
 type WideFixture = (
     tokio::runtime::Runtime,
     BenchDb,
@@ -102,6 +110,20 @@ fn large_value(rows: usize, seed: u64) -> LargeValue {
     }
 }
 
+fn large_key(rows: usize, seed: u64) -> LargeKey {
+    LargeKey {
+        shard: seed as u32,
+        label: format!("key-{seed}-{rows}"),
+        rows: large_value(rows, seed).rows,
+        flags: [
+            seed as u16,
+            seed.wrapping_mul(3) as u16,
+            seed.wrapping_mul(5) as u16,
+            seed.wrapping_mul(7) as u16,
+        ],
+    }
+}
+
 #[divan::bench]
 fn input_get_hit(bencher: Bencher) {
     let db = BenchDb::default();
@@ -115,6 +137,19 @@ fn input_get_hit(bencher: Bencher) {
 }
 
 #[divan::bench]
+fn input_get_hit_large_key(bencher: Bencher) {
+    let db = BenchDb::default();
+    let input: InputIngredient<LargeKey, u64> = InputIngredient::new(QueryKindId(5), "LargeKey");
+    let key = large_key(128, 7);
+    input.set(&db, key.clone(), 42);
+
+    bencher.bench(|| {
+        let value = input.get(&db, black_box(&key)).unwrap();
+        black_box(value);
+    });
+}
+
+#[divan::bench]
 fn input_set_noop_small_value(bencher: Bencher) {
     let db = BenchDb::default();
     let input: InputIngredient<u32, u64> = InputIngredient::new(QueryKindId(2), "Number");
@@ -122,6 +157,19 @@ fn input_set_noop_small_value(bencher: Bencher) {
 
     bencher.bench(|| {
         let revision = input.set(&db, black_box(7), black_box(42));
+        black_box(revision);
+    });
+}
+
+#[divan::bench]
+fn input_set_noop_large_key(bencher: Bencher) {
+    let db = BenchDb::default();
+    let input: InputIngredient<LargeKey, u64> = InputIngredient::new(QueryKindId(6), "LargeKey");
+    let key = large_key(128, 7);
+    input.set(&db, key.clone(), 42);
+
+    bencher.bench(|| {
+        let revision = input.set(&db, black_box(key.clone()), black_box(42));
         black_box(revision);
     });
 }
