@@ -110,11 +110,49 @@ pub fn has_active_frame() -> bool {
 // r[dep.recording]
 /// Record a dependency on the current top-of-stack frame, if any.
 pub fn record_dep(dep: Dep) {
-    let _ = ACTIVE_STACK.try_with(|stack| {
-        if let Some(top) = stack.borrow().last() {
+    let _ = record_dep_if_active(dep);
+}
+
+pub(crate) fn record_dep_if_active(dep: Dep) -> bool {
+    ACTIVE_STACK
+        .try_with(|stack| {
+            let stack = stack.borrow();
+            let Some(top) = stack.last() else {
+                return false;
+            };
+
             top.0.deps.lock().push(dep);
-        }
-    });
+            true
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn record_dep_with(make_dep: impl FnOnce() -> Dep) -> bool {
+    ACTIVE_STACK
+        .try_with(|stack| {
+            let stack = stack.borrow();
+            let Some(top) = stack.last() else {
+                return false;
+            };
+
+            top.0.deps.lock().push(make_dep());
+            true
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn record_dep_result<E>(make_dep: impl FnOnce() -> Result<Dep, E>) -> Result<bool, E> {
+    ACTIVE_STACK
+        .try_with(|stack| {
+            let stack = stack.borrow();
+            let Some(top) = stack.last() else {
+                return Ok(false);
+            };
+
+            top.0.deps.lock().push(make_dep()?);
+            Ok(true)
+        })
+        .unwrap_or(Ok(false))
 }
 
 // r[frame.cycle-detect]
