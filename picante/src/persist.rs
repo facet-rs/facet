@@ -1,7 +1,7 @@
 //! Cache persistence for Picante ingredients.
 
 use crate::error::{PicanteError, PicanteResult};
-use crate::key::QueryKindId;
+use crate::key::{Key, QueryKindId};
 use crate::revision::Revision;
 use crate::runtime::Runtime;
 use crate::wal::{WalEntry, WalOperation, WalReader, WalWriter};
@@ -100,6 +100,9 @@ pub enum SectionType {
     Interned,
 }
 
+/// Decoder for persisted dependency key bytes.
+pub type KeyDecodeFn<'a> = dyn Fn(QueryKindId, Vec<u8>) -> PicanteResult<Key> + 'a;
+
 /// An ingredient that can be saved to / loaded from a cache file.
 pub trait PersistableIngredient: Send + Sync {
     /// Stable kind id (must be unique within a database).
@@ -110,10 +113,23 @@ pub trait PersistableIngredient: Send + Sync {
     fn section_type(&self) -> SectionType;
     /// Clear all in-memory data for this ingredient.
     fn clear(&self);
+    /// Decode persistent key bytes into this ingredient's runtime key shape.
+    fn key_from_bytes(&self, bytes: Vec<u8>) -> PicanteResult<Key> {
+        Ok(Key::from_bytes(bytes))
+    }
     /// Serialize this ingredient's records.
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>>;
     /// Load this ingredient from raw record bytes.
     fn load_records(&self, records: Vec<Vec<u8>>) -> PicanteResult<()>;
+    /// Load this ingredient, decoding dependency keys through their owning ingredients.
+    fn load_records_with_key_decoder(
+        &self,
+        records: Vec<Vec<u8>>,
+        decode_key: &KeyDecodeFn<'_>,
+    ) -> PicanteResult<()> {
+        let _ = decode_key;
+        self.load_records(records)
+    }
     /// Restore any runtime-side state derived from loaded records.
     fn restore_runtime_state<'a>(
         &'a self,
@@ -154,6 +170,18 @@ pub trait PersistableIngredient: Send + Sync {
     ) -> PicanteResult<()> {
         // Default: not implemented
         Ok(())
+    }
+
+    /// Apply a WAL entry, decoding dependency keys through their owning ingredients.
+    fn apply_wal_entry_with_key_decoder(
+        &self,
+        revision: u64,
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+        decode_key: &KeyDecodeFn<'_>,
+    ) -> PicanteResult<()> {
+        let _ = decode_key;
+        self.apply_wal_entry(revision, key, value)
     }
 }
 
@@ -413,7 +441,19 @@ async fn load_cache_inner(
             }));
         }
 
-        ingredient.load_records(section.records)?;
+        let decode_key = |kind: QueryKindId, bytes: Vec<u8>| {
+            let Some(ingredient) = by_kind.get(&kind.as_u32()).copied() else {
+                return Err(Arc::new(PicanteError::Cache {
+                    message: format!(
+                        "record references unknown dependency kind {}",
+                        kind.as_u32()
+                    ),
+                }));
+            };
+            ingredient.key_from_bytes(bytes)
+        };
+
+        ingredient.load_records_with_key_decoder(section.records, &decode_key)?;
     }
     let load_elapsed = load_start.elapsed();
 
@@ -687,6 +727,18 @@ pub async fn replay_wal(
         ingredient_map.insert(ingredient.kind().0, *ingredient);
     }
 
+    let decode_key = |kind: QueryKindId, bytes: Vec<u8>| {
+        let Some(ingredient) = ingredient_map.get(&kind.as_u32()).copied() else {
+            return Err(Arc::new(PicanteError::Cache {
+                message: format!(
+                    "WAL record references unknown dependency kind {}",
+                    kind.as_u32()
+                ),
+            }));
+        };
+        ingredient.key_from_bytes(bytes)
+    };
+
     let mut entry_count = 0;
     let mut max_revision = base_revision;
 
@@ -705,10 +757,20 @@ pub async fn replay_wal(
         // Apply the operation
         match entry.operation {
             WalOperation::Set { key, value } => {
-                ingredient.apply_wal_entry(entry.revision, key, Some(value))?;
+                ingredient.apply_wal_entry_with_key_decoder(
+                    entry.revision,
+                    key,
+                    Some(value),
+                    &decode_key,
+                )?;
             }
             WalOperation::Delete { key } => {
-                ingredient.apply_wal_entry(entry.revision, key, None)?;
+                ingredient.apply_wal_entry_with_key_decoder(
+                    entry.revision,
+                    key,
+                    None,
+                    &decode_key,
+                )?;
             }
         }
 

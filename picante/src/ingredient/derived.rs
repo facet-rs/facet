@@ -2,8 +2,8 @@ use crate::db::{DynIngredient, IngredientLookup, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame::{self, ActiveFrameHandle};
 use crate::inflight::{self, InFlightKey, InFlightState, SharedCacheRecord, TryLeadResult};
-use crate::key::{Dep, DynKey, Key, QueryKindId};
-use crate::persist::{PersistableIngredient, SectionType};
+use crate::key::{Dep, DynKey, Key, KeyFactory, QueryKindId};
+use crate::persist::{KeyDecodeFn, PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use facet::Facet;
 use facet_core::Shape;
@@ -12,7 +12,6 @@ use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use parking_lot::RwLock;
 use std::any::Any;
-use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
@@ -58,7 +57,11 @@ type EncodeRecordFn = fn(
 
 /// Decode a single record from bytes (called from erased load_records)
 /// Takes owned `Vec<u8>` because facet_postcard::from_slice requires 'static
-type DecodeRecordFn = fn(kind: QueryKindId, bytes: Vec<u8>) -> PicanteResult<ErasedRecordData>;
+type DecodeRecordFn = fn(
+    kind: QueryKindId,
+    bytes: Vec<u8>,
+    decode_key: &KeyDecodeFn<'_>,
+) -> PicanteResult<ErasedRecordData>;
 
 /// Encode incremental record (key + optional value) for WAL
 type EncodeIncrementalFn = fn(
@@ -76,6 +79,7 @@ type ApplyWalEntryFn = fn(
     kind: QueryKindId,
     key_bytes: Vec<u8>,
     value_bytes: Option<Vec<u8>>,
+    decode_key: &KeyDecodeFn<'_>,
 ) -> PicanteResult<ApplyWalResult>;
 
 /// Result of applying a WAL entry
@@ -151,6 +155,7 @@ trait ErasedCompute<DB>: Send + Sync {
 /// The state machine in DerivedCore stays monomorphic by calling through the trait.
 struct TypedCompute<DB, K, V> {
     f: Arc<ComputeFn<DB, K, V>>,
+    key_factory: KeyFactory<K>,
     _phantom: PhantomData<(K, V)>,
 }
 
@@ -159,13 +164,13 @@ struct TypedCompute<DB, K, V> {
 impl<DB, K, V> ErasedCompute<DB> for TypedCompute<DB, K, V>
 where
     DB: IngredientLookup + Send + Sync + 'static,
-    K: Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Send + Sync + 'static,
 {
     fn compute<'a>(&'a self, db: &'a DB, key: Key) -> ComputeFut<'a> {
         // Tradeoffs: vtable dispatch, boxed future allocation, and key decode per compute.
         Box::pin(async move {
-            let k: K = key.decode_facet()?;
+            let k: K = self.key_factory.decode_key(&key)?;
             let v: V = (self.f)(db, k).await?;
             Ok(Arc::new(v) as ArcAny)
         })
@@ -849,10 +854,14 @@ impl DerivedCore {
     }
 
     /// Load records using type-erased callbacks
-    fn load_records_erased(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
+    fn load_records_erased(
+        &self,
+        records: Vec<Vec<u8>>,
+        decode_key: &KeyDecodeFn<'_>,
+    ) -> PicanteResult<()> {
         for bytes in records {
             // Call through function pointer (takes owned Vec<u8>)
-            let data = (self.decode_record)(self.kind, bytes)?;
+            let data = (self.decode_record)(self.kind, bytes, decode_key)?;
 
             let cell = Arc::new(ErasedCell::new_ready(
                 data.value,
@@ -924,9 +933,10 @@ impl DerivedCore {
         _revision: u64,
         key_bytes: Vec<u8>,
         value_bytes: Option<Vec<u8>>,
+        decode_key: &KeyDecodeFn<'_>,
     ) -> PicanteResult<()> {
         // Pass owned bytes (callback needs 'static for deserialization)
-        let result = (self.apply_wal_entry)(self.kind, key_bytes, value_bytes)?;
+        let result = (self.apply_wal_entry)(self.kind, key_bytes, value_bytes, decode_key)?;
 
         let mut cells = self.cells.write();
         if let Some(cell) = result.cell {
@@ -1069,7 +1079,7 @@ impl DerivedCore {
 /// Create an encode_record function pointer for a specific K, V
 fn make_encode_record<K, V>() -> EncodeRecordFn
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind_name, dyn_key, value, verified_at, changed_at, deps| {
@@ -1098,11 +1108,13 @@ where
 
         let deps = deps
             .iter()
-            .map(|d| DepRecord {
-                kind_id: d.kind.as_u32(),
-                key_bytes: d.key.bytes().to_vec(),
+            .map(|d| {
+                Ok(DepRecord {
+                    kind_id: d.kind.as_u32(),
+                    key_bytes: d.key.to_bytes()?.to_vec(),
+                })
             })
-            .collect();
+            .collect::<PicanteResult<Vec<_>>>()?;
 
         let rec = DerivedRecord::<K, V> {
             key,
@@ -1120,10 +1132,10 @@ where
 /// Create a decode_record function pointer for a specific K, V
 fn make_decode_record<K, V>() -> DecodeRecordFn
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
-    |kind, bytes| {
+    |kind, bytes, decode_key| {
         // SAFETY: <DerivedRecord<K, V>>::SHAPE is the correct shape for DerivedRecord<K, V>
         let heap_value = unsafe {
             decode_to_heap_value(&bytes, <DerivedRecord<K, V>>::SHAPE, "derived record")
@@ -1138,16 +1150,19 @@ where
         let deps: Arc<[Dep]> = rec
             .deps
             .into_iter()
-            .map(|d| Dep {
-                kind: QueryKindId(d.kind_id),
-                key: Key::from_bytes(d.key_bytes),
+            .map(|d| {
+                let kind = QueryKindId(d.kind_id);
+                Ok(Dep {
+                    kind,
+                    key: decode_key(kind, d.key_bytes)?,
+                })
             })
-            .collect::<Vec<_>>()
+            .collect::<PicanteResult<Vec<_>>>()?
             .into();
 
         let dyn_key = DynKey {
             kind,
-            key: Key::encode_facet(&rec.key)?,
+            key: KeyFactory::<K>::new().key(rec.key)?,
         };
 
         let value = Arc::new(rec.value) as ArcAny;
@@ -1165,7 +1180,7 @@ where
 /// Create an encode_incremental function pointer for a specific K, V
 fn make_encode_incremental<K, V>() -> EncodeIncrementalFn
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind_name, dyn_key, value, verified_at, changed_at, deps| {
@@ -1194,11 +1209,13 @@ where
 
         let dep_records = deps
             .iter()
-            .map(|d| DepRecord {
-                kind_id: d.kind.as_u32(),
-                key_bytes: d.key.bytes().to_vec(),
+            .map(|d| {
+                Ok(DepRecord {
+                    kind_id: d.kind.as_u32(),
+                    key_bytes: d.key.to_bytes()?.to_vec(),
+                })
             })
-            .collect();
+            .collect::<PicanteResult<Vec<_>>>()?;
 
         let rec = DerivedRecord::<K, V> {
             key: key.clone(),
@@ -1209,7 +1226,7 @@ where
         };
 
         // Peek::new is tiny and generic, encode_with_peek is non-generic
-        let key_bytes = encode_with_peek(Peek::new(&key), "derived key")?;
+        let key_bytes = dyn_key.key.to_bytes()?.to_vec();
         let value_bytes = encode_with_peek(Peek::new(&rec), "derived record")?;
 
         Ok((key_bytes, value_bytes))
@@ -1219,23 +1236,13 @@ where
 /// Create an apply_wal_entry function pointer for a specific K, V
 fn make_apply_wal_entry<K, V>() -> ApplyWalEntryFn
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
-    |kind, key_bytes, value_bytes| {
-        // SAFETY: K::SHAPE is the correct shape for K
-        let heap_value =
-            unsafe { decode_to_heap_value(&key_bytes, K::SHAPE, "derived key from WAL") }?;
-        let key: K = heap_value.materialize().map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "derived key from WAL (materialize)",
-                message: format!("{e:?}"),
-            })
-        })?;
-
+    |kind, key_bytes, value_bytes, decode_key| {
         let dyn_key = DynKey {
             kind,
-            key: Key::encode_facet(&key)?,
+            key: KeyFactory::<K>::new().key_from_bytes(key_bytes)?,
         };
 
         if let Some(value_bytes) = value_bytes {
@@ -1257,11 +1264,14 @@ where
             let deps: Arc<[Dep]> = rec
                 .deps
                 .into_iter()
-                .map(|d| Dep {
-                    kind: QueryKindId(d.kind_id),
-                    key: Key::from_bytes(d.key_bytes),
+                .map(|d| {
+                    let kind = QueryKindId(d.kind_id);
+                    Ok(Dep {
+                        kind,
+                        key: decode_key(kind, d.key_bytes)?,
+                    })
                 })
-                .collect::<Vec<_>>()
+                .collect::<PicanteResult<Vec<_>>>()?
                 .into();
 
             let erased_value = Arc::new(rec.value) as ArcAny;
@@ -1300,10 +1310,11 @@ where
 /// is compiled once instead of per (DB, K, V) combination.
 pub struct DerivedIngredient<DB, K, V>
 where
-    K: Clone + Eq + Hash,
+    K: Clone + Facet<'static>,
 {
     /// Non-generic core containing the type-erased state machine
     core: DerivedCore,
+    key_factory: KeyFactory<K>,
     /// Type information for K and V
     _phantom: PhantomData<(K, V)>,
     /// Type-erased compute function (trait object for dyn dispatch)
@@ -1315,7 +1326,7 @@ where
 impl<DB, K, V> DerivedIngredient<DB, K, V>
 where
     DB: IngredientLookup + Send + Sync + 'static,
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     /// Create a new derived ingredient.
@@ -1327,6 +1338,7 @@ where
         // Create typed adapter and erase to trait object
         let typed_compute = TypedCompute {
             f: Arc::new(compute),
+            key_factory: KeyFactory::new(),
             _phantom: PhantomData,
         };
         let compute_erased: Arc<dyn ErasedCompute<DB>> = Arc::new(typed_compute);
@@ -1346,6 +1358,7 @@ where
                 encode_incremental,
                 apply_wal_entry,
             ),
+            key_factory: KeyFactory::new(),
             _phantom: PhantomData,
             compute: compute_erased,
             eq_erased: eq_erased_for::<V>,
@@ -1369,7 +1382,7 @@ where
         // Encode key once (avoids re-encoding on every lookup)
         let dyn_key = DynKey {
             kind: self.core.kind,
-            key: Key::encode_facet(&key)?,
+            key: self.key_factory.key(key)?,
         };
 
         // Use the type-erased get helper (compiled once per DB, not per K/V)
@@ -1401,7 +1414,7 @@ where
         // Encode key once
         let dyn_key = DynKey {
             kind: self.core.kind,
-            key: Key::encode_facet(&key)?,
+            key: self.key_factory.key(key)?,
         };
 
         // Use the type-erased touch helper (compiled once per DB, not per K/V)
@@ -1434,7 +1447,7 @@ where
     pub fn cell_for_key(&self, key: &K) -> PicanteResult<Option<Arc<ErasedCell>>> {
         let dyn_key = DynKey {
             kind: self.core.kind,
-            key: Key::encode_facet(key)?,
+            key: self.key_factory.key(key.clone())?,
         };
         Ok(self.core.cells.read().get(&dyn_key).cloned())
     }
@@ -1445,7 +1458,7 @@ where
     pub fn insert_ready_record(&self, key: &K, record: ErasedReadyRecord) -> PicanteResult<()> {
         let dyn_key = DynKey {
             kind: self.core.kind,
-            key: Key::encode_facet(key)?,
+            key: self.key_factory.key(key.clone())?,
         };
         let cell = Arc::new(ErasedCell::new_ready(
             record.value,
@@ -1635,7 +1648,7 @@ struct DerivedRecord<K, V> {
 impl<DB, K, V> PersistableIngredient for DerivedIngredient<DB, K, V>
 where
     DB: IngredientLookup + Send + Sync + 'static,
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     fn kind(&self) -> QueryKindId {
@@ -1660,9 +1673,22 @@ where
         Box::pin(self.core.save_records_erased())
     }
 
+    fn key_from_bytes(&self, bytes: Vec<u8>) -> PicanteResult<Key> {
+        self.key_factory.key_from_bytes(bytes)
+    }
+
     fn load_records(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
+        let decode_key = |_kind: QueryKindId, bytes: Vec<u8>| Ok(Key::from_bytes(bytes));
+        self.core.load_records_erased(records, &decode_key)
+    }
+
+    fn load_records_with_key_decoder(
+        &self,
+        records: Vec<Vec<u8>>,
+        decode_key: &KeyDecodeFn<'_>,
+    ) -> PicanteResult<()> {
         // Delegate to type-erased core (compiled once, uses function pointers)
-        self.core.load_records_erased(records)
+        self.core.load_records_erased(records, decode_key)
     }
 
     fn restore_runtime_state<'a>(
@@ -1687,21 +1713,35 @@ where
         key: Vec<u8>,
         value: Option<Vec<u8>>,
     ) -> PicanteResult<()> {
+        let decode_key = |_kind: QueryKindId, bytes: Vec<u8>| Ok(Key::from_bytes(bytes));
+        self.core
+            .apply_wal_entry_erased(revision, key, value, &decode_key)
+    }
+
+    fn apply_wal_entry_with_key_decoder(
+        &self,
+        revision: u64,
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+        decode_key: &KeyDecodeFn<'_>,
+    ) -> PicanteResult<()> {
         // Delegate to type-erased core (compiled once, uses function pointers)
-        self.core.apply_wal_entry_erased(revision, key, value)
+        self.core
+            .apply_wal_entry_erased(revision, key, value, decode_key)
     }
 }
 
 impl<DB, K, V> DynIngredient<DB> for DerivedIngredient<DB, K, V>
 where
     DB: IngredientLookup + Send + Sync + 'static,
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     fn touch<'a>(&'a self, db: &'a DB, key: Key) -> BoxFuture<'a, PicanteResult<Touch>> {
-        // Use the type-erased touch directly to avoid decode/encode round-trip.
-        // The key is already encoded as bytes; we just wrap it in a DynKey.
-        // Returns the boxed future directly to avoid monomorphizing another async block.
+        let key = match self.key_factory.normalize_key(key) {
+            Ok(key) => key,
+            Err(e) => return Box::pin(async move { Err(e) }),
+        };
         let dyn_key = DynKey {
             kind: self.core.kind,
             key,
