@@ -21,7 +21,7 @@ round-trip and rewrite Fable source without losing anything.
 
 ```rust
 use facet::Facet;
-use fable::{FablePlan, apply};
+use fable::{FablePlan, FablePredicatePlan, apply};
 
 #[derive(Facet)]
 struct Config {
@@ -52,6 +52,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // One-shot convenience wrapper.
     apply(&mut cfg, r#"root.name = root.name + "-v2";"#)?;
 
+    let acceptable = FablePredicatePlan::<Config>::compile(
+        r#"root.max_retries <= 10 and root.threshold <= 1.0"#,
+    )?
+    .evaluate(&cfg)?;
+    assert!(acceptable);
+
     Ok(())
 }
 ```
@@ -68,6 +74,11 @@ Supported scalar types cover the full Rust numeric tower (`i8`–`i128`, `u8`–
 `f32`, `f64`), `bool`, `char`, `String`, and `Cow<str>`. Built-in intrinsics
 include `min`, `max`, `clamp`, `len`, `trim`, `contains`, `starts_with`, and
 `ends_with`.
+
+For read-only validation and filtering, `FablePredicatePlan<T>` compiles a
+source file whose final top-level statement is a boolean expression. Earlier
+statements can bind typed locals, so predicates can share the same lowering and
+Weavy execution path as mutating scripts and `in` to `out` transforms.
 
 ## License
 
