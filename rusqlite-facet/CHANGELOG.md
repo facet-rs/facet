@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-rc.3](https://github.com/facet-rs/facet/compare/rusqlite-facet-v2.0.0-rc.2...rusqlite-facet-v2.0.0-rc.3) - 2026-06-26
+
+### Other
+
+- updated the following local packages: facet-core, facet-reflect, facet
+
 ## [2.0.0-rc.2](https://github.com/facet-rs/facet/compare/rusqlite-facet-v2.0.0-rc.1...rusqlite-facet-v2.0.0-rc.2) - 2026-06-25
 
 ### Other

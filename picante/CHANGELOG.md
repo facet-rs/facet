@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-rc.3](https://github.com/facet-rs/facet/compare/picante-v3.0.0-rc.2...picante-v3.0.0-rc.3) - 2026-06-26
+
+### Other
+
+- slim runtime key lookups
+- use typed facet runtime keys
+- *(facet-hash)* add concrete FNV byte hashing
+- *(facet-hash)* bulk hash byte sequences
+- *(picante)* keep key hashing on existing byte hash
+- *(picante)* cheapen key hashing and dep recording
+- Speed up stable Picante dependency updates
+- Speed up Picante structural equality
+- Expand Picante runtime benchmarks
+
 ## [3.0.0-rc.2](https://github.com/facet-rs/facet/compare/picante-v3.0.0-rc.1...picante-v3.0.0-rc.2) - 2026-06-25
 
 ### Other

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-rc.3](https://github.com/facet-rs/facet/compare/phon-ir-v0.2.0-rc.2...phon-ir-v0.2.0-rc.3) - 2026-06-26
+
+### Other
+
+- Bundle Weavy IR analysis results
+- Share intrinsic child traversal in Weavy
+- Add PHON value IR analysis helpers
+- Make PHON canonical value lowering authoritative
+
 ## [0.2.0-rc.2](https://github.com/facet-rs/facet/compare/copypatch-v0.2.0-rc.1...copypatch-v0.2.0-rc.2) - 2026-06-25
 
 ### Other
