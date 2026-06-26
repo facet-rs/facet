@@ -149,8 +149,8 @@ where
     HashPlan::<T>::build()?.hash64(value)
 }
 
-/// Hash a raw byte sequence using the byte stream shape used by value-mode
-/// facet-hash byte plans.
+/// Hash a raw byte sequence into a caller-supplied [`Hasher`] using the byte
+/// stream shape used by value-mode facet-hash byte plans.
 pub fn hash_bytes_into<H>(bytes: &[u8], hasher: &mut H)
 where
     H: Hasher + ?Sized,
@@ -159,11 +159,80 @@ where
     hasher.write(bytes);
 }
 
-/// Hash a raw byte sequence with [`std::collections::hash_map::DefaultHasher`].
+/// Hash a raw byte sequence with facet-hash's default concrete 64-bit byte hash.
+#[must_use]
 pub fn hash_bytes64(bytes: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    hash_bytes_into(bytes, &mut hasher);
-    hasher.finish()
+    hash_bytes_fnv1a64(bytes)
+}
+
+/// Hash a raw byte sequence with 64-bit FNV-1a.
+#[must_use]
+pub fn hash_bytes_fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = Fnv1a64::new();
+    hash.write_len(bytes.len());
+    hash.write(bytes);
+    hash.finish()
+}
+
+/// A concrete 64-bit FNV-1a accumulator.
+///
+/// This is intentionally not a [`Hasher`] wrapper on the fast path: callers that
+/// know they want FNV can use inherent methods that the compiler can inline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fnv1a64 {
+    state: u64,
+}
+
+impl Fnv1a64 {
+    /// FNV-1a 64-bit offset basis.
+    pub const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+
+    /// FNV-1a 64-bit prime.
+    pub const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    /// Create an accumulator initialized to the standard FNV-1a offset basis.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: Self::OFFSET_BASIS,
+        }
+    }
+
+    /// Return the current accumulator state.
+    #[must_use]
+    pub const fn finish(self) -> u64 {
+        self.state
+    }
+
+    /// Feed raw bytes into the accumulator.
+    pub fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u8(byte);
+        }
+    }
+
+    /// Feed a byte into the accumulator.
+    pub fn write_u8(&mut self, byte: u8) {
+        self.state ^= u64::from(byte);
+        self.state = self.state.wrapping_mul(Self::PRIME);
+    }
+
+    /// Feed a length prefix into the accumulator using a stable little-endian
+    /// 64-bit representation.
+    pub fn write_len(&mut self, len: usize) {
+        self.write_u64(len as u64);
+    }
+
+    /// Feed a 64-bit word into the accumulator using little-endian bytes.
+    pub fn write_u64(&mut self, value: u64) {
+        self.write(&value.to_le_bytes());
+    }
+}
+
+impl Default for Fnv1a64 {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn run_error(err: RunError<ExecBlock, HashError>) -> HashError {

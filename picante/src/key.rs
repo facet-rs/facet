@@ -147,5 +147,5 @@ pub struct Dep {
 }
 
 fn stable_hash(bytes: &[u8]) -> u64 {
-    facet_hash::hash_bytes64(bytes)
+    facet_hash::hash_bytes_fnv1a64(bytes)
 }
