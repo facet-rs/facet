@@ -18,10 +18,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use facet_value::{VArray, VObject, VString, Value};
 use phon_ir::ir::{
-    CanonicalProgram, CanonicalValueProgram, IntrinsicDescriptor, LoweredEffectStats,
-    LoweredProgramStats, Program, ValueIntrinsic, ValueOp, ValueProgram, canonical_program,
-    canonical_value_lowered_effect_stats, canonical_value_lowered_intrinsic_counts,
-    canonical_value_lowered_stats, canonical_value_program,
+    CanonicalProgram, CanonicalValueProgram, LoweredAnalysis, Program, ValueIntrinsic, ValueOp,
+    ValueProgram, canonical_program, canonical_value_lowered_analysis, canonical_value_program,
 };
 use phon_schema::SchemaId;
 use phon_schema::bytes::Reader;
@@ -52,9 +50,7 @@ pub struct RunReport {
 pub struct IrRunReport {
     pub value: Value,
     pub run_stats: RunStats,
-    pub program_stats: LoweredProgramStats,
-    pub effect_stats: LoweredEffectStats,
-    pub intrinsic_counts: BTreeMap<IntrinsicDescriptor, usize>,
+    pub analysis: LoweredAnalysis,
 }
 
 /// Run a lowered program against `bytes`, producing the decoded value and
@@ -175,9 +171,7 @@ pub fn run_canonical_lowered_with_ir_report(
     Ok(IrRunReport {
         value,
         run_stats: stats,
-        program_stats: canonical_value_lowered_stats(lowered),
-        effect_stats: canonical_value_lowered_effect_stats(lowered),
-        intrinsic_counts: canonical_value_lowered_intrinsic_counts(lowered),
+        analysis: canonical_value_lowered_analysis(lowered),
     })
 }
 
@@ -568,7 +562,7 @@ impl Interp<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phon_ir::ir::Op;
+    use phon_ir::ir::{IntrinsicDescriptor, Op};
     use phon_schema::{Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, primitive_id};
 
     fn prim(p: Primitive) -> SchemaRef {
@@ -637,16 +631,16 @@ mod tests {
 
         assert_eq!(report.value, Value::from(7u8));
         assert_eq!(report.run_stats.block_call_count, 1);
-        assert_eq!(report.program_stats.root.op_count, 1);
-        assert_eq!(report.program_stats.root.block_call_count, 1);
-        assert_eq!(report.program_stats.blocks.op_count, 1);
-        assert_eq!(report.program_stats.total.op_count, 2);
-        assert_eq!(report.program_stats.block_count, 1);
-        assert_eq!(report.effect_stats.total.op_count, 2);
-        assert_eq!(report.effect_stats.total.input_advance_count, 1);
-        assert_eq!(report.effect_stats.total.side_channel_count, 1);
+        assert_eq!(report.analysis.program_stats.root.op_count, 1);
+        assert_eq!(report.analysis.program_stats.root.block_call_count, 1);
+        assert_eq!(report.analysis.program_stats.blocks.op_count, 1);
+        assert_eq!(report.analysis.program_stats.total.op_count, 2);
+        assert_eq!(report.analysis.program_stats.block_count, 1);
+        assert_eq!(report.analysis.effect_stats.total.op_count, 2);
+        assert_eq!(report.analysis.effect_stats.total.input_advance_count, 1);
+        assert_eq!(report.analysis.effect_stats.total.side_channel_count, 1);
         assert_eq!(
-            report.intrinsic_counts[&IntrinsicDescriptor {
+            report.analysis.intrinsic_counts[&IntrinsicDescriptor {
                 dialect: "phon.value",
                 name: "scalar",
             }],

@@ -1443,6 +1443,17 @@ where
     crate::ir::lowered_effect_stats_with_intrinsic_children(lowered)
 }
 
+/// Analyze canonical typed-memory IR and its block table.
+#[must_use]
+pub fn canonical_mem_lowered_analysis<BlockId>(
+    lowered: &CanonicalMemLowered<BlockId>,
+) -> crate::ir::LoweredAnalysis
+where
+    BlockId: Ord,
+{
+    crate::ir::lowered_analysis_with_intrinsic_children(lowered)
+}
+
 fn canonical_mem_op<BlockId>(op: MemOp<BlockId>) -> WeavyOp<BlockId, MemIntrinsic<BlockId>> {
     match op {
         MemOp::Scalar {
@@ -2463,6 +2474,13 @@ mod tests {
             }),
             Some(&1)
         );
+
+        let analysis = canonical_mem_lowered_analysis(&CanonicalMemLowered {
+            program: canonical.clone(),
+            blocks: BTreeMap::new(),
+        });
+        assert_eq!(analysis.program_stats.total, recursive);
+        assert_eq!(analysis.intrinsic_counts, counts);
 
         let roundtripped = mem_program_from_canonical(canonical).unwrap();
         let stats = mem_program_stats(&roundtripped);
