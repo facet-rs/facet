@@ -4716,6 +4716,7 @@ dependencies = [
  "facet-postcard",
  "facet-reflect",
  "futures-util",
+ "hashbrown 0.17.1",
  "im",
  "parking_lot",
  "picante-macros",

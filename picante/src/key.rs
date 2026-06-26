@@ -3,7 +3,9 @@
 use crate::error::{PicanteError, PicanteResult};
 use facet::Facet;
 use std::any::Any;
+use std::collections::hash_map::DefaultHasher;
 use std::fmt;
+use std::hash::BuildHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -53,8 +55,27 @@ pub struct Key {
 
 #[derive(Clone)]
 enum KeyRepr {
+    Inline(InlineKey, Arc<dyn ErasedKeyBytes>),
     Typed(Arc<dyn ErasedFacetKey>),
     Bytes(Arc<[u8]>),
+}
+
+#[derive(Clone, Eq, PartialEq)]
+enum InlineKey {
+    Unit,
+    Bool(bool),
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
+    U128(u128),
+    Usize(usize),
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    I128(i128),
+    Isize(isize),
 }
 
 trait ErasedFacetKey: Send + Sync {
@@ -67,6 +88,39 @@ trait ErasedFacetKey: Send + Sync {
 struct FacetKey<T> {
     value: Arc<T>,
     bytes: OnceLock<PicanteResult<Arc<[u8]>>>,
+}
+
+trait ErasedKeyBytes: Send + Sync {
+    fn bytes(&self) -> PicanteResult<&[u8]>;
+    fn to_bytes(&self) -> PicanteResult<Arc<[u8]>>;
+}
+
+struct InlineKeyBytes {
+    key: InlineKey,
+    bytes: OnceLock<PicanteResult<Arc<[u8]>>>,
+}
+
+impl InlineKeyBytes {
+    fn new(key: InlineKey, bytes: Option<Arc<[u8]>>) -> Self {
+        Self {
+            key,
+            bytes: once_lock_from_option(bytes.map(Ok)),
+        }
+    }
+}
+
+impl ErasedKeyBytes for InlineKeyBytes {
+    fn bytes(&self) -> PicanteResult<&[u8]> {
+        self.bytes
+            .get_or_init(|| self.key.to_bytes())
+            .as_ref()
+            .map(|bytes| bytes.as_ref())
+            .map_err(Clone::clone)
+    }
+
+    fn to_bytes(&self) -> PicanteResult<Arc<[u8]>> {
+        self.bytes.get_or_init(|| self.key.to_bytes()).clone()
+    }
 }
 
 impl<T> ErasedFacetKey for FacetKey<T>
@@ -143,15 +197,14 @@ impl Key {
     where
         T: Clone + Facet<'static> + Send + Sync + 'static,
     {
-        if let KeyRepr::Typed(typed) = &self.repr
-            && let Some(value) = typed
+        match &self.repr {
+            KeyRepr::Inline(inline, _) => inline.typed_value(),
+            KeyRepr::Typed(typed) => typed
                 .as_any()
                 .downcast_ref::<FacetKey<T>>()
-                .map(|key| (*key.value).clone())
-        {
-            return Some(value);
+                .map(|key| (*key.value).clone()),
+            KeyRepr::Bytes(_) => None,
         }
-        None
     }
 
     /// Decode a key using `facet-postcard`.
@@ -183,6 +236,7 @@ impl Key {
     /// Try to access the encoded bytes without panicking on materialization errors.
     pub fn try_bytes(&self) -> PicanteResult<&[u8]> {
         match &self.repr {
+            KeyRepr::Inline(_, bytes) => bytes.bytes(),
             KeyRepr::Typed(typed) => typed.bytes(),
             KeyRepr::Bytes(bytes) => Ok(bytes),
         }
@@ -191,6 +245,7 @@ impl Key {
     /// Return the persistent byte representation of this key.
     pub fn to_bytes(&self) -> PicanteResult<Arc<[u8]>> {
         match &self.repr {
+            KeyRepr::Inline(_, bytes) => bytes.to_bytes(),
             KeyRepr::Typed(typed) => typed.to_bytes(),
             KeyRepr::Bytes(bytes) => Ok(bytes.clone()),
         }
@@ -216,6 +271,7 @@ impl Key {
 impl PartialEq for Key {
     fn eq(&self, other: &Self) -> bool {
         match (&self.repr, &other.repr) {
+            (KeyRepr::Inline(left, _), KeyRepr::Inline(right, _)) => left == right,
             (KeyRepr::Typed(left), KeyRepr::Typed(right)) => left.eq_typed(&**right),
             (KeyRepr::Bytes(left), KeyRepr::Bytes(right)) => left == right,
             _ => match (self.to_bytes(), other.to_bytes()) {
@@ -237,6 +293,7 @@ impl Hash for Key {
 impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Key")
+            .field("repr", &self.repr.kind_name())
             .field("hash", &format_args!("{:016x}", self.hash))
             .finish()
     }
@@ -264,6 +321,238 @@ pub struct Dep {
 
 fn stable_hash(bytes: &[u8]) -> u64 {
     facet_hash::hash_bytes_fnv1a64(bytes)
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct KeyBuildHasher;
+
+#[derive(Default)]
+pub(crate) struct KeyHasher {
+    hash: u64,
+    fallback: Option<DefaultHasher>,
+}
+
+impl BuildHasher for KeyBuildHasher {
+    type Hasher = KeyHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        KeyHasher::default()
+    }
+}
+
+impl Hasher for KeyHasher {
+    fn finish(&self) -> u64 {
+        self.fallback
+            .as_ref()
+            .map_or(self.hash, DefaultHasher::finish)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.fallback
+            .get_or_insert_with(DefaultHasher::new)
+            .write(bytes);
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        if let Some(fallback) = &mut self.fallback {
+            fallback.write_u64(i);
+        } else {
+            self.hash = i;
+        }
+    }
+}
+
+pub(crate) type KeyMap<V> = im::HashMap<Key, V, KeyBuildHasher>;
+
+pub(crate) fn key_map<V>() -> KeyMap<V> {
+    im::HashMap::with_hasher(KeyBuildHasher)
+}
+
+pub(crate) type RuntimeKeyMap<K, V> = hashbrown::HashMap<RuntimeKey<K>, V, KeyBuildHasher>;
+
+pub(crate) fn runtime_key_map<K, V>() -> RuntimeKeyMap<K, V> {
+    hashbrown::HashMap::with_hasher(KeyBuildHasher)
+}
+
+pub(crate) struct RuntimeKey<T> {
+    value: T,
+    hash: u64,
+    bytes: Option<Arc<[u8]>>,
+}
+
+impl<T> RuntimeKey<T>
+where
+    T: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    fn new(value: T, hash: u64, bytes: Option<Arc<[u8]>>) -> Self {
+        Self { value, hash, bytes }
+    }
+
+    pub(crate) fn value(&self) -> &T {
+        &self.value
+    }
+
+    pub(crate) fn hash(&self) -> u64 {
+        self.hash
+    }
+
+    pub(crate) fn matches(&self, value: &T) -> bool {
+        eq_known_key_type(&self.value, value)
+            .unwrap_or_else(|| crate::facet_eq::facet_eq_direct(&self.value, value))
+    }
+
+    pub(crate) fn to_key(&self) -> Key {
+        if let Some(inline) = InlineKey::from_value(&self.value) {
+            return Key {
+                repr: KeyRepr::Inline(
+                    inline.clone(),
+                    Arc::new(InlineKeyBytes::new(inline, self.bytes.clone())),
+                ),
+                hash: self.hash,
+            };
+        }
+
+        Key {
+            repr: KeyRepr::Typed(Arc::new(FacetKey {
+                value: Arc::new(self.value.clone()),
+                bytes: once_lock_from_option(self.bytes.clone().map(Ok)),
+            })),
+            hash: self.hash,
+        }
+    }
+}
+
+impl<T> Clone for RuntimeKey<T>
+where
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+            hash: self.hash,
+            bytes: self.bytes.clone(),
+        }
+    }
+}
+
+impl<T> PartialEq for RuntimeKey<T>
+where
+    T: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && self.matches(&other.value)
+    }
+}
+
+impl<T> Eq for RuntimeKey<T> where T: Clone + Facet<'static> + Send + Sync + 'static {}
+
+impl<T> Hash for RuntimeKey<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
+    }
+}
+
+impl KeyRepr {
+    fn kind_name(&self) -> &'static str {
+        match self {
+            KeyRepr::Inline(_, _) => "inline",
+            KeyRepr::Typed(_) => "typed",
+            KeyRepr::Bytes(_) => "bytes",
+        }
+    }
+}
+
+impl InlineKey {
+    fn from_value<T>(value: &T) -> Option<Self>
+    where
+        T: 'static,
+    {
+        let value = value as &dyn Any;
+
+        macro_rules! copy_as {
+            ($ty:ty, $variant:ident) => {
+                if let Some(value) = value.downcast_ref::<$ty>() {
+                    return Some(Self::$variant(*value));
+                }
+            };
+        }
+
+        if value.is::<()>() {
+            return Some(Self::Unit);
+        }
+        copy_as!(bool, Bool);
+        copy_as!(u8, U8);
+        copy_as!(u16, U16);
+        copy_as!(u32, U32);
+        copy_as!(u64, U64);
+        copy_as!(u128, U128);
+        copy_as!(usize, Usize);
+        copy_as!(i8, I8);
+        copy_as!(i16, I16);
+        copy_as!(i32, I32);
+        copy_as!(i64, I64);
+        copy_as!(i128, I128);
+        copy_as!(isize, Isize);
+
+        None
+    }
+
+    fn typed_value<T>(&self) -> Option<T>
+    where
+        T: Clone + 'static,
+    {
+        macro_rules! clone_as {
+            ($value:expr) => {{
+                let value = $value;
+                return (value as &dyn Any).downcast_ref::<T>().cloned();
+            }};
+        }
+
+        match self {
+            Self::Unit => {
+                let value = ();
+                clone_as!(&value);
+            }
+            Self::Bool(value) => clone_as!(value),
+            Self::U8(value) => clone_as!(value),
+            Self::U16(value) => clone_as!(value),
+            Self::U32(value) => clone_as!(value),
+            Self::U64(value) => clone_as!(value),
+            Self::U128(value) => clone_as!(value),
+            Self::Usize(value) => clone_as!(value),
+            Self::I8(value) => clone_as!(value),
+            Self::I16(value) => clone_as!(value),
+            Self::I32(value) => clone_as!(value),
+            Self::I64(value) => clone_as!(value),
+            Self::I128(value) => clone_as!(value),
+            Self::Isize(value) => clone_as!(value),
+        }
+    }
+
+    fn to_bytes(&self) -> PicanteResult<Arc<[u8]>> {
+        macro_rules! encode {
+            ($value:expr) => {
+                encode_key_bytes($value)
+            };
+        }
+
+        match self {
+            Self::Unit => encode!(&()),
+            Self::Bool(value) => encode!(value),
+            Self::U8(value) => encode!(value),
+            Self::U16(value) => encode!(value),
+            Self::U32(value) => encode!(value),
+            Self::U64(value) => encode!(value),
+            Self::U128(value) => encode!(value),
+            Self::Usize(value) => encode!(value),
+            Self::I8(value) => encode!(value),
+            Self::I16(value) => encode!(value),
+            Self::I32(value) => encode!(value),
+            Self::I64(value) => encode!(value),
+            Self::I128(value) => encode!(value),
+            Self::Isize(value) => encode!(value),
+        }
+    }
 }
 
 fn key_hash_error(error: facet_hash::HashError) -> Arc<PicanteError> {
@@ -355,12 +644,60 @@ where
         }
     }
 
+    pub(crate) fn hash_parts(&self, value: &T) -> PicanteResult<(u64, Option<Arc<[u8]>>)> {
+        if let Some(plan) = &self.plan {
+            return Ok((plan.hash64(value).map_err(key_hash_error)?, None));
+        }
+
+        let bytes = encode_key_bytes(value)?;
+        Ok((stable_hash(&bytes), Some(bytes)))
+    }
+
+    pub(crate) fn hash_borrowed(&self, value: &T) -> PicanteResult<u64> {
+        self.hash_parts(value).map(|(hash, _)| hash)
+    }
+
+    pub(crate) fn runtime_key(&self, value: T) -> PicanteResult<RuntimeKey<T>>
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        let (hash, bytes) = self.hash_parts(&value)?;
+        Ok(self.runtime_key_from_parts(value, hash, bytes))
+    }
+
+    pub(crate) fn runtime_key_from_parts(
+        &self,
+        value: T,
+        hash: u64,
+        bytes: Option<Arc<[u8]>>,
+    ) -> RuntimeKey<T>
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        RuntimeKey::new(value, hash, bytes)
+    }
+
     /// Build a key from an owned value.
     pub fn key(&self, value: T) -> PicanteResult<Key>
     where
         T: Send + Sync + 'static,
     {
-        self.key_arc(Arc::new(value))
+        let (hash, bytes) = self.hash_parts(&value)?;
+        Ok(self.key_with_parts(value, hash, bytes))
+    }
+
+    pub(crate) fn key_with_parts(&self, value: T, hash: u64, bytes: Option<Arc<[u8]>>) -> Key
+    where
+        T: Send + Sync + 'static,
+    {
+        if let Some(inline) = InlineKey::from_value(&value) {
+            return Key {
+                repr: KeyRepr::Inline(inline.clone(), Arc::new(InlineKeyBytes::new(inline, bytes))),
+                hash,
+            };
+        }
+
+        self.key_arc_with_hash(Arc::new(value), hash, bytes)
     }
 
     /// Build a key from an already-shared value.
@@ -368,25 +705,30 @@ where
     where
         T: Send + Sync + 'static,
     {
-        let mut bytes = None;
-        let hash = if let Some(plan) = &self.plan {
-            plan.hash64(&*value).map_err(key_hash_error)?
-        } else {
-            let encoded = encode_key_bytes(&*value)?;
-            let hash = stable_hash(&encoded);
-            bytes = Some(encoded);
-            hash
-        };
+        let (hash, bytes) = self.hash_parts(&*value)?;
+        if let Some(inline) = InlineKey::from_value(&*value) {
+            return Ok(Key {
+                repr: KeyRepr::Inline(inline.clone(), Arc::new(InlineKeyBytes::new(inline, bytes))),
+                hash,
+            });
+        }
 
+        Ok(self.key_arc_with_hash(value, hash, bytes))
+    }
+
+    fn key_arc_with_hash(&self, value: Arc<T>, hash: u64, bytes: Option<Arc<[u8]>>) -> Key
+    where
+        T: Send + Sync + 'static,
+    {
         let key = FacetKey {
             value,
             bytes: once_lock_from_option(bytes.map(Ok)),
         };
 
-        Ok(Key {
+        Key {
             repr: KeyRepr::Typed(Arc::new(key)),
             hash,
-        })
+        }
     }
 
     /// Decode persistent key bytes and rehydrate them as a typed runtime key.
@@ -406,14 +748,7 @@ where
         } else {
             stable_hash(&bytes)
         };
-        let key = FacetKey {
-            value: Arc::new(value),
-            bytes: once_lock_from_option(Some(Ok(bytes))),
-        };
-        Ok(Key {
-            repr: KeyRepr::Typed(Arc::new(key)),
-            hash,
-        })
+        Ok(self.key_with_parts(value, hash, Some(bytes)))
     }
 
     /// Normalize an erased key into this factory's typed runtime representation.
@@ -422,6 +757,7 @@ where
         T: Clone + Send + Sync + 'static,
     {
         let already_typed = match &key.repr {
+            KeyRepr::Inline(_, _) => key.typed_value::<T>().is_some(),
             KeyRepr::Typed(typed) => typed.as_any().is::<FacetKey<T>>(),
             KeyRepr::Bytes(_) => false,
         };
@@ -492,5 +828,16 @@ mod tests {
     fn aggregate_key_hash_plan_falls_back_to_interpreted() {
         let plan = KeyHashPlan::<Vec<u8>>::build().unwrap();
         assert!(matches!(plan, KeyHashPlan::Interpreted(_)));
+    }
+
+    #[test]
+    fn inline_scalar_key_keeps_persistent_bytes_and_decode_parity() {
+        let inline = Key::from_facet(7u32).unwrap();
+        let encoded = Key::encode_facet(&7u32).unwrap();
+
+        assert_eq!(inline, encoded);
+        assert_eq!(inline.to_bytes().unwrap(), encoded.to_bytes().unwrap());
+        assert_eq!(inline.bytes(), encoded.bytes());
+        assert_eq!(inline.decode_facet::<u32>().unwrap(), 7);
     }
 }

@@ -2,59 +2,78 @@
 
 use crate::key::{Dep, DynKey};
 use crate::revision::Revision;
-use parking_lot::Mutex;
 use std::cell::RefCell;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::trace;
 
 // r[frame.task-local]
 // r[frame.cycle-stack]
 tokio::task_local! {
-    static ACTIVE_STACK: RefCell<Vec<ActiveFrameHandle>>;
+    static ACTIVE_STACK: RefCell<ActiveStack>;
 }
+
+static NEXT_FRAME_ID: AtomicU64 = AtomicU64::new(1);
 
 // r[frame.purpose]
 /// A cheap, clonable handle for the currently-running query frame.
 #[derive(Clone)]
-pub struct ActiveFrameHandle(Arc<ActiveFrameInner>);
-
-// r[frame.no-lock-await]
-struct ActiveFrameInner {
+pub struct ActiveFrameHandle {
+    id: u64,
     dyn_key: DynKey,
     started_at: Revision,
-    deps: Mutex<Vec<Dep>>,
+}
+
+struct ActiveStack {
+    frames: Vec<ActiveFrame>,
+}
+
+// r[frame.no-lock-await]
+struct ActiveFrame {
+    id: u64,
+    dyn_key: DynKey,
+    deps: Vec<Dep>,
 }
 
 impl ActiveFrameHandle {
     /// Create a new frame for `dyn_key`, recording dependencies at `started_at`.
     pub fn new(dyn_key: DynKey, started_at: Revision) -> Self {
-        Self(Arc::new(ActiveFrameInner {
+        Self {
+            id: NEXT_FRAME_ID.fetch_add(1, Ordering::Relaxed),
             dyn_key,
             started_at,
-            deps: Mutex::new(Vec::new()),
-        }))
+        }
     }
 
     /// The erased key for this frame.
     pub fn dyn_key(&self) -> &DynKey {
-        &self.0.dyn_key
+        &self.dyn_key
     }
 
     /// The revision at which the frame started.
     pub fn started_at(&self) -> Revision {
-        self.0.started_at
+        self.started_at
     }
 
     /// Drain the recorded dependency list.
     pub fn take_deps(&self) -> Vec<Dep> {
-        let mut deps = self.0.deps.lock();
-        std::mem::take(&mut *deps)
+        ACTIVE_STACK
+            .try_with(|stack| {
+                let mut stack = stack.borrow_mut();
+                stack
+                    .frames
+                    .iter_mut()
+                    .find(|frame| frame.id == self.id)
+                    .map(|frame| std::mem::take(&mut frame.deps))
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
     }
 }
 
 /// Guard that pops the active frame when dropped.
 pub struct FrameGuard {
+    id: u64,
     popped: bool,
 }
 
@@ -64,7 +83,16 @@ impl Drop for FrameGuard {
             return;
         }
         let _ = ACTIVE_STACK.try_with(|stack| {
-            let popped = stack.borrow_mut().pop();
+            let mut stack = stack.borrow_mut();
+            let popped = if stack.frames.last().is_some_and(|frame| frame.id == self.id) {
+                stack.frames.pop()
+            } else {
+                stack
+                    .frames
+                    .iter()
+                    .rposition(|frame| frame.id == self.id)
+                    .map(|index| stack.frames.remove(index))
+            };
             trace!(popped = popped.is_some(), "pop_frame");
         });
         self.popped = true;
@@ -80,7 +108,9 @@ where
     if ACTIVE_STACK.try_with(|_| ()).is_ok() {
         f().await
     } else {
-        ACTIVE_STACK.scope(RefCell::new(Vec::new()), f()).await
+        ACTIVE_STACK
+            .scope(RefCell::new(ActiveStack { frames: Vec::new() }), f())
+            .await
     }
 }
 
@@ -95,14 +125,16 @@ pub async fn scope_if_needed_boxed<R>(
     if ACTIVE_STACK.try_with(|_| ()).is_ok() {
         fut.await
     } else {
-        ACTIVE_STACK.scope(RefCell::new(Vec::new()), fut).await
+        ACTIVE_STACK
+            .scope(RefCell::new(ActiveStack { frames: Vec::new() }), fut)
+            .await
     }
 }
 
 /// Returns `true` if there is a current query frame.
 pub fn has_active_frame() -> bool {
     ACTIVE_STACK
-        .try_with(|stack| !stack.borrow().is_empty())
+        .try_with(|stack| !stack.borrow().frames.is_empty())
         .unwrap_or(false)
 }
 
@@ -116,12 +148,12 @@ pub fn record_dep(dep: Dep) {
 pub(crate) fn record_dep_if_active(dep: Dep) -> bool {
     ACTIVE_STACK
         .try_with(|stack| {
-            let stack = stack.borrow();
-            let Some(top) = stack.last() else {
+            let mut stack = stack.borrow_mut();
+            let Some(top) = stack.frames.last_mut() else {
                 return false;
             };
 
-            top.0.deps.lock().push(dep);
+            top.deps.push(dep);
             true
         })
         .unwrap_or(false)
@@ -130,12 +162,12 @@ pub(crate) fn record_dep_if_active(dep: Dep) -> bool {
 pub(crate) fn record_dep_with(make_dep: impl FnOnce() -> Dep) -> bool {
     ACTIVE_STACK
         .try_with(|stack| {
-            let stack = stack.borrow();
-            let Some(top) = stack.last() else {
+            let mut stack = stack.borrow_mut();
+            let Some(top) = stack.frames.last_mut() else {
                 return false;
             };
 
-            top.0.deps.lock().push(make_dep());
+            top.deps.push(make_dep());
             true
         })
         .unwrap_or(false)
@@ -144,12 +176,12 @@ pub(crate) fn record_dep_with(make_dep: impl FnOnce() -> Dep) -> bool {
 pub(crate) fn record_dep_result<E>(make_dep: impl FnOnce() -> Result<Dep, E>) -> Result<bool, E> {
     ACTIVE_STACK
         .try_with(|stack| {
-            let stack = stack.borrow();
-            let Some(top) = stack.last() else {
+            let mut stack = stack.borrow_mut();
+            let Some(top) = stack.frames.last_mut() else {
                 return Ok(false);
             };
 
-            top.0.deps.lock().push(make_dep()?);
+            top.deps.push(make_dep()?);
             Ok(true)
         })
         .unwrap_or(Ok(false))
@@ -162,11 +194,11 @@ pub fn find_cycle(requested: &DynKey) -> Option<Vec<DynKey>> {
     ACTIVE_STACK
         .try_with(|stack| {
             let stack = stack.borrow();
-            let has_cycle = stack.iter().any(|f| f.dyn_key() == requested);
+            let has_cycle = stack.frames.iter().any(|f| &f.dyn_key == requested);
             if !has_cycle {
                 return None;
             }
-            Some(stack.iter().map(|f| f.dyn_key().clone()).collect())
+            Some(stack.frames.iter().map(|f| f.dyn_key.clone()).collect())
         })
         .ok()
         .flatten()
@@ -174,8 +206,14 @@ pub fn find_cycle(requested: &DynKey) -> Option<Vec<DynKey>> {
 
 /// Push a frame onto the task-local stack. Requires an active scope (see [`scope_if_needed`]).
 pub fn push_frame(frame: ActiveFrameHandle) -> FrameGuard {
+    let id = frame.id;
     let _ = ACTIVE_STACK.try_with(|stack| {
-        stack.borrow_mut().push(frame);
+        let mut stack = stack.borrow_mut();
+        stack.frames.push(ActiveFrame {
+            id,
+            dyn_key: frame.dyn_key.clone(),
+            deps: Vec::new(),
+        });
     });
-    FrameGuard { popped: false }
+    FrameGuard { id, popped: false }
 }
