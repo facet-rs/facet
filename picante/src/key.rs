@@ -46,11 +46,12 @@ impl QueryKindId {
 /// Erased runtime key plus a deterministic cached hash for indexing/tracing.
 #[derive(Clone)]
 pub struct Key {
-    repr: Arc<KeyRepr>,
+    repr: KeyRepr,
     // r[key.hash]
     hash: u64,
 }
 
+#[derive(Clone)]
 enum KeyRepr {
     Typed(Arc<dyn ErasedFacetKey>),
     Bytes(Arc<[u8]>),
@@ -80,7 +81,11 @@ where
         other
             .as_any()
             .downcast_ref::<FacetKey<T>>()
-            .is_some_and(|other| crate::facet_eq::facet_eq_direct(&*self.value, &*other.value))
+            .is_some_and(|other| {
+                eq_known_key_type(&*self.value, &*other.value).unwrap_or_else(|| {
+                    crate::facet_eq::facet_eq_direct(&*self.value, &*other.value)
+                })
+            })
     }
 
     fn bytes(&self) -> PicanteResult<&[u8]> {
@@ -134,7 +139,7 @@ impl Key {
             stable_hash(&bytes)
         };
         Ok(Self {
-            repr: Arc::new(KeyRepr::Bytes(bytes.into())),
+            repr: KeyRepr::Bytes(bytes.into()),
             hash,
         })
     }
@@ -143,7 +148,7 @@ impl Key {
     where
         T: Clone + Facet<'static> + Send + Sync + 'static,
     {
-        if let KeyRepr::Typed(typed) = &*self.repr
+        if let KeyRepr::Typed(typed) = &self.repr
             && let Some(value) = typed
                 .as_any()
                 .downcast_ref::<FacetKey<T>>()
@@ -169,7 +174,7 @@ impl Key {
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         let hash = stable_hash(&bytes);
         Self {
-            repr: Arc::new(KeyRepr::Bytes(bytes.into())),
+            repr: KeyRepr::Bytes(bytes.into()),
             hash,
         }
     }
@@ -182,7 +187,7 @@ impl Key {
 
     /// Try to access the encoded bytes without panicking on materialization errors.
     pub fn try_bytes(&self) -> PicanteResult<&[u8]> {
-        match &*self.repr {
+        match &self.repr {
             KeyRepr::Typed(typed) => typed.bytes(),
             KeyRepr::Bytes(bytes) => Ok(bytes),
         }
@@ -190,7 +195,7 @@ impl Key {
 
     /// Return the persistent byte representation of this key.
     pub fn to_bytes(&self) -> PicanteResult<Arc<[u8]>> {
-        match &*self.repr {
+        match &self.repr {
             KeyRepr::Typed(typed) => typed.to_bytes(),
             KeyRepr::Bytes(bytes) => Ok(bytes.clone()),
         }
@@ -215,7 +220,7 @@ impl Key {
 // r[key.equality]
 impl PartialEq for Key {
     fn eq(&self, other: &Self) -> bool {
-        match (&*self.repr, &*other.repr) {
+        match (&self.repr, &other.repr) {
             (KeyRepr::Typed(left), KeyRepr::Typed(right)) => left.eq_typed(&**right),
             (KeyRepr::Bytes(left), KeyRepr::Bytes(right)) => left == right,
             _ => match (self.to_bytes(), other.to_bytes()) {
@@ -264,6 +269,37 @@ pub struct Dep {
 
 fn stable_hash(bytes: &[u8]) -> u64 {
     facet_hash::hash_bytes_fnv1a64(bytes)
+}
+
+fn eq_known_key_type<T: 'static>(left: &T, right: &T) -> Option<bool> {
+    let left = left as &dyn Any;
+    let right = right as &dyn Any;
+
+    macro_rules! eq_as {
+        ($ty:ty) => {
+            if let Some(left) = left.downcast_ref::<$ty>() {
+                return Some(left == right.downcast_ref::<$ty>()?);
+            }
+        };
+    }
+
+    eq_as!(u32);
+    eq_as!(());
+    eq_as!(String);
+    eq_as!(u64);
+    eq_as!(bool);
+    eq_as!(u16);
+    eq_as!(u8);
+    eq_as!(u128);
+    eq_as!(usize);
+    eq_as!(i32);
+    eq_as!(i64);
+    eq_as!(i16);
+    eq_as!(i8);
+    eq_as!(i128);
+    eq_as!(isize);
+
+    None
 }
 
 /// Reusable key builder for one Facet key type.
@@ -316,7 +352,7 @@ where
         };
 
         Ok(Key {
-            repr: Arc::new(KeyRepr::Typed(Arc::new(key))),
+            repr: KeyRepr::Typed(Arc::new(key)),
             hash,
         })
     }
@@ -348,7 +384,7 @@ where
             bytes: once_lock_from_option(Some(Ok(bytes))),
         };
         Ok(Key {
-            repr: Arc::new(KeyRepr::Typed(Arc::new(key))),
+            repr: KeyRepr::Typed(Arc::new(key)),
             hash,
         })
     }
@@ -358,7 +394,7 @@ where
     where
         T: Clone + Send + Sync + 'static,
     {
-        let already_typed = match &*key.repr {
+        let already_typed = match &key.repr {
             KeyRepr::Typed(typed) => typed.as_any().is::<FacetKey<T>>(),
             KeyRepr::Bytes(_) => false,
         };

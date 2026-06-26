@@ -155,7 +155,7 @@ trait ErasedCompute<DB>: Send + Sync {
 /// The state machine in DerivedCore stays monomorphic by calling through the trait.
 struct TypedCompute<DB, K, V> {
     f: Arc<ComputeFn<DB, K, V>>,
-    key_factory: KeyFactory<K>,
+    key_factory: Arc<KeyFactory<K>>,
     _phantom: PhantomData<(K, V)>,
 }
 
@@ -202,7 +202,7 @@ where
 struct DerivedCore {
     kind: QueryKindId,
     kind_name: &'static str,
-    cells: RwLock<im::HashMap<DynKey, Arc<ErasedCell>>>,
+    cells: RwLock<im::HashMap<Key, Arc<ErasedCell>>>,
     // Type-erased persistence callbacks (function pointers, not closures)
     encode_record: EncodeRecordFn,
     decode_record: DecodeRecordFn,
@@ -274,16 +274,16 @@ impl DerivedCore {
         // Get or create the cell for this key
         let cell = {
             // Fast path: read lock
-            if let Some(cell) = self.cells.read().get(&requested) {
+            if let Some(cell) = self.cells.read().get(&requested.key) {
                 cell.clone()
             } else {
                 // Slow path: write lock, double-check after acquiring lock
                 let mut cells = self.cells.write();
-                if let Some(cell) = cells.get(&requested) {
+                if let Some(cell) = cells.get(&requested.key) {
                     cell.clone()
                 } else {
                     let cell = Arc::new(ErasedCell::new());
-                    cells.insert(requested.clone(), cell.clone());
+                    cells.insert(requested.key.clone(), cell.clone());
                     cell
                 }
             }
@@ -816,13 +816,13 @@ impl DerivedCore {
     /// Save all records using type-erased callbacks
     async fn save_records_erased(&self) -> PicanteResult<Vec<Vec<u8>>> {
         // Collect snapshot under lock, then release before async work
-        let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
+        let snapshot: Vec<(Key, Arc<ErasedCell>)> = {
             let cells = self.cells.read();
             cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
         let mut records = Vec::with_capacity(snapshot.len());
 
-        for (dyn_key, cell) in snapshot {
+        for (key, cell) in snapshot {
             let state = cell.state.lock().await;
             let ErasedState::Ready {
                 value,
@@ -834,6 +834,10 @@ impl DerivedCore {
                 continue;
             };
 
+            let dyn_key = DynKey {
+                kind: self.kind,
+                key,
+            };
             // Call through function pointer (monomorphized once per K,V at construction)
             let bytes = (self.encode_record)(
                 self.kind_name,
@@ -870,7 +874,7 @@ impl DerivedCore {
                 data.deps,
             ));
             let mut cells = self.cells.write();
-            cells.insert(data.dyn_key, cell);
+            cells.insert(data.dyn_key.key, cell);
         }
         Ok(())
     }
@@ -881,13 +885,13 @@ impl DerivedCore {
         since_revision: u64,
     ) -> PicanteResult<Vec<(u64, Vec<u8>, Option<Vec<u8>>)>> {
         // Collect snapshot under lock, then release before async work
-        let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
+        let snapshot: Vec<(Key, Arc<ErasedCell>)> = {
             let cells = self.cells.read();
             cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
         let mut changes = Vec::new();
 
-        for (dyn_key, cell) in snapshot {
+        for (key, cell) in snapshot {
             let state = cell.state.lock().await;
             let ErasedState::Ready {
                 value,
@@ -904,6 +908,10 @@ impl DerivedCore {
                 continue;
             }
 
+            let dyn_key = DynKey {
+                kind: self.kind,
+                key,
+            };
             // Call through function pointer
             let (key_bytes, value_bytes) = (self.encode_incremental)(
                 self.kind_name,
@@ -940,9 +948,9 @@ impl DerivedCore {
 
         let mut cells = self.cells.write();
         if let Some(cell) = result.cell {
-            cells.insert(result.dyn_key, cell);
+            cells.insert(result.dyn_key.key, cell);
         } else {
-            cells.remove(&result.dyn_key);
+            cells.remove(&result.dyn_key.key);
         }
 
         Ok(())
@@ -957,17 +965,21 @@ impl DerivedCore {
         runtime: &crate::runtime::Runtime,
     ) -> PicanteResult<()> {
         // Collect snapshot under lock, then release before async work
-        let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
+        let snapshot: Vec<(Key, Arc<ErasedCell>)> = {
             let cells = self.cells.read();
             cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
 
-        for (dyn_key, cell) in snapshot {
+        for (key, cell) in snapshot {
             let state = cell.state.lock().await;
             let ErasedState::Ready { deps, .. } = &*state else {
                 continue;
             };
 
+            let dyn_key = DynKey {
+                kind: self.kind,
+                key,
+            };
             runtime.update_query_deps(dyn_key, deps.clone());
         }
 
@@ -1039,14 +1051,14 @@ impl DerivedCore {
     /// `Arc<dyn Any>` (bumping refcount, not actually cloning V).
     async fn snapshot_cells_deep_inner(&self) -> im::HashMap<DynKey, Arc<ErasedCell>> {
         // Collect all cells under lock, then release before async work
-        let cells_snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
+        let cells_snapshot: Vec<(Key, Arc<ErasedCell>)> = {
             let cells = self.cells.read();
             cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
 
         let mut result = im::HashMap::new();
 
-        for (dyn_key, cell) in cells_snapshot {
+        for (key, cell) in cells_snapshot {
             let state = cell.state.lock().await;
             if let ErasedState::Ready {
                 value,
@@ -1064,6 +1076,10 @@ impl DerivedCore {
                     *changed_at,
                     deps.clone(),
                 ));
+                let dyn_key = DynKey {
+                    kind: self.kind,
+                    key,
+                };
                 result.insert(dyn_key, new_cell);
             }
         }
@@ -1314,7 +1330,7 @@ where
 {
     /// Non-generic core containing the type-erased state machine
     core: DerivedCore,
-    key_factory: KeyFactory<K>,
+    key_factory: Arc<KeyFactory<K>>,
     /// Type information for K and V
     _phantom: PhantomData<(K, V)>,
     /// Type-erased compute function (trait object for dyn dispatch)
@@ -1335,10 +1351,11 @@ where
         kind_name: &'static str,
         compute: impl for<'db> Fn(&'db DB, K) -> ComputeFuture<'db, V> + Send + Sync + 'static,
     ) -> Self {
+        let key_factory = Arc::new(KeyFactory::new());
         // Create typed adapter and erase to trait object
         let typed_compute = TypedCompute {
             f: Arc::new(compute),
-            key_factory: KeyFactory::new(),
+            key_factory: key_factory.clone(),
             _phantom: PhantomData,
         };
         let compute_erased: Arc<dyn ErasedCompute<DB>> = Arc::new(typed_compute);
@@ -1358,7 +1375,7 @@ where
                 encode_incremental,
                 apply_wal_entry,
             ),
-            key_factory: KeyFactory::new(),
+            key_factory,
             _phantom: PhantomData,
             compute: compute_erased,
             eq_erased: eq_erased_for::<V>,
@@ -1428,38 +1445,48 @@ where
 
     /// Create a snapshot of this ingredient's cells.
     ///
-    /// This is an O(1) operation due to structural sharing in `im::HashMap`.
-    /// The returned map shares structure with the live ingredient.
+    /// The returned map contains the erased runtime key shape expected by debug
+    /// and snapshot callers; the live per-kind cell map stores bare `Key`s.
     pub fn snapshot(&self) -> im::HashMap<DynKey, Arc<ErasedCell>> {
-        self.core.cells.read().clone()
+        self.core
+            .cells
+            .read()
+            .iter()
+            .map(|(key, cell)| {
+                (
+                    DynKey {
+                        kind: self.core.kind,
+                        key: key.clone(),
+                    },
+                    cell.clone(),
+                )
+            })
+            .collect()
     }
 
     /// Load cells from a snapshot into this ingredient.
     ///
     /// This is used when creating database snapshots. Existing cells are replaced.
     pub fn load_cells(&self, cells: im::HashMap<DynKey, Arc<ErasedCell>>) {
-        *self.core.cells.write() = cells;
+        *self.core.cells.write() = cells
+            .into_iter()
+            .map(|(dyn_key, cell)| (dyn_key.key, cell))
+            .collect();
     }
 
     /// Look up the raw (type-erased) cell for `key`.
     ///
     /// This is intended for cache promotion across runtimes/snapshots.
     pub fn cell_for_key(&self, key: &K) -> PicanteResult<Option<Arc<ErasedCell>>> {
-        let dyn_key = DynKey {
-            kind: self.core.kind,
-            key: self.key_factory.key(key.clone())?,
-        };
-        Ok(self.core.cells.read().get(&dyn_key).cloned())
+        let key = self.key_factory.key(key.clone())?;
+        Ok(self.core.cells.read().get(&key).cloned())
     }
 
     /// Insert a ready cell record into this ingredient (overwriting any existing cell).
     ///
     /// This is intended for cache promotion (e.g. from a snapshot back into a live DB).
     pub fn insert_ready_record(&self, key: &K, record: ErasedReadyRecord) -> PicanteResult<()> {
-        let dyn_key = DynKey {
-            kind: self.core.kind,
-            key: self.key_factory.key(key.clone())?,
-        };
+        let key = self.key_factory.key(key.clone())?;
         let cell = Arc::new(ErasedCell::new_ready(
             record.value,
             record.verified_at,
@@ -1468,7 +1495,7 @@ where
         ));
 
         let mut cells = self.core.cells.write();
-        cells.insert(dyn_key, cell);
+        cells.insert(key, cell);
         Ok(())
     }
 

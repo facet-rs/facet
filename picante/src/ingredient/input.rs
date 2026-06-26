@@ -56,7 +56,7 @@ type ApplyInputWalEntryFn = fn(
 struct InputCore {
     kind: QueryKindId,
     kind_name: &'static str,
-    entries: RwLock<im::HashMap<DynKey, ErasedInputEntry>>,
+    entries: RwLock<im::HashMap<Key, ErasedInputEntry>>,
     // Type-erased persistence callbacks
     encode_record: EncodeInputRecordFn,
     decode_record: DecodeInputRecordFn,
@@ -91,8 +91,12 @@ impl InputCore {
     fn save_records_erased(&self) -> PicanteResult<Vec<Vec<u8>>> {
         let entries = self.entries.read();
         let mut records = Vec::with_capacity(entries.len());
-        for (dyn_key, entry) in entries.iter() {
-            let bytes = (self.encode_record)(dyn_key, entry.value.as_ref(), entry.changed_at)?;
+        for (key, entry) in entries.iter() {
+            let dyn_key = DynKey {
+                kind: self.kind,
+                key: key.clone(),
+            };
+            let bytes = (self.encode_record)(&dyn_key, entry.value.as_ref(), entry.changed_at)?;
             records.push(bytes);
         }
         trace!(
@@ -108,7 +112,7 @@ impl InputCore {
         for bytes in records {
             // Pass owned Vec<u8> (callback needs 'static for deserialization)
             let (dyn_key, entry) = (self.decode_record)(self.kind, bytes)?;
-            entries.insert(dyn_key, entry);
+            entries.insert(dyn_key.key, entry);
         }
         Ok(())
     }
@@ -121,10 +125,14 @@ impl InputCore {
         let entries = self.entries.read();
         let mut changes = Vec::new();
 
-        for (dyn_key, entry) in entries.iter() {
+        for (key, entry) in entries.iter() {
             if entry.changed_at.0 > since_revision {
+                let dyn_key = DynKey {
+                    kind: self.kind,
+                    key: key.clone(),
+                };
                 let (key_bytes, value_bytes) =
-                    (self.encode_incremental)(dyn_key, entry.value.as_ref())?;
+                    (self.encode_incremental)(&dyn_key, entry.value.as_ref())?;
                 changes.push((entry.changed_at.0, key_bytes, value_bytes));
             }
         }
@@ -151,7 +159,7 @@ impl InputCore {
         entry.changed_at = Revision(revision);
 
         let mut entries = self.entries.write();
-        entries.insert(dyn_key, entry);
+        entries.insert(dyn_key.key, entry);
 
         Ok(())
     }
@@ -319,7 +327,7 @@ pub struct InputEntry<V> {
 /// lock-free `DashMap`). The trade-off favors snapshot efficiency for database
 /// state capture and time-travel debugging scenarios.
 ///
-/// Storage is type-erased internally (using `DynKey` and `Arc<dyn Any>`) to enable
+/// Storage is type-erased internally (using `Key` and `Arc<dyn Any>`) to enable
 /// persistence code to be compiled once instead of per (K, V) combination.
 pub struct InputIngredient<K, V>
 where
@@ -372,19 +380,15 @@ where
     pub fn set<DB: HasRuntime>(&self, db: &DB, key: K, value: V) -> Revision {
         let _span = tracing::debug_span!("set", kind = self.core.kind.0).entered();
 
-        // Encode key for storage
-        let dyn_key = match self.key_factory.key(key.clone()) {
-            Ok(encoded) => DynKey {
-                kind: self.core.kind,
-                key: encoded,
-            },
+        let encoded_key = match self.key_factory.key(key.clone()) {
+            Ok(encoded) => encoded,
             Err(_) => return Revision(0), // Can't encode key, no-op
         };
 
         // Check if value is unchanged (read lock)
         {
             let entries = self.core.entries.read();
-            if let Some(existing) = entries.get(&dyn_key)
+            if let Some(existing) = entries.get(&encoded_key)
                 && let Some(existing_value) = existing.value.as_ref()
                 && let Some(typed_existing) = existing_value.downcast_ref::<V>()
                 && crate::facet_eq::facet_eq_direct(typed_existing, &value)
@@ -407,7 +411,7 @@ where
         {
             let mut entries = self.core.entries.write();
             entries.insert(
-                dyn_key.clone(),
+                encoded_key.clone(),
                 ErasedInputEntry {
                     value: Some(Arc::new(value) as ArcAny),
                     changed_at: rev,
@@ -415,7 +419,7 @@ where
             );
         }
         db.runtime()
-            .notify_input_set(rev, self.core.kind, dyn_key.key);
+            .notify_input_set(rev, self.core.kind, encoded_key);
         rev
     }
 
@@ -426,19 +430,15 @@ where
     pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision {
         let _span = tracing::debug_span!("remove", kind = self.core.kind.0).entered();
 
-        // Encode key for storage
-        let dyn_key = match self.key_factory.key(key.clone()) {
-            Ok(encoded) => DynKey {
-                kind: self.core.kind,
-                key: encoded,
-            },
+        let encoded_key = match self.key_factory.key(key.clone()) {
+            Ok(encoded) => encoded,
             Err(_) => return Revision(0), // Can't encode key, no-op
         };
 
         // Check current state (read lock)
         {
             let entries = self.core.entries.read();
-            match entries.get(&dyn_key) {
+            match entries.get(&encoded_key) {
                 Some(existing) if existing.value.is_none() => {
                     trace!(
                         kind = self.core.kind.0,
@@ -462,7 +462,7 @@ where
         {
             let mut entries = self.core.entries.write();
             entries.insert(
-                dyn_key.clone(),
+                encoded_key.clone(),
                 ErasedInputEntry {
                     value: None,
                     changed_at: rev,
@@ -470,7 +470,7 @@ where
             );
         }
         db.runtime()
-            .notify_input_removed(rev, self.core.kind, dyn_key.key);
+            .notify_input_removed(rev, self.core.kind, encoded_key);
         rev
     }
 
@@ -483,20 +483,16 @@ where
 
         let encoded_key = self.key_factory.key(key.clone())?;
         let key_hash = encoded_key.hash();
-        let dyn_key = DynKey {
-            kind: self.core.kind,
-            key: encoded_key.clone(),
-        };
 
         if frame::record_dep_if_active(Dep {
             kind: self.core.kind,
-            key: encoded_key,
+            key: encoded_key.clone(),
         }) {
             trace!(kind = self.core.kind.0, key_hash = %format!("{:016x}", key_hash), "input dep");
         }
 
         let entries = self.core.entries.read();
-        Ok(entries.get(&dyn_key).and_then(|e| {
+        Ok(entries.get(&encoded_key).and_then(|e| {
             e.value
                 .as_ref()
                 .and_then(|v| v.downcast_ref::<V>())
@@ -506,12 +502,9 @@ where
 
     /// The last revision at which this input was changed.
     pub fn changed_at(&self, key: &K) -> Option<Revision> {
-        let dyn_key = DynKey {
-            kind: self.core.kind,
-            key: self.key_factory.key(key.clone()).ok()?,
-        };
+        let encoded_key = self.key_factory.key(key.clone()).ok()?;
         let entries = self.core.entries.read();
-        entries.get(&dyn_key).map(|e| e.changed_at)
+        entries.get(&encoded_key).map(|e| e.changed_at)
     }
 
     // r[snapshot.input]
@@ -527,8 +520,8 @@ where
         let entries = self.core.entries.read();
         entries
             .iter()
-            .filter_map(|(dyn_key, entry)| {
-                let key: K = dyn_key.key.decode_facet().ok()?;
+            .filter_map(|(encoded_key, entry)| {
+                let key: K = encoded_key.decode_facet().ok()?;
                 let value = entry
                     .value
                     .as_ref()
@@ -573,13 +566,9 @@ where
             let mut erased_entries = core.entries.write();
             for (key, entry) in entries {
                 if let Ok(encoded_key) = key_factory.key(key) {
-                    let dyn_key = DynKey {
-                        kind,
-                        key: encoded_key,
-                    };
                     let erased_value = entry.value.map(|v| Arc::new(v) as ArcAny);
                     erased_entries.insert(
-                        dyn_key,
+                        encoded_key,
                         ErasedInputEntry {
                             value: erased_value,
                             changed_at: entry.changed_at,
@@ -668,13 +657,9 @@ where
     fn touch<'a>(&'a self, _db: &'a DB, key: Key) -> BoxFuture<'a, PicanteResult<Touch>> {
         Box::pin(async move {
             let key = self.key_factory.normalize_key(key)?;
-            let dyn_key = DynKey {
-                kind: self.core.kind,
-                key,
-            };
             let entries = self.core.entries.read();
             let changed_at = entries
-                .get(&dyn_key)
+                .get(&key)
                 .map(|e| e.changed_at)
                 .unwrap_or(Revision(0));
             Ok(Touch { changed_at })
