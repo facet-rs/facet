@@ -193,7 +193,16 @@ impl Runtime {
     // r[runtime.update-deps]
     /// Update the dependency edges for `query`.
     pub fn update_query_deps(&self, query: DynKey, deps: Arc<[Dep]>) {
+        if let Some(old) = self.deps_by_query.get(&query)
+            && old.as_ref() == deps.as_ref()
+        {
+            return;
+        }
+
         let old = self.deps_by_query.insert(query.clone(), deps.clone());
+        if old.as_deref() == Some(deps.as_ref()) {
+            return;
+        }
 
         let new_set: HashSet<Dep> = deps.iter().cloned().collect();
 
