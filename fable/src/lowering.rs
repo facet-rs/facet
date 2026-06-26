@@ -40,11 +40,30 @@ pub struct FableTransformPlan<Input, Output> {
     _marker: PhantomData<fn(&Input) -> Output>,
 }
 
+/// A reusable lowered Fable predicate for `T`.
+///
+/// Predicate plans expose a read-only `root` and return the final boolean
+/// expression in the source. Build once with [`FablePredicatePlan::compile`],
+/// then evaluate repeatedly against values of the same Facet-reflected type.
+pub struct FablePredicatePlan<T> {
+    plan: FableRootPredicatePlan,
+    _marker: PhantomData<fn(&T) -> bool>,
+}
+
 /// A reusable lowered Fable program over explicitly named roots.
 ///
 /// This is the lower-level form used by transform/debug-shell style callers
 /// that expose more than one typed root to a script.
 pub struct FableRootPlan {
+    lowered: FableLowered,
+    roots: Box<[FableRootSpec]>,
+}
+
+/// A reusable lowered Fable predicate over explicitly named roots.
+///
+/// All roots must be read-only. The final top-level statement must be a boolean
+/// expression; earlier statements may bind typed locals.
+pub struct FableRootPredicatePlan {
     lowered: FableLowered,
     roots: Box<[FableRootSpec]>,
 }
@@ -537,6 +556,42 @@ where
     }
 }
 
+impl<T> FablePredicatePlan<T>
+where
+    T: Facet<'static>,
+{
+    /// Parse and lower a read-only Fable predicate for values of type `T`.
+    pub fn compile(src: &str) -> Result<Self, FableError> {
+        Self::compile_with_intrinsics(src, &FableIntrinsics::standard())
+    }
+
+    /// Parse and lower a read-only Fable predicate with an explicit host-call registry.
+    pub fn compile_with_intrinsics(
+        src: &str,
+        intrinsics: &FableIntrinsics,
+    ) -> Result<Self, FableError> {
+        let roots = [FableRootSpec::read_only::<T>("root")];
+        let plan = FableRootPredicatePlan::compile_with_intrinsics(src, &roots, intrinsics)?;
+
+        Ok(Self {
+            plan,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Run this predicate against `value`.
+    pub fn evaluate(&self, value: &T) -> Result<bool, FableError> {
+        let mut roots = [FableRootValue::read_only("root", value)];
+        self.plan.evaluate(&mut roots)
+    }
+
+    /// Run this predicate and return Weavy execution counters.
+    pub fn evaluate_with_stats(&self, value: &T) -> Result<(bool, RunStats), FableError> {
+        let mut roots = [FableRootValue::read_only("root", value)];
+        self.plan.evaluate_with_stats(&mut roots)
+    }
+}
+
 impl FableRootPlan {
     /// Parse and lower Fable source for an explicit root set.
     pub fn compile(src: &str, roots: &[FableRootSpec]) -> Result<Self, FableError> {
@@ -577,6 +632,7 @@ impl FableRootPlan {
         let mut interp = FableInterp {
             roots: runtime_roots,
             locals: LocalSlots::default(),
+            predicate_result: None,
         };
         weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)
     }
@@ -590,39 +646,87 @@ impl FableRootPlan {
         let mut interp = FableInterp {
             roots: runtime_roots,
             locals: LocalSlots::default(),
+            predicate_result: None,
         };
         weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)
     }
 
     fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
-        validate_runtime_roots(values)?;
+        runtime_roots(&self.roots, values)
+    }
+}
 
-        let mut roots = Vec::with_capacity(self.roots.len());
-        for spec in self.roots.iter() {
-            let value = values
-                .iter()
-                .find(|value| value.name == spec.name)
-                .ok_or_else(|| FableError::MissingRoot {
-                    name: spec.name.to_owned(),
-                })?;
-            if value.shape != spec.shape {
-                return Err(FableError::RootShapeMismatch {
-                    name: spec.name.to_owned(),
-                    expected: spec.shape,
-                    actual: value.shape,
-                });
-            }
-            if spec.access == FableRootAccess::ReadWrite && value.ptr.as_mut().is_none() {
-                return Err(FableError::ReadOnlyRoot {
-                    name: spec.name.to_owned(),
-                });
-            }
-            roots.push(RuntimeRoot {
-                name: spec.name,
-                ptr: value.ptr,
+impl FableRootPredicatePlan {
+    /// Parse and lower a Fable predicate for an explicit root set.
+    pub fn compile(src: &str, roots: &[FableRootSpec]) -> Result<Self, FableError> {
+        Self::compile_with_intrinsics(src, roots, &FableIntrinsics::standard())
+    }
+
+    /// Parse and lower a Fable predicate with explicit roots and host intrinsics.
+    pub fn compile_with_intrinsics(
+        src: &str,
+        roots: &[FableRootSpec],
+        intrinsics: &FableIntrinsics,
+    ) -> Result<Self, FableError> {
+        validate_root_specs(roots)?;
+        validate_predicate_root_specs(roots)?;
+
+        let parsed = parse(src);
+        if !parsed.errors().is_empty() {
+            return Err(FableError::Parse {
+                errors: parsed.errors().to_vec(),
             });
         }
-        Ok(roots)
+
+        let root = ast::Root::cast(parsed.syntax().clone()).ok_or(FableError::MalformedSyntax {
+            reason: "parse root was not a Fable root node",
+        })?;
+        let mut lowerer = Lowerer::new(roots, intrinsics);
+        let program = lowerer.lower_predicate_root(&root)?;
+        let blocks = lowerer.into_blocks();
+
+        Ok(Self {
+            lowered: FableLowered::new(program, blocks),
+            roots: roots.into(),
+        })
+    }
+
+    /// Run this predicate against explicitly bound root values.
+    pub fn evaluate(&self, roots: &mut [FableRootValue<'_>]) -> Result<bool, FableError> {
+        let runtime_roots = self.runtime_roots(roots)?;
+        let mut interp = FableInterp {
+            roots: runtime_roots,
+            locals: LocalSlots::default(),
+            predicate_result: None,
+        };
+        weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)?;
+        interp.predicate_result.ok_or(FableError::MalformedProgram {
+            reason: "predicate plan did not write a result",
+        })
+    }
+
+    /// Run this predicate and return Weavy execution counters.
+    pub fn evaluate_with_stats(
+        &self,
+        roots: &mut [FableRootValue<'_>],
+    ) -> Result<(bool, RunStats), FableError> {
+        let runtime_roots = self.runtime_roots(roots)?;
+        let mut interp = FableInterp {
+            roots: runtime_roots,
+            locals: LocalSlots::default(),
+            predicate_result: None,
+        };
+        let stats = weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)?;
+        let result = interp
+            .predicate_result
+            .ok_or(FableError::MalformedProgram {
+                reason: "predicate plan did not write a result",
+            })?;
+        Ok((result, stats))
+    }
+
+    fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
+        runtime_roots(&self.roots, values)
     }
 }
 
@@ -644,6 +748,26 @@ where
     T: Facet<'static>,
 {
     FablePlan::<T>::compile_with_intrinsics(src, intrinsics)?.apply(value)
+}
+
+/// Compile and immediately evaluate a read-only Fable predicate.
+pub fn predicate<T>(value: &T, src: &str) -> Result<bool, FableError>
+where
+    T: Facet<'static>,
+{
+    FablePredicatePlan::<T>::compile(src)?.evaluate(value)
+}
+
+/// Compile with explicit host intrinsics and immediately evaluate a read-only predicate.
+pub fn predicate_with_intrinsics<T>(
+    value: &T,
+    src: &str,
+    intrinsics: &FableIntrinsics,
+) -> Result<bool, FableError>
+where
+    T: Facet<'static>,
+{
+    FablePredicatePlan::<T>::compile_with_intrinsics(src, intrinsics)?.evaluate(value)
 }
 
 /// Compile and immediately apply a Fable `in` to `out` transform.
@@ -693,6 +817,18 @@ fn validate_root_specs(roots: &[FableRootSpec]) -> Result<(), FableError> {
     Ok(())
 }
 
+fn validate_predicate_root_specs(roots: &[FableRootSpec]) -> Result<(), FableError> {
+    for root in roots {
+        if root.access != FableRootAccess::ReadOnly {
+            return Err(FableError::InvalidRoot {
+                name: root.name.to_owned(),
+                reason: "predicate roots must be read-only",
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_runtime_roots(roots: &[FableRootValue<'_>]) -> Result<(), FableError> {
     for (index, root) in roots.iter().enumerate() {
         validate_root_name(root.name)?;
@@ -703,6 +839,40 @@ fn validate_runtime_roots(roots: &[FableRootValue<'_>]) -> Result<(), FableError
         }
     }
     Ok(())
+}
+
+fn runtime_roots(
+    specs: &[FableRootSpec],
+    values: &[FableRootValue<'_>],
+) -> Result<Vec<RuntimeRoot>, FableError> {
+    validate_runtime_roots(values)?;
+
+    let mut roots = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let value = values
+            .iter()
+            .find(|value| value.name == spec.name)
+            .ok_or_else(|| FableError::MissingRoot {
+                name: spec.name.to_owned(),
+            })?;
+        if value.shape != spec.shape {
+            return Err(FableError::RootShapeMismatch {
+                name: spec.name.to_owned(),
+                expected: spec.shape,
+                actual: value.shape,
+            });
+        }
+        if spec.access == FableRootAccess::ReadWrite && value.ptr.as_mut().is_none() {
+            return Err(FableError::ReadOnlyRoot {
+                name: spec.name.to_owned(),
+            });
+        }
+        roots.push(RuntimeRoot {
+            name: spec.name,
+            ptr: value.ptr,
+        });
+    }
+    Ok(roots)
 }
 
 fn validate_root_name(name: &'static str) -> Result<(), FableError> {
@@ -1005,6 +1175,7 @@ enum FableIntrinsic {
         then_block: BlockRef,
         else_block: Option<BlockRef>,
     },
+    Predicate(BoolExpr),
 }
 
 impl IntrinsicOp for FableIntrinsic {
@@ -1016,6 +1187,7 @@ impl IntrinsicOp for FableIntrinsic {
                 FableIntrinsic::Assign { .. } => "assign",
                 FableIntrinsic::Eval(_) => "eval",
                 FableIntrinsic::Branch { .. } => "branch",
+                FableIntrinsic::Predicate(_) => "predicate",
             },
         }
     }
@@ -1040,6 +1212,12 @@ impl IntrinsicOp for FableIntrinsic {
             FableIntrinsic::Branch { .. } => EffectContract::new()
                 .read_resource(EffectResource::SideChannel("fable.locals"))
                 .may_fail()
+                .calls_user_code(),
+            FableIntrinsic::Predicate(_) => EffectContract::new()
+                .read_resource(EffectResource::SideChannel("fable.locals"))
+                .write_resource(EffectResource::SideChannel("fable.result"))
+                .may_fail()
+                .may_allocate()
                 .calls_user_code(),
         }
     }
@@ -1556,6 +1734,32 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
     fn lower_root(&mut self, root: &ast::Root) -> Result<FableProgram, FableError> {
         self.lower_statements(root.statements())
+    }
+
+    fn lower_predicate_root(&mut self, root: &ast::Root) -> Result<FableProgram, FableError> {
+        let statements: Vec<_> = root.statements().collect();
+        let Some((last, prefix)) = statements.split_last() else {
+            return Err(FableError::MalformedSyntax {
+                reason: "predicate source did not contain a final boolean expression",
+            });
+        };
+
+        let mut program = Vec::with_capacity(statements.len());
+        for stmt in prefix {
+            program.push(self.lower_stmt(stmt)?);
+        }
+
+        let Stmt::Expr(expr_stmt) = last else {
+            return Err(FableError::Unsupported {
+                feature: "predicate final statement must be a boolean expression".into(),
+            });
+        };
+        let expr = expr_stmt.expr().ok_or(FableError::MalformedSyntax {
+            reason: "predicate final statement without expression",
+        })?;
+        let value = expect_bool_plan(self.lower_expr(&expr)?)?;
+        program.push(fable_op(FableIntrinsic::Predicate(value)));
+        Ok(program)
     }
 
     fn lower_block(&mut self, block: &Block) -> Result<FableProgram, FableError> {
@@ -2830,6 +3034,7 @@ impl Drop for StructInitGuard {
 struct FableInterp {
     roots: Vec<RuntimeRoot>,
     locals: LocalSlots,
+    predicate_result: Option<bool>,
 }
 
 impl<'program> Step<'program, BlockRef, FableWeavyOp> for FableInterp {
@@ -2899,6 +3104,10 @@ impl FableInterp {
                 } else {
                     Ok(Control::Continue)
                 }
+            }
+            FableIntrinsic::Predicate(value) => {
+                self.predicate_result = Some(self.eval_bool(value)?);
+                Ok(Control::Continue)
             }
         }
     }
@@ -4752,6 +4961,132 @@ mod tests {
                 adult: true,
             }
         );
+    }
+
+    #[test]
+    fn evaluates_typed_predicate_plan_against_read_only_root() {
+        let value = state();
+        let plan = FablePredicatePlan::<State>::compile(
+            r#"
+                let next_age = root.user.age + 1;
+                next_age >= 18 and not root.user.active
+            "#,
+        )
+        .unwrap();
+
+        let (result, stats) = plan.evaluate_with_stats(&value).unwrap();
+
+        assert!(result);
+        assert!(stats.step_count >= 2);
+
+        let analysis = dense_lowered_analysis(&plan.plan.lowered);
+        assert_eq!(analysis.program_stats.root.op_count, 2);
+        assert_eq!(
+            analysis.intrinsic_counts[&IntrinsicDescriptor {
+                dialect: "fable",
+                name: "predicate",
+            }],
+            1
+        );
+    }
+
+    #[test]
+    fn evaluates_root_predicate_plan_over_explicit_roots() {
+        let roots = [
+            FableRootSpec::read_only::<TransformInput>("in"),
+            FableRootSpec::read_only::<TransformOutput>("out"),
+        ];
+        let plan = FableRootPredicatePlan::compile(
+            r#"
+                let expected = in.first_name + " " + in.last_name;
+                out.name == expected and out.age == in.age and not in.deleted
+            "#,
+            &roots,
+        )
+        .unwrap();
+
+        let input = transform_input();
+        let mut output = transform_output();
+        output.name = "Ada Lovelace".into();
+        output.age = 36;
+        let mut values = [
+            FableRootValue::read_only("in", &input),
+            FableRootValue::read_only("out", &output),
+        ];
+
+        assert!(plan.evaluate(&mut values).unwrap());
+    }
+
+    #[test]
+    fn predicate_helper_supports_custom_intrinsics() {
+        let value = state();
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics
+            .add_string_binary_predicate("contains_ci", contains_ci)
+            .unwrap();
+
+        let result = predicate_with_intrinsics(
+            &value,
+            r#"contains_ci(root.user.name, "ADA") and root.user.age == 17"#,
+            &intrinsics,
+        )
+        .unwrap();
+
+        assert!(result);
+    }
+
+    #[test]
+    fn predicate_plans_reject_mutating_the_read_only_root() {
+        let err = match FablePredicatePlan::<State>::compile(
+            r#"
+                root.user.active = true;
+                root.user.active
+            "#,
+        ) {
+            Ok(_) => panic!("expected Fable predicate compilation to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            FableError::ReadOnlyRoot {
+                name
+            } if name == "root"
+        ));
+    }
+
+    #[test]
+    fn root_predicate_plans_require_read_only_roots() {
+        let roots = [FableRootSpec::read_write::<State>("root")];
+
+        let err = match FableRootPredicatePlan::compile("root.user.active", &roots) {
+            Ok(_) => panic!("expected Fable predicate compilation to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            FableError::InvalidRoot {
+                name,
+                reason: "predicate roots must be read-only",
+            } if name == "root"
+        ));
+    }
+
+    #[test]
+    fn predicate_source_must_end_with_bool_expression() {
+        let err = match FablePredicatePlan::<State>::compile("root.user.name") {
+            Ok(_) => panic!("expected Fable predicate compilation to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            FableError::TypeMismatch {
+                expected,
+                actual: "string",
+            } if expected == "bool"
+        ));
     }
 
     #[test]

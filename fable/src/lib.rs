@@ -16,9 +16,10 @@ pub mod ast;
 mod lowering;
 pub use lowering::{
     FableError, FableField, FableFieldBoolUnary, FableFieldMut, FableFieldMutUnary,
-    FableFieldStringUnary, FableFloatUnary, FableIntrinsics, FablePlan, FableRootAccess,
-    FableRootPlan, FableRootSpec, FableRootValue, FableSignedUnary, FableStringBinaryPredicate,
-    FableStringUnary, FableTransformPlan, FableUnsignedUnary, apply, apply_with_intrinsics,
+    FableFieldStringUnary, FableFloatUnary, FableIntrinsics, FablePlan, FablePredicatePlan,
+    FableRootAccess, FableRootPlan, FableRootPredicatePlan, FableRootSpec, FableRootValue,
+    FableSignedUnary, FableStringBinaryPredicate, FableStringUnary, FableTransformPlan,
+    FableUnsignedUnary, apply, apply_with_intrinsics, predicate, predicate_with_intrinsics,
     transform, transform_with_intrinsics,
 };
 
