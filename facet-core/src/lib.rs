@@ -185,6 +185,26 @@ pub mod 𝟋 {
         clone_into::<T>
     }
 
+    /// Returns a parse function pointer for VTableDirect.
+    /// # Safety
+    /// The pointer must point to uninitialized memory of sufficient size and alignment for T.
+    pub const fn 𝟋parse_for<T: ::core::str::FromStr>()
+    -> unsafe fn(&str, *mut T) -> ::core::result::Result<(), crate::ParseError> {
+        unsafe fn parse<T: ::core::str::FromStr>(
+            s: &str,
+            dst: *mut T,
+        ) -> ::core::result::Result<(), crate::ParseError> {
+            match <T as ::core::str::FromStr>::from_str(s) {
+                Ok(value) => {
+                    unsafe { dst.write(value) };
+                    Ok(())
+                }
+                Err(_) => Err(crate::ParseError::from_str("parse error")),
+            }
+        }
+        parse::<T>
+    }
+
     // === TypeOpsIndirect helpers ===
     // These take OxPtrMut/OxPtrConst and work with wide pointers
 
