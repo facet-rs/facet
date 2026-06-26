@@ -21,8 +21,8 @@ use facet_core::{
     ResultDef, ScalarType, SetDef, Shape, SliceDef, StructKind, Type, UserType,
 };
 use weavy::ir::{
-    ControlOp, EffectContract, EffectResource, EffectStats, IntrinsicDescriptor, IntrinsicOp,
-    LoweredEffectStats, MemoryRegion, TypedMemoryAccess, WeavyOp,
+    ControlOp, EffectContract, EffectResource, IntrinsicChildren, IntrinsicDescriptor, IntrinsicOp,
+    LoweredAnalysis, LoweredEffectStats, MemoryRegion, TypedMemoryAccess, WeavyOp,
 };
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
@@ -104,7 +104,12 @@ where
 
     /// Return conservative effect counters for the lowered hash program.
     pub fn effect_stats(&self) -> LoweredEffectStats {
-        hash_lowered_effect_stats(&self.lowered)
+        self.analysis().effect_stats
+    }
+
+    /// Return static Weavy analysis for the lowered hash program.
+    pub fn analysis(&self) -> LoweredAnalysis {
+        hash_lowered_analysis(&self.lowered)
     }
 
     /// Hash `value` with [`std::collections::hash_map::DefaultHasher`].
@@ -302,18 +307,96 @@ impl<Block> IntrinsicOp for HashIntrinsic<Block> {
                 if !fields.is_empty() {
                     effect = effect.barrier();
                 }
+                for field in fields {
+                    effect.accumulate(struct_field_direct_effect(field));
+                }
                 effect
             }
-            HashIntrinsic::Option { .. } | HashIntrinsic::Result { .. } => {
-                thunked_read_effect().barrier()
+            HashIntrinsic::Option { some, .. } => {
+                let mut effect = thunked_read_effect().barrier();
+                effect.accumulate(child_direct_effect(some));
+                effect
             }
-            HashIntrinsic::List { .. }
-            | HashIntrinsic::Array { .. }
-            | HashIntrinsic::Slice { .. }
-            | HashIntrinsic::Pointer { .. } => thunked_read_effect().barrier(),
-            HashIntrinsic::Set { .. } | HashIntrinsic::Map { .. } => {
-                thunked_read_effect().may_allocate().barrier()
+            HashIntrinsic::Result { ok, err, .. } => {
+                let mut effect = thunked_read_effect().barrier();
+                effect.accumulate(child_direct_effect(ok));
+                effect.accumulate(child_direct_effect(err));
+                effect
             }
+            HashIntrinsic::List { element, .. }
+            | HashIntrinsic::Array { element, .. }
+            | HashIntrinsic::Slice { element, .. } => {
+                let mut effect = thunked_read_effect().barrier();
+                effect.accumulate(child_direct_effect(element));
+                effect
+            }
+            HashIntrinsic::Set { element, .. } => {
+                let mut effect = thunked_read_effect().may_allocate().barrier();
+                effect.accumulate(child_direct_effect(element));
+                effect
+            }
+            HashIntrinsic::Map { key, value, .. } => {
+                let mut effect = thunked_read_effect().may_allocate().barrier();
+                effect.accumulate(child_direct_effect(key));
+                effect.accumulate(child_direct_effect(value));
+                effect
+            }
+            HashIntrinsic::Pointer { pointee, .. } => {
+                let mut effect = thunked_read_effect().barrier();
+                effect.accumulate(child_direct_effect(pointee));
+                effect
+            }
+        }
+    }
+}
+
+impl<Block> IntrinsicChildren<Block> for HashIntrinsic<Block> {
+    fn visit_child_programs<'a>(&'a self, visit: &mut dyn FnMut(&'a [WeavyOp<Block, Self>])) {
+        match self {
+            HashIntrinsic::Struct { fields, .. } => {
+                for field in fields {
+                    field.visit_child_programs(visit);
+                }
+            }
+            HashIntrinsic::Option { some, .. } => some.visit_child_programs(visit),
+            HashIntrinsic::Result { ok, err, .. } => {
+                ok.visit_child_programs(visit);
+                err.visit_child_programs(visit);
+            }
+            HashIntrinsic::List { element, .. }
+            | HashIntrinsic::Array { element, .. }
+            | HashIntrinsic::Slice { element, .. }
+            | HashIntrinsic::Set { element, .. } => element.visit_child_programs(visit),
+            HashIntrinsic::Map { key, value, .. } => {
+                key.visit_child_programs(visit);
+                value.visit_child_programs(visit);
+            }
+            HashIntrinsic::Pointer { pointee, .. } => pointee.visit_child_programs(visit),
+            HashIntrinsic::Shape(_) | HashIntrinsic::Scalar { .. } => {}
+        }
+    }
+}
+
+impl<Block> ChildPlan<Block> {
+    fn visit_child_programs<'a>(
+        &'a self,
+        visit: &mut dyn FnMut(&'a [WeavyOp<Block, HashIntrinsic<Block>>]),
+    ) {
+        match self {
+            ChildPlan::Program(program) => visit(program),
+            ChildPlan::Scalar { .. } => {}
+        }
+    }
+}
+
+impl<Block> StructFieldPlan<Block> {
+    fn visit_child_programs<'a>(
+        &'a self,
+        visit: &mut dyn FnMut(&'a [WeavyOp<Block, HashIntrinsic<Block>>]),
+    ) {
+        match self {
+            StructFieldPlan::Field(field) => field.child.visit_child_programs(visit),
+            StructFieldPlan::ScalarRun(_) => {}
         }
     }
 }
@@ -338,6 +421,47 @@ fn scalar_hash_effect(shape: &'static Shape, scalar: ScalarType) -> EffectContra
             .ordered(),
         _ => effect.typed_memory(shape_memory_region(shape), TypedMemoryAccess::Read),
     }
+}
+
+fn struct_field_direct_effect<Block>(field: &StructFieldPlan<Block>) -> EffectContract {
+    match field {
+        StructFieldPlan::ScalarRun(run) => {
+            let mut effect = EffectContract::new();
+            for field in run {
+                effect.accumulate(scalar_field_direct_effect(field));
+            }
+            effect
+        }
+        StructFieldPlan::Field(field) => child_direct_effect(&field.child),
+    }
+}
+
+fn scalar_field_direct_effect(field: &ScalarFieldPlan) -> EffectContract {
+    scalar_child_direct_effect(field.include_shape, field.shape, field.scalar)
+}
+
+fn child_direct_effect<Block>(child: &ChildPlan<Block>) -> EffectContract {
+    match child {
+        ChildPlan::Scalar {
+            include_shape,
+            shape,
+            scalar,
+        } => scalar_child_direct_effect(*include_shape, shape, *scalar),
+        ChildPlan::Program(_) => EffectContract::new(),
+    }
+}
+
+fn scalar_child_direct_effect(
+    include_shape: bool,
+    shape: &'static Shape,
+    scalar: ScalarType,
+) -> EffectContract {
+    let mut effect = EffectContract::new();
+    if include_shape {
+        effect.accumulate(hash_sink_effect());
+    }
+    effect.accumulate(scalar_hash_effect(shape, scalar));
+    effect
 }
 
 fn thunked_read_effect() -> EffectContract {
@@ -732,97 +856,8 @@ fn resolve_block_ref(
     })
 }
 
-fn hash_lowered_effect_stats(lowered: &DenseLowered<ExecOp>) -> LoweredEffectStats {
-    let root = hash_program_effect_stats(&lowered.program);
-    let mut blocks = EffectStats::default();
-    for block in &lowered.blocks {
-        blocks.accumulate(hash_program_effect_stats(block));
-    }
-    LoweredEffectStats::new(root, blocks, lowered.blocks.len())
-}
-
-fn hash_program_effect_stats(program: &[ExecOp]) -> EffectStats {
-    let mut stats = weavy::ir::effect_stats(program);
-    for op in program {
-        if let WeavyOp::Intrinsic(intrinsic) = op {
-            add_hash_intrinsic_effect_stats(intrinsic, &mut stats);
-        }
-    }
-    stats
-}
-
-fn add_hash_intrinsic_effect_stats(intrinsic: &HashIntrinsic<ExecBlock>, stats: &mut EffectStats) {
-    match intrinsic {
-        HashIntrinsic::Shape(_) | HashIntrinsic::Scalar { .. } => {}
-        HashIntrinsic::Struct { fields, .. } => {
-            for field in fields {
-                stats.accumulate(hash_struct_field_effect_stats(field));
-            }
-        }
-        HashIntrinsic::Option { some, .. } => {
-            stats.accumulate(hash_child_effect_stats(some));
-        }
-        HashIntrinsic::Result { ok, err, .. } => {
-            stats.accumulate(hash_child_effect_stats(ok));
-            stats.accumulate(hash_child_effect_stats(err));
-        }
-        HashIntrinsic::List { element, .. }
-        | HashIntrinsic::Array { element, .. }
-        | HashIntrinsic::Slice { element, .. }
-        | HashIntrinsic::Set { element, .. } => {
-            stats.accumulate(hash_child_effect_stats(element));
-        }
-        HashIntrinsic::Map { key, value, .. } => {
-            stats.accumulate(hash_child_effect_stats(key));
-            stats.accumulate(hash_child_effect_stats(value));
-        }
-        HashIntrinsic::Pointer { pointee, .. } => {
-            stats.accumulate(hash_child_effect_stats(pointee));
-        }
-    }
-}
-
-fn hash_struct_field_effect_stats(field: &StructFieldPlan<ExecBlock>) -> EffectStats {
-    match field {
-        StructFieldPlan::ScalarRun(run) => {
-            let mut stats = EffectStats::default();
-            for scalar in run {
-                stats.accumulate(hash_scalar_field_effect_stats(scalar));
-            }
-            stats
-        }
-        StructFieldPlan::Field(field) => hash_child_effect_stats(&field.child),
-    }
-}
-
-fn hash_scalar_field_effect_stats(field: &ScalarFieldPlan) -> EffectStats {
-    hash_scalar_child_effect_stats(field.include_shape, field.shape, field.scalar)
-}
-
-fn hash_scalar_child_effect_stats(
-    include_shape: bool,
-    shape: &'static Shape,
-    scalar: ScalarType,
-) -> EffectStats {
-    let mut stats = EffectStats::default();
-    if include_shape {
-        let shape_op: ExecOp = WeavyOp::Intrinsic(HashIntrinsic::Shape(shape));
-        stats.accumulate(weavy::ir::effect_stats(core::slice::from_ref(&shape_op)));
-    }
-    let scalar_op: ExecOp = WeavyOp::Intrinsic(HashIntrinsic::Scalar { shape, scalar });
-    stats.accumulate(weavy::ir::effect_stats(core::slice::from_ref(&scalar_op)));
-    stats
-}
-
-fn hash_child_effect_stats(child: &ChildPlan<ExecBlock>) -> EffectStats {
-    match child {
-        ChildPlan::Scalar {
-            include_shape,
-            shape,
-            scalar,
-        } => hash_scalar_child_effect_stats(*include_shape, shape, *scalar),
-        ChildPlan::Program(program) => hash_program_effect_stats(program),
-    }
+fn hash_lowered_analysis(lowered: &DenseLowered<ExecOp>) -> LoweredAnalysis {
+    weavy::ir::dense_lowered_analysis_with_intrinsic_children(lowered)
 }
 
 fn sized_layout(shape: &'static Shape) -> Result<Layout, HashError> {

@@ -6,6 +6,7 @@ use facet::Facet;
 use facet_hash::HashPlan;
 #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
 use facet_hash::NativeHashPlan;
+use weavy::ir::IntrinsicDescriptor;
 
 #[derive(Clone, Debug, Facet)]
 struct Point {
@@ -322,9 +323,39 @@ fn plan_writes_through_supplied_hasher() {
 fn plan_reports_canonical_effect_stats() {
     let plan = HashPlan::<Nested>::build().unwrap();
 
-    let stats = plan.effect_stats();
+    let analysis = plan.analysis();
+    let stats = analysis.effect_stats;
 
+    assert_eq!(plan.effect_stats(), stats);
+    assert_eq!(analysis.program_stats.block_count, 0);
     assert_eq!(stats.block_count, 0);
+    assert!(
+        analysis.intrinsic_counts[&IntrinsicDescriptor {
+            dialect: "facet-hash",
+            name: "struct",
+        }] >= 2
+    );
+    assert_eq!(
+        analysis.intrinsic_counts[&IntrinsicDescriptor {
+            dialect: "facet-hash",
+            name: "list",
+        }],
+        2
+    );
+    assert_eq!(
+        analysis.intrinsic_counts[&IntrinsicDescriptor {
+            dialect: "facet-hash",
+            name: "array",
+        }],
+        1
+    );
+    assert_eq!(
+        analysis.intrinsic_counts[&IntrinsicDescriptor {
+            dialect: "facet-hash",
+            name: "pointer",
+        }],
+        1
+    );
     assert!(stats.total.intrinsic_op_count > 0);
     assert!(stats.total.sink_write_count > 0);
     assert!(stats.total.typed_memory_read_count > 0);
@@ -347,7 +378,7 @@ fn recursive_shapes_still_lower_blocks() {
         })),
     };
 
-    assert!(plan.effect_stats().block_count > 0);
+    assert!(plan.analysis().program_stats.block_count > 0);
     assert_ne!(plan.hash64(&short).unwrap(), plan.hash64(&long).unwrap());
 }
 
