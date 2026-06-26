@@ -1,7 +1,7 @@
 use crate::db::{DynIngredient, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame;
-use crate::key::{Dep, DynKey, Key, KeyBuildHasher, QueryKindId};
+use crate::key::{Dep, DynKey, Key, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use crate::runtime::HasRuntime;
@@ -26,8 +26,6 @@ struct ErasedInputEntry {
     value: Option<ArcAny>,
     changed_at: Revision,
 }
-
-type ErasedInputMap = im::HashMap<DynKey, ErasedInputEntry, KeyBuildHasher>;
 
 /// Encode a single record to bytes
 type EncodeInputRecordFn =
@@ -58,7 +56,7 @@ type ApplyInputWalEntryFn = fn(
 struct InputCore {
     kind: QueryKindId,
     kind_name: &'static str,
-    entries: RwLock<ErasedInputMap>,
+    entries: RwLock<im::HashMap<DynKey, ErasedInputEntry>>,
     // Type-erased persistence callbacks
     encode_record: EncodeInputRecordFn,
     decode_record: DecodeInputRecordFn,
@@ -78,7 +76,7 @@ impl InputCore {
         Self {
             kind,
             kind_name,
-            entries: RwLock::new(ErasedInputMap::default()),
+            entries: RwLock::new(im::HashMap::new()),
             encode_record,
             decode_record,
             encode_incremental,
@@ -629,7 +627,7 @@ where
 
     fn clear(&self) {
         let mut entries = self.core.entries.write();
-        *entries = ErasedInputMap::default();
+        *entries = im::HashMap::new();
     }
 
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {
