@@ -3,54 +3,8 @@
 use crate::error::{PicanteError, PicanteResult};
 use facet::Facet;
 use std::fmt;
-use std::hash::{BuildHasherDefault, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-
-const FNV64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV64_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-pub(crate) type KeyBuildHasher = BuildHasherDefault<StableHasher>;
-
-pub(crate) struct StableHasher {
-    hash: u64,
-}
-
-impl Default for StableHasher {
-    fn default() -> Self {
-        Self { hash: FNV64_OFFSET }
-    }
-}
-
-impl Hasher for StableHasher {
-    fn finish(&self) -> u64 {
-        self.hash
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        self.hash = stable_hash_from(self.hash, bytes);
-    }
-
-    fn write_u8(&mut self, i: u8) {
-        self.hash ^= u64::from(i);
-        self.hash = self.hash.wrapping_mul(FNV64_PRIME);
-    }
-
-    fn write_u16(&mut self, i: u16) {
-        self.write(&i.to_le_bytes());
-    }
-
-    fn write_u32(&mut self, i: u32) {
-        self.write(&i.to_le_bytes());
-    }
-
-    fn write_u64(&mut self, i: u64) {
-        self.write(&i.to_le_bytes());
-    }
-
-    fn write_usize(&mut self, i: usize) {
-        self.write(&i.to_le_bytes());
-    }
-}
 
 // r[kind.type]
 /// Stable identifier for a query/input kind.
@@ -193,13 +147,7 @@ pub struct Dep {
 }
 
 fn stable_hash(bytes: &[u8]) -> u64 {
-    stable_hash_from(FNV64_OFFSET, bytes)
-}
-
-fn stable_hash_from(mut hash: u64, bytes: &[u8]) -> u64 {
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(FNV64_PRIME);
-    }
-    hash
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
