@@ -1,6 +1,7 @@
 //! Query key encoding and erased identifiers used for dependency graphs.
 
 use crate::error::{PicanteError, PicanteResult};
+use crate::facet_eq::PlannedEquality;
 use facet::Facet;
 use std::any::Any;
 use std::collections::hash_map::DefaultHasher;
@@ -88,7 +89,7 @@ trait ErasedFacetKey: Send + Sync {
 struct FacetKey<T> {
     value: Arc<T>,
     bytes: OnceLock<PicanteResult<Arc<[u8]>>>,
-    eq_plan: Option<Arc<facet_hash::EqualityPlan<T>>>,
+    equality: PlannedEquality<T>,
 }
 
 trait ErasedKeyBytes: Send + Sync {
@@ -136,17 +137,7 @@ where
         other
             .as_any()
             .downcast_ref::<FacetKey<T>>()
-            .is_some_and(|other| {
-                if let Some(equal) = eq_known_key_type(&*self.value, &*other.value) {
-                    return equal;
-                }
-                if let Some(plan) = self.eq_plan.as_ref().or(other.eq_plan.as_ref())
-                    && let Ok(equal) = plan.eq(&*self.value, &*other.value)
-                {
-                    return equal;
-                }
-                crate::facet_eq::facet_eq_direct(&*self.value, &*other.value)
-            })
+            .is_some_and(|other| self.equality.eq(&*self.value, &*other.value))
     }
 
     fn bytes(&self) -> PicanteResult<&[u8]> {
@@ -385,24 +376,19 @@ pub(crate) struct RuntimeKey<T> {
     value: T,
     hash: u64,
     bytes: Option<Arc<[u8]>>,
-    eq_plan: Option<Arc<facet_hash::EqualityPlan<T>>>,
+    equality: PlannedEquality<T>,
 }
 
 impl<T> RuntimeKey<T>
 where
     T: Clone + Facet<'static> + Send + Sync + 'static,
 {
-    fn new(
-        value: T,
-        hash: u64,
-        bytes: Option<Arc<[u8]>>,
-        eq_plan: Option<Arc<facet_hash::EqualityPlan<T>>>,
-    ) -> Self {
+    fn new(value: T, hash: u64, bytes: Option<Arc<[u8]>>, equality: PlannedEquality<T>) -> Self {
         Self {
             value,
             hash,
             bytes,
-            eq_plan,
+            equality,
         }
     }
 
@@ -415,15 +401,7 @@ where
     }
 
     pub(crate) fn matches(&self, value: &T) -> bool {
-        if let Some(equal) = eq_known_key_type(&self.value, value) {
-            return equal;
-        }
-        if let Some(plan) = &self.eq_plan
-            && let Ok(equal) = plan.eq(&self.value, value)
-        {
-            return equal;
-        }
-        crate::facet_eq::facet_eq_direct(&self.value, value)
+        self.equality.eq(&self.value, value)
     }
 
     pub(crate) fn to_key(&self) -> Key {
@@ -441,7 +419,7 @@ where
             repr: KeyRepr::Typed(Arc::new(FacetKey {
                 value: Arc::new(self.value.clone()),
                 bytes: once_lock_from_option(self.bytes.clone().map(Ok)),
-                eq_plan: self.eq_plan.clone(),
+                equality: self.equality.clone(),
             })),
             hash: self.hash,
         }
@@ -457,7 +435,7 @@ where
             value: self.value.clone(),
             hash: self.hash,
             bytes: self.bytes.clone(),
-            eq_plan: self.eq_plan.clone(),
+            equality: self.equality.clone(),
         }
     }
 }
@@ -596,37 +574,6 @@ where
     KeyHashPlan::<T>::build()?.hash64(value)
 }
 
-fn eq_known_key_type<T: 'static>(left: &T, right: &T) -> Option<bool> {
-    let left = left as &dyn Any;
-    let right = right as &dyn Any;
-
-    macro_rules! eq_as {
-        ($ty:ty) => {
-            if let Some(left) = left.downcast_ref::<$ty>() {
-                return Some(left == right.downcast_ref::<$ty>()?);
-            }
-        };
-    }
-
-    eq_as!(u32);
-    eq_as!(());
-    eq_as!(String);
-    eq_as!(u64);
-    eq_as!(bool);
-    eq_as!(u16);
-    eq_as!(u8);
-    eq_as!(u128);
-    eq_as!(usize);
-    eq_as!(i32);
-    eq_as!(i64);
-    eq_as!(i16);
-    eq_as!(i8);
-    eq_as!(i128);
-    eq_as!(isize);
-
-    None
-}
-
 enum KeyHashPlan<T> {
     #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
     Native(facet_hash::NativeHashPlan<T>),
@@ -658,7 +605,7 @@ where
 /// Reusable key builder for one Facet key type.
 pub struct KeyFactory<T> {
     plan: Option<KeyHashPlan<T>>,
-    eq_plan: Option<Arc<facet_hash::EqualityPlan<T>>>,
+    equality: PlannedEquality<T>,
 }
 
 impl<T> KeyFactory<T>
@@ -669,7 +616,7 @@ where
     pub fn new() -> Self {
         Self {
             plan: KeyHashPlan::<T>::build().ok(),
-            eq_plan: facet_hash::EqualityPlan::<T>::build().ok().map(Arc::new),
+            equality: PlannedEquality::new(),
         }
     }
 
@@ -703,7 +650,7 @@ where
     where
         T: Clone + Send + Sync + 'static,
     {
-        RuntimeKey::new(value, hash, bytes, self.eq_plan.clone())
+        RuntimeKey::new(value, hash, bytes, self.equality.clone())
     }
 
     /// Build a key from an owned value.
@@ -752,7 +699,7 @@ where
         let key = FacetKey {
             value,
             bytes: once_lock_from_option(bytes.map(Ok)),
-            eq_plan: self.eq_plan.clone(),
+            equality: self.equality.clone(),
         };
 
         Key {
@@ -882,7 +829,7 @@ mod tests {
     #[test]
     fn aggregate_runtime_keys_use_cached_equality_plan() {
         let factory = KeyFactory::<PlannedKey>::new();
-        assert!(factory.eq_plan.is_some());
+        assert!(factory.equality.has_plan());
 
         let key = PlannedKey {
             shard: 7,

@@ -13,33 +13,91 @@ use facet::Facet;
 use facet_core::{Def, StructKind, Type, UserType};
 use facet_reflect::Peek;
 use std::any::Any;
+use std::sync::Arc;
 
-/// Check if two type-erased Facet values are equal.
-///
-/// This function:
-/// - Downcasts both `dyn Any` values to the concrete type `V`
-/// - Performs structural comparison using facet reflection
-/// - Works even when inner types don't implement PartialEq
-///
-/// # Type Parameters
-/// - `V`: Must implement `Facet<'static>` for shape information
-///
-/// # Returns
-/// - `true` if values are structurally equal
-/// - `false` if types don't match or values differ
-pub fn facet_eq<V>(a: &dyn Any, b: &dyn Any) -> bool
+pub(crate) struct PlannedEquality<T> {
+    plan: Option<Arc<facet_hash::EqualityPlan<T>>>,
+}
+
+impl<T> Clone for PlannedEquality<T> {
+    fn clone(&self) -> Self {
+        Self {
+            plan: self.plan.clone(),
+        }
+    }
+}
+
+impl<T> PlannedEquality<T>
 where
-    V: Facet<'static> + 'static,
+    T: Facet<'static>,
 {
-    // Downcast to concrete type
-    let Some(a) = a.downcast_ref::<V>() else {
-        return false;
-    };
-    let Some(b) = b.downcast_ref::<V>() else {
-        return false;
-    };
+    pub(crate) fn new() -> Self {
+        Self {
+            plan: facet_hash::EqualityPlan::<T>::build().ok().map(Arc::new),
+        }
+    }
 
-    facet_eq_direct(a, b)
+    #[cfg(test)]
+    pub(crate) fn has_plan(&self) -> bool {
+        self.plan.is_some()
+    }
+}
+
+impl<T> PlannedEquality<T>
+where
+    T: Facet<'static> + 'static,
+{
+    pub(crate) fn eq(&self, a: &T, b: &T) -> bool {
+        if let Some(equal) = known_eq(a, b) {
+            return equal;
+        }
+        if let Some(plan) = &self.plan
+            && let Ok(equal) = plan.eq(a, b)
+        {
+            return equal;
+        }
+        facet_eq_direct(a, b)
+    }
+}
+
+impl<T> Default for PlannedEquality<T>
+where
+    T: Facet<'static>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub(crate) fn known_eq<T: 'static>(left: &T, right: &T) -> Option<bool> {
+    let left = left as &dyn Any;
+    let right = right as &dyn Any;
+
+    macro_rules! eq_as {
+        ($ty:ty) => {
+            if let Some(left) = left.downcast_ref::<$ty>() {
+                return Some(left == right.downcast_ref::<$ty>()?);
+            }
+        };
+    }
+
+    eq_as!(u32);
+    eq_as!(());
+    eq_as!(String);
+    eq_as!(u64);
+    eq_as!(bool);
+    eq_as!(u16);
+    eq_as!(u8);
+    eq_as!(u128);
+    eq_as!(usize);
+    eq_as!(i32);
+    eq_as!(i64);
+    eq_as!(i16);
+    eq_as!(i8);
+    eq_as!(i128);
+    eq_as!(isize);
+
+    None
 }
 
 /// Check if two concrete Facet values are structurally equal.
