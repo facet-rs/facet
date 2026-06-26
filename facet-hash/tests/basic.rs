@@ -189,6 +189,94 @@ fn scalar_list_elements_hash_without_element_frames() {
 }
 
 #[test]
+fn byte_vec_value_plan_hashes_bulk_bytes() {
+    let plan = HashPlan::<Vec<u8>>::build().unwrap();
+    let value = vec![0, 1, 2, 3, 5, 8, 13, 255];
+    let mut expected = RecordingHasher::default();
+    let mut actual = RecordingHasher::default();
+
+    facet_hash::hash_bytes_into(&value, &mut expected);
+    plan.hash(&value, &mut actual).unwrap();
+
+    assert_eq!(actual.bytes, expected.bytes);
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let stats = plan.hash_with_stats(&value, &mut hasher).unwrap();
+    let analysis = plan.analysis();
+
+    assert_eq!(stats.step_count, 1);
+    assert_eq!(stats.inline_call_count, 0);
+    assert_eq!(stats.continuation_resume_count, 0);
+    assert_eq!(stats.max_frame_depth, 1);
+    assert_eq!(
+        analysis
+            .intrinsic_counts
+            .get(&IntrinsicDescriptor {
+                dialect: "facet-hash",
+                name: "bytes",
+            })
+            .copied(),
+        Some(1)
+    );
+    assert_eq!(
+        analysis
+            .intrinsic_counts
+            .get(&IntrinsicDescriptor {
+                dialect: "facet-hash",
+                name: "list",
+            })
+            .copied()
+            .unwrap_or(0),
+        0
+    );
+}
+
+#[test]
+fn byte_array_value_plan_hashes_bulk_bytes() {
+    let plan = HashPlan::<[u8; 4]>::build().unwrap();
+    let value = [10, 20, 30, 40];
+    let mut expected = RecordingHasher::default();
+    let mut actual = RecordingHasher::default();
+
+    facet_hash::hash_bytes_into(&value, &mut expected);
+    plan.hash(&value, &mut actual).unwrap();
+
+    assert_eq!(actual.bytes, expected.bytes);
+    assert_eq!(
+        plan.analysis().intrinsic_counts[&IntrinsicDescriptor {
+            dialect: "facet-hash",
+            name: "bytes",
+        }],
+        1
+    );
+}
+
+#[test]
+fn structural_byte_vec_keeps_sequence_shape() {
+    let plan = HashPlan::<Vec<u8>>::build_structural().unwrap();
+    let analysis = plan.analysis();
+
+    assert_eq!(
+        analysis
+            .intrinsic_counts
+            .get(&IntrinsicDescriptor {
+                dialect: "facet-hash",
+                name: "bytes",
+            })
+            .copied()
+            .unwrap_or(0),
+        0
+    );
+    assert_eq!(
+        analysis.intrinsic_counts[&IntrinsicDescriptor {
+            dialect: "facet-hash",
+            name: "list",
+        }],
+        1
+    );
+}
+
+#[test]
 fn hashes_scalar_sets_and_maps() {
     let plan = HashPlan::<Collections>::build().unwrap();
     let mut set = BTreeSet::new();

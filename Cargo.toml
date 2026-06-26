@@ -283,6 +283,7 @@ facet-dom = { path = "facet-dom", version = "0.50.0-rc.2" }
 facet-error = { path = "facet-error", version = "0.50.0-rc.2" }
 facet-format = { path = "facet-format", version = "0.50.0-rc.2" }
 facet-format-suite = { path = "facet-format-suite", version = "0.50.0-rc.0" }
+facet-hash = { path = "facet-hash", version = "0.50.0-rc.2" }
 facet-json = { path = "facet-json", version = "0.50.0-rc.2" }
 facet-json-classics = { path = "facet-json-classics", version = "0.50.0-rc.0" }
 facet-msgpack = { path = "facet-msgpack", version = "0.50.0-rc.2" }

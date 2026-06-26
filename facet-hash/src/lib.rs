@@ -149,6 +149,23 @@ where
     HashPlan::<T>::build()?.hash64(value)
 }
 
+/// Hash a raw byte sequence using the byte stream shape used by value-mode
+/// facet-hash byte plans.
+pub fn hash_bytes_into<H>(bytes: &[u8], hasher: &mut H)
+where
+    H: Hasher,
+{
+    bytes.len().hash(hasher);
+    hasher.write(bytes);
+}
+
+/// Hash a raw byte sequence with [`std::collections::hash_map::DefaultHasher`].
+pub fn hash_bytes64(bytes: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash_bytes_into(bytes, &mut hasher);
+    hasher.finish()
+}
+
 fn run_error(err: RunError<ExecBlock, HashError>) -> HashError {
     match err {
         RunError::Step(err) => err,
@@ -217,6 +234,7 @@ enum HashIntrinsic<Block> {
         ok: ChildPlan<Block>,
         err: ChildPlan<Block>,
     },
+    Bytes(ByteSource),
     List {
         list_shape: &'static Shape,
         list: ListDef,
@@ -245,6 +263,20 @@ enum HashIntrinsic<Block> {
     Pointer {
         pointer: PointerDef,
         pointee: ChildPlan<Block>,
+    },
+}
+
+#[derive(Clone, Debug)]
+enum ByteSource {
+    List {
+        list_shape: &'static Shape,
+        list: ListDef,
+    },
+    Array {
+        array: ArrayDef,
+    },
+    Slice {
+        slice: SliceDef,
     },
 }
 
@@ -281,6 +313,7 @@ impl<Block> IntrinsicOp for HashIntrinsic<Block> {
             HashIntrinsic::Struct { .. } => "struct",
             HashIntrinsic::Option { .. } => "option",
             HashIntrinsic::Result { .. } => "result",
+            HashIntrinsic::Bytes(_) => "bytes",
             HashIntrinsic::List { .. } => "list",
             HashIntrinsic::Array { .. } => "array",
             HashIntrinsic::Slice { .. } => "slice",
@@ -323,6 +356,7 @@ impl<Block> IntrinsicOp for HashIntrinsic<Block> {
                 effect.accumulate(child_direct_effect(err));
                 effect
             }
+            HashIntrinsic::Bytes(_) => thunked_read_effect().barrier(),
             HashIntrinsic::List { element, .. }
             | HashIntrinsic::Array { element, .. }
             | HashIntrinsic::Slice { element, .. } => {
@@ -372,7 +406,7 @@ impl<Block> IntrinsicChildren<Block> for HashIntrinsic<Block> {
                 value.visit_child_programs(visit);
             }
             HashIntrinsic::Pointer { pointee, .. } => pointee.visit_child_programs(visit),
-            HashIntrinsic::Shape(_) | HashIntrinsic::Scalar { .. } => {}
+            HashIntrinsic::Shape(_) | HashIntrinsic::Scalar { .. } | HashIntrinsic::Bytes(_) => {}
         }
     }
 }
@@ -565,6 +599,13 @@ impl Lowering {
                 if list.vtable.as_ptr.is_none() {
                     return Err(unsupported(shape, "list as_ptr"));
                 }
+                if self.mode == HashMode::Value && is_byte_shape(list.t()) {
+                    program.push(WeavyOp::Intrinsic(HashIntrinsic::Bytes(ByteSource::List {
+                        list_shape: shape,
+                        list,
+                    })));
+                    return Ok(program);
+                }
                 let element_layout = sized_layout(list.t())?;
                 let element = self.lower_child(list.t())?;
                 program.push(WeavyOp::Intrinsic(HashIntrinsic::List {
@@ -575,6 +616,12 @@ impl Lowering {
                 }));
             }
             Def::Array(array) => {
+                if self.mode == HashMode::Value && is_byte_shape(array.t()) {
+                    program.push(WeavyOp::Intrinsic(HashIntrinsic::Bytes(
+                        ByteSource::Array { array },
+                    )));
+                    return Ok(program);
+                }
                 let element_layout = sized_layout(array.t())?;
                 let element = self.lower_child(array.t())?;
                 program.push(WeavyOp::Intrinsic(HashIntrinsic::Array {
@@ -584,6 +631,12 @@ impl Lowering {
                 }));
             }
             Def::Slice(slice) => {
+                if self.mode == HashMode::Value && is_byte_shape(slice.t()) {
+                    program.push(WeavyOp::Intrinsic(HashIntrinsic::Bytes(
+                        ByteSource::Slice { slice },
+                    )));
+                    return Ok(program);
+                }
                 let element_layout = sized_layout(slice.t())?;
                 let element = self.lower_child(slice.t())?;
                 program.push(WeavyOp::Intrinsic(HashIntrinsic::Slice {
@@ -766,6 +819,7 @@ fn resolve_hash_intrinsic(
             ok: resolve_child_plan(ok, refs)?,
             err: resolve_child_plan(err, refs)?,
         },
+        HashIntrinsic::Bytes(source) => HashIntrinsic::Bytes(source),
         HashIntrinsic::List {
             list_shape,
             list,
@@ -1062,6 +1116,10 @@ where
                     self.call_child(err, PtrConst::new_sized(value), self.base)
                 }
             }
+            HashIntrinsic::Bytes(source) => {
+                unsafe { self.hash_byte_source(source)? };
+                Ok(Control::Continue)
+            }
             HashIntrinsic::List {
                 list_shape,
                 list,
@@ -1135,6 +1193,47 @@ where
                     )
                 })?;
                 self.call_child(pointee, unsafe { borrow(self.base) }, self.base)
+            }
+        }
+    }
+
+    unsafe fn hash_byte_source(&mut self, source: &ByteSource) -> Result<(), HashError> {
+        match source {
+            ByteSource::List { list_shape, list } => {
+                let len = unsafe { (list.vtable.len)(self.base) };
+                if len == 0 {
+                    hash_bytes_into(&[], self.hasher);
+                    return Ok(());
+                }
+                let as_ptr = list
+                    .vtable
+                    .as_ptr
+                    .ok_or_else(|| unsupported(list_shape, "list as_ptr"))?;
+                let data = unsafe { as_ptr(self.base) };
+                let bytes = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), len) };
+                hash_bytes_into(bytes, self.hasher);
+                Ok(())
+            }
+            ByteSource::Array { array } => {
+                if array.n == 0 {
+                    hash_bytes_into(&[], self.hasher);
+                    return Ok(());
+                }
+                let data = unsafe { (array.vtable.as_ptr)(self.base) };
+                let bytes = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), array.n) };
+                hash_bytes_into(bytes, self.hasher);
+                Ok(())
+            }
+            ByteSource::Slice { slice } => {
+                let len = unsafe { (slice.vtable.len)(self.base) };
+                if len == 0 {
+                    hash_bytes_into(&[], self.hasher);
+                    return Ok(());
+                }
+                let data = unsafe { (slice.vtable.as_ptr)(self.base) };
+                let bytes = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), len) };
+                hash_bytes_into(bytes, self.hasher);
+                Ok(())
             }
         }
     }
@@ -1514,4 +1613,8 @@ fn supported_scalar(scalar: ScalarType) -> bool {
         | ScalarType::Ipv6Addr => true,
         _ => false,
     }
+}
+
+fn is_byte_shape(shape: &'static Shape) -> bool {
+    ScalarType::try_from_shape(shape) == Some(ScalarType::U8)
 }
