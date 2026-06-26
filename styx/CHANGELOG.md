@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0-rc.3](https://github.com/facet-rs/facet/compare/serde_styx-v5.0.0-rc.2...serde_styx-v5.0.0-rc.3) - 2026-06-26
+
+### Other
+
+- Fix serde_styx deserialization of enumerations
+
 ## [5.0.0-rc.2](https://github.com/facet-rs/facet/compare/facet-styx-v5.0.0-rc.1...facet-styx-v5.0.0-rc.2) - 2026-06-25
 
 ### Other

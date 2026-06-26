@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0-rc.3](https://github.com/facet-rs/facet/compare/facet-hash-v0.50.0-rc.2...facet-hash-v0.50.0-rc.3) - 2026-06-26
+
+### Fixed
+
+- *(facet-hash)* write byte lengths through hasher
+
+### Other
+
+- *(facet-hash)* add concrete FNV byte hashing
+- *(facet-hash)* bulk hash byte sequences
+- Share facet-hash Weavy analysis
+
+## [0.50.0-rc.3](https://github.com/facet-rs/facet/compare/facet-postcard-v0.50.0-rc.2...facet-postcard-v0.50.0-rc.3) - 2026-06-26
+
+### Other
+
+- Fix Dibs string parameter signatures
+
+## [0.50.0-rc.3](https://github.com/facet-rs/facet/compare/facet-json-v0.50.0-rc.2...facet-json-v0.50.0-rc.3) - 2026-06-26
+
+### Fixed
+
+- fix #2342 but it uses unwrap so kinda ugly
+
+### Other
+
+- Match JSON map-key proxy repro opacity
+- Add test for #[facet(content)] on a #[facet(other)]
+- add tests related to #2342
+- clean up tests for #2341
+- Implement fix for #2341
+- Add tests for #2341
+- Fix #2363
+- add failing tests for #2363
+
+## [0.2.1](https://github.com/facet-rs/facet/compare/weavy-v0.2.0...weavy-v0.2.1) - 2026-06-26
+
+### Other
+
+- Share facet-hash Weavy analysis
+- Bundle Weavy IR analysis results
+- Share intrinsic child traversal in Weavy
+
+## [0.50.0-rc.3](https://github.com/facet-rs/facet/compare/facet-format-v0.50.0-rc.2...facet-format-v0.50.0-rc.3) - 2026-06-26
+
+### Fixed
+
+- fix #2342 but it uses unwrap so kinda ugly
+
+### Other
+
+- replace unwrap with actual error message
+- Potential fix for pull request finding
+- Implement fix for #2341
+
+## [0.50.0-rc.3](https://github.com/facet-rs/facet/compare/facet-reflect-v0.50.0-rc.2...facet-reflect-v0.50.0-rc.3) - 2026-06-26
+
+### Other
+
+- Fix #2363
+
 ## [0.50.0-rc.2](https://github.com/facet-rs/facet/compare/facet-cargo-toml-v0.50.0-rc.1...facet-cargo-toml-v0.50.0-rc.2) - 2026-06-25
 
 ### Other

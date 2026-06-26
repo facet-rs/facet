@@ -1,6 +1,6 @@
 [package]
 name = "facet-reflect"
-version = "0.50.0-rc.2"
+version = "0.50.0-rc.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -38,8 +38,8 @@ jiff02 = ["facet-core/jiff02"] # Enable Facet implementation for jiff 0.2 types
 fn-ptr = ["facet-core/fn-ptr"] # Enable Facet implementation for function pointers
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.50.0-rc.2", default-features = false }
-facet-path = { version = "0.50.0-rc.2", path = "../facet-path", default-features = false }
+facet-core = { path = "../facet-core", version = "0.50.0-rc.3", default-features = false }
+facet-path = { version = "0.50.0-rc.3", path = "../facet-path", default-features = false }
 hashbrown = "0.17"
 smallvec = "^2.0.0-alpha.10"
 regex = { version = "1", default-features = false, features = ["std"], optional = true }

@@ -1,6 +1,6 @@
 [package]
 name = "styx-tree"
-version = "5.0.0-rc.2"
+version = "5.0.0-rc.3"
 edition.workspace = true
 rust-version.workspace = true
 description = "High-level syntax tree for the Styx configuration language"

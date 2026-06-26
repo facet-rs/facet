@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/facet-rs/facet/compare/fable-v0.1.0...fable-v0.1.1) - 2026-06-26
+
+### Other
+
+- Bundle Weavy IR analysis results
+
 ## [0.1.0](https://github.com/facet-rs/facet/compare/fable-v0.0.0...fable-v0.1.0) - 2026-06-25
 
 ### Added
