@@ -43,6 +43,12 @@ impl TestDb {
     }
 }
 
+#[derive(Clone, Debug, facet::Facet)]
+struct FacetOnlyKey {
+    shard: u32,
+    slot: u32,
+}
+
 #[tokio_test_lite::test]
 async fn load_cache_restores_reverse_deps_for_invalidation_events() {
     init_tracing();
@@ -132,6 +138,105 @@ async fn load_cache_restores_reverse_deps_for_invalidation_events() {
         }
     }
     assert!(saw, "expected QueryInvalidated event after input set");
+
+    let _ = tokio::fs::remove_file(&cache_path).await;
+}
+
+#[tokio_test_lite::test]
+async fn typed_facet_keys_do_not_require_rust_hash_or_eq_after_cache_load() {
+    init_tracing();
+
+    let cache_path = temp_file("picante-typed-key-cache-graph.bin");
+
+    let mut db = TestDb::default();
+    let input: Arc<InputIngredient<FacetOnlyKey, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(10), "FacetOnlyInput"));
+    db.register(input.clone());
+
+    let derived: Arc<DerivedIngredient<TestDb, FacetOnlyKey, u64>> = {
+        let input = input.clone();
+        Arc::new(DerivedIngredient::new(
+            QueryKindId(11),
+            "FacetOnlyLen",
+            move |db, key| {
+                let input = input.clone();
+                Box::pin(async move {
+                    let s = input.get(db, &key)?.unwrap_or_default();
+                    Ok(s.len() as u64)
+                })
+            },
+        ))
+    };
+    db.register(derived.clone());
+
+    let key = FacetOnlyKey { shard: 7, slot: 3 };
+    input.set(&db, key.clone(), "hello".to_string());
+    assert_eq!(derived.get(&db, key.clone()).await.unwrap(), 5);
+
+    save_cache(&cache_path, db.runtime(), &[&*input, &*derived])
+        .await
+        .unwrap();
+
+    let mut db2 = TestDb::default();
+    let input2: Arc<InputIngredient<FacetOnlyKey, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(10), "FacetOnlyInput"));
+    db2.register(input2.clone());
+
+    let derived2: Arc<DerivedIngredient<TestDb, FacetOnlyKey, u64>> = {
+        let input2 = input2.clone();
+        Arc::new(DerivedIngredient::new(
+            QueryKindId(11),
+            "FacetOnlyLen",
+            move |db, key| {
+                let input2 = input2.clone();
+                Box::pin(async move {
+                    let s = input2.get(db, &key)?.unwrap_or_default();
+                    Ok(s.len() as u64)
+                })
+            },
+        ))
+    };
+    db2.register(derived2.clone());
+
+    let mut events = db2.runtime().subscribe_events();
+
+    let loaded = load_cache(&cache_path, db2.runtime(), &[&*input2, &*derived2])
+        .await
+        .unwrap();
+    assert!(loaded);
+
+    match events.recv().await.unwrap() {
+        RuntimeEvent::RevisionSet { revision } => assert_eq!(revision, Revision(1)),
+        other => panic!("expected RevisionSet, got {other:?}"),
+    }
+
+    input2.set(&db2, key.clone(), "hello!".to_string());
+
+    let mut saw = false;
+    for _ in 0..8 {
+        if let RuntimeEvent::QueryInvalidated {
+            kind,
+            key,
+            by_kind,
+            by_key,
+            ..
+        } = events.recv().await.unwrap()
+        {
+            let key = key.decode_facet::<FacetOnlyKey>().unwrap();
+            let by_key = by_key.decode_facet::<FacetOnlyKey>().unwrap();
+            assert_eq!(kind, QueryKindId(11));
+            assert_eq!(key.shard, 7);
+            assert_eq!(key.slot, 3);
+            assert_eq!(by_kind, QueryKindId(10));
+            assert_eq!(by_key.shard, 7);
+            assert_eq!(by_key.slot, 3);
+            saw = true;
+            break;
+        }
+    }
+    assert!(saw, "expected typed-key invalidation after input set");
+
+    assert_eq!(derived2.get(&db2, key).await.unwrap(), 6);
 
     let _ = tokio::fs::remove_file(&cache_path).await;
 }

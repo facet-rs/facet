@@ -1,7 +1,7 @@
 use crate::db::{DynIngredient, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame;
-use crate::key::{Dep, DynKey, Key, QueryKindId};
+use crate::key::{Dep, DynKey, Key, KeyFactory, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use crate::runtime::HasRuntime;
@@ -164,7 +164,7 @@ impl InputCore {
 // r[input.constraints]
 fn make_encode_input_record<K, V>() -> EncodeInputRecordFn
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |dyn_key, value, changed_at| {
@@ -203,7 +203,7 @@ where
 
 fn make_decode_input_record<K, V>() -> DecodeInputRecordFn
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, bytes| {
@@ -216,7 +216,7 @@ where
 
         let dyn_key = DynKey {
             kind,
-            key: Key::encode_facet(&rec.key)?,
+            key: KeyFactory::<K>::new().key(rec.key)?,
         };
 
         let value: Option<ArcAny> = rec.value.map(|v| Arc::new(v) as ArcAny);
@@ -231,20 +231,12 @@ where
     }
 }
 
-fn make_encode_input_incremental<K, V>() -> EncodeInputIncrementalFn
+fn make_encode_input_incremental<V>() -> EncodeInputIncrementalFn
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |dyn_key, value| {
-        let key: K = dyn_key.key.decode_facet()?;
-
-        let key_bytes = facet_postcard::to_vec(&key).map_err(|e| {
-            Arc::new(PicanteError::Encode {
-                what: "input key",
-                message: format!("{e:?}"),
-            })
-        })?;
+        let key_bytes = dyn_key.key.to_bytes()?.to_vec();
 
         let value_bytes = match value {
             Some(arc_any) => {
@@ -272,17 +264,10 @@ where
 
 fn make_apply_input_wal_entry<K, V>() -> ApplyInputWalEntryFn
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, key_bytes, value_bytes| {
-        let key: K = facet_postcard::from_slice(&key_bytes).map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "input key from WAL",
-                message: format!("{e:?}"),
-            })
-        })?;
-
         let value: Option<ArcAny> = match value_bytes {
             Some(bytes) => {
                 let v: V = facet_postcard::from_slice(&bytes).map_err(|e| {
@@ -298,7 +283,7 @@ where
 
         let dyn_key = DynKey {
             kind,
-            key: Key::encode_facet(&key)?,
+            key: KeyFactory::<K>::new().key_from_bytes(key_bytes)?,
         };
 
         Ok((
@@ -338,18 +323,19 @@ pub struct InputEntry<V> {
 /// persistence code to be compiled once instead of per (K, V) combination.
 pub struct InputIngredient<K, V>
 where
-    K: Clone + Eq + Hash,
+    K: Clone + Facet<'static>,
     V: Clone,
 {
     /// Type-erased core with persistence logic
     core: InputCore,
+    key_factory: KeyFactory<K>,
     /// Phantom data for K and V types
     _phantom: std::marker::PhantomData<(K, V)>,
 }
 
 impl<K, V> InputIngredient<K, V>
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     /// Create an empty input ingredient.
@@ -360,9 +346,10 @@ where
                 kind_name,
                 make_encode_input_record::<K, V>(),
                 make_decode_input_record::<K, V>(),
-                make_encode_input_incremental::<K, V>(),
+                make_encode_input_incremental::<V>(),
                 make_apply_input_wal_entry::<K, V>(),
             ),
+            key_factory: KeyFactory::new(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -386,7 +373,7 @@ where
         let _span = tracing::debug_span!("set", kind = self.core.kind.0).entered();
 
         // Encode key for storage
-        let dyn_key = match Key::encode_facet(&key) {
+        let dyn_key = match self.key_factory.key(key.clone()) {
             Ok(encoded) => DynKey {
                 kind: self.core.kind,
                 key: encoded,
@@ -440,7 +427,7 @@ where
         let _span = tracing::debug_span!("remove", kind = self.core.kind.0).entered();
 
         // Encode key for storage
-        let dyn_key = match Key::encode_facet(key) {
+        let dyn_key = match self.key_factory.key(key.clone()) {
             Ok(encoded) => DynKey {
                 kind: self.core.kind,
                 key: encoded,
@@ -494,7 +481,7 @@ where
     pub fn get<DB: HasRuntime>(&self, _db: &DB, key: &K) -> PicanteResult<Option<V>> {
         let _span = tracing::trace_span!("get", kind = self.core.kind.0).entered();
 
-        let encoded_key = Key::encode_facet(key)?;
+        let encoded_key = self.key_factory.key(key.clone())?;
         let key_hash = encoded_key.hash();
         let dyn_key = DynKey {
             kind: self.core.kind,
@@ -521,7 +508,7 @@ where
     pub fn changed_at(&self, key: &K) -> Option<Revision> {
         let dyn_key = DynKey {
             kind: self.core.kind,
-            key: Key::encode_facet(key).ok()?,
+            key: self.key_factory.key(key.clone()).ok()?,
         };
         let entries = self.core.entries.read();
         entries.get(&dyn_key).map(|e| e.changed_at)
@@ -533,7 +520,10 @@ where
     /// This is an O(1) operation due to structural sharing in `im::HashMap`.
     /// The returned map is immutable and can be used for consistent reads
     /// while the live ingredient continues to be modified.
-    pub fn snapshot(&self) -> im::HashMap<K, InputEntry<V>> {
+    pub fn snapshot(&self) -> im::HashMap<K, InputEntry<V>>
+    where
+        K: Eq + Hash,
+    {
         let entries = self.core.entries.read();
         entries
             .iter()
@@ -563,21 +553,26 @@ where
         kind: QueryKindId,
         kind_name: &'static str,
         entries: im::HashMap<K, InputEntry<V>>,
-    ) -> Self {
+    ) -> Self
+    where
+        K: Eq + Hash,
+    {
         let core = InputCore::new(
             kind,
             kind_name,
             make_encode_input_record::<K, V>(),
             make_decode_input_record::<K, V>(),
-            make_encode_input_incremental::<K, V>(),
+            make_encode_input_incremental::<V>(),
             make_apply_input_wal_entry::<K, V>(),
         );
+
+        let key_factory = KeyFactory::<K>::new();
 
         // Convert typed entries to type-erased storage
         {
             let mut erased_entries = core.entries.write();
             for (key, entry) in entries {
-                if let Ok(encoded_key) = Key::encode_facet(&key) {
+                if let Ok(encoded_key) = key_factory.key(key) {
                     let dyn_key = DynKey {
                         kind,
                         key: encoded_key,
@@ -596,6 +591,7 @@ where
 
         Self {
             core,
+            key_factory,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -610,7 +606,7 @@ struct InputRecord<K, V> {
 
 impl<K, V> PersistableIngredient for InputIngredient<K, V>
 where
-    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    K: Clone + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     fn kind(&self) -> QueryKindId {
@@ -628,6 +624,10 @@ where
     fn clear(&self) {
         let mut entries = self.core.entries.write();
         *entries = im::HashMap::new();
+    }
+
+    fn key_from_bytes(&self, bytes: Vec<u8>) -> PicanteResult<Key> {
+        self.key_factory.key_from_bytes(bytes)
     }
 
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {
@@ -662,11 +662,12 @@ where
 impl<DB, K, V> DynIngredient<DB> for InputIngredient<K, V>
 where
     DB: HasRuntime + Send + Sync + 'static,
-    K: Clone + Eq + Hash + facet::Facet<'static> + Send + Sync + 'static,
+    K: Clone + facet::Facet<'static> + Send + Sync + 'static,
     V: Clone + facet::Facet<'static> + Send + Sync + 'static,
 {
     fn touch<'a>(&'a self, _db: &'a DB, key: Key) -> BoxFuture<'a, PicanteResult<Touch>> {
         Box::pin(async move {
+            let key = self.key_factory.normalize_key(key)?;
             let dyn_key = DynKey {
                 kind: self.core.kind,
                 key,

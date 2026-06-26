@@ -1,7 +1,7 @@
 use crate::db::{DynIngredient, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame;
-use crate::key::{Dep, Key, QueryKindId};
+use crate::key::{Dep, Key, KeyFactory, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use crate::runtime::HasRuntime;
@@ -29,6 +29,8 @@ pub struct InternedIngredient<K> {
     next_id: AtomicU32,
     by_value: DashMap<Key, InternId>,
     by_id: DashMap<InternId, Arc<K>>,
+    value_key_factory: KeyFactory<K>,
+    id_key_factory: KeyFactory<InternId>,
 }
 
 // r[interned.constraints]
@@ -44,6 +46,8 @@ where
             next_id: AtomicU32::new(0),
             by_value: DashMap::new(),
             by_id: DashMap::new(),
+            value_key_factory: KeyFactory::new(),
+            id_key_factory: KeyFactory::new(),
         }
     }
 
@@ -61,14 +65,15 @@ where
     /// Intern `value` and return its stable id.
     pub fn intern(&self, value: K) -> PicanteResult<InternId> {
         let _span = tracing::debug_span!("intern", kind = self.kind.0).entered();
-        let key = Key::encode_facet(&value)?;
+        let value = Arc::new(value);
+        let key = self.value_key_factory.key_arc(value.clone())?;
         let key_hash = key.hash();
 
         match self.by_value.entry(key) {
             dashmap::mapref::entry::Entry::Occupied(e) => Ok(*e.get()),
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 let id = InternId(self.next_id.fetch_add(1, Ordering::AcqRel));
-                self.by_id.insert(id, Arc::new(value));
+                self.by_id.insert(id, value);
                 e.insert(id);
                 trace!(
                     kind = self.kind.0,
@@ -89,7 +94,7 @@ where
         let _span = tracing::trace_span!("get", kind = self.kind.0, id = id.0).entered();
         let mut key_hash = None;
         if frame::record_dep_result(|| {
-            let key = Key::encode_facet(&id)?;
+            let key = self.id_key_factory.key(id)?;
             key_hash = Some(key.hash());
             Ok::<Dep, Arc<PicanteError>>(Dep {
                 kind: self.kind,
@@ -139,6 +144,10 @@ where
         self.by_value.clear();
         self.by_id.clear();
         self.next_id.store(0, Ordering::Release);
+    }
+
+    fn key_from_bytes(&self, bytes: Vec<u8>) -> PicanteResult<Key> {
+        self.id_key_factory.key_from_bytes(bytes)
     }
 
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {
@@ -194,7 +203,7 @@ where
                 }));
             }
 
-            let key = Key::encode_facet(rec.value.as_ref())?;
+            let key = self.value_key_factory.key_arc(rec.value.clone())?;
             if let Some(existing) = self.by_value.insert(key, id) {
                 return Err(Arc::new(PicanteError::Cache {
                     message: format!(
@@ -262,7 +271,7 @@ where
             })?;
 
             let id = InternId(rec.id);
-            let key = Key::encode_facet(rec.value.as_ref())?;
+            let key = self.value_key_factory.key_arc(rec.value.clone())?;
 
             // Insert into both maps
             self.by_id.insert(id, rec.value);
