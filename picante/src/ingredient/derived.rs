@@ -253,16 +253,17 @@ impl DerivedCore {
         }
 
         // 0) record dependency into parent frame (if any)
-        if want_value && frame::has_active_frame() {
+        if want_value
+            && frame::record_dep_with(|| Dep {
+                kind: self.kind,
+                key: requested.key.clone(),
+            })
+        {
             trace!(
                 kind = self.kind.0,
                 key_hash = %format!("{:016x}", key_hash),
                 "derived dep"
             );
-            frame::record_dep(Dep {
-                kind: self.kind,
-                key: requested.key.clone(),
-            });
         }
 
         // Get or create the cell for this key

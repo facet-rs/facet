@@ -1,7 +1,7 @@
 use crate::db::{DynIngredient, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame;
-use crate::key::{Dep, DynKey, Key, QueryKindId};
+use crate::key::{Dep, DynKey, Key, KeyBuildHasher, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use crate::runtime::HasRuntime;
@@ -26,6 +26,8 @@ struct ErasedInputEntry {
     value: Option<ArcAny>,
     changed_at: Revision,
 }
+
+type ErasedInputMap = im::HashMap<DynKey, ErasedInputEntry, KeyBuildHasher>;
 
 /// Encode a single record to bytes
 type EncodeInputRecordFn =
@@ -56,7 +58,7 @@ type ApplyInputWalEntryFn = fn(
 struct InputCore {
     kind: QueryKindId,
     kind_name: &'static str,
-    entries: RwLock<im::HashMap<DynKey, ErasedInputEntry>>,
+    entries: RwLock<ErasedInputMap>,
     // Type-erased persistence callbacks
     encode_record: EncodeInputRecordFn,
     decode_record: DecodeInputRecordFn,
@@ -76,7 +78,7 @@ impl InputCore {
         Self {
             kind,
             kind_name,
-            entries: RwLock::new(im::HashMap::new()),
+            entries: RwLock::new(ErasedInputMap::default()),
             encode_record,
             decode_record,
             encode_incremental,
@@ -495,17 +497,17 @@ where
         let _span = tracing::trace_span!("get", kind = self.core.kind.0).entered();
 
         let encoded_key = Key::encode_facet(key)?;
+        let key_hash = encoded_key.hash();
         let dyn_key = DynKey {
             kind: self.core.kind,
             key: encoded_key.clone(),
         };
 
-        if frame::has_active_frame() {
-            trace!(kind = self.core.kind.0, key_hash = %format!("{:016x}", encoded_key.hash()), "input dep");
-            frame::record_dep(Dep {
-                kind: self.core.kind,
-                key: encoded_key,
-            });
+        if frame::record_dep_if_active(Dep {
+            kind: self.core.kind,
+            key: encoded_key,
+        }) {
+            trace!(kind = self.core.kind.0, key_hash = %format!("{:016x}", key_hash), "input dep");
         }
 
         let entries = self.core.entries.read();
@@ -627,7 +629,7 @@ where
 
     fn clear(&self) {
         let mut entries = self.core.entries.write();
-        *entries = im::HashMap::new();
+        *entries = ErasedInputMap::default();
     }
 
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {

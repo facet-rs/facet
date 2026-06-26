@@ -87,18 +87,21 @@ where
     /// If there's an active query frame, records a dependency edge.
     pub fn get<DB: HasRuntime>(&self, _db: &DB, id: InternId) -> PicanteResult<Arc<K>> {
         let _span = tracing::trace_span!("get", kind = self.kind.0, id = id.0).entered();
-        if frame::has_active_frame() {
+        let mut key_hash = None;
+        if frame::record_dep_result(|| {
             let key = Key::encode_facet(&id)?;
+            key_hash = Some(key.hash());
+            Ok::<Dep, Arc<PicanteError>>(Dep {
+                kind: self.kind,
+                key,
+            })
+        })? {
             trace!(
                 kind = self.kind.0,
-                key_hash = %format!("{:016x}", key.hash()),
+                key_hash = %format!("{:016x}", key_hash.unwrap_or_default()),
                 id = id.0,
                 "interned dep"
             );
-            frame::record_dep(Dep {
-                kind: self.kind,
-                key,
-            });
         }
 
         self.by_id.get(&id).map(|v| v.clone()).ok_or_else(|| {
