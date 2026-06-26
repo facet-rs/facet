@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-rc.4](https://github.com/facet-rs/facet/compare/picante-v3.0.0-rc.3...picante-v3.0.0-rc.4) - 2026-06-26
+
+### Other
+
+- cover legacy key-byte cache loads
+- use typed runtime keys in hot paths
+- add opt-in native key hashing
+
 ## [3.0.0-rc.3](https://github.com/facet-rs/facet/compare/picante-v3.0.0-rc.2...picante-v3.0.0-rc.3) - 2026-06-26
 
 ### Other

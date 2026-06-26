@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "dibs"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "blake3",
  "bytes",
@@ -1608,7 +1608,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-cli"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "arborium",
  "arborium-highlight",
@@ -1652,14 +1652,14 @@ dependencies = [
 
 [[package]]
 name = "dibs-config"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "dibs-db-schema"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "chrono",
  "dibs-jsonb",
@@ -1675,7 +1675,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-jsonb"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "facet",
 ]
@@ -1691,7 +1691,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-proto"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "facet",
  "vox",
@@ -1699,7 +1699,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-qgen"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "ariadne",
  "camino",
@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-query-schema"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "dibs-sql",
  "facet",
@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-runtime"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "dibs-jsonb",
  "facet",
@@ -1746,7 +1746,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-sql"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "blake3",
  "facet",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "fable"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cstree",
  "facet",
@@ -2004,7 +2004,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -2022,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "facet-asn1"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "facet-atom"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-testhelpers",
@@ -2046,7 +2046,7 @@ dependencies = [
 
 [[package]]
 name = "facet-axum"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "axum",
  "facet",
@@ -2063,7 +2063,7 @@ dependencies = [
 
 [[package]]
 name = "facet-cargo-toml"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "camino",
  "datatest-stable",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "autocfg",
  "bytes",
@@ -2111,7 +2111,7 @@ dependencies = [
 
 [[package]]
 name = "facet-csv"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -2123,14 +2123,14 @@ dependencies = [
 
 [[package]]
 name = "facet-default"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-dessert"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -2138,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "facet-dom"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet-core",
  "facet-dessert",
@@ -2151,14 +2151,14 @@ dependencies = [
 
 [[package]]
 name = "facet-error"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-format"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "ariadne",
  "facet-core",
@@ -2201,7 +2201,7 @@ dependencies = [
 
 [[package]]
 name = "facet-hash"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "codspeed-divan-compat",
  "copypatch",
@@ -2213,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "axum-core",
  "codspeed-divan-compat",
@@ -2254,7 +2254,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json-schema"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -2264,7 +2264,7 @@ dependencies = [
 
 [[package]]
 name = "facet-lua"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -2277,7 +2277,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -2286,7 +2286,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2295,14 +2295,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -2314,7 +2314,7 @@ dependencies = [
 
 [[package]]
 name = "facet-msgpack"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "axum-core",
  "codspeed-divan-compat",
@@ -2334,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -2344,7 +2344,7 @@ dependencies = [
 
 [[package]]
 name = "facet-postcard"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "axum-core",
  "bytestring",
@@ -2377,7 +2377,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "camino",
  "facet",
@@ -2392,7 +2392,7 @@ dependencies = [
 
 [[package]]
 name = "facet-python"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "chrono",
  "facet",
@@ -2402,7 +2402,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "eyre",
  "facet",
@@ -2430,7 +2430,7 @@ dependencies = [
 
 [[package]]
 name = "facet-singularize"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "codspeed-divan-compat",
  "facet",
@@ -2444,7 +2444,7 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "codspeed-divan-compat",
  "facet",
@@ -2458,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "facet-styx"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "ariadne",
  "facet",
@@ -2482,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "facet-svg"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "datatest-stable",
  "facet",
@@ -2501,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -2512,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "quote",
  "unsynn",
@@ -2520,7 +2520,7 @@ dependencies = [
 
 [[package]]
 name = "facet-tokio-postgres"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "chrono",
  "dibs-jsonb",
@@ -2541,7 +2541,7 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "axum-core",
  "codspeed-divan-compat",
@@ -2567,7 +2567,7 @@ dependencies = [
 
 [[package]]
 name = "facet-typescript"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "chrono",
  "facet",
@@ -2577,7 +2577,7 @@ dependencies = [
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "axum-core",
  "facet",
@@ -2592,7 +2592,7 @@ dependencies = [
 
 [[package]]
 name = "facet-validate"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -2601,7 +2601,7 @@ dependencies = [
 
 [[package]]
 name = "facet-value"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "bolero",
  "codspeed-divan-compat",
@@ -2617,7 +2617,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xdr"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -2628,7 +2628,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xml"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "axum-core",
  "facet",
@@ -2644,7 +2644,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xml-node"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -2656,7 +2656,7 @@ dependencies = [
 
 [[package]]
 name = "facet-yaml"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "axum-core",
  "codspeed-divan-compat",
@@ -2682,7 +2682,7 @@ dependencies = [
 
 [[package]]
 name = "facet-zod"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -2754,7 +2754,7 @@ dependencies = [
 
 [[package]]
 name = "figue"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "ariadne",
  "camino",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "figue-attrs"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "facet",
 ]
@@ -4635,7 +4635,7 @@ dependencies = [
 
 [[package]]
 name = "phon"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "facet",
  "facet-value",
@@ -4647,7 +4647,7 @@ dependencies = [
 
 [[package]]
 name = "phon-codegen"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "facet",
  "phon",
@@ -4656,7 +4656,7 @@ dependencies = [
 
 [[package]]
 name = "phon-conformance"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "facet",
  "facet-json",
@@ -4669,7 +4669,7 @@ dependencies = [
 
 [[package]]
 name = "phon-engine"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "facet-value",
  "phon-ir",
@@ -4680,7 +4680,7 @@ dependencies = [
 
 [[package]]
 name = "phon-ir"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "phon-schema",
  "weavy",
@@ -4688,7 +4688,7 @@ dependencies = [
 
 [[package]]
 name = "phon-jit"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "copypatch",
  "phon-ir",
@@ -4698,7 +4698,7 @@ dependencies = [
 
 [[package]]
 name = "phon-schema"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 dependencies = [
  "blake3",
  "facet-value",
@@ -4706,7 +4706,7 @@ dependencies = [
 
 [[package]]
 name = "picante"
-version = "3.0.0-rc.3"
+version = "3.0.0-rc.4"
 dependencies = [
  "codspeed-divan-compat",
  "dashmap 6.2.1",
@@ -4729,7 +4729,7 @@ dependencies = [
 
 [[package]]
 name = "picante-macros"
-version = "3.0.0-rc.3"
+version = "3.0.0-rc.4"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -5315,7 +5315,7 @@ dependencies = [
 
 [[package]]
 name = "rediff"
-version = "0.50.0-rc.3"
+version = "0.50.0-rc.4"
 dependencies = [
  "confusables",
  "facet",
@@ -5525,7 +5525,7 @@ dependencies = [
 
 [[package]]
 name = "rusqlite-facet"
-version = "2.0.0-rc.3"
+version = "2.0.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -5926,7 +5926,7 @@ dependencies = [
 
 [[package]]
 name = "serde_styx"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "serde",
  "styx-format",
@@ -6226,7 +6226,7 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "strid"
-version = "11.0.0-rc.3"
+version = "11.0.0-rc.4"
 dependencies = [
  "bytestring",
  "compact_str",
@@ -6242,7 +6242,7 @@ dependencies = [
 
 [[package]]
 name = "strid-examples"
-version = "11.0.0-rc.3"
+version = "11.0.0-rc.4"
 dependencies = [
  "bytestring",
  "compact_str",
@@ -6254,7 +6254,7 @@ dependencies = [
 
 [[package]]
 name = "strid-macros"
-version = "11.0.0-rc.2"
+version = "11.0.0-rc.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6365,7 +6365,7 @@ dependencies = [
 
 [[package]]
 name = "styx-cli"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "facet",
  "facet-styx",
@@ -6395,7 +6395,7 @@ dependencies = [
 
 [[package]]
 name = "styx-cst"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "rowan",
  "styx-testhelpers",
@@ -6404,7 +6404,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "blake3",
  "goblin",
@@ -6415,7 +6415,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed-macros"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "blake3",
  "lz4_flex",
@@ -6426,7 +6426,7 @@ dependencies = [
 
 [[package]]
 name = "styx-ffi"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "cbindgen",
  "styx-tree",
@@ -6434,7 +6434,7 @@ dependencies = [
 
 [[package]]
 name = "styx-format"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "insta",
  "proptest",
@@ -6445,14 +6445,14 @@ dependencies = [
 
 [[package]]
 name = "styx-gen-go"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "facet-styx",
 ]
 
 [[package]]
 name = "styx-lsp"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "dirs",
  "eyre",
@@ -6481,7 +6481,7 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-ext"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "facet",
  "styx-tree",
@@ -6490,14 +6490,14 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-test-schema"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "styx-parse"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "ariadne",
  "facet",
@@ -6510,14 +6510,14 @@ dependencies = [
 
 [[package]]
 name = "styx-testhelpers"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "ariadne",
 ]
 
 [[package]]
 name = "styx-tokenizer"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "facet",
  "facet-testhelpers",
@@ -6526,7 +6526,7 @@ dependencies = [
 
 [[package]]
 name = "styx-tree"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "ariadne",
  "facet",
@@ -6540,7 +6540,7 @@ dependencies = [
 
 [[package]]
 name = "styx-wasm"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
@@ -7339,7 +7339,7 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
 name = "tree-sitter-styx"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 dependencies = [
  "arborium-tree-sitter",
  "cc",
@@ -7615,7 +7615,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vox"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "facet",
  "facet-pretty",
@@ -7639,7 +7639,7 @@ dependencies = [
 
 [[package]]
 name = "vox-codegen"
-version = "0.10.0-rc.4"
+version = "0.10.0-rc.5"
 dependencies = [
  "base64 0.21.7",
  "facet",
@@ -7658,7 +7658,7 @@ dependencies = [
 
 [[package]]
 name = "vox-core"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "facet",
  "facet-core",
@@ -7676,7 +7676,7 @@ dependencies = [
 
 [[package]]
 name = "vox-fdpass"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "libc",
  "passfd",
@@ -7686,7 +7686,7 @@ dependencies = [
 
 [[package]]
 name = "vox-ffi"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "tracing",
  "vox-types",
@@ -7694,7 +7694,7 @@ dependencies = [
 
 [[package]]
 name = "vox-inprocess"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -7705,7 +7705,7 @@ dependencies = [
 
 [[package]]
 name = "vox-local"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "tokio",
  "vox-stream",
@@ -7713,7 +7713,7 @@ dependencies = [
 
 [[package]]
 name = "vox-macros-core"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "heck 0.5.0",
  "insta",
@@ -7724,7 +7724,7 @@ dependencies = [
 
 [[package]]
 name = "vox-macros-parse"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "proc-macro2",
  "unsynn",
@@ -7732,7 +7732,7 @@ dependencies = [
 
 [[package]]
 name = "vox-phon"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "facet",
  "phon",
@@ -7747,7 +7747,7 @@ dependencies = [
 
 [[package]]
 name = "vox-rt"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -7762,11 +7762,11 @@ dependencies = [
 
 [[package]]
 name = "vox-rt-macros"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 
 [[package]]
 name = "vox-schema"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "blake3",
  "facet",
@@ -7775,7 +7775,7 @@ dependencies = [
 
 [[package]]
 name = "vox-service-macros"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "proc-macro2",
  "vox-macros-core",
@@ -7783,7 +7783,7 @@ dependencies = [
 
 [[package]]
 name = "vox-stream"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "libc",
  "tempfile",
@@ -7798,7 +7798,7 @@ dependencies = [
 
 [[package]]
 name = "vox-types"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "blake3",
  "facet",
@@ -7816,7 +7816,7 @@ dependencies = [
 
 [[package]]
 name = "vox-websocket"
-version = "0.10.0-rc.3"
+version = "0.10.0-rc.4"
 dependencies = [
  "futures-channel",
  "futures-util",

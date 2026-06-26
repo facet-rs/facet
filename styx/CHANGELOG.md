@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0-rc.4](https://github.com/facet-rs/facet/compare/styx-format-v5.0.0-rc.3...styx-format-v5.0.0-rc.4) - 2026-06-26
+
+### Other
+
+- add `omit_none` serialize option
+
 ## [5.0.0-rc.3](https://github.com/facet-rs/facet/compare/serde_styx-v5.0.0-rc.2...serde_styx-v5.0.0-rc.3) - 2026-06-26
 
 ### Other
