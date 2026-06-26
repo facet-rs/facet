@@ -254,15 +254,33 @@ fn derived_wide_revalidate_64_deps(bencher: Bencher) {
 }
 
 #[divan::bench]
+fn derived_wide_recompute_64_deps(bencher: Bencher) {
+    let (rt, db, leaves, _noise, wide) = wide_sum_fixture(64);
+    bench_wide_recompute(bencher, rt, db, leaves, wide);
+}
+
+#[divan::bench]
 fn derived_wide_revalidate_512_deps(bencher: Bencher) {
     let (rt, db, _leaves, noise, wide) = wide_sum_fixture(512);
     bench_wide_revalidate(bencher, rt, db, noise, wide);
 }
 
 #[divan::bench]
+fn derived_wide_recompute_512_deps(bencher: Bencher) {
+    let (rt, db, leaves, _noise, wide) = wide_sum_fixture(512);
+    bench_wide_recompute(bencher, rt, db, leaves, wide);
+}
+
+#[divan::bench]
 fn derived_wide_revalidate_2048_deps(bencher: Bencher) {
     let (rt, db, _leaves, noise, wide) = wide_sum_fixture(2048);
     bench_wide_revalidate(bencher, rt, db, noise, wide);
+}
+
+#[divan::bench]
+fn derived_wide_recompute_2048_deps(bencher: Bencher) {
+    let (rt, db, leaves, _noise, wide) = wide_sum_fixture(2048);
+    bench_wide_recompute(bencher, rt, db, leaves, wide);
 }
 
 fn bench_wide_revalidate(
@@ -278,6 +296,24 @@ fn bench_wide_revalidate(
             .fetch_add(1, Ordering::Relaxed)
             .wrapping_add(1);
         noise.set(&db, (), next_noise);
+        rt.block_on(async {
+            let value = wide.get(&db, ()).await.unwrap();
+            black_box(value);
+        })
+    });
+}
+
+fn bench_wide_recompute(
+    bencher: Bencher,
+    rt: tokio::runtime::Runtime,
+    db: BenchDb,
+    leaves: Arc<InputIngredient<u32, u64>>,
+    wide: Arc<DerivedIngredient<BenchDb, (), u64>>,
+) {
+    let leaf_value = AtomicU64::new(0);
+    bencher.bench(|| {
+        let next_value = leaf_value.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        leaves.set(&db, black_box(0), next_value);
         rt.block_on(async {
             let value = wide.get(&db, ()).await.unwrap();
             black_box(value);
