@@ -12,6 +12,8 @@ use styx_format::{FormatOptions, StyxWriter};
 
 // Re-export FormatOptions as SerializeOptions for backwards compatibility
 pub use styx_format::FormatOptions as SerializeOptions;
+// Re-export the text reformatter so callers can pretty-print serialized styx.
+pub use styx_format::format_source;
 
 /// Extract a FieldKey from a Peek value (typically a map key).
 ///
@@ -186,6 +188,9 @@ impl std::error::Error for StyxSerializeError {}
 /// Styx serializer with configurable formatting options.
 pub struct StyxSerializer {
     writer: StyxWriter,
+    /// Serialization options (also held by the writer); kept here for value-level
+    /// decisions like `omit_none`.
+    options: FormatOptions,
     /// Track if we're at root level (for struct unwrapping)
     at_root: bool,
     /// Track if we just wrote a variant tag (to skip None payload)
@@ -201,7 +206,8 @@ impl StyxSerializer {
     /// Create a new Styx serializer with the given options.
     pub fn with_options(options: FormatOptions) -> Self {
         Self {
-            writer: StyxWriter::with_options(options),
+            writer: StyxWriter::with_options(options.clone()),
+            options,
             at_root: true,
             just_wrote_tag: false,
         }
@@ -221,6 +227,16 @@ impl Default for StyxSerializer {
 
 impl FormatSerializer for StyxSerializer {
     type Error = StyxSerializeError;
+
+    fn should_omit_field(&self, _field: &facet_reflect::FieldItem, value: Peek<'_, '_>) -> bool {
+        // With `omit_none`, drop absent options instead of writing them as `@`
+        // (which is noise and doesn't round-trip for map/seq fields).
+        self.options.omit_none
+            && value
+                .innermost_peek()
+                .into_option()
+                .is_ok_and(|opt| opt.is_none())
+    }
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
         let is_after_tag = self.just_wrote_tag;
@@ -938,6 +954,30 @@ mod tests {
         };
         let result = to_string(&value).unwrap();
         assert!(result.contains("required hello"));
+        assert!(result.contains("optional 42"));
+    }
+
+    #[test]
+    fn test_omit_none() {
+        let value = WithOptional {
+            required: "hello".into(),
+            optional: None,
+        };
+        let opts = SerializeOptions::default().omit_none();
+        let result = to_string_with_options(&value, &opts).unwrap();
+        assert!(result.contains("required hello"));
+        // With omit_none, the absent option is dropped entirely (no `optional @`).
+        assert!(!result.contains("optional"));
+    }
+
+    #[test]
+    fn test_omit_none_keeps_some() {
+        let value = WithOptional {
+            required: "hello".into(),
+            optional: Some(42),
+        };
+        let opts = SerializeOptions::default().omit_none();
+        let result = to_string_with_options(&value, &opts).unwrap();
         assert!(result.contains("optional 42"));
     }
 

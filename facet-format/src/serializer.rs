@@ -162,6 +162,15 @@ pub trait FormatSerializer {
     /// Emit a scalar value.
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error>;
 
+    /// Optional: Whether to omit a struct field entirely (no key, no value).
+    ///
+    /// Lets a format drop fields it's configured to skip — e.g. `None` options
+    /// when an "omit none" option is set. Called for each named-struct field
+    /// before it's written. Default: never omit.
+    fn should_omit_field(&self, _field: &facet_reflect::FieldItem, _value: Peek<'_, '_>) -> bool {
+        false
+    }
+
     /// Optional: Provide field metadata before field_key is called.
     /// Default implementation does nothing.
     fn field_metadata(&mut self, _field: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
@@ -1090,6 +1099,9 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         sort_fields_if_needed(self.serializer, &mut fields);
 
         for (field_item, field_value) in fields {
+            if self.serializer.should_omit_field(&field_item, field_value) {
+                continue;
+            }
             if field_item.flattened {
                 self.serialize_flattened_struct_field(field_mode, field_item, field_value)?;
             } else {

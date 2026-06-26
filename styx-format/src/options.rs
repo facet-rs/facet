@@ -39,6 +39,12 @@ pub struct FormatOptions {
     pub force_style: ForceStyle,
     /// Whether pretty printing is enabled
     pub pretty_printing: bool,
+
+    /// When serializing a Facet value, omit struct fields whose value is `None`
+    /// (an absent `Option`) instead of writing them as the unit key `@`. Off by
+    /// default; opt in for clean, round-trippable output. Only affects value
+    /// serialization, not text reformatting.
+    pub omit_none: bool,
 }
 
 impl Default for FormatOptions {
@@ -52,6 +58,7 @@ impl Default for FormatOptions {
             heredoc_line_threshold: 2,
             force_style: ForceStyle::None,
             pretty_printing: false,
+            omit_none: false,
         }
     }
 }
@@ -71,6 +78,12 @@ impl FormatOptions {
     /// Force all output to be inline (comma separators, single line).
     pub fn inline(mut self) -> Self {
         self.force_style = ForceStyle::Inline;
+        self
+    }
+
+    /// Omit `None` (absent `Option`) struct fields during value serialization.
+    pub fn omit_none(mut self) -> Self {
+        self.omit_none = true;
         self
     }
 
