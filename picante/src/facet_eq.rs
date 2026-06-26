@@ -11,7 +11,7 @@
 
 use facet::Facet;
 use facet_core::{Def, StructKind, Type, UserType};
-use facet_reflect::{HasFields, Peek};
+use facet_reflect::Peek;
 use std::any::Any;
 
 /// Check if two type-erased Facet values are equal.
@@ -137,33 +137,22 @@ fn peek_eq<'mem, 'facet>(a: Peek<'mem, 'facet>, b: Peek<'mem, 'facet>) -> bool {
     }
 
     match a.shape().ty {
-        Type::User(UserType::Struct(_)) => {
-            let Ok(struct_a) = a.into_struct() else {
-                return false;
-            };
-            let Ok(struct_b) = b.into_struct() else {
-                return false;
-            };
-
-            // Compare each field
-            let fields_a: Vec<_> = struct_a
-                .fields()
-                .filter(|(field, _)| !field.is_metadata())
-                .collect();
-            let fields_b: Vec<_> = struct_b
-                .fields()
-                .filter(|(field, _)| !field.is_metadata())
-                .collect();
-
-            if fields_a.len() != fields_b.len() {
-                return false;
-            }
-
-            for ((field_a, peek_a), (field_b, peek_b)) in fields_a.iter().zip(fields_b.iter()) {
-                if field_a.name != field_b.name {
-                    return false;
+        Type::User(UserType::Struct(struct_def)) => {
+            for field in struct_def.fields {
+                if field.is_metadata() {
+                    continue;
                 }
-                if !peek_eq(*peek_a, *peek_b) {
+
+                let field_shape = field.shape();
+                // SAFETY: `a` and `b` have the same static shape, and `field.offset`
+                // comes from that shape's field definition.
+                let field_a =
+                    unsafe { Peek::unchecked_new(a.data().field(field.offset), field_shape) };
+                // SAFETY: same field definition and shape as above, applied to `b`.
+                let field_b =
+                    unsafe { Peek::unchecked_new(b.data().field(field.offset), field_shape) };
+
+                if !peek_eq(field_a, field_b) {
                     return false;
                 }
             }
