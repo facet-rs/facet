@@ -642,6 +642,24 @@ impl LoweredEffectStats {
     }
 }
 
+/// Analysis bundle for one canonical program.
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProgramAnalysis {
+    pub program_stats: ProgramStats,
+    pub effect_stats: EffectStats,
+    pub intrinsic_counts: BTreeMap<IntrinsicDescriptor, usize>,
+}
+
+/// Analysis bundle for a canonical lowered program with block table.
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LoweredAnalysis {
+    pub program_stats: LoweredProgramStats,
+    pub effect_stats: LoweredEffectStats,
+    pub intrinsic_counts: BTreeMap<IntrinsicDescriptor, usize>,
+}
+
 /// Count the canonical IR shape for one program.
 #[must_use]
 pub fn program_stats<Block, Intrinsic>(program: &[WeavyOp<Block, Intrinsic>]) -> ProgramStats {
@@ -874,6 +892,97 @@ where
         blocks.accumulate(effect_stats_with_intrinsic_children(block));
     }
     LoweredEffectStats::new(root, blocks, lowered.blocks.len())
+}
+
+/// Analyze one canonical program.
+#[must_use]
+pub fn program_analysis<Block, Intrinsic>(program: &[WeavyOp<Block, Intrinsic>]) -> ProgramAnalysis
+where
+    Intrinsic: IntrinsicOp,
+{
+    ProgramAnalysis {
+        program_stats: program_stats(program),
+        effect_stats: effect_stats(program),
+        intrinsic_counts: intrinsic_counts(program),
+    }
+}
+
+/// Analyze one canonical program, recursively entering child programs exposed
+/// by intrinsics.
+#[must_use]
+pub fn program_analysis_with_intrinsic_children<Block, Intrinsic>(
+    program: &[WeavyOp<Block, Intrinsic>],
+) -> ProgramAnalysis
+where
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    ProgramAnalysis {
+        program_stats: program_stats_with_intrinsic_children(program),
+        effect_stats: effect_stats_with_intrinsic_children(program),
+        intrinsic_counts: intrinsic_counts_with_intrinsic_children(program),
+    }
+}
+
+/// Analyze a canonical lowered program and its block table.
+#[must_use]
+pub fn lowered_analysis<Block, Intrinsic>(
+    lowered: &WeavyLowered<Block, Intrinsic>,
+) -> LoweredAnalysis
+where
+    Block: Ord,
+    Intrinsic: IntrinsicOp,
+{
+    LoweredAnalysis {
+        program_stats: lowered_program_stats(lowered),
+        effect_stats: lowered_effect_stats(lowered),
+        intrinsic_counts: lowered_intrinsic_counts(lowered),
+    }
+}
+
+/// Analyze a canonical lowered program and its block table, recursively entering
+/// child programs exposed by intrinsics.
+#[must_use]
+pub fn lowered_analysis_with_intrinsic_children<Block, Intrinsic>(
+    lowered: &WeavyLowered<Block, Intrinsic>,
+) -> LoweredAnalysis
+where
+    Block: Ord,
+    Intrinsic: IntrinsicChildren<Block>,
+{
+    LoweredAnalysis {
+        program_stats: lowered_program_stats_with_intrinsic_children(lowered),
+        effect_stats: lowered_effect_stats_with_intrinsic_children(lowered),
+        intrinsic_counts: lowered_intrinsic_counts_with_intrinsic_children(lowered),
+    }
+}
+
+/// Analyze a dense canonical lowered program and its block table.
+#[must_use]
+pub fn dense_lowered_analysis<Intrinsic>(lowered: &DenseWeavyLowered<Intrinsic>) -> LoweredAnalysis
+where
+    Intrinsic: IntrinsicOp,
+{
+    LoweredAnalysis {
+        program_stats: dense_lowered_program_stats(lowered),
+        effect_stats: dense_lowered_effect_stats(lowered),
+        intrinsic_counts: dense_lowered_intrinsic_counts(lowered),
+    }
+}
+
+/// Analyze a dense canonical lowered program and its block table, recursively
+/// entering child programs exposed by intrinsics.
+#[must_use]
+pub fn dense_lowered_analysis_with_intrinsic_children<Intrinsic>(
+    lowered: &DenseWeavyLowered<Intrinsic>,
+) -> LoweredAnalysis
+where
+    Intrinsic: IntrinsicChildren<BlockRef>,
+{
+    LoweredAnalysis {
+        program_stats: dense_lowered_program_stats_with_intrinsic_children(lowered),
+        effect_stats: dense_lowered_effect_stats_with_intrinsic_children(lowered),
+        intrinsic_counts: dense_lowered_intrinsic_counts_with_intrinsic_children(lowered),
+    }
 }
 
 fn add_program_stats<Block, Intrinsic>(
@@ -1496,7 +1605,8 @@ mod tests {
             ],
         );
 
-        let shape = dense_lowered_program_stats(&lowered);
+        let analysis = dense_lowered_analysis(&lowered);
+        let shape = analysis.program_stats;
         assert_eq!(shape.block_count, 2);
         assert_eq!(shape.root.op_count, 1);
         assert_eq!(shape.blocks.op_count, 2);
@@ -1504,14 +1614,14 @@ mod tests {
         assert_eq!(shape.total.intrinsic_op_count, 2);
         assert_eq!(shape.total.scalar_copy_count, 1);
 
-        let effects = dense_lowered_effect_stats(&lowered);
+        let effects = analysis.effect_stats;
         assert_eq!(effects.block_count, 2);
         assert_eq!(effects.total.intrinsic_op_count, 2);
         assert_eq!(effects.total.typed_memory_read_count, 2);
         assert_eq!(effects.total.typed_memory_initialize_count, 2);
         assert_eq!(effects.total.sink_write_count, 2);
 
-        let counts = dense_lowered_intrinsic_counts(&lowered);
+        let counts = analysis.intrinsic_counts;
         assert_eq!(
             counts[&IntrinsicDescriptor {
                 dialect: "json",
@@ -1637,7 +1747,11 @@ mod tests {
         assert_eq!(effects.sink_write_count, 1);
         assert_eq!(effects.side_channel_count, 1);
 
-        let counts = intrinsic_counts_with_intrinsic_children(&program);
+        let analysis = program_analysis_with_intrinsic_children(&program);
+        assert_eq!(analysis.program_stats, recursive);
+        assert_eq!(analysis.effect_stats, effects);
+
+        let counts = analysis.intrinsic_counts;
         assert_eq!(
             counts[&IntrinsicDescriptor {
                 dialect: "test",

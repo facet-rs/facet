@@ -32,8 +32,9 @@ use phon_schema::bytes::{Reader, skip_pad};
 use phon_schema::{DecodeError, Primitive, SchemaId, SchemaRef};
 pub use weavy::ir::{
     ControlOp, EffectContract, EffectOrdering, EffectResource, EffectStats, IntrinsicChildren,
-    IntrinsicDescriptor, IntrinsicOp, LoweredEffectStats, LoweredProgramStats, MemoryRegion,
-    ProgramStats, ResourceAccess, ResourceEffect, TypedMemoryAccess, TypedMemoryEffect, WeavyOp,
+    IntrinsicDescriptor, IntrinsicOp, LoweredAnalysis, LoweredEffectStats, LoweredProgramStats,
+    MemoryRegion, ProgramStats, ResourceAccess, ResourceEffect, TypedMemoryAccess,
+    TypedMemoryEffect, WeavyOp,
 };
 pub use weavy::mem::{
     BorrowOp, BorrowThunks, ByteValidator, BytesOp, CanonicalEnumOp, CanonicalEnumVariantOp,
@@ -42,11 +43,12 @@ pub use weavy::mem::{
     LoweredMemProgramStats, LoweringError, MapThunks, MemIntrinsic, MemProgramStats, OpaqueOp,
     OpaqueThunks, OptionThunks, PointerThunks, ResultThunks, ScalarRunOp, ScalarSegment, SeqThunks,
     SetThunks, SkipOp, canonical_mem_intrinsic_counts, canonical_mem_lowered,
-    canonical_mem_lowered_effect_stats, canonical_mem_lowered_intrinsic_counts,
-    canonical_mem_lowered_stats, canonical_mem_program, canonical_mem_program_effect_stats,
-    canonical_mem_program_stats, element_min_wire, group_record_scalars, lower_fixed_array,
-    lower_record_fields, lowered_mem_program_stats, mem_lowered_from_canonical,
-    mem_program_from_canonical, mem_program_stats, owned_sequence_op, set_op,
+    canonical_mem_lowered_analysis, canonical_mem_lowered_effect_stats,
+    canonical_mem_lowered_intrinsic_counts, canonical_mem_lowered_stats, canonical_mem_program,
+    canonical_mem_program_effect_stats, canonical_mem_program_stats, element_min_wire,
+    group_record_scalars, lower_fixed_array, lower_record_fields, lowered_mem_program_stats,
+    mem_lowered_from_canonical, mem_program_from_canonical, mem_program_stats, owned_sequence_op,
+    set_op,
 };
 
 /// A lowered decode program: a straight run of [`Op`]s executed start to finish.
@@ -317,6 +319,12 @@ pub fn canonical_value_program_effect_stats(program: &[ValueOp]) -> EffectStats 
 #[must_use]
 pub fn canonical_value_lowered_effect_stats(lowered: &CanonicalValueProgram) -> LoweredEffectStats {
     weavy::ir::lowered_effect_stats_with_intrinsic_children(lowered)
+}
+
+/// Analyze canonical PHON dynamic-value IR and its block table.
+#[must_use]
+pub fn canonical_value_lowered_analysis(lowered: &CanonicalValueProgram) -> LoweredAnalysis {
+    weavy::ir::lowered_analysis_with_intrinsic_children(lowered)
 }
 
 /// Canonical-to-legacy dynamic-value conversion failure.
@@ -762,5 +770,10 @@ mod tests {
             }],
             2
         );
+
+        let analysis = canonical_value_lowered_analysis(&lowered);
+        assert_eq!(analysis.program_stats, lowered_stats);
+        assert_eq!(analysis.effect_stats, lowered_effects);
+        assert_eq!(analysis.intrinsic_counts, lowered_counts);
     }
 }

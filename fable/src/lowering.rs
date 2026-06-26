@@ -4438,10 +4438,7 @@ fn decode_string(text: &str) -> Result<String, FableError> {
 #[cfg(test)]
 mod tests {
     use facet::Facet;
-    use weavy::ir::{
-        IntrinsicDescriptor, dense_lowered_effect_stats, dense_lowered_intrinsic_counts,
-        dense_lowered_program_stats,
-    };
+    use weavy::ir::{IntrinsicDescriptor, dense_lowered_analysis};
 
     use super::*;
 
@@ -4641,7 +4638,8 @@ mod tests {
         )
         .unwrap();
 
-        let shape = dense_lowered_program_stats(&plan.lowered);
+        let analysis = dense_lowered_analysis(&plan.lowered);
+        let shape = analysis.program_stats;
         assert_eq!(shape.block_count, 2);
         assert_eq!(shape.root.op_count, 3);
         assert_eq!(shape.blocks.op_count, 2);
@@ -4649,7 +4647,7 @@ mod tests {
         assert_eq!(shape.total.control_op_count, 0);
         assert_eq!(shape.total.memory_op_count, 0);
 
-        let counts = dense_lowered_intrinsic_counts(&plan.lowered);
+        let counts = analysis.intrinsic_counts;
         assert_eq!(
             counts[&IntrinsicDescriptor {
                 dialect: "fable",
@@ -4672,7 +4670,7 @@ mod tests {
             1
         );
 
-        let effects = dense_lowered_effect_stats(&plan.lowered);
+        let effects = analysis.effect_stats;
         assert_eq!(effects.total.intrinsic_op_count, 5);
         assert_eq!(effects.total.typed_memory_overwrite_count, 3);
         assert!(effects.total.side_channel_count >= 2);
