@@ -1,3 +1,4 @@
+use facet::Facet;
 use picante::db::{DynIngredient, IngredientLookup, IngredientRegistry};
 use picante::error::PicanteError;
 use picante::ingredient::{DerivedIngredient, InputIngredient};
@@ -6,6 +7,34 @@ use picante::persist::{load_cache, save_cache};
 use picante::runtime::{HasRuntime, Runtime};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Clone, Debug, Facet)]
+struct AggregateRow {
+    id: u32,
+    label: String,
+}
+
+#[derive(Clone, Debug, Facet)]
+struct AggregateValue {
+    name: String,
+    rows: Vec<AggregateRow>,
+    checksum: u64,
+}
+
+fn aggregate_value(seed: u64) -> AggregateValue {
+    let rows = (0..8)
+        .map(|i| AggregateRow {
+            id: i,
+            label: format!("row-{seed}-{i}"),
+        })
+        .collect();
+
+    AggregateValue {
+        name: format!("aggregate-{seed}"),
+        rows,
+        checksum: seed.wrapping_mul(31),
+    }
+}
 
 fn init_tracing() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
@@ -509,4 +538,56 @@ async fn changed_at_stable_when_value_unchanged() {
         changed_at_2, changed_at_3,
         "changed_at should bump when value actually changes"
     );
+}
+
+#[tokio_test_lite::test]
+async fn aggregate_values_use_structural_equality_for_noop_paths() {
+    init_tracing();
+
+    let mut db = TestDb::default();
+    let input: Arc<InputIngredient<String, AggregateValue>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "AggregateInput"));
+    db.register(input.clone());
+
+    let r1 = input.set(&db, "x".into(), aggregate_value(1));
+    let r2 = input.set(&db, "x".into(), aggregate_value(1));
+    assert_eq!(r1, r2);
+
+    let r3 = input.set(&db, "x".into(), aggregate_value(2));
+    assert_ne!(r2, r3);
+
+    let seed_input: Arc<InputIngredient<String, u64>> =
+        Arc::new(InputIngredient::new(QueryKindId(2), "Seed"));
+    db.register(seed_input.clone());
+
+    let executions = Arc::new(AtomicUsize::new(0));
+    let seed_for_compute = seed_input.clone();
+    let executions_for_compute = executions.clone();
+    let derived: Arc<DerivedIngredient<TestDb, String, AggregateValue>> = Arc::new(
+        DerivedIngredient::new(QueryKindId(3), "AggregateDerived", move |db, key| {
+            let seed_input = seed_for_compute.clone();
+            let executions = executions_for_compute.clone();
+            Box::pin(async move {
+                executions.fetch_add(1, Ordering::SeqCst);
+                let seed = seed_input.get(db, &key)?.expect("missing seed");
+                Ok(aggregate_value(seed % 2))
+            })
+        }),
+    );
+    db.register(derived.clone());
+
+    seed_input.set(&db, "x".into(), 1);
+    let _ = derived.get(&db, "x".into()).await.unwrap();
+    let changed_at_1 = derived.touch(&db, "x".into()).await.unwrap();
+
+    seed_input.set(&db, "x".into(), 3);
+    let _ = derived.get(&db, "x".into()).await.unwrap();
+    let changed_at_2 = derived.touch(&db, "x".into()).await.unwrap();
+    assert_eq!(changed_at_1, changed_at_2);
+    assert_eq!(executions.load(Ordering::SeqCst), 2);
+
+    seed_input.set(&db, "x".into(), 4);
+    let _ = derived.get(&db, "x".into()).await.unwrap();
+    let changed_at_3 = derived.touch(&db, "x".into()).await.unwrap();
+    assert_ne!(changed_at_2, changed_at_3);
 }

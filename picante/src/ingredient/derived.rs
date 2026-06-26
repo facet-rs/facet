@@ -1,5 +1,6 @@
 use crate::db::{DynIngredient, IngredientLookup, Touch};
 use crate::error::{PicanteError, PicanteResult};
+use crate::facet_eq::PlannedEquality;
 use crate::frame::{self, ActiveFrameHandle};
 use crate::inflight::{self, InFlightKey, InFlightState, SharedCacheRecord, TryLeadResult};
 use crate::key::{Dep, DynKey, Key, KeyFactory, KeyMap, QueryKindId, key_map};
@@ -88,8 +89,9 @@ struct ApplyWalResult {
     cell: Option<Arc<ErasedCell>>, // None = delete
 }
 
-/// Function pointer for deep equality check without knowing V
-type EqErasedFn = fn(&dyn Any, &dyn Any) -> bool;
+trait ErasedEquality: Send + Sync {
+    fn eq(&self, a: &dyn Any, b: &dyn Any) -> bool;
+}
 
 // ============================================================================
 // Non-generic helpers for type-erased serialization/deserialization
@@ -177,16 +179,23 @@ where
     }
 }
 
-/// Deep equality helper for type-erased values
-///
-/// Uses autoref specialization to prefer PartialEq when available,
-/// falling back to byte-wise comparison otherwise.
-/// This avoids pulling in facet-diff and all its transitive feature dependencies.
-fn eq_erased_for<V>(a: &dyn Any, b: &dyn Any) -> bool
+struct TypedEquality<V> {
+    equality: PlannedEquality<V>,
+}
+
+impl<V> ErasedEquality for TypedEquality<V>
 where
-    V: Facet<'static> + 'static,
+    V: Facet<'static> + Send + Sync + 'static,
 {
-    crate::facet_eq::facet_eq::<V>(a, b)
+    fn eq(&self, a: &dyn Any, b: &dyn Any) -> bool {
+        let Some(a) = a.downcast_ref::<V>() else {
+            return false;
+        };
+        let Some(b) = b.downcast_ref::<V>() else {
+            return false;
+        };
+        self.equality.eq(a, b)
+    }
 }
 
 // ============================================================================
@@ -243,7 +252,7 @@ impl DerivedCore {
         requested: DynKey,
         want_value: bool,
         compute: &dyn ErasedCompute<DB>,
-        eq_erased: EqErasedFn,
+        equality: &dyn ErasedEquality,
     ) -> PicanteResult<ErasedAccessResult>
     where
         DB: IngredientLookup + Send + Sync + 'static,
@@ -653,9 +662,9 @@ impl DerivedCore {
                             let changed_at = match prev {
                                 Some((prev_value, prev_changed_at)) => {
                                     // Fast path: pointer equality (values are literally the same Arc)
-                                    // Slow path: deep equality via eq_erased function pointer
+                                    // Slow path: deep equality via the cached typed plan
                                     let is_same = Arc::ptr_eq(&prev_value, &out)
-                                        || eq_erased(prev_value.as_ref(), out.as_ref());
+                                        || equality.eq(prev_value.as_ref(), out.as_ref());
 
                                     if is_same { prev_changed_at } else { rev }
                                 }
@@ -996,14 +1005,14 @@ impl DerivedCore {
         db: &'a DB,
         dyn_key: DynKey,
         compute: &'a dyn ErasedCompute<DB>,
-        eq_erased: EqErasedFn,
+        equality: &'a dyn ErasedEquality,
     ) -> BoxFuture<'a, PicanteResult<Touch>>
     where
         DB: IngredientLookup + Send + Sync + 'static,
     {
         Box::pin(async move {
             let result = frame::scope_if_needed_boxed(Box::pin(
-                self.access_scoped_erased(db, dyn_key, false, compute, eq_erased),
+                self.access_scoped_erased(db, dyn_key, false, compute, equality),
             ))
             .await?;
             Ok(Touch {
@@ -1021,7 +1030,7 @@ impl DerivedCore {
         db: &'a DB,
         dyn_key: DynKey,
         compute: &'a dyn ErasedCompute<DB>,
-        eq_erased: EqErasedFn,
+        equality: &'a dyn ErasedEquality,
     ) -> BoxFuture<'a, PicanteResult<ArcAny>>
     where
         DB: IngredientLookup + Send + Sync + 'static,
@@ -1032,7 +1041,7 @@ impl DerivedCore {
                 dyn_key.clone(),
                 true,
                 compute,
-                eq_erased,
+                equality,
             )))
             .await?;
 
@@ -1335,8 +1344,8 @@ where
     _phantom: PhantomData<(K, V)>,
     /// Type-erased compute function (trait object for dyn dispatch)
     compute: Arc<dyn ErasedCompute<DB>>,
-    /// Deep equality function for detecting value changes
-    eq_erased: EqErasedFn,
+    /// Deep equality checker for detecting value changes
+    equality: Arc<dyn ErasedEquality>,
 }
 
 impl<DB, K, V> DerivedIngredient<DB, K, V>
@@ -1378,7 +1387,9 @@ where
             key_factory,
             _phantom: PhantomData,
             compute: compute_erased,
-            eq_erased: eq_erased_for::<V>,
+            equality: Arc::new(TypedEquality::<V> {
+                equality: PlannedEquality::new(),
+            }),
         }
     }
 
@@ -1405,7 +1416,7 @@ where
         // Use the type-erased get helper (compiled once per DB, not per K/V)
         let arc_any = self
             .core
-            .get_erased(db, dyn_key, self.compute.as_ref(), self.eq_erased)
+            .get_erased(db, dyn_key, self.compute.as_ref(), self.equality.as_ref())
             .await?;
 
         // Downcast Arc<dyn Any> → Arc<V>
@@ -1437,7 +1448,7 @@ where
         // Use the type-erased touch helper (compiled once per DB, not per K/V)
         let touch = self
             .core
-            .touch_erased(db, dyn_key, self.compute.as_ref(), self.eq_erased)
+            .touch_erased(db, dyn_key, self.compute.as_ref(), self.equality.as_ref())
             .await?;
 
         Ok(touch.changed_at)
@@ -1774,7 +1785,7 @@ where
             key,
         };
         self.core
-            .touch_erased(db, dyn_key, self.compute.as_ref(), self.eq_erased)
+            .touch_erased(db, dyn_key, self.compute.as_ref(), self.equality.as_ref())
     }
 }
 

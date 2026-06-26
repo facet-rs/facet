@@ -1,5 +1,6 @@
 use crate::db::{DynIngredient, Touch};
 use crate::error::{PicanteError, PicanteResult};
+use crate::facet_eq::PlannedEquality;
 use crate::frame;
 use crate::key::{Dep, Key, KeyFactory, QueryKindId, RuntimeKeyMap, runtime_key_map};
 use crate::persist::{PersistableIngredient, SectionType};
@@ -329,6 +330,7 @@ where
 {
     core: InputCore<K>,
     key_factory: KeyFactory<K>,
+    value_equality: PlannedEquality<V>,
     /// Phantom data for K and V types
     _phantom: std::marker::PhantomData<(K, V)>,
 }
@@ -350,6 +352,7 @@ where
                 make_apply_input_wal_entry::<K, V>(),
             ),
             key_factory: KeyFactory::new(),
+            value_equality: PlannedEquality::new(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -385,7 +388,7 @@ where
                 .from_hash(key_hash, |stored| stored.matches(&key))
                 && let Some(existing_value) = existing.value.as_ref()
                 && let Some(typed_existing) = existing_value.downcast_ref::<V>()
-                && crate::facet_eq::facet_eq_direct(typed_existing, &value)
+                && self.value_equality.eq(typed_existing, &value)
             {
                 trace!(
                     kind = self.core.kind.0,
@@ -614,6 +617,7 @@ where
         Self {
             core,
             key_factory,
+            value_equality: PlannedEquality::new(),
             _phantom: std::marker::PhantomData,
         }
     }
