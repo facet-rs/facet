@@ -413,6 +413,26 @@ impl EffectContract {
         self.opaque = true;
         self.barrier()
     }
+
+    /// Merge another contract into this one.
+    ///
+    /// This is useful for fused intrinsics that perform several logical
+    /// operations without materializing each one as a separate Weavy op.
+    pub fn accumulate(&mut self, other: EffectContract) {
+        self.resources.extend(other.resources);
+        self.typed_memory.extend(other.typed_memory);
+        self.may_fail |= other.may_fail;
+        self.may_allocate |= other.may_allocate;
+        self.calls_user_code |= other.calls_user_code;
+        self.opaque |= other.opaque;
+        self.ordering = match (self.ordering, other.ordering) {
+            (EffectOrdering::Barrier, _) | (_, EffectOrdering::Barrier) => EffectOrdering::Barrier,
+            (EffectOrdering::Ordered, _) | (_, EffectOrdering::Ordered) => EffectOrdering::Ordered,
+            (EffectOrdering::Reorderable, EffectOrdering::Reorderable) => {
+                EffectOrdering::Reorderable
+            }
+        };
+    }
 }
 
 /// Minimal intrinsic metadata hook.
@@ -1723,6 +1743,35 @@ mod tests {
         assert_eq!(stats.typed_memory_read_count, 1);
         assert_eq!(stats.typed_memory_initialize_count, 1);
         assert_eq!(stats.opaque_count, 0);
+    }
+
+    #[test]
+    fn effect_contract_accumulate_merges_resources_and_ordering() {
+        let mut contract = EffectContract::new()
+            .write_resource(EffectResource::Sink("hash"))
+            .typed_memory(MemoryRegion::base_relative(0, 4), TypedMemoryAccess::Read);
+
+        contract.accumulate(
+            EffectContract::new()
+                .read_resource(EffectResource::Input("json"))
+                .typed_memory(
+                    MemoryRegion::base_relative_unknown_size(8),
+                    TypedMemoryAccess::Initialize,
+                )
+                .may_fail()
+                .calls_user_code(),
+        );
+
+        let mut stats = EffectStats::default();
+        add_contract_stats(&contract, &mut stats);
+
+        assert_eq!(stats.input_read_count, 1);
+        assert_eq!(stats.sink_write_count, 1);
+        assert_eq!(stats.typed_memory_read_count, 1);
+        assert_eq!(stats.typed_memory_initialize_count, 1);
+        assert_eq!(stats.may_fail_count, 1);
+        assert_eq!(stats.calls_user_code_count, 1);
+        assert_eq!(stats.barrier_count, 1);
     }
 
     #[test]
