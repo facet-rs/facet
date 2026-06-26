@@ -153,9 +153,9 @@ where
 /// facet-hash byte plans.
 pub fn hash_bytes_into<H>(bytes: &[u8], hasher: &mut H)
 where
-    H: Hasher,
+    H: Hasher + ?Sized,
 {
-    bytes.len().hash(hasher);
+    hasher.write_usize(bytes.len());
     hasher.write(bytes);
 }
 
