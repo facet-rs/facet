@@ -50,8 +50,10 @@ site {
 
     // Link checking configuration
     link_check {
-        // Domains to skip (anti-bot policies)
-        // skip_domains (example.com)
+        // Domains to skip (anti-bot policies): patreon 403s automated checks.
+        skip_domains (
+            patreon.com
+        )
     }
 
     stable_assets (
