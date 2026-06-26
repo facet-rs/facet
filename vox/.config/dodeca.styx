@@ -1,28 +1,35 @@
-content docs/content
-output docs/public
+@schema {id crate:dodeca-config@1, cli ddc}
 
-link_check {}
+// vox's standalone dodeca config. When vox is built on its own, `source` +
+// `site` apply; when it's mounted into the facet aggregator, the aggregator
+// composes this `source {}` (its location comes from the mount's `local`).
 
-stable_assets ()
+source {
+    content docs/content
+}
 
-code_execution {
-    enabled true
-    fail_on_error true
-    timeout_secs 30
-    cache_dir .cache/code-execution
+site {
+    output docs/public
 
-    rust {
-        command cargo
-        args (
-            run
-            --quiet
-            --release
-        )
-        extension rs
-        prepare_code true
-        auto_imports (
-            "use std::collections::HashMap;"
-        )
-        show_output true
+    code_execution {
+        enabled true
+        fail_on_error true
+        timeout_secs 30
+        cache_dir .cache/code-execution
+
+        rust {
+            command cargo
+            args (
+                run
+                --quiet
+                --release
+            )
+            extension rs
+            prepare_code true
+            auto_imports (
+                "use std::collections::HashMap;"
+            )
+            show_output true
+        }
     }
 }
