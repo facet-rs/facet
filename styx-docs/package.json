@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build"
+    "dev": "pnpm --filter @bearcove/styx-webmd run build && vite",
+    "build": "pnpm --filter @bearcove/styx-webmd run build && vite build"
   },
   "dependencies": {
     "@bearcove/styx": "workspace:*",
