@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0-rc.4](https://github.com/facet-rs/facet/compare/facet-hash-v0.50.0-rc.3...facet-hash-v0.50.0-rc.4) - 2026-06-26
+
+### Other
+
+- add opt-in native key hashing
+
+## [0.50.0-rc.4](https://github.com/facet-rs/facet/compare/facet-format-v0.50.0-rc.3...facet-format-v0.50.0-rc.4) - 2026-06-26
+
+### Other
+
+- add `omit_none` serialize option
+
 ## [0.50.0-rc.3](https://github.com/facet-rs/facet/compare/facet-hash-v0.50.0-rc.2...facet-hash-v0.50.0-rc.3) - 2026-06-26
 
 ### Fixed

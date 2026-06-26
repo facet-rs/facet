@@ -1,6 +1,6 @@
 [package]
 name = "serde_styx"
-version = "5.0.0-rc.3"
+version = "5.0.0-rc.4"
 edition.workspace = true
 rust-version.workspace = true
 description = "Serde support for the Styx configuration language"

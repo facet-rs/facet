@@ -1,6 +1,6 @@
 [package]
 name = "dibs-runtime"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 edition = "2024"
 rust-version.workspace = true
 description = "Runtime types for dibs-generated query code"
@@ -16,7 +16,7 @@ tokio-postgres.workspace = true
 facet.workspace = true
 facet-tokio-postgres = { workspace = true, features = ["jiff02", "rust_decimal", "uuid"] }
 facet-value.workspace = true
-dibs-jsonb = { version = "0.2.0-rc.3", path = "../dibs-jsonb" }
+dibs-jsonb = { version = "0.2.0-rc.4", path = "../dibs-jsonb" }
 jiff.workspace = true
 uuid.workspace = true
 rust_decimal.workspace = true
