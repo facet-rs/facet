@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Facet)]
-#[facet(proxy = String)]
+#[facet(opaque, proxy = String)]
 #[repr(C)]
 enum Descriptor {
     Aad(String),
