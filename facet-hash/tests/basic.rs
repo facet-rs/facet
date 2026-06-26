@@ -252,6 +252,21 @@ fn byte_array_value_plan_hashes_bulk_bytes() {
 }
 
 #[test]
+fn byte_fnv1a64_helper_uses_concrete_accumulator() {
+    let bytes = b"facet-hash bytes";
+    let mut expected = facet_hash::Fnv1a64::new();
+    expected.write_len(bytes.len());
+    expected.write(bytes);
+
+    assert_eq!(facet_hash::hash_bytes_fnv1a64(bytes), expected.finish());
+    assert_eq!(facet_hash::hash_bytes64(bytes), expected.finish());
+    assert_ne!(
+        facet_hash::hash_bytes_fnv1a64(bytes),
+        facet_hash::hash_bytes_fnv1a64(b"facet-hash byte")
+    );
+}
+
+#[test]
 fn structural_byte_vec_keeps_sequence_shape() {
     let plan = HashPlan::<Vec<u8>>::build_structural().unwrap();
     let analysis = plan.analysis();

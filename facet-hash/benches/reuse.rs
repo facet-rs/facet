@@ -128,9 +128,9 @@ fn byte_vec_native_hash(bencher: Bencher<'_, '_>) {
 }
 
 #[divan::bench]
-fn byte_vec_helper_hash(bencher: Bencher<'_, '_>) {
+fn byte_vec_fnv1a64_hash(bencher: Bencher<'_, '_>) {
     let value = byte_vec();
-    bencher.bench_local(|| black_box(facet_hash::hash_bytes64(black_box(&value))));
+    bencher.bench_local(|| black_box(facet_hash::hash_bytes_fnv1a64(black_box(&value))));
 }
 
 #[divan::bench]
