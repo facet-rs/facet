@@ -2,7 +2,7 @@ use picante::Revision;
 use picante::db::{DynIngredient, IngredientLookup, IngredientRegistry};
 use picante::ingredient::{DerivedIngredient, InputIngredient};
 use picante::key::QueryKindId;
-use picante::persist::{load_cache, save_cache};
+use picante::persist::{CacheFile, Section, SectionType, load_cache, save_cache};
 use picante::runtime::{HasRuntime, Runtime, RuntimeEvent};
 use std::sync::Arc;
 
@@ -47,6 +47,28 @@ impl TestDb {
 struct FacetOnlyKey {
     shard: u32,
     slot: u32,
+}
+
+#[derive(Clone, Debug, facet::Facet)]
+struct LegacyInputRecord<K, V> {
+    key: K,
+    value: Option<V>,
+    changed_at: u64,
+}
+
+#[derive(Clone, Debug, facet::Facet)]
+struct LegacyDepRecord {
+    kind_id: u32,
+    key_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, facet::Facet)]
+struct LegacyDerivedRecord<K, V> {
+    key: K,
+    value: V,
+    verified_at: u64,
+    changed_at: u64,
+    deps: Vec<LegacyDepRecord>,
 }
 
 #[tokio_test_lite::test]
@@ -237,6 +259,123 @@ async fn typed_facet_keys_do_not_require_rust_hash_or_eq_after_cache_load() {
     assert!(saw, "expected typed-key invalidation after input set");
 
     assert_eq!(derived2.get(&db2, key).await.unwrap(), 6);
+
+    let _ = tokio::fs::remove_file(&cache_path).await;
+}
+
+#[tokio_test_lite::test]
+async fn legacy_persistent_key_bytes_rehydrate_into_current_runtime_keys() {
+    init_tracing();
+
+    let cache_path = temp_file("picante-legacy-key-bytes-cache-graph.bin");
+    let key = FacetOnlyKey { shard: 42, slot: 9 };
+    let key_bytes = facet_postcard::to_vec(&key).unwrap();
+
+    let input_record = LegacyInputRecord {
+        key: key.clone(),
+        value: Some("hello".to_string()),
+        changed_at: 1,
+    };
+    let derived_record = LegacyDerivedRecord {
+        key: key.clone(),
+        value: 5_u64,
+        verified_at: 1,
+        changed_at: 1,
+        deps: vec![LegacyDepRecord {
+            kind_id: 20,
+            key_bytes,
+        }],
+    };
+
+    let cache = CacheFile {
+        format_version: 1,
+        current_revision: 1,
+        sections: vec![
+            Section {
+                kind_id: 20,
+                kind_name: "LegacyFacetOnlyInput".to_string(),
+                section_type: SectionType::Input,
+                records: vec![facet_postcard::to_vec(&input_record).unwrap()],
+            },
+            Section {
+                kind_id: 21,
+                kind_name: "LegacyFacetOnlyLen".to_string(),
+                section_type: SectionType::Derived,
+                records: vec![facet_postcard::to_vec(&derived_record).unwrap()],
+            },
+        ],
+    };
+    tokio::fs::write(&cache_path, facet_postcard::to_vec(&cache).unwrap())
+        .await
+        .unwrap();
+
+    let mut db = TestDb::default();
+    let input: Arc<InputIngredient<FacetOnlyKey, String>> = Arc::new(InputIngredient::new(
+        QueryKindId(20),
+        "LegacyFacetOnlyInput",
+    ));
+    db.register(input.clone());
+
+    let derived: Arc<DerivedIngredient<TestDb, FacetOnlyKey, u64>> = {
+        let input = input.clone();
+        Arc::new(DerivedIngredient::new(
+            QueryKindId(21),
+            "LegacyFacetOnlyLen",
+            move |db, key| {
+                let input = input.clone();
+                Box::pin(async move {
+                    let s = input.get(db, &key)?.unwrap_or_default();
+                    Ok(s.len() as u64)
+                })
+            },
+        ))
+    };
+    db.register(derived.clone());
+
+    let mut events = db.runtime().subscribe_events();
+
+    let loaded = load_cache(&cache_path, db.runtime(), &[&*input, &*derived])
+        .await
+        .unwrap();
+    assert!(loaded);
+
+    match events.recv().await.unwrap() {
+        RuntimeEvent::RevisionSet { revision } => assert_eq!(revision, Revision(1)),
+        other => panic!("expected RevisionSet, got {other:?}"),
+    }
+
+    assert_eq!(derived.get(&db, key.clone()).await.unwrap(), 5);
+
+    input.set(&db, key.clone(), "hello!".to_string());
+
+    let mut saw = false;
+    for _ in 0..8 {
+        if let RuntimeEvent::QueryInvalidated {
+            kind,
+            key,
+            by_kind,
+            by_key,
+            ..
+        } = events.recv().await.unwrap()
+        {
+            let key = key.decode_facet::<FacetOnlyKey>().unwrap();
+            let by_key = by_key.decode_facet::<FacetOnlyKey>().unwrap();
+            assert_eq!(kind, QueryKindId(21));
+            assert_eq!(key.shard, 42);
+            assert_eq!(key.slot, 9);
+            assert_eq!(by_kind, QueryKindId(20));
+            assert_eq!(by_key.shard, 42);
+            assert_eq!(by_key.slot, 9);
+            saw = true;
+            break;
+        }
+    }
+    assert!(
+        saw,
+        "expected invalidation from rehydrated persistent key bytes"
+    );
+
+    assert_eq!(derived.get(&db, key).await.unwrap(), 6);
 
     let _ = tokio::fs::remove_file(&cache_path).await;
 }
