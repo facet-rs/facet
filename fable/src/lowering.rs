@@ -50,6 +50,17 @@ pub struct FablePredicatePlan<T> {
     _marker: PhantomData<fn(&T) -> bool>,
 }
 
+/// A reusable lowered Fable query for `T`.
+///
+/// Query plans expose a read-only `root` and return the final expression in the
+/// source as a concrete Rust scalar/string type. Build once with
+/// [`FableQueryPlan::compile`], then evaluate repeatedly against values of the
+/// same Facet-reflected type.
+pub struct FableQueryPlan<T, Output> {
+    plan: FableRootQueryPlan<Output>,
+    _marker: PhantomData<fn(&T) -> Output>,
+}
+
 /// A reusable lowered Fable program over explicitly named roots.
 ///
 /// This is the lower-level form used by transform/debug-shell style callers
@@ -68,9 +79,252 @@ pub struct FableRootPredicatePlan {
     roots: Box<[FableRootSpec]>,
 }
 
+/// A reusable lowered Fable query over explicitly named roots.
+///
+/// All roots must be read-only. The final top-level statement must be an
+/// expression compatible with `Output`; earlier statements may bind typed
+/// locals.
+pub struct FableRootQueryPlan<Output> {
+    lowered: FableLowered,
+    roots: Box<[FableRootSpec]>,
+    _marker: PhantomData<fn() -> Output>,
+}
+
 type FableLowered = DenseWeavyLowered<FableIntrinsic>;
 type FableProgram = DenseWeavyProgram<FableIntrinsic>;
 type FableWeavyOp = WeavyOp<BlockRef, FableIntrinsic>;
+
+/// Broad result lane expected by a Fable query plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FableQueryType {
+    /// Unit expression.
+    Unit,
+    /// Boolean expression.
+    Bool,
+    /// Character expression.
+    Char,
+    /// Owned string expression.
+    String,
+    /// Signed integer expression.
+    Signed,
+    /// Unsigned integer expression.
+    Unsigned,
+    /// Floating-point expression.
+    Float,
+}
+
+impl FableQueryType {
+    fn name(self) -> &'static str {
+        match self {
+            FableQueryType::Unit => "unit",
+            FableQueryType::Bool => "bool",
+            FableQueryType::Char => "char",
+            FableQueryType::String => "string",
+            FableQueryType::Signed => "signed number",
+            FableQueryType::Unsigned => "unsigned number",
+            FableQueryType::Float => "float",
+        }
+    }
+}
+
+/// Rust result types accepted by [`FableQueryPlan`] and [`FableRootQueryPlan`].
+pub trait FableQueryResult: query_result_sealed::Sealed + Sized + 'static {
+    /// Return the broad Fable result lane expected by this Rust type.
+    fn query_type() -> FableQueryType;
+
+    #[doc(hidden)]
+    fn from_unit() -> Result<Self, FableError> {
+        Err(query_result_mismatch(Self::query_type(), "unit"))
+    }
+
+    #[doc(hidden)]
+    fn from_bool(_value: bool) -> Result<Self, FableError> {
+        Err(query_result_mismatch(Self::query_type(), "bool"))
+    }
+
+    #[doc(hidden)]
+    fn from_char(_value: char) -> Result<Self, FableError> {
+        Err(query_result_mismatch(Self::query_type(), "char"))
+    }
+
+    #[doc(hidden)]
+    fn from_string(_value: String) -> Result<Self, FableError> {
+        Err(query_result_mismatch(Self::query_type(), "string"))
+    }
+
+    #[doc(hidden)]
+    fn from_i128(_value: i128) -> Result<Self, FableError> {
+        Err(query_result_mismatch(Self::query_type(), "signed number"))
+    }
+
+    #[doc(hidden)]
+    fn from_u128(_value: u128) -> Result<Self, FableError> {
+        Err(query_result_mismatch(Self::query_type(), "unsigned number"))
+    }
+
+    #[doc(hidden)]
+    fn from_f64(_value: f64) -> Result<Self, FableError> {
+        Err(query_result_mismatch(Self::query_type(), "float"))
+    }
+}
+
+mod query_result_sealed {
+    pub trait Sealed {}
+}
+
+impl FableQueryResult for () {
+    fn query_type() -> FableQueryType {
+        FableQueryType::Unit
+    }
+
+    fn from_unit() -> Result<Self, FableError> {
+        Ok(())
+    }
+}
+
+impl query_result_sealed::Sealed for () {}
+
+impl FableQueryResult for bool {
+    fn query_type() -> FableQueryType {
+        FableQueryType::Bool
+    }
+
+    fn from_bool(value: bool) -> Result<Self, FableError> {
+        Ok(value)
+    }
+}
+
+impl query_result_sealed::Sealed for bool {}
+
+impl FableQueryResult for char {
+    fn query_type() -> FableQueryType {
+        FableQueryType::Char
+    }
+
+    fn from_char(value: char) -> Result<Self, FableError> {
+        Ok(value)
+    }
+}
+
+impl query_result_sealed::Sealed for char {}
+
+impl FableQueryResult for String {
+    fn query_type() -> FableQueryType {
+        FableQueryType::String
+    }
+
+    fn from_string(value: String) -> Result<Self, FableError> {
+        Ok(value)
+    }
+}
+
+impl query_result_sealed::Sealed for String {}
+
+macro_rules! impl_signed_query_result {
+    ($($ty:ty => $scalar:ident),* $(,)?) => {
+        $(
+            impl query_result_sealed::Sealed for $ty {}
+
+            impl FableQueryResult for $ty {
+                fn query_type() -> FableQueryType {
+                    FableQueryType::Signed
+                }
+
+                fn from_i128(value: i128) -> Result<Self, FableError> {
+                    Self::try_from(value)
+                        .map_err(|_| number_out_of_range(ScalarType::$scalar, value.to_string()))
+                }
+
+                fn from_u128(value: u128) -> Result<Self, FableError> {
+                    Self::try_from(value)
+                        .map_err(|_| number_out_of_range(ScalarType::$scalar, value.to_string()))
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_unsigned_query_result {
+    ($($ty:ty => $scalar:ident),* $(,)?) => {
+        $(
+            impl query_result_sealed::Sealed for $ty {}
+
+            impl FableQueryResult for $ty {
+                fn query_type() -> FableQueryType {
+                    FableQueryType::Unsigned
+                }
+
+                fn from_i128(value: i128) -> Result<Self, FableError> {
+                    Self::try_from(value)
+                        .map_err(|_| number_out_of_range(ScalarType::$scalar, value.to_string()))
+                }
+
+                fn from_u128(value: u128) -> Result<Self, FableError> {
+                    Self::try_from(value)
+                        .map_err(|_| number_out_of_range(ScalarType::$scalar, value.to_string()))
+                }
+            }
+        )*
+    };
+}
+
+impl_signed_query_result! {
+    i8 => I8,
+    i16 => I16,
+    i32 => I32,
+    i64 => I64,
+    i128 => I128,
+    isize => ISize,
+}
+
+impl_unsigned_query_result! {
+    u8 => U8,
+    u16 => U16,
+    u32 => U32,
+    u64 => U64,
+    u128 => U128,
+    usize => USize,
+}
+
+impl FableQueryResult for f32 {
+    fn query_type() -> FableQueryType {
+        FableQueryType::Float
+    }
+
+    fn from_i128(value: i128) -> Result<Self, FableError> {
+        Ok(value as f32)
+    }
+
+    fn from_u128(value: u128) -> Result<Self, FableError> {
+        Ok(value as f32)
+    }
+
+    fn from_f64(value: f64) -> Result<Self, FableError> {
+        Ok(value as f32)
+    }
+}
+
+impl query_result_sealed::Sealed for f32 {}
+
+impl FableQueryResult for f64 {
+    fn query_type() -> FableQueryType {
+        FableQueryType::Float
+    }
+
+    fn from_i128(value: i128) -> Result<Self, FableError> {
+        Ok(value as f64)
+    }
+
+    fn from_u128(value: u128) -> Result<Self, FableError> {
+        Ok(value as f64)
+    }
+
+    fn from_f64(value: f64) -> Result<Self, FableError> {
+        Ok(value)
+    }
+}
+
+impl query_result_sealed::Sealed for f64 {}
 
 /// Access policy for a Fable root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -592,6 +846,43 @@ where
     }
 }
 
+impl<T, Output> FableQueryPlan<T, Output>
+where
+    T: Facet<'static>,
+    Output: FableQueryResult,
+{
+    /// Parse and lower a read-only Fable query for values of type `T`.
+    pub fn compile(src: &str) -> Result<Self, FableError> {
+        Self::compile_with_intrinsics(src, &FableIntrinsics::standard())
+    }
+
+    /// Parse and lower a read-only Fable query with an explicit host-call registry.
+    pub fn compile_with_intrinsics(
+        src: &str,
+        intrinsics: &FableIntrinsics,
+    ) -> Result<Self, FableError> {
+        let roots = [FableRootSpec::read_only::<T>("root")];
+        let plan = FableRootQueryPlan::compile_with_intrinsics(src, &roots, intrinsics)?;
+
+        Ok(Self {
+            plan,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Run this query against `value`.
+    pub fn evaluate(&self, value: &T) -> Result<Output, FableError> {
+        let mut roots = [FableRootValue::read_only("root", value)];
+        self.plan.evaluate(&mut roots)
+    }
+
+    /// Run this query and return Weavy execution counters.
+    pub fn evaluate_with_stats(&self, value: &T) -> Result<(Output, RunStats), FableError> {
+        let mut roots = [FableRootValue::read_only("root", value)];
+        self.plan.evaluate_with_stats(&mut roots)
+    }
+}
+
 impl FableRootPlan {
     /// Parse and lower Fable source for an explicit root set.
     pub fn compile(src: &str, roots: &[FableRootSpec]) -> Result<Self, FableError> {
@@ -633,6 +924,7 @@ impl FableRootPlan {
             roots: runtime_roots,
             locals: LocalSlots::default(),
             predicate_result: None,
+            query_result: None,
         };
         weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)
     }
@@ -647,6 +939,7 @@ impl FableRootPlan {
             roots: runtime_roots,
             locals: LocalSlots::default(),
             predicate_result: None,
+            query_result: None,
         };
         weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)
     }
@@ -698,6 +991,7 @@ impl FableRootPredicatePlan {
             roots: runtime_roots,
             locals: LocalSlots::default(),
             predicate_result: None,
+            query_result: None,
         };
         weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)?;
         interp.predicate_result.ok_or(FableError::MalformedProgram {
@@ -715,6 +1009,7 @@ impl FableRootPredicatePlan {
             roots: runtime_roots,
             locals: LocalSlots::default(),
             predicate_result: None,
+            query_result: None,
         };
         let stats = weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)?;
         let result = interp
@@ -722,6 +1017,90 @@ impl FableRootPredicatePlan {
             .ok_or(FableError::MalformedProgram {
                 reason: "predicate plan did not write a result",
             })?;
+        Ok((result, stats))
+    }
+
+    fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
+        runtime_roots(&self.roots, values)
+    }
+}
+
+impl<Output> FableRootQueryPlan<Output>
+where
+    Output: FableQueryResult,
+{
+    /// Parse and lower a Fable query for an explicit root set.
+    pub fn compile(src: &str, roots: &[FableRootSpec]) -> Result<Self, FableError> {
+        Self::compile_with_intrinsics(src, roots, &FableIntrinsics::standard())
+    }
+
+    /// Parse and lower a Fable query with explicit roots and host intrinsics.
+    pub fn compile_with_intrinsics(
+        src: &str,
+        roots: &[FableRootSpec],
+        intrinsics: &FableIntrinsics,
+    ) -> Result<Self, FableError> {
+        validate_root_specs(roots)?;
+        validate_read_only_root_specs(roots, "query roots must be read-only")?;
+
+        let parsed = parse(src);
+        if !parsed.errors().is_empty() {
+            return Err(FableError::Parse {
+                errors: parsed.errors().to_vec(),
+            });
+        }
+
+        let root = ast::Root::cast(parsed.syntax().clone()).ok_or(FableError::MalformedSyntax {
+            reason: "parse root was not a Fable root node",
+        })?;
+        let mut lowerer = Lowerer::new(roots, intrinsics);
+        let program = lowerer.lower_query_root(&root, Output::query_type())?;
+        let blocks = lowerer.into_blocks();
+
+        Ok(Self {
+            lowered: FableLowered::new(program, blocks),
+            roots: roots.into(),
+            _marker: PhantomData,
+        })
+    }
+
+    /// Run this query against explicitly bound root values.
+    pub fn evaluate(&self, roots: &mut [FableRootValue<'_>]) -> Result<Output, FableError> {
+        let runtime_roots = self.runtime_roots(roots)?;
+        let mut interp = FableInterp {
+            roots: runtime_roots,
+            locals: LocalSlots::default(),
+            predicate_result: None,
+            query_result: None,
+        };
+        weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)?;
+        interp
+            .query_result
+            .ok_or(FableError::MalformedProgram {
+                reason: "query plan did not write a result",
+            })?
+            .into_result()
+    }
+
+    /// Run this query and return Weavy execution counters.
+    pub fn evaluate_with_stats(
+        &self,
+        roots: &mut [FableRootValue<'_>],
+    ) -> Result<(Output, RunStats), FableError> {
+        let runtime_roots = self.runtime_roots(roots)?;
+        let mut interp = FableInterp {
+            roots: runtime_roots,
+            locals: LocalSlots::default(),
+            predicate_result: None,
+            query_result: None,
+        };
+        let stats = weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)?;
+        let result = interp
+            .query_result
+            .ok_or(FableError::MalformedProgram {
+                reason: "query plan did not write a result",
+            })?
+            .into_result()?;
         Ok((result, stats))
     }
 
@@ -768,6 +1147,28 @@ where
     T: Facet<'static>,
 {
     FablePredicatePlan::<T>::compile_with_intrinsics(src, intrinsics)?.evaluate(value)
+}
+
+/// Compile and immediately evaluate a read-only Fable query.
+pub fn query<T, Output>(value: &T, src: &str) -> Result<Output, FableError>
+where
+    T: Facet<'static>,
+    Output: FableQueryResult,
+{
+    FableQueryPlan::<T, Output>::compile(src)?.evaluate(value)
+}
+
+/// Compile with explicit host intrinsics and immediately evaluate a read-only query.
+pub fn query_with_intrinsics<T, Output>(
+    value: &T,
+    src: &str,
+    intrinsics: &FableIntrinsics,
+) -> Result<Output, FableError>
+where
+    T: Facet<'static>,
+    Output: FableQueryResult,
+{
+    FableQueryPlan::<T, Output>::compile_with_intrinsics(src, intrinsics)?.evaluate(value)
 }
 
 /// Compile and immediately apply a Fable `in` to `out` transform.
@@ -818,11 +1219,18 @@ fn validate_root_specs(roots: &[FableRootSpec]) -> Result<(), FableError> {
 }
 
 fn validate_predicate_root_specs(roots: &[FableRootSpec]) -> Result<(), FableError> {
+    validate_read_only_root_specs(roots, "predicate roots must be read-only")
+}
+
+fn validate_read_only_root_specs(
+    roots: &[FableRootSpec],
+    reason: &'static str,
+) -> Result<(), FableError> {
     for root in roots {
         if root.access != FableRootAccess::ReadOnly {
             return Err(FableError::InvalidRoot {
                 name: root.name.to_owned(),
-                reason: "predicate roots must be read-only",
+                reason,
             });
         }
     }
@@ -1176,6 +1584,7 @@ enum FableIntrinsic {
         else_block: Option<BlockRef>,
     },
     Predicate(BoolExpr),
+    Query(ExprPlan),
 }
 
 impl IntrinsicOp for FableIntrinsic {
@@ -1188,6 +1597,7 @@ impl IntrinsicOp for FableIntrinsic {
                 FableIntrinsic::Eval(_) => "eval",
                 FableIntrinsic::Branch { .. } => "branch",
                 FableIntrinsic::Predicate(_) => "predicate",
+                FableIntrinsic::Query(_) => "query",
             },
         }
     }
@@ -1219,12 +1629,45 @@ impl IntrinsicOp for FableIntrinsic {
                 .may_fail()
                 .may_allocate()
                 .calls_user_code(),
+            FableIntrinsic::Query(_) => EffectContract::new()
+                .read_resource(EffectResource::SideChannel("fable.locals"))
+                .write_resource(EffectResource::SideChannel("fable.result"))
+                .may_fail()
+                .may_allocate()
+                .calls_user_code(),
         }
     }
 }
 
 fn fable_op(intrinsic: FableIntrinsic) -> FableWeavyOp {
     WeavyOp::Intrinsic(intrinsic)
+}
+
+enum FableQueryOutput {
+    Unit,
+    Bool(bool),
+    Char(char),
+    String(String),
+    Signed(i128),
+    Unsigned(u128),
+    Float(f64),
+}
+
+impl FableQueryOutput {
+    fn into_result<Output>(self) -> Result<Output, FableError>
+    where
+        Output: FableQueryResult,
+    {
+        match self {
+            FableQueryOutput::Unit => Output::from_unit(),
+            FableQueryOutput::Bool(value) => Output::from_bool(value),
+            FableQueryOutput::Char(value) => Output::from_char(value),
+            FableQueryOutput::String(value) => Output::from_string(value),
+            FableQueryOutput::Signed(value) => Output::from_i128(value),
+            FableQueryOutput::Unsigned(value) => Output::from_u128(value),
+            FableQueryOutput::Float(value) => Output::from_f64(value),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1759,6 +2202,37 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         })?;
         let value = expect_bool_plan(self.lower_expr(&expr)?)?;
         program.push(fable_op(FableIntrinsic::Predicate(value)));
+        Ok(program)
+    }
+
+    fn lower_query_root(
+        &mut self,
+        root: &ast::Root,
+        query_type: FableQueryType,
+    ) -> Result<FableProgram, FableError> {
+        let statements: Vec<_> = root.statements().collect();
+        let Some((last, prefix)) = statements.split_last() else {
+            return Err(FableError::MalformedSyntax {
+                reason: "query source did not contain a final expression",
+            });
+        };
+
+        let mut program = Vec::with_capacity(statements.len());
+        for stmt in prefix {
+            program.push(self.lower_stmt(stmt)?);
+        }
+
+        let Stmt::Expr(expr_stmt) = last else {
+            return Err(FableError::Unsupported {
+                feature: "query final statement must be an expression".into(),
+            });
+        };
+        let expr = expr_stmt.expr().ok_or(FableError::MalformedSyntax {
+            reason: "query final statement without expression",
+        })?;
+        let value = self.lower_expr(&expr)?;
+        validate_query_expr(query_type, &value)?;
+        program.push(fable_op(FableIntrinsic::Query(value)));
         Ok(program)
     }
 
@@ -2801,6 +3275,26 @@ fn call_callee_name(callee: &Expr) -> Result<String, FableError> {
     })
 }
 
+fn validate_query_expr(query_type: FableQueryType, expr: &ExprPlan) -> Result<(), FableError> {
+    let ok = match query_type {
+        FableQueryType::Unit => matches!(expr, ExprPlan::Unit(_)),
+        FableQueryType::Bool => matches!(expr, ExprPlan::Bool(_)),
+        FableQueryType::Char => matches!(expr, ExprPlan::Char(_)),
+        FableQueryType::String => matches!(expr, ExprPlan::String(_)),
+        FableQueryType::Signed | FableQueryType::Unsigned | FableQueryType::Float => {
+            matches!(expr, ExprPlan::Number(_))
+        }
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(FableError::TypeMismatch {
+            expected: query_type.name().into(),
+            actual: expr.kind_name(),
+        })
+    }
+}
+
 fn expect_bool_plan(expr: ExprPlan) -> Result<BoolExpr, FableError> {
     match expr {
         ExprPlan::Bool(expr) => Ok(expr),
@@ -3035,6 +3529,7 @@ struct FableInterp {
     roots: Vec<RuntimeRoot>,
     locals: LocalSlots,
     predicate_result: Option<bool>,
+    query_result: Option<FableQueryOutput>,
 }
 
 impl<'program> Step<'program, BlockRef, FableWeavyOp> for FableInterp {
@@ -3107,6 +3602,10 @@ impl FableInterp {
             }
             FableIntrinsic::Predicate(value) => {
                 self.predicate_result = Some(self.eval_bool(value)?);
+                Ok(Control::Continue)
+            }
+            FableIntrinsic::Query(value) => {
+                self.query_result = Some(self.eval_query(value)?);
                 Ok(Control::Continue)
             }
         }
@@ -3185,6 +3684,30 @@ impl FableInterp {
             ExprPlan::String(expr) => self.eval_string(expr).map(drop),
             ExprPlan::Number(expr) => self.eval_number_for_effect(expr),
             ExprPlan::Value(expr) => self.eval_value_for_effect(expr),
+        }
+    }
+
+    fn eval_query(&mut self, expr: &ExprPlan) -> Result<FableQueryOutput, FableError> {
+        match expr {
+            ExprPlan::Unit(expr) => {
+                self.eval_unit(expr)?;
+                Ok(FableQueryOutput::Unit)
+            }
+            ExprPlan::Bool(expr) => Ok(FableQueryOutput::Bool(self.eval_bool(expr)?)),
+            ExprPlan::Char(expr) => Ok(FableQueryOutput::Char(self.eval_char(expr)?)),
+            ExprPlan::String(expr) => Ok(FableQueryOutput::String(self.eval_string(expr)?)),
+            ExprPlan::Number(NumberExpr::Signed(expr)) => {
+                Ok(FableQueryOutput::Signed(self.eval_i128(expr)?))
+            }
+            ExprPlan::Number(NumberExpr::Unsigned(expr)) => {
+                Ok(FableQueryOutput::Unsigned(self.eval_u128(expr)?))
+            }
+            ExprPlan::Number(NumberExpr::Float(expr)) => {
+                Ok(FableQueryOutput::Float(self.eval_f64(expr)?))
+            }
+            ExprPlan::Value(_) => Err(FableError::Unsupported {
+                feature: "querying typed values".into(),
+            }),
         }
     }
 
@@ -3965,6 +4488,13 @@ fn local_kind_mismatch(expected: &'static str, actual: LocalRef) -> FableError {
 fn uninitialized_local() -> FableError {
     FableError::MalformedProgram {
         reason: "local read before initialization",
+    }
+}
+
+fn query_result_mismatch(expected: FableQueryType, actual: &'static str) -> FableError {
+    FableError::TypeMismatch {
+        expected: expected.name().into(),
+        actual,
     }
 }
 
@@ -5086,6 +5616,137 @@ mod tests {
                 expected,
                 actual: "string",
             } if expected == "bool"
+        ));
+    }
+
+    #[test]
+    fn evaluates_typed_query_plan_against_read_only_root() {
+        let value = state();
+        let plan = FableQueryPlan::<State, String>::compile(
+            r#"
+                let suffix = " Lovelace";
+                trim(root.user.name + suffix)
+            "#,
+        )
+        .unwrap();
+
+        let (result, stats) = plan.evaluate_with_stats(&value).unwrap();
+
+        assert_eq!(result, "Ada Lovelace");
+        assert!(stats.step_count >= 2);
+
+        let analysis = dense_lowered_analysis(&plan.plan.lowered);
+        assert_eq!(analysis.program_stats.root.op_count, 2);
+        assert_eq!(
+            analysis.intrinsic_counts[&IntrinsicDescriptor {
+                dialect: "fable",
+                name: "query",
+            }],
+            1
+        );
+    }
+
+    #[test]
+    fn evaluates_numeric_query_plan_with_checked_output_conversion() {
+        let value = state();
+        let visits: u8 = query(&value, "root.visits + 4").unwrap();
+        let score: f32 = query(&value, "root.score + 0.25").unwrap();
+        let age: i16 = query(&value, "root.user.age + 1").unwrap();
+
+        assert_eq!(visits, 5);
+        assert_eq!(score, 1.75);
+        assert_eq!(age, 18);
+    }
+
+    #[test]
+    fn evaluates_root_query_plan_over_explicit_roots() {
+        let roots = [
+            FableRootSpec::read_only::<TransformInput>("in"),
+            FableRootSpec::read_only::<TransformOutput>("out"),
+        ];
+        let plan = FableRootQueryPlan::<String>::compile(
+            r#"
+                let expected = in.first_name + " " + in.last_name;
+                out.status + ":" + expected
+            "#,
+            &roots,
+        )
+        .unwrap();
+
+        let input = transform_input();
+        let mut output = transform_output();
+        output.status = "active".into();
+        let mut values = [
+            FableRootValue::read_only("in", &input),
+            FableRootValue::read_only("out", &output),
+        ];
+
+        assert_eq!(plan.evaluate(&mut values).unwrap(), "active:Ada Lovelace");
+    }
+
+    #[test]
+    fn query_helper_supports_custom_intrinsics() {
+        let value = state();
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics.add_string_unary("scream", scream).unwrap();
+
+        let result: String =
+            query_with_intrinsics(&value, "scream(root.user.name)", &intrinsics).unwrap();
+
+        assert_eq!(result, "ADA!");
+    }
+
+    #[test]
+    fn query_plans_reject_mutating_the_read_only_root() {
+        let err = match FableQueryPlan::<State, bool>::compile(
+            r#"
+                root.user.active = true;
+                root.user.active
+            "#,
+        ) {
+            Ok(_) => panic!("expected Fable query compilation to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            FableError::ReadOnlyRoot {
+                name
+            } if name == "root"
+        ));
+    }
+
+    #[test]
+    fn root_query_plans_require_read_only_roots() {
+        let roots = [FableRootSpec::read_write::<State>("root")];
+
+        let err = match FableRootQueryPlan::<bool>::compile("root.user.active", &roots) {
+            Ok(_) => panic!("expected Fable query compilation to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            FableError::InvalidRoot {
+                name,
+                reason: "query roots must be read-only",
+            } if name == "root"
+        ));
+    }
+
+    #[test]
+    fn query_source_must_end_with_compatible_expression() {
+        let err = match FableQueryPlan::<State, String>::compile("root.user.age") {
+            Ok(_) => panic!("expected Fable query compilation to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            FableError::TypeMismatch {
+                expected,
+                actual: "signed number",
+            } if expected == "string"
         ));
     }
 
