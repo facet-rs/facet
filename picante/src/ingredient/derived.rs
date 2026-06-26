@@ -2,7 +2,7 @@ use crate::db::{DynIngredient, IngredientLookup, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame::{self, ActiveFrameHandle};
 use crate::inflight::{self, InFlightKey, InFlightState, SharedCacheRecord, TryLeadResult};
-use crate::key::{Dep, DynKey, Key, KeyFactory, QueryKindId};
+use crate::key::{Dep, DynKey, Key, KeyFactory, KeyMap, QueryKindId, key_map};
 use crate::persist::{KeyDecodeFn, PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use facet::Facet;
@@ -202,7 +202,7 @@ where
 struct DerivedCore {
     kind: QueryKindId,
     kind_name: &'static str,
-    cells: RwLock<im::HashMap<Key, Arc<ErasedCell>>>,
+    cells: RwLock<KeyMap<Arc<ErasedCell>>>,
     // Type-erased persistence callbacks (function pointers, not closures)
     encode_record: EncodeRecordFn,
     decode_record: DecodeRecordFn,
@@ -222,7 +222,7 @@ impl DerivedCore {
         Self {
             kind,
             kind_name,
-            cells: RwLock::new(im::HashMap::new()),
+            cells: RwLock::new(key_map()),
             encode_record,
             decode_record,
             encode_incremental,
@@ -1692,7 +1692,7 @@ where
 
     fn clear(&self) {
         let mut cells = self.core.cells.write();
-        *cells = im::HashMap::new();
+        *cells = key_map();
     }
 
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {

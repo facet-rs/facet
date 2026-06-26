@@ -386,6 +386,7 @@ futures-channel = "0.3"
 futures-util = { version = "^0.3.31", default-features = false, features = ["std", "async-await", "async-await-macro"] }
 glob = "^0.3"
 goblin = "^0.9"
+hashbrown = { version = "0.17", features = ["raw-entry"] }
 heck = "^0.5.0"
 hex = "^0.4"
 http = "^1.4.0"

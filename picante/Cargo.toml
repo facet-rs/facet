@@ -27,6 +27,7 @@ facet-hash.workspace = true
 facet-reflect.workspace = true
 facet-postcard.workspace = true
 futures-util.workspace = true
+hashbrown.workspace = true
 parking_lot.workspace = true
 tokio = { workspace = true, features = ["fs", "sync", "time"] }
 tracing.workspace = true
