@@ -26,10 +26,24 @@ use weavy::ir::{
 };
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 mod native;
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
-pub use native::{NativeHashPlan, NativeHashPlanStats};
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+pub use native::{
+    NativeEqualityPlan, NativeEqualityPlanStats, NativeHashPlan, NativeHashPlanStats,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum HashBlockId {

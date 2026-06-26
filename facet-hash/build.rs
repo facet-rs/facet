@@ -12,13 +12,21 @@ pub const SCALAR: &[u8] = &[];\n\
 pub const SCALAR_CONT: &[usize] = &[];\n\
 pub const SCALAR_RUN: &[u8] = &[];\n\
 pub const SCALAR_RUN_CONT: &[usize] = &[];\n\
-pub const DONE: &[u8] = &[];\n";
+pub const EQ_SCALAR: &[u8] = &[];\n\
+pub const EQ_SCALAR_CONT: &[usize] = &[];\n\
+pub const EQ_SCALAR_RUN: &[u8] = &[];\n\
+pub const EQ_SCALAR_RUN_CONT: &[usize] = &[];\n\
+pub const DONE: &[u8] = &[];\n\
+pub const EQ_DONE: &[u8] = &[];\n";
 
 #[cfg(feature = "jit")]
 const SYMBOLS: &[&str] = &[
     "facet_hash_stencil_scalar",
     "facet_hash_stencil_scalar_run",
+    "facet_hash_stencil_eq_scalar",
+    "facet_hash_stencil_eq_scalar_run",
     "facet_hash_stencil_done",
+    "facet_hash_stencil_eq_done",
 ];
 
 fn main() {
@@ -31,8 +39,8 @@ fn main() {
     {
         let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
         let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-        if target_os == "macos" && target_arch == "aarch64" {
-            emit_arm64_macos(&out, &generated);
+        if native_copy_patch_target(&target_os, &target_arch) {
+            emit_native(&out, &generated, &target_os, &target_arch);
             return;
         }
     }
@@ -41,16 +49,29 @@ fn main() {
 }
 
 #[cfg(feature = "jit")]
-fn emit_arm64_macos(out: &Path, generated: &Path) {
+fn native_copy_patch_target(target_os: &str, target_arch: &str) -> bool {
+    matches!(
+        (target_os, target_arch),
+        ("macos", "aarch64") | ("linux", "x86_64")
+    )
+}
+
+#[cfg(feature = "jit")]
+fn emit_native(out: &Path, generated: &Path, target_os: &str, target_arch: &str) {
     println!("cargo:rerun-if-changed=stencils/stencils.rs");
+    println!("cargo:rerun-if-changed=stencils/stencils_tailcall.rs");
+    println!("cargo:rerun-if-changed=stencils/common.rs");
     println!("cargo:rerun-if-changed=build.rs");
 
     let target = env::var("TARGET").expect("TARGET set by cargo");
     let obj = out.join("stencils.o");
     let src = Path::new("stencils/stencils.rs");
+    let tailcall_src = Path::new("stencils/stencils_tailcall.rs");
 
-    let tailcall =
-        nightly_available() && compile_object("rustc", &["+nightly"], src, &obj, &target, true);
+    let try_tailcall = target_os == "macos" && target_arch == "aarch64";
+    let tailcall = try_tailcall
+        && nightly_available()
+        && compile_object("rustc", &["+nightly"], tailcall_src, &obj, &target, false);
     if tailcall {
         println!("cargo:rustc-cfg=facet_hash_jit_tailcall");
     } else {
@@ -63,9 +84,13 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
 
     let bytes = fs::read(&obj).unwrap();
     let get = |symbol: &str| extract_stencil(&bytes, SYMBOLS, symbol, "facet_hash_cont");
+    let get_eq = |symbol: &str| extract_stencil(&bytes, SYMBOLS, symbol, "facet_hash_eq_cont");
     let scalar = get("facet_hash_stencil_scalar");
     let scalar_run = get("facet_hash_stencil_scalar_run");
+    let eq_scalar = get_eq("facet_hash_stencil_eq_scalar");
+    let eq_scalar_run = get_eq("facet_hash_stencil_eq_scalar_run");
     let done = get("facet_hash_stencil_done");
+    let eq_done = get_eq("facet_hash_stencil_eq_done");
 
     let mode = if tailcall {
         "tail-call (nightly become)"
@@ -90,7 +115,27 @@ fn emit_arm64_macos(out: &Path, generated: &Path) {
         &scalar_run,
     );
     emit_cont(&mut out, "SCALAR_RUN_CONT", "SCALAR_RUN", &scalar_run);
+    emit(
+        &mut out,
+        "EQ_SCALAR",
+        "Compare one scalar field, then continue if still equal.",
+        &eq_scalar,
+    );
+    emit_cont(&mut out, "EQ_SCALAR_CONT", "EQ_SCALAR", &eq_scalar);
+    emit(
+        &mut out,
+        "EQ_SCALAR_RUN",
+        "Compare a grouped scalar field run, then continue if still equal.",
+        &eq_scalar_run,
+    );
+    emit_cont(
+        &mut out,
+        "EQ_SCALAR_RUN_CONT",
+        "EQ_SCALAR_RUN",
+        &eq_scalar_run,
+    );
     emit(&mut out, "DONE", "Terminal hash stencil.", &done);
+    emit(&mut out, "EQ_DONE", "Terminal equality stencil.", &eq_done);
 
     fs::write(generated, out).unwrap();
 }
@@ -106,7 +151,7 @@ fn emit(out: &mut String, name: &str, doc: &str, stencil: &Stencil) {
 #[cfg(feature = "jit")]
 fn emit_cont(out: &mut String, name: &str, of: &str, stencil: &Stencil) {
     out.push_str(&format!(
-        "/// Byte offsets within `{of}` of the continuation `BRANCH26` relocations to patch.\n\
+        "/// Byte offsets within `{of}` of the continuation relocations to patch.\n\
          pub const {name}: &[usize] = &{:?};\n",
         stencil.cont_relocs
     ));

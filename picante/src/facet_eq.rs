@@ -16,13 +16,43 @@ use std::any::Any;
 use std::sync::Arc;
 
 pub(crate) struct PlannedEquality<T> {
-    plan: Option<Arc<facet_hash::EqualityPlan<T>>>,
+    backend: PlannedEqualityBackend<T>,
+}
+
+enum PlannedEqualityBackend<T> {
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    Native(Arc<facet_hash::NativeEqualityPlan<T>>),
+    Interpreted(Arc<facet_hash::EqualityPlan<T>>),
+    None,
 }
 
 impl<T> Clone for PlannedEquality<T> {
     fn clone(&self) -> Self {
         Self {
-            plan: self.plan.clone(),
+            backend: self.backend.clone(),
+        }
+    }
+}
+
+impl<T> Clone for PlannedEqualityBackend<T> {
+    fn clone(&self) -> Self {
+        match self {
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            Self::Native(plan) => Self::Native(plan.clone()),
+            Self::Interpreted(plan) => Self::Interpreted(plan.clone()),
+            Self::None => Self::None,
         }
     }
 }
@@ -32,14 +62,62 @@ where
     T: Facet<'static>,
 {
     pub(crate) fn new() -> Self {
-        Self {
-            plan: facet_hash::EqualityPlan::<T>::build().ok().map(Arc::new),
-        }
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        let backend = if let Ok(native) = facet_hash::NativeEqualityPlan::<T>::build() {
+            PlannedEqualityBackend::Native(Arc::new(native))
+        } else if let Ok(plan) = facet_hash::EqualityPlan::<T>::build() {
+            PlannedEqualityBackend::Interpreted(Arc::new(plan))
+        } else {
+            PlannedEqualityBackend::None
+        };
+        #[cfg(not(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        )))]
+        let backend = match facet_hash::EqualityPlan::<T>::build() {
+            Ok(plan) => PlannedEqualityBackend::Interpreted(Arc::new(plan)),
+            Err(_) => PlannedEqualityBackend::None,
+        };
+
+        Self { backend }
     }
 
     #[cfg(test)]
     pub(crate) fn has_plan(&self) -> bool {
-        self.plan.is_some()
+        !matches!(self.backend, PlannedEqualityBackend::None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_native_plan(&self) -> bool {
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        {
+            matches!(self.backend, PlannedEqualityBackend::Native(_))
+        }
+        #[cfg(not(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        )))]
+        {
+            false
+        }
     }
 }
 
@@ -51,10 +129,26 @@ where
         if let Some(equal) = known_eq(a, b) {
             return equal;
         }
-        if let Some(plan) = &self.plan
-            && let Ok(equal) = plan.eq(a, b)
-        {
-            return equal;
+
+        match &self.backend {
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            PlannedEqualityBackend::Native(plan) => {
+                if let Ok(equal) = plan.eq(a, b) {
+                    return equal;
+                }
+            }
+            PlannedEqualityBackend::Interpreted(plan) => {
+                if let Ok(equal) = plan.eq(a, b) {
+                    return equal;
+                }
+            }
+            PlannedEqualityBackend::None => {}
         }
         facet_eq_direct(a, b)
     }
@@ -410,6 +504,12 @@ mod tests {
         value: i32,
     }
 
+    #[derive(Facet, Debug, Clone)]
+    struct ScalarPair {
+        left: u32,
+        right: i64,
+    }
+
     #[derive(Facet, Debug, Clone, PartialEq)]
     struct Container {
         items: Vec<WithPartialEq>,
@@ -428,6 +528,25 @@ mod tests {
 
         assert!(facet_eq_direct(&a, &b));
         assert!(!facet_eq_direct(&a, &c));
+    }
+
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    #[test]
+    fn planned_equality_uses_native_for_supported_scalar_structs() {
+        let equality = PlannedEquality::<ScalarPair>::new();
+        let left = ScalarPair { left: 1, right: -2 };
+        let same = ScalarPair { left: 1, right: -2 };
+        let different = ScalarPair { left: 1, right: -3 };
+
+        assert!(equality.has_native_plan());
+        assert!(equality.eq(&left, &same));
+        assert!(!equality.eq(&left, &different));
     }
 
     #[test]

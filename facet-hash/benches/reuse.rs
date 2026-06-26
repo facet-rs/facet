@@ -2,9 +2,15 @@ use core::hash::{Hash, Hasher};
 
 use divan::{Bencher, black_box};
 use facet::Facet;
-use facet_hash::HashPlan;
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
-use facet_hash::NativeHashPlan;
+use facet_hash::{EqualityPlan, HashPlan};
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+use facet_hash::{NativeEqualityPlan, NativeHashPlan};
 use facet_reflect::Peek;
 
 fn main() {
@@ -109,12 +115,64 @@ fn point_value_plan_reused(bencher: Bencher<'_, '_>) {
     bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[divan::bench]
+fn point_equality_plan_equal(bencher: Bencher<'_, '_>) {
+    let plan = EqualityPlan::<Point>::build().unwrap();
+    let left = Point { x: 123, y: -456 };
+    let right = Point { x: 123, y: -456 };
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
+}
+
+#[divan::bench]
+fn point_equality_plan_different(bencher: Bencher<'_, '_>) {
+    let plan = EqualityPlan::<Point>::build().unwrap();
+    let left = Point { x: 123, y: -456 };
+    let right = Point { x: 123, y: -457 };
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[divan::bench]
 fn point_value_native_jit(bencher: Bencher<'_, '_>) {
     let plan = NativeHashPlan::<Point>::build().unwrap();
     let value = Point { x: 123, y: -456 };
     bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[divan::bench]
+fn point_equality_native_jit_equal(bencher: Bencher<'_, '_>) {
+    let plan = NativeEqualityPlan::<Point>::build().unwrap();
+    let left = Point { x: 123, y: -456 };
+    let right = Point { x: 123, y: -456 };
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[divan::bench]
+fn point_equality_native_jit_different(bencher: Bencher<'_, '_>) {
+    let plan = NativeEqualityPlan::<Point>::build().unwrap();
+    let left = Point { x: 123, y: -456 };
+    let right = Point { x: 123, y: -457 };
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
 }
 
 #[divan::bench]
@@ -180,12 +238,41 @@ fn mixed_value_plan_reused(bencher: Bencher<'_, '_>) {
     bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[divan::bench]
+fn mixed_equality_plan_equal(bencher: Bencher<'_, '_>) {
+    let plan = EqualityPlan::<MixedScalarRuns>::build().unwrap();
+    let left = mixed_scalar_runs();
+    let right = mixed_scalar_runs();
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[divan::bench]
 fn mixed_value_native_jit(bencher: Bencher<'_, '_>) {
     let plan = NativeHashPlan::<MixedScalarRuns>::build().unwrap();
     let value = mixed_scalar_runs();
     bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[divan::bench]
+fn mixed_equality_native_jit_equal(bencher: Bencher<'_, '_>) {
+    let plan = NativeEqualityPlan::<MixedScalarRuns>::build().unwrap();
+    let left = mixed_scalar_runs();
+    let right = mixed_scalar_runs();
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
 }
 
 #[divan::bench]
@@ -205,12 +292,41 @@ fn point_array_value_plan_reused(bencher: Bencher<'_, '_>) {
     bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[divan::bench]
+fn point_array_equality_plan_equal(bencher: Bencher<'_, '_>) {
+    let plan = EqualityPlan::<PointArray>::build().unwrap();
+    let left = point_array();
+    let right = point_array();
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[divan::bench]
 fn point_array_value_native_jit(bencher: Bencher<'_, '_>) {
     let plan = NativeHashPlan::<PointArray>::build().unwrap();
     let value = point_array();
     bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[divan::bench]
+fn point_array_equality_native_jit_equal(bencher: Bencher<'_, '_>) {
+    let plan = NativeEqualityPlan::<PointArray>::build().unwrap();
+    let left = point_array();
+    let right = point_array();
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
 }
 
 #[divan::bench]
@@ -258,7 +374,29 @@ fn float_value_plan_reused(bencher: Bencher<'_, '_>) {
     bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[divan::bench]
+fn float_equality_plan_equal(bencher: Bencher<'_, '_>) {
+    let plan = EqualityPlan::<FloatPoint>::build().unwrap();
+    let left = FloatPoint {
+        x: 1.25,
+        y: -9.5,
+        z: f64::NAN,
+    };
+    let right = FloatPoint {
+        x: 1.25,
+        y: -9.5,
+        z: f64::from_bits(f64::NAN.to_bits()),
+    };
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[divan::bench]
 fn float_value_native_jit(bencher: Bencher<'_, '_>) {
     let plan = NativeHashPlan::<FloatPoint>::build().unwrap();
@@ -268,6 +406,29 @@ fn float_value_native_jit(bencher: Bencher<'_, '_>) {
         z: f64::NAN,
     };
     bencher.bench_local(|| black_box(plan.hash64(black_box(&value)).unwrap()));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[divan::bench]
+fn float_equality_native_jit_equal(bencher: Bencher<'_, '_>) {
+    let plan = NativeEqualityPlan::<FloatPoint>::build().unwrap();
+    let left = FloatPoint {
+        x: 1.25,
+        y: -9.5,
+        z: f64::NAN,
+    };
+    let right = FloatPoint {
+        x: 1.25,
+        y: -9.5,
+        z: f64::from_bits(f64::NAN.to_bits()),
+    };
+    bencher.bench_local(|| black_box(plan.eq(black_box(&left), black_box(&right)).unwrap()));
 }
 
 #[divan::bench]

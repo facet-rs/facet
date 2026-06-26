@@ -9,8 +9,8 @@ use weavy::ir::{ControlOp, WeavyOp};
 use weavy::jit::{Chain, NativeProgram, ProgSlot, StencilLayout};
 
 use crate::{
-    ChildPlan, ExecBlock, ExecOp, HashError, HashIntrinsic, HashMode, HashPlan, ScalarFieldPlan,
-    StructFieldPlan, unsupported,
+    ChildPlan, EqualityPlan, ExecBlock, ExecOp, HashError, HashIntrinsic, HashMode, HashPlan,
+    ScalarFieldPlan, StructFieldPlan, unsupported,
 };
 
 mod stencils {
@@ -27,12 +27,28 @@ pub struct NativeHashPlan<T, H = std::collections::hash_map::DefaultHasher> {
     _marker: PhantomData<fn() -> (T, H)>,
 }
 
+/// Native copy-and-patch equality plan for the supported value-mode scalar subset.
+pub struct NativeEqualityPlan<T> {
+    native: NativeProgram,
+    scalar_infos: Vec<EqScalarInfo>,
+    scalar_run_fields: Vec<Vec<EqScalarInfo>>,
+    scalar_run_infos: Vec<EqScalarRunInfo>,
+    _marker: PhantomData<fn() -> T>,
+}
+
 // SAFETY: the executable buffer and side tables are fully materialized before
 // the plan is returned. `hash` only reads them and uses the caller-owned hasher.
 unsafe impl<T, H> Send for NativeHashPlan<T, H> {}
 // SAFETY: the executable buffer and side tables are fully materialized before
 // the plan is returned. `hash` only reads them and uses the caller-owned hasher.
 unsafe impl<T, H> Sync for NativeHashPlan<T, H> {}
+
+// SAFETY: the executable buffer and side tables are fully materialized before
+// the plan is returned. `eq` only reads them and the two caller-owned values.
+unsafe impl<T> Send for NativeEqualityPlan<T> {}
+// SAFETY: the executable buffer and side tables are fully materialized before
+// the plan is returned. `eq` only reads them and the two caller-owned values.
+unsafe impl<T> Sync for NativeEqualityPlan<T> {}
 
 impl<T, H> NativeHashPlan<T, H>
 where
@@ -84,6 +100,43 @@ where
     }
 }
 
+impl<T> NativeEqualityPlan<T>
+where
+    T: Facet<'static>,
+{
+    /// Compile a value-mode native equality plan for `T`.
+    pub fn build() -> Result<Self, HashError> {
+        let plan = EqualityPlan::<T>::build()?;
+        EqualityCompiler::compile::<T>(T::SHAPE, &plan.lowered)
+    }
+
+    /// Compare two values through the compiled native plan.
+    pub fn eq(&self, left: &T, right: &T) -> Result<bool, HashError> {
+        let mut ctx = EqCtx {
+            left: (left as *const T).cast::<u8>(),
+            right: (right as *const T).cast::<u8>(),
+            prog: self.native.entry_prog(),
+            equal: true,
+        };
+        let entry = unsafe { self.native.entry_fn::<EqCtx>() };
+        unsafe { entry(&mut ctx) };
+        Ok(ctx.equal)
+    }
+
+    /// Return code-layout counters for this native plan.
+    #[must_use]
+    pub fn stats(&self) -> NativeEqualityPlanStats {
+        NativeEqualityPlanStats {
+            chain_count: self.native.chain_count(),
+            stencil_count: self.native.stencil_count(),
+            prog_slot_count: self.native.prog_slot_count(),
+            scalar_count: self.scalar_infos.len(),
+            scalar_run_count: self.scalar_run_infos.len(),
+            scalar_run_field_count: self.scalar_run_fields.iter().map(Vec::len).sum(),
+        }
+    }
+}
+
 /// Code-layout counters for a [`NativeHashPlan`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +157,24 @@ pub struct NativeHashPlanStats {
     pub const_usize_count: usize,
 }
 
+/// Code-layout counters for a [`NativeEqualityPlan`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeEqualityPlanStats {
+    /// Number of compiled chains.
+    pub chain_count: usize,
+    /// Number of stencil copies.
+    pub stencil_count: usize,
+    /// Number of side program-stream words.
+    pub prog_slot_count: usize,
+    /// Number of standalone scalar ops.
+    pub scalar_count: usize,
+    /// Number of grouped scalar runs.
+    pub scalar_run_count: usize,
+    /// Total scalar fields inside grouped runs.
+    pub scalar_run_field_count: usize,
+}
+
 #[repr(C)]
 struct Ctx {
     base: *const u8,
@@ -111,7 +182,16 @@ struct Ctx {
     prog: *const u64,
 }
 
+#[repr(C)]
+struct EqCtx {
+    left: *const u8,
+    right: *const u8,
+    prog: *const u64,
+    equal: bool,
+}
+
 type HashFn = unsafe extern "C" fn(hasher: *mut (), ptr: *const u8);
+type EqFn = unsafe extern "C" fn(left: *const u8, right: *const u8) -> bool;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -127,6 +207,19 @@ struct ScalarRunInfo {
     field_count: usize,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct EqScalarInfo {
+    offset: usize,
+    eq: EqFn,
+}
+
+#[repr(C)]
+struct EqScalarRunInfo {
+    fields: *const EqScalarInfo,
+    field_count: usize,
+}
+
 #[derive(Clone, Copy)]
 enum EmittedOp {
     Scalar,
@@ -139,6 +232,16 @@ struct ScalarFixup {
 }
 
 struct ScalarRunFixup {
+    slot: ProgSlot,
+    run_index: usize,
+}
+
+struct EqScalarFixup {
+    slot: ProgSlot,
+    scalar_index: usize,
+}
+
+struct EqScalarRunFixup {
     slot: ProgSlot,
     run_index: usize,
 }
@@ -164,6 +267,15 @@ struct Compiler<H> {
     scalar_run_fixups: Vec<ScalarRunFixup>,
     const_usizes: Vec<usize>,
     _marker: PhantomData<fn() -> H>,
+}
+
+struct EqualityCompiler {
+    layout: StencilLayout,
+    scalar_infos: Vec<EqScalarInfo>,
+    scalar_fixups: Vec<EqScalarFixup>,
+    scalar_run_fields: Vec<Vec<EqScalarInfo>>,
+    scalar_run_infos: Vec<EqScalarRunInfo>,
+    scalar_run_fixups: Vec<EqScalarRunFixup>,
 }
 
 impl<H> Compiler<H>
@@ -216,7 +328,7 @@ where
                 EmittedOp::ScalarRun => stencils::SCALAR_RUN_CONT,
             };
             for &rel in relocs {
-                self.layout.patch_branch26(op_start + rel, next);
+                self.layout.patch_continuation(op_start + rel, next);
             }
         }
 
@@ -487,6 +599,302 @@ where
     }
 }
 
+impl EqualityCompiler {
+    fn compile<T>(
+        root_shape: &'static Shape,
+        lowered: &weavy::DenseLowered<ExecOp>,
+    ) -> Result<NativeEqualityPlan<T>, HashError> {
+        if !lowered.blocks.is_empty() {
+            return Err(unsupported(root_shape, "native recursive blocks"));
+        }
+
+        let mut compiler = Self {
+            layout: StencilLayout::new(),
+            scalar_infos: Vec::new(),
+            scalar_fixups: Vec::new(),
+            scalar_run_fields: Vec::new(),
+            scalar_run_infos: Vec::new(),
+            scalar_run_fixups: Vec::new(),
+        };
+        let entry = compiler.compile_chain(root_shape, &lowered.program)?;
+        compiler.finish(entry)
+    }
+
+    fn compile_chain(
+        &mut self,
+        root_shape: &'static Shape,
+        program: &[ExecOp],
+    ) -> Result<Chain, HashError> {
+        let chain = self.layout.start_chain();
+        let mut starts = Vec::with_capacity(program.len());
+        let mut emitted = Vec::with_capacity(program.len());
+
+        for op in program {
+            starts.push(self.layout.code_len());
+            emitted.push(self.compile_op(root_shape, chain.prog_index, op)?);
+        }
+
+        let done_start = self.layout.code_len();
+        self.layout.emit_stencil(stencils::EQ_DONE);
+
+        for (index, &op_start) in starts.iter().enumerate() {
+            let next = starts.get(index + 1).copied().unwrap_or(done_start);
+            let relocs = match emitted[index] {
+                EmittedOp::Scalar => stencils::EQ_SCALAR_CONT,
+                EmittedOp::ScalarRun => stencils::EQ_SCALAR_RUN_CONT,
+            };
+            for &rel in relocs {
+                self.layout.patch_continuation(op_start + rel, next);
+            }
+        }
+
+        Ok(chain)
+    }
+
+    fn compile_op(
+        &mut self,
+        root_shape: &'static Shape,
+        prog_index: usize,
+        op: &ExecOp,
+    ) -> Result<EmittedOp, HashError> {
+        let WeavyOp::Intrinsic(intrinsic) = op else {
+            return match op {
+                WeavyOp::Control(ControlOp::Return) => Err(HashError::MalformedProgram {
+                    reason: "native equality root must not contain return",
+                }),
+                WeavyOp::Control(ControlOp::CallBlock { .. }) => {
+                    Err(unsupported(root_shape, "native recursive blocks"))
+                }
+                _ => Err(HashError::MalformedProgram {
+                    reason: "native equality compiler only accepts hash intrinsics",
+                }),
+            };
+        };
+
+        match intrinsic {
+            HashIntrinsic::Scalar { shape, scalar } => {
+                let info = eq_scalar_info(shape, *scalar, 0)?;
+                self.layout.emit_stencil(stencils::EQ_SCALAR);
+                let slot = self.layout.reserve_prog_slot(prog_index);
+                let scalar_index = self.scalar_infos.len();
+                self.scalar_infos.push(info);
+                self.scalar_fixups
+                    .push(EqScalarFixup { slot, scalar_index });
+                Ok(EmittedOp::Scalar)
+            }
+            HashIntrinsic::Struct { mode, fields, .. } => {
+                if *mode != HashMode::Value {
+                    return Err(unsupported(root_shape, "native structural equality"));
+                }
+
+                let mut run = Vec::new();
+                self.collect_struct_fields(root_shape, fields, 0, &mut run)?;
+                Ok(self.emit_scalar_run(prog_index, run))
+            }
+            HashIntrinsic::Array {
+                array,
+                element_layout,
+                element,
+            } => {
+                let mut run = Vec::new();
+                self.collect_array(
+                    root_shape,
+                    array.n,
+                    element_layout.size(),
+                    element,
+                    0,
+                    &mut run,
+                )?;
+                Ok(self.emit_scalar_run(prog_index, run))
+            }
+            HashIntrinsic::Shape(_) => Err(unsupported(root_shape, "native structural equality")),
+            HashIntrinsic::Bytes(_)
+            | HashIntrinsic::Option { .. }
+            | HashIntrinsic::Result { .. }
+            | HashIntrinsic::List { .. }
+            | HashIntrinsic::Slice { .. }
+            | HashIntrinsic::Set { .. }
+            | HashIntrinsic::Map { .. }
+            | HashIntrinsic::Pointer { .. } => {
+                Err(unsupported(root_shape, "native aggregate equality"))
+            }
+        }
+    }
+
+    fn emit_scalar_run(&mut self, prog_index: usize, run: Vec<EqScalarInfo>) -> EmittedOp {
+        self.layout.emit_stencil(stencils::EQ_SCALAR_RUN);
+        let slot = self.layout.reserve_prog_slot(prog_index);
+        let run_index = self.scalar_run_fields.len();
+        self.scalar_run_infos.push(EqScalarRunInfo {
+            fields: core::ptr::null(),
+            field_count: run.len(),
+        });
+        self.scalar_run_fields.push(run);
+        self.scalar_run_fixups
+            .push(EqScalarRunFixup { slot, run_index });
+        EmittedOp::ScalarRun
+    }
+
+    fn collect_program_scalars(
+        &mut self,
+        root_shape: &'static Shape,
+        program: &[ExecOp],
+        base_offset: usize,
+        run: &mut Vec<EqScalarInfo>,
+    ) -> Result<(), HashError> {
+        for op in program {
+            let WeavyOp::Intrinsic(intrinsic) = op else {
+                return match op {
+                    WeavyOp::Control(ControlOp::Return) => Err(HashError::MalformedProgram {
+                        reason: "native equality child must not contain return",
+                    }),
+                    WeavyOp::Control(ControlOp::CallBlock { .. }) => {
+                        Err(unsupported(root_shape, "native recursive blocks"))
+                    }
+                    _ => Err(HashError::MalformedProgram {
+                        reason: "native equality compiler only accepts hash intrinsics",
+                    }),
+                };
+            };
+
+            match intrinsic {
+                HashIntrinsic::Scalar { shape, scalar } => {
+                    run.push(eq_scalar_info(shape, *scalar, base_offset)?);
+                }
+                HashIntrinsic::Struct { mode, fields, .. } => {
+                    if *mode != HashMode::Value {
+                        return Err(unsupported(root_shape, "native structural equality"));
+                    }
+                    self.collect_struct_fields(root_shape, fields, base_offset, run)?;
+                }
+                HashIntrinsic::Array {
+                    array,
+                    element_layout,
+                    element,
+                } => {
+                    self.collect_array(
+                        root_shape,
+                        array.n,
+                        element_layout.size(),
+                        element,
+                        base_offset,
+                        run,
+                    )?;
+                }
+                HashIntrinsic::Shape(_) => {
+                    return Err(unsupported(root_shape, "native structural equality"));
+                }
+                HashIntrinsic::Bytes(_)
+                | HashIntrinsic::Option { .. }
+                | HashIntrinsic::Result { .. }
+                | HashIntrinsic::List { .. }
+                | HashIntrinsic::Slice { .. }
+                | HashIntrinsic::Set { .. }
+                | HashIntrinsic::Map { .. }
+                | HashIntrinsic::Pointer { .. } => {
+                    return Err(unsupported(root_shape, "native aggregate equality"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_struct_fields(
+        &mut self,
+        root_shape: &'static Shape,
+        fields: &[StructFieldPlan<ExecBlock>],
+        base_offset: usize,
+        run: &mut Vec<EqScalarInfo>,
+    ) -> Result<(), HashError> {
+        for field in fields {
+            match field {
+                StructFieldPlan::ScalarRun(fields) => {
+                    for field in fields.iter() {
+                        run.push(eq_scalar_field_info(field, base_offset)?);
+                    }
+                }
+                StructFieldPlan::Field(field) => {
+                    self.collect_child_scalars(
+                        root_shape,
+                        &field.child,
+                        base_offset + field.offset,
+                        run,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_array(
+        &mut self,
+        root_shape: &'static Shape,
+        len: usize,
+        stride: usize,
+        element: &ChildPlan<ExecBlock>,
+        base_offset: usize,
+        run: &mut Vec<EqScalarInfo>,
+    ) -> Result<(), HashError> {
+        for index in 0..len {
+            self.collect_child_scalars(root_shape, element, base_offset + index * stride, run)?;
+        }
+        Ok(())
+    }
+
+    fn collect_child_scalars(
+        &mut self,
+        root_shape: &'static Shape,
+        child: &ChildPlan<ExecBlock>,
+        base_offset: usize,
+        run: &mut Vec<EqScalarInfo>,
+    ) -> Result<(), HashError> {
+        match child {
+            ChildPlan::Scalar {
+                include_shape,
+                shape,
+                scalar,
+            } => {
+                if *include_shape {
+                    return Err(unsupported(shape, "native structural scalar field"));
+                }
+                run.push(eq_scalar_info(shape, *scalar, base_offset)?);
+                Ok(())
+            }
+            ChildPlan::Program(program) => {
+                self.collect_program_scalars(root_shape, program, base_offset, run)
+            }
+        }
+    }
+
+    fn finish<T>(mut self, entry: Chain) -> Result<NativeEqualityPlan<T>, HashError> {
+        let native = NativeProgram::new(core::mem::take(&mut self.layout), entry);
+        let mut plan = NativeEqualityPlan {
+            native,
+            scalar_infos: self.scalar_infos,
+            scalar_run_fields: self.scalar_run_fields,
+            scalar_run_infos: self.scalar_run_infos,
+            _marker: PhantomData,
+        };
+
+        let run_ptrs: Vec<*const EqScalarInfo> =
+            plan.scalar_run_fields.iter().map(Vec::as_ptr).collect();
+        for (info, &ptr) in plan.scalar_run_infos.iter_mut().zip(run_ptrs.iter()) {
+            info.fields = ptr;
+        }
+
+        for fixup in self.scalar_fixups {
+            let ptr: *const EqScalarInfo = &plan.scalar_infos[fixup.scalar_index];
+            plan.native.fill_prog_slot(fixup.slot, ptr as u64);
+        }
+        for fixup in self.scalar_run_fixups {
+            let ptr: *const EqScalarRunInfo = &plan.scalar_run_infos[fixup.run_index];
+            plan.native.fill_prog_slot(fixup.slot, ptr as u64);
+        }
+
+        Ok(plan)
+    }
+}
+
 fn scalar_field_info<H>(
     field: &ScalarFieldPlan,
     base_offset: usize,
@@ -571,6 +979,63 @@ where
     })
 }
 
+fn eq_scalar_field_info(
+    field: &ScalarFieldPlan,
+    base_offset: usize,
+) -> Result<EqScalarInfo, HashError> {
+    if field.include_shape {
+        return Err(unsupported(field.shape, "native structural scalar field"));
+    }
+    eq_scalar_info(field.shape, field.scalar, base_offset + field.offset)
+}
+
+fn eq_scalar_info(
+    shape: &'static Shape,
+    scalar: ScalarType,
+    offset: usize,
+) -> Result<EqScalarInfo, HashError> {
+    Ok(EqScalarInfo {
+        offset,
+        eq: scalar_eq_fn(shape, scalar)?,
+    })
+}
+
+fn scalar_eq_fn(shape: &'static Shape, scalar: ScalarType) -> Result<EqFn, HashError> {
+    Ok(match scalar {
+        ScalarType::Unit => eq_unit,
+        ScalarType::Bool => eq_value::<bool>,
+        ScalarType::Char => eq_value::<char>,
+        ScalarType::Str if shape.is_type::<&'static str>() => eq_value::<&'static str>,
+        ScalarType::Str => return Err(unsupported(shape, "native unsized str equality")),
+        ScalarType::String => eq_value::<String>,
+        ScalarType::CowStr => eq_value::<Cow<'static, str>>,
+        ScalarType::F32 => eq_f32,
+        ScalarType::F64 => eq_f64,
+        ScalarType::U8 => eq_value::<u8>,
+        ScalarType::U16 => eq_value::<u16>,
+        ScalarType::U32 => eq_value::<u32>,
+        ScalarType::U64 => eq_value::<u64>,
+        ScalarType::U128 => eq_value::<u128>,
+        ScalarType::USize => eq_value::<usize>,
+        ScalarType::I8 => eq_value::<i8>,
+        ScalarType::I16 => eq_value::<i16>,
+        ScalarType::I32 => eq_value::<i32>,
+        ScalarType::I64 => eq_value::<i64>,
+        ScalarType::I128 => eq_value::<i128>,
+        ScalarType::ISize => eq_value::<isize>,
+        ScalarType::ConstTypeId => eq_value::<ConstTypeId>,
+        #[cfg(feature = "net")]
+        ScalarType::SocketAddr => eq_value::<core::net::SocketAddr>,
+        #[cfg(feature = "net")]
+        ScalarType::IpAddr => eq_value::<core::net::IpAddr>,
+        #[cfg(feature = "net")]
+        ScalarType::Ipv4Addr => eq_value::<core::net::Ipv4Addr>,
+        #[cfg(feature = "net")]
+        ScalarType::Ipv6Addr => eq_value::<core::net::Ipv6Addr>,
+        _ => return Err(unsupported(shape, "native scalar equality")),
+    })
+}
+
 unsafe extern "C" fn hash_unit<H>(hasher: *mut (), _ptr: *const u8)
 where
     H: Hasher,
@@ -605,4 +1070,27 @@ where
     unsafe { PtrConst::new_sized(ptr.cast::<f64>()).get::<f64>() }
         .to_bits()
         .hash(hasher);
+}
+
+unsafe extern "C" fn eq_unit(_left: *const u8, _right: *const u8) -> bool {
+    true
+}
+
+unsafe extern "C" fn eq_value<T>(left: *const u8, right: *const u8) -> bool
+where
+    T: PartialEq,
+{
+    let left = unsafe { PtrConst::new_sized(left.cast::<T>()).get::<T>() };
+    let right = unsafe { PtrConst::new_sized(right.cast::<T>()).get::<T>() };
+    left == right
+}
+
+unsafe extern "C" fn eq_f32(left: *const u8, right: *const u8) -> bool {
+    unsafe { PtrConst::new_sized(left.cast::<f32>()).get::<f32>() }.to_bits()
+        == unsafe { PtrConst::new_sized(right.cast::<f32>()).get::<f32>() }.to_bits()
+}
+
+unsafe extern "C" fn eq_f64(left: *const u8, right: *const u8) -> bool {
+    unsafe { PtrConst::new_sized(left.cast::<f64>()).get::<f64>() }.to_bits()
+        == unsafe { PtrConst::new_sized(right.cast::<f64>()).get::<f64>() }.to_bits()
 }

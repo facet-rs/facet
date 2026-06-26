@@ -5,8 +5,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use facet::Facet;
 use facet_hash::EqualityPlan;
 use facet_hash::HashPlan;
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
-use facet_hash::NativeHashPlan;
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+use facet_hash::{NativeEqualityPlan, NativeHashPlan};
 use weavy::ir::IntrinsicDescriptor;
 
 #[derive(Clone, Debug, Facet)]
@@ -611,7 +617,13 @@ fn unsupported_enums_fail_while_building() {
     assert!(err.to_string().contains("enum"));
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[test]
 fn native_plan_matches_interpreter_stream_for_scalar_struct() {
     let plan = HashPlan::<Point>::build().unwrap();
@@ -626,7 +638,13 @@ fn native_plan_matches_interpreter_stream_for_scalar_struct() {
     assert_eq!(expected.bytes, actual.bytes);
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[test]
 fn native_plan_matches_interpreter_stream_for_nested_scalar_struct() {
     let plan = HashPlan::<MixedScalarRuns>::build().unwrap();
@@ -646,7 +664,13 @@ fn native_plan_matches_interpreter_stream_for_nested_scalar_struct() {
     assert_eq!(expected.bytes, actual.bytes);
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[test]
 fn native_plan_matches_interpreter_stream_for_text_scalars() {
     let plan = HashPlan::<TextScalars>::build().unwrap();
@@ -665,7 +689,13 @@ fn native_plan_matches_interpreter_stream_for_text_scalars() {
     assert_eq!(expected.bytes, actual.bytes);
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[test]
 fn native_plan_matches_interpreter_stream_for_root_array() {
     let plan = HashPlan::<[u16; 4]>::build().unwrap();
@@ -680,7 +710,13 @@ fn native_plan_matches_interpreter_stream_for_root_array() {
     assert_eq!(expected.bytes, actual.bytes);
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[test]
 fn native_plan_matches_interpreter_stream_for_array_field() {
     let plan = HashPlan::<PointArray>::build().unwrap();
@@ -698,7 +734,13 @@ fn native_plan_matches_interpreter_stream_for_array_field() {
     assert_eq!(expected.bytes, actual.bytes);
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[test]
 fn native_plan_hashes_floats_by_bits() {
     let plan = HashPlan::<Floaty>::build().unwrap();
@@ -716,7 +758,13 @@ fn native_plan_hashes_floats_by_bits() {
     assert_eq!(expected.bytes, actual.bytes);
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[test]
 fn native_plan_reports_code_layout_stats() {
     let native = NativeHashPlan::<Point>::build().unwrap();
@@ -731,7 +779,13 @@ fn native_plan_reports_code_layout_stats() {
     assert_eq!(stats.stencil_count, 2);
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[test]
 fn native_array_plan_reports_const_layout_stats() {
     let native = NativeHashPlan::<PointArray>::build().unwrap();
@@ -746,7 +800,13 @@ fn native_array_plan_reports_const_layout_stats() {
     assert_eq!(stats.stencil_count, 2);
 }
 
-#[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
 #[test]
 fn native_plan_rejects_aggregate_fields_for_now() {
     let Err(err) = NativeHashPlan::<Person>::build() else {
@@ -754,4 +814,170 @@ fn native_plan_rejects_aggregate_fields_for_now() {
     };
 
     assert!(err.to_string().contains("native aggregate hashing"));
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[test]
+fn native_equality_matches_interpreter_for_scalar_struct() {
+    let plan = EqualityPlan::<Point>::build().unwrap();
+    let native = NativeEqualityPlan::<Point>::build().unwrap();
+    let left = Point { x: 10, y: -4 };
+    let same = Point { x: 10, y: -4 };
+    let different = Point { x: 10, y: -5 };
+
+    assert_eq!(
+        plan.eq(&left, &same).unwrap(),
+        native.eq(&left, &same).unwrap()
+    );
+    assert_eq!(
+        plan.eq(&left, &different).unwrap(),
+        native.eq(&left, &different).unwrap()
+    );
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[test]
+fn native_equality_matches_interpreter_for_text_scalars() {
+    let plan = EqualityPlan::<TextScalars>::build().unwrap();
+    let native = NativeEqualityPlan::<TextScalars>::build().unwrap();
+    let left = TextScalars {
+        owned: "Ada".to_owned(),
+        borrowed: "Grace",
+        cow: Cow::Owned("Katherine".to_owned()),
+    };
+    let same = TextScalars {
+        owned: "Ada".to_owned(),
+        borrowed: "Grace",
+        cow: Cow::Borrowed("Katherine"),
+    };
+    let different = TextScalars {
+        owned: "Ada".to_owned(),
+        borrowed: "Grace",
+        cow: Cow::Borrowed("Hedy"),
+    };
+
+    assert_eq!(
+        plan.eq(&left, &same).unwrap(),
+        native.eq(&left, &same).unwrap()
+    );
+    assert_eq!(
+        plan.eq(&left, &different).unwrap(),
+        native.eq(&left, &different).unwrap()
+    );
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[test]
+fn native_equality_matches_interpreter_for_array_field() {
+    let plan = EqualityPlan::<PointArray>::build().unwrap();
+    let native = NativeEqualityPlan::<PointArray>::build().unwrap();
+    let left = PointArray {
+        points: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }],
+        tail: -5,
+    };
+    let same = PointArray {
+        points: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }],
+        tail: -5,
+    };
+    let different = PointArray {
+        points: [Point { x: 1, y: 2 }, Point { x: 3, y: 99 }],
+        tail: -5,
+    };
+
+    assert_eq!(
+        plan.eq(&left, &same).unwrap(),
+        native.eq(&left, &same).unwrap()
+    );
+    assert_eq!(
+        plan.eq(&left, &different).unwrap(),
+        native.eq(&left, &different).unwrap()
+    );
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[test]
+fn native_equality_compares_floats_by_bits() {
+    let plan = EqualityPlan::<Floaty>::build().unwrap();
+    let native = NativeEqualityPlan::<Floaty>::build().unwrap();
+    let left = Floaty {
+        x: -0.0,
+        y: f32::NAN,
+    };
+    let same_bits = Floaty {
+        x: -0.0,
+        y: f32::from_bits(f32::NAN.to_bits()),
+    };
+    let different_zero = Floaty {
+        x: 0.0,
+        y: f32::from_bits(f32::NAN.to_bits()),
+    };
+
+    assert_eq!(
+        plan.eq(&left, &same_bits).unwrap(),
+        native.eq(&left, &same_bits).unwrap()
+    );
+    assert_eq!(
+        plan.eq(&left, &different_zero).unwrap(),
+        native.eq(&left, &different_zero).unwrap()
+    );
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[test]
+fn native_equality_reports_code_layout_stats() {
+    let native = NativeEqualityPlan::<Point>::build().unwrap();
+    let stats = native.stats();
+
+    assert_eq!(stats.chain_count, 1);
+    assert_eq!(stats.scalar_count, 0);
+    assert_eq!(stats.scalar_run_count, 1);
+    assert_eq!(stats.scalar_run_field_count, 2);
+    assert_eq!(stats.prog_slot_count, 1);
+    assert_eq!(stats.stencil_count, 2);
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[test]
+fn native_equality_rejects_aggregate_fields_for_now() {
+    let Err(err) = NativeEqualityPlan::<Person>::build() else {
+        panic!("Person contains aggregate fields and should not compile natively yet");
+    };
+
+    assert!(err.to_string().contains("native aggregate equality"));
 }
