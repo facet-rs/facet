@@ -69,6 +69,55 @@ fn readme_sample() -> Result<(), IPanic> {
     Ok(())
 }
 
+#[derive(Facet, Debug, PartialEq)]
+struct Port(u16);
+
+impl core::str::FromStr for Port {
+    type Err = core::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(s.parse()?))
+    }
+}
+
+#[test]
+fn derived_from_str_parse_from_str_auto_detects() -> Result<(), IPanic> {
+    assert!(Port::SHAPE.is_from_str());
+
+    let port = Partial::alloc::<Port>()?
+        .parse_from_str("8080")?
+        .build()?
+        .materialize::<Port>()?;
+
+    assert_eq!(port, Port(8080));
+    Ok(())
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(traits(FromStr))]
+struct DeclaredPort(u16);
+
+impl core::str::FromStr for DeclaredPort {
+    type Err = core::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(s.parse()?))
+    }
+}
+
+#[test]
+fn derived_from_str_parse_from_str_declared_trait() -> Result<(), IPanic> {
+    assert!(DeclaredPort::SHAPE.is_from_str());
+
+    let port = Partial::alloc::<DeclaredPort>()?
+        .parse_from_str("8080")?
+        .build()?
+        .materialize::<DeclaredPort>()?;
+
+    assert_eq!(port, DeclaredPort(8080));
+    Ok(())
+}
+
 // Enum tests
 
 #[derive(Facet, PartialEq, Eq, Debug)]

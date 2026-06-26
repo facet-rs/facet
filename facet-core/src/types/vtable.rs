@@ -180,6 +180,9 @@ impl Hasher for HashProxy<'_> {
 // VTableDirect - For concrete types
 //////////////////////////////////////////////////////////////////////
 
+/// Parse function for direct vtables.
+pub type DirectParseFn<T> = unsafe fn(&str, *mut T) -> Result<(), crate::ParseError>;
+
 /// VTable for concrete types with compile-time known traits.
 ///
 /// Uses thin pointers (`*const ()`, `*mut ()`) as receivers.
@@ -215,7 +218,7 @@ pub struct VTableDirect {
     pub invariants: Option<unsafe fn(*const ()) -> Result<(), String>>,
 
     /// Parse function - parses value from string into destination.
-    pub parse: Option<unsafe fn(&str, *mut ()) -> Result<(), crate::ParseError>>,
+    pub parse: Option<DirectParseFn<()>>,
 
     /// Parse bytes function - parses value from byte slice into destination.
     /// Used for binary formats where types have a more efficient representation.
@@ -523,16 +526,8 @@ impl<T> TypedVTableDirectBuilder<T> {
     }
 
     /// Set the parse function.
-    pub const fn parse(
-        mut self,
-        f: unsafe fn(&str, *mut T) -> Result<(), crate::ParseError>,
-    ) -> Self {
-        self.vtable.parse = Some(unsafe {
-            transmute::<
-                unsafe fn(&str, *mut T) -> Result<(), crate::ParseError>,
-                unsafe fn(&str, *mut ()) -> Result<(), crate::ParseError>,
-            >(f)
-        });
+    pub const fn parse(mut self, f: DirectParseFn<T>) -> Self {
+        self.vtable.parse = Some(unsafe { transmute::<DirectParseFn<T>, DirectParseFn<()>>(f) });
         self
     }
 
@@ -716,6 +711,16 @@ impl<T> TypedVTableDirectBuilder<T> {
                     unsafe fn(*const (), *const ()) -> cmp::Ordering,
                 >(f)
             }),
+            None => None,
+        };
+        self
+    }
+
+    /// Set the parse function from an Option.
+    /// Used for auto-detection where the function may not be available.
+    pub const fn parse_opt(mut self, f: Option<DirectParseFn<T>>) -> Self {
+        self.vtable.parse = match f {
+            Some(f) => Some(unsafe { transmute::<DirectParseFn<T>, DirectParseFn<()>>(f) }),
             None => None,
         };
         self

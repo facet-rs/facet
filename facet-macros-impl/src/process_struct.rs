@@ -396,6 +396,33 @@ fn gen_vtable_direct(
         quote! {}
     };
 
+    // FromStr: check declared, then auto-detect if possible
+    let parse_call = if sources.has_declared(|d| d.from_str) {
+        quote! { .parse(#facet_crate::𝟋::𝟋parse_for::<Self>()) }
+    } else if can_auto_detect {
+        quote! {
+            .parse_opt(
+                if #facet_crate::𝟋::impls!(Self: ::core::str::FromStr) {
+                    𝟋Some({
+                        unsafe fn __parse(s: &str, dst: *mut #struct_type) -> 𝟋Result<(), #facet_crate::ParseError> {
+                            let target = #facet_crate::PtrUninit::new(dst as *mut u8);
+                            unsafe {
+                                (&&&#facet_crate::𝟋::SpezEmpty::<#struct_type>::SPEZ)
+                                    .spez_parse(s, target)?;
+                            }
+                            𝟋Ok(())
+                        }
+                        __parse
+                    })
+                } else {
+                    𝟋None
+                }
+            )
+        }
+    } else {
+        quote! {}
+    };
+
     // Transparent type functions: try_borrow_inner
     // For transparent types (newtypes), we generate a function to borrow the inner value
     let try_borrow_inner_call = if let Some(info) = transparent {
@@ -462,6 +489,7 @@ fn gen_vtable_direct(
                 #partial_ord_call
                 #ord_call
                 #hash_call
+                #parse_call
                 #invariants_call
                 #try_borrow_inner_call
                 #try_from_call
@@ -723,6 +751,9 @@ pub(crate) fn gen_trait_bounds(
         }
         if declared.default {
             bounds.push(quote! { core::default::Default });
+        }
+        if declared.from_str {
+            bounds.push(quote! { core::str::FromStr });
         }
         if declared.send {
             bounds.push(quote! { core::marker::Send });

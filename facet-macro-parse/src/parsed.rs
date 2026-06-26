@@ -517,6 +517,8 @@ pub struct DeclaredTraits {
     pub hash: bool,
     /// Default trait declared
     pub default: bool,
+    /// FromStr trait declared
+    pub from_str: bool,
     /// Send trait declared (marker)
     pub send: bool,
     /// Sync trait declared (marker)
@@ -538,6 +540,7 @@ impl DeclaredTraits {
             || self.ord
             || self.hash
             || self.default
+            || self.from_str
             || self.send
             || self.sync
             || self.unpin
@@ -561,6 +564,7 @@ impl DeclaredTraits {
                     "Ord" => result.ord = true,
                     "Hash" => result.hash = true,
                     "Default" => result.default = true,
+                    "FromStr" => result.from_str = true,
                     "Send" => result.send = true,
                     "Sync" => result.sync = true,
                     "Unpin" => result.unpin = true,
@@ -569,7 +573,7 @@ impl DeclaredTraits {
                             message: format!(
                                 "unknown trait `{unknown}` in #[facet(traits(...))]. \
                                  Valid traits: Display, Debug, Clone, Copy, PartialEq, Eq, \
-                                 PartialOrd, Ord, Hash, Default, Send, Sync, Unpin"
+                                 PartialOrd, Ord, Hash, Default, FromStr, Send, Sync, Unpin"
                             ),
                             span: ident.span(),
                         });
