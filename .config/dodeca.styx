@@ -1,51 +1,61 @@
 @schema {id crate:dodeca-config@1, cli ddc}
 
-// Dodeca configuration for facet docs
-
-output docs/public
-
-// Multiple sources: the facet docs at /, plus the standalone subsites each
-// mounted under their own prefix so their root-absolute links localize
-// (e.g. styx's /tools/cli -> /styx/tools/cli) and they get a source identity
-// for cross-links ([[styx:...]]).
+// Dodeca configuration for the facet docs aggregator.
+//
+// The facet docs are the root `source` (served at /); every other subsite is a
+// `mounts` entry under its own URL prefix so its root-absolute links localize
+// (e.g. styx's /tools/cli -> /styx/tools/cli) and it gets a source identity for
+// cross-links ([[styx:...]]).
 //
 // Each source's chrome is its OWN: templates / sass / static resolve to the
 // content dir's sibling `../{templates,sass,static}`. styx points at its real
 // project `styx-docs/` (its own templates incl. the codemirror/monaco/quiz
 // playgrounds), so it keeps its full identity. facet/picante/dibs all live
-// under docs/ and so share docs/templates as the uniform facet baseline.
-// The *only* uniformized layer across every site is the nav + search (woven
-// into each base template) so the sites are mutually discoverable.
+// under docs/ and share docs/templates as the uniform facet baseline. The only
+// uniformized layer across every site is the nav + search (woven into each base
+// template) so the sites are mutually discoverable.
+//
+// `repo` is each mount's "view source" base URL. These are vendored content
+// dirs in this monorepo (no config of their own to compose from), so the URL is
+// declared on the mount; a cloned, standalone source would instead compose it
+// from its own `source { repo … }`.
 
-sources (
-    { name facet,   mount /,        local docs/content,          repo "https://github.com/facet-rs/facet" }
-    { name styx,    mount /styx,    local styx-docs/content,      repo "https://github.com/bearcove/styx" }
-    { name picante, mount /picante, local docs/picante-content,   repo "https://github.com/bearcove/picante" }
-    { name dibs,    mount /dibs,    local docs/dibs-content,      repo "https://github.com/bearcove/dibs" }
-    { name figue,   mount /figue,   local figue/docs/content,     repo "https://github.com/bearcove/figue" }
-    { name rediff,  mount /rediff,  local rediff/docs/content,    repo "https://github.com/bearcove/rediff" }
-    { name strid,   mount /strid,   local strid/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/strid" }
-    { name fable,   mount /fable,   local fable/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/fable" }
-    { name weavy,   mount /weavy,   local weavy/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/weavy" }
-    { name vox,     mount /vox,     local vox/docs/content,       repo "https://github.com/bearcove/vox" }
-    { name facet-axum,       mount /facet-axum,       local facet-axum/docs/content,       repo "https://github.com/facet-rs/facet/tree/main/facet-axum" }
-    { name facet-cargo-toml, mount /facet-cargo-toml, local facet-cargo-toml/docs/content, repo "https://github.com/facet-rs/facet/tree/main/facet-cargo-toml" }
-    { name rusqlite-facet,   mount /rusqlite-facet,   local rusqlite-facet/docs/content,   repo "https://github.com/facet-rs/facet/tree/main/rusqlite-facet" }
-    { name facet-json,       mount /facet-json,       local facet-json/docs/content,       repo "https://github.com/facet-rs/facet/tree/main/facet-json" }
-    { name facet-pretty,     mount /facet-pretty,     local facet-pretty/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/facet-pretty" }
-    { name facet-default,    mount /facet-default,    local facet-default/docs/content,    repo "https://github.com/facet-rs/facet/tree/main/facet-default" }
-    { name facet-error,      mount /facet-error,      local facet-error/docs/content,      repo "https://github.com/facet-rs/facet/tree/main/facet-error" }
-    { name facet-validate,   mount /facet-validate,   local facet-validate/docs/content,   repo "https://github.com/facet-rs/facet/tree/main/facet-validate" }
-)
-
-// Link checking configuration
-
-link_check {
-    // Domains to skip (anti-bot policies)
-    // skip_domains (example.com)
+source {
+    content docs/content
+    repo "https://github.com/facet-rs/facet"
 }
 
-stable_assets (
-    "docs/static/favicon.png favicon.png"
-    "docs/static/CNAME CNAME"
+mounts (
+    { name styx,    path /styx,    local styx-docs/content,      repo "https://github.com/bearcove/styx" }
+    { name picante, path /picante, local docs/picante-content,   repo "https://github.com/bearcove/picante" }
+    { name dibs,    path /dibs,    local docs/dibs-content,      repo "https://github.com/bearcove/dibs" }
+    { name figue,   path /figue,   local figue/docs/content,     repo "https://github.com/bearcove/figue" }
+    { name rediff,  path /rediff,  local rediff/docs/content,    repo "https://github.com/bearcove/rediff" }
+    { name strid,   path /strid,   local strid/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/strid" }
+    { name fable,   path /fable,   local fable/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/fable" }
+    { name weavy,   path /weavy,   local weavy/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/weavy" }
+    { name vox,     path /vox,     local vox/docs/content,       repo "https://github.com/bearcove/vox" }
+    { name facet-axum,       path /facet-axum,       local facet-axum/docs/content,       repo "https://github.com/facet-rs/facet/tree/main/facet-axum" }
+    { name facet-cargo-toml, path /facet-cargo-toml, local facet-cargo-toml/docs/content, repo "https://github.com/facet-rs/facet/tree/main/facet-cargo-toml" }
+    { name rusqlite-facet,   path /rusqlite-facet,   local rusqlite-facet/docs/content,   repo "https://github.com/facet-rs/facet/tree/main/rusqlite-facet" }
+    { name facet-json,       path /facet-json,       local facet-json/docs/content,       repo "https://github.com/facet-rs/facet/tree/main/facet-json" }
+    { name facet-pretty,     path /facet-pretty,     local facet-pretty/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/facet-pretty" }
+    { name facet-default,    path /facet-default,    local facet-default/docs/content,    repo "https://github.com/facet-rs/facet/tree/main/facet-default" }
+    { name facet-error,      path /facet-error,      local facet-error/docs/content,      repo "https://github.com/facet-rs/facet/tree/main/facet-error" }
+    { name facet-validate,   path /facet-validate,   local facet-validate/docs/content,   repo "https://github.com/facet-rs/facet/tree/main/facet-validate" }
 )
+
+site {
+    output docs/public
+
+    // Link checking configuration
+    link_check {
+        // Domains to skip (anti-bot policies)
+        // skip_domains (example.com)
+    }
+
+    stable_assets (
+        "docs/static/favicon.png favicon.png"
+        "docs/static/CNAME CNAME"
+    )
+}
