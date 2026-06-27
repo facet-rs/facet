@@ -335,10 +335,8 @@ fn deserialize_scalar_field<'facet, const BORROW: bool>(
                 warn!("facet-urlencoded: unsupported scalar type: {}", wip.shape());
                 return Err(UrlEncodedError::UnsupportedType(format!("{}", wip.shape())));
             }
-            // Pop the `begin_some` frame opened above so the caller's
-            // `.end()` can pop the field cleanly.
         }
-        Def::Undefined if let Type::User(UserType::Enum(_)) = wip.shape().ty => {
+        Def::Undefined if matches!(wip.shape().ty, Type::User(UserType::Enum(_))) => {
             wip = wip.select_variant_named(value)?;
         }
         _ => {
@@ -349,6 +347,8 @@ fn deserialize_scalar_field<'facet, const BORROW: bool>(
         }
     }
 
+    // Pop the `begin_some` frame opened above so the caller's
+    // `.end()` can pop the field cleanly.
     if is_option {
         wip = wip.end()?;
     }
