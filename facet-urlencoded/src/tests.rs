@@ -1,5 +1,6 @@
-use crate::from_str;
+use crate::{from_str, from_str_value};
 use facet::Facet;
+use facet_reflect::TypePlan;
 use facet_testhelpers::test;
 
 #[derive(Debug, Facet, PartialEq)]
@@ -27,6 +28,23 @@ struct OrderForm {
     product_id: String,
     quantity: u64,
     user: User,
+}
+
+#[derive(Debug, Facet, PartialEq)]
+struct ExtendedSearchParams {
+    #[facet(flatten)]
+    search: SearchParams,
+
+    filter: Filter,
+}
+
+#[derive(Debug, Facet, PartialEq)]
+#[repr(C)]
+#[facet(rename_all = "kebab-case")]
+enum Filter {
+    All,
+    Cats,
+    Bears,
 }
 
 #[test]
@@ -254,4 +272,46 @@ fn test_option_default_none_on_missing() {
 fn test_option_all_default() {
     let q: OptionalParams = from_str("").unwrap();
     assert_eq!(q, OptionalParams::default());
+}
+
+#[test]
+fn test_partial_update() {
+    let default = SearchParams {
+        query: "default".to_string(),
+        page: 2,
+    };
+    let query_string = "query=rust+programming";
+
+    let params: SearchParams = {
+        let plan = TypePlan::<SearchParams>::build().unwrap();
+        let partial = plan.partial_owned().unwrap();
+        let partial = partial.set(default).unwrap();
+        let partial = from_str_value(partial, query_string).unwrap();
+        partial.build().unwrap().materialize().unwrap()
+    };
+
+    assert_eq!(
+        params,
+        SearchParams {
+            query: "rust programming".to_string(),
+            page: 2
+        }
+    );
+}
+
+#[test]
+fn test_flattened() {
+    let query_string = "query=rust+programming&page=2&filter=cats";
+
+    let params: ExtendedSearchParams = from_str(query_string).unwrap();
+    assert_eq!(
+        params,
+        ExtendedSearchParams {
+            search: SearchParams {
+                query: "rust programming".to_string(),
+                page: 2
+            },
+            filter: Filter::Cats
+        }
+    );
 }
