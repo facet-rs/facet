@@ -674,66 +674,7 @@ mod tests {
             .unwrap();
         assert_eq!(highlight_fixture.kind, CorpusKind::Highlight);
         let highlight_assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
-        assert_eq!(highlight_assertions.len(), 37);
-        assert_eq!(
-            &highlight_assertions[..7],
-            [
-                HighlightAssertion {
-                    position: HighlightPoint { row: 0, column: 0 },
-                    length: 1,
-                    negative: false,
-                    expected_capture_name: "punctuation.delimiter".to_owned(),
-                },
-                HighlightAssertion {
-                    position: HighlightPoint { row: 0, column: 1 },
-                    length: 1,
-                    negative: false,
-                    expected_capture_name: "attribute".to_owned(),
-                },
-                HighlightAssertion {
-                    position: HighlightPoint { row: 3, column: 2 },
-                    length: 1,
-                    negative: false,
-                    expected_capture_name: "property".to_owned(),
-                },
-                HighlightAssertion {
-                    position: HighlightPoint { row: 3, column: 12 },
-                    length: 1,
-                    negative: false,
-                    expected_capture_name: "punctuation.delimiter".to_owned(),
-                },
-                HighlightAssertion {
-                    position: HighlightPoint { row: 3, column: 13 },
-                    length: 1,
-                    negative: false,
-                    expected_capture_name: "string.special".to_owned(),
-                },
-                HighlightAssertion {
-                    position: HighlightPoint { row: 7, column: 15 },
-                    length: 1,
-                    negative: false,
-                    expected_capture_name: "function".to_owned(),
-                },
-                HighlightAssertion {
-                    position: HighlightPoint { row: 7, column: 20 },
-                    length: 1,
-                    negative: false,
-                    expected_capture_name: "punctuation.delimiter".to_owned(),
-                },
-            ]
-        );
-        assert!(highlight_assertions.contains(&HighlightAssertion {
-            position: HighlightPoint { row: 57, column: 0 },
-            length: 1,
-            negative: false,
-            expected_capture_name: "keyword".to_owned(),
-        }));
-        assert!(highlight_assertions.contains(&HighlightAssertion {
-            position: HighlightPoint { row: 64, column: 3 },
-            length: 1,
-            negative: false,
-            expected_capture_name: "property".to_owned(),
-        }));
+        assert_eq!(highlight_assertions, css_highlight_assertions());
         let parse_fixture = grammar
             .corpus
             .iter()
@@ -869,6 +810,56 @@ mod tests {
                 collect_node_kinds(child, out);
             }
         }
+    }
+
+    fn css_highlight_assertions() -> Vec<HighlightAssertion> {
+        [
+            (0, 0, "punctuation.delimiter"),
+            (0, 1, "attribute"),
+            (3, 2, "property"),
+            (3, 12, "punctuation.delimiter"),
+            (3, 13, "string.special"),
+            (7, 15, "function"),
+            (7, 20, "punctuation.delimiter"),
+            (17, 0, "tag"),
+            (19, 15, "function"),
+            (19, 18, "punctuation.bracket"),
+            (19, 19, "variable"),
+            (33, 0, "punctuation.delimiter"),
+            (33, 3, "property"),
+            (33, 6, "punctuation.bracket"),
+            (37, 2, "property"),
+            (37, 13, "punctuation.delimiter"),
+            (37, 25, "punctuation.delimiter"),
+            (41, 6, "punctuation.delimiter"),
+            (41, 20, "number"),
+            (41, 21, "type"),
+            (41, 25, "operator"),
+            (41, 28, "number"),
+            (41, 33, "string"),
+            (41, 48, "punctuation.delimiter"),
+            (49, 2, "property"),
+            (49, 9, "punctuation.delimiter"),
+            (49, 11, "number"),
+            (49, 12, "type"),
+            (54, 0, "punctuation.bracket"),
+            (57, 0, "keyword"),
+            (57, 7, "punctuation.bracket"),
+            (57, 11, "property"),
+            (57, 20, "number"),
+            (57, 23, "type"),
+            (57, 25, "punctuation.bracket"),
+            (64, 2, "punctuation.delimiter"),
+            (64, 3, "property"),
+        ]
+        .into_iter()
+        .map(|(row, column, expected_capture_name)| HighlightAssertion {
+            position: HighlightPoint { row, column },
+            length: 1,
+            negative: false,
+            expected_capture_name: expected_capture_name.to_owned(),
+        })
+        .collect()
     }
 
     #[test]

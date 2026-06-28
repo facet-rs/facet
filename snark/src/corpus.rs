@@ -969,4 +969,29 @@ mod tests {
             }]
         );
     }
+
+    #[test]
+    fn duplicate_highlight_assertions_keep_fixture_order() {
+        let fixture = highlight_fixture("name      \n   /* ^ variable */\n   /* ^ property */");
+
+        let assertions = fixture.parse_css_highlight_assertions().unwrap();
+
+        assert_eq!(
+            assertions,
+            [
+                HighlightAssertion {
+                    position: HighlightPoint { row: 0, column: 6 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "variable".to_owned(),
+                },
+                HighlightAssertion {
+                    position: HighlightPoint { row: 0, column: 6 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "property".to_owned(),
+                },
+            ]
+        );
+    }
 }

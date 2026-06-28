@@ -13,7 +13,8 @@ Tree-sitter's public test surface.
 
 ## Boundaries
 
-- `grammar` owns raw `grammar.json` DTOs and later validated Snark grammar IR.
+- `grammar` owns raw `grammar.json` DTOs.
+- `validated` owns resolved Snark grammar facts derived from raw grammar input.
 - `lower` owns the validated Snark grammar IR to Weavy lowering boundary.
 - `tree_sitter` owns filesystem package import and provenance.
 - `scanner`, `query`, and `corpus` own imported inputs for their domains.
