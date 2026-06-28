@@ -11,9 +11,18 @@ description = "Tree-sitter-compatible grammar package model and parser runtime s
 keywords = ["parsing", "tree-sitter", "incremental", "syntax"]
 categories = ["parsing", "text-editors"]
 readme = "README.md"
+include = [
+    "Cargo.toml",
+    "README.md",
+    "CHANGELOG.md",
+    "docs/**",
+    "src/**",
+    "tests/fixtures/**",
+]
 
 [features]
 default = []
+ci = ["tree-sitter-import"]
 json-import = ["dep:facet-json", "facet/indexmap"]
 tree-sitter-import = ["json-import"]
 
@@ -24,3 +33,6 @@ indexmap.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.docs.rs]
+all-features = true

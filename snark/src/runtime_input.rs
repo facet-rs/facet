@@ -69,10 +69,8 @@ impl ByteOffset {
 /// Half-open byte range.
 #[derive(Debug, Clone, Copy, Facet, PartialEq, Eq)]
 pub struct ByteRange {
-    /// Start byte.
-    pub start: ByteOffset,
-    /// End byte.
-    pub end: ByteOffset,
+    start: ByteOffset,
+    end: ByteOffset,
 }
 
 impl ByteRange {
@@ -82,6 +80,16 @@ impl ByteRange {
             return Err(RangeError::ReversedByteRange { start, end });
         }
         Ok(Self { start, end })
+    }
+
+    /// Start byte.
+    pub const fn start(self) -> ByteOffset {
+        self.start
+    }
+
+    /// End byte.
+    pub const fn end(self) -> ByteOffset {
+        self.end
     }
 }
 
@@ -120,19 +128,32 @@ impl Utf8ColumnBytes {
 /// Row/column coordinate using UTF-8 byte columns.
 #[derive(Debug, Clone, Copy, Facet, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PointBytes {
+    row: Row,
+    column: Utf8ColumnBytes,
+}
+
+impl PointBytes {
+    /// Construct a point from row and UTF-8 byte column.
+    pub const fn new(row: Row, column: Utf8ColumnBytes) -> Self {
+        Self { row, column }
+    }
+
     /// Zero-based row.
-    pub row: Row,
+    pub const fn row(self) -> Row {
+        self.row
+    }
+
     /// Zero-based UTF-8 byte column.
-    pub column: Utf8ColumnBytes,
+    pub const fn column(self) -> Utf8ColumnBytes {
+        self.column
+    }
 }
 
 /// Half-open point range.
 #[derive(Debug, Clone, Copy, Facet, PartialEq, Eq)]
 pub struct PointRange {
-    /// Start point.
-    pub start: PointBytes,
-    /// End point.
-    pub end: PointBytes,
+    start: PointBytes,
+    end: PointBytes,
 }
 
 impl PointRange {
@@ -143,19 +164,25 @@ impl PointRange {
         }
         Ok(Self { start, end })
     }
+
+    /// Start point.
+    pub const fn start(self) -> PointBytes {
+        self.start
+    }
+
+    /// End point.
+    pub const fn end(self) -> PointBytes {
+        self.end
+    }
 }
 
 /// Incremental edit coordinates.
 #[derive(Debug, Clone, Copy, Facet, PartialEq, Eq)]
 pub struct InputEdit {
-    /// Edited byte range in the old input.
-    pub old_bytes: ByteRange,
-    /// New end byte after the edit.
-    pub new_end_byte: ByteOffset,
-    /// Edited point range in the old input.
-    pub old_points: PointRange,
-    /// New end point after the edit.
-    pub new_end_point: PointBytes,
+    old_bytes: ByteRange,
+    new_end_byte: ByteOffset,
+    old_points: PointRange,
+    new_end_point: PointBytes,
 }
 
 impl InputEdit {
@@ -173,21 +200,49 @@ impl InputEdit {
             new_end_point,
         }
     }
+
+    /// Edited byte range in the old input.
+    pub const fn old_bytes(self) -> ByteRange {
+        self.old_bytes
+    }
+
+    /// New end byte after the edit.
+    pub const fn new_end_byte(self) -> ByteOffset {
+        self.new_end_byte
+    }
+
+    /// Edited point range in the old input.
+    pub const fn old_points(self) -> PointRange {
+        self.old_points
+    }
+
+    /// New end point after the edit.
+    pub const fn new_end_point(self) -> PointBytes {
+        self.new_end_point
+    }
 }
 
 /// Range included in a child language parse.
 #[derive(Debug, Clone, Copy, Facet, PartialEq, Eq)]
 pub struct IncludedRange {
-    /// Included byte range.
-    pub bytes: ByteRange,
-    /// Included point range.
-    pub points: PointRange,
+    bytes: ByteRange,
+    points: PointRange,
 }
 
 impl IncludedRange {
     /// Construct an included range from validated byte and point ranges.
     pub const fn new(bytes: ByteRange, points: PointRange) -> Self {
         Self { bytes, points }
+    }
+
+    /// Included byte range.
+    pub const fn bytes(self) -> ByteRange {
+        self.bytes
+    }
+
+    /// Included point range.
+    pub const fn points(self) -> PointRange {
+        self.points
     }
 }
 
@@ -208,14 +263,8 @@ mod tests {
 
     #[test]
     fn point_ranges_reject_reversed_order() {
-        let start = PointBytes {
-            row: Row::new(2),
-            column: Utf8ColumnBytes::new(0),
-        };
-        let end = PointBytes {
-            row: Row::new(1),
-            column: Utf8ColumnBytes::new(20),
-        };
+        let start = PointBytes::new(Row::new(2), Utf8ColumnBytes::new(0));
+        let end = PointBytes::new(Row::new(1), Utf8ColumnBytes::new(20));
 
         assert_eq!(
             PointRange::new(start, end),

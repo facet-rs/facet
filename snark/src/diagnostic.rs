@@ -2,12 +2,15 @@
 
 use std::{error::Error, fmt, io, path::PathBuf};
 
+use facet::Facet;
+
 #[cfg(feature = "json-import")]
 use crate::source::PackageRelativePath;
 use crate::source::{InvalidPackagePathReason, SourceId};
 
 /// Diagnostic severity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Facet, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Severity {
     /// The operation cannot continue.
     Error,
@@ -16,7 +19,8 @@ pub enum Severity {
 }
 
 /// Stable diagnostic code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Facet, PartialEq, Eq)]
+#[repr(u8)]
 pub enum DiagnosticCode {
     /// Reading a source file failed.
     ReadFile,
@@ -28,12 +32,16 @@ pub enum DiagnosticCode {
     InvalidPackageRoot,
     /// A discovered filesystem path was outside the package root.
     PathOutsidePackage,
+    /// A Tree-sitter external-token ordinal could not fit in Snark's ordinal type.
+    ExternalTokenOrdinalOverflow,
+    /// A `tree-sitter.json` manifest did not declare any grammars.
+    NoGrammars,
     /// Decoding JSON into a raw compatibility model failed.
     JsonDecode,
 }
 
 /// Byte span inside an imported source, when a source id is known.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Facet, PartialEq, Eq)]
 pub struct SourceSpan {
     /// Imported source id.
     pub source_id: SourceId,
@@ -44,7 +52,7 @@ pub struct SourceSpan {
 }
 
 /// Labeled diagnostic span.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct DiagnosticLabel {
     /// Span being labeled.
     pub span: SourceSpan,
@@ -53,7 +61,7 @@ pub struct DiagnosticLabel {
 }
 
 /// Structured diagnostic emitted by import, validation, and later lowering phases.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct Diagnostic {
     /// Diagnostic severity.
     pub severity: Severity,
@@ -94,7 +102,8 @@ impl Diagnostic {
 }
 
 /// JSON document kind being imported.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Facet, PartialEq, Eq)]
+#[repr(u8)]
 pub enum JsonDocumentKind {
     /// `src/grammar.json`.
     Grammar,
@@ -123,6 +132,11 @@ pub enum ImportError {
         path: PathBuf,
         /// I/O error raised while validating the root.
         source: io::Error,
+    },
+    /// Package root did not point to a directory.
+    PackageRootNotDirectory {
+        /// Root path requested by the caller.
+        path: PathBuf,
     },
     /// Could not read a file.
     ReadFile {
@@ -156,6 +170,16 @@ pub enum ImportError {
         /// Discovered path.
         path: PathBuf,
     },
+    /// Too many external tokens were declared for the ordinal type.
+    ExternalTokenOrdinalOverflow {
+        /// Source-order index that did not fit.
+        index: usize,
+    },
+    /// `tree-sitter.json` did not declare any grammar entries.
+    NoGrammarsInManifest {
+        /// Package root used for this import.
+        package_root: PathBuf,
+    },
     /// Facet JSON deserialization failed.
     #[cfg(feature = "json-import")]
     Json {
@@ -185,6 +209,10 @@ impl ImportError {
                 format!("could not validate package root {}", path.display()),
             )
             .with_note(source.to_string()),
+            Self::PackageRootNotDirectory { path } => Diagnostic::error(
+                DiagnosticCode::InvalidPackageRoot,
+                format!("package root {} is not a directory", path.display()),
+            ),
             Self::ReadFile {
                 package_root,
                 path,
@@ -216,6 +244,15 @@ impl ImportError {
                     "package path {} is outside the package root",
                     path.display()
                 ),
+            )
+            .with_note(format!("package root: {}", package_root.display())),
+            Self::ExternalTokenOrdinalOverflow { index } => Diagnostic::error(
+                DiagnosticCode::ExternalTokenOrdinalOverflow,
+                format!("external token index {index} does not fit in u32"),
+            ),
+            Self::NoGrammarsInManifest { package_root } => Diagnostic::error(
+                DiagnosticCode::NoGrammars,
+                "tree-sitter.json did not declare any grammars",
             )
             .with_note(format!("package root: {}", package_root.display())),
             #[cfg(feature = "json-import")]
@@ -261,6 +298,9 @@ impl fmt::Display for ImportError {
                     source
                 )
             }
+            Self::PackageRootNotDirectory { path } => {
+                write!(f, "package root {} is not a directory", path.display())
+            }
             Self::ReadFile {
                 package_root,
                 path,
@@ -303,6 +343,14 @@ impl fmt::Display for ImportError {
                     package_root.display()
                 )
             }
+            Self::ExternalTokenOrdinalOverflow { index } => {
+                write!(f, "external token index {index} does not fit in u32")
+            }
+            Self::NoGrammarsInManifest { package_root } => write!(
+                f,
+                "tree-sitter.json under package {} did not declare any grammars",
+                package_root.display()
+            ),
             #[cfg(feature = "json-import")]
             Self::Json {
                 path,
@@ -333,7 +381,11 @@ impl Error for ImportError {
             | Self::ReadDir { source, .. } => Some(source),
             #[cfg(feature = "json-import")]
             Self::Json { source, .. } => Some(source),
-            Self::InvalidPackagePath { .. } | Self::PathOutsidePackage { .. } => None,
+            Self::InvalidPackagePath { .. }
+            | Self::PathOutsidePackage { .. }
+            | Self::PackageRootNotDirectory { .. }
+            | Self::ExternalTokenOrdinalOverflow { .. }
+            | Self::NoGrammarsInManifest { .. } => None,
         }
     }
 }

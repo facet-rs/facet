@@ -10,6 +10,39 @@ use crate::source::{PackageRoot, SourceFile};
 
 type OrderedMap<V> = IndexMap<String, V, std::hash::RandomState>;
 
+/// Raw `grammar.json` source plus decoded grammar data.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+pub struct RawGrammarFile {
+    /// Original JSON source.
+    pub raw: String,
+    /// Decoded raw grammar JSON.
+    pub grammar: RawGrammarJson,
+}
+
+impl RawGrammarFile {
+    /// Import a `src/grammar.json` source file.
+    #[cfg(feature = "json-import")]
+    pub fn from_source_file(
+        root: &PackageRoot,
+        source_file: SourceFile<String>,
+    ) -> Result<SourceFile<Self>, ImportError> {
+        let path = root.join(&source_file.path);
+        let source_id = source_file.id;
+        let package_path = source_file.path.clone();
+        let grammar =
+            facet_json::from_str(&source_file.body).map_err(|source| ImportError::Json {
+                package_root: Some(root.as_path().to_owned()),
+                path: Some(path),
+                source_id: Some(source_id),
+                package_path: Some(package_path),
+                document: JsonDocumentKind::Grammar,
+                phase: "decode raw grammar JSON",
+                source,
+            })?;
+        Ok(source_file.map(|raw| Self { raw, grammar }))
+    }
+}
+
 /// Tree-sitter language name as declared in `grammar.json`.
 #[derive(Debug, Clone, Facet, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LanguageName(String);
@@ -133,7 +166,7 @@ pub struct RawGrammarJson {
     pub extras: Vec<RawRuleJson>,
     /// Static precedence order declarations.
     #[facet(default)]
-    pub precedences: Vec<Vec<RawRuleJson>>,
+    pub precedences: Vec<Vec<PrecedenceEntryJson>>,
     /// Declared GLR conflict sets.
     #[facet(default)]
     pub conflicts: Vec<Vec<String>>,
@@ -168,28 +201,6 @@ impl RawGrammarJson {
         })
     }
 
-    /// Import a `src/grammar.json` source file.
-    #[cfg(feature = "json-import")]
-    pub fn from_source_file(
-        root: &PackageRoot,
-        source_file: SourceFile<String>,
-    ) -> Result<SourceFile<Self>, ImportError> {
-        let path = root.join(&source_file.path);
-        let source_id = source_file.id;
-        let package_path = source_file.path.clone();
-        let grammar =
-            facet_json::from_str(&source_file.body).map_err(|source| ImportError::Json {
-                package_root: Some(root.as_path().to_owned()),
-                path: Some(path),
-                source_id: Some(source_id),
-                package_path: Some(package_path),
-                document: JsonDocumentKind::Grammar,
-                phase: "decode raw grammar JSON",
-                source,
-            })?;
-        Ok(source_file.map(|_| grammar))
-    }
-
     /// The start rule is Tree-sitter's first rule in source order.
     pub fn start_rule(&self) -> Option<(RuleName, &RawRuleJson)> {
         self.rules.start_rule()
@@ -204,6 +215,27 @@ impl RawGrammarJson {
     pub fn language_name(&self) -> LanguageName {
         LanguageName::new(self.name.clone())
     }
+}
+
+/// Tree-sitter precedence-order entry.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+#[facet(untagged)]
+#[repr(u8)]
+pub enum PrecedenceEntryJson {
+    /// Named precedence entry.
+    Name(String),
+    /// Symbol precedence entry.
+    Symbol(PrecedenceSymbolJson),
+}
+
+/// Tree-sitter precedence-order symbol entry.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+pub struct PrecedenceSymbolJson {
+    /// Rule JSON type, expected to be `SYMBOL` at validation time.
+    #[facet(rename = "type")]
+    pub kind: String,
+    /// Referenced symbol name.
+    pub name: String,
 }
 
 /// Tree-sitter `RuleJSON`, mirrored at the compatibility boundary.

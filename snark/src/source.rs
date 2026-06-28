@@ -60,6 +60,9 @@ impl PackageRoot {
             path: path.to_owned(),
             source,
         })?;
+        if !canonical.is_dir() {
+            return Err(ImportError::PackageRootNotDirectory { path: canonical });
+        }
         Ok(Self(canonical))
     }
 
@@ -190,7 +193,7 @@ pub(crate) fn read_source_string(
     relative: &PackageRelativePath,
     ids: &mut SourceIdAllocator,
 ) -> Result<SourceFile<String>, ImportError> {
-    let absolute = root.join(relative);
+    let absolute = contained_file_path(root, relative)?;
     let body = std::fs::read_to_string(&absolute).map_err(|source| ImportError::ReadFile {
         package_root: root.as_path().to_owned(),
         path: absolute,
@@ -209,7 +212,10 @@ pub(crate) fn read_optional_source_string(
     relative: &PackageRelativePath,
     ids: &mut SourceIdAllocator,
 ) -> Result<Option<SourceFile<String>>, ImportError> {
-    let absolute = root.join(relative);
+    let absolute = match contained_optional_file_path(root, relative)? {
+        Some(absolute) => absolute,
+        None => return Ok(None),
+    };
     match std::fs::read_to_string(&absolute) {
         Ok(body) => Ok(Some(SourceFile {
             id: ids.allocate(),
@@ -222,5 +228,51 @@ pub(crate) fn read_optional_source_string(
             path: absolute,
             source,
         }),
+    }
+}
+
+#[cfg(feature = "tree-sitter-import")]
+pub(crate) fn contained_file_path(
+    root: &PackageRoot,
+    relative: &PackageRelativePath,
+) -> Result<PathBuf, ImportError> {
+    let lexical = root.join(relative);
+    let canonical = std::fs::canonicalize(&lexical).map_err(|source| ImportError::ReadFile {
+        package_root: root.as_path().to_owned(),
+        path: lexical,
+        source,
+    })?;
+    ensure_under_root(root, canonical)
+}
+
+#[cfg(feature = "tree-sitter-import")]
+fn contained_optional_file_path(
+    root: &PackageRoot,
+    relative: &PackageRelativePath,
+) -> Result<Option<PathBuf>, ImportError> {
+    let lexical = root.join(relative);
+    let canonical = match std::fs::canonicalize(&lexical) {
+        Ok(canonical) => canonical,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ImportError::ReadFile {
+                package_root: root.as_path().to_owned(),
+                path: lexical,
+                source,
+            });
+        }
+    };
+    ensure_under_root(root, canonical).map(Some)
+}
+
+#[cfg(feature = "tree-sitter-import")]
+fn ensure_under_root(root: &PackageRoot, path: PathBuf) -> Result<PathBuf, ImportError> {
+    if path.starts_with(root.as_path()) {
+        Ok(path)
+    } else {
+        Err(ImportError::PathOutsidePackage {
+            package_root: root.as_path().to_owned(),
+            path,
+        })
     }
 }

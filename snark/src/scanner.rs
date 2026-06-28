@@ -2,6 +2,8 @@
 
 use facet::Facet;
 
+#[cfg(feature = "tree-sitter-import")]
+use crate::diagnostic::ImportError;
 use crate::{grammar::RawRuleJson, source::SourceFile};
 
 /// Ordinal of an external token in Tree-sitter's `externals` array.
@@ -9,9 +11,11 @@ use crate::{grammar::RawRuleJson, source::SourceFile};
 pub struct ExternalTokenOrdinal(u32);
 
 impl ExternalTokenOrdinal {
-    /// Create an external token ordinal.
-    pub const fn new(value: u32) -> Self {
-        Self(value)
+    #[cfg(feature = "tree-sitter-import")]
+    pub(crate) fn from_index(index: usize) -> Result<Self, ImportError> {
+        let value = u32::try_from(index)
+            .map_err(|_| ImportError::ExternalTokenOrdinalOverflow { index })?;
+        Ok(Self(value))
     }
 
     /// Return the numeric ordinal.
@@ -39,17 +43,14 @@ impl ExternalTokenName {
 /// External token declaration preserving Tree-sitter scanner ordinal.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct ExternalTokenDecl {
-    /// Ordinal in the `externals` array.
-    pub ordinal: ExternalTokenOrdinal,
-    /// Full raw external rule.
-    pub rule: RawRuleJson,
-    /// Optional symbolic name for diagnostics.
-    pub name: Option<ExternalTokenName>,
+    ordinal: ExternalTokenOrdinal,
+    rule: RawRuleJson,
+    name: Option<ExternalTokenName>,
 }
 
 impl ExternalTokenDecl {
-    /// Build an external token declaration from a raw grammar rule.
-    pub fn new(ordinal: ExternalTokenOrdinal, rule: RawRuleJson) -> Self {
+    #[cfg(feature = "tree-sitter-import")]
+    fn new(ordinal: ExternalTokenOrdinal, rule: RawRuleJson) -> Self {
         let name = match &rule {
             RawRuleJson::Symbol { name } => Some(ExternalTokenName::new(name.clone())),
             _ => None,
@@ -59,6 +60,61 @@ impl ExternalTokenDecl {
             rule,
             name,
         }
+    }
+
+    /// Ordinal in the `externals` array.
+    pub const fn ordinal(&self) -> ExternalTokenOrdinal {
+        self.ordinal
+    }
+
+    /// Full raw external rule.
+    pub const fn rule(&self) -> &RawRuleJson {
+        &self.rule
+    }
+
+    /// Optional symbolic name for diagnostics.
+    pub const fn name(&self) -> Option<&ExternalTokenName> {
+        self.name.as_ref()
+    }
+}
+
+/// External tokens in grammar order; index is the scanner ordinal.
+#[derive(Debug, Clone, Default, Facet, PartialEq, Eq)]
+#[facet(transparent)]
+pub struct ExternalTokenTable(Vec<ExternalTokenDecl>);
+
+impl ExternalTokenTable {
+    /// Build an external token table from raw grammar externals.
+    #[cfg(feature = "tree-sitter-import")]
+    pub(crate) fn from_rules(rules: &[RawRuleJson]) -> Result<Self, ImportError> {
+        let mut tokens = Vec::with_capacity(rules.len());
+        for (index, rule) in rules.iter().cloned().enumerate() {
+            tokens.push(ExternalTokenDecl::new(
+                ExternalTokenOrdinal::from_index(index)?,
+                rule,
+            ));
+        }
+        Ok(Self(tokens))
+    }
+
+    /// Number of external tokens.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether there are no external tokens.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Get an external token by ordinal index.
+    pub fn get(&self, index: usize) -> Option<&ExternalTokenDecl> {
+        self.0.get(index)
+    }
+
+    /// Iterate external tokens in scanner ordinal order.
+    pub fn iter(&self) -> impl Iterator<Item = &ExternalTokenDecl> {
+        self.0.iter()
     }
 }
 
@@ -84,5 +140,5 @@ pub struct TreeSitterScanner {
     /// Scanner source file.
     pub source: SourceFile<ScannerSource>,
     /// External tokens in grammar order; index is the scanner ordinal.
-    pub externals: Vec<ExternalTokenDecl>,
+    pub externals: ExternalTokenTable,
 }

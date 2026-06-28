@@ -37,8 +37,19 @@ impl WellKnownQuery {
 /// Imported query files. Unknown query files are preserved.
 #[derive(Debug, Clone, Default, Facet, PartialEq, Eq)]
 pub struct QueryBundle {
-    /// Query source files in package order.
-    pub files: Vec<SourceFile<QuerySource>>,
+    /// Query source files with category resolution.
+    pub files: Vec<QueryFile>,
+}
+
+/// Imported query source file with Tree-sitter category metadata.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+pub struct QueryFile {
+    /// Well-known category, when this file was resolved through category semantics.
+    pub category: Option<WellKnownQuery>,
+    /// Whether the file came from `tree-sitter.json` rather than fallback discovery.
+    pub configured: bool,
+    /// Query source file.
+    pub source: SourceFile<QuerySource>,
 }
 
 impl QueryBundle {
@@ -46,11 +57,28 @@ impl QueryBundle {
     pub fn well_known(&self, query: WellKnownQuery) -> Option<&SourceFile<QuerySource>> {
         self.files
             .iter()
-            .find(|file| file.path.as_str().ends_with(query.filename()))
+            .find(|file| file.category == Some(query))
+            .map(|file| &file.source)
+    }
+
+    /// Iterate well-known query files in configured order.
+    pub fn well_known_files(
+        &self,
+        query: WellKnownQuery,
+    ) -> impl Iterator<Item = &SourceFile<QuerySource>> {
+        self.files
+            .iter()
+            .filter(move |file| file.category == Some(query))
+            .map(|file| &file.source)
     }
 
     /// Iterate all query files.
     pub fn iter(&self) -> impl Iterator<Item = &SourceFile<QuerySource>> {
+        self.files.iter().map(|file| &file.source)
+    }
+
+    /// Iterate all query files with category metadata.
+    pub fn iter_files(&self) -> impl Iterator<Item = &QueryFile> {
         self.files.iter()
     }
 }

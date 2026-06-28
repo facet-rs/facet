@@ -12,6 +12,8 @@ Tree-sitter behavior before they become stable Snark behavior.
 - `scanner`, `query`, and `corpus` own imported artifacts for their domains.
 - `runtime_input` owns editor/runtime coordinate types.
 - raw import artifacts are not runtime language objects.
+- the pinned fixture lane proves raw import and package-layout contracts; it is
+  not a substitute for semantic parse/query/scanner oracles.
 
 ## Fixture Lanes
 
@@ -28,6 +30,8 @@ additional confidence only. They must not be the only oracle for a contract.
 For each implemented layer, compare Snark output with Tree-sitter output:
 
 - grammar import: observed fields, rule order, externals order, package assets
+- package import: manifest grammar paths, configured query order, source
+  containment, and artifact provenance
 - corpus import: named examples, inputs, expected trees, highlight assertions
 - parser lowering: normalized symbols, precedence, conflicts, tokens, fields
 - scanner runtime: valid-symbol inputs, accepted tokens, serialized state

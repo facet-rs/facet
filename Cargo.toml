@@ -254,6 +254,7 @@ default-members = [
   "margin-term",
   "figue",
   "figue-attrs",
+  "snark",
 
   # Phon schema and typed codec
   "weavy",
