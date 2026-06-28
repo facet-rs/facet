@@ -1,6 +1,6 @@
 [package]
 name = "dibs-config"
-version = "0.2.0-rc.4"
+version = "0.2.0-rc.5"
 edition = "2024"
 rust-version.workspace = true
 description = "Facet types for the dibs configuration schema"

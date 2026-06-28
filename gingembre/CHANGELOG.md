@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.10.0-rc.2](https://github.com/facet-rs/facet/compare/margin-v0.10.0-rc.1...margin-v0.10.0-rc.2) - 2026-06-28
+## [0.0.1](https://github.com/facet-rs/facet/compare/gingembre-v0.0.0...gingembre-v0.0.1) - 2026-06-28
 
-### Other
+### Added
 
-- updated the following local packages: facet
+- copy gingembre and gingembre-syntax into facet workspace (step 1)
+
+### Fixed
+
+- fix CI for margin and gingembre
