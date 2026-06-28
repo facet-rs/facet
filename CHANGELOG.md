@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/facet-rs/facet/compare/weavy-v0.2.1...weavy-v0.2.2) - 2026-06-28
+
+### Other
+
+- updated the following local packages: copypatch, copypatch
+
 ## [0.50.0-rc.4](https://github.com/facet-rs/facet/compare/facet-hash-v0.50.0-rc.3...facet-hash-v0.50.0-rc.4) - 2026-06-26
 
 ### Other

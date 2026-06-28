@@ -1,6 +1,6 @@
 [package]
 name = "vox-local"
-version = "0.10.0-rc.4"
+version = "0.10.0-rc.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
