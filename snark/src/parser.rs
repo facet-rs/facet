@@ -9,7 +9,10 @@
 use crate::{
     lexical::{LexicalFacts, TerminalKind},
     runtime_input::{ByteRange, PointRange},
-    validated::{AliasId, FieldId, RuleId, ValidatedGrammar},
+    validated::{
+        AliasId, FieldId, GrammarExprId, PrecedenceEntry as ValidatedPrecedenceEntry, RuleId,
+        ValidatedGrammar, VisibleNodeKind,
+    },
 };
 
 macro_rules! id_type {
@@ -61,6 +64,11 @@ id_type!(LookaheadTokenId, "Branch-local lookahead token id.");
 id_type!(QueryPatternId, "Query pattern id.");
 id_type!(QueryCaptureId, "Query capture id.");
 id_type!(ProvenanceId, "Parser-generation provenance id.");
+id_type!(FieldMapId, "Production field-map id.");
+id_type!(AliasSequenceId, "Production alias-sequence id.");
+id_type!(PublicNodeKindId, "Public node-kind id.");
+id_type!(HighlightAssertionId, "Highlight assertion oracle id.");
+id_type!(PrecedenceGroupId, "Static precedence group id.");
 
 /// Generation phase represented by a parser-machine value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,9 +92,17 @@ pub struct ParserGrammar {
     symbols: SymbolTables,
     productions: Vec<Production>,
     production_metadata: Vec<ProductionMetadata>,
+    field_maps: Vec<FieldMap>,
+    alias_sequences: Vec<AliasSequence>,
     lexical_modes: Vec<LexMode>,
     reserved_contexts: Vec<ReservedContext>,
     valid_symbol_sets: Vec<ValidSymbolSet>,
+    extra_roots: Vec<ExtraRoot>,
+    word: Option<NonterminalId>,
+    supertypes: Vec<NonterminalId>,
+    precedence_groups: Vec<PrecedenceGroup>,
+    public_node_kinds: Vec<PublicNodeKind>,
+    glr_plan: GlrPlan,
 }
 
 impl ParserGrammar {
@@ -126,6 +142,83 @@ impl ParserGrammar {
                 name: external.name().map(str::to_owned),
             })
             .collect::<Vec<_>>();
+        let reserved_contexts = grammar
+            .reserved_sets()
+            .iter()
+            .enumerate()
+            .map(|(index, reserved)| ReservedContext {
+                id: ReservedContextId::from_index(index),
+                name: reserved.name().to_owned(),
+                entries: reserved.entries().to_vec(),
+            })
+            .collect::<Vec<_>>();
+        let extra_roots = grammar
+            .extras()
+            .iter()
+            .copied()
+            .map(|expr| ExtraRoot { expr })
+            .collect::<Vec<_>>();
+        let word = grammar
+            .word()
+            .map(|rule| NonterminalId::from_index(rule.get() as usize));
+        let supertypes = grammar
+            .supertypes()
+            .iter()
+            .map(|rule| NonterminalId::from_index(rule.get() as usize))
+            .collect::<Vec<_>>();
+        let precedence_groups = grammar
+            .precedence_groups()
+            .iter()
+            .enumerate()
+            .map(|(index, entries)| PrecedenceGroup {
+                id: PrecedenceGroupId::from_index(index),
+                entries: entries
+                    .iter()
+                    .map(|entry| match entry {
+                        ValidatedPrecedenceEntry::Name(name) => {
+                            PrecedenceGroupEntry::Name(name.clone())
+                        }
+                        ValidatedPrecedenceEntry::Symbol(rule) => {
+                            PrecedenceGroupEntry::Nonterminal(NonterminalId::from_index(
+                                rule.get() as usize
+                            ))
+                        }
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        let public_node_kinds = grammar
+            .visible_node_kinds()
+            .enumerate()
+            .map(|(index, name)| {
+                let source = match grammar
+                    .visible_node_kind(name)
+                    .expect("visible kind exists")
+                {
+                    VisibleNodeKind::Rule(rule) => {
+                        PublicNodeKindSource::Rule(NonterminalId::from_index(rule.get() as usize))
+                    }
+                    VisibleNodeKind::Alias(alias) => PublicNodeKindSource::Alias(alias),
+                };
+                PublicNodeKind {
+                    id: PublicNodeKindId::from_index(index),
+                    name: name.to_owned(),
+                    source,
+                }
+            })
+            .collect::<Vec<_>>();
+        let conflict_plans = grammar
+            .conflicts()
+            .iter()
+            .enumerate()
+            .map(|(index, symbols)| ConflictPlan {
+                id: ConflictId::from_index(index),
+                symbols: symbols
+                    .iter()
+                    .map(|rule| NonterminalId::from_index(rule.get() as usize))
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
         Self {
             stage: ParserGenerationStage::SymbolDomains,
             start: NonterminalId::from_index(grammar.start_rule().get() as usize),
@@ -151,9 +244,19 @@ impl ParserGrammar {
             },
             productions: Vec::new(),
             production_metadata: Vec::new(),
+            field_maps: Vec::new(),
+            alias_sequences: Vec::new(),
             lexical_modes: Vec::new(),
-            reserved_contexts: Vec::new(),
+            reserved_contexts,
             valid_symbol_sets: Vec::new(),
+            extra_roots,
+            word,
+            supertypes,
+            precedence_groups,
+            public_node_kinds,
+            glr_plan: GlrPlan {
+                conflicts: conflict_plans,
+            },
         }
     }
 
@@ -182,6 +285,16 @@ impl ParserGrammar {
         &self.production_metadata
     }
 
+    /// Field maps keyed by [`FieldMapId`].
+    pub fn field_maps(&self) -> &[FieldMap] {
+        &self.field_maps
+    }
+
+    /// Alias sequences keyed by [`AliasSequenceId`].
+    pub fn alias_sequences(&self) -> &[AliasSequence] {
+        &self.alias_sequences
+    }
+
     /// Lexical modes attached to parser states.
     pub fn lexical_modes(&self) -> &[LexMode] {
         &self.lexical_modes
@@ -195,6 +308,36 @@ impl ParserGrammar {
     /// External scanner valid-symbol sets referenced by lexical modes.
     pub fn valid_symbol_sets(&self) -> &[ValidSymbolSet] {
         &self.valid_symbol_sets
+    }
+
+    /// Extra grammar roots.
+    pub fn extra_roots(&self) -> &[ExtraRoot] {
+        &self.extra_roots
+    }
+
+    /// Optional word token nonterminal.
+    pub const fn word(&self) -> Option<NonterminalId> {
+        self.word
+    }
+
+    /// Supertype nonterminals.
+    pub fn supertypes(&self) -> &[NonterminalId] {
+        &self.supertypes
+    }
+
+    /// Static precedence groups.
+    pub fn precedence_groups(&self) -> &[PrecedenceGroup] {
+        &self.precedence_groups
+    }
+
+    /// Public visible node kinds.
+    pub fn public_node_kinds(&self) -> &[PublicNodeKind] {
+        &self.public_node_kinds
+    }
+
+    /// GLR conflict/recovery plan facts.
+    pub const fn glr_plan(&self) -> &GlrPlan {
+        &self.glr_plan
     }
 }
 
@@ -466,6 +609,11 @@ impl ProductionStep {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionMetadata {
     id: ProductionMetadataId,
+    owner: RuleId,
+    public_node: Option<PublicNodeKindId>,
+    field_map: Option<FieldMapId>,
+    alias_sequence: Option<AliasSequenceId>,
+    origin: ProductionOrigin,
     static_precedence: Option<StaticPrecedence>,
     associativity: Associativity,
     dynamic_precedence: i32,
@@ -477,6 +625,31 @@ impl ProductionMetadata {
     /// Metadata id.
     pub const fn id(&self) -> ProductionMetadataId {
         self.id
+    }
+
+    /// Rule that owns this production before auxiliary expansion.
+    pub const fn owner(&self) -> RuleId {
+        self.owner
+    }
+
+    /// Public node emitted by this production, if any.
+    pub const fn public_node(&self) -> Option<PublicNodeKindId> {
+        self.public_node
+    }
+
+    /// Production-keyed field map.
+    pub const fn field_map(&self) -> Option<FieldMapId> {
+        self.field_map
+    }
+
+    /// Production-keyed alias sequence.
+    pub const fn alias_sequence(&self) -> Option<AliasSequenceId> {
+        self.alias_sequence
+    }
+
+    /// How this production was introduced.
+    pub const fn origin(&self) -> ProductionOrigin {
+        self.origin
     }
 
     /// Static precedence used for conflict resolution.
@@ -503,6 +676,175 @@ impl ProductionMetadata {
     pub const fn provenance(&self) -> Option<ProvenanceId> {
         self.provenance
     }
+}
+
+/// How a production entered the normalized grammar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ProductionOrigin {
+    /// Production came directly from a grammar rule.
+    Rule,
+    /// Production was introduced while expanding a repeat.
+    Repeat,
+    /// Production was introduced while inlining a rule.
+    Inline,
+    /// Production was introduced for the augmented start rule.
+    AugmentedStart,
+    /// Production was introduced for error recovery.
+    Recovery,
+}
+
+/// Field map attached to one production.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldMap {
+    id: FieldMapId,
+    entries: Vec<FieldMapEntry>,
+}
+
+impl FieldMap {
+    /// Field-map id.
+    pub const fn id(&self) -> FieldMapId {
+        self.id
+    }
+
+    /// Field entries keyed by structural child index.
+    pub fn entries(&self) -> &[FieldMapEntry] {
+        &self.entries
+    }
+}
+
+/// One field attachment in a production field map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldMapEntry {
+    structural_index: usize,
+    field: FieldId,
+}
+
+impl FieldMapEntry {
+    /// Structural child index.
+    pub const fn structural_index(&self) -> usize {
+        self.structural_index
+    }
+
+    /// Field attached at this index.
+    pub const fn field(&self) -> FieldId {
+        self.field
+    }
+}
+
+/// Alias sequence attached to one production.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AliasSequence {
+    id: AliasSequenceId,
+    entries: Vec<AliasSequenceEntry>,
+}
+
+impl AliasSequence {
+    /// Alias-sequence id.
+    pub const fn id(&self) -> AliasSequenceId {
+        self.id
+    }
+
+    /// Alias entries keyed by structural child index.
+    pub fn entries(&self) -> &[AliasSequenceEntry] {
+        &self.entries
+    }
+}
+
+/// One alias attachment in a production alias sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AliasSequenceEntry {
+    structural_index: usize,
+    alias: AliasId,
+}
+
+impl AliasSequenceEntry {
+    /// Structural child index.
+    pub const fn structural_index(&self) -> usize {
+        self.structural_index
+    }
+
+    /// Alias attached at this index.
+    pub const fn alias(&self) -> AliasId {
+        self.alias
+    }
+}
+
+/// Public visible node kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicNodeKind {
+    id: PublicNodeKindId,
+    name: String,
+    source: PublicNodeKindSource,
+}
+
+impl PublicNodeKind {
+    /// Public node-kind id.
+    pub const fn id(&self) -> PublicNodeKindId {
+        self.id
+    }
+
+    /// Node kind name as observed in S-expressions and queries.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Source that introduced this public node kind.
+    pub const fn source(&self) -> PublicNodeKindSource {
+        self.source
+    }
+}
+
+/// Source of a public visible node kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PublicNodeKindSource {
+    /// Visible grammar rule.
+    Rule(NonterminalId),
+    /// Named alias.
+    Alias(AliasId),
+}
+
+/// Extra grammar root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExtraRoot {
+    expr: GrammarExprId,
+}
+
+impl ExtraRoot {
+    /// Extra expression root.
+    pub const fn expr(&self) -> GrammarExprId {
+        self.expr
+    }
+}
+
+/// Static precedence group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrecedenceGroup {
+    id: PrecedenceGroupId,
+    entries: Vec<PrecedenceGroupEntry>,
+}
+
+impl PrecedenceGroup {
+    /// Precedence group id.
+    pub const fn id(&self) -> PrecedenceGroupId {
+        self.id
+    }
+
+    /// Ordered precedence entries.
+    pub fn entries(&self) -> &[PrecedenceGroupEntry] {
+        &self.entries
+    }
+}
+
+/// One static precedence group entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PrecedenceGroupEntry {
+    /// Named precedence entry.
+    Name(String),
+    /// Rule/nonterminal precedence entry.
+    Nonterminal(NonterminalId),
 }
 
 /// Static precedence fact.
@@ -532,6 +874,7 @@ pub enum Associativity {
 pub struct ReservedContext {
     id: ReservedContextId,
     name: String,
+    entries: Vec<GrammarExprId>,
 }
 
 impl ReservedContext {
@@ -543,6 +886,11 @@ impl ReservedContext {
     /// Reserved context name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Reserved word entry expressions.
+    pub fn entries(&self) -> &[GrammarExprId] {
+        &self.entries
     }
 }
 
@@ -630,6 +978,7 @@ pub struct LexMode {
     externals: Vec<ExternalId>,
     reserved_context: Option<ReservedContextId>,
     valid_symbols: Option<ValidSymbolSetId>,
+    word: Option<TerminalId>,
 }
 
 impl LexMode {
@@ -657,6 +1006,111 @@ impl LexMode {
     pub const fn valid_symbols(&self) -> Option<ValidSymbolSetId> {
         self.valid_symbols
     }
+
+    /// Word token used for keyword/reserved-word rewrites.
+    pub const fn word(&self) -> Option<TerminalId> {
+        self.word
+    }
+}
+
+/// Concrete branch-local lookahead token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LookaheadToken {
+    id: LookaheadTokenId,
+    symbol: LookaheadSymbol,
+    bytes: ByteRange,
+    points: PointRange,
+    lexical_precedence: i32,
+    tie_break: LexicalTieBreak,
+    extra: bool,
+    immediate: bool,
+    keyword: KeywordStatus,
+    scanner_snapshot: Option<ScannerSnapshotId>,
+}
+
+impl LookaheadToken {
+    /// Lookahead token id.
+    pub const fn id(&self) -> LookaheadTokenId {
+        self.id
+    }
+
+    /// Symbol selected by lexing.
+    pub const fn symbol(&self) -> LookaheadSymbol {
+        self.symbol
+    }
+
+    /// Byte range consumed by this token.
+    pub const fn bytes(&self) -> ByteRange {
+        self.bytes
+    }
+
+    /// Point range consumed by this token.
+    pub const fn points(&self) -> PointRange {
+        self.points
+    }
+
+    /// Lexical precedence used for token selection.
+    pub const fn lexical_precedence(&self) -> i32 {
+        self.lexical_precedence
+    }
+
+    /// Lexical tie-break facts.
+    pub const fn tie_break(&self) -> LexicalTieBreak {
+        self.tie_break
+    }
+
+    /// Whether the token is an extra.
+    pub const fn extra(&self) -> bool {
+        self.extra
+    }
+
+    /// Whether the token was accepted by an immediate lexical rule.
+    pub const fn immediate(&self) -> bool {
+        self.immediate
+    }
+
+    /// Keyword/reserved-word rewrite status.
+    pub const fn keyword(&self) -> KeywordStatus {
+        self.keyword
+    }
+
+    /// External scanner snapshot after accepting this token.
+    pub const fn scanner_snapshot(&self) -> Option<ScannerSnapshotId> {
+        self.scanner_snapshot
+    }
+}
+
+/// Stable facts used after lexical precedence ties.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LexicalTieBreak {
+    byte_len: u32,
+    source_order: u32,
+}
+
+impl LexicalTieBreak {
+    /// Accepted token byte length.
+    pub const fn byte_len(&self) -> u32 {
+        self.byte_len
+    }
+
+    /// Source-order tie-breaker.
+    pub const fn source_order(&self) -> u32 {
+        self.source_order
+    }
+}
+
+/// Keyword or reserved-word rewrite status for a lookahead token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum KeywordStatus {
+    /// Token was not checked against the word/reserved system.
+    Unchecked,
+    /// Token remained the word token.
+    Word,
+    /// Token was rewritten to a keyword/reserved terminal.
+    Rewritten,
+    /// Token was rejected by the active reserved context.
+    ReservedRejected,
 }
 
 /// Generated LR/GLR parse table.
@@ -816,11 +1270,7 @@ impl ConflictPlan {
 pub struct StackMergeKey {
     state: ParseStateId,
     byte_position: u32,
-    lookahead: Option<LookaheadTokenId>,
-    error_cost: u32,
-    dynamic_precedence: i32,
     scanner_snapshot: Option<ScannerSnapshotId>,
-    active: bool,
 }
 
 impl StackMergeKey {
@@ -834,7 +1284,23 @@ impl StackMergeKey {
         self.byte_position
     }
 
-    /// Branch-local lookahead token at stack head.
+    /// External scanner snapshot compatible with this stack version.
+    pub const fn scanner_snapshot(&self) -> Option<ScannerSnapshotId> {
+        self.scanner_snapshot
+    }
+}
+
+/// Branch-local ranking and liveness facts retained after merge checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BranchRanking {
+    lookahead: Option<LookaheadTokenId>,
+    error_cost: u32,
+    dynamic_precedence: i32,
+    active: bool,
+}
+
+impl BranchRanking {
+    /// Branch-local lookahead token.
     pub const fn lookahead(&self) -> Option<LookaheadTokenId> {
         self.lookahead
     }
@@ -849,11 +1315,6 @@ impl StackMergeKey {
         self.dynamic_precedence
     }
 
-    /// External scanner snapshot compatible with this stack version.
-    pub const fn scanner_snapshot(&self) -> Option<ScannerSnapshotId> {
-        self.scanner_snapshot
-    }
-
     /// Whether this branch remains active.
     pub const fn active(&self) -> bool {
         self.active
@@ -864,16 +1325,33 @@ impl StackMergeKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TreeEvent {
+    /// A node was opened.
+    OpenNode {
+        /// Runtime tree node.
+        node: TreeNodeId,
+        /// Public or internal symbol.
+        symbol: ParserSymbol,
+        /// Whether this node is visible in public traversal.
+        visible: bool,
+        /// Whether this node is named.
+        named: bool,
+    },
     /// A token was shifted.
     Token {
         /// Token symbol.
         symbol: ParserSymbol,
+        /// Lookahead token source.
+        lookahead: LookaheadTokenId,
         /// Byte range.
         bytes: ByteRange,
         /// Point range.
         points: PointRange,
         /// Whether this token is an extra.
         extra: bool,
+        /// Whether this token is named in public traversal.
+        named: bool,
+        /// Keyword/reserved-word rewrite status.
+        keyword: KeywordStatus,
     },
     /// A production was reduced into a parent node.
     Reduce {
@@ -905,6 +1383,28 @@ pub enum TreeEvent {
         bytes: ByteRange,
         /// Point range.
         points: PointRange,
+        /// Accumulated error cost at this node.
+        error_cost: u32,
+    },
+    /// A node was finished.
+    CloseNode {
+        /// Runtime tree node.
+        node: TreeNodeId,
+        /// Byte range.
+        bytes: ByteRange,
+        /// Point range.
+        points: PointRange,
+    },
+    /// A reusable subtree was accepted.
+    ReuseNode {
+        /// Runtime tree node.
+        node: TreeNodeId,
+        /// Byte range.
+        bytes: ByteRange,
+        /// Point range.
+        points: PointRange,
+        /// Scanner snapshot required for reuse.
+        scanner_snapshot: Option<ScannerSnapshotId>,
     },
     /// A field was attached at a structural child index.
     Field {
@@ -972,6 +1472,8 @@ pub enum TraceEvent {
         before: Option<ScannerSnapshotId>,
         /// Scanner snapshot after the call.
         after: Option<ScannerSnapshotId>,
+        /// Lookahead token accepted by the scanner.
+        result: Option<LookaheadTokenId>,
     },
     /// A shift action executed.
     Shift {
@@ -997,6 +1499,8 @@ pub enum TraceEvent {
         source: StackVersionId,
         /// Conflict that caused the split.
         conflict: ConflictId,
+        /// Branches created by the split.
+        branches: Vec<StackVersionId>,
     },
     /// GLR branches merged.
     GlrMerge {
@@ -1006,6 +1510,8 @@ pub enum TraceEvent {
         retired: StackVersionId,
         /// Merge key.
         key: StackMergeKey,
+        /// Ranking retained for the surviving branch.
+        ranking: BranchRanking,
     },
     /// A GLR branch was retired.
     GlrRetire {
@@ -1029,8 +1535,18 @@ pub enum TraceEvent {
         pattern: QueryPatternId,
         /// Query capture.
         capture: QueryCaptureId,
+        /// Capture name.
+        capture_name: String,
         /// Captured tree node.
         node: TreeNodeId,
+        /// Captured byte range.
+        bytes: ByteRange,
+        /// Captured point range.
+        points: PointRange,
+        /// Predicate outcome for this capture.
+        predicates: PredicateOutcome,
+        /// Highlight assertion matched by this capture, if any.
+        highlight_assertion: Option<HighlightAssertionId>,
     },
 }
 
@@ -1056,4 +1572,18 @@ pub enum BranchRetireReason {
     NoAction,
     /// The branch exceeded configured runtime limits.
     Limit,
+}
+
+/// Query predicate outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PredicateOutcome {
+    /// No predicates were attached.
+    None,
+    /// All predicates accepted the capture.
+    Accepted,
+    /// At least one predicate rejected the capture.
+    Rejected,
+    /// Predicate execution is not represented yet.
+    Unknown,
 }

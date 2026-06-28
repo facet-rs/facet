@@ -86,6 +86,19 @@ id_type!(
 id_type!(TraceEventId, "Snark parser trace event identity.");
 id_type!(TreeEventId, "Snark tree-event identity.");
 id_type!(QueryPlanId, "Snark query plan identity.");
+id_type!(
+    ValidSymbolSetId,
+    "Snark external scanner valid-symbol-set identity."
+);
+id_type!(
+    ScannerSnapshotId,
+    "Snark serialized external scanner snapshot identity."
+);
+id_type!(StackMergeKeyId, "Snark GLR stack-merge-key identity.");
+id_type!(BranchRankingId, "Snark GLR branch-ranking identity.");
+id_type!(ProductionMetadataId, "Snark production metadata identity.");
+id_type!(TreeNodeId, "Snark runtime tree-node identity.");
+id_type!(QueryCaptureId, "Snark query capture identity.");
 
 /// A domain intrinsic emitted by Snark lowering.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,8 +106,12 @@ id_type!(QueryPlanId, "Snark query plan identity.");
 pub enum SnarkIntrinsic {
     /// Read the next token according to a Snark lexical mode.
     Lex {
+        /// GLR stack version being lexed.
+        version: StackVersionId,
         /// Lexical mode selected by the current parser state.
         mode: LexModeId,
+        /// Branch-local lookahead token produced by lexing.
+        output: LookaheadTokenId,
     },
     /// Placeholder for an external scanner call.
     ///
@@ -102,13 +119,25 @@ pub enum SnarkIntrinsic {
     /// cursor, mark-end, result-symbol, EOF, and serialization contracts belong
     /// to the scanner ABI layer before this intrinsic becomes executable.
     CallExternalScanner {
+        /// GLR stack version being scanned.
+        version: StackVersionId,
         /// Parser state whose valid-symbol set is being offered.
         state: ParseStateId,
+        /// Valid-symbol mask offered to the scanner.
+        valid_symbols: ValidSymbolSetId,
         /// Scanner state selected by Snark's parser runtime.
         scanner_state: ExternalScannerStateId,
+        /// Serialized scanner snapshot before the call.
+        before: Option<ScannerSnapshotId>,
+        /// Serialized scanner snapshot after the call.
+        after: Option<ScannerSnapshotId>,
+        /// Branch-local lookahead accepted by the scanner.
+        result: Option<LookaheadTokenId>,
     },
     /// Select parser actions for the branch-local lookahead.
     DispatchActions {
+        /// GLR stack version being dispatched.
+        version: StackVersionId,
         /// Parser state at the stack head.
         state: ParseStateId,
         /// Branch-local lookahead token.
@@ -116,11 +145,15 @@ pub enum SnarkIntrinsic {
     },
     /// Commit a branch-local lookahead to the input cursor.
     CommitLookahead {
+        /// GLR stack version whose lookahead is being consumed.
+        version: StackVersionId,
         /// Lookahead token being consumed.
         lookahead: LookaheadTokenId,
     },
     /// Shift the current lookahead and enter another parser state.
     Shift {
+        /// GLR stack version being shifted.
+        version: StackVersionId,
         /// Parser state to enter after the shift.
         state: ParseStateId,
         /// Lookahead token shifted by this action.
@@ -128,8 +161,12 @@ pub enum SnarkIntrinsic {
     },
     /// Reduce a production into a nonterminal symbol.
     Reduce {
+        /// GLR stack version being reduced.
+        version: StackVersionId,
         /// Production being reduced.
         production: ProductionId,
+        /// Production metadata applied by this reduction.
+        metadata: ProductionMetadataId,
         /// Symbol emitted by the reduction.
         symbol: NonterminalId,
         /// Optional alias sequence applied to visible children.
@@ -141,6 +178,8 @@ pub enum SnarkIntrinsic {
         conflict: ConflictId,
         /// Source stack version.
         source: StackVersionId,
+        /// Branches created by the split.
+        branches: Vec<StackVersionId>,
     },
     /// Merge compatible GLR branches.
     MergeGlr {
@@ -148,11 +187,17 @@ pub enum SnarkIntrinsic {
         survivor: StackVersionId,
         /// Retired stack version.
         retired: StackVersionId,
+        /// Merge compatibility key.
+        key: StackMergeKeyId,
+        /// Ranking retained for the survivor.
+        ranking: BranchRankingId,
     },
     /// Retire a GLR branch that can no longer win.
     RetireBranch {
         /// Stack version being retired.
         version: StackVersionId,
+        /// Why this branch was retired.
+        reason: BranchRetireReason,
     },
     /// Recover through Snark's generated recovery path.
     Recover {
@@ -176,6 +221,12 @@ pub enum SnarkIntrinsic {
     },
     /// Emit a query capture into the query result sink.
     EmitCapture {
+        /// Query plan that emitted the capture.
+        query: QueryPlanId,
+        /// Query capture id.
+        capture: QueryCaptureId,
+        /// Runtime tree node captured.
+        node: TreeNodeId,
         /// Optional field associated with the capture.
         field: Option<FieldId>,
     },
@@ -184,6 +235,18 @@ pub enum SnarkIntrinsic {
         /// Query plan id.
         query: QueryPlanId,
     },
+}
+
+/// Why a GLR branch was retired by Snark lowering/runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum BranchRetireReason {
+    /// Another branch dominated this one.
+    Dominated,
+    /// The parse table had no viable action.
+    NoAction,
+    /// A runtime bound retired the branch.
+    Limit,
 }
 
 impl SnarkIntrinsic {
@@ -221,12 +284,14 @@ impl IntrinsicOp for SnarkIntrinsic {
             Self::Lex { .. } => EffectContract::new()
                 .read_resource(EffectResource::Input("source"))
                 .write_resource(EffectResource::SideChannel("lookahead"))
+                .write_resource(EffectResource::SideChannel("parser_stack"))
                 .may_fail(),
             Self::CallExternalScanner { .. } => EffectContract::new()
                 .read_resource(EffectResource::Input("source"))
                 .read_resource(EffectResource::SideChannel("scanner_state"))
                 .write_resource(EffectResource::SideChannel("scanner_state"))
                 .write_resource(EffectResource::SideChannel("lookahead"))
+                .write_resource(EffectResource::SideChannel("parser_stack"))
                 .may_fail()
                 .calls_user_code(),
             Self::DispatchActions { .. } => EffectContract::new()
@@ -299,6 +364,7 @@ mod tests {
     #[test]
     fn intrinsic_descriptors_use_snark_tree_sitter_dialect() {
         let descriptor = SnarkIntrinsic::Shift {
+            version: StackVersionId(0),
             state: ParseStateId(7),
             lookahead: LookaheadTokenId(1),
         }
@@ -310,7 +376,12 @@ mod tests {
 
     #[test]
     fn lex_and_scanner_effects_are_branch_local_until_commit() {
-        let lex_effect = SnarkIntrinsic::Lex { mode: LexModeId(3) }.effect();
+        let lex_effect = SnarkIntrinsic::Lex {
+            version: StackVersionId(0),
+            mode: LexModeId(3),
+            output: LookaheadTokenId(1),
+        }
+        .effect();
         assert!(lex_effect.resources.contains(&ResourceEffect {
             resource: EffectResource::Input("source"),
             access: ResourceAccess::Read,
@@ -325,8 +396,13 @@ mod tests {
         }));
 
         let scanner_effect = SnarkIntrinsic::CallExternalScanner {
+            version: StackVersionId(0),
             state: ParseStateId(7),
+            valid_symbols: ValidSymbolSetId(3),
             scanner_state: ExternalScannerStateId(2),
+            before: Some(ScannerSnapshotId(0)),
+            after: Some(ScannerSnapshotId(1)),
+            result: Some(LookaheadTokenId(4)),
         }
         .effect();
         assert!(!scanner_effect.resources.contains(&ResourceEffect {
@@ -336,6 +412,7 @@ mod tests {
         assert!(scanner_effect.calls_user_code);
 
         let commit_effect = SnarkIntrinsic::CommitLookahead {
+            version: StackVersionId(0),
             lookahead: LookaheadTokenId(5),
         }
         .effect();
