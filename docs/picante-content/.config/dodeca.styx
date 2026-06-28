@@ -1,0 +1,19 @@
+@schema {id crate:dodeca-config@1, cli ddc}
+
+source {
+    impls (
+        {
+            name rust
+            include (
+                "picante/src/**/*.rs"
+                "picante-macros/src/**/*.rs"
+            )
+            test_include (
+                "picante/tests/**/*.rs"
+            )
+            exclude (
+                "target/**"
+            )
+        }
+    )
+}
