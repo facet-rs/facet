@@ -81,7 +81,11 @@ pub enum SnarkIntrinsic {
         /// Lexical mode selected by the current parser state.
         mode: LexModeId,
     },
-    /// Call an external scanner with a Snark valid-symbol mask.
+    /// Placeholder for an external scanner call.
+    ///
+    /// This does not define Snark's scanner host ABI. The valid-symbol mask,
+    /// cursor, mark-end, result-symbol, EOF, and serialization contracts belong
+    /// to the scanner ABI layer before this intrinsic becomes executable.
     CallExternalScanner {
         /// Parser state whose valid-symbol set is being offered.
         state: ParseStateId,

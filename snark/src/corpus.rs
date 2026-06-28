@@ -29,6 +29,18 @@ impl CorpusFixture {
         }
         parse_corpus_cases(&self.source.body.0)
     }
+
+    /// Parse this fixture as a Tree-sitter highlight assertion file.
+    pub fn parse_highlight_assertions(
+        &self,
+    ) -> Result<Vec<HighlightAssertion>, HighlightParseError> {
+        if self.kind != CorpusKind::Highlight {
+            return Err(HighlightParseError::new(
+                HighlightParseErrorKind::WrongKind { kind: self.kind },
+            ));
+        }
+        parse_highlight_assertions(&self.source.body.0)
+    }
 }
 
 /// Supported fixture categories.
@@ -62,6 +74,79 @@ pub struct CorpusAttribute {
     pub name: String,
     /// Optional attribute value.
     pub value: Option<String>,
+}
+
+/// One highlight assertion from a Tree-sitter highlight fixture comment.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+pub struct HighlightAssertion {
+    /// Target position in the source fixture.
+    pub position: HighlightPoint,
+    /// Assertion marker width, usually the number of `^` marker characters.
+    pub length: usize,
+    /// Whether this assertion expects the capture not to be present.
+    pub negative: bool,
+    /// Expected query capture or highlight name.
+    pub expected_capture_name: String,
+}
+
+/// UTF-8 text point used by Tree-sitter highlight fixtures.
+#[derive(Debug, Clone, Copy, Facet, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HighlightPoint {
+    /// Zero-based row.
+    pub row: usize,
+    /// Zero-based UTF-8 column.
+    pub column: usize,
+}
+
+/// Error while parsing Tree-sitter highlight fixtures.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+pub struct HighlightParseError {
+    /// Error kind.
+    pub kind: HighlightParseErrorKind,
+}
+
+impl HighlightParseError {
+    fn new(kind: HighlightParseErrorKind) -> Self {
+        Self { kind }
+    }
+}
+
+impl fmt::Display for HighlightParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            HighlightParseErrorKind::WrongKind { kind } => {
+                write!(f, "cannot parse {kind:?} fixture as highlight assertions")
+            }
+            HighlightParseErrorKind::NoTargetLine {
+                expected_capture_name,
+                position,
+            } => write!(
+                f,
+                "could not find a source line for highlight assertion `{expected_capture_name}` at row {}, column {}",
+                position.row, position.column
+            ),
+        }
+    }
+}
+
+impl Error for HighlightParseError {}
+
+/// Error kind while parsing Tree-sitter highlight fixtures.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+#[repr(u8)]
+pub enum HighlightParseErrorKind {
+    /// Fixture was not a highlight fixture file.
+    WrongKind {
+        /// Actual fixture kind.
+        kind: CorpusKind,
+    },
+    /// An assertion comment could not be adjusted to a source line.
+    NoTargetLine {
+        /// Expected capture name.
+        expected_capture_name: String,
+        /// Original assertion position.
+        position: HighlightPoint,
+    },
 }
 
 /// Parsed S-expression node from a Tree-sitter corpus expected tree.
@@ -256,6 +341,13 @@ fn parse_corpus_cases(source: &str) -> Result<Vec<CorpusCase>, CorpusParseError>
             ));
         }
         let (name, attributes) = parse_case_header(&name);
+        if name.is_empty() {
+            return Err(CorpusParseError::new(
+                CorpusParseErrorKind::MissingCaseName {
+                    line: separator_line,
+                },
+            ));
+        }
         index += 1;
 
         let mut input_lines = Vec::new();
@@ -327,7 +419,8 @@ fn parse_attribute_line(line: &str) -> Option<CorpusAttribute> {
 }
 
 fn trim_blank_edges(input: &str) -> &str {
-    input.trim_matches('\n')
+    let input = input.strip_prefix('\n').unwrap_or(input);
+    input.strip_suffix('\n').unwrap_or(input)
 }
 
 fn is_separator(line: &str) -> bool {
@@ -338,6 +431,160 @@ fn is_separator(line: &str) -> bool {
 fn is_input_separator(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '-')
+}
+
+fn parse_highlight_assertions(
+    source: &str,
+) -> Result<Vec<HighlightAssertion>, HighlightParseError> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut assertions = Vec::new();
+    let mut assertion_rows = Vec::new();
+
+    for (row, line) in lines.iter().enumerate() {
+        for comment in highlight_comments_in_line(line) {
+            if let Some(assertion) = parse_highlight_comment(row, line, comment) {
+                assertion_rows.push(row);
+                assertions.push(assertion);
+            }
+        }
+    }
+
+    for assertion in &mut assertions {
+        let original_position = assertion.position;
+        loop {
+            let on_assertion_line = assertion_rows.contains(&assertion.position.row);
+            let on_empty_line = lines
+                .get(assertion.position.row)
+                .is_none_or(|line| utf8_len(line) <= assertion.position.column);
+            if on_assertion_line || on_empty_line {
+                if assertion.position.row == 0 {
+                    return Err(HighlightParseError::new(
+                        HighlightParseErrorKind::NoTargetLine {
+                            expected_capture_name: assertion.expected_capture_name.clone(),
+                            position: original_position,
+                        },
+                    ));
+                }
+                assertion.position.row -= 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    assertions.sort_unstable_by_key(|assertion| assertion.position);
+    Ok(assertions)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HighlightComment<'line> {
+    text: &'line str,
+    start_byte: usize,
+}
+
+fn highlight_comments_in_line(line: &str) -> Vec<HighlightComment<'_>> {
+    let mut comments = Vec::new();
+    let mut search_start = 0;
+    while let Some(relative_start) = line[search_start..].find("/*") {
+        let start = search_start + relative_start;
+        let rest = &line[start..];
+        let end = rest.find("*/").map_or(line.len(), |end| start + end + 2);
+        comments.push(HighlightComment {
+            text: &line[start..end],
+            start_byte: start,
+        });
+        search_start = end;
+    }
+    if let Some(start) = line.find("//") {
+        comments.push(HighlightComment {
+            text: &line[start..],
+            start_byte: start,
+        });
+    }
+    comments
+}
+
+fn parse_highlight_comment(
+    row: usize,
+    line: &str,
+    comment: HighlightComment<'_>,
+) -> Option<HighlightAssertion> {
+    let mut has_left_caret = false;
+    let mut arrow_end = 0;
+    let mut arrow_count = 1;
+    let mut position_column = utf8_column_for_byte(line, comment.start_byte);
+    let mut has_arrow = false;
+
+    for (index, ch) in comment.text.char_indices() {
+        arrow_end = index + ch.len_utf8();
+        if ch == '-' && has_left_caret {
+            has_arrow = true;
+            break;
+        }
+        if ch == '^' {
+            has_arrow = true;
+            position_column = utf8_column_for_byte(line, comment.start_byte + index);
+            for (_, next) in comment.text[arrow_end..].char_indices() {
+                if next != '^' {
+                    arrow_end += arrow_count - 1;
+                    break;
+                }
+                arrow_count += 1;
+            }
+            break;
+        }
+        has_left_caret = ch == '<';
+    }
+
+    if !has_arrow {
+        return None;
+    }
+
+    let mut negative = false;
+    for (index, ch) in comment.text[arrow_end..].char_indices() {
+        if ch == '!' {
+            negative = true;
+            arrow_end += index + ch.len_utf8();
+            break;
+        }
+        if !ch.is_whitespace() {
+            break;
+        }
+    }
+
+    let capture = capture_name_after(&comment.text[arrow_end..])?;
+    Some(HighlightAssertion {
+        position: HighlightPoint {
+            row,
+            column: position_column,
+        },
+        length: arrow_count,
+        negative,
+        expected_capture_name: capture.to_owned(),
+    })
+}
+
+fn capture_name_after(text: &str) -> Option<&str> {
+    let start = text
+        .char_indices()
+        .find_map(|(index, ch)| is_capture_name_char(ch).then_some(index))?;
+    let end = text[start..]
+        .char_indices()
+        .find_map(|(index, ch)| (!is_capture_name_char(ch)).then_some(start + index))
+        .unwrap_or(text.len());
+    Some(&text[start..end])
+}
+
+fn is_capture_name_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.')
+}
+
+fn utf8_column_for_byte(line: &str, byte_column: usize) -> usize {
+    line[..byte_column].chars().count()
+}
+
+fn utf8_len(line: &str) -> usize {
+    line.chars().count()
 }
 
 fn parse_sexp(source: &str) -> Result<SexpNode, CorpusParseError> {
@@ -450,7 +697,6 @@ impl<'source> SexpParser<'source> {
                         return Err(self.error("unterminated escape"));
                     };
                     self.position += escaped.len_utf8();
-                    out.push('\\');
                     out.push(escaped);
                 }
                 _ => out.push(ch),
@@ -536,6 +782,17 @@ mod tests {
         }
     }
 
+    fn highlight_fixture(source: &str) -> CorpusFixture {
+        CorpusFixture {
+            kind: CorpusKind::Highlight,
+            source: SourceFile {
+                id: SourceId::for_test(0),
+                path: PackageRelativePath::new("test/highlight/example.css").unwrap(),
+                body: CorpusSource(source.to_owned()),
+            },
+        }
+    }
+
     #[test]
     fn parses_tree_sitter_corpus_cases() {
         let corpus = fixture(
@@ -589,6 +846,31 @@ mod tests {
     }
 
     #[test]
+    fn rejects_header_with_only_attributes() {
+        let corpus = fixture(
+            "====================\n:skip\n====================\n\ninput\n\n---\n\n(document)\n",
+        );
+
+        let error = corpus.parse_cases().unwrap_err();
+
+        assert!(matches!(
+            error.kind,
+            CorpusParseErrorKind::MissingCaseName { line: 1 }
+        ));
+    }
+
+    #[test]
+    fn trims_only_structural_outer_blank_lines() {
+        let corpus = fixture(
+            "====================\nBlank input\n====================\n\n\nactual\n\n\n---\n\n(document)\n",
+        );
+
+        let cases = corpus.parse_cases().unwrap();
+
+        assert_eq!(cases[0].input, "\nactual\n");
+    }
+
+    #[test]
     fn parses_atom_children_and_quoted_anonymous_tokens() {
         let node = parse_sexp(r#"(ERROR (MISSING ";") "}")"#).unwrap();
 
@@ -614,5 +896,43 @@ mod tests {
         let node = parse_sexp(r#"(ERROR "é")"#).unwrap();
 
         assert_eq!(node.to_sexp(), r#"(ERROR "é")"#);
+    }
+
+    #[test]
+    fn quoted_atoms_escape_once_when_rendered() {
+        let node = parse_sexp(r#"(ERROR "\"")"#).unwrap();
+
+        assert_eq!(
+            node.children[0].value,
+            SexpValue::Atom(SexpAtom::Quoted("\"".to_owned()))
+        );
+        assert_eq!(node.to_sexp(), r#"(ERROR "\"")"#);
+    }
+
+    #[test]
+    fn parses_highlight_assertions() {
+        let fixture = highlight_fixture(
+            ":root {\n /* <- attribute */\n  color: blue;\n        /* ^^ !string.special */\n}",
+        );
+
+        let assertions = fixture.parse_highlight_assertions().unwrap();
+
+        assert_eq!(
+            assertions,
+            [
+                HighlightAssertion {
+                    position: HighlightPoint { row: 0, column: 1 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "attribute".to_owned(),
+                },
+                HighlightAssertion {
+                    position: HighlightPoint { row: 2, column: 11 },
+                    length: 2,
+                    negative: true,
+                    expected_capture_name: "string.special".to_owned(),
+                },
+            ]
+        );
     }
 }

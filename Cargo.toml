@@ -104,7 +104,7 @@ members = [
   "gingembre",
   "gingembre-syntax",
 
-  # Tree-sitter-compatible grammar runtime
+  # Tree-sitter-compatible grammar package model and lowering scaffold
   "snark",
 
   # async incremental query runtime

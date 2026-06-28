@@ -638,6 +638,29 @@ mod tests {
                 .as_str()
                 .starts_with("test/highlight/"))
         );
+        let highlight_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
+            .unwrap();
+        assert_eq!(highlight_fixture.kind, CorpusKind::Highlight);
+        let highlight_assertions = highlight_fixture.parse_highlight_assertions().unwrap();
+        assert!(highlight_assertions.len() > 20);
+        assert!(
+            highlight_assertions
+                .iter()
+                .any(|assertion| assertion.expected_capture_name == "attribute")
+        );
+        assert!(
+            highlight_assertions
+                .iter()
+                .any(|assertion| assertion.expected_capture_name == "function")
+        );
+        assert!(
+            highlight_assertions
+                .iter()
+                .any(|assertion| assertion.expected_capture_name == "punctuation.delimiter")
+        );
         let parse_fixture = grammar
             .corpus
             .iter()

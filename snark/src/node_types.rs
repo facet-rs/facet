@@ -1,4 +1,8 @@
 //! Typed raw `node-types.json` metadata.
+//!
+//! This is observed Tree-sitter package metadata for compatibility checks and
+//! diagnostics. It is not the source of Snark parser shape; validated grammar
+//! facts own parser symbols, fields, aliases, and productions.
 
 use facet::Facet;
 use indexmap::IndexMap;
@@ -11,7 +15,7 @@ use crate::{
 
 type FieldMap = IndexMap<String, NodeFieldInfo, std::hash::RandomState>;
 
-/// Raw `node-types.json` source plus decoded node metadata.
+/// Raw `node-types.json` source plus decoded compatibility metadata.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct NodeTypesJson {
     /// Original JSON source.
