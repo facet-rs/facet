@@ -772,6 +772,30 @@ mod tests {
         assert!(!normalized_parser_grammar.aliases().is_empty());
         assert!(!normalized_parser_grammar.lexical_rules().is_empty());
         assert_eq!(normalized_parser_grammar.inline_rules().len(), 2);
+        let prepared_parser_grammar = normalized_parser_grammar
+            .clone()
+            .prepare_productions_for_items()
+            .unwrap();
+        assert_eq!(
+            prepared_parser_grammar.stage(),
+            ParserGenerationStage::Productions
+        );
+        assert_eq!(
+            prepared_parser_grammar
+                .item_preparation()
+                .unwrap()
+                .inline_expansions()
+                .len(),
+            2
+        );
+        assert!(
+            prepared_parser_grammar
+                .item_preparation()
+                .unwrap()
+                .graph()
+                .reachable()
+                .contains(&prepared_parser_grammar.start())
+        );
         assert!(
             normalized_parser_grammar
                 .public_node_kinds()
@@ -782,19 +806,61 @@ mod tests {
             .queries
             .well_known(WellKnownQuery::Highlights)
             .unwrap();
-        for literal in quoted_query_literals(&highlights_query.body.0) {
+        let query_literals = highlights_query.body.anonymous_node_literals();
+        assert_eq!(
+            query_literals,
+            [
+                "#",
+                "$=",
+                "*",
+                "*=",
+                "+",
+                ",",
+                "-",
+                ".",
+                "/",
+                ":",
+                "::",
+                ";",
+                "=",
+                ">",
+                "@charset",
+                "@import",
+                "@keyframes",
+                "@media",
+                "@namespace",
+                "@supports",
+                "^=",
+                "and",
+                "not",
+                "only",
+                "or",
+                "|=",
+                "~",
+                "~=",
+                "{",
+                "}",
+                "(",
+                ")",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>()
+        );
+        for literal in &query_literals {
             assert!(
                 normalized_parser_grammar
                     .public_node_kinds()
                     .iter()
-                    .any(|kind| kind.name() == literal),
+                    .any(|kind| kind.name() == literal.as_str()),
                 "missing query-visible literal {literal}"
             );
             assert!(
                 normalized_parser_grammar
                     .public_literal_terminals()
                     .iter()
-                    .any(|mapping| mapping.literal() == literal && !mapping.terminals().is_empty()),
+                    .any(|mapping| mapping.literal() == literal.as_str()
+                        && !mapping.terminals().is_empty()),
                 "missing terminal provenance for query-visible literal {literal}"
             );
         }
@@ -1048,47 +1114,6 @@ mod tests {
             .any(|(index, _)| capture_at(query, index + 1, capture))
     }
 
-    fn quoted_query_literals(query: &str) -> BTreeSet<String> {
-        let mut literals = BTreeSet::new();
-        let mut chars = query.char_indices();
-        while let Some((index, ch)) = chars.next() {
-            if ch != '"' {
-                continue;
-            }
-            let previous = query[..index].chars().rev().find(|ch| !ch.is_whitespace());
-            if !matches!(previous, None | Some('(' | '[')) {
-                consume_quoted_query_string(&mut chars);
-                continue;
-            }
-            if let Some(literal) = parse_quoted_query_string(&mut chars) {
-                literals.insert(literal);
-            }
-        }
-        literals
-    }
-
-    fn consume_quoted_query_string(chars: &mut std::str::CharIndices<'_>) {
-        let _ = parse_quoted_query_string(chars);
-    }
-
-    fn parse_quoted_query_string(chars: &mut std::str::CharIndices<'_>) -> Option<String> {
-        let mut literal = String::new();
-        let mut escaped = false;
-        for (_, ch) in chars.by_ref() {
-            if escaped {
-                literal.push(ch);
-                escaped = false;
-                continue;
-            }
-            match ch {
-                '\\' => escaped = true,
-                '"' => return Some(literal),
-                _ => literal.push(ch),
-            }
-        }
-        None
-    }
-
     fn capture_at(query: &str, start: usize, capture: &str) -> bool {
         let Some(rest) = query.get(start..) else {
             return false;
@@ -1115,15 +1140,6 @@ mod tests {
         assert!(query_contains_capture(query, "property"));
         assert!(!query_contains_capture(query, "string"));
         assert!(!query_contains_capture(query, "prop"));
-    }
-
-    #[test]
-    fn extracts_quoted_query_literals() {
-        let query = r#"(("and") @keyword) ("\"" @punctuation.delimiter)"#;
-        let literals = quoted_query_literals(query);
-
-        assert!(literals.contains("and"));
-        assert!(literals.contains("\""));
     }
 
     #[test]

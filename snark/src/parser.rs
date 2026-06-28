@@ -114,6 +114,7 @@ pub struct ParserGrammar {
     precedence_groups: Vec<PrecedenceGroup>,
     public_node_kinds: Vec<PublicNodeKind>,
     public_literal_terminals: Vec<PublicLiteralTerminals>,
+    item_preparation: Option<ItemPreparationFacts>,
     glr_plan: GlrPlan,
 }
 
@@ -144,6 +145,30 @@ impl ParserGrammar {
         parser.add_public_anonymous_terminals_from_productions();
         parser.stage = ParserGenerationStage::ProductionsPrepared;
         Ok(parser)
+    }
+
+    /// Prepare normalized productions for LR item-set generation.
+    ///
+    /// This pass does not build item sets yet. It freezes the graph facts that
+    /// item-set generation must consume: inline expansion roots, reachable
+    /// nonterminals, productive nonterminals, and nullable nonterminals.
+    pub fn prepare_productions_for_items(mut self) -> Result<Self, ParserPrepareError> {
+        if self.stage != ParserGenerationStage::ProductionsPrepared {
+            return Err(ParserPrepareError::new(
+                ParserPrepareErrorKind::WrongStage { stage: self.stage },
+            ));
+        }
+        self.reject_recursive_inline_rules()?;
+        let graph = self.production_graph_facts();
+        self.reject_nonproductive_reachable_nonterminals(&graph)?;
+        self.reject_illegal_nullable_nonterminals(&graph)?;
+        let inline_expansions = self.inline_expansion_facts();
+        self.item_preparation = Some(ItemPreparationFacts {
+            inline_expansions,
+            graph,
+        });
+        self.stage = ParserGenerationStage::Productions;
+        Ok(self)
     }
 
     fn seed(grammar: &ValidatedGrammar, lexical: &LexicalFacts) -> Self {
@@ -306,6 +331,7 @@ impl ParserGrammar {
             precedence_groups,
             public_node_kinds,
             public_literal_terminals: Vec::new(),
+            item_preparation: None,
             glr_plan: GlrPlan {
                 conflicts: conflict_plans,
             },
@@ -415,6 +441,12 @@ impl ParserGrammar {
     /// Public anonymous literal-to-terminal mappings.
     pub fn public_literal_terminals(&self) -> &[PublicLiteralTerminals] {
         &self.public_literal_terminals
+    }
+
+    /// LR item-generation preparation facts, once the grammar reaches
+    /// [`ParserGenerationStage::Productions`].
+    pub fn item_preparation(&self) -> Option<&ItemPreparationFacts> {
+        self.item_preparation.as_ref()
     }
 
     /// GLR conflict/recovery plan facts.
@@ -547,6 +579,195 @@ impl ParserGrammar {
             }
         }
     }
+
+    fn production_graph_facts(&self) -> ProductionGraphFacts {
+        let nullable = self.nullable_nonterminals();
+        let productive = self.productive_nonterminals();
+        let reachable = self.reachable_nonterminals();
+        ProductionGraphFacts {
+            nullable: ids_from_flags(&nullable),
+            productive: ids_from_flags(&productive),
+            reachable: ids_from_flags(&reachable),
+        }
+    }
+
+    fn productive_nonterminals(&self) -> Vec<bool> {
+        let mut productive = vec![false; self.symbols.nonterminals.len()];
+        loop {
+            let mut changed = false;
+            for production in &self.productions {
+                let lhs = production.lhs.get() as usize;
+                if productive[lhs] {
+                    continue;
+                }
+                if production.steps.iter().all(|step| match step.symbol {
+                    ParserSymbol::Nonterminal(nonterminal) => productive
+                        .get(nonterminal.get() as usize)
+                        .copied()
+                        .unwrap_or(false),
+                    ParserSymbol::Terminal(_)
+                    | ParserSymbol::External(_)
+                    | ParserSymbol::Eof
+                    | ParserSymbol::Internal(_) => true,
+                }) {
+                    productive[lhs] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                return productive;
+            }
+        }
+    }
+
+    fn reachable_nonterminals(&self) -> Vec<bool> {
+        let mut reachable = vec![false; self.symbols.nonterminals.len()];
+        let mut stack = vec![self.start];
+        while let Some(nonterminal) = stack.pop() {
+            let index = nonterminal.get() as usize;
+            if reachable[index] {
+                continue;
+            }
+            reachable[index] = true;
+            for production in self
+                .productions
+                .iter()
+                .filter(|production| production.lhs == nonterminal)
+            {
+                for step in &production.steps {
+                    if let ParserSymbol::Nonterminal(child) = step.symbol {
+                        stack.push(child);
+                    }
+                }
+            }
+        }
+        reachable
+    }
+
+    fn reject_nonproductive_reachable_nonterminals(
+        &self,
+        graph: &ProductionGraphFacts,
+    ) -> Result<(), ParserPrepareError> {
+        for nonterminal in &graph.reachable {
+            if !graph.productive.contains(nonterminal) {
+                return Err(ParserPrepareError::new(
+                    ParserPrepareErrorKind::NonproductiveNonterminal {
+                        nonterminal: *nonterminal,
+                    },
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn reject_illegal_nullable_nonterminals(
+        &self,
+        graph: &ProductionGraphFacts,
+    ) -> Result<(), ParserPrepareError> {
+        let mut used = vec![false; self.symbols.nonterminals.len()];
+        for production in &self.productions {
+            for step in &production.steps {
+                if let ParserSymbol::Nonterminal(nonterminal) = step.symbol {
+                    used[nonterminal.get() as usize] = true;
+                }
+            }
+        }
+        for nonterminal in &graph.nullable {
+            if *nonterminal == self.start {
+                continue;
+            }
+            let symbol = &self.symbols.nonterminals[nonterminal.get() as usize];
+            if symbol.origin == NonterminalOrigin::RepeatAuxiliary {
+                continue;
+            }
+            if used[nonterminal.get() as usize] {
+                return Err(ParserPrepareError::new(
+                    ParserPrepareErrorKind::NullableUsedNonterminal {
+                        nonterminal: *nonterminal,
+                    },
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn reject_recursive_inline_rules(&self) -> Result<(), ParserPrepareError> {
+        let mut inline = vec![false; self.symbols.nonterminals.len()];
+        for rule in &self.inline_rules {
+            inline[rule.nonterminal.get() as usize] = true;
+        }
+        let mut visit = vec![InlineVisit::Unseen; self.symbols.nonterminals.len()];
+        for rule in &self.inline_rules {
+            self.visit_inline_rule(rule.nonterminal, &inline, &mut visit)?;
+        }
+        Ok(())
+    }
+
+    fn visit_inline_rule(
+        &self,
+        nonterminal: NonterminalId,
+        inline: &[bool],
+        visit: &mut [InlineVisit],
+    ) -> Result<(), ParserPrepareError> {
+        let index = nonterminal.get() as usize;
+        match visit[index] {
+            InlineVisit::Active => {
+                return Err(ParserPrepareError::new(
+                    ParserPrepareErrorKind::RecursiveInline { nonterminal },
+                ));
+            }
+            InlineVisit::Done => return Ok(()),
+            InlineVisit::Unseen => {}
+        }
+        visit[index] = InlineVisit::Active;
+        for production in self
+            .productions
+            .iter()
+            .filter(|production| production.lhs == nonterminal)
+        {
+            for step in &production.steps {
+                if let ParserSymbol::Nonterminal(child) = step.symbol {
+                    if inline.get(child.get() as usize).copied().unwrap_or(false) {
+                        self.visit_inline_rule(child, inline, visit)?;
+                    }
+                }
+            }
+        }
+        visit[index] = InlineVisit::Done;
+        Ok(())
+    }
+
+    fn inline_expansion_facts(&self) -> Vec<InlineExpansion> {
+        self.inline_rules
+            .iter()
+            .map(|rule| InlineExpansion {
+                rule: rule.rule,
+                nonterminal: rule.nonterminal,
+                productions: self
+                    .productions
+                    .iter()
+                    .filter(|production| production.lhs == rule.nonterminal)
+                    .map(Production::id)
+                    .collect(),
+            })
+            .collect()
+    }
+}
+
+fn ids_from_flags(flags: &[bool]) -> Vec<NonterminalId> {
+    flags
+        .iter()
+        .enumerate()
+        .filter_map(|(index, flag)| flag.then(|| NonterminalId::from_index(index)))
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum InlineVisit {
+    Unseen,
+    Active,
+    Done,
 }
 
 fn repeat_content_steps(production: &Production) -> &[ProductionStep] {
@@ -806,6 +1027,85 @@ impl fmt::Display for ParserNormalizeError {
 }
 
 impl Error for ParserNormalizeError {}
+
+/// Error produced while preparing normalized productions for LR item sets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParserPrepareError {
+    kind: ParserPrepareErrorKind,
+}
+
+impl ParserPrepareError {
+    fn new(kind: ParserPrepareErrorKind) -> Self {
+        Self { kind }
+    }
+
+    /// Error kind.
+    pub const fn kind(&self) -> &ParserPrepareErrorKind {
+        &self.kind
+    }
+}
+
+impl fmt::Display for ParserPrepareError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            ParserPrepareErrorKind::WrongStage { stage } => {
+                write!(
+                    f,
+                    "parser grammar is at stage {stage:?}, not ProductionsPrepared"
+                )
+            }
+            ParserPrepareErrorKind::RecursiveInline { nonterminal } => {
+                write!(
+                    f,
+                    "inline nonterminal {} recursively references inline productions",
+                    nonterminal.get()
+                )
+            }
+            ParserPrepareErrorKind::NonproductiveNonterminal { nonterminal } => {
+                write!(
+                    f,
+                    "reachable nonterminal {} cannot derive terminal output",
+                    nonterminal.get()
+                )
+            }
+            ParserPrepareErrorKind::NullableUsedNonterminal { nonterminal } => {
+                write!(
+                    f,
+                    "used non-start nonterminal {} is nullable before LR generation",
+                    nonterminal.get()
+                )
+            }
+        }
+    }
+}
+
+impl Error for ParserPrepareError {}
+
+/// Parser production-preparation error kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParserPrepareErrorKind {
+    /// The grammar was not in the expected stage.
+    WrongStage {
+        /// Current generation stage.
+        stage: ParserGenerationStage,
+    },
+    /// Inline declarations are recursive.
+    RecursiveInline {
+        /// Inline nonterminal involved in the recursion.
+        nonterminal: NonterminalId,
+    },
+    /// A reachable nonterminal cannot derive any terminal/external output.
+    NonproductiveNonterminal {
+        /// Nonproductive nonterminal.
+        nonterminal: NonterminalId,
+    },
+    /// A used non-start syntax nonterminal is nullable.
+    NullableUsedNonterminal {
+        /// Nullable nonterminal.
+        nonterminal: NonterminalId,
+    },
+}
 
 /// Parser production-normalization error kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1999,6 +2299,75 @@ impl InlineRule {
     }
 }
 
+/// Facts produced once normalized productions are ready for LR item generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemPreparationFacts {
+    inline_expansions: Vec<InlineExpansion>,
+    graph: ProductionGraphFacts,
+}
+
+impl ItemPreparationFacts {
+    /// Inline expansion mappings to be consumed by item-set construction.
+    pub fn inline_expansions(&self) -> &[InlineExpansion] {
+        &self.inline_expansions
+    }
+
+    /// Production graph facts.
+    pub const fn graph(&self) -> &ProductionGraphFacts {
+        &self.graph
+    }
+}
+
+/// Inline rule mapped to the productions that must be expanded at use sites.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineExpansion {
+    rule: RuleId,
+    nonterminal: NonterminalId,
+    productions: Vec<ProductionId>,
+}
+
+impl InlineExpansion {
+    /// Source inline rule.
+    pub const fn rule(&self) -> RuleId {
+        self.rule
+    }
+
+    /// Parser nonterminal marked inline.
+    pub const fn nonterminal(&self) -> NonterminalId {
+        self.nonterminal
+    }
+
+    /// Productions owned by the inline nonterminal.
+    pub fn productions(&self) -> &[ProductionId] {
+        &self.productions
+    }
+}
+
+/// Production graph facts used by FIRST/closure and table construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductionGraphFacts {
+    nullable: Vec<NonterminalId>,
+    productive: Vec<NonterminalId>,
+    reachable: Vec<NonterminalId>,
+}
+
+impl ProductionGraphFacts {
+    /// Nullable nonterminals.
+    pub fn nullable(&self) -> &[NonterminalId] {
+        &self.nullable
+    }
+
+    /// Productive nonterminals.
+    pub fn productive(&self) -> &[NonterminalId] {
+        &self.productive
+    }
+
+    /// Reachable nonterminals from the start symbol.
+    pub fn reachable(&self) -> &[NonterminalId] {
+        &self.reachable
+    }
+}
+
 /// Parser-generation provenance row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Provenance {
@@ -2984,6 +3353,43 @@ mod tests {
     }
 
     #[test]
+    fn anonymous_literal_provenance_keeps_all_contributing_terminals() {
+        let grammar = normalize(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "CHOICE",
+                  "members": [
+                    { "type": "SYMBOL", "name": "left_plus" },
+                    { "type": "SYMBOL", "name": "right_plus" }
+                  ]
+                },
+                "left_plus": { "type": "STRING", "value": "+" },
+                "right_plus": { "type": "STRING", "value": "+" }
+              }
+            }"##,
+        );
+
+        let public_literal = grammar
+            .public_literal_terminals()
+            .iter()
+            .find(|literal| literal.literal() == "+")
+            .unwrap();
+
+        assert_eq!(public_literal.terminals().len(), 2);
+        assert_ne!(public_literal.terminals()[0], public_literal.terminals()[1]);
+        assert_eq!(
+            grammar
+                .public_node_kinds()
+                .iter()
+                .filter(|kind| kind.name() == "+")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn preserves_precedence_dynamic_precedence_and_reserved_contexts() {
         let grammar = normalize(
             r##"{
@@ -3123,5 +3529,98 @@ mod tests {
                 .terminal(),
             word
         );
+    }
+
+    #[test]
+    fn prepares_productions_for_lr_item_generation() {
+        let grammar = normalize(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "SYMBOL", "name": "item" },
+                "item": { "type": "STRING", "value": "x" }
+              },
+              "inline": ["item"]
+            }"##,
+        );
+
+        let prepared = grammar.prepare_productions_for_items().unwrap();
+
+        assert_eq!(prepared.stage(), ParserGenerationStage::Productions);
+        let facts = prepared.item_preparation().unwrap();
+        assert_eq!(facts.inline_expansions().len(), 1);
+        assert_eq!(facts.inline_expansions()[0].productions().len(), 1);
+        assert!(facts.graph().nullable().is_empty());
+        assert_eq!(facts.graph().reachable().len(), 2);
+        assert_eq!(facts.graph().productive().len(), 2);
+    }
+
+    #[test]
+    fn rejects_recursive_inline_before_item_generation() {
+        let grammar = normalize(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "SYMBOL", "name": "left" },
+                "left": { "type": "SYMBOL", "name": "right" },
+                "right": { "type": "SYMBOL", "name": "left" }
+              },
+              "inline": ["left", "right"]
+            }"##,
+        );
+
+        let error = grammar.prepare_productions_for_items().unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            ParserPrepareErrorKind::RecursiveInline { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_nonproductive_reachable_nonterminals_before_item_generation() {
+        let grammar = normalize(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "SYMBOL", "name": "left" },
+                "left": { "type": "SYMBOL", "name": "right" },
+                "right": { "type": "SYMBOL", "name": "left" }
+              }
+            }"##,
+        );
+
+        let error = grammar.prepare_productions_for_items().unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            ParserPrepareErrorKind::NonproductiveNonterminal { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_used_nullable_non_start_syntax_nonterminals_before_item_generation() {
+        let grammar = normalize(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "SYMBOL", "name": "maybe" },
+                "maybe": {
+                  "type": "CHOICE",
+                  "members": [
+                    { "type": "BLANK" },
+                    { "type": "STRING", "value": "x" }
+                  ]
+                }
+              }
+            }"##,
+        );
+
+        let error = grammar.prepare_productions_for_items().unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            ParserPrepareErrorKind::NullableUsedNonterminal { .. }
+        ));
     }
 }
