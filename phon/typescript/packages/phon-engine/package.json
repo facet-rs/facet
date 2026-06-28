@@ -29,9 +29,9 @@
     "@bearcove/phon-schema": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
+    "@types/node": "^25.9.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.9"
   },
   "license": "MIT OR Apache-2.0",
   "description": "phon's TypeScript engine: compact codec, compatibility planning, interpreter, and the new Function() JIT.",

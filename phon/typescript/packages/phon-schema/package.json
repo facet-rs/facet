@@ -29,9 +29,9 @@
     "@noble/hashes": "^2.2.0"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
+    "@types/node": "^25.9.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.9"
   },
   "license": "MIT OR Apache-2.0",
   "description": "phon's wire contract for TypeScript: schema model, schema identity, Value, and the self-describing codec.",
