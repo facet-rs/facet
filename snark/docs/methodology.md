@@ -32,6 +32,8 @@ For each implemented layer, compare Snark output with Tree-sitter output:
 - grammar import: observed fields, rule order, externals order, package assets
 - package import: manifest grammar paths, configured query order, source
   containment, and artifact provenance
+- scannerless parser milestone: tiny Tree-sitter JSON subset to reduced
+  named-node S-expression
 - corpus import: named examples, inputs, expected trees, highlight assertions
 - parser lowering: normalized symbols, precedence, conflicts, tokens, fields
 - scanner runtime: valid-symbol inputs, accepted tokens, serialized state

@@ -12,6 +12,7 @@ pub mod diagnostic;
 pub mod grammar;
 pub mod manifest;
 pub mod node_types;
+pub mod parse;
 pub mod query;
 pub mod runtime_input;
 pub mod scanner;
