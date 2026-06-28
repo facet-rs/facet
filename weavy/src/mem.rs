@@ -1306,6 +1306,8 @@ fn borrowed_run_effect(field_offset: usize) -> EffectContract {
 pub enum CanonicalMemError {
     /// Canonical `return` has no legacy [`MemOp`] equivalent.
     Return,
+    /// Canonical block continuation has no legacy [`MemOp`] equivalent.
+    CallBlockThen,
     /// Canonical zeroing is not represented by legacy [`MemOp`] yet.
     Zero,
     /// Canonical move is not represented by legacy [`MemOp`] yet.
@@ -1322,6 +1324,9 @@ impl core::fmt::Display for CanonicalMemError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             CanonicalMemError::Return => write!(f, "canonical return has no MemOp equivalent"),
+            CanonicalMemError::CallBlockThen => {
+                write!(f, "canonical block continuation has no MemOp equivalent")
+            }
             CanonicalMemError::Zero => write!(f, "canonical zero has no MemOp equivalent"),
             CanonicalMemError::Move => write!(f, "canonical move has no MemOp equivalent"),
             CanonicalMemError::Drop => write!(f, "canonical drop has no MemOp equivalent"),
@@ -1574,6 +1579,9 @@ fn mem_op_from_canonical<BlockId>(
             schema: block,
             offset: base_offset,
         },
+        WeavyOp::Control(ControlOp::CallBlockThen { .. }) => {
+            return Err(CanonicalMemError::CallBlockThen);
+        }
         WeavyOp::Control(ControlOp::Return) => return Err(CanonicalMemError::Return),
         WeavyOp::Memory(MemoryOp::ScalarCopy {
             offset,

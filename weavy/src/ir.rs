@@ -61,6 +61,15 @@ impl<Block, Intrinsic> WeavyOp<Block, Intrinsic> {
 pub enum ControlOp<Block> {
     /// Call a recursive or shared lowered block at `base + base_offset`.
     CallBlock { block: Block, base_offset: usize },
+    /// Call a lowered block, then continue in another lowered block when it returns.
+    CallBlockThen {
+        /// Block to call first.
+        block: Block,
+        /// Block to enter after `block` returns.
+        then: Block,
+        /// Base-relative offset passed to the called block.
+        base_offset: usize,
+    },
     /// Return from the current program.
     Return,
 }
@@ -73,6 +82,15 @@ impl<Block> ControlOp<Block> {
         Ok(match self {
             ControlOp::CallBlock { block, base_offset } => ControlOp::CallBlock {
                 block: map(block)?,
+                base_offset,
+            },
+            ControlOp::CallBlockThen {
+                block,
+                then,
+                base_offset,
+            } => ControlOp::CallBlockThen {
+                block: map(block)?,
+                then: map(then)?,
                 base_offset,
             },
             ControlOp::Return => ControlOp::Return,
@@ -1041,7 +1059,9 @@ fn add_program_stats_with_intrinsic_children<Block, Intrinsic>(
 
 fn control_effect<Block>(op: &ControlOp<Block>) -> EffectContract {
     match op {
-        ControlOp::CallBlock { .. } | ControlOp::Return => EffectContract::new().barrier(),
+        ControlOp::CallBlock { .. } | ControlOp::CallBlockThen { .. } | ControlOp::Return => {
+            EffectContract::new().barrier()
+        }
     }
 }
 
@@ -1247,7 +1267,9 @@ fn add_contract_stats(contract: &EffectContract, stats: &mut EffectStats) {
 fn add_control_stats<Block>(op: &ControlOp<Block>, stats: &mut ProgramStats) {
     stats.control_op_count += 1;
     match op {
-        ControlOp::CallBlock { .. } => stats.block_call_count += 1,
+        ControlOp::CallBlock { .. } | ControlOp::CallBlockThen { .. } => {
+            stats.block_call_count += 1;
+        }
         ControlOp::Return => stats.return_count += 1,
     }
 }
@@ -1481,6 +1503,11 @@ mod tests {
                     block: "child",
                     base_offset: 4,
                 }),
+                WeavyOp::Control(ControlOp::CallBlockThen {
+                    block: "child",
+                    then: "loop",
+                    base_offset: 6,
+                }),
                 WeavyOp::Aggregate(AggregateOp::BeginList {
                     offset: 8,
                     element: Layout { size: 4, align: 4 },
@@ -1507,6 +1534,11 @@ mod tests {
                 WeavyOp::Control(ControlOp::CallBlock {
                     block: BlockRef::new(0),
                     base_offset: 4,
+                }),
+                WeavyOp::Control(ControlOp::CallBlockThen {
+                    block: BlockRef::new(0),
+                    then: BlockRef::new(1),
+                    base_offset: 6,
                 }),
                 WeavyOp::Aggregate(AggregateOp::BeginList {
                     offset: 8,
@@ -1546,6 +1578,11 @@ mod tests {
                 block: "loop",
                 base_offset: 0,
             }),
+            WeavyOp::Control(ControlOp::CallBlockThen {
+                block: "body",
+                then: "after",
+                base_offset: 4,
+            }),
             WeavyOp::Control(ControlOp::Return),
             WeavyOp::Memory(MemoryOp::ScalarRun {
                 segments: vec![
@@ -1579,13 +1616,13 @@ mod tests {
 
         let stats = program_stats(&program);
 
-        assert_eq!(stats.op_count, 8);
-        assert_eq!(stats.control_op_count, 2);
+        assert_eq!(stats.op_count, 9);
+        assert_eq!(stats.control_op_count, 3);
         assert_eq!(stats.memory_op_count, 2);
         assert_eq!(stats.init_op_count, 1);
         assert_eq!(stats.aggregate_op_count, 2);
         assert_eq!(stats.intrinsic_op_count, 1);
-        assert_eq!(stats.block_call_count, 1);
+        assert_eq!(stats.block_call_count, 2);
         assert_eq!(stats.return_count, 1);
         assert_eq!(stats.scalar_run_count, 1);
         assert_eq!(stats.scalar_run_segment_count, 2);

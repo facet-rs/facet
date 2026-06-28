@@ -455,6 +455,7 @@ mod tests {
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
+        parser::{ParserGenerationStage, ParserGrammar},
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
         validated::{ExternalTokenDecl, ValidatedGrammar},
@@ -687,6 +688,32 @@ mod tests {
                     },
                 ),
             ]
+        );
+        let parser_grammar = ParserGrammar::seed_from_validated(&validated, &lexical);
+        assert_eq!(parser_grammar.stage(), ParserGenerationStage::SymbolDomains);
+        assert_eq!(parser_grammar.start().get(), validated.start_rule().get());
+        assert_eq!(parser_grammar.symbols().nonterminals().len(), 66);
+        assert_eq!(parser_grammar.symbols().externals().len(), 3);
+        assert!(
+            parser_grammar
+                .symbols()
+                .terminals()
+                .iter()
+                .any(|terminal| terminal.spelling() == "\\d+")
+        );
+        assert!(
+            parser_grammar
+                .symbols()
+                .nonterminals()
+                .iter()
+                .any(|symbol| symbol.name() == "stylesheet" && symbol.visible())
+        );
+        assert!(
+            parser_grammar
+                .symbols()
+                .nonterminals()
+                .iter()
+                .any(|symbol| symbol.name() == "_block_item" && symbol.inline())
         );
         assert_eq!(
             grammar
