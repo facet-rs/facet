@@ -1,6 +1,5 @@
 [package]
 name = "margin-term"
-publish = false
 version.workspace = true
 edition.workspace = true
 
