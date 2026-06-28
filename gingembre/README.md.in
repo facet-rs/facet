@@ -1,0 +1,6 @@
+`gingembre` is a Jinja-like template engine with rich error diagnostics.
+
+It supports template inheritance, macros, filters, and lazy data resolution,
+and is used by dodeca for all HTML templating.
+
+This crate is part of the Dodeca workspace.
