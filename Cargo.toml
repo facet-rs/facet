@@ -104,6 +104,9 @@ members = [
   "gingembre",
   "gingembre-syntax",
 
+  # Tree-sitter-compatible grammar runtime
+  "snark",
+
   # async incremental query runtime
   "picante",
   "picante-macros",
