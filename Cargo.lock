@@ -3027,6 +3027,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
+name = "gingembre"
+version = "0.0.0"
+dependencies = [
+ "ariadne",
+ "camino",
+ "facet",
+ "facet-value",
+ "futures",
+ "gingembre-syntax",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "gingembre-syntax"
+version = "0.0.0"
+dependencies = [
+ "cstree",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
