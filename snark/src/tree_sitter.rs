@@ -454,9 +454,10 @@ mod tests {
         corpus::{HighlightAssertion, HighlightPoint, SexpNode, SexpValue},
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
+        lexical::{LexicalFacts, ScannerHostOperation},
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
-        validated::ValidatedGrammar,
+        validated::{ExternalTokenDecl, ValidatedGrammar},
     };
 
     use super::*;
@@ -625,6 +626,63 @@ mod tests {
             ]
         );
         assert!(validated.has_visible_node_kind("function_name"));
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(lexical.valid_symbol_mask_width(), 3);
+        assert_eq!(lexical.scanner_abi().valid_symbol_mask_width(), 3);
+        assert!(lexical.scanner_abi().supports_serialized_state());
+        assert_eq!(
+            lexical.scanner_abi().operations(),
+            [
+                ScannerHostOperation::Advance,
+                ScannerHostOperation::MarkEnd,
+                ScannerHostOperation::SetResultSymbol,
+                ScannerHostOperation::IsAtEnd,
+                ScannerHostOperation::Serialize,
+                ScannerHostOperation::Deserialize,
+            ]
+        );
+        assert_eq!(lexical.extra_roots().len(), 3);
+        assert!(lexical.lexical_roots().iter().any(|root| root.immediate));
+        assert!(
+            lexical
+                .terminals()
+                .iter()
+                .any(|terminal| terminal.spelling == "\\d+")
+        );
+        assert_eq!(
+            lexical
+                .external_tokens()
+                .iter()
+                .map(|token| (
+                    token.ordinal().get(),
+                    token.name().unwrap_or("<anonymous>"),
+                    token.declaration().clone()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    0,
+                    "_descendant_operator",
+                    ExternalTokenDecl::Symbol {
+                        name: "_descendant_operator".to_owned(),
+                    },
+                ),
+                (
+                    1,
+                    "_pseudo_class_selector_colon",
+                    ExternalTokenDecl::Symbol {
+                        name: "_pseudo_class_selector_colon".to_owned(),
+                    },
+                ),
+                (
+                    2,
+                    "__error_recovery",
+                    ExternalTokenDecl::Symbol {
+                        name: "__error_recovery".to_owned(),
+                    },
+                ),
+            ]
+        );
         assert_eq!(
             grammar
                 .grammar
@@ -675,6 +733,17 @@ mod tests {
         assert_eq!(highlight_fixture.kind, CorpusKind::Highlight);
         let highlight_assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
         assert_eq!(highlight_assertions, css_highlight_assertions());
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        for assertion in &highlight_assertions {
+            assert!(
+                query_contains_capture(&highlights_query.body.0, &assertion.expected_capture_name),
+                "query missing capture `{}`",
+                assertion.expected_capture_name
+            );
+        }
         let parse_fixture = grammar
             .corpus
             .iter()
@@ -860,6 +929,12 @@ mod tests {
             expected_capture_name: expected_capture_name.to_owned(),
         })
         .collect()
+    }
+
+    fn query_contains_capture(query: &str, capture: &str) -> bool {
+        query
+            .match_indices('@')
+            .any(|(index, _)| query[index + 1..].starts_with(capture))
     }
 
     #[test]

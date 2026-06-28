@@ -12,6 +12,7 @@
 pub mod corpus;
 pub mod diagnostic;
 pub mod grammar;
+pub mod lexical;
 pub mod lower;
 pub mod manifest;
 pub mod milestone;

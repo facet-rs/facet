@@ -5,7 +5,8 @@ use std::{error::Error, fmt};
 use indexmap::IndexMap;
 
 use crate::grammar::{
-    LanguageName, PrecedenceEntryJson, PrecedenceValue, RawGrammarJson, RawRuleJson, RuleName,
+    LanguageName, PrecedenceEntryJson, PrecedenceValue as RawPrecedenceValue, RawGrammarJson,
+    RawRuleJson, RuleName,
 };
 
 type OrderedMap<V> = IndexMap<String, V, std::hash::RandomState>;
@@ -24,11 +25,11 @@ pub struct ValidatedGrammar {
     fields_by_name: OrderedMap<FieldId>,
     aliases: Vec<AliasDecl>,
     alias_by_value: OrderedMap<AliasId>,
-    inline: Vec<SymbolRef>,
-    supertypes: Vec<SymbolRef>,
-    conflicts: Vec<Vec<SymbolRef>>,
+    inline: Vec<RuleId>,
+    supertypes: Vec<RuleId>,
+    conflicts: Vec<Vec<RuleId>>,
     precedence_groups: Vec<Vec<PrecedenceEntry>>,
-    word: Option<SymbolRef>,
+    word: Option<RuleId>,
     extras: Vec<GrammarExprId>,
     reserved_sets: Vec<ReservedSetDecl>,
     reserved_sets_by_name: OrderedMap<ReservedSetId>,
@@ -85,15 +86,8 @@ impl ValidatedGrammar {
         let inline = raw
             .inline
             .iter()
-            .map(|name| builder.resolve_symbol(name))
+            .map(|name| builder.resolve_rule_ref(name, "inline"))
             .collect::<Result<Vec<_>, _>>()?;
-        let inline_rule_ids = inline
-            .iter()
-            .filter_map(|symbol| match symbol {
-                SymbolRef::Rule(id) => Some(*id),
-                SymbolRef::External(_) => None,
-            })
-            .collect::<Vec<_>>();
 
         for rule in &mut rules {
             let raw_rule = raw.rule(rule.name.as_str()).ok_or_else(|| {
@@ -105,7 +99,7 @@ impl ValidatedGrammar {
         }
 
         for rule in &rules {
-            if rule.visible && !inline_rule_ids.contains(&rule.id) {
+            if rule.visible && !inline.contains(&rule.id) {
                 builder.visible_node_kinds.insert(
                     rule.name.as_str().to_owned(),
                     VisibleNodeKind::Rule(rule.id),
@@ -123,7 +117,7 @@ impl ValidatedGrammar {
                     id,
                     ordinal: ExternalTokenOrdinal(id.get()),
                     name: external_name(rule).map(str::to_owned),
-                    expr: builder.lower_rule(rule)?,
+                    declaration: builder.lower_external_declaration(rule)?,
                 })
             })
             .collect::<Result<Vec<_>, GrammarValidationError>>()?;
@@ -135,7 +129,7 @@ impl ValidatedGrammar {
         let supertypes = raw
             .supertypes
             .iter()
-            .map(|name| builder.resolve_symbol(name))
+            .map(|name| builder.resolve_rule_ref(name, "supertypes"))
             .collect::<Result<Vec<_>, _>>()?;
         let conflicts = raw
             .conflicts
@@ -143,7 +137,7 @@ impl ValidatedGrammar {
             .map(|members| {
                 members
                     .iter()
-                    .map(|name| builder.resolve_symbol(name))
+                    .map(|name| builder.resolve_rule_ref(name, "conflicts"))
                     .collect::<Result<Vec<_>, _>>()
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -160,7 +154,7 @@ impl ValidatedGrammar {
         let word = raw
             .word
             .as_ref()
-            .map(|name| builder.resolve_symbol(name))
+            .map(|name| builder.resolve_rule_ref(name, "word"))
             .transpose()?;
         let reserved_sets = raw
             .reserved
@@ -280,6 +274,14 @@ impl ValidatedGrammar {
         &self.fields[id.get() as usize]
     }
 
+    /// Iterate fields in id order.
+    pub fn fields(&self) -> impl Iterator<Item = (FieldId, &FieldName)> {
+        self.fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| (FieldId(index as u32), field))
+    }
+
     /// Number of named aliases discovered in rule expressions.
     pub fn alias_count(&self) -> usize {
         self.aliases.len()
@@ -290,9 +292,19 @@ impl ValidatedGrammar {
         &self.aliases[id.get() as usize]
     }
 
+    /// Iterate aliases in id order.
+    pub fn aliases(&self) -> impl Iterator<Item = &AliasDecl> {
+        self.aliases.iter()
+    }
+
     /// Number of extra rule expressions.
     pub fn extra_count(&self) -> usize {
         self.extras.len()
+    }
+
+    /// Extra expressions.
+    pub fn extras(&self) -> &[GrammarExprId] {
+        &self.extras
     }
 
     /// Number of inline symbol declarations.
@@ -301,7 +313,7 @@ impl ValidatedGrammar {
     }
 
     /// Inline declarations.
-    pub fn inline(&self) -> &[SymbolRef] {
+    pub fn inline(&self) -> &[RuleId] {
         &self.inline
     }
 
@@ -311,7 +323,7 @@ impl ValidatedGrammar {
     }
 
     /// Supertype declarations.
-    pub fn supertypes(&self) -> &[SymbolRef] {
+    pub fn supertypes(&self) -> &[RuleId] {
         &self.supertypes
     }
 
@@ -321,7 +333,7 @@ impl ValidatedGrammar {
     }
 
     /// Conflict sets.
-    pub fn conflicts(&self) -> &[Vec<SymbolRef>] {
+    pub fn conflicts(&self) -> &[Vec<RuleId>] {
         &self.conflicts
     }
 
@@ -346,13 +358,18 @@ impl ValidatedGrammar {
     }
 
     /// Word-token symbol, if one was declared.
-    pub fn word(&self) -> Option<SymbolRef> {
+    pub fn word(&self) -> Option<RuleId> {
         self.word
     }
 
     /// Whether a visible corpus node kind is known to this grammar.
     pub fn has_visible_node_kind(&self, kind: &str) -> bool {
         self.visible_node_kinds.contains_key(kind)
+    }
+
+    /// Source of a visible corpus node kind.
+    pub fn visible_node_kind(&self, kind: &str) -> Option<VisibleNodeKind> {
+        self.visible_node_kinds.get(kind).copied()
     }
 
     /// Iterate visible node kind names derived from visible rules and named aliases.
@@ -386,6 +403,47 @@ impl ValidationBuilder {
                 name: name.to_owned(),
             },
         ))
+    }
+
+    fn resolve_rule_ref(
+        &self,
+        name: &str,
+        context: &'static str,
+    ) -> Result<RuleId, GrammarValidationError> {
+        if let Some(id) = self.rules_by_name.get(name) {
+            return Ok(*id);
+        }
+        if self.external_names.contains_key(name) {
+            return Err(GrammarValidationError::new(
+                GrammarValidationErrorKind::ExternalWhereRuleRequired {
+                    name: name.to_owned(),
+                    context,
+                },
+            ));
+        }
+        Err(GrammarValidationError::new(
+            GrammarValidationErrorKind::UnknownRule {
+                name: name.to_owned(),
+                context,
+            },
+        ))
+    }
+
+    fn lower_external_declaration(
+        &mut self,
+        rule: &RawRuleJson,
+    ) -> Result<ExternalTokenDecl, GrammarValidationError> {
+        match rule {
+            RawRuleJson::Symbol { name } => Ok(ExternalTokenDecl::Symbol { name: name.clone() }),
+            RawRuleJson::String { value } => Ok(ExternalTokenDecl::StringToken {
+                value: value.clone(),
+            }),
+            RawRuleJson::Pattern { value, flags } => Ok(ExternalTokenDecl::PatternToken {
+                value: value.clone(),
+                flags: flags.clone(),
+            }),
+            other => Ok(ExternalTokenDecl::Expression(self.lower_rule(other)?)),
+        }
     }
 
     fn lower_rule(&mut self, rule: &RawRuleJson) -> Result<GrammarExprId, GrammarValidationError> {
@@ -437,17 +495,17 @@ impl ValidationBuilder {
             },
             RawRuleJson::PrecLeft { value, content } => GrammarExpr::Prec {
                 assoc: PrecedenceAssoc::Left,
-                value: value.clone(),
+                value: StaticPrecedenceValue::from_raw(value),
                 content: self.lower_rule(content)?,
             },
             RawRuleJson::PrecRight { value, content } => GrammarExpr::Prec {
                 assoc: PrecedenceAssoc::Right,
-                value: value.clone(),
+                value: StaticPrecedenceValue::from_raw(value),
                 content: self.lower_rule(content)?,
             },
             RawRuleJson::Prec { value, content } => GrammarExpr::Prec {
                 assoc: PrecedenceAssoc::None,
-                value: value.clone(),
+                value: StaticPrecedenceValue::from_raw(value),
                 content: self.lower_rule(content)?,
             },
             RawRuleJson::Token { content } => GrammarExpr::Token(self.lower_rule(content)?),
@@ -493,7 +551,9 @@ impl ValidationBuilder {
                         },
                     ));
                 }
-                Ok(PrecedenceEntry::Symbol(self.resolve_symbol(&symbol.name)?))
+                Ok(PrecedenceEntry::Symbol(
+                    self.resolve_rule_ref(&symbol.name, "precedences")?,
+                ))
             }
         }
     }
@@ -716,7 +776,7 @@ pub struct ExternalTokenFact {
     id: ExternalTokenId,
     ordinal: ExternalTokenOrdinal,
     name: Option<String>,
-    expr: GrammarExprId,
+    declaration: ExternalTokenDecl,
 }
 
 impl ExternalTokenFact {
@@ -735,10 +795,35 @@ impl ExternalTokenFact {
         self.name.as_deref()
     }
 
-    /// Validated expression for the external token declaration.
-    pub const fn expr(&self) -> GrammarExprId {
-        self.expr
+    /// Validated external token declaration.
+    pub const fn declaration(&self) -> &ExternalTokenDecl {
+        &self.declaration
     }
+}
+
+/// Validated external scanner token declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExternalTokenDecl {
+    /// Named scanner token from a `SYMBOL` external entry.
+    Symbol {
+        /// External token name.
+        name: String,
+    },
+    /// Literal external token.
+    StringToken {
+        /// Literal token text.
+        value: String,
+    },
+    /// Regex external token.
+    PatternToken {
+        /// Regex source.
+        value: String,
+        /// Regex flags.
+        flags: Option<String>,
+    },
+    /// Nontrivial external token declaration lowered into the expression arena.
+    Expression(GrammarExprId),
 }
 
 /// Field name.
@@ -818,7 +903,7 @@ pub enum GrammarExpr {
         /// Associativity.
         assoc: PrecedenceAssoc,
         /// Static precedence value.
-        value: PrecedenceValue,
+        value: StaticPrecedenceValue,
         /// Wrapped expression.
         content: GrammarExprId,
     },
@@ -859,6 +944,25 @@ pub enum PrecedenceAssoc {
     Right,
 }
 
+/// Validated static precedence value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum StaticPrecedenceValue {
+    /// Integer precedence.
+    Integer(i32),
+    /// Named precedence.
+    Name(String),
+}
+
+impl StaticPrecedenceValue {
+    fn from_raw(value: &RawPrecedenceValue) -> Self {
+        match value {
+            RawPrecedenceValue::Integer(value) => Self::Integer(*value),
+            RawPrecedenceValue::Name(name) => Self::Name(name.clone()),
+        }
+    }
+}
+
 /// Precedence declaration entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -866,7 +970,7 @@ pub enum PrecedenceEntry {
     /// Named precedence.
     Name(String),
     /// Symbol precedence.
-    Symbol(SymbolRef),
+    Symbol(RuleId),
 }
 
 /// Reserved-word set.
@@ -924,6 +1028,15 @@ impl fmt::Display for GrammarValidationError {
             GrammarValidationErrorKind::UnknownSymbol { name } => {
                 write!(f, "unknown grammar symbol `{name}`")
             }
+            GrammarValidationErrorKind::UnknownRule { name, context } => {
+                write!(f, "unknown grammar rule `{name}` in {context}")
+            }
+            GrammarValidationErrorKind::ExternalWhereRuleRequired { name, context } => {
+                write!(
+                    f,
+                    "external token `{name}` used where {context} requires a rule"
+                )
+            }
             GrammarValidationErrorKind::UnknownReservedContext { name } => {
                 write!(f, "unknown reserved-word context `{name}`")
             }
@@ -949,6 +1062,20 @@ pub enum GrammarValidationErrorKind {
     UnknownSymbol {
         /// Unknown symbol name.
         name: String,
+    },
+    /// A rule-only context referenced a missing rule.
+    UnknownRule {
+        /// Unknown rule name.
+        name: String,
+        /// Validation context.
+        context: &'static str,
+    },
+    /// A rule-only context referenced an external token.
+    ExternalWhereRuleRequired {
+        /// External token name.
+        name: String,
+        /// Validation context.
+        context: &'static str,
     },
     /// A reserved-word wrapper referred to an undeclared reserved set.
     UnknownReservedContext {
@@ -1090,5 +1217,62 @@ mod tests {
 
         assert!(grammar.has_visible_node_kind("source"));
         assert!(!grammar.has_visible_node_kind("helper"));
+    }
+
+    #[test]
+    fn rule_only_contexts_reject_external_tokens() {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(
+            r#"{
+              "name": "bad_inline",
+              "rules": {
+                "source": { "type": "STRING", "value": "x" }
+              },
+              "externals": [{ "type": "SYMBOL", "name": "external_token" }],
+              "inline": ["external_token"]
+            }"#,
+        )
+        .unwrap();
+
+        let error = ValidatedGrammar::from_raw(&raw).unwrap_err();
+
+        assert_eq!(
+            error.kind,
+            GrammarValidationErrorKind::ExternalWhereRuleRequired {
+                name: "external_token".to_owned(),
+                context: "inline",
+            }
+        );
+    }
+
+    #[test]
+    fn external_declarations_are_not_self_referential_expressions() {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(
+            r#"{
+              "name": "externals",
+              "rules": {
+                "source": { "type": "SYMBOL", "name": "external_token" }
+              },
+              "externals": [
+                { "type": "SYMBOL", "name": "external_token" },
+                { "type": "STRING", "value": "@nest" }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        let grammar = ValidatedGrammar::from_raw(&raw).unwrap();
+
+        assert_eq!(
+            grammar.externals()[0].declaration(),
+            &ExternalTokenDecl::Symbol {
+                name: "external_token".to_owned()
+            }
+        );
+        assert_eq!(
+            grammar.externals()[1].declaration(),
+            &ExternalTokenDecl::StringToken {
+                value: "@nest".to_owned()
+            }
+        );
     }
 }
