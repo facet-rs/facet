@@ -80,7 +80,9 @@ id_type!(PrecedenceGroupId, "Static precedence group id.");
 pub enum ParserGenerationStage {
     /// Symbol domains have been seeded from validated grammar and lexical facts.
     SymbolDomains,
-    /// Grammar expressions have been normalized into productions.
+    /// Grammar expressions have been flattened into production-shaped facts.
+    ProductionsPrepared,
+    /// Productions are ready for LR item-set generation.
     Productions,
     /// LR item sets and action/goto tables have been generated.
     Tables,
@@ -111,6 +113,7 @@ pub struct ParserGrammar {
     supertypes: Vec<NonterminalId>,
     precedence_groups: Vec<PrecedenceGroup>,
     public_node_kinds: Vec<PublicNodeKind>,
+    public_literal_terminals: Vec<PublicLiteralTerminals>,
     glr_plan: GlrPlan,
 }
 
@@ -126,17 +129,20 @@ impl ParserGrammar {
 
     /// Normalize validated grammar facts into flattened productions.
     ///
-    /// This is the parser-generator input stage before LR item sets and parse
-    /// tables. It lowers grammar expressions into flat production rows and
-    /// generated auxiliary nonterminals; it does not execute the grammar.
+    /// This lowers grammar expressions into flat production rows and generated
+    /// auxiliary nonterminals. It does not execute the grammar and does not yet
+    /// claim LR item-set readiness; inline expansion and nullable validation
+    /// are separate parser-generation passes.
     pub fn normalize_from_validated(
         grammar: &ValidatedGrammar,
         lexical: &LexicalFacts,
     ) -> Result<Self, ParserNormalizeError> {
         let mut parser = Self::seed(grammar, lexical);
+        parser.validate_materialized_inputs(grammar)?;
         ProductionNormalizer::new(grammar, &mut parser).normalize()?;
+        parser.validate_nullable_repeat_content()?;
         parser.add_public_anonymous_terminals_from_productions();
-        parser.stage = ParserGenerationStage::Productions;
+        parser.stage = ParserGenerationStage::ProductionsPrepared;
         Ok(parser)
     }
 
@@ -299,6 +305,7 @@ impl ParserGrammar {
             supertypes,
             precedence_groups,
             public_node_kinds,
+            public_literal_terminals: Vec::new(),
             glr_plan: GlrPlan {
                 conflicts: conflict_plans,
             },
@@ -405,35 +412,161 @@ impl ParserGrammar {
         &self.public_node_kinds
     }
 
+    /// Public anonymous literal-to-terminal mappings.
+    pub fn public_literal_terminals(&self) -> &[PublicLiteralTerminals] {
+        &self.public_literal_terminals
+    }
+
     /// GLR conflict/recovery plan facts.
     pub const fn glr_plan(&self) -> &GlrPlan {
         &self.glr_plan
     }
 
     fn add_public_anonymous_terminals_from_productions(&mut self) {
-        let mut additions = Vec::new();
+        let mut mappings = Vec::<PublicLiteralTerminals>::new();
         for production in &self.productions {
             for step in &production.steps {
                 if let ParserSymbol::Terminal(terminal_id) = step.symbol {
                     let terminal = &self.symbols.terminals[terminal_id.get() as usize];
                     for name in &terminal.public_names {
-                        if !self.public_node_kinds.iter().any(|kind| kind.name == *name)
-                            && !additions.iter().any(|(existing, _)| existing == name)
-                        {
-                            additions.push((name.clone(), terminal_id));
+                        if let Some(mapping) = mappings.iter_mut().find(|mapping| {
+                            mapping.literal == *name
+                                && matches!(mapping.source, PublicNodeKindSource::AnonymousLiteral)
+                        }) {
+                            if !mapping.terminals.contains(&terminal_id) {
+                                mapping.terminals.push(terminal_id);
+                            }
+                        } else {
+                            mappings.push(PublicLiteralTerminals {
+                                literal: name.clone(),
+                                terminals: vec![terminal_id],
+                                source: PublicNodeKindSource::AnonymousLiteral,
+                            });
                         }
                     }
                 }
             }
         }
-        for (name, terminal_id) in additions {
-            self.public_node_kinds.push(PublicNodeKind {
-                id: PublicNodeKindId::from_index(self.public_node_kinds.len()),
-                name,
-                source: PublicNodeKindSource::AnonymousTerminal(terminal_id),
-            });
+        for mapping in mappings {
+            if !self
+                .public_node_kinds
+                .iter()
+                .any(|kind| kind.name == mapping.literal)
+            {
+                self.public_node_kinds.push(PublicNodeKind {
+                    id: PublicNodeKindId::from_index(self.public_node_kinds.len()),
+                    name: mapping.literal.clone(),
+                    source: mapping.source,
+                });
+            }
+            self.public_literal_terminals.push(mapping);
         }
     }
+
+    fn validate_materialized_inputs(
+        &self,
+        grammar: &ValidatedGrammar,
+    ) -> Result<(), ParserNormalizeError> {
+        let terminal_by_expr = self
+            .symbols
+            .terminals
+            .iter()
+            .map(|terminal| (terminal.source_expr(), terminal.id()))
+            .collect::<HashMap<_, _>>();
+        for expr in grammar.extras() {
+            if extra_root_symbol(grammar, &terminal_by_expr, *expr).is_none() {
+                return Err(ParserNormalizeError::new(
+                    ParserNormalizeErrorKind::UnmaterializedExtraRoot { expr: *expr },
+                ));
+            }
+        }
+        for reserved in grammar.reserved_sets() {
+            for expr in reserved.entries() {
+                if !terminal_by_expr.contains_key(expr) {
+                    return Err(ParserNormalizeError::new(
+                        ParserNormalizeErrorKind::UnmaterializedReservedEntry {
+                            context: reserved.id(),
+                            expr: *expr,
+                        },
+                    ));
+                }
+            }
+        }
+        if let Some(rule) = grammar.word() {
+            let expr = grammar.rule(rule).expr();
+            if !terminal_by_expr.contains_key(&expr) {
+                return Err(ParserNormalizeError::new(
+                    ParserNormalizeErrorKind::UnmaterializedWord { rule, expr },
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_nullable_repeat_content(&self) -> Result<(), ParserNormalizeError> {
+        let nullable = self.nullable_nonterminals();
+        for production in &self.productions {
+            let metadata = &self.production_metadata[production.metadata.get() as usize];
+            let Some(provenance) = metadata.provenance else {
+                continue;
+            };
+            let ProvenanceSource::RepeatAuxiliary { expr, content, .. } =
+                self.provenances[provenance.get() as usize].source
+            else {
+                continue;
+            };
+            let content_steps = repeat_content_steps(production);
+            if content_steps.is_empty() {
+                continue;
+            }
+            if steps_are_nullable(content_steps, &nullable) {
+                return Err(ParserNormalizeError::new(
+                    ParserNormalizeErrorKind::NullableRepeatContent { expr, content },
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn nullable_nonterminals(&self) -> Vec<bool> {
+        let mut nullable = vec![false; self.symbols.nonterminals.len()];
+        loop {
+            let mut changed = false;
+            for production in &self.productions {
+                let lhs = production.lhs.get() as usize;
+                if nullable[lhs] {
+                    continue;
+                }
+                if steps_are_nullable(&production.steps, &nullable) {
+                    nullable[lhs] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                return nullable;
+            }
+        }
+    }
+}
+
+fn repeat_content_steps(production: &Production) -> &[ProductionStep] {
+    match production.steps.split_first() {
+        Some((first, rest)) if first.symbol == ParserSymbol::Nonterminal(production.lhs) => rest,
+        _ => &production.steps,
+    }
+}
+
+fn steps_are_nullable(steps: &[ProductionStep], nullable: &[bool]) -> bool {
+    steps.iter().all(|step| match step.symbol {
+        ParserSymbol::Nonterminal(nonterminal) => nullable
+            .get(nonterminal.get() as usize)
+            .copied()
+            .unwrap_or(false),
+        ParserSymbol::Terminal(_)
+        | ParserSymbol::External(_)
+        | ParserSymbol::Eof
+        | ParserSymbol::Internal(_) => false,
+    })
 }
 
 fn seed_terminal_symbols(
@@ -531,36 +664,31 @@ fn lexical_root_spelling(grammar: &ValidatedGrammar, expr: GrammarExprId) -> Str
 
 fn collect_public_literal_names(grammar: &ValidatedGrammar, expr: GrammarExprId) -> Vec<String> {
     let mut names = Vec::new();
-    collect_public_literal_names_into(grammar, expr, &mut names);
+    if let Some(name) = direct_public_literal_name(grammar, expr) {
+        names.push(name);
+    }
     names.sort();
     names.dedup();
     names
 }
 
-fn collect_public_literal_names_into(
-    grammar: &ValidatedGrammar,
-    expr: GrammarExprId,
-    names: &mut Vec<String>,
-) {
+fn direct_public_literal_name(grammar: &ValidatedGrammar, expr: GrammarExprId) -> Option<String> {
     match grammar.expr(expr) {
-        GrammarExpr::StringToken(value) => names.push(value.clone()),
-        GrammarExpr::Choice(members) | GrammarExpr::Seq(members) => {
-            for member in members {
-                collect_public_literal_names_into(grammar, *member, names);
-            }
-        }
-        GrammarExpr::Repeat(content)
-        | GrammarExpr::Repeat1(content)
-        | GrammarExpr::Field { content, .. }
+        GrammarExpr::StringToken(value) => Some(value.clone()),
+        GrammarExpr::Field { content, .. }
         | GrammarExpr::Token(content)
         | GrammarExpr::ImmediateToken(content)
         | GrammarExpr::Prec { content, .. }
         | GrammarExpr::PrecDynamic { content, .. }
         | GrammarExpr::Alias { content, .. }
-        | GrammarExpr::Reserved { content, .. } => {
-            collect_public_literal_names_into(grammar, *content, names);
-        }
-        GrammarExpr::Blank | GrammarExpr::PatternToken { .. } | GrammarExpr::Symbol(_) => {}
+        | GrammarExpr::Reserved { content, .. } => direct_public_literal_name(grammar, *content),
+        GrammarExpr::Blank
+        | GrammarExpr::PatternToken { .. }
+        | GrammarExpr::Symbol(_)
+        | GrammarExpr::Choice(_)
+        | GrammarExpr::Seq(_)
+        | GrammarExpr::Repeat(_)
+        | GrammarExpr::Repeat1(_) => None,
     }
 }
 
@@ -654,6 +782,25 @@ impl fmt::Display for ParserNormalizeError {
                     content.get()
                 )
             }
+            ParserNormalizeErrorKind::UnmaterializedExtraRoot { expr } => {
+                write!(f, "extra expression {} did not materialize", expr.get())
+            }
+            ParserNormalizeErrorKind::UnmaterializedReservedEntry { context, expr } => {
+                write!(
+                    f,
+                    "reserved context {} entry {} did not materialize",
+                    context.get(),
+                    expr.get()
+                )
+            }
+            ParserNormalizeErrorKind::UnmaterializedWord { rule, expr } => {
+                write!(
+                    f,
+                    "word rule {} expression {} did not materialize",
+                    rule.get(),
+                    expr.get()
+                )
+            }
         }
     }
 }
@@ -680,6 +827,25 @@ pub enum ParserNormalizeErrorKind {
         expr: GrammarExprId,
         /// Repeated content expression id.
         content: GrammarExprId,
+    },
+    /// Extra root could not be represented as a parser symbol.
+    UnmaterializedExtraRoot {
+        /// Extra expression id.
+        expr: GrammarExprId,
+    },
+    /// Reserved entry could not be represented as a terminal.
+    UnmaterializedReservedEntry {
+        /// Reserved context id.
+        context: ReservedSetId,
+        /// Reserved entry expression id.
+        expr: GrammarExprId,
+    },
+    /// Word rule could not be represented as a terminal.
+    UnmaterializedWord {
+        /// Word rule id.
+        rule: RuleId,
+        /// Word rule expression id.
+        expr: GrammarExprId,
     },
 }
 
@@ -809,7 +975,7 @@ impl<'a> ProductionNormalizer<'a> {
                 let mut sequences = self.lower_expr(owner, content)?;
                 for sequence in &mut sequences {
                     sequence.dynamic_precedence =
-                        strongest_dynamic_precedence(sequence.dynamic_precedence, value);
+                        strongest_dynamic_precedence(sequence.dynamic_precedence, Some(value));
                 }
                 Ok(sequences)
             }
@@ -880,6 +1046,7 @@ impl<'a> ProductionNormalizer<'a> {
                 ProvenanceSource::RepeatAuxiliary {
                     owner,
                     expr: repeat_expr,
+                    content,
                 },
             );
         }
@@ -894,6 +1061,7 @@ impl<'a> ProductionNormalizer<'a> {
                     ProvenanceSource::RepeatAuxiliary {
                         owner,
                         expr: repeat_expr,
+                        content,
                     },
                 );
             }
@@ -911,6 +1079,7 @@ impl<'a> ProductionNormalizer<'a> {
                 ProvenanceSource::RepeatAuxiliary {
                     owner,
                     expr: repeat_expr,
+                    content,
                 },
             );
         }
@@ -929,7 +1098,7 @@ impl<'a> ProductionNormalizer<'a> {
         let metadata = ProductionMetadataId::from_index(self.parser.production_metadata.len());
         let provenance = self.push_provenance(provenance_source);
         let (steps, field_map, alias_sequence) = self.materialize_sequence(sequence.clone());
-        let dynamic_precedence = sequence.dynamic_precedence;
+        let dynamic_precedence = sequence.dynamic_precedence.unwrap_or(0);
         let production = Production {
             id: ProductionId::from_index(self.parser.productions.len()),
             lhs,
@@ -1056,7 +1225,7 @@ struct SequenceDraft {
     steps: Vec<StepDraft>,
     static_precedence: Option<StaticPrecedence>,
     associativity: Associativity,
-    dynamic_precedence: i32,
+    dynamic_precedence: Option<i32>,
     source_expr: Option<GrammarExprId>,
 }
 
@@ -1084,7 +1253,7 @@ impl SequenceDraft {
         }
         self.dynamic_precedence =
             strongest_dynamic_precedence(self.dynamic_precedence, other.dynamic_precedence);
-        if other.source_expr.is_some() {
+        if self.source_expr.is_none() {
             self.source_expr = other.source_expr;
         }
     }
@@ -1145,11 +1314,12 @@ fn associativity(assoc: PrecedenceAssoc) -> Associativity {
     }
 }
 
-fn strongest_dynamic_precedence(left: i32, right: i32) -> i32 {
-    if right.abs() >= left.abs() {
-        right
-    } else {
-        left
+fn strongest_dynamic_precedence(left: Option<i32>, right: Option<i32>) -> Option<i32> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
     }
 }
 
@@ -1687,7 +1857,32 @@ pub enum PublicNodeKindSource {
     /// Named alias.
     Alias(AliasId),
     /// Anonymous literal terminal referenced by queries.
-    AnonymousTerminal(TerminalId),
+    AnonymousLiteral,
+}
+
+/// Public anonymous literal spelling and contributing parser terminals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicLiteralTerminals {
+    literal: String,
+    terminals: Vec<TerminalId>,
+    source: PublicNodeKindSource,
+}
+
+impl PublicLiteralTerminals {
+    /// Literal spelling.
+    pub fn literal(&self) -> &str {
+        &self.literal
+    }
+
+    /// Parser terminals that can produce this public literal spelling.
+    pub fn terminals(&self) -> &[TerminalId] {
+        &self.terminals
+    }
+
+    /// Public node-kind source.
+    pub const fn source(&self) -> PublicNodeKindSource {
+        self.source
+    }
 }
 
 /// Parser-owned field declaration.
@@ -1840,6 +2035,8 @@ pub enum ProvenanceSource {
         owner: RuleId,
         /// Repetition expression that introduced the auxiliary.
         expr: GrammarExprId,
+        /// Repeated content expression.
+        content: GrammarExprId,
     },
 }
 
@@ -2688,7 +2885,7 @@ mod tests {
             }"##,
         );
 
-        assert_eq!(grammar.stage(), ParserGenerationStage::Productions);
+        assert_eq!(grammar.stage(), ParserGenerationStage::ProductionsPrepared);
         assert_eq!(grammar.symbols().nonterminals().len(), 3);
         assert_eq!(
             grammar.symbols().nonterminals()[2].origin(),
@@ -2776,9 +2973,14 @@ mod tests {
             ProvenanceSource::GrammarRule { .. }
         ));
         assert!(grammar.public_node_kinds().iter().any(|kind| {
-            kind.name() == "a"
-                && matches!(kind.source(), PublicNodeKindSource::AnonymousTerminal(_))
+            kind.name() == "a" && matches!(kind.source(), PublicNodeKindSource::AnonymousLiteral)
         }));
+        let literal = grammar
+            .public_literal_terminals()
+            .iter()
+            .find(|literal| literal.literal() == "a")
+            .unwrap();
+        assert_eq!(literal.terminals(), &[token.id()]);
     }
 
     #[test]
@@ -2795,10 +2997,10 @@ mod tests {
                       "value": "tight",
                       "content": {
                         "type": "PREC_DYNAMIC",
-                        "value": 3,
+                        "value": -10,
                         "content": {
                           "type": "PREC_DYNAMIC",
-                          "value": 7,
+                          "value": 3,
                           "content": {
                             "type": "RESERVED",
                             "context_name": "default",
@@ -2819,7 +3021,7 @@ mod tests {
             }"##,
         );
 
-        assert_eq!(grammar.stage(), ParserGenerationStage::Productions);
+        assert_eq!(grammar.stage(), ParserGenerationStage::ProductionsPrepared);
         assert_eq!(grammar.productions().len(), 1);
         let metadata = &grammar.production_metadata()[0];
         assert_eq!(
@@ -2827,7 +3029,7 @@ mod tests {
             Some(&StaticPrecedence::Named("tight".to_owned()))
         );
         assert_eq!(metadata.associativity(), Associativity::Left);
-        assert_eq!(metadata.dynamic_precedence(), 7);
+        assert_eq!(metadata.dynamic_precedence(), 3);
         assert_eq!(
             grammar.productions()[0].steps()[0].reserved_context(),
             Some(ReservedContextId::from_index(0))
@@ -2845,6 +3047,38 @@ mod tests {
                 "source_file": {
                   "type": "REPEAT",
                   "content": { "type": "BLANK" }
+                }
+              }
+            }"##,
+        )
+        .unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+
+        let error = ParserGrammar::normalize_from_validated(&validated, &lexical).unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            ParserNormalizeErrorKind::NullableRepeatContent { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_repeat_content_that_is_nullable_through_a_symbol() {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "REPEAT",
+                  "content": { "type": "SYMBOL", "name": "maybe_item" }
+                },
+                "maybe_item": {
+                  "type": "CHOICE",
+                  "members": [
+                    { "type": "BLANK" },
+                    { "type": "STRING", "value": "x" }
+                  ]
                 }
               }
             }"##,

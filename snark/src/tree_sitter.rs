@@ -743,7 +743,7 @@ mod tests {
             ParserGrammar::normalize_from_validated(&validated, &lexical).unwrap();
         assert_eq!(
             normalized_parser_grammar.stage(),
-            ParserGenerationStage::Productions
+            ParserGenerationStage::ProductionsPrepared
         );
         assert!(!normalized_parser_grammar.productions().is_empty());
         assert_eq!(normalized_parser_grammar.symbols().externals().len(), 3);
@@ -778,16 +778,24 @@ mod tests {
                 .iter()
                 .any(|kind| kind.name() == "~")
         );
-        for literal in [
-            "~", ">", "+", "-", "*", "/", "=", "^=", "|=", "~=", "$=", "*=", "#", ",", ".", ":",
-            "::", ";", "{", ")", "(", "}",
-        ] {
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        for literal in quoted_query_literals(&highlights_query.body.0) {
             assert!(
                 normalized_parser_grammar
                     .public_node_kinds()
                     .iter()
                     .any(|kind| kind.name() == literal),
                 "missing query-visible literal {literal}"
+            );
+            assert!(
+                normalized_parser_grammar
+                    .public_literal_terminals()
+                    .iter()
+                    .any(|mapping| mapping.literal() == literal && !mapping.terminals().is_empty()),
+                "missing terminal provenance for query-visible literal {literal}"
             );
         }
         assert_eq!(
@@ -840,10 +848,6 @@ mod tests {
         assert_eq!(highlight_fixture.kind, CorpusKind::Highlight);
         let highlight_assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
         assert_eq!(highlight_assertions, css_highlight_assertions());
-        let highlights_query = grammar
-            .queries
-            .well_known(WellKnownQuery::Highlights)
-            .unwrap();
         for assertion in &highlight_assertions {
             assert!(
                 query_contains_capture(&highlights_query.body.0, &assertion.expected_capture_name),
@@ -1044,6 +1048,47 @@ mod tests {
             .any(|(index, _)| capture_at(query, index + 1, capture))
     }
 
+    fn quoted_query_literals(query: &str) -> BTreeSet<String> {
+        let mut literals = BTreeSet::new();
+        let mut chars = query.char_indices();
+        while let Some((index, ch)) = chars.next() {
+            if ch != '"' {
+                continue;
+            }
+            let previous = query[..index].chars().rev().find(|ch| !ch.is_whitespace());
+            if !matches!(previous, None | Some('(' | '[')) {
+                consume_quoted_query_string(&mut chars);
+                continue;
+            }
+            if let Some(literal) = parse_quoted_query_string(&mut chars) {
+                literals.insert(literal);
+            }
+        }
+        literals
+    }
+
+    fn consume_quoted_query_string(chars: &mut std::str::CharIndices<'_>) {
+        let _ = parse_quoted_query_string(chars);
+    }
+
+    fn parse_quoted_query_string(chars: &mut std::str::CharIndices<'_>) -> Option<String> {
+        let mut literal = String::new();
+        let mut escaped = false;
+        for (_, ch) in chars.by_ref() {
+            if escaped {
+                literal.push(ch);
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => return Some(literal),
+                _ => literal.push(ch),
+            }
+        }
+        None
+    }
+
     fn capture_at(query: &str, start: usize, capture: &str) -> bool {
         let Some(rest) = query.get(start..) else {
             return false;
@@ -1070,6 +1115,15 @@ mod tests {
         assert!(query_contains_capture(query, "property"));
         assert!(!query_contains_capture(query, "string"));
         assert!(!query_contains_capture(query, "prop"));
+    }
+
+    #[test]
+    fn extracts_quoted_query_literals() {
+        let query = r#"(("and") @keyword) ("\"" @punctuation.delimiter)"#;
+        let literals = quoted_query_literals(query);
+
+        assert!(literals.contains("and"));
+        assert!(literals.contains("\""));
     }
 
     #[test]
