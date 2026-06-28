@@ -8,10 +8,13 @@ Tree-sitter behavior before they become stable Snark behavior.
 ## Boundaries
 
 - `grammar` owns raw `grammar.json` DTOs and later validated grammar tables.
+- `lower` owns the Tree-sitter artifact to Weavy lowering boundary.
 - `tree_sitter` owns filesystem package import and provenance.
 - `scanner`, `query`, and `corpus` own imported artifacts for their domains.
 - `runtime_input` owns editor/runtime coordinate types.
+- `milestone` owns non-foundational proof artifacts and smoke parsers.
 - raw import artifacts are not runtime language objects.
+- recursive scannerless milestone behavior is not Snark parser semantics.
 - the pinned fixture lane proves raw import and package-layout contracts; it is
   not a substitute for semantic parse/query/scanner oracles.
 
@@ -33,9 +36,12 @@ For each implemented layer, compare Snark output with Tree-sitter output:
 - package import: manifest grammar paths, configured query order, source
   containment, and artifact provenance
 - scannerless parser milestone: tiny Tree-sitter JSON subset to reduced
-  named-node S-expression
+  named-node S-expression, explicitly quarantined from runtime semantics
 - corpus import: named examples, inputs, expected trees, highlight assertions
-- parser lowering: normalized symbols, precedence, conflicts, tokens, fields
+- parser lowering: normalized symbols, precedence, conflicts, tokens, fields,
+  parser actions, alias sequences, lex modes, and generated table facts
+- Weavy lowering: Snark intrinsic programs, block identities, effect contracts,
+  provenance maps, and reduced execution traces
 - scanner runtime: valid-symbol inputs, accepted tokens, serialized state
 - query runtime: capture names, byte ranges, predicates, injections
 - incremental parsing: changed ranges, error nodes, and final tree equivalence

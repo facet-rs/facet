@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/snark"
-description = "Tree-sitter-compatible grammar package model and parser runtime scaffold."
+description = "Tree-sitter-compatible grammar package model and Weavy lowering scaffold."
 keywords = ["parsing", "tree-sitter", "incremental", "syntax"]
 categories = ["parsing", "text-editors"]
 readme = "README.md"
@@ -25,11 +25,13 @@ default = []
 ci = ["tree-sitter-import"]
 json-import = ["dep:facet-json", "facet/indexmap"]
 tree-sitter-import = ["json-import"]
+weavy-lowering = ["dep:weavy"]
 
 [dependencies]
 facet = { workspace = true, features = ["indexmap"] }
 facet-json = { workspace = true, optional = true }
 indexmap.workspace = true
+weavy = { workspace = true, optional = true }
 
 [lints]
 workspace = true

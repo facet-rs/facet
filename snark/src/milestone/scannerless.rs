@@ -1,4 +1,8 @@
-//! Scannerless parser milestone for a small Tree-sitter grammar subset.
+//! Scannerless parser smoke milestone for a small Tree-sitter grammar subset.
+//!
+//! This module is deliberately not Snark's runtime parser contract. It exists
+//! to exercise a tiny scannerless grammar shape while the production path is
+//! built as Tree-sitter artifact validation followed by Weavy lowering.
 
 use std::fmt;
 
@@ -73,7 +77,7 @@ impl fmt::Display for ParseErrorKind {
     }
 }
 
-/// Scannerless parser for the initial grammar subset.
+/// Scannerless smoke parser for the initial grammar subset.
 #[derive(Debug)]
 pub struct ScannerlessParser<'grammar> {
     grammar: &'grammar RawGrammarJson,
@@ -81,7 +85,7 @@ pub struct ScannerlessParser<'grammar> {
 }
 
 impl<'grammar> ScannerlessParser<'grammar> {
-    /// Build a scannerless parser from raw Tree-sitter grammar JSON.
+    /// Build a scannerless smoke parser from raw Tree-sitter grammar JSON.
     pub fn new(grammar: &'grammar RawGrammarJson) -> Result<Self, ParseError> {
         if !grammar.externals.is_empty() {
             return Err(ParseError {
