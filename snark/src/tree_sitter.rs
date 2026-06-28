@@ -454,7 +454,7 @@ mod tests {
         corpus::{HighlightAssertion, HighlightPoint, SexpNode, SexpValue},
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
-        lexical::{LexicalFacts, ScannerHostOperation},
+        lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
         validated::{ExternalTokenDecl, ValidatedGrammar},
@@ -633,7 +633,9 @@ mod tests {
         assert_eq!(
             lexical.scanner_abi().operations(),
             [
-                ScannerHostOperation::Advance,
+                ScannerHostOperation::ReadLookahead,
+                ScannerHostOperation::Advance { skip: false },
+                ScannerHostOperation::Advance { skip: true },
                 ScannerHostOperation::MarkEnd,
                 ScannerHostOperation::SetResultSymbol,
                 ScannerHostOperation::IsAtEnd,
@@ -642,7 +644,10 @@ mod tests {
             ]
         );
         assert_eq!(lexical.extra_roots().len(), 3);
-        assert!(lexical.lexical_roots().iter().any(|root| root.immediate));
+        assert!(lexical.lexical_roots().iter().any(|root| {
+            root.kind == LexicalRootKind::ImmediateToken
+                && root.leading_extras == LeadingExtrasPolicy::Forbidden
+        }));
         assert!(
             lexical
                 .terminals()
@@ -934,7 +939,35 @@ mod tests {
     fn query_contains_capture(query: &str, capture: &str) -> bool {
         query
             .match_indices('@')
-            .any(|(index, _)| query[index + 1..].starts_with(capture))
+            .any(|(index, _)| capture_at(query, index + 1, capture))
+    }
+
+    fn capture_at(query: &str, start: usize, capture: &str) -> bool {
+        let Some(rest) = query.get(start..) else {
+            return false;
+        };
+        if !rest.starts_with(capture) {
+            return false;
+        }
+        let end = start + capture.len();
+        query
+            .get(end..)
+            .and_then(|tail| tail.chars().next())
+            .is_none_or(|next| !is_capture_name_char(next))
+    }
+
+    fn is_capture_name_char(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '?')
+    }
+
+    #[test]
+    fn query_capture_matching_requires_name_boundary() {
+        let query = "((string) @string.special)\n((property_name) @property)";
+
+        assert!(query_contains_capture(query, "string.special"));
+        assert!(query_contains_capture(query, "property"));
+        assert!(!query_contains_capture(query, "string"));
+        assert!(!query_contains_capture(query, "prop"));
     }
 
     #[test]

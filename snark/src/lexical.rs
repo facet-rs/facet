@@ -31,12 +31,16 @@ impl LexicalFacts {
                 GrammarExpr::Token(content) => lexical_roots.push(LexicalRoot {
                     id,
                     content: *content,
-                    immediate: false,
+                    kind: LexicalRootKind::Token,
+                    leading_extras: LeadingExtrasPolicy::Allowed,
+                    internal_extras: InternalExtrasPolicy::Forbidden,
                 }),
                 GrammarExpr::ImmediateToken(content) => lexical_roots.push(LexicalRoot {
                     id,
                     content: *content,
-                    immediate: true,
+                    kind: LexicalRootKind::ImmediateToken,
+                    leading_extras: LeadingExtrasPolicy::Forbidden,
+                    internal_extras: InternalExtrasPolicy::Forbidden,
                 }),
                 GrammarExpr::StringToken(value) => terminals.push(TerminalFact {
                     expr: id,
@@ -140,8 +144,40 @@ pub struct LexicalRoot {
     pub id: GrammarExprId,
     /// Wrapped expression id.
     pub content: GrammarExprId,
-    /// Whether this came from `token.immediate`.
-    pub immediate: bool,
+    /// Token wrapper kind.
+    pub kind: LexicalRootKind,
+    /// Whether normal extras may be consumed before this root.
+    pub leading_extras: LeadingExtrasPolicy,
+    /// Whether normal extras may be consumed while evaluating this root.
+    pub internal_extras: InternalExtrasPolicy,
+}
+
+/// Lexical wrapper kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LexicalRootKind {
+    /// `token(...)`.
+    Token,
+    /// `token.immediate(...)`.
+    ImmediateToken,
+}
+
+/// Leading-extra policy for a lexical root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LeadingExtrasPolicy {
+    /// Normal parsing may skip extras before this token.
+    Allowed,
+    /// The token must start at the current cursor.
+    Forbidden,
+}
+
+/// Internal-extra policy for a lexical root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum InternalExtrasPolicy {
+    /// Extras are not consumed while evaluating token content.
+    Forbidden,
 }
 
 /// Literal or regex terminal expression.
@@ -178,7 +214,9 @@ impl ScannerHostAbi {
         Self {
             valid_symbol_mask_width,
             operations: vec![
-                ScannerHostOperation::Advance,
+                ScannerHostOperation::ReadLookahead,
+                ScannerHostOperation::Advance { skip: false },
+                ScannerHostOperation::Advance { skip: true },
                 ScannerHostOperation::MarkEnd,
                 ScannerHostOperation::SetResultSymbol,
                 ScannerHostOperation::IsAtEnd,
@@ -209,8 +247,13 @@ impl ScannerHostAbi {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ScannerHostOperation {
+    /// Read the current lookahead codepoint.
+    ReadLookahead,
     /// Advance the input cursor.
-    Advance,
+    Advance {
+        /// Whether this advance skips input outside the accepted token extent.
+        skip: bool,
+    },
     /// Mark the end of the accepted token.
     MarkEnd,
     /// Set the accepted external token symbol.

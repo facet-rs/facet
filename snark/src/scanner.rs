@@ -40,7 +40,10 @@ impl ExternalTokenName {
     }
 }
 
-/// External token declaration preserving Tree-sitter scanner ordinal.
+/// Imported raw external token declaration preserving Tree-sitter scanner ordinal.
+///
+/// This is package-provenance data. Runtime scanner semantics are derived from
+/// validated grammar and lexical facts, not from this raw DTO.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct ExternalTokenDecl {
     ordinal: ExternalTokenOrdinal,
@@ -67,7 +70,7 @@ impl ExternalTokenDecl {
         self.ordinal
     }
 
-    /// Full raw external rule.
+    /// Full raw external rule for import/provenance diagnostics.
     pub const fn rule(&self) -> &RawRuleJson {
         &self.rule
     }

@@ -442,7 +442,11 @@ impl ValidationBuilder {
                 value: value.clone(),
                 flags: flags.clone(),
             }),
-            other => Ok(ExternalTokenDecl::Expression(self.lower_rule(other)?)),
+            other => Err(GrammarValidationError::new(
+                GrammarValidationErrorKind::UnsupportedExternalDeclaration {
+                    kind: raw_rule_kind(other),
+                },
+            )),
         }
     }
 
@@ -822,8 +826,6 @@ pub enum ExternalTokenDecl {
         /// Regex flags.
         flags: Option<String>,
     },
-    /// Nontrivial external token declaration lowered into the expression arena.
-    Expression(GrammarExprId),
 }
 
 /// Field name.
@@ -1043,6 +1045,9 @@ impl fmt::Display for GrammarValidationError {
             GrammarValidationErrorKind::InvalidPrecedenceSymbolKind { kind } => {
                 write!(f, "expected SYMBOL precedence entry, got `{kind}`")
             }
+            GrammarValidationErrorKind::UnsupportedExternalDeclaration { kind } => {
+                write!(f, "unsupported external token declaration `{kind}`")
+            }
             GrammarValidationErrorKind::IdOverflow { domain, index } => {
                 write!(f, "{domain} id overflow at index {index}")
             }
@@ -1087,6 +1092,11 @@ pub enum GrammarValidationErrorKind {
         /// Raw kind string.
         kind: String,
     },
+    /// An external token declaration is outside Snark's validated scanner ABI slice.
+    UnsupportedExternalDeclaration {
+        /// Raw rule kind.
+        kind: &'static str,
+    },
     /// A dense id could not fit in Snark's id width.
     IdOverflow {
         /// Id domain name.
@@ -1104,6 +1114,28 @@ fn external_name(rule: &RawRuleJson) -> Option<&str> {
     match rule {
         RawRuleJson::Symbol { name } => Some(name),
         _ => None,
+    }
+}
+
+fn raw_rule_kind(rule: &RawRuleJson) -> &'static str {
+    match rule {
+        RawRuleJson::Alias { .. } => "ALIAS",
+        RawRuleJson::Blank => "BLANK",
+        RawRuleJson::Choice { .. } => "CHOICE",
+        RawRuleJson::Field { .. } => "FIELD",
+        RawRuleJson::ImmediateToken { .. } => "IMMEDIATE_TOKEN",
+        RawRuleJson::Pattern { .. } => "PATTERN",
+        RawRuleJson::Prec { .. } => "PREC",
+        RawRuleJson::PrecDynamic { .. } => "PREC_DYNAMIC",
+        RawRuleJson::PrecLeft { .. } => "PREC_LEFT",
+        RawRuleJson::PrecRight { .. } => "PREC_RIGHT",
+        RawRuleJson::Repeat { .. } => "REPEAT",
+        RawRuleJson::Repeat1 { .. } => "REPEAT1",
+        RawRuleJson::Reserved { .. } => "RESERVED",
+        RawRuleJson::Seq { .. } => "SEQ",
+        RawRuleJson::String { .. } => "STRING",
+        RawRuleJson::Symbol { .. } => "SYMBOL",
+        RawRuleJson::Token { .. } => "TOKEN",
     }
 }
 
@@ -1273,6 +1305,32 @@ mod tests {
             &ExternalTokenDecl::StringToken {
                 value: "@nest".to_owned()
             }
+        );
+    }
+
+    #[test]
+    fn complex_external_declarations_are_rejected_before_expression_lowering() {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(
+            r#"{
+              "name": "externals",
+              "rules": {
+                "source": { "type": "STRING", "value": "x" }
+              },
+              "externals": [
+                {
+                  "type": "TOKEN",
+                  "content": { "type": "SYMBOL", "name": "external_token" }
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        let error = ValidatedGrammar::from_raw(&raw).unwrap_err();
+
+        assert_eq!(
+            error.kind,
+            GrammarValidationErrorKind::UnsupportedExternalDeclaration { kind: "TOKEN" }
         );
     }
 }
