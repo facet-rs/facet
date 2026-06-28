@@ -22,3 +22,4 @@ pub mod scanner;
 pub mod source;
 #[cfg(feature = "tree-sitter-import")]
 pub mod tree_sitter;
+pub mod validated;

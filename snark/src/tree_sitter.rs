@@ -448,14 +448,15 @@ fn rel_under(
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{collections::BTreeSet, fs};
 
     use crate::{
-        corpus::SexpValue,
+        corpus::{HighlightAssertion, HighlightPoint, SexpNode, SexpValue},
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
+        validated::ValidatedGrammar,
     };
 
     use super::*;
@@ -596,6 +597,34 @@ mod tests {
         let grammar = package.first_grammar();
 
         assert_eq!(package.language_name(), "css");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        assert_eq!(validated.language_name().as_str(), "css");
+        assert_eq!(validated.rule_count(), 66);
+        assert_eq!(
+            validated.rule(validated.start_rule()).name().as_str(),
+            "stylesheet"
+        );
+        assert_eq!(validated.external_count(), 3);
+        assert_eq!(validated.external_valid_symbol_mask_width(), 3);
+        assert_eq!(validated.extra_count(), 3);
+        assert_eq!(validated.inline_count(), 2);
+        assert_eq!(validated.field_count(), 0);
+        assert_eq!(validated.conflict_count(), 0);
+        assert_eq!(validated.precedence_group_count(), 0);
+        assert_eq!(validated.supertype_count(), 0);
+        assert_eq!(
+            validated
+                .externals()
+                .iter()
+                .map(|external| external.name().unwrap_or("<anonymous>"))
+                .collect::<Vec<_>>(),
+            [
+                "_descendant_operator",
+                "_pseudo_class_selector_colon",
+                "__error_recovery",
+            ]
+        );
+        assert!(validated.has_visible_node_kind("function_name"));
         assert_eq!(
             grammar
                 .grammar
@@ -645,22 +674,66 @@ mod tests {
             .unwrap();
         assert_eq!(highlight_fixture.kind, CorpusKind::Highlight);
         let highlight_assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
-        assert!(highlight_assertions.len() > 20);
-        assert!(
-            highlight_assertions
-                .iter()
-                .any(|assertion| assertion.expected_capture_name == "attribute")
+        assert_eq!(highlight_assertions.len(), 37);
+        assert_eq!(
+            &highlight_assertions[..7],
+            [
+                HighlightAssertion {
+                    position: HighlightPoint { row: 0, column: 0 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "punctuation.delimiter".to_owned(),
+                },
+                HighlightAssertion {
+                    position: HighlightPoint { row: 0, column: 1 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "attribute".to_owned(),
+                },
+                HighlightAssertion {
+                    position: HighlightPoint { row: 3, column: 2 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "property".to_owned(),
+                },
+                HighlightAssertion {
+                    position: HighlightPoint { row: 3, column: 12 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "punctuation.delimiter".to_owned(),
+                },
+                HighlightAssertion {
+                    position: HighlightPoint { row: 3, column: 13 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "string.special".to_owned(),
+                },
+                HighlightAssertion {
+                    position: HighlightPoint { row: 7, column: 15 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "function".to_owned(),
+                },
+                HighlightAssertion {
+                    position: HighlightPoint { row: 7, column: 20 },
+                    length: 1,
+                    negative: false,
+                    expected_capture_name: "punctuation.delimiter".to_owned(),
+                },
+            ]
         );
-        assert!(
-            highlight_assertions
-                .iter()
-                .any(|assertion| assertion.expected_capture_name == "function")
-        );
-        assert!(
-            highlight_assertions
-                .iter()
-                .any(|assertion| assertion.expected_capture_name == "punctuation.delimiter")
-        );
+        assert!(highlight_assertions.contains(&HighlightAssertion {
+            position: HighlightPoint { row: 57, column: 0 },
+            length: 1,
+            negative: false,
+            expected_capture_name: "keyword".to_owned(),
+        }));
+        assert!(highlight_assertions.contains(&HighlightAssertion {
+            position: HighlightPoint { row: 64, column: 3 },
+            length: 1,
+            negative: false,
+            expected_capture_name: "property".to_owned(),
+        }));
         let parse_fixture = grammar
             .corpus
             .iter()
@@ -712,6 +785,38 @@ mod tests {
             .map(|fixture| fixture.parse_cases().unwrap().len())
             .sum::<usize>();
         assert_eq!(parse_case_count, 40);
+        let mut expected_node_kinds = BTreeSet::new();
+        for fixture in grammar
+            .corpus
+            .iter()
+            .filter(|fixture| fixture.kind == CorpusKind::Parse)
+        {
+            for case in fixture.parse_cases().unwrap() {
+                collect_node_kinds(&case.expected, &mut expected_node_kinds);
+            }
+        }
+        for kind in [
+            "import_statement",
+            "namespace_statement",
+            "keyframes_statement",
+            "media_statement",
+            "supports_statement",
+            "scope_statement",
+            "postcss_statement",
+            "pseudo_class_selector",
+            "pseudo_element_selector",
+            "descendant_selector",
+            "escape_sequence",
+        ] {
+            assert!(expected_node_kinds.contains(kind), "missing `{kind}`");
+        }
+        for kind in &expected_node_kinds {
+            assert!(
+                matches!(kind.as_str(), "ERROR" | "MISSING")
+                    || validated.has_visible_node_kind(kind),
+                "expected corpus node kind `{kind}` to be a visible grammar node"
+            );
+        }
 
         let mut source_ids = Vec::new();
         if let Some(file) = &package.manifest {
@@ -755,6 +860,15 @@ mod tests {
                 ("test/highlight/test_css.css".to_string(), 9),
             ]
         );
+    }
+
+    fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
+        out.insert(node.kind.clone());
+        for child in &node.children {
+            if let SexpValue::Node(child) = &child.value {
+                collect_node_kinds(child, out);
+            }
+        }
     }
 
     #[test]

@@ -1,11 +1,14 @@
 # tree-sitter-css Reduced Fixture
 
-- Upstream repository: `/Users/amos/oss/tree-sitter-css`
+- Upstream repository: `https://github.com/tree-sitter/tree-sitter-css`
+- Local source checkout: `/Users/amos/oss/tree-sitter-css`
 - Upstream commit: `dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f`
 - Upstream package version: `0.25.0`
 - Upstream generator dependency: `tree-sitter-cli ^0.25.10`
 - Upstream license: MIT, preserved in `LICENSE`
 - Purpose: pinned Tree-sitter package import fixture for Snark's raw package boundary.
+- Refresh recipe: copy the included file list from the pinned upstream checkout,
+  then remove generated implementation files such as `src/parser.c`.
 
 Included files:
 

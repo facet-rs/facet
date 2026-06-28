@@ -488,7 +488,7 @@ fn parse_css_highlight_assertions(
         }
     }
 
-    assertions.sort_unstable_by_key(|assertion| assertion.position);
+    assertions.sort_by_key(|assertion| assertion.position);
     Ok(assertions)
 }
 
