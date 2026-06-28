@@ -160,6 +160,8 @@ impl RawGrammarJson {
         facet_json::from_str(input).map_err(|source| ImportError::Json {
             package_root: None,
             path: None,
+            source_id: None,
+            package_path: None,
             document: JsonDocumentKind::Grammar,
             phase: "decode raw grammar JSON",
             source,
@@ -173,10 +175,14 @@ impl RawGrammarJson {
         source_file: SourceFile<String>,
     ) -> Result<SourceFile<Self>, ImportError> {
         let path = root.join(&source_file.path);
+        let source_id = source_file.id;
+        let package_path = source_file.path.clone();
         let grammar =
             facet_json::from_str(&source_file.body).map_err(|source| ImportError::Json {
                 package_root: Some(root.as_path().to_owned()),
                 path: Some(path),
+                source_id: Some(source_id),
+                package_path: Some(package_path),
                 document: JsonDocumentKind::Grammar,
                 phase: "decode raw grammar JSON",
                 source,

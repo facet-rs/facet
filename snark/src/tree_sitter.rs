@@ -11,13 +11,15 @@ use crate::{
     corpus::{CorpusFixture, CorpusKind, CorpusSource},
     diagnostic::ImportError,
     grammar::RawGrammarJson,
+    manifest::TreeSitterConfigJson,
+    node_types::NodeTypesJson,
     query::{QueryBundle, QuerySource},
     scanner::{
         ExternalTokenDecl, ExternalTokenOrdinal, ScannerSource, TreeSitterScanner,
         TreeSitterScannerKind,
     },
     source::{
-        PackageRelativePath, PackageRoot, SourceFile, SourceIdAllocator, TreeSitterConfigJson,
+        PackageRelativePath, PackageRoot, SourceFile, SourceIdAllocator,
         read_optional_source_string, read_source_string,
     },
 };
@@ -25,10 +27,6 @@ use crate::{
 /// Raw generated `src/parser.c` source.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct ParserC(pub String);
-
-/// Raw generated `src/node-types.json` source.
-#[derive(Debug, Clone, Facet, PartialEq, Eq)]
-pub struct NodeTypesJson(pub String);
 
 /// Imported Tree-sitter package artifacts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,24 +72,24 @@ impl TreeSitterPackageImporter {
 
     /// Import package artifacts.
     pub fn import(self) -> Result<ImportedPackage, ImportError> {
+        let root = PackageRoot::from_existing_dir(self.root.as_path())?;
         let mut ids = SourceIdAllocator::new();
-        let manifest = read_optional_typed(
-            &self.root,
-            "tree-sitter.json",
-            &mut ids,
-            TreeSitterConfigJson,
-        )?;
-        let grammar_source = read_source_string(&self.root, &rel("src/grammar.json")?, &mut ids)?;
-        let grammar = RawGrammarJson::from_source_file(&self.root, grammar_source)?;
-        let parser_c = read_optional_typed(&self.root, "src/parser.c", &mut ids, ParserC)?;
+        let manifest = read_optional_source_string(&root, &rel("tree-sitter.json")?, &mut ids)?
+            .map(|source| TreeSitterConfigJson::from_source_file(&root, source))
+            .transpose()?;
+        let grammar_source = read_source_string(&root, &rel("src/grammar.json")?, &mut ids)?;
+        let grammar = RawGrammarJson::from_source_file(&root, grammar_source)?;
+        let parser_c = read_optional_typed(&root, "src/parser.c", &mut ids, ParserC)?;
         let node_types_json =
-            read_optional_typed(&self.root, "src/node-types.json", &mut ids, NodeTypesJson)?;
-        let scanners = import_scanners(&self.root, &grammar.body, &mut ids)?;
-        let queries = import_queries(&self.root, &mut ids)?;
-        let corpus = import_corpus(&self.root, &mut ids)?;
+            read_optional_source_string(&root, &rel("src/node-types.json")?, &mut ids)?
+                .map(|source| NodeTypesJson::from_source_file(&root, source))
+                .transpose()?;
+        let scanners = import_scanners(&root, &grammar.body, &mut ids)?;
+        let queries = import_queries(&root, &mut ids)?;
+        let corpus = import_corpus(&root, &mut ids)?;
 
         Ok(ImportedPackage {
-            root: self.root,
+            root,
             manifest,
             grammar,
             parser_c,
@@ -207,6 +205,22 @@ fn collect_source_files<T>(
 where
     T: FnMut(SourceFile<String>),
 {
+    let mut relative_paths = Vec::new();
+    collect_relative_file_paths(root, dir, &mut relative_paths)?;
+    relative_paths.sort();
+
+    for relative in relative_paths {
+        let source = read_source_string(root, &relative, ids)?;
+        push(source);
+    }
+    Ok(())
+}
+
+fn collect_relative_file_paths(
+    root: &PackageRoot,
+    dir: &Path,
+    paths: &mut Vec<PackageRelativePath>,
+) -> Result<(), ImportError> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -219,20 +233,29 @@ where
         }
     };
 
+    let mut entries =
+        entries
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|source| ImportError::ReadDir {
+                package_root: root.as_path().to_owned(),
+                path: dir.to_owned(),
+                source,
+            })?;
+    entries.sort_by_key(|entry| entry.path());
+
     for entry in entries {
-        let entry = entry.map_err(|source| ImportError::ReadDir {
-            package_root: root.as_path().to_owned(),
-            path: dir.to_owned(),
-            source,
-        })?;
         let path = entry.path();
         if path.is_dir() {
-            collect_source_files(root, &path, ids, push)?;
+            collect_relative_file_paths(root, &path, paths)?;
         } else if path.is_file() {
-            let relative = path.strip_prefix(root.as_path()).unwrap_or(&path);
+            let relative =
+                path.strip_prefix(root.as_path())
+                    .map_err(|_| ImportError::PathOutsidePackage {
+                        package_root: root.as_path().to_owned(),
+                        path: path.clone(),
+                    })?;
             let relative = PackageRelativePath::new(relative)?;
-            let source = read_source_string(root, &relative, ids)?;
-            push(source);
+            paths.push(relative);
         }
     }
     Ok(())
@@ -247,12 +270,18 @@ mod tests {
     use std::fs;
 
     use crate::{
+        diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawRuleJson},
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
     };
 
     use super::*;
+
+    const CSS_FIXTURE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/packages/tree-sitter-css-reduced"
+    );
 
     const MINI_GRAMMAR: &str = r#"{
       "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
@@ -357,14 +386,118 @@ mod tests {
     }
 
     #[test]
-    fn imports_tree_sitter_package_artifacts() {
+    fn imports_pinned_tree_sitter_css_fixture() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+
+        assert_eq!(package.language_name(), "css");
+        assert_eq!(
+            package
+                .grammar
+                .body
+                .start_rule()
+                .map(|(name, _)| name.as_str().to_owned()),
+            Some("stylesheet".to_string())
+        );
+        assert_eq!(package.grammar.body.rules.len(), 66);
+        assert_eq!(package.grammar.body.externals.len(), 3);
+        assert!(package.manifest.is_some());
+        assert!(package.parser_c.is_some());
+        assert!(package.node_types_json.is_some());
+        let manifest = &package.manifest.as_ref().unwrap().body.config;
+        assert_eq!(manifest.grammars[0].name, "css");
+        assert_eq!(manifest.grammars[0].scope, "source.css");
+        assert_eq!(
+            manifest.grammars[0].highlights.as_ref().unwrap().as_slice(),
+            ["queries/highlights.scm"]
+        );
+        let node_types = &package.node_types_json.as_ref().unwrap().body.node_types;
+        assert!(
+            node_types
+                .iter()
+                .any(|node| node.kind == "stylesheet" && node.root)
+        );
+        assert_eq!(package.scanners.len(), 1);
+        assert_eq!(package.scanners[0].kind, TreeSitterScannerKind::C);
+        assert_eq!(package.scanners[0].externals.len(), 3);
+        assert!(
+            package
+                .queries
+                .well_known(WellKnownQuery::Highlights)
+                .is_some()
+        );
+        assert!(
+            package.corpus.iter().any(|fixture| fixture
+                .source
+                .path
+                .as_str()
+                .starts_with("test/highlight/"))
+        );
+
+        let mut source_ids = Vec::new();
+        if let Some(file) = &package.manifest {
+            source_ids.push((file.path.as_str().to_owned(), file.id.get()));
+        }
+        source_ids.push((
+            package.grammar.path.as_str().to_owned(),
+            package.grammar.id.get(),
+        ));
+        if let Some(file) = &package.parser_c {
+            source_ids.push((file.path.as_str().to_owned(), file.id.get()));
+        }
+        if let Some(file) = &package.node_types_json {
+            source_ids.push((file.path.as_str().to_owned(), file.id.get()));
+        }
+        for scanner in &package.scanners {
+            source_ids.push((
+                scanner.source.path.as_str().to_owned(),
+                scanner.source.id.get(),
+            ));
+        }
+        for file in package.queries.iter() {
+            source_ids.push((file.path.as_str().to_owned(), file.id.get()));
+        }
+        for fixture in &package.corpus {
+            source_ids.push((
+                fixture.source.path.as_str().to_owned(),
+                fixture.source.id.get(),
+            ));
+        }
+
+        assert_eq!(
+            source_ids,
+            [
+                ("tree-sitter.json".to_string(), 0),
+                ("src/grammar.json".to_string(), 1),
+                ("src/parser.c".to_string(), 2),
+                ("src/node-types.json".to_string(), 3),
+                ("src/scanner.c".to_string(), 4),
+                ("queries/highlights.scm".to_string(), 5),
+                ("test/highlight/test_css.css".to_string(), 6),
+            ]
+        );
+    }
+
+    #[test]
+    fn imports_synthetic_package_with_literal_external() {
         let root = test_package_root("snark-mini-css");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("src")).unwrap();
         fs::create_dir_all(root.join("queries")).unwrap();
         fs::create_dir_all(root.join("test").join("corpus")).unwrap();
         fs::create_dir_all(root.join("test").join("highlight")).unwrap();
-        fs::write(root.join("tree-sitter.json"), r#"{"grammars":[]}"#).unwrap();
+        fs::write(
+            root.join("tree-sitter.json"),
+            r#"{
+              "grammars": [],
+              "metadata": {
+                "version": "0.0.0",
+                "links": { "repository": "https://example.com/snark-mini-css" }
+              }
+            }"#,
+        )
+        .unwrap();
         fs::write(root.join("src").join("grammar.json"), MINI_GRAMMAR).unwrap();
         fs::write(root.join("src").join("parser.c"), "/* parser */").unwrap();
         fs::write(
@@ -428,7 +561,7 @@ mod tests {
             package
                 .node_types_json
                 .as_ref()
-                .map(|file| file.body.0.as_str()),
+                .map(|file| file.body.raw.as_str()),
             Some("[]")
         );
         assert!(
@@ -442,6 +575,31 @@ mod tests {
                 .corpus
                 .iter()
                 .any(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn malformed_grammar_json_reports_source_diagnostic() {
+        let root = test_package_root("snark-bad-json");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("grammar.json"), r#"{"name": "bad""#).unwrap();
+
+        let error = TreeSitterPackageImporter::new(&root).import().unwrap_err();
+        let diagnostic = error.diagnostic();
+
+        assert_eq!(diagnostic.code, DiagnosticCode::JsonDecode);
+        assert_eq!(
+            diagnostic.primary_span.map(|span| span.source_id.get()),
+            Some(0)
+        );
+        assert!(
+            diagnostic
+                .notes
+                .iter()
+                .any(|note| note == "package path: src/grammar.json")
         );
 
         fs::remove_dir_all(&root).unwrap();

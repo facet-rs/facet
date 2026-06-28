@@ -1,0 +1,70 @@
+:root {
+ /* <- attribute */
+/* <- punctuation.delimiter */
+  --color1: #000;
+  /* <- property */
+          /* ^ string.special */
+         /* ^ punctuation.delimiter */
+  --color2: rgba(255, 255, 255, 1);
+            /* ^ function */
+                 /* ^ punctuation.delimiter */
+
+  --font-family: 'Times New Roman', sans-serif;
+  --spacing: .3em;
+
+  --gap: 8px;
+}
+
+body {
+/* <- tag */
+  font-family: var(--font-family);
+            /* ^ function */
+               /* ^ punctuation.bracket */
+                /* ^ variable */
+}
+
+a {
+  color: blue;
+}
+
+a:href {
+  color: green;
+}
+
+#logo {
+/* <- punctuation.delimiter */
+/* ^ property */
+   /* ^ punctuation.bracket */
+  font-family: sans-serif;
+  /* <- property */
+          /* ^ punctuation.delimiter */
+                      /* ^ punctuation.delimiter */
+  font: normal bold 1rem / 1.4 'Times New Roman', sans-serif;
+   /* ^ punctuation.delimiter */
+                      /* ^ operator */
+                         /* ^ number */
+                                             /* ^ punctuation.delimiter */
+                              /* ^ string */
+                 /* ^ number */
+                  /* ^ type */
+  padding: 0px 0px;
+      /* ^ punctuation.delimiter */
+        /* ^ number */
+         /* ^ type */
+  /* <- property */
+}
+/* <- punctuation.bracket */
+
+@media (max-width: 1024px) {
+                 /* ^ number */
+                    /* ^ type */
+        /* ^ property */
+/* <- keyword */
+    /* ^ punctuation.bracket */
+                      /* ^ punctuation.bracket */
+  .container {
+   /* <- property */
+  /* <- punctuation.delimiter */
+    display: flex;
+  }
+}

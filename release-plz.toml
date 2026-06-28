@@ -307,6 +307,15 @@ version_group = "picante"
 changelog_path = "picante/CHANGELOG.md"
 
 # ============================================================================
+# Snark packages - Tree-sitter-compatible parser foundations
+# ============================================================================
+
+[[package]]
+name = "snark"
+version_group = "snark"
+changelog_path = "snark/CHANGELOG.md"
+
+# ============================================================================
 # Dibs packages - coordinated from this monorepo, preserving their major line
 # ============================================================================
 

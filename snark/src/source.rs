@@ -11,7 +11,7 @@ use facet::Facet;
 
 use crate::diagnostic::ImportError;
 
-/// Stable source id assigned during package import.
+/// Deterministic source id assigned during package import.
 #[derive(Debug, Clone, Copy, Facet, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SourceId(u32);
 
@@ -22,7 +22,7 @@ impl SourceId {
     }
 }
 
-/// Allocates source ids in import order.
+/// Allocates source ids in deterministic importer order.
 #[derive(Debug, Default)]
 #[cfg(feature = "tree-sitter-import")]
 pub(crate) struct SourceIdAllocator {
@@ -42,14 +42,25 @@ impl SourceIdAllocator {
     }
 }
 
-/// Absolute package root used for diagnostics.
+/// Package root used for diagnostics and package-relative path resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageRoot(PathBuf);
 
 impl PackageRoot {
-    /// Build a package root from a filesystem path.
+    /// Build a package root from a lexical filesystem path.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self(path.into())
+    }
+
+    /// Canonicalize an existing package root.
+    #[cfg(feature = "tree-sitter-import")]
+    pub(crate) fn from_existing_dir(path: impl AsRef<Path>) -> Result<Self, ImportError> {
+        let path = path.as_ref();
+        let canonical = std::fs::canonicalize(path).map_err(|source| ImportError::PackageRoot {
+            path: path.to_owned(),
+            source,
+        })?;
+        Ok(Self(canonical))
     }
 
     /// Filesystem path for this package root.
@@ -172,10 +183,6 @@ impl<T> SourceFile<T> {
         }
     }
 }
-
-/// Raw `tree-sitter.json` package metadata.
-#[derive(Debug, Clone, Facet, PartialEq, Eq)]
-pub struct TreeSitterConfigJson(pub String);
 
 #[cfg(feature = "tree-sitter-import")]
 pub(crate) fn read_source_string(

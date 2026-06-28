@@ -6,16 +6,16 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/snark"
 description = "Tree-sitter-compatible grammar package model and parser runtime scaffold."
 keywords = ["parsing", "tree-sitter", "incremental", "syntax"]
 categories = ["parsing", "text-editors"]
 readme = "README.md"
 
 [features]
-default = ["std", "tree-sitter-import"]
-std = []
+default = []
 json-import = ["dep:facet-json", "facet/indexmap"]
-tree-sitter-import = ["std", "json-import"]
+tree-sitter-import = ["json-import"]
 
 [dependencies]
 facet = { workspace = true, features = ["indexmap"] }
