@@ -815,6 +815,8 @@ fn handle_directive(
     match directive.as_str() {
         // === Type-level directives ===
         "Self" => emit_self_type(ctx, output),
+        "GenericParams" => emit_generic_params(ctx, output),
+        "WhereClause" => emit_where_clause(ctx, output),
 
         // === Looping directives ===
         "for_variant" => handle_for_variant(iter, ctx, output),
@@ -862,7 +864,25 @@ fn handle_directive(
 
 fn emit_self_type(ctx: &EvalContext<'_>, output: &mut TokenStream) {
     let name = ctx.parsed_type.name();
-    output.extend(quote! { #name });
+    let generics = match ctx.parsed_type {
+        facet_macro_parse::PType::Struct(s) => s.container.bgp.display_without_bounds(),
+        facet_macro_parse::PType::Enum(e) => e.container.bgp.display_without_bounds(),
+    };
+    output.extend(quote! { #name #generics });
+}
+
+fn emit_generic_params(ctx: &EvalContext<'_>, output: &mut TokenStream) {
+    let generics = match ctx.parsed_type {
+        facet_macro_parse::PType::Struct(s) => s.container.bgp.display_with_bounds(),
+        facet_macro_parse::PType::Enum(e) => e.container.bgp.display_with_bounds(),
+    };
+    output.extend(quote! { #generics });
+}
+
+fn emit_where_clause(_ctx: &EvalContext<'_>, _output: &mut TokenStream) {
+    // TODO: facet-macro-parse does not currently expose user where-clauses in
+    // PContainer. This directive is reserved so plugin templates can place a
+    // where-clause once parsing support is available.
 }
 
 // ============================================================================

@@ -86,7 +86,7 @@ macro_rules! __facet_invoke {
                 @plugin {
                     @name { "Default" }
                     @template {
-                        impl ::core::default::Default for @Self {
+                        impl @GenericParams ::core::default::Default for @Self @WhereClause {
                             fn default() -> Self {
                                 @if_struct {
                                     Self {

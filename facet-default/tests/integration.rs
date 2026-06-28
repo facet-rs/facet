@@ -2,6 +2,7 @@
 
 use facet::Facet;
 use facet_default as default;
+use std::marker::PhantomData;
 
 /// Test struct with various default attributes
 #[test]
@@ -225,4 +226,33 @@ fn test_string_literal_default() {
 
     let blah = Blah::default();
     assert_eq!(blah.field, "ha");
+}
+
+/// Repro for issue #2398: `@Self` in plugin templates must include generic
+/// arguments without their bounds, e.g. `IdType<TKind>` rather than `IdType`.
+#[test]
+fn test_derive_default_with_bounded_generic() {
+    mod private {
+        use facet::Facet;
+
+        pub(super) trait Sealed {
+            type Associated: for<'facet> Facet<'facet>;
+        }
+    }
+
+    #[derive(Facet)]
+    pub struct IdMarker;
+    impl private::Sealed for IdMarker {
+        type Associated = String;
+    }
+
+    #[derive(Facet)]
+    #[facet(derive(Default))]
+    pub struct IdType<TKind: private::Sealed> {
+        something: String,
+        _kind: PhantomData<TKind>,
+    }
+
+    let id = IdType::<IdMarker>::default();
+    assert_eq!(id.something, String::default());
 }
