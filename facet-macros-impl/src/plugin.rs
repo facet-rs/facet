@@ -16,7 +16,7 @@
 //! `#[facet(derive(Foo))]` maps to `::facet_foo::__facet_derive!`
 //! (lowercase the trait name, prefix with `facet_`)
 
-use crate::{Attribute, AttributeInner, FacetInner, IParse, Ident, ToTokenIter, TokenStream};
+use crate::{Attribute, AttributeInner, FacetInner, IParse, Ident, ToTokenIter, ToTokens, TokenStream};
 use quote::quote;
 
 /// A plugin reference - either a simple name or a full path.
@@ -879,10 +879,31 @@ fn emit_generic_params(ctx: &EvalContext<'_>, output: &mut TokenStream) {
     output.extend(quote! { #generics });
 }
 
-fn emit_where_clause(_ctx: &EvalContext<'_>, _output: &mut TokenStream) {
-    // TODO: facet-macro-parse does not currently expose user where-clauses in
-    // PContainer. This directive is reserved so plugin templates can place a
-    // where-clause once parsing support is available.
+fn emit_where_clause(ctx: &EvalContext<'_>, output: &mut TokenStream) {
+    // Emit the user-written `where` clauses (e.g. `where T: Trait`) so plugin
+    // templates like `impl @GenericParams Default for @Self @WhereClause` produce
+    // well-formed impls for generic types. Only user predicates are emitted —
+    // Facet-specific bounds (`T: Facet<'ʄ>`, lifetime constraints) belong to the
+    // Facet impl, not to derived traits like Default.
+    let clauses = match ctx.parsed_type {
+        facet_macro_parse::PType::Struct(s) => &s.container.where_clauses,
+        facet_macro_parse::PType::Enum(e) => &e.container.where_clauses,
+    };
+    let Some(wc) = clauses else {
+        return;
+    };
+    let mut predicates = TokenStream::new();
+    let mut first = true;
+    for c in wc.clauses.iter() {
+        if !first {
+            predicates.extend(quote! { , });
+        }
+        predicates.extend(c.value.to_token_stream());
+        first = false;
+    }
+    if !first {
+        output.extend(quote! { where #predicates });
+    }
 }
 
 // ============================================================================

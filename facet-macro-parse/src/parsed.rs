@@ -1,4 +1,4 @@
-use crate::{BoundedGenericParams, RenameRule, unescape};
+use crate::{BoundedGenericParams, RenameRule, WhereClauses, unescape};
 use crate::{Ident, KWhere, ReprInner, ToTokens, TokenStream};
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
@@ -829,6 +829,9 @@ pub struct PContainer {
 
     /// Generic parameters of the container
     pub bgp: BoundedGenericParams,
+
+    /// User-written `where` clauses on the type, e.g. `where T: Trait`.
+    pub where_clauses: Option<WhereClauses>,
 }
 
 /// Parse struct
@@ -868,6 +871,7 @@ impl PEnum {
             rename: attrs.rename.clone(),
             attrs,
             bgp: BoundedGenericParams::parse(e.generics.as_ref()),
+            where_clauses: e.clauses.clone(),
         };
 
         // Parse variants, passing the container's rename_all rule
@@ -1029,12 +1033,21 @@ impl PStruct {
         // Extract the rename_all rule *after* parsing all attributes.
         let rename_all_rule = attrs.rename_all;
 
+        // Extract user `where` clauses (carried by every StructKind variant) before
+        // the container borrows `attrs`.
+        let where_clauses = match &s.kind {
+            crate::StructKind::Struct { clauses, .. }
+            | crate::StructKind::TupleStruct { clauses, .. }
+            | crate::StructKind::UnitStruct { clauses, .. } => clauses.clone(),
+        };
+
         // Build PContainer from struct's name and attributes.
         let container = PContainer {
             name: s.name.clone(),
             rename: attrs.rename.clone(),
             attrs,
             bgp: BoundedGenericParams::parse(s.generics.as_ref()),
+            where_clauses,
         };
 
         // Pass the container's rename_all rule (extracted above) as argument to PStructKind::parse
