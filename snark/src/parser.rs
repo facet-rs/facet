@@ -66,6 +66,7 @@ id_type!(ScannerSnapshotId, "Serialized external scanner state id.");
 id_type!(LookaheadTokenId, "Branch-local lookahead token id.");
 id_type!(QueryPatternId, "Query pattern id.");
 id_type!(QueryCaptureId, "Query capture id.");
+id_type!(LexicalRuleId, "Parser-owned lexical rule id.");
 id_type!(ProvenanceId, "Parser-generation provenance id.");
 id_type!(FieldMapId, "Production field-map id.");
 id_type!(AliasSequenceId, "Production alias-sequence id.");
@@ -98,11 +99,15 @@ pub struct ParserGrammar {
     field_maps: Vec<FieldMap>,
     alias_sequences: Vec<AliasSequence>,
     provenances: Vec<Provenance>,
+    fields: Vec<FieldDecl>,
+    aliases: Vec<AliasDecl>,
+    lexical_rules: Vec<LexicalRule>,
+    inline_rules: Vec<InlineRule>,
     lexical_modes: Vec<LexMode>,
     reserved_contexts: Vec<ReservedContext>,
     valid_symbol_sets: Vec<ValidSymbolSet>,
     extra_roots: Vec<ExtraRoot>,
-    word: Option<NonterminalId>,
+    word: Option<TerminalId>,
     supertypes: Vec<NonterminalId>,
     precedence_groups: Vec<PrecedenceGroup>,
     public_node_kinds: Vec<PublicNodeKind>,
@@ -130,6 +135,7 @@ impl ParserGrammar {
     ) -> Result<Self, ParserNormalizeError> {
         let mut parser = Self::seed(grammar, lexical);
         ProductionNormalizer::new(grammar, &mut parser).normalize()?;
+        parser.add_public_anonymous_terminals_from_productions();
         parser.stage = ParserGenerationStage::Productions;
         Ok(parser)
     }
@@ -146,7 +152,12 @@ impl ParserGrammar {
                 origin: NonterminalOrigin::Rule,
             })
             .collect::<Vec<_>>();
-        let terminals = seed_terminal_symbols(grammar, lexical);
+        let mut lexical_rules = Vec::new();
+        let terminals = seed_terminal_symbols(grammar, lexical, &mut lexical_rules);
+        let terminal_by_expr = terminals
+            .iter()
+            .map(|terminal| (terminal.source_expr(), terminal.id()))
+            .collect::<HashMap<_, _>>();
         let externals = lexical
             .external_tokens()
             .iter()
@@ -157,25 +168,15 @@ impl ParserGrammar {
                 name: external.name().map(str::to_owned),
             })
             .collect::<Vec<_>>();
-        let reserved_contexts = grammar
-            .reserved_sets()
-            .iter()
-            .enumerate()
-            .map(|(index, reserved)| ReservedContext {
-                id: ReservedContextId::from_index(index),
-                name: reserved.name().to_owned(),
-                entries: reserved.entries().to_vec(),
-            })
-            .collect::<Vec<_>>();
+        let reserved_contexts = seed_reserved_contexts(grammar, &terminal_by_expr);
         let extra_roots = grammar
             .extras()
             .iter()
             .copied()
-            .map(|expr| ExtraRoot { expr })
+            .filter_map(|expr| extra_root_symbol(grammar, &terminal_by_expr, expr))
+            .map(|symbol| ExtraRoot { symbol })
             .collect::<Vec<_>>();
-        let word = grammar
-            .word()
-            .map(|rule| NonterminalId::from_index(rule.get() as usize));
+        let word = resolve_word_terminal(grammar, &terminal_by_expr);
         let supertypes = grammar
             .supertypes()
             .iter()
@@ -202,7 +203,7 @@ impl ParserGrammar {
                     .collect(),
             })
             .collect::<Vec<_>>();
-        let mut public_node_kinds = grammar
+        let public_node_kinds = grammar
             .visible_node_kinds()
             .enumerate()
             .map(|(index, name)| {
@@ -222,19 +223,30 @@ impl ParserGrammar {
                 }
             })
             .collect::<Vec<_>>();
-        for terminal in &terminals {
-            if terminal.kind == ParserTerminalKind::String
-                && !public_node_kinds
-                    .iter()
-                    .any(|kind| kind.name == terminal.spelling)
-            {
-                public_node_kinds.push(PublicNodeKind {
-                    id: PublicNodeKindId::from_index(public_node_kinds.len()),
-                    name: terminal.spelling.clone(),
-                    source: PublicNodeKindSource::AnonymousTerminal(terminal.id),
-                });
-            }
-        }
+        let fields = grammar
+            .fields()
+            .map(|(id, field)| FieldDecl {
+                id,
+                name: field.as_str().to_owned(),
+            })
+            .collect::<Vec<_>>();
+        let aliases = grammar
+            .aliases()
+            .map(|alias| AliasDecl {
+                id: alias.id(),
+                value: alias.value().to_owned(),
+                named: alias.named(),
+            })
+            .collect::<Vec<_>>();
+        let inline_rules = grammar
+            .inline()
+            .iter()
+            .copied()
+            .map(|rule| InlineRule {
+                rule,
+                nonterminal: NonterminalId::from_index(rule.get() as usize),
+            })
+            .collect::<Vec<_>>();
         let conflict_plans = grammar
             .conflicts()
             .iter()
@@ -275,6 +287,10 @@ impl ParserGrammar {
             field_maps: Vec::new(),
             alias_sequences: Vec::new(),
             provenances: Vec::new(),
+            fields,
+            aliases,
+            lexical_rules,
+            inline_rules,
             lexical_modes: Vec::new(),
             reserved_contexts,
             valid_symbol_sets: Vec::new(),
@@ -329,6 +345,26 @@ impl ParserGrammar {
         &self.provenances
     }
 
+    /// Field declarations keyed by [`FieldId`].
+    pub fn fields(&self) -> &[FieldDecl] {
+        &self.fields
+    }
+
+    /// Alias declarations keyed by [`AliasId`].
+    pub fn aliases(&self) -> &[AliasDecl] {
+        &self.aliases
+    }
+
+    /// Parser-owned lexical rules keyed by [`LexicalRuleId`].
+    pub fn lexical_rules(&self) -> &[LexicalRule] {
+        &self.lexical_rules
+    }
+
+    /// Inline declarations that still need expansion before LR item generation.
+    pub fn inline_rules(&self) -> &[InlineRule] {
+        &self.inline_rules
+    }
+
     /// Lexical modes attached to parser states.
     pub fn lexical_modes(&self) -> &[LexMode] {
         &self.lexical_modes
@@ -350,7 +386,7 @@ impl ParserGrammar {
     }
 
     /// Optional word token nonterminal.
-    pub const fn word(&self) -> Option<NonterminalId> {
+    pub const fn word(&self) -> Option<TerminalId> {
         self.word
     }
 
@@ -373,25 +409,70 @@ impl ParserGrammar {
     pub const fn glr_plan(&self) -> &GlrPlan {
         &self.glr_plan
     }
+
+    fn add_public_anonymous_terminals_from_productions(&mut self) {
+        let mut additions = Vec::new();
+        for production in &self.productions {
+            for step in &production.steps {
+                if let ParserSymbol::Terminal(terminal_id) = step.symbol {
+                    let terminal = &self.symbols.terminals[terminal_id.get() as usize];
+                    for name in &terminal.public_names {
+                        if !self.public_node_kinds.iter().any(|kind| kind.name == *name)
+                            && !additions.iter().any(|(existing, _)| existing == name)
+                        {
+                            additions.push((name.clone(), terminal_id));
+                        }
+                    }
+                }
+            }
+        }
+        for (name, terminal_id) in additions {
+            self.public_node_kinds.push(PublicNodeKind {
+                id: PublicNodeKindId::from_index(self.public_node_kinds.len()),
+                name,
+                source: PublicNodeKindSource::AnonymousTerminal(terminal_id),
+            });
+        }
+    }
 }
 
 fn seed_terminal_symbols(
     grammar: &ValidatedGrammar,
     lexical: &LexicalFacts,
+    lexical_rules: &mut Vec<LexicalRule>,
 ) -> Vec<TerminalSymbol> {
     let mut terminals = lexical
         .terminals()
         .iter()
         .enumerate()
-        .map(|(index, terminal)| TerminalSymbol {
-            id: TerminalId::from_index(index),
-            kind: match terminal.kind {
+        .map(|(index, terminal)| {
+            let id = TerminalId::from_index(index);
+            let kind = match terminal.kind {
                 TerminalKind::String => ParserTerminalKind::String,
                 TerminalKind::Pattern => ParserTerminalKind::Pattern,
-            },
-            spelling: terminal.spelling.clone(),
-            expr: terminal.expr,
-            lexical_root: None,
+            };
+            let public_names = match terminal.kind {
+                TerminalKind::String => vec![terminal.spelling.clone()],
+                TerminalKind::Pattern => Vec::new(),
+            };
+            let lexical_rule = push_lexical_rule(
+                lexical_rules,
+                id,
+                LexicalRuleSource::Terminal {
+                    expr: terminal.expr,
+                    kind,
+                    spelling: terminal.spelling.clone(),
+                },
+            );
+            TerminalSymbol {
+                id,
+                kind,
+                spelling: terminal.spelling.clone(),
+                source_expr: terminal.expr,
+                lexical_rule,
+                lexical_root: None,
+                public_names,
+            }
         })
         .collect::<Vec<_>>();
     for root in lexical.lexical_roots() {
@@ -399,15 +480,43 @@ fn seed_terminal_symbols(
             crate::lexical::LexicalRootKind::Token => ParserTerminalKind::Token,
             crate::lexical::LexicalRootKind::ImmediateToken => ParserTerminalKind::ImmediateToken,
         };
+        let id = TerminalId::from_index(terminals.len());
+        let public_names = collect_public_literal_names(grammar, root.content);
+        let lexical_rule = push_lexical_rule(
+            lexical_rules,
+            id,
+            LexicalRuleSource::TokenRoot {
+                root: root.id,
+                content: root.content,
+                kind,
+                public_names: public_names.clone(),
+            },
+        );
         terminals.push(TerminalSymbol {
-            id: TerminalId::from_index(terminals.len()),
+            id,
             kind,
             spelling: lexical_root_spelling(grammar, root.id),
-            expr: root.id,
+            source_expr: root.id,
+            lexical_rule,
             lexical_root: Some(root.id),
+            public_names,
         });
     }
     terminals
+}
+
+fn push_lexical_rule(
+    lexical_rules: &mut Vec<LexicalRule>,
+    terminal: TerminalId,
+    source: LexicalRuleSource,
+) -> LexicalRuleId {
+    let id = LexicalRuleId::from_index(lexical_rules.len());
+    lexical_rules.push(LexicalRule {
+        id,
+        terminal,
+        source,
+    });
+    id
 }
 
 fn lexical_root_spelling(grammar: &ValidatedGrammar, expr: GrammarExprId) -> String {
@@ -418,6 +527,89 @@ fn lexical_root_spelling(grammar: &ValidatedGrammar, expr: GrammarExprId) -> Str
         }
         _ => format!("token#{}", expr.get()),
     }
+}
+
+fn collect_public_literal_names(grammar: &ValidatedGrammar, expr: GrammarExprId) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_public_literal_names_into(grammar, expr, &mut names);
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn collect_public_literal_names_into(
+    grammar: &ValidatedGrammar,
+    expr: GrammarExprId,
+    names: &mut Vec<String>,
+) {
+    match grammar.expr(expr) {
+        GrammarExpr::StringToken(value) => names.push(value.clone()),
+        GrammarExpr::Choice(members) | GrammarExpr::Seq(members) => {
+            for member in members {
+                collect_public_literal_names_into(grammar, *member, names);
+            }
+        }
+        GrammarExpr::Repeat(content)
+        | GrammarExpr::Repeat1(content)
+        | GrammarExpr::Field { content, .. }
+        | GrammarExpr::Token(content)
+        | GrammarExpr::ImmediateToken(content)
+        | GrammarExpr::Prec { content, .. }
+        | GrammarExpr::PrecDynamic { content, .. }
+        | GrammarExpr::Alias { content, .. }
+        | GrammarExpr::Reserved { content, .. } => {
+            collect_public_literal_names_into(grammar, *content, names);
+        }
+        GrammarExpr::Blank | GrammarExpr::PatternToken { .. } | GrammarExpr::Symbol(_) => {}
+    }
+}
+
+fn seed_reserved_contexts(
+    grammar: &ValidatedGrammar,
+    terminal_by_expr: &HashMap<GrammarExprId, TerminalId>,
+) -> Vec<ReservedContext> {
+    grammar
+        .reserved_sets()
+        .iter()
+        .enumerate()
+        .map(|(index, reserved)| ReservedContext {
+            id: ReservedContextId::from_index(index),
+            name: reserved.name().to_owned(),
+            entries: reserved
+                .entries()
+                .iter()
+                .filter_map(|expr| terminal_by_expr.get(expr).copied())
+                .collect(),
+        })
+        .collect()
+}
+
+fn extra_root_symbol(
+    grammar: &ValidatedGrammar,
+    terminal_by_expr: &HashMap<GrammarExprId, TerminalId>,
+    expr: GrammarExprId,
+) -> Option<ParserSymbol> {
+    if let Some(terminal) = terminal_by_expr.get(&expr).copied() {
+        return Some(ParserSymbol::Terminal(terminal));
+    }
+    match grammar.expr(expr) {
+        GrammarExpr::Symbol(SymbolRef::Rule(rule)) => Some(ParserSymbol::Nonterminal(
+            NonterminalId::from_index(rule.get() as usize),
+        )),
+        GrammarExpr::Symbol(SymbolRef::External(external)) => Some(ParserSymbol::External(
+            ExternalId::from_index(external.get() as usize),
+        )),
+        _ => None,
+    }
+}
+
+fn resolve_word_terminal(
+    grammar: &ValidatedGrammar,
+    terminal_by_expr: &HashMap<GrammarExprId, TerminalId>,
+) -> Option<TerminalId> {
+    let word = grammar.word()?;
+    let expr = grammar.rule(word).expr();
+    terminal_by_expr.get(&expr).copied()
 }
 
 /// Error produced while normalizing grammar expressions into productions.
@@ -454,6 +646,14 @@ impl fmt::Display for ParserNormalizeError {
                     context.get()
                 )
             }
+            ParserNormalizeErrorKind::NullableRepeatContent { expr, content } => {
+                write!(
+                    f,
+                    "repeat expression {} has nullable content {}",
+                    expr.get(),
+                    content.get()
+                )
+            }
         }
     }
 }
@@ -474,6 +674,13 @@ pub enum ParserNormalizeErrorKind {
         /// Missing context id.
         context: ReservedSetId,
     },
+    /// Repetition content normalized to an empty production.
+    NullableRepeatContent {
+        /// Repeat expression id.
+        expr: GrammarExprId,
+        /// Repeated content expression id.
+        content: GrammarExprId,
+    },
 }
 
 struct ProductionNormalizer<'a> {
@@ -489,7 +696,7 @@ impl<'a> ProductionNormalizer<'a> {
             .symbols
             .terminals
             .iter()
-            .map(|terminal| (terminal.expr, terminal.id))
+            .map(|terminal| (terminal.source_expr, terminal.id))
             .collect::<HashMap<_, _>>();
         let public_node_by_rule = parser
             .public_node_kinds
@@ -517,6 +724,7 @@ impl<'a> ProductionNormalizer<'a> {
             let sequences = self.lower_expr(rule.id(), rule.expr())?;
             let public_node = self.public_node_by_rule.get(&rule.id()).copied();
             for sequence in sequences {
+                let source_expr = sequence.source_expr.unwrap_or(rule.expr());
                 self.push_production(
                     lhs,
                     rule.id(),
@@ -525,7 +733,7 @@ impl<'a> ProductionNormalizer<'a> {
                     public_node,
                     ProvenanceSource::GrammarRule {
                         rule: rule.id(),
-                        expr: rule.expr(),
+                        expr: source_expr,
                     },
                 );
             }
@@ -539,7 +747,7 @@ impl<'a> ProductionNormalizer<'a> {
         expr: GrammarExprId,
     ) -> Result<Vec<SequenceDraft>, ParserNormalizeError> {
         let expr_value = self.grammar.expr(expr).clone();
-        match expr_value {
+        let mut sequences = match expr_value {
             GrammarExpr::Blank => Ok(vec![SequenceDraft::default()]),
             GrammarExpr::StringToken(_) | GrammarExpr::PatternToken { .. } => {
                 Ok(vec![SequenceDraft::single(self.terminal_symbol(expr)?)])
@@ -600,7 +808,8 @@ impl<'a> ProductionNormalizer<'a> {
             GrammarExpr::PrecDynamic { value, content } => {
                 let mut sequences = self.lower_expr(owner, content)?;
                 for sequence in &mut sequences {
-                    sequence.dynamic_precedence += value;
+                    sequence.dynamic_precedence =
+                        strongest_dynamic_precedence(sequence.dynamic_precedence, value);
                 }
                 Ok(sequences)
             }
@@ -619,11 +828,17 @@ impl<'a> ProductionNormalizer<'a> {
                 let reserved_context = self.reserved_context(context)?;
                 let mut sequences = self.lower_expr(owner, content)?;
                 for sequence in &mut sequences {
-                    sequence.reserved_context = Some(reserved_context);
+                    sequence.apply_reserved_context(reserved_context);
                 }
                 Ok(sequences)
             }
+        }?;
+        for sequence in &mut sequences {
+            if sequence.source_expr.is_none() {
+                sequence.source_expr = Some(expr);
+            }
         }
+        Ok(sequences)
     }
 
     fn add_repeat_auxiliary(
@@ -644,6 +859,17 @@ impl<'a> ProductionNormalizer<'a> {
         });
 
         let content_sequences = self.lower_expr(owner, content)?;
+        if content_sequences
+            .iter()
+            .any(|sequence| sequence.steps.is_empty())
+        {
+            return Err(ParserNormalizeError::new(
+                ParserNormalizeErrorKind::NullableRepeatContent {
+                    expr: repeat_expr,
+                    content,
+                },
+            ));
+        }
         if !one_or_more {
             self.push_production(
                 aux,
@@ -657,18 +883,20 @@ impl<'a> ProductionNormalizer<'a> {
                 },
             );
         }
-        for content_sequence in &content_sequences {
-            self.push_production(
-                aux,
-                owner,
-                content_sequence.clone(),
-                ProductionOrigin::Repeat,
-                None,
-                ProvenanceSource::RepeatAuxiliary {
+        if one_or_more {
+            for content_sequence in &content_sequences {
+                self.push_production(
+                    aux,
                     owner,
-                    expr: repeat_expr,
-                },
-            );
+                    content_sequence.clone(),
+                    ProductionOrigin::Repeat,
+                    None,
+                    ProvenanceSource::RepeatAuxiliary {
+                        owner,
+                        expr: repeat_expr,
+                    },
+                );
+            }
         }
         for mut content_sequence in content_sequences {
             let mut recursive = SequenceDraft::single(ParserSymbol::Nonterminal(aux));
@@ -720,7 +948,6 @@ impl<'a> ProductionNormalizer<'a> {
             static_precedence: sequence.static_precedence,
             associativity: sequence.associativity,
             dynamic_precedence,
-            reserved_context: sequence.reserved_context,
             provenance: Some(provenance),
         });
     }
@@ -758,6 +985,7 @@ impl<'a> ProductionNormalizer<'a> {
                     field: step.field,
                     alias: step.alias,
                     alias_named: step.alias_named,
+                    reserved_context: step.reserved_context,
                     structural_index,
                 }
             })
@@ -829,7 +1057,7 @@ struct SequenceDraft {
     static_precedence: Option<StaticPrecedence>,
     associativity: Associativity,
     dynamic_precedence: i32,
-    reserved_context: Option<ReservedContextId>,
+    source_expr: Option<GrammarExprId>,
 }
 
 impl SequenceDraft {
@@ -840,6 +1068,7 @@ impl SequenceDraft {
                 field: None,
                 alias: None,
                 alias_named: None,
+                reserved_context: None,
             }],
             ..Self::default()
         }
@@ -853,9 +1082,10 @@ impl SequenceDraft {
         if other.associativity != Associativity::None {
             self.associativity = other.associativity;
         }
-        self.dynamic_precedence += other.dynamic_precedence;
-        if other.reserved_context.is_some() {
-            self.reserved_context = other.reserved_context;
+        self.dynamic_precedence =
+            strongest_dynamic_precedence(self.dynamic_precedence, other.dynamic_precedence);
+        if other.source_expr.is_some() {
+            self.source_expr = other.source_expr;
         }
     }
 
@@ -871,6 +1101,12 @@ impl SequenceDraft {
             step.alias_named = Some(named);
         }
     }
+
+    fn apply_reserved_context(&mut self, reserved_context: ReservedContextId) {
+        for step in &mut self.steps {
+            step.reserved_context = Some(reserved_context);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -879,6 +1115,7 @@ struct StepDraft {
     field: Option<FieldId>,
     alias: Option<AliasId>,
     alias_named: Option<bool>,
+    reserved_context: Option<ReservedContextId>,
 }
 
 fn combine_sequences(left: Vec<SequenceDraft>, right: Vec<SequenceDraft>) -> Vec<SequenceDraft> {
@@ -905,6 +1142,14 @@ fn associativity(assoc: PrecedenceAssoc) -> Associativity {
         PrecedenceAssoc::None => Associativity::None,
         PrecedenceAssoc::Left => Associativity::Left,
         PrecedenceAssoc::Right => Associativity::Right,
+    }
+}
+
+fn strongest_dynamic_precedence(left: i32, right: i32) -> i32 {
+    if right.abs() >= left.abs() {
+        right
+    } else {
+        left
     }
 }
 
@@ -1023,8 +1268,10 @@ pub struct TerminalSymbol {
     id: TerminalId,
     kind: ParserTerminalKind,
     spelling: String,
-    expr: GrammarExprId,
+    source_expr: GrammarExprId,
+    lexical_rule: LexicalRuleId,
     lexical_root: Option<GrammarExprId>,
+    public_names: Vec<String>,
 }
 
 impl TerminalSymbol {
@@ -1044,13 +1291,23 @@ impl TerminalSymbol {
     }
 
     /// Grammar expression that introduced this terminal symbol.
-    pub const fn expr(&self) -> GrammarExprId {
-        self.expr
+    pub const fn source_expr(&self) -> GrammarExprId {
+        self.source_expr
+    }
+
+    /// Parser-owned lexical rule that describes this terminal.
+    pub const fn lexical_rule(&self) -> LexicalRuleId {
+        self.lexical_rule
     }
 
     /// Token/immediate-token wrapper root that introduced this terminal, if any.
     pub const fn lexical_root(&self) -> Option<GrammarExprId> {
         self.lexical_root
+    }
+
+    /// Public anonymous names this terminal can contribute to queries.
+    pub fn public_names(&self) -> &[String] {
+        &self.public_names
     }
 }
 
@@ -1195,6 +1452,7 @@ pub struct ProductionStep {
     field: Option<FieldId>,
     alias: Option<AliasId>,
     alias_named: Option<bool>,
+    reserved_context: Option<ReservedContextId>,
     structural_index: usize,
 }
 
@@ -1219,6 +1477,11 @@ impl ProductionStep {
         self.alias_named
     }
 
+    /// Reserved-word context applied at this structural child index.
+    pub const fn reserved_context(&self) -> Option<ReservedContextId> {
+        self.reserved_context
+    }
+
     /// Structural child index used for fields and aliases.
     pub const fn structural_index(&self) -> usize {
         self.structural_index
@@ -1237,7 +1500,6 @@ pub struct ProductionMetadata {
     static_precedence: Option<StaticPrecedence>,
     associativity: Associativity,
     dynamic_precedence: i32,
-    reserved_context: Option<ReservedContextId>,
     provenance: Option<ProvenanceId>,
 }
 
@@ -1285,11 +1547,6 @@ impl ProductionMetadata {
     /// Dynamic precedence applied to the reduced subtree.
     pub const fn dynamic_precedence(&self) -> i32 {
         self.dynamic_precedence
-    }
-
-    /// Reserved-word context active for this production.
-    pub const fn reserved_context(&self) -> Option<ReservedContextId> {
-        self.reserved_context
     }
 
     /// Provenance row for diagnostics and trace output.
@@ -1433,6 +1690,120 @@ pub enum PublicNodeKindSource {
     AnonymousTerminal(TerminalId),
 }
 
+/// Parser-owned field declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldDecl {
+    id: FieldId,
+    name: String,
+}
+
+impl FieldDecl {
+    /// Field id.
+    pub const fn id(&self) -> FieldId {
+        self.id
+    }
+
+    /// Field name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Parser-owned alias declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AliasDecl {
+    id: AliasId,
+    value: String,
+    named: bool,
+}
+
+impl AliasDecl {
+    /// Alias id.
+    pub const fn id(&self) -> AliasId {
+        self.id
+    }
+
+    /// Alias value.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Whether this alias is named.
+    pub const fn named(&self) -> bool {
+        self.named
+    }
+}
+
+/// Parser-owned lexical rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LexicalRule {
+    id: LexicalRuleId,
+    terminal: TerminalId,
+    source: LexicalRuleSource,
+}
+
+impl LexicalRule {
+    /// Lexical rule id.
+    pub const fn id(&self) -> LexicalRuleId {
+        self.id
+    }
+
+    /// Terminal produced by this lexical rule.
+    pub const fn terminal(&self) -> TerminalId {
+        self.terminal
+    }
+
+    /// Source facts for this lexical rule.
+    pub const fn source(&self) -> &LexicalRuleSource {
+        &self.source
+    }
+}
+
+/// Source facts for a parser-owned lexical rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LexicalRuleSource {
+    /// Direct literal or regex terminal expression.
+    Terminal {
+        /// Source expression id retained for provenance.
+        expr: GrammarExprId,
+        /// Terminal kind.
+        kind: ParserTerminalKind,
+        /// Literal or regex spelling.
+        spelling: String,
+    },
+    /// Token or immediate-token lexical root.
+    TokenRoot {
+        /// Wrapper expression id retained for provenance.
+        root: GrammarExprId,
+        /// Wrapped content expression id retained for provenance.
+        content: GrammarExprId,
+        /// Terminal kind.
+        kind: ParserTerminalKind,
+        /// Public literal names visible through this root.
+        public_names: Vec<String>,
+    },
+}
+
+/// Inline declaration retained until the inline-expansion pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InlineRule {
+    rule: RuleId,
+    nonterminal: NonterminalId,
+}
+
+impl InlineRule {
+    /// Source inline rule id.
+    pub const fn rule(&self) -> RuleId {
+        self.rule
+    }
+
+    /// Parser nonterminal marked for inline expansion.
+    pub const fn nonterminal(&self) -> NonterminalId {
+        self.nonterminal
+    }
+}
+
 /// Parser-generation provenance row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Provenance {
@@ -1475,13 +1846,13 @@ pub enum ProvenanceSource {
 /// Extra grammar root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtraRoot {
-    expr: GrammarExprId,
+    symbol: ParserSymbol,
 }
 
 impl ExtraRoot {
-    /// Extra expression root.
-    pub const fn expr(&self) -> GrammarExprId {
-        self.expr
+    /// Extra parser symbol root.
+    pub const fn symbol(&self) -> ParserSymbol {
+        self.symbol
     }
 }
 
@@ -1547,7 +1918,7 @@ impl Default for Associativity {
 pub struct ReservedContext {
     id: ReservedContextId,
     name: String,
-    entries: Vec<GrammarExprId>,
+    entries: Vec<TerminalId>,
 }
 
 impl ReservedContext {
@@ -1561,8 +1932,8 @@ impl ReservedContext {
         &self.name
     }
 
-    /// Reserved word entry expressions.
-    pub fn entries(&self) -> &[GrammarExprId] {
+    /// Reserved word terminal entries.
+    pub fn entries(&self) -> &[TerminalId] {
         &self.entries
     }
 }
@@ -2323,8 +2694,12 @@ mod tests {
             grammar.symbols().nonterminals()[2].origin(),
             NonterminalOrigin::RepeatAuxiliary
         );
-        assert_eq!(grammar.productions().len(), 5);
+        assert_eq!(grammar.productions().len(), 4);
         assert_eq!(grammar.provenances().len(), grammar.productions().len());
+        assert_eq!(grammar.fields()[0].name(), "name");
+        assert_eq!(grammar.aliases()[0].value(), "thing");
+        assert!(grammar.aliases()[0].named());
+        assert_eq!(grammar.inline_rules().len(), 0);
 
         let repeat_aux = NonterminalId::from_index(2);
         assert_eq!(grammar.productions()[0].lhs(), repeat_aux);
@@ -2335,21 +2710,13 @@ mod tests {
                 .iter()
                 .map(ProductionStep::symbol)
                 .collect::<Vec<_>>(),
-            [ParserSymbol::Nonterminal(NonterminalId::from_index(1))]
-        );
-        assert_eq!(
-            grammar.productions()[2]
-                .steps()
-                .iter()
-                .map(ProductionStep::symbol)
-                .collect::<Vec<_>>(),
             [
                 ParserSymbol::Nonterminal(repeat_aux),
                 ParserSymbol::Nonterminal(NonterminalId::from_index(1)),
             ]
         );
         assert_eq!(
-            grammar.productions()[3]
+            grammar.productions()[2]
                 .steps()
                 .iter()
                 .map(ProductionStep::symbol)
@@ -2372,7 +2739,7 @@ mod tests {
             .iter()
             .find(|terminal| terminal.kind() == ParserTerminalKind::ImmediateToken)
             .unwrap();
-        let item = &grammar.productions()[4];
+        let item = &grammar.productions()[3];
         assert_eq!(
             item.steps()
                 .iter()
@@ -2421,18 +2788,28 @@ mod tests {
               "name": "mini",
               "rules": {
                 "source_file": {
-                  "type": "PREC_LEFT",
-                  "value": "tight",
-                  "content": {
-                    "type": "PREC_DYNAMIC",
-                    "value": 7,
-                    "content": {
-                      "type": "RESERVED",
-                      "context_name": "default",
-                      "content": { "type": "STRING", "value": "a" }
-                    }
+                  "type": "SEQ",
+                  "members": [
+                    {
+                      "type": "PREC_LEFT",
+                      "value": "tight",
+                      "content": {
+                        "type": "PREC_DYNAMIC",
+                        "value": 3,
+                        "content": {
+                          "type": "PREC_DYNAMIC",
+                          "value": 7,
+                          "content": {
+                            "type": "RESERVED",
+                            "context_name": "default",
+                            "content": { "type": "STRING", "value": "a" }
+                          }
+                        }
+                      }
+                    },
+                    { "type": "STRING", "value": "b" }
+                  ]
                   }
-                }
               },
               "reserved": {
                 "default": [
@@ -2452,8 +2829,65 @@ mod tests {
         assert_eq!(metadata.associativity(), Associativity::Left);
         assert_eq!(metadata.dynamic_precedence(), 7);
         assert_eq!(
-            metadata.reserved_context(),
+            grammar.productions()[0].steps()[0].reserved_context(),
             Some(ReservedContextId::from_index(0))
+        );
+        assert_eq!(grammar.productions()[0].steps()[1].reserved_context(), None);
+        assert_eq!(grammar.reserved_contexts()[0].entries().len(), 1);
+    }
+
+    #[test]
+    fn rejects_nullable_repeat_content_before_table_generation() {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "REPEAT",
+                  "content": { "type": "BLANK" }
+                }
+              }
+            }"##,
+        )
+        .unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+
+        let error = ParserGrammar::normalize_from_validated(&validated, &lexical).unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            ParserNormalizeErrorKind::NullableRepeatContent { .. }
+        ));
+    }
+
+    #[test]
+    fn resolves_word_rules_to_terminal_symbols() {
+        let grammar = normalize(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "SYMBOL", "name": "identifier" },
+                "identifier": {
+                  "type": "TOKEN",
+                  "content": { "type": "PATTERN", "value": "[a-z]+" }
+                }
+              },
+              "word": "identifier"
+            }"##,
+        );
+
+        let word = grammar.word().unwrap();
+        assert_eq!(
+            grammar.symbols().terminals()[word.get() as usize].kind(),
+            ParserTerminalKind::Token
+        );
+        assert_eq!(
+            grammar.lexical_rules()[grammar.symbols().terminals()[word.get() as usize]
+                .lexical_rule()
+                .get() as usize]
+                .terminal(),
+            word
         );
     }
 }

@@ -768,12 +768,28 @@ mod tests {
         );
         assert!(!normalized_parser_grammar.alias_sequences().is_empty());
         assert!(!normalized_parser_grammar.provenances().is_empty());
+        assert!(normalized_parser_grammar.fields().is_empty());
+        assert!(!normalized_parser_grammar.aliases().is_empty());
+        assert!(!normalized_parser_grammar.lexical_rules().is_empty());
+        assert_eq!(normalized_parser_grammar.inline_rules().len(), 2);
         assert!(
             normalized_parser_grammar
                 .public_node_kinds()
                 .iter()
                 .any(|kind| kind.name() == "~")
         );
+        for literal in [
+            "~", ">", "+", "-", "*", "/", "=", "^=", "|=", "~=", "$=", "*=", "#", ",", ".", ":",
+            "::", ";", "{", ")", "(", "}",
+        ] {
+            assert!(
+                normalized_parser_grammar
+                    .public_node_kinds()
+                    .iter()
+                    .any(|kind| kind.name() == literal),
+                "missing query-visible literal {literal}"
+            );
+        }
         assert_eq!(
             grammar
                 .grammar
