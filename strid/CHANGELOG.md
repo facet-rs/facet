@@ -4,6 +4,12 @@ The format of this changelog is based on [Keep a Changelog](https://keepachangel
 
 ## [Unreleased]
 
+## [11.0.0-rc.5](https://github.com/facet-rs/facet/compare/strid-v11.0.0-rc.4...strid-v11.0.0-rc.5) - 2026-06-28
+
+### Other
+
+- updated the following local packages: facet, strid-macros
+
 ## [11.0.0-rc.4](https://github.com/facet-rs/facet/compare/strid-v11.0.0-rc.3...strid-v11.0.0-rc.4) - 2026-06-26
 
 ### Other

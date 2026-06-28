@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/facet-rs/facet/compare/fable-v0.1.2...fable-v0.1.3) - 2026-06-28
+
+### Other
+
+- add typed query plans
+- add reusable predicate plans
+
 ## [0.1.2](https://github.com/facet-rs/facet/compare/fable-v0.1.1...fable-v0.1.2) - 2026-06-26
 
 ### Other
