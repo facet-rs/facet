@@ -15,6 +15,7 @@ pub mod lower;
 pub mod manifest;
 pub mod milestone;
 pub mod node_types;
+pub mod parser_c;
 pub mod query;
 pub mod runtime_input;
 pub mod scanner;

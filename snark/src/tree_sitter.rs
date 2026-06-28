@@ -5,14 +5,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use facet::Facet;
-
 use crate::{
     corpus::{CorpusFixture, CorpusKind, CorpusSource},
     diagnostic::ImportError,
     grammar::RawGrammarFile,
     manifest::{QueryPaths, TreeSitterConfigJson, TreeSitterGrammarConfig},
     node_types::NodeTypesJson,
+    parser_c::ParserC,
     query::{QueryBundle, QueryFile, QuerySource, WellKnownQuery},
     scanner::{ExternalTokenTable, ScannerSource, TreeSitterScanner, TreeSitterScannerKind},
     source::{
@@ -20,10 +19,6 @@ use crate::{
         read_optional_source_string, read_source_string,
     },
 };
-
-/// Raw generated `src/parser.c` source.
-#[derive(Debug, Clone, Facet, PartialEq, Eq)]
-pub struct ParserC(pub String);
 
 /// Imported artifacts for one Tree-sitter grammar entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -476,6 +471,7 @@ mod tests {
     use crate::{
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
+        parser_c::GeneratedParserFacts,
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
     };
@@ -631,6 +627,17 @@ mod tests {
         assert_eq!(grammar.grammar.body.grammar.externals.len(), 3);
         assert!(package.manifest.is_some());
         assert!(grammar.parser_c.is_some());
+        let parser_facts =
+            GeneratedParserFacts::from_parser_c(&grammar.parser_c.as_ref().unwrap().body).unwrap();
+        assert_eq!(parser_facts.constants.state_count, 442);
+        assert_eq!(parser_facts.constants.symbol_count, 142);
+        assert_eq!(parser_facts.constants.external_token_count, 3);
+        assert_eq!(
+            parser_facts
+                .symbol_by_c_name("sym_stylesheet")
+                .map(|symbol| symbol.name.as_str()),
+            Some("stylesheet")
+        );
         assert!(grammar.node_types_json.is_some());
         let manifest = &package.manifest.as_ref().unwrap().body.config;
         assert_eq!(manifest.grammars[0].name, "css");
