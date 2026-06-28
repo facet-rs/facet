@@ -11,7 +11,6 @@ use crate::{
     grammar::RawGrammarFile,
     manifest::{QueryPaths, TreeSitterConfigJson, TreeSitterGrammarConfig},
     node_types::NodeTypesJson,
-    parser_c::ParserC,
     query::{QueryBundle, QueryFile, QuerySource, WellKnownQuery},
     scanner::{ExternalTokenTable, ScannerSource, TreeSitterScanner, TreeSitterScannerKind},
     source::{
@@ -29,8 +28,6 @@ pub struct ImportedGrammar {
     pub path: Option<PackageRelativePath>,
     /// Raw grammar JSON with source provenance.
     pub grammar: SourceFile<RawGrammarFile>,
-    /// Optional generated parser source used as an oracle artifact.
-    pub parser_c: Option<SourceFile<ParserC>>,
     /// Optional `node-types.json`.
     pub node_types_json: Option<SourceFile<NodeTypesJson>>,
     /// Imported Tree-sitter scanners.
@@ -148,7 +145,6 @@ fn import_grammar(
     let grammar_source =
         read_source_string(root, &rel_under(path.as_ref(), "src/grammar.json")?, ids)?;
     let grammar = RawGrammarFile::from_source_file(root, grammar_source)?;
-    let parser_c = read_optional_typed_at(root, path.as_ref(), "src/parser.c", ids, ParserC)?;
     let node_types_json =
         read_optional_source_string(root, &rel_under(path.as_ref(), "src/node-types.json")?, ids)?
             .map(|source| NodeTypesJson::from_source_file(root, source))
@@ -161,25 +157,11 @@ fn import_grammar(
         config,
         path,
         grammar,
-        parser_c,
         node_types_json,
         scanners,
         queries,
         corpus,
     })
-}
-
-fn read_optional_typed_at<T>(
-    root: &PackageRoot,
-    base: Option<&PackageRelativePath>,
-    relative: &str,
-    ids: &mut SourceIdAllocator,
-    wrap: impl FnOnce(String) -> T,
-) -> Result<Option<SourceFile<T>>, ImportError> {
-    Ok(
-        read_optional_source_string(root, &rel_under(base, relative)?, ids)?
-            .map(|source| source.map(wrap)),
-    )
 }
 
 fn import_scanners(
@@ -471,7 +453,6 @@ mod tests {
     use crate::{
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
-        parser_c::GeneratedParserFacts,
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
     };
@@ -626,18 +607,6 @@ mod tests {
         assert_eq!(grammar.grammar.body.grammar.rules.len(), 66);
         assert_eq!(grammar.grammar.body.grammar.externals.len(), 3);
         assert!(package.manifest.is_some());
-        assert!(grammar.parser_c.is_some());
-        let parser_facts =
-            GeneratedParserFacts::from_parser_c(&grammar.parser_c.as_ref().unwrap().body).unwrap();
-        assert_eq!(parser_facts.constants.state_count, 442);
-        assert_eq!(parser_facts.constants.symbol_count, 142);
-        assert_eq!(parser_facts.constants.external_token_count, 3);
-        assert_eq!(
-            parser_facts
-                .symbol_by_c_name("sym_stylesheet")
-                .map(|symbol| symbol.name.as_str()),
-            Some("stylesheet")
-        );
         assert!(grammar.node_types_json.is_some());
         let manifest = &package.manifest.as_ref().unwrap().body.config;
         assert_eq!(manifest.grammars[0].name, "css");
@@ -677,9 +646,6 @@ mod tests {
             grammar.grammar.path.as_str().to_owned(),
             grammar.grammar.id.get(),
         ));
-        if let Some(file) = &grammar.parser_c {
-            source_ids.push((file.path.as_str().to_owned(), file.id.get()));
-        }
         if let Some(file) = &grammar.node_types_json {
             source_ids.push((file.path.as_str().to_owned(), file.id.get()));
         }
@@ -704,11 +670,10 @@ mod tests {
             [
                 ("tree-sitter.json".to_string(), 0),
                 ("src/grammar.json".to_string(), 1),
-                ("src/parser.c".to_string(), 2),
-                ("src/node-types.json".to_string(), 3),
-                ("src/scanner.c".to_string(), 4),
-                ("queries/highlights.scm".to_string(), 5),
-                ("test/highlight/test_css.css".to_string(), 6),
+                ("src/node-types.json".to_string(), 2),
+                ("src/scanner.c".to_string(), 3),
+                ("queries/highlights.scm".to_string(), 4),
+                ("test/highlight/test_css.css".to_string(), 5),
             ]
         );
     }
@@ -739,7 +704,6 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("src").join("grammar.json"), MINI_GRAMMAR).unwrap();
-        fs::write(root.join("src").join("parser.c"), "/* parser */").unwrap();
         fs::write(
             root.join("src").join("scanner.c"),
             "enum TokenType { DESCENDANT_OP };",
@@ -772,7 +736,6 @@ mod tests {
 
         assert_eq!(package.language_name(), "mini_css");
         assert!(package.manifest.is_some());
-        assert!(grammar.parser_c.is_some());
         assert_eq!(grammar.scanners.len(), 1);
         assert_eq!(grammar.scanners[0].kind, TreeSitterScannerKind::C);
         assert_eq!(grammar.scanners[0].externals.len(), 3);
@@ -1053,7 +1016,6 @@ mod tests {
         assert_eq!(grammar.grammar.body.grammar.rules.len(), 66);
         assert_eq!(grammar.grammar.body.grammar.externals.len(), 3);
         assert!(package.manifest.is_some());
-        assert!(grammar.parser_c.is_some());
         assert_eq!(grammar.scanners.len(), 1);
         assert_eq!(grammar.scanners[0].kind, TreeSitterScannerKind::C);
         assert_eq!(grammar.scanners[0].externals.len(), 3);

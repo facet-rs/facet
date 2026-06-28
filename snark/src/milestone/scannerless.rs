@@ -2,7 +2,7 @@
 //!
 //! This module is deliberately not Snark's runtime parser contract. It exists
 //! to exercise a tiny scannerless grammar shape while the production path is
-//! built as Tree-sitter artifact validation followed by Weavy lowering.
+//! built as Snark grammar validation followed by Weavy lowering.
 
 use std::fmt;
 

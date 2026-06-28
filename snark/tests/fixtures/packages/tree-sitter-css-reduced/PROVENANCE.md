@@ -12,7 +12,6 @@ Included files:
 - `tree-sitter.json`
 - `LICENSE`
 - `src/grammar.json`
-- `src/parser.c`
 - `src/node-types.json`
 - `src/scanner.c`
 - `queries/highlights.scm`
@@ -20,4 +19,7 @@ Included files:
 
 Omitted files:
 
-- Language bindings, package-manager metadata, examples, scripts, and additional tests not needed by the raw package import boundary.
+- Generated implementation files such as `src/parser.c`; Snark does not inspect
+  Tree-sitter's generated parser implementation.
+- Language bindings, package-manager metadata, examples, scripts, and additional
+  tests not needed by the raw package import boundary.

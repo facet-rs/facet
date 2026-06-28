@@ -1,8 +1,9 @@
 //! Snark dialect scaffold for Weavy lowering.
 //!
 //! This module names the target shape before the full lowering implementation
-//! exists: Tree-sitter parser/scanner/query machinery should become typed
-//! Snark intrinsics inside canonical Weavy programs.
+//! exists: validated Snark grammar, scanner, parser, query, recovery, and
+//! incremental facts should become typed Snark intrinsics inside canonical
+//! Weavy programs.
 
 use weavy::ir::{
     EffectContract, EffectResource, IntrinsicDescriptor, IntrinsicOp, WeavyLowered, WeavyOp,
@@ -36,55 +37,55 @@ id_type!(
 );
 id_type!(
     ParseStateId,
-    "Tree-sitter parse state identity preserved for lowering."
+    "Snark parser state identity generated from validated grammar facts."
 );
 id_type!(
     SymbolId,
-    "Tree-sitter symbol identity preserved for lowering."
+    "Snark symbol identity generated from validated grammar facts."
 );
 id_type!(
     TerminalId,
-    "Tree-sitter terminal symbol identity preserved for lowering."
+    "Snark terminal symbol identity generated from validated grammar facts."
 );
 id_type!(
     NonterminalId,
-    "Tree-sitter nonterminal symbol identity preserved for lowering."
+    "Snark nonterminal symbol identity generated from validated grammar facts."
 );
 id_type!(
     ProductionId,
-    "Tree-sitter production identity preserved for reductions and aliases."
+    "Snark production identity generated from validated grammar facts."
 );
 id_type!(
     FieldId,
-    "Tree-sitter field identity preserved for tree/query output."
+    "Snark field identity generated from validated grammar facts."
 );
 id_type!(
     LexModeId,
-    "Tree-sitter lexical mode identity preserved for tokenization."
+    "Snark lexical mode identity generated from validated grammar facts."
 );
 id_type!(
     AliasSequenceId,
-    "Tree-sitter alias-sequence identity preserved for visible node output."
+    "Snark alias-sequence identity generated from validated grammar facts."
 );
 id_type!(
     ExternalScannerStateId,
-    "External scanner state-table identity preserved for scanner replay."
+    "Snark external scanner state identity for scanner replay."
 );
 
 /// A domain intrinsic emitted by Snark lowering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SnarkIntrinsic {
-    /// Read the next token according to a Tree-sitter lexical mode.
+    /// Read the next token according to a Snark lexical mode.
     Lex {
         /// Lexical mode selected by the current parser state.
         mode: LexModeId,
     },
-    /// Call a Tree-sitter external scanner with a valid-symbol mask.
+    /// Call an external scanner with a Snark valid-symbol mask.
     CallExternalScanner {
         /// Parser state whose valid-symbol set is being offered.
         state: ParseStateId,
-        /// Scanner state row selected by the generated parser table.
+        /// Scanner state selected by Snark's parser runtime.
         scanner_state: ExternalScannerStateId,
     },
     /// Shift the current lookahead and enter another parser state.
@@ -101,7 +102,7 @@ pub enum SnarkIntrinsic {
         /// Optional alias sequence applied to visible children.
         aliases: Option<AliasSequenceId>,
     },
-    /// Recover through the generated Tree-sitter recovery path.
+    /// Recover through Snark's generated recovery path.
     Recover {
         /// Parser state whose recovery action is being executed.
         state: ParseStateId,
@@ -179,8 +180,9 @@ impl IntrinsicOp for SnarkIntrinsic {
 /// Build the empty initial lowered artifact.
 ///
 /// This is intentionally only a carrier smoke check. Full lowering must fill
-/// this with validated Tree-sitter parser/scanner/query facts rather than raw
-/// recursive grammar interpretation.
+/// this with validated Snark parser/scanner/query facts rather than raw
+/// recursive grammar interpretation or generated Tree-sitter implementation
+/// artifacts.
 #[must_use]
 pub fn empty_lowered() -> SnarkWeavyLowered {
     WeavyLowered::new(Vec::new())
