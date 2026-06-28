@@ -100,6 +100,10 @@ members = [
   "styx-xtask",
   "tree-sitter-styx",
 
+  # Gingembre Jinja-like template engine
+  "gingembre",
+  "gingembre-syntax",
+
   # async incremental query runtime
   "picante",
   "picante-macros",
