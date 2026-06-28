@@ -46,10 +46,22 @@ pub enum CorpusKind {
 pub struct CorpusCase {
     /// Human-readable case name from the corpus separator header.
     pub name: String,
+    /// Tree-sitter corpus attributes declared in the case header.
+    #[facet(default)]
+    pub attributes: Vec<CorpusAttribute>,
     /// Source input that Tree-sitter parses for this case.
     pub input: String,
     /// Expected Tree-sitter S-expression.
     pub expected: SexpNode,
+}
+
+/// Attribute declared in a Tree-sitter corpus case header.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+pub struct CorpusAttribute {
+    /// Attribute name.
+    pub name: String,
+    /// Optional attribute value.
+    pub value: Option<String>,
 }
 
 /// Parsed S-expression node from a Tree-sitter corpus expected tree.
@@ -57,18 +69,38 @@ pub struct CorpusCase {
 pub struct SexpNode {
     /// Node kind.
     pub kind: String,
-    /// Child nodes.
+    /// Child values.
     #[facet(default)]
     pub children: Vec<SexpChild>,
 }
 
-/// Parsed S-expression child, optionally labeled with a Tree-sitter field.
+/// Parsed S-expression child value, optionally labeled with a Tree-sitter field.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct SexpChild {
     /// Optional field label.
     pub field: Option<String>,
-    /// Child node.
-    pub node: SexpNode,
+    /// Child value.
+    pub value: SexpValue,
+}
+
+/// Parsed S-expression value.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SexpValue {
+    /// Nested named node.
+    Node(SexpNode),
+    /// Atom child, used for anonymous terminals such as `MISSING ";"`.
+    Atom(SexpAtom),
+}
+
+/// Parsed S-expression atom.
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SexpAtom {
+    /// Unquoted atom.
+    Bare(String),
+    /// Quoted anonymous terminal, without surrounding quotes.
+    Quoted(String),
 }
 
 impl SexpNode {
@@ -96,7 +128,25 @@ impl SexpChild {
             out.push_str(field);
             out.push_str(": ");
         }
-        self.node.write_sexp(out);
+        self.value.write_sexp(out);
+    }
+}
+
+impl SexpValue {
+    fn write_sexp(&self, out: &mut String) {
+        match self {
+            Self::Node(node) => node.write_sexp(out),
+            Self::Atom(atom) => atom.write_sexp(out),
+        }
+    }
+}
+
+impl SexpAtom {
+    fn write_sexp(&self, out: &mut String) {
+        match self {
+            Self::Bare(atom) => out.push_str(atom),
+            Self::Quoted(atom) => write_quoted_atom(atom, out),
+        }
     }
 }
 
@@ -205,19 +255,31 @@ fn parse_corpus_cases(source: &str) -> Result<Vec<CorpusCase>, CorpusParseError>
                 },
             ));
         }
+        let (name, attributes) = parse_case_header(&name);
         index += 1;
 
-        let mut body_lines = Vec::new();
-        while index < lines.len() && !is_separator(lines[index]) {
-            body_lines.push(lines[index]);
+        let mut input_lines = Vec::new();
+        while index < lines.len()
+            && !is_separator(lines[index])
+            && !is_input_separator(lines[index])
+        {
+            input_lines.push(lines[index]);
             index += 1;
         }
-        let body = body_lines.join("\n");
-        let Some((input, expected)) = body.split_once("\n---\n") else {
+        if index >= lines.len() || is_separator(lines[index]) {
             return Err(CorpusParseError::new(
                 CorpusParseErrorKind::MissingInputSeparator { name },
             ));
-        };
+        }
+        index += 1;
+
+        let mut expected_lines = Vec::new();
+        while index < lines.len() && !is_separator(lines[index]) {
+            expected_lines.push(lines[index]);
+            index += 1;
+        }
+        let input = input_lines.join("\n");
+        let expected = expected_lines.join("\n");
         let expected = expected.trim();
         if expected.is_empty() {
             return Err(CorpusParseError::new(
@@ -226,11 +288,42 @@ fn parse_corpus_cases(source: &str) -> Result<Vec<CorpusCase>, CorpusParseError>
         }
         cases.push(CorpusCase {
             name,
-            input: trim_blank_edges(input).to_owned(),
+            attributes,
+            input: trim_blank_edges(&input).to_owned(),
             expected: parse_sexp(expected)?,
         });
     }
     Ok(cases)
+}
+
+fn parse_case_header(header: &str) -> (String, Vec<CorpusAttribute>) {
+    let mut name_lines = Vec::new();
+    let mut attributes = Vec::new();
+    for line in header.lines() {
+        let trimmed = line.trim();
+        if let Some(attribute) = parse_attribute_line(trimmed) {
+            attributes.push(attribute);
+        } else {
+            name_lines.push(line);
+        }
+    }
+    (name_lines.join("\n").trim().to_owned(), attributes)
+}
+
+fn parse_attribute_line(line: &str) -> Option<CorpusAttribute> {
+    let body = line.strip_prefix(':')?;
+    let (name, value) = body
+        .split_once(' ')
+        .or_else(|| body.split_once('\t'))
+        .map_or((body, None), |(name, value)| (name, Some(value.trim())));
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(CorpusAttribute {
+        name: name.to_owned(),
+        value: value.filter(|value| !value.is_empty()).map(str::to_owned),
+    })
 }
 
 fn trim_blank_edges(input: &str) -> &str {
@@ -240,6 +333,11 @@ fn trim_blank_edges(input: &str) -> &str {
 fn is_separator(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '=')
+}
+
+fn is_input_separator(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '-')
 }
 
 fn parse_sexp(source: &str) -> Result<SexpNode, CorpusParseError> {
@@ -268,7 +366,7 @@ impl<'source> SexpParser<'source> {
     fn parse_node(&mut self) -> Result<SexpNode, CorpusParseError> {
         self.skip_ws();
         self.expect_byte(b'(')?;
-        let kind = self.parse_atom()?;
+        let kind = self.parse_node_kind()?;
         let mut children = Vec::new();
         loop {
             self.skip_ws();
@@ -276,20 +374,37 @@ impl<'source> SexpParser<'source> {
                 break;
             }
             let field = self.parse_field_label()?;
-            let node = self.parse_node()?;
-            children.push(SexpChild { field, node });
+            let value = self.parse_value()?;
+            children.push(SexpChild { field, value });
         }
         Ok(SexpNode { kind, children })
     }
 
+    fn parse_node_kind(&mut self) -> Result<String, CorpusParseError> {
+        match self.parse_atom()? {
+            SexpAtom::Bare(kind) => Ok(kind),
+            SexpAtom::Quoted(_) => Err(self.error("expected node kind")),
+        }
+    }
+
+    fn parse_value(&mut self) -> Result<SexpValue, CorpusParseError> {
+        self.skip_ws();
+        if self.peek_byte() == Some(b'(') {
+            return Ok(SexpValue::Node(self.parse_node()?));
+        }
+        Ok(SexpValue::Atom(self.parse_atom()?))
+    }
+
     fn parse_field_label(&mut self) -> Result<Option<String>, CorpusParseError> {
         let checkpoint = self.position;
-        let Some(atom) = self.try_parse_atom()? else {
+        let Some(atom) = self.try_parse_bare_atom()? else {
             return Ok(None);
         };
-        if let Some(field) = atom.strip_suffix(':') {
+        if let SexpAtom::Bare(atom) = atom
+            && let Some(field) = atom.strip_suffix(':')
+        {
             self.skip_ws();
-            if self.peek_byte() == Some(b'(') {
+            if !matches!(self.peek_byte(), None | Some(b')')) {
                 return Ok(Some(field.to_owned()));
             }
         }
@@ -297,15 +412,15 @@ impl<'source> SexpParser<'source> {
         Ok(None)
     }
 
-    fn try_parse_atom(&mut self) -> Result<Option<String>, CorpusParseError> {
+    fn try_parse_bare_atom(&mut self) -> Result<Option<SexpAtom>, CorpusParseError> {
         self.skip_ws();
-        if self.is_eof() || matches!(self.peek_byte(), Some(b'(' | b')')) {
+        if self.is_eof() || matches!(self.peek_byte(), Some(b'(' | b')' | b'"')) {
             return Ok(None);
         }
         Ok(Some(self.parse_atom()?))
     }
 
-    fn parse_atom(&mut self) -> Result<String, CorpusParseError> {
+    fn parse_atom(&mut self) -> Result<SexpAtom, CorpusParseError> {
         self.skip_ws();
         if self.peek_byte() == Some(b'"') {
             return self.parse_quoted_atom();
@@ -320,25 +435,25 @@ impl<'source> SexpParser<'source> {
         if self.position == start {
             return Err(self.error("expected atom"));
         }
-        Ok(self.source[start..self.position].to_owned())
+        Ok(SexpAtom::Bare(self.source[start..self.position].to_owned()))
     }
 
-    fn parse_quoted_atom(&mut self) -> Result<String, CorpusParseError> {
+    fn parse_quoted_atom(&mut self) -> Result<SexpAtom, CorpusParseError> {
         self.expect_byte(b'"')?;
         let mut out = String::new();
-        while let Some(byte) = self.peek_byte() {
-            self.position += 1;
-            match byte {
-                b'"' => return Ok(format!("\"{out}\"")),
-                b'\\' => {
-                    let Some(escaped) = self.peek_byte() else {
+        while let Some(ch) = self.peek_char() {
+            self.position += ch.len_utf8();
+            match ch {
+                '"' => return Ok(SexpAtom::Quoted(out)),
+                '\\' => {
+                    let Some(escaped) = self.peek_char() else {
                         return Err(self.error("unterminated escape"));
                     };
-                    self.position += 1;
+                    self.position += escaped.len_utf8();
                     out.push('\\');
-                    out.push(char::from(escaped));
+                    out.push(escaped);
                 }
-                _ => out.push(char::from(byte)),
+                _ => out.push(ch),
             }
         }
         Err(self.error("unterminated quoted atom"))
@@ -375,6 +490,10 @@ impl<'source> SexpParser<'source> {
         self.source.as_bytes().get(self.position).copied()
     }
 
+    fn peek_char(&self) -> Option<char> {
+        self.source[self.position..].chars().next()
+    }
+
     fn is_eof(&self) -> bool {
         self.position >= self.source.len()
     }
@@ -385,6 +504,20 @@ impl<'source> SexpParser<'source> {
             offset: self.position,
         })
     }
+}
+
+fn write_quoted_atom(atom: &str, out: &mut String) {
+    out.push('"');
+    for ch in atom.chars() {
+        match ch {
+            '"' | '\\' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
 }
 
 #[cfg(test)]
@@ -413,6 +546,7 @@ mod tests {
 
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].name, "Rule sets");
+        assert!(cases[0].attributes.is_empty());
         assert_eq!(cases[0].input, "#some-id {\n  some-property: 5px;\n}");
         assert_eq!(
             cases[0].expected.to_sexp(),
@@ -427,5 +561,58 @@ mod tests {
 
         assert_eq!(node.children[0].field.as_deref(), Some("property"));
         assert_eq!(node.children[1].field.as_deref(), Some("value"));
+    }
+
+    #[test]
+    fn parses_long_hyphen_input_separators_and_attributes() {
+        let corpus = fixture(
+            "====================\nCase name\n:skip\n:platform linux\n====================\n\ninput\n\n--------------------------------------------------------------------------------\n\n(document)\n",
+        );
+
+        let cases = corpus.parse_cases().unwrap();
+
+        assert_eq!(cases[0].name, "Case name");
+        assert_eq!(
+            cases[0].attributes,
+            [
+                CorpusAttribute {
+                    name: "skip".to_owned(),
+                    value: None,
+                },
+                CorpusAttribute {
+                    name: "platform".to_owned(),
+                    value: Some("linux".to_owned()),
+                },
+            ]
+        );
+        assert_eq!(cases[0].input, "input");
+    }
+
+    #[test]
+    fn parses_atom_children_and_quoted_anonymous_tokens() {
+        let node = parse_sexp(r#"(ERROR (MISSING ";") "}")"#).unwrap();
+
+        assert_eq!(node.to_sexp(), r#"(ERROR (MISSING ";") "}")"#);
+        assert_eq!(
+            node.children[0].value,
+            SexpValue::Node(SexpNode {
+                kind: "MISSING".to_owned(),
+                children: vec![SexpChild {
+                    field: None,
+                    value: SexpValue::Atom(SexpAtom::Quoted(";".to_owned())),
+                }],
+            })
+        );
+        assert_eq!(
+            node.children[1].value,
+            SexpValue::Atom(SexpAtom::Quoted("}".to_owned()))
+        );
+    }
+
+    #[test]
+    fn preserves_non_ascii_quoted_atoms() {
+        let node = parse_sexp(r#"(ERROR "é")"#).unwrap();
+
+        assert_eq!(node.to_sexp(), r#"(ERROR "é")"#);
     }
 }

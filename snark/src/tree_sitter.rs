@@ -451,6 +451,7 @@ mod tests {
     use std::fs;
 
     use crate::{
+        corpus::SexpValue,
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
         query::WellKnownQuery,
@@ -646,6 +647,22 @@ mod tests {
         let cases = parse_fixture.parse_cases().unwrap();
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].name, "Rule sets");
+        assert!(cases[0].attributes.is_empty());
+        assert_eq!(cases[0].expected.kind, "stylesheet");
+        assert_eq!(cases[0].expected.children.len(), 1);
+        let SexpValue::Node(rule_set) = &cases[0].expected.children[0].value else {
+            panic!("stylesheet child should be rule_set node");
+        };
+        assert_eq!(rule_set.kind, "rule_set");
+        assert_eq!(rule_set.children.len(), 2);
+        let SexpValue::Node(selectors) = &rule_set.children[0].value else {
+            panic!("rule_set first child should be selectors node");
+        };
+        assert_eq!(selectors.kind, "selectors");
+        let SexpValue::Node(block) = &rule_set.children[1].value else {
+            panic!("rule_set second child should be block node");
+        };
+        assert_eq!(block.kind, "block");
         assert_eq!(
             cases[0].expected.to_sexp(),
             "(stylesheet (rule_set (selectors (id_selector (id_name))) (block (declaration (property_name) (integer_value (unit))))))"
