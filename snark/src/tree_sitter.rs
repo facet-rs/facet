@@ -739,6 +739,41 @@ mod tests {
                 .iter()
                 .any(|symbol| symbol.name() == "_block_item" && symbol.inline())
         );
+        let normalized_parser_grammar =
+            ParserGrammar::normalize_from_validated(&validated, &lexical).unwrap();
+        assert_eq!(
+            normalized_parser_grammar.stage(),
+            ParserGenerationStage::Productions
+        );
+        assert!(!normalized_parser_grammar.productions().is_empty());
+        assert_eq!(normalized_parser_grammar.symbols().externals().len(), 3);
+        assert!(
+            normalized_parser_grammar
+                .symbols()
+                .terminals()
+                .iter()
+                .any(|terminal| terminal.kind() == crate::parser::ParserTerminalKind::Token)
+        );
+        assert!(
+            normalized_parser_grammar.symbols().terminals().iter().any(
+                |terminal| terminal.kind() == crate::parser::ParserTerminalKind::ImmediateToken
+            )
+        );
+        assert!(
+            normalized_parser_grammar
+                .symbols()
+                .nonterminals()
+                .iter()
+                .any(|symbol| symbol.origin() == crate::parser::NonterminalOrigin::RepeatAuxiliary)
+        );
+        assert!(!normalized_parser_grammar.alias_sequences().is_empty());
+        assert!(!normalized_parser_grammar.provenances().is_empty());
+        assert!(
+            normalized_parser_grammar
+                .public_node_kinds()
+                .iter()
+                .any(|kind| kind.name() == "~")
+        );
         assert_eq!(
             grammar
                 .grammar

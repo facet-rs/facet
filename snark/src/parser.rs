@@ -6,12 +6,15 @@
 //! state. It is not a recursive recognizer and it never consumes generated
 //! Tree-sitter implementation files.
 
+use std::{collections::HashMap, error::Error, fmt};
+
 use crate::{
     lexical::{LexicalFacts, TerminalKind},
     runtime_input::{ByteRange, PointRange},
     validated::{
-        AliasId, FieldId, GrammarExprId, PrecedenceEntry as ValidatedPrecedenceEntry, RuleId,
-        ValidatedGrammar, VisibleNodeKind,
+        AliasId, FieldId, GrammarExpr, GrammarExprId, PrecedenceAssoc,
+        PrecedenceEntry as ValidatedPrecedenceEntry, ReservedSetId, RuleId, StaticPrecedenceValue,
+        SymbolRef, ValidatedGrammar, VisibleNodeKind,
     },
 };
 
@@ -94,6 +97,7 @@ pub struct ParserGrammar {
     production_metadata: Vec<ProductionMetadata>,
     field_maps: Vec<FieldMap>,
     alias_sequences: Vec<AliasSequence>,
+    provenances: Vec<Provenance>,
     lexical_modes: Vec<LexMode>,
     reserved_contexts: Vec<ReservedContext>,
     valid_symbol_sets: Vec<ValidSymbolSet>,
@@ -112,26 +116,37 @@ impl ParserGrammar {
     /// flatten `ValidatedGrammar` expressions into [`Production`] rows before
     /// item sets or runtime execution are valid.
     pub fn seed_from_validated(grammar: &ValidatedGrammar, lexical: &LexicalFacts) -> Self {
+        Self::seed(grammar, lexical)
+    }
+
+    /// Normalize validated grammar facts into flattened productions.
+    ///
+    /// This is the parser-generator input stage before LR item sets and parse
+    /// tables. It lowers grammar expressions into flat production rows and
+    /// generated auxiliary nonterminals; it does not execute the grammar.
+    pub fn normalize_from_validated(
+        grammar: &ValidatedGrammar,
+        lexical: &LexicalFacts,
+    ) -> Result<Self, ParserNormalizeError> {
+        let mut parser = Self::seed(grammar, lexical);
+        ProductionNormalizer::new(grammar, &mut parser).normalize()?;
+        parser.stage = ParserGenerationStage::Productions;
+        Ok(parser)
+    }
+
+    fn seed(grammar: &ValidatedGrammar, lexical: &LexicalFacts) -> Self {
         let nonterminals = grammar
             .rules()
             .map(|rule| NonterminalSymbol {
                 id: NonterminalId::from_index(rule.id().get() as usize),
-                rule: rule.id(),
+                source_rule: Some(rule.id()),
                 name: rule.name().as_str().to_owned(),
                 visible: rule.visible() && !grammar.inline().contains(&rule.id()),
                 inline: grammar.inline().contains(&rule.id()),
+                origin: NonterminalOrigin::Rule,
             })
             .collect::<Vec<_>>();
-        let terminals = lexical
-            .terminals()
-            .iter()
-            .enumerate()
-            .map(|(index, terminal)| TerminalSymbol {
-                id: TerminalId::from_index(index),
-                kind: terminal.kind,
-                spelling: terminal.spelling.clone(),
-            })
-            .collect::<Vec<_>>();
+        let terminals = seed_terminal_symbols(grammar, lexical);
         let externals = lexical
             .external_tokens()
             .iter()
@@ -187,7 +202,7 @@ impl ParserGrammar {
                     .collect(),
             })
             .collect::<Vec<_>>();
-        let public_node_kinds = grammar
+        let mut public_node_kinds = grammar
             .visible_node_kinds()
             .enumerate()
             .map(|(index, name)| {
@@ -207,6 +222,19 @@ impl ParserGrammar {
                 }
             })
             .collect::<Vec<_>>();
+        for terminal in &terminals {
+            if terminal.kind == ParserTerminalKind::String
+                && !public_node_kinds
+                    .iter()
+                    .any(|kind| kind.name == terminal.spelling)
+            {
+                public_node_kinds.push(PublicNodeKind {
+                    id: PublicNodeKindId::from_index(public_node_kinds.len()),
+                    name: terminal.spelling.clone(),
+                    source: PublicNodeKindSource::AnonymousTerminal(terminal.id),
+                });
+            }
+        }
         let conflict_plans = grammar
             .conflicts()
             .iter()
@@ -246,6 +274,7 @@ impl ParserGrammar {
             production_metadata: Vec::new(),
             field_maps: Vec::new(),
             alias_sequences: Vec::new(),
+            provenances: Vec::new(),
             lexical_modes: Vec::new(),
             reserved_contexts,
             valid_symbol_sets: Vec::new(),
@@ -295,6 +324,11 @@ impl ParserGrammar {
         &self.alias_sequences
     }
 
+    /// Parser-generation provenance rows keyed by [`ProvenanceId`].
+    pub fn provenances(&self) -> &[Provenance] {
+        &self.provenances
+    }
+
     /// Lexical modes attached to parser states.
     pub fn lexical_modes(&self) -> &[LexMode] {
         &self.lexical_modes
@@ -338,6 +372,539 @@ impl ParserGrammar {
     /// GLR conflict/recovery plan facts.
     pub const fn glr_plan(&self) -> &GlrPlan {
         &self.glr_plan
+    }
+}
+
+fn seed_terminal_symbols(
+    grammar: &ValidatedGrammar,
+    lexical: &LexicalFacts,
+) -> Vec<TerminalSymbol> {
+    let mut terminals = lexical
+        .terminals()
+        .iter()
+        .enumerate()
+        .map(|(index, terminal)| TerminalSymbol {
+            id: TerminalId::from_index(index),
+            kind: match terminal.kind {
+                TerminalKind::String => ParserTerminalKind::String,
+                TerminalKind::Pattern => ParserTerminalKind::Pattern,
+            },
+            spelling: terminal.spelling.clone(),
+            expr: terminal.expr,
+            lexical_root: None,
+        })
+        .collect::<Vec<_>>();
+    for root in lexical.lexical_roots() {
+        let kind = match root.kind {
+            crate::lexical::LexicalRootKind::Token => ParserTerminalKind::Token,
+            crate::lexical::LexicalRootKind::ImmediateToken => ParserTerminalKind::ImmediateToken,
+        };
+        terminals.push(TerminalSymbol {
+            id: TerminalId::from_index(terminals.len()),
+            kind,
+            spelling: lexical_root_spelling(grammar, root.id),
+            expr: root.id,
+            lexical_root: Some(root.id),
+        });
+    }
+    terminals
+}
+
+fn lexical_root_spelling(grammar: &ValidatedGrammar, expr: GrammarExprId) -> String {
+    match grammar.expr(expr) {
+        GrammarExpr::Token(content) => format!("token#{}:{}", expr.get(), content.get()),
+        GrammarExpr::ImmediateToken(content) => {
+            format!("token.immediate#{}:{}", expr.get(), content.get())
+        }
+        _ => format!("token#{}", expr.get()),
+    }
+}
+
+/// Error produced while normalizing grammar expressions into productions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParserNormalizeError {
+    kind: ParserNormalizeErrorKind,
+}
+
+impl ParserNormalizeError {
+    fn new(kind: ParserNormalizeErrorKind) -> Self {
+        Self { kind }
+    }
+
+    /// Error kind.
+    pub const fn kind(&self) -> &ParserNormalizeErrorKind {
+        &self.kind
+    }
+}
+
+impl fmt::Display for ParserNormalizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            ParserNormalizeErrorKind::MissingTerminalExpression { expr } => {
+                write!(
+                    f,
+                    "grammar expression {} has no parser terminal",
+                    expr.get()
+                )
+            }
+            ParserNormalizeErrorKind::MissingReservedContext { context } => {
+                write!(
+                    f,
+                    "reserved context {} has no parser context row",
+                    context.get()
+                )
+            }
+        }
+    }
+}
+
+impl Error for ParserNormalizeError {}
+
+/// Parser production-normalization error kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParserNormalizeErrorKind {
+    /// A grammar expression expected to be a terminal had no terminal symbol.
+    MissingTerminalExpression {
+        /// Missing expression id.
+        expr: GrammarExprId,
+    },
+    /// A reserved wrapper referenced a missing reserved context row.
+    MissingReservedContext {
+        /// Missing context id.
+        context: ReservedSetId,
+    },
+}
+
+struct ProductionNormalizer<'a> {
+    grammar: &'a ValidatedGrammar,
+    parser: &'a mut ParserGrammar,
+    terminal_by_expr: HashMap<GrammarExprId, TerminalId>,
+    public_node_by_rule: HashMap<RuleId, PublicNodeKindId>,
+}
+
+impl<'a> ProductionNormalizer<'a> {
+    fn new(grammar: &'a ValidatedGrammar, parser: &'a mut ParserGrammar) -> Self {
+        let terminal_by_expr = parser
+            .symbols
+            .terminals
+            .iter()
+            .map(|terminal| (terminal.expr, terminal.id))
+            .collect::<HashMap<_, _>>();
+        let public_node_by_rule = parser
+            .public_node_kinds
+            .iter()
+            .filter_map(|kind| match kind.source {
+                PublicNodeKindSource::Rule(nonterminal) => parser
+                    .symbols
+                    .nonterminals
+                    .get(nonterminal.get() as usize)
+                    .and_then(|symbol| symbol.source_rule.map(|rule| (rule, kind.id))),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        Self {
+            grammar,
+            parser,
+            terminal_by_expr,
+            public_node_by_rule,
+        }
+    }
+
+    fn normalize(&mut self) -> Result<(), ParserNormalizeError> {
+        for rule in self.grammar.rules() {
+            let lhs = NonterminalId::from_index(rule.id().get() as usize);
+            let sequences = self.lower_expr(rule.id(), rule.expr())?;
+            let public_node = self.public_node_by_rule.get(&rule.id()).copied();
+            for sequence in sequences {
+                self.push_production(
+                    lhs,
+                    rule.id(),
+                    sequence,
+                    ProductionOrigin::Rule,
+                    public_node,
+                    ProvenanceSource::GrammarRule {
+                        rule: rule.id(),
+                        expr: rule.expr(),
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_expr(
+        &mut self,
+        owner: RuleId,
+        expr: GrammarExprId,
+    ) -> Result<Vec<SequenceDraft>, ParserNormalizeError> {
+        let expr_value = self.grammar.expr(expr).clone();
+        match expr_value {
+            GrammarExpr::Blank => Ok(vec![SequenceDraft::default()]),
+            GrammarExpr::StringToken(_) | GrammarExpr::PatternToken { .. } => {
+                Ok(vec![SequenceDraft::single(self.terminal_symbol(expr)?)])
+            }
+            GrammarExpr::Token(_) | GrammarExpr::ImmediateToken(_) => {
+                Ok(vec![SequenceDraft::single(self.terminal_symbol(expr)?)])
+            }
+            GrammarExpr::Symbol(SymbolRef::Rule(rule)) => Ok(vec![SequenceDraft::single(
+                ParserSymbol::Nonterminal(NonterminalId::from_index(rule.get() as usize)),
+            )]),
+            GrammarExpr::Symbol(SymbolRef::External(external)) => Ok(vec![SequenceDraft::single(
+                ParserSymbol::External(ExternalId::from_index(external.get() as usize)),
+            )]),
+            GrammarExpr::Choice(members) => {
+                let mut choices = Vec::new();
+                for member in members.clone() {
+                    choices.extend(self.lower_expr(owner, member)?);
+                }
+                Ok(choices)
+            }
+            GrammarExpr::Seq(members) => {
+                let mut sequences = vec![SequenceDraft::default()];
+                for member in members.clone() {
+                    let member_sequences = self.lower_expr(owner, member)?;
+                    sequences = combine_sequences(sequences, member_sequences);
+                }
+                Ok(sequences)
+            }
+            GrammarExpr::Repeat(content) => {
+                let aux = self.add_repeat_auxiliary(owner, expr, content, false)?;
+                Ok(vec![SequenceDraft::single(ParserSymbol::Nonterminal(aux))])
+            }
+            GrammarExpr::Repeat1(content) => {
+                let aux = self.add_repeat_auxiliary(owner, expr, content, true)?;
+                Ok(vec![SequenceDraft::single(ParserSymbol::Nonterminal(aux))])
+            }
+            GrammarExpr::Field { field, content } => {
+                let mut sequences = self.lower_expr(owner, content)?;
+                for sequence in &mut sequences {
+                    sequence.apply_field(field);
+                }
+                Ok(sequences)
+            }
+            GrammarExpr::Prec {
+                assoc,
+                value,
+                content,
+            } => {
+                let mut sequences = self.lower_expr(owner, content)?;
+                let precedence = static_precedence(&value);
+                let associativity = associativity(assoc);
+                for sequence in &mut sequences {
+                    sequence.static_precedence = Some(precedence.clone());
+                    sequence.associativity = associativity;
+                }
+                Ok(sequences)
+            }
+            GrammarExpr::PrecDynamic { value, content } => {
+                let mut sequences = self.lower_expr(owner, content)?;
+                for sequence in &mut sequences {
+                    sequence.dynamic_precedence += value;
+                }
+                Ok(sequences)
+            }
+            GrammarExpr::Alias {
+                alias,
+                named,
+                content,
+            } => {
+                let mut sequences = self.lower_expr(owner, content)?;
+                for sequence in &mut sequences {
+                    sequence.apply_alias(alias, named);
+                }
+                Ok(sequences)
+            }
+            GrammarExpr::Reserved { context, content } => {
+                let reserved_context = self.reserved_context(context)?;
+                let mut sequences = self.lower_expr(owner, content)?;
+                for sequence in &mut sequences {
+                    sequence.reserved_context = Some(reserved_context);
+                }
+                Ok(sequences)
+            }
+        }
+    }
+
+    fn add_repeat_auxiliary(
+        &mut self,
+        owner: RuleId,
+        repeat_expr: GrammarExprId,
+        content: GrammarExprId,
+        one_or_more: bool,
+    ) -> Result<NonterminalId, ParserNormalizeError> {
+        let aux = NonterminalId::from_index(self.parser.symbols.nonterminals.len());
+        self.parser.symbols.nonterminals.push(NonterminalSymbol {
+            id: aux,
+            source_rule: Some(owner),
+            name: format!("__snark_repeat_{}_{}", owner.get(), repeat_expr.get()),
+            visible: false,
+            inline: true,
+            origin: NonterminalOrigin::RepeatAuxiliary,
+        });
+
+        let content_sequences = self.lower_expr(owner, content)?;
+        if !one_or_more {
+            self.push_production(
+                aux,
+                owner,
+                SequenceDraft::default(),
+                ProductionOrigin::Repeat,
+                None,
+                ProvenanceSource::RepeatAuxiliary {
+                    owner,
+                    expr: repeat_expr,
+                },
+            );
+        }
+        for content_sequence in &content_sequences {
+            self.push_production(
+                aux,
+                owner,
+                content_sequence.clone(),
+                ProductionOrigin::Repeat,
+                None,
+                ProvenanceSource::RepeatAuxiliary {
+                    owner,
+                    expr: repeat_expr,
+                },
+            );
+        }
+        for mut content_sequence in content_sequences {
+            let mut recursive = SequenceDraft::single(ParserSymbol::Nonterminal(aux));
+            recursive.append(content_sequence.clone());
+            content_sequence = recursive;
+            self.push_production(
+                aux,
+                owner,
+                content_sequence,
+                ProductionOrigin::Repeat,
+                None,
+                ProvenanceSource::RepeatAuxiliary {
+                    owner,
+                    expr: repeat_expr,
+                },
+            );
+        }
+        Ok(aux)
+    }
+
+    fn push_production(
+        &mut self,
+        lhs: NonterminalId,
+        owner: RuleId,
+        sequence: SequenceDraft,
+        origin: ProductionOrigin,
+        public_node: Option<PublicNodeKindId>,
+        provenance_source: ProvenanceSource,
+    ) {
+        let metadata = ProductionMetadataId::from_index(self.parser.production_metadata.len());
+        let provenance = self.push_provenance(provenance_source);
+        let (steps, field_map, alias_sequence) = self.materialize_sequence(sequence.clone());
+        let dynamic_precedence = sequence.dynamic_precedence;
+        let production = Production {
+            id: ProductionId::from_index(self.parser.productions.len()),
+            lhs,
+            steps,
+            dynamic_precedence,
+            metadata,
+        };
+        self.parser.productions.push(production);
+        self.parser.production_metadata.push(ProductionMetadata {
+            id: metadata,
+            owner,
+            public_node,
+            field_map,
+            alias_sequence,
+            origin,
+            static_precedence: sequence.static_precedence,
+            associativity: sequence.associativity,
+            dynamic_precedence,
+            reserved_context: sequence.reserved_context,
+            provenance: Some(provenance),
+        });
+    }
+
+    fn materialize_sequence(
+        &mut self,
+        sequence: SequenceDraft,
+    ) -> (
+        Vec<ProductionStep>,
+        Option<FieldMapId>,
+        Option<AliasSequenceId>,
+    ) {
+        let mut field_entries = Vec::new();
+        let mut alias_entries = Vec::new();
+        let steps = sequence
+            .steps
+            .into_iter()
+            .enumerate()
+            .map(|(structural_index, step)| {
+                if let Some(field) = step.field {
+                    field_entries.push(FieldMapEntry {
+                        structural_index,
+                        field,
+                    });
+                }
+                if let (Some(alias), Some(named)) = (step.alias, step.alias_named) {
+                    alias_entries.push(AliasSequenceEntry {
+                        structural_index,
+                        alias,
+                        named,
+                    });
+                }
+                ProductionStep {
+                    symbol: step.symbol,
+                    field: step.field,
+                    alias: step.alias,
+                    alias_named: step.alias_named,
+                    structural_index,
+                }
+            })
+            .collect::<Vec<_>>();
+        let field_map = if field_entries.is_empty() {
+            None
+        } else {
+            let id = FieldMapId::from_index(self.parser.field_maps.len());
+            self.parser.field_maps.push(FieldMap {
+                id,
+                entries: field_entries,
+            });
+            Some(id)
+        };
+        let alias_sequence = if alias_entries.is_empty() {
+            None
+        } else {
+            let id = AliasSequenceId::from_index(self.parser.alias_sequences.len());
+            self.parser.alias_sequences.push(AliasSequence {
+                id,
+                entries: alias_entries,
+            });
+            Some(id)
+        };
+        (steps, field_map, alias_sequence)
+    }
+
+    fn push_provenance(&mut self, source: ProvenanceSource) -> ProvenanceId {
+        let id = ProvenanceId::from_index(self.parser.provenances.len());
+        self.parser.provenances.push(Provenance { id, source });
+        id
+    }
+
+    fn terminal_symbol(&self, expr: GrammarExprId) -> Result<ParserSymbol, ParserNormalizeError> {
+        self.terminal_by_expr
+            .get(&expr)
+            .copied()
+            .map(ParserSymbol::Terminal)
+            .ok_or_else(|| {
+                ParserNormalizeError::new(ParserNormalizeErrorKind::MissingTerminalExpression {
+                    expr,
+                })
+            })
+    }
+
+    fn reserved_context(
+        &self,
+        context: ReservedSetId,
+    ) -> Result<ReservedContextId, ParserNormalizeError> {
+        let id = ReservedContextId::from_index(context.get() as usize);
+        if self
+            .parser
+            .reserved_contexts
+            .get(id.get() as usize)
+            .is_some()
+        {
+            Ok(id)
+        } else {
+            Err(ParserNormalizeError::new(
+                ParserNormalizeErrorKind::MissingReservedContext { context },
+            ))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SequenceDraft {
+    steps: Vec<StepDraft>,
+    static_precedence: Option<StaticPrecedence>,
+    associativity: Associativity,
+    dynamic_precedence: i32,
+    reserved_context: Option<ReservedContextId>,
+}
+
+impl SequenceDraft {
+    fn single(symbol: ParserSymbol) -> Self {
+        Self {
+            steps: vec![StepDraft {
+                symbol,
+                field: None,
+                alias: None,
+                alias_named: None,
+            }],
+            ..Self::default()
+        }
+    }
+
+    fn append(&mut self, other: Self) {
+        self.steps.extend(other.steps);
+        if other.static_precedence.is_some() {
+            self.static_precedence = other.static_precedence;
+        }
+        if other.associativity != Associativity::None {
+            self.associativity = other.associativity;
+        }
+        self.dynamic_precedence += other.dynamic_precedence;
+        if other.reserved_context.is_some() {
+            self.reserved_context = other.reserved_context;
+        }
+    }
+
+    fn apply_field(&mut self, field: FieldId) {
+        for step in &mut self.steps {
+            step.field = Some(field);
+        }
+    }
+
+    fn apply_alias(&mut self, alias: AliasId, named: bool) {
+        for step in &mut self.steps {
+            step.alias = Some(alias);
+            step.alias_named = Some(named);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StepDraft {
+    symbol: ParserSymbol,
+    field: Option<FieldId>,
+    alias: Option<AliasId>,
+    alias_named: Option<bool>,
+}
+
+fn combine_sequences(left: Vec<SequenceDraft>, right: Vec<SequenceDraft>) -> Vec<SequenceDraft> {
+    let mut combined = Vec::new();
+    for left_sequence in left {
+        for right_sequence in &right {
+            let mut sequence = left_sequence.clone();
+            sequence.append(right_sequence.clone());
+            combined.push(sequence);
+        }
+    }
+    combined
+}
+
+fn static_precedence(value: &StaticPrecedenceValue) -> StaticPrecedence {
+    match value {
+        StaticPrecedenceValue::Integer(value) => StaticPrecedence::Integer(*value),
+        StaticPrecedenceValue::Name(name) => StaticPrecedence::Named(name.clone()),
+    }
+}
+
+fn associativity(assoc: PrecedenceAssoc) -> Associativity {
+    match assoc {
+        PrecedenceAssoc::None => Associativity::None,
+        PrecedenceAssoc::Left => Associativity::Left,
+        PrecedenceAssoc::Right => Associativity::Right,
     }
 }
 
@@ -454,8 +1021,10 @@ pub enum LookaheadSymbol {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalSymbol {
     id: TerminalId,
-    kind: TerminalKind,
+    kind: ParserTerminalKind,
     spelling: String,
+    expr: GrammarExprId,
+    lexical_root: Option<GrammarExprId>,
 }
 
 impl TerminalSymbol {
@@ -465,7 +1034,7 @@ impl TerminalSymbol {
     }
 
     /// Terminal kind.
-    pub const fn kind(&self) -> TerminalKind {
+    pub const fn kind(&self) -> ParserTerminalKind {
         self.kind
     }
 
@@ -473,16 +1042,41 @@ impl TerminalSymbol {
     pub fn spelling(&self) -> &str {
         &self.spelling
     }
+
+    /// Grammar expression that introduced this terminal symbol.
+    pub const fn expr(&self) -> GrammarExprId {
+        self.expr
+    }
+
+    /// Token/immediate-token wrapper root that introduced this terminal, if any.
+    pub const fn lexical_root(&self) -> Option<GrammarExprId> {
+        self.lexical_root
+    }
+}
+
+/// Parser terminal kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ParserTerminalKind {
+    /// Literal string token.
+    String,
+    /// Regex pattern token.
+    Pattern,
+    /// `token(...)` lexical variable.
+    Token,
+    /// `token.immediate(...)` lexical variable.
+    ImmediateToken,
 }
 
 /// Nonterminal symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NonterminalSymbol {
     id: NonterminalId,
-    rule: RuleId,
+    source_rule: Option<RuleId>,
     name: String,
     visible: bool,
     inline: bool,
+    origin: NonterminalOrigin,
 }
 
 impl NonterminalSymbol {
@@ -491,9 +1085,14 @@ impl NonterminalSymbol {
         self.id
     }
 
-    /// Source validated rule id.
-    pub const fn rule(&self) -> RuleId {
-        self.rule
+    /// Source validated rule id, when this is not a generated auxiliary symbol.
+    pub const fn rule(&self) -> Option<RuleId> {
+        self.source_rule
+    }
+
+    /// Source validated rule id, when this is not a generated auxiliary symbol.
+    pub const fn source_rule(&self) -> Option<RuleId> {
+        self.source_rule
     }
 
     /// Source rule name.
@@ -510,6 +1109,21 @@ impl NonterminalSymbol {
     pub const fn inline(&self) -> bool {
         self.inline
     }
+
+    /// Origin of this nonterminal symbol.
+    pub const fn origin(&self) -> NonterminalOrigin {
+        self.origin
+    }
+}
+
+/// How a nonterminal entered the parser symbol table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NonterminalOrigin {
+    /// Nonterminal came from a validated grammar rule.
+    Rule,
+    /// Nonterminal was generated while expanding a repetition expression.
+    RepeatAuxiliary,
 }
 
 /// External scanner symbol.
@@ -580,6 +1194,7 @@ pub struct ProductionStep {
     symbol: ParserSymbol,
     field: Option<FieldId>,
     alias: Option<AliasId>,
+    alias_named: Option<bool>,
     structural_index: usize,
 }
 
@@ -597,6 +1212,11 @@ impl ProductionStep {
     /// Alias applied at this structural child index.
     pub const fn alias(&self) -> Option<AliasId> {
         self.alias
+    }
+
+    /// Whether the alias at this structural child index is named.
+    pub const fn alias_named(&self) -> Option<bool> {
+        self.alias_named
     }
 
     /// Structural child index used for fields and aliases.
@@ -756,6 +1376,7 @@ impl AliasSequence {
 pub struct AliasSequenceEntry {
     structural_index: usize,
     alias: AliasId,
+    named: bool,
 }
 
 impl AliasSequenceEntry {
@@ -767,6 +1388,11 @@ impl AliasSequenceEntry {
     /// Alias attached at this index.
     pub const fn alias(&self) -> AliasId {
         self.alias
+    }
+
+    /// Whether this alias emits a named node/token.
+    pub const fn named(&self) -> bool {
+        self.named
     }
 }
 
@@ -803,6 +1429,47 @@ pub enum PublicNodeKindSource {
     Rule(NonterminalId),
     /// Named alias.
     Alias(AliasId),
+    /// Anonymous literal terminal referenced by queries.
+    AnonymousTerminal(TerminalId),
+}
+
+/// Parser-generation provenance row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Provenance {
+    id: ProvenanceId,
+    source: ProvenanceSource,
+}
+
+impl Provenance {
+    /// Provenance id.
+    pub const fn id(&self) -> ProvenanceId {
+        self.id
+    }
+
+    /// Source fact that introduced the generated row.
+    pub const fn source(&self) -> ProvenanceSource {
+        self.source
+    }
+}
+
+/// Source fact that introduced generated parser data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ProvenanceSource {
+    /// Production came from a grammar rule root expression.
+    GrammarRule {
+        /// Owning rule.
+        rule: RuleId,
+        /// Expression lowered for this production.
+        expr: GrammarExprId,
+    },
+    /// Production came from a generated repeat auxiliary.
+    RepeatAuxiliary {
+        /// Owning grammar rule.
+        owner: RuleId,
+        /// Repetition expression that introduced the auxiliary.
+        expr: GrammarExprId,
+    },
 }
 
 /// Extra grammar root.
@@ -867,6 +1534,12 @@ pub enum Associativity {
     Left,
     /// Right associative.
     Right,
+}
+
+impl Default for Associativity {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 /// Reserved-word context.
@@ -1421,6 +2094,8 @@ pub enum TreeEvent {
         node: TreeNodeId,
         /// Alias id.
         alias: AliasId,
+        /// Whether this alias emits a named node/token.
+        named: bool,
         /// Structural child index.
         structural_index: usize,
     },
@@ -1586,4 +2261,199 @@ pub enum PredicateOutcome {
     Rejected,
     /// Predicate execution is not represented yet.
     Unknown,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{grammar::RawGrammarJson, lexical::LexicalFacts, validated::ValidatedGrammar};
+
+    fn normalize(input: &str) -> ParserGrammar {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(input).unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        ParserGrammar::normalize_from_validated(&validated, &lexical).unwrap()
+    }
+
+    #[test]
+    fn normalizes_rules_tokens_repeats_fields_and_aliases_into_productions() {
+        let grammar = normalize(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "item" },
+                    {
+                      "type": "REPEAT",
+                      "content": { "type": "SYMBOL", "name": "item" }
+                    }
+                  ]
+                },
+                "item": {
+                  "type": "SEQ",
+                  "members": [
+                    {
+                      "type": "ALIAS",
+                      "named": true,
+                      "value": "thing",
+                      "content": {
+                        "type": "FIELD",
+                        "name": "name",
+                        "content": {
+                          "type": "TOKEN",
+                          "content": { "type": "STRING", "value": "a" }
+                        }
+                      }
+                    },
+                    {
+                      "type": "IMMEDIATE_TOKEN",
+                      "content": { "type": "STRING", "value": "b" }
+                    }
+                  ]
+                }
+              }
+            }"##,
+        );
+
+        assert_eq!(grammar.stage(), ParserGenerationStage::Productions);
+        assert_eq!(grammar.symbols().nonterminals().len(), 3);
+        assert_eq!(
+            grammar.symbols().nonterminals()[2].origin(),
+            NonterminalOrigin::RepeatAuxiliary
+        );
+        assert_eq!(grammar.productions().len(), 5);
+        assert_eq!(grammar.provenances().len(), grammar.productions().len());
+
+        let repeat_aux = NonterminalId::from_index(2);
+        assert_eq!(grammar.productions()[0].lhs(), repeat_aux);
+        assert!(grammar.productions()[0].steps().is_empty());
+        assert_eq!(
+            grammar.productions()[1]
+                .steps()
+                .iter()
+                .map(ProductionStep::symbol)
+                .collect::<Vec<_>>(),
+            [ParserSymbol::Nonterminal(NonterminalId::from_index(1))]
+        );
+        assert_eq!(
+            grammar.productions()[2]
+                .steps()
+                .iter()
+                .map(ProductionStep::symbol)
+                .collect::<Vec<_>>(),
+            [
+                ParserSymbol::Nonterminal(repeat_aux),
+                ParserSymbol::Nonterminal(NonterminalId::from_index(1)),
+            ]
+        );
+        assert_eq!(
+            grammar.productions()[3]
+                .steps()
+                .iter()
+                .map(ProductionStep::symbol)
+                .collect::<Vec<_>>(),
+            [
+                ParserSymbol::Nonterminal(NonterminalId::from_index(1)),
+                ParserSymbol::Nonterminal(repeat_aux),
+            ]
+        );
+
+        let token = grammar
+            .symbols()
+            .terminals()
+            .iter()
+            .find(|terminal| terminal.kind() == ParserTerminalKind::Token)
+            .unwrap();
+        let immediate = grammar
+            .symbols()
+            .terminals()
+            .iter()
+            .find(|terminal| terminal.kind() == ParserTerminalKind::ImmediateToken)
+            .unwrap();
+        let item = &grammar.productions()[4];
+        assert_eq!(
+            item.steps()
+                .iter()
+                .map(ProductionStep::symbol)
+                .collect::<Vec<_>>(),
+            [
+                ParserSymbol::Terminal(token.id()),
+                ParserSymbol::Terminal(immediate.id()),
+            ]
+        );
+        assert_eq!(item.steps()[0].structural_index(), 0);
+        assert!(item.steps()[0].field().is_some());
+        assert!(item.steps()[0].alias().is_some());
+        assert_eq!(item.steps()[0].alias_named(), Some(true));
+        assert_eq!(item.steps()[1].structural_index(), 1);
+        assert!(item.steps()[1].field().is_none());
+        assert!(item.steps()[1].alias().is_none());
+
+        let item_metadata = &grammar.production_metadata()[item.metadata().get() as usize];
+        let field_map = item_metadata.field_map().unwrap();
+        let alias_sequence = item_metadata.alias_sequence().unwrap();
+        assert_eq!(
+            grammar.field_maps()[field_map.get() as usize]
+                .entries()
+                .len(),
+            1
+        );
+        assert_eq!(
+            grammar.alias_sequences()[alias_sequence.get() as usize].entries()[0].named(),
+            true
+        );
+        assert!(matches!(
+            grammar.provenances()[item_metadata.provenance().unwrap().get() as usize].source(),
+            ProvenanceSource::GrammarRule { .. }
+        ));
+        assert!(grammar.public_node_kinds().iter().any(|kind| {
+            kind.name() == "a"
+                && matches!(kind.source(), PublicNodeKindSource::AnonymousTerminal(_))
+        }));
+    }
+
+    #[test]
+    fn preserves_precedence_dynamic_precedence_and_reserved_contexts() {
+        let grammar = normalize(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "PREC_LEFT",
+                  "value": "tight",
+                  "content": {
+                    "type": "PREC_DYNAMIC",
+                    "value": 7,
+                    "content": {
+                      "type": "RESERVED",
+                      "context_name": "default",
+                      "content": { "type": "STRING", "value": "a" }
+                    }
+                  }
+                }
+              },
+              "reserved": {
+                "default": [
+                  { "type": "STRING", "value": "if" }
+                ]
+              }
+            }"##,
+        );
+
+        assert_eq!(grammar.stage(), ParserGenerationStage::Productions);
+        assert_eq!(grammar.productions().len(), 1);
+        let metadata = &grammar.production_metadata()[0];
+        assert_eq!(
+            metadata.static_precedence(),
+            Some(&StaticPrecedence::Named("tight".to_owned()))
+        );
+        assert_eq!(metadata.associativity(), Associativity::Left);
+        assert_eq!(metadata.dynamic_precedence(), 7);
+        assert_eq!(
+            metadata.reserved_context(),
+            Some(ReservedContextId::from_index(0))
+        );
+    }
 }
