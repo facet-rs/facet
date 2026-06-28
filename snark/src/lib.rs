@@ -13,8 +13,11 @@ use std::{
 };
 
 use facet::Facet;
-use facet_format::{FormatParser, ParseEventKind};
-use facet_json::{JsonParser, RawJson};
+use indexmap::IndexMap;
+
+/// Insertion-ordered string-keyed map used for Tree-sitter JSON objects whose
+/// order is semantically meaningful.
+pub type OrderedMap<V> = IndexMap<String, V, std::hash::RandomState>;
 
 /// A complete language package as consumed by the parser/highlighter runtime.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
@@ -85,7 +88,7 @@ pub struct GrammarJson {
     /// Grammar name.
     pub name: String,
     /// Named grammar rules in Tree-sitter source order.
-    pub rules: Vec<NamedRule>,
+    pub rules: OrderedMap<RuleJson>,
     /// Extra tokens/rules skipped between normal tokens.
     pub extras: Vec<RuleJson>,
     /// Static precedence order declarations.
@@ -101,36 +104,18 @@ pub struct GrammarJson {
     /// Optional word token used for keyword extraction.
     pub word: Option<String>,
     /// Contextual reserved-word sets.
-    pub reserved: Vec<ReservedSet>,
+    pub reserved: OrderedMap<Vec<RuleJson>>,
 }
 
 impl GrammarJson {
     /// Import a `src/grammar.json` document emitted by Tree-sitter's generator.
     pub fn from_tree_sitter_json(input: &str) -> Result<Self, ImportError> {
-        let raw: RawGrammarJson<'_> =
-            facet_json::from_str_borrowed(input).map_err(ImportError::Deserialize)?;
-        let rules = parse_ordered_object(raw.rules.as_str(), |name, value| {
-            let rule = facet_json::from_str(value).map_err(ImportError::Deserialize)?;
-            Ok(NamedRule {
-                name: name.to_owned(),
-                rule,
-            })
-        })?;
-        let reserved = match raw.reserved {
-            Some(reserved) => parse_ordered_object(reserved.as_str(), |name, value| {
-                let rules = facet_json::from_str(value).map_err(ImportError::Deserialize)?;
-                Ok(ReservedSet {
-                    name: name.to_owned(),
-                    rules,
-                })
-            })?,
-            None => Vec::new(),
-        };
+        let raw: RawGrammarJson = facet_json::from_str(input).map_err(ImportError::Deserialize)?;
 
         Ok(Self {
             schema: raw.schema,
             name: raw.name,
-            rules,
+            rules: raw.rules,
             extras: raw.extras,
             precedences: raw.precedences,
             conflicts: raw.conflicts,
@@ -138,30 +123,27 @@ impl GrammarJson {
             inline: raw.inline,
             supertypes: raw.supertypes,
             word: raw.word,
-            reserved,
+            reserved: raw.reserved,
         })
     }
 
     /// The start rule is Tree-sitter's first rule in source order.
-    pub fn start_rule(&self) -> Option<&NamedRule> {
-        self.rules.first()
+    pub fn start_rule(&self) -> Option<(&str, &RuleJson)> {
+        self.rules.first().map(|(name, rule)| (name.as_str(), rule))
     }
 
     /// Look up a rule by name.
     pub fn rule(&self, name: &str) -> Option<&RuleJson> {
-        self.rules
-            .iter()
-            .find(|rule| rule.name == name)
-            .map(|rule| &rule.rule)
+        self.rules.get(name)
     }
 }
 
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
-struct RawGrammarJson<'a> {
+struct RawGrammarJson {
     #[facet(rename = "$schema")]
     schema: Option<String>,
     name: String,
-    rules: RawJson<'a>,
+    rules: OrderedMap<RuleJson>,
     #[facet(default)]
     extras: Vec<RuleJson>,
     #[facet(default)]
@@ -176,25 +158,7 @@ struct RawGrammarJson<'a> {
     supertypes: Vec<String>,
     word: Option<String>,
     #[facet(default)]
-    reserved: Option<RawJson<'a>>,
-}
-
-/// A named grammar rule.
-#[derive(Debug, Clone, Facet, PartialEq, Eq)]
-pub struct NamedRule {
-    /// Rule name.
-    pub name: String,
-    /// Rule body.
-    pub rule: RuleJson,
-}
-
-/// A contextual reserved-word set.
-#[derive(Debug, Clone, Facet, PartialEq, Eq)]
-pub struct ReservedSet {
-    /// Reserved-word context name.
-    pub name: String,
-    /// Rules in this reserved-word set.
-    pub rules: Vec<RuleJson>,
+    reserved: OrderedMap<Vec<RuleJson>>,
 }
 
 /// Tree-sitter `RuleJSON`, mirrored at the compatibility boundary.
@@ -457,17 +421,6 @@ pub enum ImportError {
     },
     /// Facet JSON deserialization failed.
     Deserialize(facet_json::DeserializeError),
-    /// Facet JSON event parsing failed.
-    Parse(facet_format::ParseError),
-    /// A JSON document did not have the expected shape.
-    Expected {
-        /// Expected shape.
-        expected: &'static str,
-        /// Actual event description.
-        actual: &'static str,
-    },
-    /// A JSON object key was missing a name.
-    NamelessKey,
 }
 
 impl fmt::Display for ImportError {
@@ -482,11 +435,6 @@ impl fmt::Display for ImportError {
             Self::Deserialize(source) => {
                 write!(f, "could not deserialize Tree-sitter JSON: {source}")
             }
-            Self::Parse(source) => write!(f, "could not parse Tree-sitter JSON: {source}"),
-            Self::Expected { expected, actual } => {
-                write!(f, "expected {expected}, found {actual}")
-            }
-            Self::NamelessKey => write!(f, "object key did not contain a field name"),
         }
     }
 }
@@ -496,8 +444,6 @@ impl std::error::Error for ImportError {
         match self {
             Self::ReadFile { source, .. } | Self::ReadDir { source, .. } => Some(source),
             Self::Deserialize(source) => Some(source),
-            Self::Parse(source) => Some(source),
-            Self::Expected { .. } | Self::NamelessKey => None,
         }
     }
 }
@@ -589,68 +535,6 @@ fn collect_corpus(
     Ok(())
 }
 
-fn parse_ordered_object<T>(
-    input: &str,
-    mut parse_entry: impl FnMut(&str, &str) -> Result<T, ImportError>,
-) -> Result<Vec<T>, ImportError> {
-    let mut parser = JsonParser::<true>::new(input.as_bytes());
-    let Some(event) = parser.next_event().map_err(ImportError::Parse)? else {
-        return Err(ImportError::Expected {
-            expected: "object",
-            actual: "end of input",
-        });
-    };
-    if !matches!(event.kind, ParseEventKind::StructStart(_)) {
-        return Err(ImportError::Expected {
-            expected: "object",
-            actual: event_kind_name(&event.kind),
-        });
-    }
-
-    let mut values = Vec::new();
-    loop {
-        let Some(event) = parser.next_event().map_err(ImportError::Parse)? else {
-            return Err(ImportError::Expected {
-                expected: "object end",
-                actual: "end of input",
-            });
-        };
-        match event.kind {
-            ParseEventKind::StructEnd => return Ok(values),
-            ParseEventKind::FieldKey(key) => {
-                let name = key.name().ok_or(ImportError::NamelessKey)?;
-                let raw = parser.capture_raw().map_err(ImportError::Parse)?.ok_or(
-                    ImportError::Expected {
-                        expected: "raw JSON value",
-                        actual: "unsupported raw capture",
-                    },
-                )?;
-                values.push(parse_entry(name, raw)?);
-            }
-            other => {
-                return Err(ImportError::Expected {
-                    expected: "field key or object end",
-                    actual: event_kind_name(&other),
-                });
-            }
-        }
-    }
-}
-
-fn event_kind_name(kind: &ParseEventKind<'_>) -> &'static str {
-    match kind {
-        ParseEventKind::StructStart(_) => "object start",
-        ParseEventKind::StructEnd => "object end",
-        ParseEventKind::FieldKey(_) => "field key",
-        ParseEventKind::OrderedField => "ordered field",
-        ParseEventKind::SequenceStart(_) => "sequence start",
-        ParseEventKind::SequenceEnd => "sequence end",
-        ParseEventKind::Scalar(_) => "scalar",
-        ParseEventKind::VariantTag(_) => "variant tag",
-        _ => "unknown event",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -697,16 +581,22 @@ mod tests {
 
         assert_eq!(grammar.name, "mini_css");
         assert_eq!(
-            grammar.start_rule().map(|rule| rule.name.as_str()),
+            grammar.start_rule().map(|(name, _)| name),
             Some("stylesheet")
         );
-        assert_eq!(grammar.rules[1].name, "rule_set");
+        assert_eq!(
+            grammar.rules.get_index(1).map(|(name, _)| name.as_str()),
+            Some("rule_set")
+        );
         assert!(matches!(
             grammar.rule("selector"),
             Some(RuleJson::Choice { .. })
         ));
         assert_eq!(grammar.externals.len(), 3);
-        assert_eq!(grammar.reserved[0].name, "default");
+        assert_eq!(
+            grammar.reserved.get_index(0).map(|(name, _)| name.as_str()),
+            Some("default")
+        );
     }
 
     #[test]
@@ -802,7 +692,7 @@ mod tests {
 
         assert_eq!(package.name, "css");
         assert_eq!(
-            package.grammar.start_rule().map(|rule| rule.name.as_str()),
+            package.grammar.start_rule().map(|(name, _)| name),
             Some("stylesheet")
         );
         assert_eq!(package.grammar.rules.len(), 66);

@@ -6185,8 +6185,8 @@ name = "snark"
 version = "0.0.1"
 dependencies = [
  "facet",
- "facet-format",
  "facet-json",
+ "indexmap 2.14.0",
 ]
 
 [[package]]
