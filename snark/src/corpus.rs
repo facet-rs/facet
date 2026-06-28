@@ -30,8 +30,12 @@ impl CorpusFixture {
         parse_corpus_cases(&self.source.body.0)
     }
 
-    /// Parse this fixture as a Tree-sitter highlight assertion file.
-    pub fn parse_highlight_assertions(
+    /// Parse this fixture as a CSS highlight assertion file.
+    ///
+    /// This recognizes CSS block comments carrying Tree-sitter-style highlight
+    /// assertions. Generic Tree-sitter highlight assertion parsing needs parsed
+    /// comment nodes from the language grammar, not raw delimiter scanning.
+    pub fn parse_css_highlight_assertions(
         &self,
     ) -> Result<Vec<HighlightAssertion>, HighlightParseError> {
         if self.kind != CorpusKind::Highlight {
@@ -39,7 +43,7 @@ impl CorpusFixture {
                 HighlightParseErrorKind::WrongKind { kind: self.kind },
             ));
         }
-        parse_highlight_assertions(&self.source.body.0)
+        parse_css_highlight_assertions(&self.source.body.0)
     }
 }
 
@@ -76,7 +80,7 @@ pub struct CorpusAttribute {
     pub value: Option<String>,
 }
 
-/// One highlight assertion from a Tree-sitter highlight fixture comment.
+/// One highlight assertion from a CSS highlight fixture comment.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct HighlightAssertion {
     /// Target position in the source fixture.
@@ -89,16 +93,16 @@ pub struct HighlightAssertion {
     pub expected_capture_name: String,
 }
 
-/// UTF-8 text point used by Tree-sitter highlight fixtures.
+/// Byte-column point used by CSS highlight fixtures.
 #[derive(Debug, Clone, Copy, Facet, PartialEq, Eq, PartialOrd, Ord)]
 pub struct HighlightPoint {
     /// Zero-based row.
     pub row: usize,
-    /// Zero-based UTF-8 column.
+    /// Zero-based byte column.
     pub column: usize,
 }
 
-/// Error while parsing Tree-sitter highlight fixtures.
+/// Error while parsing CSS highlight fixtures.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct HighlightParseError {
     /// Error kind.
@@ -131,7 +135,7 @@ impl fmt::Display for HighlightParseError {
 
 impl Error for HighlightParseError {}
 
-/// Error kind while parsing Tree-sitter highlight fixtures.
+/// Error kind while parsing CSS highlight fixtures.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 #[repr(u8)]
 pub enum HighlightParseErrorKind {
@@ -409,13 +413,25 @@ fn parse_attribute_line(line: &str) -> Option<CorpusAttribute> {
         .or_else(|| body.split_once('\t'))
         .map_or((body, None), |(name, value)| (name, Some(value.trim())));
     let name = name.trim();
-    if name.is_empty() {
+    if !is_known_corpus_attribute(name) {
         return None;
     }
     Some(CorpusAttribute {
         name: name.to_owned(),
         value: value.filter(|value| !value.is_empty()).map(str::to_owned),
     })
+}
+
+fn is_known_corpus_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "skip" | "error" | "fail-fast" | "cst" | "platform" | "language"
+    ) || name
+        .strip_prefix("platform(")
+        .is_some_and(|rest| rest.ends_with(')'))
+        || name
+            .strip_prefix("language(")
+            .is_some_and(|rest| rest.ends_with(')'))
 }
 
 fn trim_blank_edges(input: &str) -> &str {
@@ -433,7 +449,7 @@ fn is_input_separator(line: &str) -> bool {
     trimmed.len() >= 3 && trimmed.chars().all(|ch| ch == '-')
 }
 
-fn parse_highlight_assertions(
+fn parse_css_highlight_assertions(
     source: &str,
 ) -> Result<Vec<HighlightAssertion>, HighlightParseError> {
     let lines = source.lines().collect::<Vec<_>>();
@@ -441,8 +457,8 @@ fn parse_highlight_assertions(
     let mut assertion_rows = Vec::new();
 
     for (row, line) in lines.iter().enumerate() {
-        for comment in highlight_comments_in_line(line) {
-            if let Some(assertion) = parse_highlight_comment(row, line, comment) {
+        for comment in css_highlight_comments_in_line(line) {
+            if let Some(assertion) = parse_highlight_comment(row, comment) {
                 assertion_rows.push(row);
                 assertions.push(assertion);
             }
@@ -482,7 +498,7 @@ struct HighlightComment<'line> {
     start_byte: usize,
 }
 
-fn highlight_comments_in_line(line: &str) -> Vec<HighlightComment<'_>> {
+fn css_highlight_comments_in_line(line: &str) -> Vec<HighlightComment<'_>> {
     let mut comments = Vec::new();
     let mut search_start = 0;
     while let Some(relative_start) = line[search_start..].find("/*") {
@@ -495,24 +511,17 @@ fn highlight_comments_in_line(line: &str) -> Vec<HighlightComment<'_>> {
         });
         search_start = end;
     }
-    if let Some(start) = line.find("//") {
-        comments.push(HighlightComment {
-            text: &line[start..],
-            start_byte: start,
-        });
-    }
     comments
 }
 
 fn parse_highlight_comment(
     row: usize,
-    line: &str,
     comment: HighlightComment<'_>,
 ) -> Option<HighlightAssertion> {
     let mut has_left_caret = false;
     let mut arrow_end = 0;
     let mut arrow_count = 1;
-    let mut position_column = utf8_column_for_byte(line, comment.start_byte);
+    let mut position_column = comment.start_byte;
     let mut has_arrow = false;
 
     for (index, ch) in comment.text.char_indices() {
@@ -523,7 +532,7 @@ fn parse_highlight_comment(
         }
         if ch == '^' {
             has_arrow = true;
-            position_column = utf8_column_for_byte(line, comment.start_byte + index);
+            position_column = comment.start_byte + index;
             for (_, next) in comment.text[arrow_end..].char_indices() {
                 if next != '^' {
                     arrow_end += arrow_count - 1;
@@ -579,12 +588,8 @@ fn is_capture_name_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.')
 }
 
-fn utf8_column_for_byte(line: &str, byte_column: usize) -> usize {
-    line[..byte_column].chars().count()
-}
-
 fn utf8_len(line: &str) -> usize {
-    line.chars().count()
+    line.len()
 }
 
 fn parse_sexp(source: &str) -> Result<SexpNode, CorpusParseError> {
@@ -860,6 +865,18 @@ mod tests {
     }
 
     #[test]
+    fn preserves_colon_prefixed_case_names() {
+        let corpus = fixture(
+            "====================\n:nth-child selectors\n====================\n\ninput\n\n---\n\n(document)\n",
+        );
+
+        let cases = corpus.parse_cases().unwrap();
+
+        assert_eq!(cases[0].name, ":nth-child selectors");
+        assert!(cases[0].attributes.is_empty());
+    }
+
+    #[test]
     fn trims_only_structural_outer_blank_lines() {
         let corpus = fixture(
             "====================\nBlank input\n====================\n\n\nactual\n\n\n---\n\n(document)\n",
@@ -912,10 +929,10 @@ mod tests {
     #[test]
     fn parses_highlight_assertions() {
         let fixture = highlight_fixture(
-            ":root {\n /* <- attribute */\n  color: blue;\n        /* ^^ !string.special */\n}",
+            ":root {\n /* <- attribute */\n  color: blue;\n        /* ^^ !string.special */",
         );
 
-        let assertions = fixture.parse_highlight_assertions().unwrap();
+        let assertions = fixture.parse_css_highlight_assertions().unwrap();
 
         assert_eq!(
             assertions,
@@ -933,6 +950,23 @@ mod tests {
                     expected_capture_name: "string.special".to_owned(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn highlight_assertions_use_byte_columns() {
+        let fixture = highlight_fixture("ééx;    \n    /* ^ string */");
+
+        let assertions = fixture.parse_css_highlight_assertions().unwrap();
+
+        assert_eq!(
+            assertions,
+            [HighlightAssertion {
+                position: HighlightPoint { row: 0, column: 7 },
+                length: 1,
+                negative: false,
+                expected_capture_name: "string".to_owned(),
+            }]
         );
     }
 }

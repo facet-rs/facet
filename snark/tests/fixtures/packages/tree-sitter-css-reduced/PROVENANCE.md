@@ -15,6 +15,9 @@ Included files:
 - `src/node-types.json`
 - `src/scanner.c`
 - `queries/highlights.scm`
+- `test/corpus/declarations.txt`
+- `test/corpus/selectors.txt`
+- `test/corpus/statements.txt`
 - `test/corpus/stylesheets.txt`
 - `test/highlight/test_css.css`
 
@@ -22,5 +25,5 @@ Omitted files:
 
 - Generated implementation files such as `src/parser.c`; Snark does not inspect
   Tree-sitter's generated parser implementation.
-- Language bindings, package-manager metadata, examples, scripts, and additional
-  tests not needed by the raw package import boundary.
+- Language bindings, package-manager metadata, examples, scripts, and tests
+  outside the selected parse/highlight oracle fixture slice.

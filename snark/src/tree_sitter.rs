@@ -644,7 +644,7 @@ mod tests {
             .find(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
             .unwrap();
         assert_eq!(highlight_fixture.kind, CorpusKind::Highlight);
-        let highlight_assertions = highlight_fixture.parse_highlight_assertions().unwrap();
+        let highlight_assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
         assert!(highlight_assertions.len() > 20);
         assert!(
             highlight_assertions
@@ -690,6 +690,28 @@ mod tests {
             cases[0].expected.to_sexp(),
             "(stylesheet (rule_set (selectors (id_selector (id_name))) (block (declaration (property_name) (integer_value (unit))))))"
         );
+        let parse_paths = grammar
+            .corpus
+            .iter()
+            .filter(|fixture| fixture.kind == CorpusKind::Parse)
+            .map(|fixture| fixture.source.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            parse_paths,
+            [
+                "test/corpus/declarations.txt",
+                "test/corpus/selectors.txt",
+                "test/corpus/statements.txt",
+                "test/corpus/stylesheets.txt",
+            ]
+        );
+        let parse_case_count = grammar
+            .corpus
+            .iter()
+            .filter(|fixture| fixture.kind == CorpusKind::Parse)
+            .map(|fixture| fixture.parse_cases().unwrap().len())
+            .sum::<usize>();
+        assert_eq!(parse_case_count, 40);
 
         let mut source_ids = Vec::new();
         if let Some(file) = &package.manifest {
@@ -726,8 +748,11 @@ mod tests {
                 ("src/node-types.json".to_string(), 2),
                 ("src/scanner.c".to_string(), 3),
                 ("queries/highlights.scm".to_string(), 4),
-                ("test/corpus/stylesheets.txt".to_string(), 5),
-                ("test/highlight/test_css.css".to_string(), 6),
+                ("test/corpus/declarations.txt".to_string(), 5),
+                ("test/corpus/selectors.txt".to_string(), 6),
+                ("test/corpus/statements.txt".to_string(), 7),
+                ("test/corpus/stylesheets.txt".to_string(), 8),
+                ("test/highlight/test_css.css".to_string(), 9),
             ]
         );
     }
