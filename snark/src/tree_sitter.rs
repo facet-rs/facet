@@ -637,6 +637,19 @@ mod tests {
                 .as_str()
                 .starts_with("test/highlight/"))
         );
+        let parse_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/stylesheets.txt")
+            .unwrap();
+        assert_eq!(parse_fixture.kind, CorpusKind::Parse);
+        let cases = parse_fixture.parse_cases().unwrap();
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0].name, "Rule sets");
+        assert_eq!(
+            cases[0].expected.to_sexp(),
+            "(stylesheet (rule_set (selectors (id_selector (id_name))) (block (declaration (property_name) (integer_value (unit))))))"
+        );
 
         let mut source_ids = Vec::new();
         if let Some(file) = &package.manifest {
@@ -673,7 +686,8 @@ mod tests {
                 ("src/node-types.json".to_string(), 2),
                 ("src/scanner.c".to_string(), 3),
                 ("queries/highlights.scm".to_string(), 4),
-                ("test/highlight/test_css.css".to_string(), 5),
+                ("test/corpus/stylesheets.txt".to_string(), 5),
+                ("test/highlight/test_css.css".to_string(), 6),
             ]
         );
     }

@@ -15,6 +15,7 @@ Included files:
 - `src/node-types.json`
 - `src/scanner.c`
 - `queries/highlights.scm`
+- `test/corpus/stylesheets.txt`
 - `test/highlight/test_css.css`
 
 Omitted files:

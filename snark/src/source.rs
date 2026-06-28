@@ -16,6 +16,12 @@ use crate::diagnostic::ImportError;
 pub struct SourceId(u32);
 
 impl SourceId {
+    /// Build a source id in tests.
+    #[cfg(test)]
+    pub(crate) const fn for_test(value: u32) -> Self {
+        Self(value)
+    }
+
     /// Return the zero-based numeric id.
     pub const fn get(self) -> u32 {
         self.0
