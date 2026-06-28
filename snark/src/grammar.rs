@@ -187,7 +187,7 @@ pub struct RawGrammarJson {
 }
 
 impl RawGrammarJson {
-    /// Import a `src/grammar.json` string emitted by Tree-sitter's generator.
+    /// Import a `src/grammar.json` string from a Tree-sitter package.
     #[cfg(feature = "json-import")]
     pub fn from_tree_sitter_json_str(input: &str) -> Result<Self, ImportError> {
         facet_json::from_str(input).map_err(|source| ImportError::Json {

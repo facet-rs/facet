@@ -13,14 +13,14 @@ Tree-sitter's public test surface.
 
 ## Boundaries
 
-- `grammar` owns raw `grammar.json` DTOs and later validated grammar tables.
+- `grammar` owns raw `grammar.json` DTOs and later validated Snark grammar IR.
 - `lower` owns the validated Snark grammar IR to Weavy lowering boundary.
 - `tree_sitter` owns filesystem package import and provenance.
-- `scanner`, `query`, and `corpus` own imported artifacts for their domains.
+- `scanner`, `query`, and `corpus` own imported inputs for their domains.
 - `runtime_input` owns editor/runtime coordinate types.
-- `milestone` owns non-foundational proof artifacts and smoke parsers.
-- raw import artifacts are not runtime language objects.
-- generated Tree-sitter implementation artifacts are not imported.
+- `milestone` owns non-foundational proof modules and smoke parsers.
+- raw import inputs are not runtime language objects.
+- generated Tree-sitter implementation files are not imported.
 - recursive scannerless milestone behavior is not Snark parser semantics.
 - the pinned fixture lane proves raw import and package-layout contracts; it is
   not a substitute for semantic parse/query/scanner oracles.
@@ -34,6 +34,24 @@ which files were included or intentionally omitted.
 Opt-in tests may read full local upstream checkouts such as
 `SNARK_TREE_SITTER_CSS=/Users/amos/oss/tree-sitter-css`, but those tests are
 additional confidence only. They must not be the only oracle for a contract.
+
+## Milestone Order
+
+The next milestones should move through observable fixture structure before
+runtime execution:
+
+1. Parse Tree-sitter corpus files into structured cases: name, input, expected
+   S-expression, and case attributes.
+2. Parse highlight fixtures into structured byte/point assertions over query
+   capture names.
+3. Validate `grammar.json` into Snark grammar IR: symbols, productions,
+   lexical rules, fields, aliases, precedence, conflicts, externals, supertypes,
+   reserved words, and source provenance.
+4. Define the Snark external scanner host ABI: valid-symbol masks indexed by
+   grammar externals, cursor operations, mark-end behavior, result symbol,
+   serialization state, and EOF behavior.
+5. Build the first reduced Snark parser/runtime lane against one pinned CSS
+   corpus slice, then lower the same validated facts to Weavy.
 
 ## Oracles
 

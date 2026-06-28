@@ -1,4 +1,4 @@
-//! Tree-sitter external scanner import artifacts.
+//! Tree-sitter external scanner inputs.
 
 use facet::Facet;
 

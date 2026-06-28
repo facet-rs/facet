@@ -177,12 +177,12 @@ impl IntrinsicOp for SnarkIntrinsic {
     }
 }
 
-/// Build the empty initial lowered artifact.
+/// Build the empty initial lowered program.
 ///
 /// This is intentionally only a carrier smoke check. Full lowering must fill
 /// this with validated Snark parser/scanner/query facts rather than raw
 /// recursive grammar interpretation or generated Tree-sitter implementation
-/// artifacts.
+/// files.
 #[must_use]
 pub fn empty_lowered() -> SnarkWeavyLowered {
     WeavyLowered::new(Vec::new())

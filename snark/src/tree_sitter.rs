@@ -19,7 +19,7 @@ use crate::{
     },
 };
 
-/// Imported artifacts for one Tree-sitter grammar entry.
+/// Imported inputs for one Tree-sitter grammar entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedGrammar {
     /// Optional manifest grammar entry that selected this grammar.
@@ -45,7 +45,7 @@ impl ImportedGrammar {
     }
 }
 
-/// Imported Tree-sitter package artifacts.
+/// Imported Tree-sitter package inputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedPackage {
     /// Package root.
@@ -82,7 +82,7 @@ impl TreeSitterPackageImporter {
         }
     }
 
-    /// Import package artifacts.
+    /// Import package inputs.
     pub fn import(self) -> Result<ImportedPackage, ImportError> {
         let root = PackageRoot::from_existing_dir(self.root.as_path())?;
         let mut ids = SourceIdAllocator::new();

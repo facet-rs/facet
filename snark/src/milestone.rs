@@ -1,4 +1,4 @@
-//! Non-foundational proof artifacts.
+//! Non-foundational proof modules.
 //!
 //! Milestone modules are allowed to be deliberately smaller than the real
 //! Tree-sitter compatibility contract. They must not define Snark's runtime

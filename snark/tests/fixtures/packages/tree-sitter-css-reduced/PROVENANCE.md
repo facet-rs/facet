@@ -5,7 +5,7 @@
 - Upstream package version: `0.25.0`
 - Upstream generator dependency: `tree-sitter-cli ^0.25.10`
 - Upstream license: MIT, preserved in `LICENSE`
-- Purpose: pinned Tree-sitter package import oracle for Snark's raw package boundary.
+- Purpose: pinned Tree-sitter package import fixture for Snark's raw package boundary.
 
 Included files:
 
