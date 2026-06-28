@@ -694,6 +694,11 @@ mod tests {
         assert_eq!(parser_grammar.start().get(), validated.start_rule().get());
         assert_eq!(parser_grammar.symbols().nonterminals().len(), 66);
         assert_eq!(parser_grammar.symbols().externals().len(), 3);
+        let _ = parser_grammar.symbols().eof();
+        assert_eq!(parser_grammar.symbols().internal().len(), 3);
+        assert!(parser_grammar.production_metadata().is_empty());
+        assert!(parser_grammar.reserved_contexts().is_empty());
+        assert!(parser_grammar.valid_symbol_sets().is_empty());
         assert!(
             parser_grammar
                 .symbols()

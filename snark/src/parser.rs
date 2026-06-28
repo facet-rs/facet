@@ -8,6 +8,7 @@
 
 use crate::{
     lexical::{LexicalFacts, TerminalKind},
+    runtime_input::{ByteRange, PointRange},
     validated::{AliasId, FieldId, RuleId, ValidatedGrammar},
 };
 
@@ -52,6 +53,14 @@ id_type!(StackVersionId, "GLR stack-version id.");
 id_type!(GraphStackNodeId, "GLR graph-stack node id.");
 id_type!(TreeNodeId, "Runtime tree node id.");
 id_type!(TraceEventId, "Structured parser trace event id.");
+id_type!(InternalSymbolId, "Internal parser sentinel symbol id.");
+id_type!(ReservedContextId, "Reserved-word context id.");
+id_type!(ValidSymbolSetId, "External scanner valid-symbol-set id.");
+id_type!(ScannerSnapshotId, "Serialized external scanner state id.");
+id_type!(LookaheadTokenId, "Branch-local lookahead token id.");
+id_type!(QueryPatternId, "Query pattern id.");
+id_type!(QueryCaptureId, "Query capture id.");
+id_type!(ProvenanceId, "Parser-generation provenance id.");
 
 /// Generation phase represented by a parser-machine value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +83,10 @@ pub struct ParserGrammar {
     start: NonterminalId,
     symbols: SymbolTables,
     productions: Vec<Production>,
+    production_metadata: Vec<ProductionMetadata>,
     lexical_modes: Vec<LexMode>,
+    reserved_contexts: Vec<ReservedContext>,
+    valid_symbol_sets: Vec<ValidSymbolSet>,
 }
 
 impl ParserGrammar {
@@ -121,9 +133,27 @@ impl ParserGrammar {
                 terminals,
                 nonterminals,
                 externals,
+                eof: EofSymbol,
+                internal: vec![
+                    InternalSymbol {
+                        id: InternalSymbolId::from_index(0),
+                        kind: InternalSymbolKind::Error,
+                    },
+                    InternalSymbol {
+                        id: InternalSymbolId::from_index(1),
+                        kind: InternalSymbolKind::Missing,
+                    },
+                    InternalSymbol {
+                        id: InternalSymbolId::from_index(2),
+                        kind: InternalSymbolKind::Recovery,
+                    },
+                ],
             },
             productions: Vec::new(),
+            production_metadata: Vec::new(),
             lexical_modes: Vec::new(),
+            reserved_contexts: Vec::new(),
+            valid_symbol_sets: Vec::new(),
         }
     }
 
@@ -147,9 +177,24 @@ impl ParserGrammar {
         &self.productions
     }
 
+    /// Production metadata rows keyed by [`ProductionMetadataId`].
+    pub fn production_metadata(&self) -> &[ProductionMetadata] {
+        &self.production_metadata
+    }
+
     /// Lexical modes attached to parser states.
     pub fn lexical_modes(&self) -> &[LexMode] {
         &self.lexical_modes
+    }
+
+    /// Reserved-word contexts referenced by lexical modes and productions.
+    pub fn reserved_contexts(&self) -> &[ReservedContext] {
+        &self.reserved_contexts
+    }
+
+    /// External scanner valid-symbol sets referenced by lexical modes.
+    pub fn valid_symbol_sets(&self) -> &[ValidSymbolSet] {
+        &self.valid_symbol_sets
     }
 }
 
@@ -159,6 +204,8 @@ pub struct SymbolTables {
     terminals: Vec<TerminalSymbol>,
     nonterminals: Vec<NonterminalSymbol>,
     externals: Vec<ExternalSymbol>,
+    eof: EofSymbol,
+    internal: Vec<InternalSymbol>,
 }
 
 impl SymbolTables {
@@ -176,6 +223,88 @@ impl SymbolTables {
     pub fn externals(&self) -> &[ExternalSymbol] {
         &self.externals
     }
+
+    /// EOF sentinel symbol.
+    pub const fn eof(&self) -> EofSymbol {
+        self.eof
+    }
+
+    /// Internal sentinel symbols such as error and missing.
+    pub fn internal(&self) -> &[InternalSymbol] {
+        &self.internal
+    }
+}
+
+/// EOF sentinel symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EofSymbol;
+
+/// Internal parser sentinel symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InternalSymbol {
+    id: InternalSymbolId,
+    kind: InternalSymbolKind,
+}
+
+impl InternalSymbol {
+    /// Internal symbol id.
+    pub const fn id(&self) -> InternalSymbolId {
+        self.id
+    }
+
+    /// Internal symbol kind.
+    pub const fn kind(&self) -> InternalSymbolKind {
+        self.kind
+    }
+}
+
+/// Internal parser sentinel kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum InternalSymbolKind {
+    /// Error node/recovery sentinel.
+    Error,
+    /// Missing node sentinel.
+    Missing,
+    /// Generated recovery sentinel.
+    Recovery,
+}
+
+/// Parser symbol in a normalized production.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParserSymbol {
+    /// Normal lexical terminal.
+    Terminal(TerminalId),
+    /// Grammar nonterminal.
+    Nonterminal(NonterminalId),
+    /// External scanner terminal.
+    External(ExternalId),
+    /// End of file.
+    Eof,
+    /// Internal sentinel.
+    Internal(InternalSymbolId),
+}
+
+/// Lookahead key in an action table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LookaheadSymbol {
+    /// Normal lexical terminal.
+    Terminal(TerminalId),
+    /// External scanner terminal.
+    External(ExternalId),
+    /// End of file.
+    Eof,
+    /// Reserved-word-sensitive terminal in a context.
+    ReservedWord {
+        /// Terminal selected by lexing.
+        terminal: TerminalId,
+        /// Reserved-word context active for this table edge.
+        context: ReservedContextId,
+    },
+    /// Generated error recovery lookahead.
+    ErrorRecovery(InternalSymbolId),
 }
 
 /// Terminal symbol.
@@ -305,14 +434,15 @@ impl Production {
 /// One structural step in a flattened production.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionStep {
-    symbol: ParserSymbolId,
+    symbol: ParserSymbol,
     field: Option<FieldId>,
     alias: Option<AliasId>,
+    structural_index: usize,
 }
 
 impl ProductionStep {
     /// Symbol consumed by this production step.
-    pub const fn symbol(&self) -> ParserSymbolId {
+    pub const fn symbol(&self) -> ParserSymbol {
         self.symbol
     }
 
@@ -324,6 +454,114 @@ impl ProductionStep {
     /// Alias applied at this structural child index.
     pub const fn alias(&self) -> Option<AliasId> {
         self.alias
+    }
+
+    /// Structural child index used for fields and aliases.
+    pub const fn structural_index(&self) -> usize {
+        self.structural_index
+    }
+}
+
+/// Metadata attached to one production.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductionMetadata {
+    id: ProductionMetadataId,
+    static_precedence: Option<StaticPrecedence>,
+    associativity: Associativity,
+    dynamic_precedence: i32,
+    reserved_context: Option<ReservedContextId>,
+    provenance: Option<ProvenanceId>,
+}
+
+impl ProductionMetadata {
+    /// Metadata id.
+    pub const fn id(&self) -> ProductionMetadataId {
+        self.id
+    }
+
+    /// Static precedence used for conflict resolution.
+    pub const fn static_precedence(&self) -> Option<&StaticPrecedence> {
+        self.static_precedence.as_ref()
+    }
+
+    /// Associativity used for equal-precedence conflicts.
+    pub const fn associativity(&self) -> Associativity {
+        self.associativity
+    }
+
+    /// Dynamic precedence applied to the reduced subtree.
+    pub const fn dynamic_precedence(&self) -> i32 {
+        self.dynamic_precedence
+    }
+
+    /// Reserved-word context active for this production.
+    pub const fn reserved_context(&self) -> Option<ReservedContextId> {
+        self.reserved_context
+    }
+
+    /// Provenance row for diagnostics and trace output.
+    pub const fn provenance(&self) -> Option<ProvenanceId> {
+        self.provenance
+    }
+}
+
+/// Static precedence fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StaticPrecedence {
+    /// Integer precedence.
+    Integer(i32),
+    /// Named precedence.
+    Named(String),
+}
+
+/// Production associativity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Associativity {
+    /// No associativity override.
+    None,
+    /// Left associative.
+    Left,
+    /// Right associative.
+    Right,
+}
+
+/// Reserved-word context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReservedContext {
+    id: ReservedContextId,
+    name: String,
+}
+
+impl ReservedContext {
+    /// Reserved context id.
+    pub const fn id(&self) -> ReservedContextId {
+        self.id
+    }
+
+    /// Reserved context name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// External scanner valid-symbol set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidSymbolSet {
+    id: ValidSymbolSetId,
+    externals: Vec<ExternalId>,
+}
+
+impl ValidSymbolSet {
+    /// Valid-symbol-set id.
+    pub const fn id(&self) -> ValidSymbolSetId {
+        self.id
+    }
+
+    /// External symbols enabled in this set.
+    pub fn externals(&self) -> &[ExternalId] {
+        &self.externals
     }
 }
 
@@ -355,12 +593,12 @@ impl LrItem {
 /// Set of lookahead terminal/external/EOF symbols.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LookaheadSet {
-    symbols: Vec<ParserSymbolId>,
+    symbols: Vec<LookaheadSymbol>,
 }
 
 impl LookaheadSet {
     /// Lookahead symbols.
-    pub fn symbols(&self) -> &[ParserSymbolId] {
+    pub fn symbols(&self) -> &[LookaheadSymbol] {
         &self.symbols
     }
 }
@@ -390,6 +628,8 @@ pub struct LexMode {
     id: LexModeId,
     terminals: Vec<TerminalId>,
     externals: Vec<ExternalId>,
+    reserved_context: Option<ReservedContextId>,
+    valid_symbols: Option<ValidSymbolSetId>,
 }
 
 impl LexMode {
@@ -406,6 +646,16 @@ impl LexMode {
     /// External scanner candidates.
     pub fn externals(&self) -> &[ExternalId] {
         &self.externals
+    }
+
+    /// Reserved-word context active in this mode.
+    pub const fn reserved_context(&self) -> Option<ReservedContextId> {
+        self.reserved_context
+    }
+
+    /// External scanner valid-symbol set active in this mode.
+    pub const fn valid_symbols(&self) -> Option<ValidSymbolSetId> {
+        self.valid_symbols
     }
 }
 
@@ -462,13 +712,13 @@ impl ParseState {
 /// Actions for one lookahead symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableEntry {
-    lookahead: ParserSymbolId,
+    lookahead: LookaheadSymbol,
     actions: Vec<ParseAction>,
 }
 
 impl TableEntry {
     /// Lookahead symbol.
-    pub const fn lookahead(&self) -> ParserSymbolId {
+    pub const fn lookahead(&self) -> LookaheadSymbol {
         self.lookahead
     }
 
@@ -516,6 +766,8 @@ pub enum ParseAction {
     Reduce {
         /// Production to reduce.
         production: ProductionId,
+        /// Metadata row attached to the production.
+        metadata: ProductionMetadataId,
         /// Reduced nonterminal.
         symbol: NonterminalId,
         /// Structural child count.
@@ -564,7 +816,11 @@ impl ConflictPlan {
 pub struct StackMergeKey {
     state: ParseStateId,
     byte_position: u32,
+    lookahead: Option<LookaheadTokenId>,
     error_cost: u32,
+    dynamic_precedence: i32,
+    scanner_snapshot: Option<ScannerSnapshotId>,
+    active: bool,
 }
 
 impl StackMergeKey {
@@ -578,9 +834,29 @@ impl StackMergeKey {
         self.byte_position
     }
 
+    /// Branch-local lookahead token at stack head.
+    pub const fn lookahead(&self) -> Option<LookaheadTokenId> {
+        self.lookahead
+    }
+
     /// Accumulated error cost.
     pub const fn error_cost(&self) -> u32 {
         self.error_cost
+    }
+
+    /// Accumulated dynamic precedence.
+    pub const fn dynamic_precedence(&self) -> i32 {
+        self.dynamic_precedence
+    }
+
+    /// External scanner snapshot compatible with this stack version.
+    pub const fn scanner_snapshot(&self) -> Option<ScannerSnapshotId> {
+        self.scanner_snapshot
+    }
+
+    /// Whether this branch remains active.
+    pub const fn active(&self) -> bool {
+        self.active
     }
 }
 
@@ -591,26 +867,83 @@ pub enum TreeEvent {
     /// A token was shifted.
     Token {
         /// Token symbol.
-        symbol: ParserSymbolId,
+        symbol: ParserSymbol,
+        /// Byte range.
+        bytes: ByteRange,
+        /// Point range.
+        points: PointRange,
+        /// Whether this token is an extra.
+        extra: bool,
     },
     /// A production was reduced into a parent node.
     Reduce {
         /// Reduced production.
         production: ProductionId,
+        /// Reduced production metadata.
+        metadata: ProductionMetadataId,
+        /// Runtime tree node.
+        node: TreeNodeId,
+        /// Byte range.
+        bytes: ByteRange,
+        /// Point range.
+        points: PointRange,
     },
     /// A missing token was inserted by recovery.
     Missing {
         /// Missing symbol.
-        symbol: ParserSymbolId,
+        symbol: ParserSymbol,
+        /// Byte range.
+        bytes: ByteRange,
+        /// Point range.
+        points: PointRange,
     },
     /// An error node was emitted.
-    Error,
+    Error {
+        /// Runtime tree node.
+        node: TreeNodeId,
+        /// Byte range.
+        bytes: ByteRange,
+        /// Point range.
+        points: PointRange,
+    },
+    /// A field was attached at a structural child index.
+    Field {
+        /// Parent runtime tree node.
+        node: TreeNodeId,
+        /// Field id.
+        field: FieldId,
+        /// Structural child index.
+        structural_index: usize,
+    },
+    /// An alias was attached at a structural child index.
+    Alias {
+        /// Parent runtime tree node.
+        node: TreeNodeId,
+        /// Alias id.
+        alias: AliasId,
+        /// Structural child index.
+        structural_index: usize,
+    },
 }
 
 /// Structured parser trace event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TraceEvent {
+    /// Parse started.
+    ParseStart {
+        /// Trace event id.
+        id: TraceEventId,
+        /// Start state.
+        state: ParseStateId,
+    },
+    /// Parse finished.
+    ParseFinish {
+        /// Trace event id.
+        id: TraceEventId,
+        /// Outcome.
+        outcome: ParseOutcome,
+    },
     /// Parser entered a state on one branch.
     StateEnter {
         /// Trace event id.
@@ -620,6 +953,44 @@ pub enum TraceEvent {
         /// State entered.
         state: ParseStateId,
     },
+    /// A lexical mode produced a branch-local lookahead.
+    Lex {
+        /// Stack version.
+        version: StackVersionId,
+        /// Lexical mode.
+        mode: LexModeId,
+        /// Produced lookahead token.
+        lookahead: LookaheadTokenId,
+    },
+    /// The external scanner was invoked.
+    ExternalScanner {
+        /// Stack version.
+        version: StackVersionId,
+        /// Valid symbols offered.
+        valid_symbols: ValidSymbolSetId,
+        /// Scanner snapshot before the call.
+        before: Option<ScannerSnapshotId>,
+        /// Scanner snapshot after the call.
+        after: Option<ScannerSnapshotId>,
+    },
+    /// A shift action executed.
+    Shift {
+        /// Stack version.
+        version: StackVersionId,
+        /// Lookahead token shifted.
+        lookahead: LookaheadTokenId,
+        /// Target parse state.
+        state: ParseStateId,
+    },
+    /// A reduce action executed.
+    Reduce {
+        /// Stack version.
+        version: StackVersionId,
+        /// Reduced production.
+        production: ProductionId,
+        /// Production metadata.
+        metadata: ProductionMetadataId,
+    },
     /// A GLR branch split.
     GlrSplit {
         /// Source version.
@@ -627,6 +998,62 @@ pub enum TraceEvent {
         /// Conflict that caused the split.
         conflict: ConflictId,
     },
+    /// GLR branches merged.
+    GlrMerge {
+        /// Surviving version.
+        survivor: StackVersionId,
+        /// Retired version.
+        retired: StackVersionId,
+        /// Merge key.
+        key: StackMergeKey,
+    },
+    /// A GLR branch was retired.
+    GlrRetire {
+        /// Retired version.
+        version: StackVersionId,
+        /// Reason for retirement.
+        reason: BranchRetireReason,
+    },
+    /// Recovery emitted parser work.
+    Recover {
+        /// Stack version.
+        version: StackVersionId,
+        /// State being recovered.
+        state: ParseStateId,
+    },
     /// A tree event was emitted.
     Tree(TreeEvent),
+    /// A query capture was emitted.
+    QueryCapture {
+        /// Query pattern.
+        pattern: QueryPatternId,
+        /// Query capture.
+        capture: QueryCaptureId,
+        /// Captured tree node.
+        node: TreeNodeId,
+    },
+}
+
+/// Parse outcome for trace/oracle events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ParseOutcome {
+    /// Input was accepted without recovery cost.
+    Accepted,
+    /// Input was accepted with recovery.
+    Recovered,
+    /// Input could not be parsed.
+    Failed,
+}
+
+/// Why a GLR branch was retired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum BranchRetireReason {
+    /// The branch was dominated by a lower-cost branch.
+    Dominated,
+    /// The branch reached an impossible action.
+    NoAction,
+    /// The branch exceeded configured runtime limits.
+    Limit,
 }

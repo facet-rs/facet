@@ -2432,6 +2432,17 @@ mod tests {
         let err = mem_program_from_canonical(program).unwrap_err();
 
         assert_eq!(err, CanonicalMemError::Zero);
+
+        let program = vec![crate::ir::WeavyOp::Control(
+            crate::ir::ControlOp::CallBlockThen {
+                block: (),
+                then: (),
+                base_offset: 0,
+            },
+        )];
+        let err = mem_program_from_canonical(program).unwrap_err();
+
+        assert_eq!(err, CanonicalMemError::CallBlockThen);
     }
 
     #[test]
