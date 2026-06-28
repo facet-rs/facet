@@ -2,6 +2,14 @@
 name = "margin"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage = "https://facet.rs"
+documentation = "https://docs.rs/margin"
+description = "Structured diagnostics core and layout planning"
+keywords = ["diagnostics", "layout", "terminal", "facet"]
+categories = ["development-tools", "command-line-interface"]
 
 [package.metadata]
 

@@ -2,6 +2,14 @@
 name = "margin-term"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage = "https://facet.rs"
+documentation = "https://docs.rs/margin-term"
+description = "Terminal rendering for margin layout plans"
+keywords = ["diagnostics", "terminal", "rendering", "facet"]
+categories = ["development-tools", "command-line-interface"]
 
 [package.metadata]
 

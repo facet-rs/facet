@@ -2,7 +2,7 @@
 name = "gingembre"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.92"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 license = "MIT OR Apache-2.0"
 description = "A Jinja-like template engine with rich diagnostics"

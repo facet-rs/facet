@@ -265,6 +265,20 @@ version_group = "rusqlite-facet"
 changelog_path = "rusqlite-facet/CHANGELOG.md"
 
 # ============================================================================
+# Margin packages - coordinated diagnostics crates with a shared changelog
+# ============================================================================
+
+[[package]]
+name = "margin"
+version_group = "margin"
+changelog_path = "margin/CHANGELOG.md"
+
+[[package]]
+name = "margin-term"
+version_group = "margin"
+changelog_path = "margin/CHANGELOG.md"
+
+# ============================================================================
 # Figue packages - coordinated from this monorepo, preserving their major line
 # ============================================================================
 

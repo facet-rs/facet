@@ -2,6 +2,7 @@
 name = "gingembre-syntax"
 version = "0.0.0"
 edition = "2024"
+rust-version = "1.91"
 description = "Lossless cstree syntax for gingembre templates, shared by the engine and the authoring LSP"
 license = "MIT OR Apache-2.0"
 

@@ -1441,7 +1441,7 @@ fn filter_by_attr<'a>(
 
 /// Convert basic inline markdown to HTML.
 ///
-/// Handles: **bold**, *italic*, `code`, and [text](url) links.
+/// Handles: **bold**, *italic*, `code`, and Markdown links like `[text](url)`.
 /// All other characters are HTML-escaped. Returns a Value string with
 /// HTML-safe content (caller should mark it safe with `| safe` if needed,
 /// or use `basic_markdown | safe`).
