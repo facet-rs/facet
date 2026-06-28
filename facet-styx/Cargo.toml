@@ -22,6 +22,8 @@ styx-parse.workspace = true
 styx-tree.workspace = true
 ariadne.workspace = true
 serde_json.workspace = true
+margin.workspace = true
+margin-term.workspace = true
 
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }

@@ -73,6 +73,8 @@ members = [
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
+  "margin",
+  "margin-term",
   "figue",
   "figue-attrs",
 
@@ -241,6 +243,8 @@ default-members = [
   "facet-cargo-toml",
   "rusqlite-facet",
   "rediff",
+  "margin",
+  "margin-term",
   "figue",
   "figue-attrs",
 
@@ -300,6 +304,8 @@ facet-xml = { path = "facet-xml", version = "0.50.0-rc.4" }
 facet-urlencoded = { path = "facet-urlencoded", version = "0.50.0-rc.4" }
 facet-value = { path = "facet-value", version = "0.50.0-rc.4" }
 facet-yaml = { path = "facet-yaml", version = "0.50.0-rc.4" }
+margin = { path = "margin", version = "0.10.0-rc.1" }
+margin-term = { path = "margin-term", version = "0.10.0-rc.1" }
 figue = { path = "figue", version = "5.0.0-rc.4" }
 figue-attrs = { path = "figue-attrs", version = "5.0.0-rc.4" }
 facet-styx = { path = "facet-styx", version = "5.0.0-rc.4" }

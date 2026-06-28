@@ -1,0 +1,16 @@
+[package]
+name = "margin"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet = { workspace = true }
+unicode-width = { workspace = true }
+
+[lints]
+workspace = true

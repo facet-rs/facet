@@ -565,7 +565,7 @@ impl fmt::Display for DeserializeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.kind)?;
         if let Some(ref path) = self.path {
-            write!(f, " at {path:?}")?;
+            write!(f, " at {path}")?;
         }
         Ok(())
     }
@@ -851,5 +851,28 @@ mod ariadne_impl {
         pub fn eprint(&self, filename: &str, source: &str) {
             let _ = self.write_pretty(&mut std::io::stderr(), filename, source);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facet_core::Facet;
+
+    #[test]
+    fn display_formats_path_without_debug_dump() {
+        let err = DeserializeError {
+            span: None,
+            path: Some(Path::new(u32::SHAPE)),
+            kind: DeserializeErrorKind::MissingField {
+                field: "output",
+                container_shape: u32::SHAPE,
+            },
+        };
+
+        let rendered = err.to_string();
+        assert_eq!(rendered, "missing field `output` in type `u32` at <root>");
+        assert!(!rendered.contains("Path {"), "{rendered}");
+        assert!(!rendered.contains("Shape {"), "{rendered}");
     }
 }

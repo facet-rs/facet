@@ -1,30 +1,37 @@
 //! Error types for Styx parsing.
 
-use ariadne::{Color, Config, Label, Report, ReportKind, Source};
 use facet_format::{DeserializeError, DeserializeErrorKind};
+use margin::{
+    Annotation, AnnotationRole, Diagnostics, Note, NoteKind, Report, Severity, Source, SourceId,
+    Span,
+};
+use margin_term::{ColorLevel, GlyphMode, HyperlinkMode, TerminalCapabilities};
 
-/// Get ariadne config, respecting NO_COLOR env var.
-fn ariadne_config() -> Config {
-    let no_color = std::env::var("NO_COLOR").is_ok();
-    if no_color {
-        Config::default().with_color(false)
-    } else {
-        Config::default()
+/// Convert a `facet_reflect::Span` to byte offsets clamped to the source.
+fn reflect_span_to_offsets(span: &facet_reflect::Span, source: &str) -> (usize, usize) {
+    let start = clamp_to_char_boundary(source, span.offset as usize);
+    let end = clamp_to_char_boundary(source, start.saturating_add(span.len as usize));
+    (start, end.max(start))
+}
+
+fn clamp_to_char_boundary(source: &str, mut offset: usize) -> usize {
+    offset = offset.min(source.len());
+    while offset > 0 && !source.is_char_boundary(offset) {
+        offset -= 1;
     }
+    offset
 }
 
-/// Convert a `facet_reflect::Span` to a `Range<usize>`.
-fn reflect_span_to_range(span: &facet_reflect::Span) -> std::ops::Range<usize> {
-    let start = span.offset as usize;
-    let end = start + span.len as usize;
-    start..end
+fn error_offsets(err: &DeserializeError, source: &str) -> (usize, usize) {
+    err.span
+        .as_ref()
+        .map(|span| reflect_span_to_offsets(span, source))
+        .unwrap_or((0, source.len()))
 }
 
-/// Trait for rendering errors with ariadne diagnostics.
+/// Trait for rendering errors as source diagnostics.
 pub trait RenderError {
-    /// Render this error with ariadne.
-    ///
-    /// Returns a string containing the formatted error message with source context.
+    /// Render this error with source context.
     fn render(&self, filename: &str, source: &str) -> String;
 
     /// Write the error report to a writer.
@@ -32,158 +39,133 @@ pub trait RenderError {
 }
 
 /// Rendering support for `DeserializeError`.
-///
-/// This allows rendering the full deserialize error (which may come from the parser
-/// or from facet-format's deserializer) with ariadne diagnostics.
 impl RenderError for DeserializeError {
     fn render(&self, filename: &str, source: &str) -> String {
-        let mut output = Vec::new();
-        self.write_report(filename, source, &mut output);
-        String::from_utf8(output).unwrap_or_else(|_| format!("{}", self))
+        render_deserialize_error(self, filename, source)
     }
 
-    fn write_report<W: std::io::Write>(&self, filename: &str, source: &str, writer: W) {
-        // IMPORTANT: Config must be applied BEFORE adding labels, because ariadne
-        // applies filter_color when labels are added, not when the report is written.
-        let report = build_deserialize_error_report(self, filename, source, ariadne_config());
-        let _ = report
-            .finish()
-            .write((filename, Source::from(source)), writer);
+    fn write_report<W: std::io::Write>(&self, filename: &str, source: &str, mut writer: W) {
+        let _ = writer.write_all(self.render(filename, source).as_bytes());
     }
 }
 
-fn build_deserialize_error_report<'a>(
-    err: &DeserializeError,
-    filename: &'a str,
-    source: &str,
-    config: Config,
-) -> ariadne::ReportBuilder<'static, (&'a str, std::ops::Range<usize>)> {
-    // Get the range from err.span, with fallback
-    let range = err
-        .span
-        .as_ref()
-        .map(reflect_span_to_range)
-        .unwrap_or(0..source.len().max(1));
+fn render_deserialize_error(err: &DeserializeError, filename: &str, source: &str) -> String {
+    let diagnostics = build_deserialize_error_diagnostics(err, filename, source);
+    let capabilities = TerminalCapabilities {
+        width: 100,
+        glyph_mode: GlyphMode::Unicode,
+        color_level: if std::env::var_os("NO_COLOR").is_some() {
+            ColorLevel::None
+        } else {
+            ColorLevel::Ansi16
+        },
+        hyperlink_mode: HyperlinkMode::None,
+        tab_width: 4,
+    };
 
-    match &err.kind {
-        // Missing field from facet-format
+    match margin_term::render(&diagnostics, capabilities) {
+        Ok(rendered) => rendered,
+        Err(_) => format!("Error: {}\n", err),
+    }
+}
+
+fn build_deserialize_error_diagnostics(
+    err: &DeserializeError,
+    filename: &str,
+    source: &str,
+) -> Diagnostics {
+    let source_id = SourceId(filename.to_string());
+    let (start, end) = error_offsets(err, source);
+
+    let mut notes = Vec::new();
+    let (title, label) = match &err.kind {
         DeserializeErrorKind::MissingField {
             field,
             container_shape,
-        } => Report::build(ReportKind::Error, (filename, range.clone()))
-            .with_config(config)
-            .with_message(format!("missing required field '{}'", field))
-            .with_label(
-                Label::new((filename, range))
-                    .with_message(format!("in {}", container_shape))
-                    .with_color(Color::Red),
+        } => {
+            notes.push(Note {
+                kind: NoteKind::Help,
+                text: format!("add `{field} <value>`"),
+            });
+            (
+                format!("missing required field `{field}`"),
+                format!("required by {container_shape}"),
             )
-            .with_help(format!("{} <value>", field)),
-
-        // Unknown field from facet-format
+        }
         DeserializeErrorKind::UnknownField { field, suggestion } => {
-            let mut report = Report::build(ReportKind::Error, (filename, range.clone()))
-                .with_config(config)
-                .with_message(format!("unknown field '{}'", field))
-                .with_label(
-                    Label::new((filename, range))
-                        .with_message("unknown field")
-                        .with_color(Color::Red),
-                );
-            if let Some(s) = suggestion {
-                report = report.with_help(format!("did you mean '{}'?", s));
+            if let Some(suggestion) = suggestion {
+                notes.push(Note {
+                    kind: NoteKind::Help,
+                    text: format!("did you mean `{suggestion}`?"),
+                });
             }
-            report
+            (
+                format!("unknown field `{field}`"),
+                "unknown field".to_string(),
+            )
         }
-
-        // Type mismatch from facet-format
-        DeserializeErrorKind::TypeMismatch { expected, got } => {
-            Report::build(ReportKind::Error, (filename, range.clone()))
-                .with_config(config)
-                .with_message(format!("type mismatch: expected {}", expected))
-                .with_label(
-                    Label::new((filename, range))
-                        .with_message(format!("got {}", got))
-                        .with_color(Color::Red),
-                )
-        }
-
-        // Reflect errors from facet-format
+        DeserializeErrorKind::TypeMismatch { expected, got } => (
+            format!("type mismatch: expected {expected}"),
+            format!("got {got}"),
+        ),
         DeserializeErrorKind::Reflect { kind, context } => {
-            let mut report = Report::build(ReportKind::Error, (filename, range.clone()))
-                .with_config(config)
-                .with_message(format!("{}", kind))
-                .with_label(
-                    Label::new((filename, range))
-                        .with_message("error here")
-                        .with_color(Color::Red),
-                );
             if !context.is_empty() {
-                report = report.with_note(format!("while {}", context));
+                notes.push(Note {
+                    kind: NoteKind::Note,
+                    text: format!("while {context}"),
+                });
             }
-            report
+            (kind.to_string(), "error here".to_string())
         }
-
-        // Unexpected EOF
-        DeserializeErrorKind::UnexpectedEof { expected } => {
-            let eof_range = source.len().saturating_sub(1)..source.len().max(1);
-            Report::build(ReportKind::Error, (filename, eof_range.clone()))
-                .with_config(config)
-                .with_message("unexpected end of input")
-                .with_label(
-                    Label::new((filename, eof_range))
-                        .with_message(format!("expected {}", expected))
-                        .with_color(Color::Red),
-                )
-        }
-
-        // Unsupported operation
-        DeserializeErrorKind::Unsupported { message } => {
-            Report::build(ReportKind::Error, (filename, 0..1))
-                .with_config(config)
-                .with_message(format!("unsupported: {}", message))
-        }
-
-        // Cannot borrow
+        DeserializeErrorKind::UnexpectedEof { expected } => (
+            "unexpected end of input".to_string(),
+            format!("expected {expected}"),
+        ),
+        DeserializeErrorKind::Unsupported { message } => (
+            format!("unsupported: {message}"),
+            "unsupported here".to_string(),
+        ),
         DeserializeErrorKind::CannotBorrow { reason } => {
-            Report::build(ReportKind::Error, (filename, 0..1))
-                .with_config(config)
-                .with_message(reason)
+            (reason.to_string(), "cannot borrow here".to_string())
         }
+        DeserializeErrorKind::UnexpectedToken { got, expected } => (
+            format!("unexpected token `{got}`"),
+            format!("expected {expected}"),
+        ),
+        DeserializeErrorKind::InvalidValue { message } => (
+            format!("invalid value: {message}"),
+            "invalid value".to_string(),
+        ),
+        _ => (err.kind.to_string(), "error here".to_string()),
+    };
 
-        // Unexpected token (from parser)
-        DeserializeErrorKind::UnexpectedToken { got, expected } => {
-            Report::build(ReportKind::Error, (filename, range.clone()))
-                .with_config(config)
-                .with_message(format!("unexpected token '{}'", got))
-                .with_label(
-                    Label::new((filename, range))
-                        .with_message(format!("expected {}", expected))
-                        .with_color(Color::Red),
-                )
-        }
+    if let Some(path) = err.path.as_ref() {
+        notes.push(Note {
+            kind: NoteKind::Note,
+            text: format!("at path: {path}"),
+        });
+    }
 
-        // Invalid value
-        DeserializeErrorKind::InvalidValue { message } => {
-            Report::build(ReportKind::Error, (filename, range.clone()))
-                .with_config(config)
-                .with_message(format!("invalid value: {}", message))
-                .with_label(
-                    Label::new((filename, range))
-                        .with_message("here")
-                        .with_color(Color::Red),
-                )
-        }
-
-        // Catch-all for other error kinds
-        _ => Report::build(ReportKind::Error, (filename, range.clone()))
-            .with_config(config)
-            .with_message(format!("{}", err.kind))
-            .with_label(
-                Label::new((filename, range))
-                    .with_message("error here")
-                    .with_color(Color::Red),
-            ),
+    Diagnostics {
+        sources: vec![Source {
+            id: source_id.clone(),
+            name: filename.to_string(),
+            hyperlink: None,
+            text: source.to_string(),
+        }],
+        reports: vec![Report {
+            severity: Severity::Error,
+            title,
+            annotations: vec![Annotation {
+                spans: vec![Span::new(source_id.0.as_str(), start, end)],
+                role: AnnotationRole::PrimaryLabel,
+                syntax_class: None,
+                message: Some(label),
+                priority: 100,
+            }],
+            notes,
+            sections: Vec::new(),
+        }],
     }
 }
 
@@ -191,73 +173,6 @@ fn build_deserialize_error_report<'a>(
 mod tests {
     use super::*;
     use facet::Facet;
-
-    #[test]
-    fn test_ariadne_no_color() {
-        // Verify that ariadne respects our config
-        let config = Config::default().with_color(false);
-
-        let source = "test input";
-        let report =
-            Report::<(&str, std::ops::Range<usize>)>::build(ReportKind::Error, ("test.styx", 0..4))
-                .with_config(config)
-                .with_message("test error")
-                .with_label(
-                    Label::new(("test.styx", 0..4))
-                        .with_message("here")
-                        .with_color(Color::Red),
-                )
-                .finish();
-
-        let mut output = Vec::new();
-        report
-            .write(("test.styx", Source::from(source)), &mut output)
-            .unwrap();
-        let s = String::from_utf8(output).unwrap();
-
-        // Check for ANSI escape codes
-        assert!(
-            !s.contains("\x1b["),
-            "Output should not contain ANSI escape codes when color is disabled:\n{:?}",
-            s
-        );
-    }
-
-    #[test]
-    fn test_ariadne_config_respects_no_color_env() {
-        // Test that ariadne_config() returns correct config based on NO_COLOR
-        let no_color = std::env::var("NO_COLOR").is_ok();
-        eprintln!("NO_COLOR is set: {}", no_color);
-
-        let config = ariadne_config();
-
-        let source = "test input";
-        let report =
-            Report::<(&str, std::ops::Range<usize>)>::build(ReportKind::Error, ("test.styx", 0..4))
-                .with_config(config)
-                .with_message("test error")
-                .with_label(
-                    Label::new(("test.styx", 0..4))
-                        .with_message("here")
-                        .with_color(Color::Red),
-                )
-                .finish();
-
-        let mut output = Vec::new();
-        report
-            .write(("test.styx", Source::from(source)), &mut output)
-            .unwrap();
-        let s = String::from_utf8(output).unwrap();
-        eprintln!("Output: {:?}", s);
-
-        // Always assert - NO_COLOR should be set by nextest setup script
-        assert!(no_color, "NO_COLOR should be set by nextest setup script");
-        assert!(
-            !s.contains("\x1b["),
-            "With NO_COLOR set, output should not contain ANSI escape codes:\n{:?}",
-            s
-        );
-    }
 
     #[derive(Facet, Debug)]
     struct Person {
@@ -272,6 +187,9 @@ mod tests {
         let err = result.unwrap_err();
 
         crate::assert_snapshot_stripped!(RenderError::render(&err, "test.styx", source));
+
+        assert!(!err.render("test.styx", source).contains("Path {"));
+        assert!(!err.render("test.styx", source).contains("Shape {"));
     }
 
     #[test]

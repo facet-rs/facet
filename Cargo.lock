@@ -2469,6 +2469,8 @@ dependencies = [
  "figue",
  "indexmap 2.14.0",
  "insta",
+ "margin",
+ "margin-term",
  "serde_json",
  "similar",
  "strip-ansi-escapes",
@@ -3970,6 +3972,23 @@ checksum = "c0aeb26bf5e836cc1c341c8106051b573f1766dfa05aa87f0b98be5e51b02303"
 dependencies = [
  "nix 0.29.0",
  "winapi",
+]
+
+[[package]]
+name = "margin"
+version = "0.10.0-rc.1"
+dependencies = [
+ "facet",
+ "unicode-width",
+]
+
+[[package]]
+name = "margin-term"
+version = "0.10.0-rc.1"
+dependencies = [
+ "arborium-theme",
+ "margin",
+ "unicode-width",
 ]
 
 [[package]]
