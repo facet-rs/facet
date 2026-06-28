@@ -256,3 +256,38 @@ fn test_derive_default_with_bounded_generic() {
     let id = IdType::<IdMarker>::default();
     assert_eq!(id.something, String::default());
 }
+
+/// Repro for where-clause bounds on a generic container: `#[facet(derive(Default))]`
+/// must propagate user `where` clauses (not just inline bounds) into the generated
+/// impl, otherwise `impl Default for Registry<TId>` is ill-formed because the struct
+/// requires `TId: SealedIdVariant`.
+#[test]
+fn test_derive_default_with_where_clause() {
+    mod private {
+        use facet::Facet;
+
+        pub(super) trait SealedIdVariant {
+            type Associated: for<'facet> Facet<'facet>;
+        }
+    }
+
+    #[derive(Facet)]
+    pub struct IdMarker;
+    impl private::SealedIdVariant for IdMarker {
+        type Associated = String;
+    }
+
+    #[derive(Facet, Clone)]
+    #[must_use]
+    #[facet(derive(Default))]
+    pub struct Registry<TId>
+    where
+        TId: private::SealedIdVariant,
+    {
+        something: String,
+        _marker: PhantomData<TId>,
+    }
+
+    let r = Registry::<IdMarker>::default();
+    assert_eq!(r.something, String::default());
+}
