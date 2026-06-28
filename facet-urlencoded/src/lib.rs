@@ -127,9 +127,47 @@ pub fn from_str_owned<T: Facet<'static>>(urlencoded: &str) -> Result<T, UrlEncod
     Ok(result)
 }
 
-/// Deserializes a URL encoded form data string into an heap-allocated value.
+/// Deserializes a URL encoded form data string into an existing `Partial` value.
 ///
-/// This is the lower-level function that works with `Partial` directly.
+/// This is a lower-level function that works with `Partial` directly, allowing
+/// for incremental or partial updates. For example, you can initialize a structure with
+/// default values, and then update it with the parsed key-value pairs from the URL encoded
+/// query string.
+///
+/// # Examples
+///
+/// ```
+/// use facet::Facet;
+/// use facet_reflect::TypePlan;
+/// use facet_urlencoded::from_str_value;
+///
+/// #[derive(Debug, Facet, PartialEq)]
+/// struct SearchParams {
+///     query: String,
+///     page: u32,
+/// }
+///
+/// let default = SearchParams {
+///     query: "default_query".to_string(),
+///     page: 1,
+/// };
+///
+/// let query_string = "query=rust+programming";
+///
+/// let plan = TypePlan::<SearchParams>::build().unwrap();
+/// let partial = plan.partial_owned().unwrap();
+/// let partial = partial.set(default).unwrap();
+/// let partial = from_str_value(partial, query_string).unwrap();
+/// let params: SearchParams = partial.build().unwrap().materialize().unwrap();
+///
+/// assert_eq!(
+///     params,
+///     SearchParams {
+///         query: "rust programming".to_string(),
+///         page: 1,
+///     }
+/// );
+/// ```
 pub fn from_str_value<'facet, const BORROW: bool>(
     mut wip: Partial<'facet, BORROW>,
     urlencoded: &str,
@@ -246,7 +284,7 @@ fn deserialize_value<'facet, const BORROW: bool>(
                 }
             }
 
-            // Process flattended fields
+            // Process flattened fields
             for (index, field) in struct_type.fields.iter().enumerate() {
                 if field.is_flattened() {
                     wip = wip.begin_nth_field(index)?;
