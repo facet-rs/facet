@@ -17,7 +17,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-gingembre-syntax = { path = "../gingembre-syntax" }
+gingembre-syntax = { path = "../gingembre-syntax", version = "0.0.1" }
 camino.workspace = true
 facet.workspace = true
 facet-value.workspace = true
