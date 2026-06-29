@@ -1,0 +1,104 @@
+"""
+Star Wars GraphQL Schema
+From the graphql-js reference implementation test suite
+"""
+
+enum Episode {
+  """Released in 1977."""
+  NEW_HOPE
+
+  """Released in 1980."""
+  EMPIRE
+
+  """Released in 1983."""
+  JEDI
+}
+
+"""
+A character in the Star Wars Trilogy
+"""
+interface Character {
+  """The id of the character."""
+  id: String!
+
+  """The name of the character."""
+  name: String
+
+  """The friends of the character, or an empty list if they have none."""
+  friends: [Character]
+
+  """Which movies they appear in."""
+  appearsIn: [Episode]
+
+  """All secrets about their past."""
+  secretBackstory: String
+}
+
+"""
+A humanoid creature in the Star Wars universe.
+"""
+type Human implements Character {
+  """The id of the human."""
+  id: String!
+
+  """The name of the human."""
+  name: String
+
+  """The friends of the human, or an empty list if they have none."""
+  friends: [Character]
+
+  """Which movies they appear in."""
+  appearsIn: [Episode]
+
+  """The home planet of the human, or null if unknown."""
+  homePlanet: String
+
+  """Where are they from and how they came to be who they are."""
+  secretBackstory: String
+}
+
+"""
+A mechanical creature in the Star Wars universe.
+"""
+type Droid implements Character {
+  """The id of the droid."""
+  id: String!
+
+  """The name of the droid."""
+  name: String
+
+  """The friends of the droid, or an empty list if they have none."""
+  friends: [Character]
+
+  """Which movies they appear in."""
+  appearsIn: [Episode]
+
+  """The primary function of the droid."""
+  primaryFunction: String
+
+  """Construction date and the name of the designer."""
+  secretBackstory: String
+}
+
+"""
+The root query type for the Star Wars schema.
+"""
+type Query {
+  """
+  Returns a hero based on the given episode.
+  If no episode is provided, returns the hero of the whole saga.
+  """
+  hero(episode: Episode): Character
+
+  """Find a human by their ID."""
+  human(
+    """id of the human"""
+    id: String!
+  ): Human
+
+  """Find a droid by their ID."""
+  droid(
+    """id of the droid"""
+    id: String!
+  ): Droid
+}

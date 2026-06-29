@@ -1,0 +1,17 @@
+# --------------------------------------------------
+# Basic vertex and fragment shaders in one file,
+# written in the Yuri shader language (WIP).
+# See https://git.gay/yuri/yuri for more.
+# --------------------------------------------------
+
+type VertexOutput = {{ @vert.pos out: vec4f, coord: vec2f }}
+
+@vert
+fn my_vert_main(pos: vec3f, coord: vec2f): VertexOutput {
+	{{ out = vec4f(pos, 1), pos, coord }}
+}
+
+@frag
+fn my_frag_main(coord: vec2f): vec4f {
+	vec4f(coord, 0, 1)
+}
