@@ -5403,6 +5403,22 @@ impl<'a> RuntimeParser<'a> {
 
     /// Parse one input and return runtime stack/tree evidence.
     pub fn parse_with_report(&self, input: &str) -> Result<RuntimeParseReport, ReducedParseError> {
+        self.parse_with_report_mode(input, RuntimeRecoveryMode::Strict)
+    }
+
+    /// Parse one input, preserving recoverable error ranges as `ERROR` nodes.
+    pub fn parse_recovering_with_report(
+        &self,
+        input: &str,
+    ) -> Result<RuntimeParseReport, ReducedParseError> {
+        self.parse_with_report_mode(input, RuntimeRecoveryMode::SkipInvalidInput)
+    }
+
+    fn parse_with_report_mode(
+        &self,
+        input: &str,
+        recovery: RuntimeRecoveryMode,
+    ) -> Result<RuntimeParseReport, ReducedParseError> {
         let mut tree_store = RuntimeTreeStore::default();
         let mut trace_events = Vec::new();
         let mut tree_events = Vec::new();
@@ -5463,6 +5479,7 @@ impl<'a> RuntimeParser<'a> {
                 &mut tree_events,
                 &mut next_version_index,
                 &mut next_lookahead_index,
+                recovery,
             ) {
                 match outcome {
                     RuntimeStepOutcome::Branch(branch) => branches.push_back(branch),
@@ -5536,6 +5553,7 @@ impl<'a> RuntimeParser<'a> {
         tree_events: &mut Vec<TreeEvent>,
         next_version_index: &mut usize,
         next_lookahead_index: &mut usize,
+        recovery: RuntimeRecoveryMode,
     ) -> Vec<RuntimeStepOutcome> {
         let source_version = branch.version;
         let state = match branch.stack.last() {
@@ -5565,6 +5583,18 @@ impl<'a> RuntimeParser<'a> {
         ) {
             Ok(token) => token,
             Err(error) => {
+                if recovery == RuntimeRecoveryMode::SkipInvalidInput
+                    && matches!(error.kind(), ReducedParseErrorKind::NoToken { .. })
+                    && let Some(branch) = self.recover_runtime_no_token(
+                        branch,
+                        input,
+                        tree_store,
+                        trace_events,
+                        tree_events,
+                    )
+                {
+                    return vec![RuntimeStepOutcome::Branch(branch)];
+                }
                 return vec![RuntimeStepOutcome::Failed {
                     version: source_version,
                     error: error.with_trace(branch.trace),
@@ -5905,6 +5935,47 @@ impl<'a> RuntimeParser<'a> {
                 }
             }
         }
+    }
+
+    fn recover_runtime_no_token(
+        &self,
+        mut branch: RuntimeBranch,
+        input: &str,
+        tree_store: &mut RuntimeTreeStore,
+        trace_events: &mut Vec<TraceEvent>,
+        tree_events: &mut Vec<TreeEvent>,
+    ) -> Option<RuntimeBranch> {
+        let state = branch.stack.last().map(|entry| entry.state)?;
+        let start_byte = branch.byte_position;
+        let end_byte = runtime_recovery_end(input, start_byte)?;
+        let node = tree_store.push(SexpNode {
+            kind: "ERROR".to_owned(),
+            children: Vec::new(),
+        });
+        let (bytes, points) = input_ranges(input, start_byte, end_byte);
+        trace_events.push(TraceEvent::Recover {
+            version: branch.version,
+            state,
+        });
+        tree_events.push(TreeEvent::Error {
+            version: branch.version,
+            node,
+            bytes,
+            points,
+            error_cost: u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX),
+        });
+        branch.stack.push(RuntimeStackEntry {
+            state,
+            fragment: Some(RuntimeFragment::Node {
+                node,
+                start_byte,
+                end_byte,
+            }),
+            extra: true,
+            end_byte,
+        });
+        branch.byte_position = end_byte;
+        Some(branch)
     }
 
     fn runtime_reduce_fragment(

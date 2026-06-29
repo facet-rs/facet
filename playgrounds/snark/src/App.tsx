@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import init, { parseBundle } from "@bearcove/snark-wasm";
 import {
   discoverGrammarRoots,
@@ -213,11 +213,6 @@ export function App() {
       ),
     [projectedFiles],
   );
-  const highlightedSource = useMemo(
-    () => renderSourceLayer(input, result),
-    [input, result],
-  );
-  const hasHighlightedSource = highlightedSource !== null;
   const busy = busyTask !== null;
 
   useEffect(() => {
@@ -305,22 +300,28 @@ export function App() {
 
   return (
     <main className="shell">
-      <section className="pane bundle-pane" aria-label="Bundle files">
-        <div className="pane-header">
-          <div>
-            <h1>Snark</h1>
-            <p>{result?.language ?? "mini_playground"}</p>
+      <aside className="rail" aria-label="Bundle files">
+        <header className="rail-head">
+          <div className="brand">
+            <span className="brand-mark" aria-hidden="true">
+              ◢◣
+            </span>
+            <div className="brand-text">
+              <h1>Snark</h1>
+              <p>{result?.language ?? "mini_playground"}</p>
+            </div>
           </div>
-          <label className="file-button">
-            Upload
+          <label className="upload">
             <input
               type="file"
               multiple
               {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
               onChange={(event) => void loadFiles(event.currentTarget.files)}
             />
+            <span>Upload</span>
           </label>
-        </div>
+        </header>
+
         <div className="file-list">
           {visibleBundleFiles.map((file) =>
             file.path.startsWith("samples/") ? (
@@ -331,241 +332,97 @@ export function App() {
                 title={file.sourcePath === file.path ? file.path : `${file.path} from ${file.sourcePath}`}
                 onClick={() => updateSourceInput(file.text, file.sourcePath)}
               >
-                <span>{file.path}</span>
-                <small>{file.text.length.toLocaleString()}b</small>
+                <span className="file-name">{file.path}</span>
+                <span className="file-size">{file.text.length.toLocaleString()}</span>
               </button>
             ) : (
               <div
                 key={file.sourcePath}
-                className="file-row"
+                className="file-row static"
                 title={file.sourcePath === file.path ? file.path : `${file.path} from ${file.sourcePath}`}
               >
-                <span>{file.path}</span>
-                <small>{file.text.length.toLocaleString()}b</small>
+                <span className="file-name">{file.path}</span>
+                <span className="file-size">{file.text.length.toLocaleString()}</span>
               </div>
             ),
           )}
         </div>
-        {!result && (
-          <LocalBundleInventory
-            files={projectedFiles}
-            grammarRootLabel={activeGrammarRoot?.label ?? "bundle root"}
-          />
-        )}
-        {result && (
-          <BundleInventory result={result} />
-        )}
-      </section>
 
-      <section className="pane work-pane" aria-label="Source">
+        <BundleInventory result={result} files={projectedFiles} />
+      </aside>
+
+      <section className="workspace" aria-label="Source and results">
         <div className="toolbar">
-          {grammarRoots.length > 1 ? (
-            <select
-              aria-label="Grammar root"
-              className="grammar-select"
-              value={activeGrammarRoot?.id ?? ""}
-              onChange={(event) => {
-                const nextGrammarRoot = event.currentTarget.value;
-                const nextSample = firstSampleForGrammarRootId(files, nextGrammarRoot);
-                setSelectedGrammarRoot(nextGrammarRoot);
-                setSelectedSamplePath(nextSample?.sourcePath ?? "");
-                setInput(nextSample?.text ?? "");
-                setResult(null);
-              }}
-            >
-              {grammarRoots.map((root) => (
-                <option key={root.id} value={root.id}>
-                  {root.label}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          {sampleFiles.length > 0 ? (
-            <select
-              aria-label="Sample"
-              className="sample-select"
-              value={selectedSamplePath}
-              onChange={(event) => {
-                const sample = sampleFiles.find((file) => file.sourcePath === event.currentTarget.value);
-                if (sample) {
-                  updateSourceInput(sample.text, sample.sourcePath);
-                } else {
-                  setSelectedSamplePath("");
-                }
-              }}
-            >
-              <option value="">Samples ({sampleFiles.length})</option>
-              {sampleFiles.map((file) => (
-                <option key={file.sourcePath} value={file.sourcePath}>
-                  {file.path}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          {hasBundledTests ? (
-            <button type="button" onClick={() => void runBundleTests()} disabled={busy}>
-              {busyTask === "tests" ? "Running tests" : "Run tests"}
-            </button>
-          ) : null}
-        </div>
-
-        <label className="editor-block source-editor">
-          <span>Source</span>
-          <div
-            className={[
-              "source-input",
-              hasHighlightedSource ? "with-highlights" : "",
-              placedDiagnostic(result) ? "with-diagnostic" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            {hasHighlightedSource ? (
-              <pre
-                aria-hidden="true"
-                className="source-highlight-layer"
-                style={{ transform: `translate(${-editorScroll.left}px, ${-editorScroll.top}px)` }}
+          <div className="toolbar-selects">
+            {grammarRoots.length > 1 ? (
+              <select
+                aria-label="Grammar root"
+                className="select"
+                value={activeGrammarRoot?.id ?? ""}
+                onChange={(event) => {
+                  const nextGrammarRoot = event.currentTarget.value;
+                  const nextSample = firstSampleForGrammarRootId(files, nextGrammarRoot);
+                  setSelectedGrammarRoot(nextGrammarRoot);
+                  setSelectedSamplePath(nextSample?.sourcePath ?? "");
+                  setInput(nextSample?.text ?? "");
+                  setResult(null);
+                }}
               >
-                {highlightedSource}
-              </pre>
+                {grammarRoots.map((root) => (
+                  <option key={root.id} value={root.id}>
+                    {root.label}
+                  </option>
+                ))}
+              </select>
             ) : null}
-            <textarea
-              value={input}
-              onChange={(event) => updateSourceInput(event.currentTarget.value)}
-              onScroll={(event) =>
-                setEditorScroll({
-                  left: event.currentTarget.scrollLeft,
-                  top: event.currentTarget.scrollTop,
-                })
-              }
-            />
-            <SourceDiagnosticOverlay result={result} />
+            {sampleFiles.length > 0 ? (
+              <select
+                aria-label="Sample"
+                className="select"
+                value={selectedSamplePath}
+                onChange={(event) => {
+                  const sample = sampleFiles.find((file) => file.sourcePath === event.currentTarget.value);
+                  if (sample) {
+                    updateSourceInput(sample.text, sample.sourcePath);
+                  } else {
+                    setSelectedSamplePath("");
+                  }
+                }}
+              >
+                <option value="">Samples · {sampleFiles.length}</option>
+                {sampleFiles.map((file) => (
+                  <option key={file.sourcePath} value={file.sourcePath}>
+                    {file.path}
+                  </option>
+                ))}
+              </select>
+            ) : null}
           </div>
-        </label>
-        <SourceDiagnostics result={result} />
-      </section>
-
-      <section className="pane result-pane" aria-label="Parse results">
-        <StatusStrip result={result} busyTask={busyTask} />
-
-        <div className="result-tabs">
-          <section>
-            <h2>S-expression</h2>
-            <pre>{result?.parse?.sexp ?? ""}</pre>
-          </section>
-          <section>
-            <h2>Captures</h2>
-            <div className="capture-list">
-              {result?.highlights.map((capture, index) => (
-                <div className="capture-row" key={`${capture.capture_name}-${capture.start_byte}-${index}`}>
-                  <span className={`capture-chip ${captureClass(capture.capture_name)}`}>
-                    @{capture.capture_name}
-                  </span>
-                  <code>{capture.text}</code>
-                  <small>
-                    {capture.start_row}:{capture.start_column}-{capture.end_row}:{capture.end_column}
-                  </small>
-                </div>
-              ))}
-            </div>
-          </section>
-          {result?.tests.requested ? (
-            <section>
-              <h2>Tests</h2>
-              <div className="corpus-summary">
-                <span>{result.tests.corpus_passed} corpus pass</span>
-                <span>{result.tests.corpus_failed} corpus fail</span>
-                <span>{result.tests.highlight_assertions_passed} highlight pass</span>
-                <span>
-                  {result.tests.highlight_assertions_failed + result.tests.highlight_fixture_errors}{" "}
-                  highlight fail
-                </span>
-              </div>
-              <div className="corpus-list">
-                {result.corpus.map((caseResult, index) => (
-                  <details key={`${caseResult.path}-${caseResult.case_name}-${index}`}>
-                    <summary className={caseResult.passed ? "pass" : "fail"}>
-                      {caseResult.case_name}
-                    </summary>
-                    <div className="test-actions">
-                      <button type="button" onClick={() => updateSourceInput(caseResult.input)}>
-                        Use input
-                      </button>
-                    </div>
-                    <div className="test-detail-grid">
-                      {caseResult.error ? (
-                        <section>
-                          <h3>Error</h3>
-                          <pre>{caseResult.error}</pre>
-                        </section>
-                      ) : null}
-                      <section>
-                        <h3>Input</h3>
-                        <pre>{caseResult.input}</pre>
-                      </section>
-                      <section>
-                        <h3>Expected</h3>
-                        <pre>{caseResult.expected}</pre>
-                      </section>
-                      <section>
-                        <h3>Actual</h3>
-                        <pre>{caseResult.actual ?? ""}</pre>
-                      </section>
-                    </div>
-                  </details>
-                ))}
-                {result.highlight_tests.map((fixture) => (
-                  <details key={fixture.path}>
-                    <summary className={fixture.passed ? "pass" : "fail"}>
-                      {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
-                    </summary>
-                    <div className="test-actions">
-                      <button type="button" onClick={() => updateSourceInput(fixture.input)}>
-                        Use fixture
-                      </button>
-                    </div>
-                    {fixture.error ? (
-                      <pre>{fixture.error}</pre>
-                    ) : (
-                      <div className="assertion-list">
-                        {fixture.assertions.map((assertion, index) => (
-                          <div
-                            className={assertion.passed ? "assertion-row pass" : "assertion-row fail"}
-                            key={`${fixture.path}-${assertion.row}-${assertion.column}-${index}`}
-                          >
-                            <span>
-                              {assertion.negative ? "!" : ""}@{assertion.capture_name}
-                            </span>
-                            <small>
-                              {assertion.row}:{assertion.column}+{assertion.length}
-                            </small>
-                            {assertion.message ? <code>{assertion.message}</code> : null}
-                            {assertion.observed_captures.length ? (
-                              <code>{assertion.observed_captures.join(", ")}</code>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </details>
-                ))}
-              </div>
-            </section>
-          ) : null}
+          <div className="toolbar-end">
+            <StatusPill result={result} busyTask={busyTask} />
+            {hasBundledTests ? (
+              <button type="button" className="btn" onClick={() => void runBundleTests()} disabled={busy}>
+                {busyTask === "tests" ? "Running…" : "Run tests"}
+              </button>
+            ) : null}
+          </div>
         </div>
-        {result?.limitations.length ? (
-          <ul className="limitations">
-            {result.limitations.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        ) : null}
+
+        <Editor
+          input={input}
+          result={result}
+          scroll={editorScroll}
+          onChange={(value) => updateSourceInput(value)}
+          onScroll={(left, top) => setEditorScroll({ left, top })}
+        />
+
+        <ResultsDock result={result} onUseInput={(value) => updateSourceInput(value)} />
       </section>
     </main>
   );
 }
 
-function StatusStrip({
+function StatusPill({
   result,
   busyTask,
 }: {
@@ -573,169 +430,366 @@ function StatusStrip({
   busyTask: "parse" | "tests" | null;
 }) {
   if (busyTask) {
-    return <div className="status-strip idle">{busyTask === "tests" ? "Running tests" : "Parsing"}</div>;
+    return (
+      <span className="pill busy">
+        <span className="dot" />
+        {busyTask === "tests" ? "Running tests" : "Parsing"}
+      </span>
+    );
   }
   if (!result) {
-    return <div className="status-strip idle">Ready</div>;
+    return (
+      <span className="pill idle">
+        <span className="dot" />
+        Ready
+      </span>
+    );
   }
   if (!result.ok) {
-    return <div className="status-strip error">Parse failed</div>;
-  }
-  const corpusFailures = result.tests.corpus_failed;
-  const highlightFailures =
-    result.tests.highlight_assertions_failed + result.tests.highlight_fixture_errors;
-  const testFailures = corpusFailures + highlightFailures;
-  if (testFailures > 0) {
     return (
-      <div className="status-strip warn">
-        {result.parse ? <span>Parse accepted {result.parse.accepted_count}</span> : null}
-        <span>{corpusFailures} corpus fail</span>
-        <span>{highlightFailures} highlight fail</span>
-      </div>
+      <span className="pill error">
+        <span className="dot" />
+        Parse failed
+      </span>
     );
   }
-  if (!result.parse && result.tests.requested) {
+  const failures =
+    result.tests.corpus_failed +
+    result.tests.highlight_assertions_failed +
+    result.tests.highlight_fixture_errors;
+  if (failures > 0) {
     return (
-      <div className="status-strip ok">
-        <span>{result.tests.corpus_passed} corpus pass</span>
-        <span>{result.tests.highlight_assertions_passed} highlight pass</span>
-      </div>
+      <span className="pill warn">
+        <span className="dot" />
+        {failures} test {failures === 1 ? "failure" : "failures"}
+      </span>
     );
   }
   return (
-    <div className="status-strip ok">
-      <span>Accepted {result.parse?.accepted_count ?? 0}</span>
-      <span>Failed {result.parse?.failure_count ?? 0}</span>
-      <span>Live {result.parse?.max_live_versions ?? 0}</span>
-      <span>Events {result.parse?.accepted_tree_event_count ?? 0}</span>
-    </div>
+    <span className="pill ok">
+      <span className="dot" />
+      {result.parse ? `Accepted ${result.parse.accepted_count}` : "Passed"}
+    </span>
   );
 }
 
-function BundleInventory({ result }: { result: PlaygroundResponse }) {
-  const grammarInput = result.bundle.grammar_js_path
-    ? `${result.bundle.grammar_js_path} -> ${result.bundle.grammar_path ?? "src/grammar.json"}`
-    : (result.bundle.grammar_path ?? "missing");
-  return (
-    <div className="bundle-inventory">
-      <dl className="bundle-facts">
-        <div>
-          <dt>grammar</dt>
-          <dd title={grammarInput}>{grammarInput}</dd>
-        </div>
-        <div>
-          <dt>queries</dt>
-          <dd>{result.bundle.query_paths.length}</dd>
-        </div>
-        <div>
-          <dt>corpus</dt>
-          <dd>{result.bundle.corpus_paths.length}</dd>
-        </div>
-        <div>
-          <dt>samples</dt>
-          <dd>{result.bundle.sample_paths.length}</dd>
-        </div>
-        <div>
-          <dt>ignored</dt>
-          <dd>{result.bundle.generated_files_ignored.length}</dd>
-        </div>
-        <div>
-          <dt>scanner</dt>
-          <dd>{result.bundle.active_scanner ? "active" : result.bundle.scanner_paths.length}</dd>
-        </div>
-      </dl>
-      <details className="bundle-paths">
-        <summary>Bundle inventory</summary>
-        <BundlePathList title="Queries" paths={result.bundle.query_paths} />
-        <BundlePathList title="Corpus and highlights" paths={result.bundle.corpus_paths} />
-        <BundlePathList title="Samples" paths={result.bundle.sample_paths} />
-        <BundlePathList title="Scanners" paths={result.bundle.scanner_paths} />
-        <BundlePathList title="Ignored generated files" paths={result.bundle.generated_files_ignored} />
-        {result.bundle.active_scanner ? (
-          <div className="bundle-path-group">
-            <h3>Active scanner</h3>
-            <code>{result.bundle.active_scanner}</code>
-          </div>
-        ) : null}
-      </details>
-    </div>
-  );
-}
+const LINT_HEIGHT = 84;
 
-function LocalBundleInventory({
-  files,
-  grammarRootLabel,
+function Editor({
+  input,
+  result,
+  scroll,
+  onChange,
+  onScroll,
 }: {
-  files: { path: string; sourcePath: string }[];
-  grammarRootLabel: string;
+  input: string;
+  result: PlaygroundResponse | null;
+  scroll: { left: number; top: number };
+  onChange: (value: string) => void;
+  onScroll: (left: number, top: number) => void;
 }) {
-  const grammarJsonPath = files.find((file) => file.path === "src/grammar.json")?.path;
-  const grammarJsPath = files.find((file) => file.path === "grammar.js")?.path;
-  const grammarPath = grammarJsonPath ?? (grammarJsPath ? `${grammarJsPath} -> src/grammar.json` : "missing");
-  const queryCount = files.filter((file) => file.path.startsWith("queries/")).length;
-  const corpusCount = files.filter(
-    (file) =>
-      file.path.startsWith("test/corpus/") ||
-      file.path.startsWith("test/highlight/") ||
-      file.path.startsWith("test/highlights/"),
-  ).length;
-  const sampleCount = files.filter((file) => file.path.startsWith("samples/")).length;
-  const scannerCount = files.filter(
-    (file) => file.path === "src/scanner.c" || file.path === "src/scanner.cc",
-  ).length;
-  const ignoredCount = files.filter((file) => isGeneratedPath(file.path)).length;
+  const diagnostic = placedDiagnostic(result);
+  const span = diagnostic?.primary_span ?? null;
+  const errorLine = span ? span.start_row : null;
+  const lines = useMemo(() => input.split("\n"), [input]);
+  const highlightNodes = useMemo(() => renderSourceLayer(input, result), [input, result]);
+  const hasInlineLint = diagnostic !== null && span !== null && errorLine !== null;
+
+  const gutter: ReactNode[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    gutter.push(
+      <span className={i === errorLine ? "ln err" : "ln"} key={`ln-${i}`}>
+        {i + 1}
+      </span>,
+    );
+    if (i === errorLine) {
+      gutter.push(<span className="ln-spacer" key="ln-spacer" aria-hidden="true" />);
+    }
+  }
+
+  let codeContent: ReactNode;
+  if (hasInlineLint && span && errorLine !== null && diagnostic) {
+    codeContent = lines.map((lineText, i) => {
+      if (i !== errorLine) {
+        return (
+          <span className="src-line" key={`l-${i}`}>
+            {lineText}
+            {i < lines.length - 1 ? "\n" : ""}
+          </span>
+        );
+      }
+      const c0 = Math.min(span.start_column, lineText.length);
+      const c1 = span.end_row === span.start_row ? Math.min(span.end_column, lineText.length) : lineText.length;
+      const token = lineText.slice(c0, Math.max(c0, c1)) || " ";
+      return (
+        <Fragment key={`l-${i}`}>
+          <span className="src-line err-line">
+            {lineText.slice(0, c0)}
+            <span className="err-token">{token}</span>
+            {lineText.slice(Math.max(c0, c1))}
+            {"\n"}
+          </span>
+          <span className="code-lint" style={{ height: LINT_HEIGHT }}>
+            <span className="code-lint-head">
+              <span className="code-lint-stage">{diagnostic.stage}</span>
+              <span className="code-lint-loc">
+                {span.start_row + 1}:{span.start_column + 1}
+              </span>
+            </span>
+            <span className="code-lint-body">{diagnostic.message}</span>
+          </span>
+        </Fragment>
+      );
+    });
+  } else if (highlightNodes) {
+    codeContent = highlightNodes;
+  } else {
+    codeContent = input;
+  }
 
   return (
-    <div className="bundle-inventory">
-      <dl className="bundle-facts">
-        <div>
-          <dt>root</dt>
-          <dd>{grammarRootLabel}</dd>
+    <div className="editor">
+      <div className="gutter-viewport">
+        <div className="gutter" style={{ transform: `translateY(${-scroll.top}px)` }}>
+          {gutter}
         </div>
-        <div>
-          <dt>grammar</dt>
-          <dd>{grammarPath}</dd>
-        </div>
-        <div>
-          <dt>queries</dt>
-          <dd>{queryCount}</dd>
-        </div>
-        <div>
-          <dt>corpus</dt>
-          <dd>{corpusCount}</dd>
-        </div>
-        <div>
-          <dt>samples</dt>
-          <dd>{sampleCount}</dd>
-        </div>
-        <div>
-          <dt>ignored</dt>
-          <dd>{ignoredCount}</dd>
-        </div>
-        <div>
-          <dt>scanner</dt>
-          <dd>{scannerCount}</dd>
-        </div>
-      </dl>
+      </div>
+      <div className="code-viewport">
+        <pre
+          aria-hidden="true"
+          className="code-layer"
+          style={{ transform: `translate(${-scroll.left}px, ${-scroll.top}px)` }}
+        >
+          {codeContent}
+        </pre>
+        <textarea
+          className={hasInlineLint ? "with-lint" : ""}
+          value={input}
+          spellCheck={false}
+          wrap="off"
+          onChange={(event) => onChange(event.currentTarget.value)}
+          onScroll={(event) => onScroll(event.currentTarget.scrollLeft, event.currentTarget.scrollTop)}
+        />
+      </div>
     </div>
   );
 }
 
-function BundlePathList({ title, paths }: { title: string; paths: string[] }) {
+function ResultsDock({
+  result,
+  onUseInput,
+}: {
+  result: PlaygroundResponse | null;
+  onUseInput: (value: string) => void;
+}) {
+  const failure = result && !result.ok ? result : null;
+  const sexp = result?.parse?.sexp ?? "";
+  const captures = result?.highlights ?? [];
+  const tests = result?.tests.requested ? result : null;
+  const unplaced = result?.diagnostics.filter((diagnostic) => !diagnostic.primary_span) ?? [];
+
   return (
-    <div className="bundle-path-group">
-      <h3>{title}</h3>
-      {paths.length ? (
-        <ul>
-          {paths.map((path) => (
-            <li key={path}>
-              <code>{path}</code>
-            </li>
+    <div className="dock">
+      {failure ? (
+        <div className="dock-failure">
+          <strong>Parse failed</strong>
+          {unplaced.map((diagnostic, index) => (
+            <div className="dock-failure-row" key={`${diagnostic.stage}-${index}`}>
+              <span className="dock-failure-stage">{diagnostic.stage}</span>
+              <code>{diagnostic.message}</code>
+            </div>
           ))}
-        </ul>
-      ) : (
-        <p>none</p>
-      )}
+        </div>
+      ) : null}
+
+      <details className="panel" open={!failure}>
+        <summary>
+          <span className="panel-title">S-expression</span>
+          {result?.parse ? (
+            <span className="panel-meta">
+              {result.parse.accepted_count} accepted · {result.parse.failure_count} failed
+            </span>
+          ) : null}
+        </summary>
+        <div className="panel-body">
+          {sexp ? <pre className="sexp">{sexp}</pre> : <p className="empty">No parse tree.</p>}
+        </div>
+      </details>
+
+      <details className="panel">
+        <summary>
+          <span className="panel-title">Captures</span>
+          <span className="panel-meta">{captures.length}</span>
+        </summary>
+        <div className="panel-body">
+          {captures.length ? (
+            <div className="capture-list">
+              {captures.map((capture, index) => (
+                <div className="capture-row" key={`${capture.capture_name}-${capture.start_byte}-${index}`}>
+                  <span className={`capture-chip ${captureClass(capture.capture_name)}`}>
+                    @{capture.capture_name}
+                  </span>
+                  <code>{capture.text}</code>
+                  <span className="capture-loc">
+                    {capture.start_row}:{capture.start_column}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="empty">No captures.</p>
+          )}
+        </div>
+      </details>
+
+      {tests ? (
+        <details className="panel" open>
+          <summary>
+            <span className="panel-title">Tests</span>
+            <span className="panel-meta">
+              {tests.tests.corpus_passed + tests.tests.highlight_assertions_passed} pass ·{" "}
+              {tests.tests.corpus_failed +
+                tests.tests.highlight_assertions_failed +
+                tests.tests.highlight_fixture_errors}{" "}
+              fail
+            </span>
+          </summary>
+          <div className="panel-body">
+            <div className="corpus-list">
+              {tests.corpus.map((caseResult, index) => (
+                <details className="case" key={`${caseResult.path}-${caseResult.case_name}-${index}`}>
+                  <summary className={caseResult.passed ? "pass" : "fail"}>
+                    {caseResult.case_name}
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        onUseInput(caseResult.input);
+                      }}
+                    >
+                      Use input
+                    </button>
+                  </summary>
+                  <div className="test-detail-grid">
+                    {caseResult.error ? (
+                      <section>
+                        <h3>Error</h3>
+                        <pre>{caseResult.error}</pre>
+                      </section>
+                    ) : null}
+                    <section>
+                      <h3>Expected</h3>
+                      <pre>{caseResult.expected}</pre>
+                    </section>
+                    <section>
+                      <h3>Actual</h3>
+                      <pre>{caseResult.actual ?? ""}</pre>
+                    </section>
+                  </div>
+                </details>
+              ))}
+              {tests.highlight_tests.map((fixture) => (
+                <details className="case" key={fixture.path}>
+                  <summary className={fixture.passed ? "pass" : "fail"}>
+                    {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        onUseInput(fixture.input);
+                      }}
+                    >
+                      Use fixture
+                    </button>
+                  </summary>
+                  {fixture.error ? (
+                    <pre>{fixture.error}</pre>
+                  ) : (
+                    <div className="assertion-list">
+                      {fixture.assertions.map((assertion, index) => (
+                        <div
+                          className={assertion.passed ? "assertion-row pass" : "assertion-row fail"}
+                          key={`${fixture.path}-${assertion.row}-${assertion.column}-${index}`}
+                        >
+                          <span>
+                            {assertion.negative ? "!" : ""}@{assertion.capture_name}
+                          </span>
+                          <span className="capture-loc">
+                            {assertion.row}:{assertion.column}
+                          </span>
+                          {assertion.message ? <code>{assertion.message}</code> : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </details>
+              ))}
+            </div>
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function BundleInventory({
+  result,
+  files,
+}: {
+  result: PlaygroundResponse | null;
+  files: { path: string; sourcePath: string }[];
+}) {
+  const queryPaths = result?.bundle.query_paths ?? files.filter((file) => file.path.startsWith("queries/")).map((file) => file.path);
+  const corpusPaths =
+    result?.bundle.corpus_paths ??
+    files
+      .filter(
+        (file) =>
+          file.path.startsWith("test/corpus/") ||
+          file.path.startsWith("test/highlight/") ||
+          file.path.startsWith("test/highlights/"),
+      )
+      .map((file) => file.path);
+  const samplePaths = result?.bundle.sample_paths ?? files.filter((file) => file.path.startsWith("samples/")).map((file) => file.path);
+  const scannerPaths = result?.bundle.scanner_paths ?? [];
+  const ignoredPaths =
+    result?.bundle.generated_files_ignored ?? files.filter((file) => isGeneratedPath(file.path)).map((file) => file.path);
+
+  return (
+    <details className="inventory">
+      <summary>
+        Bundle inventory
+        <span className="inventory-counts">
+          {queryPaths.length}q · {corpusPaths.length}c · {samplePaths.length}s
+        </span>
+      </summary>
+      <div className="inventory-body">
+        <InventoryGroup title="Queries" paths={queryPaths} />
+        <InventoryGroup title="Corpus & highlights" paths={corpusPaths} />
+        <InventoryGroup title="Samples" paths={samplePaths} />
+        <InventoryGroup title="Scanners" paths={scannerPaths} />
+        <InventoryGroup title="Ignored (generated)" paths={ignoredPaths} />
+      </div>
+    </details>
+  );
+}
+
+function InventoryGroup({ title, paths }: { title: string; paths: string[] }) {
+  if (!paths.length) {
+    return null;
+  }
+  return (
+    <div className="inventory-group">
+      <h3>{title}</h3>
+      <ul>
+        {paths.map((path) => (
+          <li key={path}>
+            <code>{path}</code>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -781,7 +835,7 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
       highlight_assertions_failed: 0,
       highlight_fixture_errors: 0,
     },
-    limitations: ["Tree-sitter grammar.js is evaluated in a browser Worker before Snark receives src/grammar.json."],
+    limitations: [],
   };
 }
 
@@ -864,7 +918,6 @@ function renderHighlightedSource(input: string, captures: HighlightOutput[]) {
       <span
         className={`source-capture ${captureClass(capture.capture.capture_name)}`}
         key={`${capture.capture.capture_name}-${capture.capture.start_byte}-${capture.capture.end_byte}`}
-        title={`@${capture.capture.capture_name}`}
       >
         {input.slice(capture.startIndex, capture.endIndex)}
       </span>,
@@ -878,11 +931,8 @@ function renderHighlightedSource(input: string, captures: HighlightOutput[]) {
 }
 
 function renderSourceLayer(input: string, result: PlaygroundResponse | null) {
-  if (!result) {
+  if (!result || !result.ok) {
     return null;
-  }
-  if (!result.ok) {
-    return renderDiagnosticSource(input, result.diagnostics);
   }
   if (result.highlights.length === 0) {
     return null;
@@ -892,71 +942,6 @@ function renderSourceLayer(input: string, result: PlaygroundResponse | null) {
 
 function placedDiagnostic(result: PlaygroundResponse | null) {
   return result?.diagnostics.find((candidate) => candidate.primary_span) ?? null;
-}
-
-function SourceDiagnosticOverlay({ result }: { result: PlaygroundResponse | null }) {
-  const diagnostic = placedDiagnostic(result);
-  const span = diagnostic?.primary_span;
-  if (!diagnostic || !span) {
-    return null;
-  }
-
-  return (
-    <div className="source-diagnostic-overlay">
-      <div>
-        <strong>{diagnostic.stage}</strong>
-        <small>
-          {span.start_row + 1}:{span.start_column + 1}
-        </small>
-      </div>
-      <code>{diagnostic.message}</code>
-    </div>
-  );
-}
-
-function SourceDiagnostics({ result }: { result: PlaygroundResponse | null }) {
-  const unplaced = result?.diagnostics.filter((diagnostic) => !diagnostic.primary_span) ?? [];
-  if (!unplaced.length) {
-    return null;
-  }
-
-  return (
-    <div className="source-diagnostics">
-      {unplaced.map((diagnostic, index) => (
-        <div className="source-diagnostic" key={`${diagnostic.stage}-${index}`}>
-          <strong>{diagnostic.stage}</strong>
-          <code>{diagnostic.message}</code>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function renderDiagnosticSource(input: string, diagnostics: Diagnostic[]) {
-  const diagnostic = diagnostics.find((candidate) => candidate.primary_span);
-  if (!diagnostic?.primary_span) {
-    return null;
-  }
-  const span = diagnostic.primary_span;
-
-  const byteToStringIndex = byteOffsetMap(input);
-  const markerIndex = byteToStringIndex[span.start_byte] ?? input.length;
-  const markerEnd = byteToStringIndex[span.end_byte] ?? markerIndex;
-  const rawMarker = input.slice(markerIndex, markerEnd);
-  const markerText = rawMarker && rawMarker !== "\n" ? rawMarker : " ";
-  const consumedEnd = markerText === rawMarker ? markerEnd : markerIndex;
-
-  return [
-    input.slice(0, markerIndex),
-    <span
-      className="source-diagnostic-marker"
-      key={`diagnostic-${span.start_byte}`}
-      title={diagnostic.message}
-    >
-      {markerText}
-    </span>,
-    input.slice(consumedEnd),
-  ];
 }
 
 function nonOverlappingCaptures(
