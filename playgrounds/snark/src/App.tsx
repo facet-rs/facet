@@ -53,6 +53,7 @@ type PlaygroundResponse = {
     corpus_paths: string[];
     generated_files_ignored: string[];
     scanner_paths: string[];
+    active_scanner: string | null;
   };
   parse: ParseOutput | null;
   highlights: HighlightOutput[];
@@ -225,6 +226,10 @@ export function App() {
             <div>
               <dt>ignored</dt>
               <dd>{result.bundle.generated_files_ignored.length}</dd>
+            </div>
+            <div>
+              <dt>scanner</dt>
+              <dd>{result.bundle.active_scanner ? "active" : result.bundle.scanner_paths.length}</dd>
             </div>
           </dl>
         )}

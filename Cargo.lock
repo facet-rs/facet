@@ -6208,6 +6208,7 @@ dependencies = [
  "facet",
  "facet-json",
  "snark",
+ "snark-scanner-host",
  "wasm-bindgen",
 ]
 

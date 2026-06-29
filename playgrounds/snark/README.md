@@ -38,5 +38,7 @@ pnpm --filter @bearcove/snark-wasm grammar-js-to-json \
   --out /tmp/snark-json/src/grammar.json
 ```
 
-For languages with `scanner.c`, the file is reported as part of the bundle, but
-browser-side external scanner execution is not wired into this playground yet.
+For languages with `scanner.c`, the playground only executes scanners that have
+an explicit source-matched host adapter. The reduced CSS scanner from the current
+fixture is wired this way; arbitrary scanner compilation/execution in the
+browser is not.

@@ -1,12 +1,18 @@
 #![forbid(unsafe_code)]
 //! WebAssembly bindings for Snark playgrounds.
 
+use std::cell::RefCell;
+
 use facet::Facet;
 use snark::{
     corpus::CorpusSource,
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    parser::{ParseTable, ParserGrammar, RuntimeParser},
+    parser::{
+        ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
+        ReducedExternalScanner, ReducedParseError, RuntimeParseReport, RuntimeParser,
+        ScannerSnapshotId,
+    },
     query::QuerySource,
     validated::ValidatedGrammar,
 };
@@ -51,6 +57,7 @@ struct BundleSummary {
     corpus_paths: Vec<String>,
     generated_files_ignored: Vec<String>,
     scanner_paths: Vec<String>,
+    active_scanner: Option<String>,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -94,6 +101,11 @@ struct PreparedGrammar {
     table: ParseTable,
 }
 
+struct ScannerSelection {
+    scanner: Option<CssBundleExternalScanner>,
+    active_scanner: Option<String>,
+}
+
 /// Parse one request with Snark and return a JSON response.
 #[wasm_bindgen(js_name = parseBundle)]
 pub fn parse_bundle(request_json: &str) -> String {
@@ -111,7 +123,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
         }
     };
     let files = normalize_bundle_files(request.files);
-    let bundle = summarize_bundle(&files);
+    let mut bundle = summarize_bundle(&files);
     let Some(grammar_file) = find_file(&files, "src/grammar.json") else {
         let message = match &bundle.grammar_js_path {
             Some(path) => format!(
@@ -130,7 +142,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
             parse: None,
             highlights: Vec::new(),
             corpus: Vec::new(),
-            limitations: limitations(&files),
+            limitations: limitations(&files, None),
         };
     };
 
@@ -145,7 +157,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                 parse: None,
                 highlights: Vec::new(),
                 corpus: Vec::new(),
-                limitations: limitations(&files),
+                limitations: limitations(&files, None),
             };
         }
     };
@@ -153,9 +165,18 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
     let mut diagnostics = Vec::new();
     let mut parse = None;
     let mut highlights = Vec::new();
+    let scanner_selection = scanner_selection(&files, &prepared.parser);
+    bundle.active_scanner = scanner_selection.active_scanner.clone();
     let runtime = RuntimeParser::new(&prepared.validated, &prepared.parser, &prepared.table);
     match runtime {
-        Ok(runtime) => match runtime.parse_with_report(&request.input) {
+        Ok(runtime) => match parse_with_optional_scanner(
+            runtime,
+            scanner_selection
+                .scanner
+                .as_ref()
+                .map(|scanner| scanner as &dyn ReducedExternalScanner),
+            &request.input,
+        ) {
             Ok(report) => {
                 let accepted_tree_event_count = report.accepted_tree_events().len();
                 parse = Some(ParseOutput {
@@ -201,7 +222,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
         parse,
         highlights,
         corpus,
-        limitations: limitations(&files),
+        limitations: limitations(&files, scanner_selection.active_scanner.as_deref()),
     }
 }
 
@@ -223,6 +244,145 @@ fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, Strin
         parser,
         table,
     })
+}
+
+fn scanner_selection(files: &[BundleFile], parser: &ParserGrammar) -> ScannerSelection {
+    let Some(scanner_file) = find_file(files, "src/scanner.c") else {
+        return ScannerSelection {
+            scanner: None,
+            active_scanner: None,
+        };
+    };
+    if scanner_file.text != snark_scanner_host::CSS_SCANNER_SOURCE {
+        return ScannerSelection {
+            scanner: None,
+            active_scanner: None,
+        };
+    }
+    let css_externals = parser
+        .symbols()
+        .externals()
+        .iter()
+        .map(|external| (external.ordinal(), external.name()))
+        .collect::<Vec<_>>();
+    if css_externals
+        != [
+            (0, Some("_descendant_operator")),
+            (1, Some("_pseudo_class_selector_colon")),
+            (2, Some("__error_recovery")),
+        ]
+    {
+        return ScannerSelection {
+            scanner: None,
+            active_scanner: None,
+        };
+    }
+    ScannerSelection {
+        scanner: Some(CssBundleExternalScanner::new(parser)),
+        active_scanner: Some(
+            "built-in compiled reduced CSS scanner matched from src/scanner.c".to_owned(),
+        ),
+    }
+}
+
+struct CssBundleExternalScanner {
+    scanner: RefCell<snark_scanner_host::CssScanner>,
+    external_ordinals: Vec<(ExternalId, usize)>,
+    snapshots: RefCell<Vec<Vec<u8>>>,
+}
+
+impl CssBundleExternalScanner {
+    fn new(parser: &ParserGrammar) -> Self {
+        Self {
+            scanner: RefCell::new(snark_scanner_host::CssScanner::new()),
+            external_ordinals: parser
+                .symbols()
+                .externals()
+                .iter()
+                .map(|external| (external.id(), external.ordinal() as usize))
+                .collect(),
+            snapshots: RefCell::new(vec![Vec::new()]),
+        }
+    }
+
+    fn ordinal_for(&self, external: ExternalId) -> Option<usize> {
+        self.external_ordinals
+            .iter()
+            .find_map(|(candidate, ordinal)| (*candidate == external).then_some(*ordinal))
+    }
+
+    fn valid_symbol_mask(&self, request: ReducedExternalScan<'_>) -> Option<Vec<bool>> {
+        let width = self
+            .external_ordinals
+            .iter()
+            .map(|(_, ordinal)| *ordinal)
+            .max()
+            .map_or(0, |ordinal| ordinal + 1);
+        let mut mask = vec![false; width];
+        if let Some(valid_symbols) = request.valid_symbols() {
+            for external in valid_symbols.externals() {
+                let ordinal = self.ordinal_for(*external)?;
+                mask[ordinal] = true;
+            }
+        } else {
+            let ordinal = self.ordinal_for(request.external())?;
+            mask[ordinal] = true;
+        }
+        Some(mask)
+    }
+
+    fn snapshot_bytes(&self, snapshot: Option<ScannerSnapshotId>) -> Vec<u8> {
+        let snapshot = snapshot.unwrap_or_else(|| ScannerSnapshotId::from_index(0));
+        self.snapshots
+            .borrow()
+            .get(snapshot.get() as usize)
+            .unwrap_or_else(|| panic!("scanner snapshot {} should be interned", snapshot.get()))
+            .clone()
+    }
+
+    fn intern_snapshot(&self, bytes: &[u8]) -> ScannerSnapshotId {
+        let mut snapshots = self.snapshots.borrow_mut();
+        if let Some(index) = snapshots.iter().position(|snapshot| snapshot == bytes) {
+            return ScannerSnapshotId::from_index(index);
+        }
+        let index = snapshots.len();
+        snapshots.push(bytes.to_vec());
+        ScannerSnapshotId::from_index(index)
+    }
+}
+
+impl ReducedExternalScanner for CssBundleExternalScanner {
+    fn scan(
+        &self,
+        request: ReducedExternalScan<'_>,
+    ) -> Result<Option<ReducedExternalScanResult>, ReducedParseError> {
+        let Some(mask) = self.valid_symbol_mask(request) else {
+            return Ok(None);
+        };
+        let Some(request_ordinal) = self.ordinal_for(request.external()) else {
+            return Ok(None);
+        };
+        if request_ordinal >= mask.len() || !mask[request_ordinal] {
+            return Ok(None);
+        }
+        let before = request
+            .scanner_snapshot()
+            .unwrap_or_else(|| ScannerSnapshotId::from_index(0));
+        let snapshot = self.snapshot_bytes(Some(before));
+        let scan = self
+            .scanner
+            .borrow_mut()
+            .scan(request.input(), request.byte_position(), &mask, &snapshot)
+            .expect("CSS valid-symbol mask width should match imported external ordinals");
+        if !scan.accepted() || scan.result_symbol() != Some(request_ordinal) {
+            return Ok(None);
+        }
+        let after = self.intern_snapshot(scan.serialized_state());
+        Ok(Some(
+            ReducedExternalScanResult::new(scan.end_byte())
+                .with_snapshots(Some(before), Some(after)),
+        ))
+    }
 }
 
 fn highlight_outputs(
@@ -253,6 +413,7 @@ fn highlight_outputs(
 
 fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<CorpusOutput> {
     let mut results = Vec::new();
+    let scanner_selection = scanner_selection(files, &prepared.parser);
     for file in files
         .iter()
         .filter(|file| file.path.starts_with("test/corpus/") && file.path.ends_with(".txt"))
@@ -290,7 +451,14 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
                         continue;
                     }
                 };
-            match runtime.parse_with_report(&case.input) {
+            match parse_with_optional_scanner(
+                runtime,
+                scanner_selection
+                    .scanner
+                    .as_ref()
+                    .map(|scanner| scanner as &dyn ReducedExternalScanner),
+                &case.input,
+            ) {
                 Ok(report) => {
                     let actual = report.tree().to_sexp();
                     let expected = case.expected.to_sexp();
@@ -319,6 +487,19 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
     results
 }
 
+fn parse_with_optional_scanner<'a>(
+    runtime: RuntimeParser<'a>,
+    scanner: Option<&'a dyn ReducedExternalScanner>,
+    input: &str,
+) -> Result<RuntimeParseReport, ReducedParseError> {
+    match scanner {
+        Some(scanner) => runtime
+            .with_external_scanner(scanner)
+            .parse_with_report(input),
+        None => runtime.parse_with_report(input),
+    }
+}
+
 fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse {
     PlaygroundResponse {
         ok: false,
@@ -334,6 +515,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
             corpus_paths: Vec::new(),
             generated_files_ignored: Vec::new(),
             scanner_paths: Vec::new(),
+            active_scanner: None,
         },
         parse: None,
         highlights: Vec::new(),
@@ -376,10 +558,11 @@ fn summarize_bundle(files: &[BundleFile]) -> BundleSummary {
             .filter(|file| file.path == "src/scanner.c" || file.path == "src/scanner.cc")
             .map(|file| file.path.clone())
             .collect(),
+        active_scanner: None,
     }
 }
 
-fn limitations(files: &[BundleFile]) -> Vec<String> {
+fn limitations(files: &[BundleFile], active_scanner: Option<&str>) -> Vec<String> {
     let mut limitations = vec![
         "This playground executes Snark's current RuntimeParser path and returns its corpus-normalized S-expression projection.".to_owned(),
         "Generated Tree-sitter files such as src/parser.c and src/node-types.json are ignored.".to_owned(),
@@ -394,9 +577,15 @@ fn limitations(files: &[BundleFile]) -> Vec<String> {
         .iter()
         .any(|file| file.path == "src/scanner.c" || file.path == "src/scanner.cc")
     {
-        limitations.push(
-            "Uploaded scanner.c/scanner.cc sources are reported, but the browser runtime does not compile or execute external scanners yet.".to_owned(),
-        );
+        if let Some(active_scanner) = active_scanner {
+            limitations.push(format!(
+                "External scanner support is source-gated in this build: {active_scanner}."
+            ));
+        } else {
+            limitations.push(
+                "Uploaded scanner.c/scanner.cc sources are reported, but the browser runtime only executes scanners that have an explicit source-matched host adapter.".to_owned(),
+            );
+        }
     }
     limitations
 }
@@ -541,6 +730,57 @@ mod tests {
             response.diagnostics[0]
                 .message
                 .contains("convert grammar.js")
+        );
+    }
+
+    #[test]
+    fn uses_source_matched_css_scanner_for_runtime_parse() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: include_str!(
+                        "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/grammar.json"
+                    )
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "src/scanner.c".to_owned(),
+                    text: snark_scanner_host::CSS_SCANNER_SOURCE.to_owned(),
+                },
+                BundleFile {
+                    path: "queries/highlights.scm".to_owned(),
+                    text: include_str!(
+                        "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/queries/highlights.scm"
+                    )
+                    .to_owned(),
+                },
+            ],
+            input: "a:hover { color: red; }\n".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.language.as_deref(), Some("css"));
+        assert_eq!(
+            response.bundle.active_scanner.as_deref(),
+            Some("built-in compiled reduced CSS scanner matched from src/scanner.c")
+        );
+        assert_eq!(
+            response.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some(
+                "(stylesheet (rule_set (selectors (pseudo_class_selector (tag_name) (class_name (identifier)))) (block (declaration (property_name) (plain_value)))))"
+            )
+        );
+        assert!(
+            response
+                .highlights
+                .iter()
+                .any(|capture| capture.capture_name == "punctuation.delimiter"
+                    && capture.text == ":")
         );
     }
 }
