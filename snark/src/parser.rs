@@ -4887,6 +4887,9 @@ impl<'a> ReducedParser<'a> {
     }
 }
 
+const ASCII_IDENTIFIER_PATTERN: &str = "[A-Za-z_][A-Za-z0-9_]*";
+const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|endif\\b|for\\b|endfor\\b|set\\b|endset\\b|block\\b|endblock\\b|extends\\b|include\\b|import\\b|macro\\b|endmacro\\b|break\\b|continue\\b|as\\b|in\\b|is\\b|not\\b|and\\b|or\\b|true\\b|True\\b|false\\b|False\\b|none\\b|None\\b)[A-Za-z_][A-Za-z0-9_]*";
+
 pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
     match pattern {
         "\\s" => input[byte_position..]
@@ -4926,7 +4929,8 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
             |ch| ch.is_ascii_alphabetic() || ch == '%',
             1,
         ),
-        "[A-Za-z_][A-Za-z0-9_]*" => match_gingembre_identifier(input, byte_position),
+        ASCII_IDENTIFIER_PATTERN => match_ascii_identifier(input, byte_position),
+        GINGEMBRE_IDENTIFIER_PATTERN => match_gingembre_identifier(input, byte_position),
         "[a-zA-Z0-9-_\\xA0-\\xFF]+" => match_while(
             input,
             byte_position,
@@ -4957,6 +4961,15 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
 }
 
 fn match_gingembre_identifier(input: &str, byte_position: usize) -> Option<usize> {
+    let end = match_ascii_identifier(input, byte_position)?;
+    let word = &input[byte_position..end];
+    if is_gingembre_keyword(word) {
+        return None;
+    }
+    Some(end)
+}
+
+fn match_ascii_identifier(input: &str, byte_position: usize) -> Option<usize> {
     let bytes = input[byte_position..].as_bytes();
     let first = bytes.first().copied()?;
     if first != b'_' && !first.is_ascii_alphabetic() {
@@ -4966,10 +4979,6 @@ fn match_gingembre_identifier(input: &str, byte_position: usize) -> Option<usize
         .iter()
         .take_while(|byte| **byte == b'_' || byte.is_ascii_alphanumeric())
         .count();
-    let word = &input[byte_position..byte_position + len];
-    if is_gingembre_keyword(word) {
-        return None;
-    }
     Some(byte_position + len)
 }
 
@@ -7220,7 +7229,7 @@ rules {
         type TOKEN
         content {
             type PATTERN
-            value r"[A-Za-z_][A-Za-z0-9_]*"
+            value r"(?!if\b|elif\b|else\b|endif\b|for\b|endfor\b|set\b|endset\b|block\b|endblock\b|extends\b|include\b|import\b|macro\b|endmacro\b|break\b|continue\b|as\b|in\b|is\b|not\b|and\b|or\b|true\b|True\b|false\b|False\b|none\b|None\b)[A-Za-z_][A-Za-z0-9_]*"
         }
     }
     _int {
@@ -7320,6 +7329,12 @@ extras (
             .unwrap()
             .parse_with_report(input);
         assert!(result.is_err(), "snark unexpectedly accepted {input:?}");
+    }
+
+    #[test]
+    fn keeps_common_ascii_identifier_pattern_grammar_neutral() {
+        assert_eq!(match_pattern(ASCII_IDENTIFIER_PATTERN, "if", 0), Some(2));
+        assert_eq!(match_pattern(GINGEMBRE_IDENTIFIER_PATTERN, "if", 0), None);
     }
 
     #[test]
