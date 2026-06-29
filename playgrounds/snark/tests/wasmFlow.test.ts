@@ -60,6 +60,60 @@ module.exports = grammar({
   );
 });
 
+test("runs bundled corpus and highlight tests through generated grammar.json", () => {
+  const grammarJs = `
+module.exports = grammar({
+  name: "tiny_testable",
+  extras: $ => [$.comment, /\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[a-z]+/,
+    comment: $ => token(/\\/\\*[^*]*\\*\\//),
+  },
+});
+`;
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [{ path: "grammar.js", text: grammarJs }],
+    "grammar.js",
+  );
+
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: [
+          { path: "grammar.js", text: grammarJs },
+          { path: "src/grammar.json", text: grammarJson },
+          { path: "queries/highlights.scm", text: "(word) @variable\n" },
+          {
+            path: "test/corpus/main.txt",
+            text: "====================\nWords\n====================\n\nalpha beta\n\n---\n\n(document (word) (word))\n",
+          },
+          {
+            path: "test/highlight/test.txt",
+            text: "alpha beta\n/* ^ variable */\n      /* ^ variable */\n",
+          },
+        ],
+        input: "",
+        run_corpus: true,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.parse, null);
+  assert.deepEqual(response.tests, {
+    requested: true,
+    corpus_passed: 1,
+    corpus_failed: 0,
+    highlight_assertions_passed: 2,
+    highlight_assertions_failed: 0,
+    highlight_fixture_errors: 0,
+  });
+  assert.equal(response.corpus[0].passed, true);
+  assert.equal(response.highlight_tests[0].passed, true);
+});
+
 const arboriumNginxDef = "/Users/amos/oss/arborium/langs/group-maple/nginx/def";
 
 test(
