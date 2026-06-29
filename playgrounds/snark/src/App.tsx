@@ -48,6 +48,7 @@ type PlaygroundResponse = {
   diagnostics: Diagnostic[];
   bundle: {
     grammar_path: string | null;
+    grammar_js_path: string | null;
     query_paths: string[];
     corpus_paths: string[];
     generated_files_ignored: string[];
@@ -208,6 +209,10 @@ export function App() {
             <div>
               <dt>grammar</dt>
               <dd>{result.bundle.grammar_path ?? "missing"}</dd>
+            </div>
+            <div>
+              <dt>grammar.js</dt>
+              <dd>{result.bundle.grammar_js_path ?? "none"}</dd>
             </div>
             <div>
               <dt>queries</dt>

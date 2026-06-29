@@ -46,6 +46,7 @@ struct Diagnostic {
 #[derive(Debug, Clone, Facet)]
 struct BundleSummary {
     grammar_path: Option<String>,
+    grammar_js_path: Option<String>,
     query_paths: Vec<String>,
     corpus_paths: Vec<String>,
     generated_files_ignored: Vec<String>,
@@ -109,22 +110,21 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
             );
         }
     };
-    let files = request
-        .files
-        .into_iter()
-        .map(|file| BundleFile {
-            path: normalize_path(&file.path),
-            text: file.text,
-        })
-        .collect::<Vec<_>>();
+    let files = normalize_bundle_files(request.files);
     let bundle = summarize_bundle(&files);
     let Some(grammar_file) = find_file(&files, "src/grammar.json") else {
+        let message = match &bundle.grammar_js_path {
+            Some(path) => format!(
+                "bundle contains {path}, but Snark's browser runtime consumes src/grammar.json; convert grammar.js with the snark-wasm Node converter and reload the emitted bundle"
+            ),
+            None => "bundle does not contain src/grammar.json".to_owned(),
+        };
         return PlaygroundResponse {
             ok: false,
             language: None,
             diagnostics: vec![Diagnostic {
                 stage: "bundle".to_owned(),
-                message: "bundle does not contain src/grammar.json".to_owned(),
+                message,
             }],
             bundle,
             parse: None,
@@ -329,6 +329,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
         }],
         bundle: BundleSummary {
             grammar_path: None,
+            grammar_js_path: None,
             query_paths: Vec::new(),
             corpus_paths: Vec::new(),
             generated_files_ignored: Vec::new(),
@@ -350,6 +351,7 @@ fn response_json(response: PlaygroundResponse) -> String {
 fn summarize_bundle(files: &[BundleFile]) -> BundleSummary {
     BundleSummary {
         grammar_path: find_file(files, "src/grammar.json").map(|file| file.path.clone()),
+        grammar_js_path: find_file(files, "grammar.js").map(|file| file.path.clone()),
         query_paths: files
             .iter()
             .filter(|file| file.path.starts_with("queries/"))
@@ -383,6 +385,11 @@ fn limitations(files: &[BundleFile]) -> Vec<String> {
         "Generated Tree-sitter files such as src/parser.c and src/node-types.json are ignored.".to_owned(),
         "Recovery, incremental reuse, and complete Tree-sitter query semantics are not implemented in this runtime slice.".to_owned(),
     ];
+    if find_file(files, "grammar.js").is_some() {
+        limitations.push(
+            "Tree-sitter grammar.js is source DSL. Convert it to src/grammar.json outside the browser with the snark-wasm Node converter before parsing.".to_owned(),
+        );
+    }
     if files
         .iter()
         .any(|file| file.path == "src/scanner.c" || file.path == "src/scanner.cc")
@@ -394,8 +401,28 @@ fn limitations(files: &[BundleFile]) -> Vec<String> {
     limitations
 }
 
+fn normalize_bundle_files(files: Vec<BundleFile>) -> Vec<BundleFile> {
+    files
+        .into_iter()
+        .map(|file| BundleFile {
+            path: normalize_bundle_path(&file.path),
+            text: file.text,
+        })
+        .collect()
+}
+
 fn find_file<'a>(files: &'a [BundleFile], path: &str) -> Option<&'a BundleFile> {
     files.iter().find(|file| file.path == path)
+}
+
+fn normalize_bundle_path(path: &str) -> String {
+    let path = normalize_path(path);
+    if let Some(relative) = arborium_def_relative(&path) {
+        if let Some(mapped) = normalize_arborium_def_path(relative) {
+            return mapped;
+        }
+    }
+    path
 }
 
 fn normalize_path(path: &str) -> String {
@@ -406,6 +433,35 @@ fn normalize_path(path: &str) -> String {
     path
 }
 
+fn arborium_def_relative(path: &str) -> Option<&str> {
+    path.strip_prefix("def/")
+        .or_else(|| path.split_once("/def/").map(|(_, relative)| relative))
+}
+
+fn normalize_arborium_def_path(relative: &str) -> Option<String> {
+    match relative {
+        "grammar/grammar.js" => Some("grammar.js".to_owned()),
+        "grammar/grammar.json" | "grammar/src/grammar.json" => Some("src/grammar.json".to_owned()),
+        "grammar/scanner.c" => Some("src/scanner.c".to_owned()),
+        "grammar/scanner.cc" => Some("src/scanner.cc".to_owned()),
+        _ => {
+            if relative.starts_with("queries/")
+                || relative.starts_with("test/corpus/")
+                || relative.starts_with("test/highlight/")
+                || relative.starts_with("test/highlights/")
+            {
+                Some(relative.to_owned())
+            } else if let Some(sample) = relative.strip_prefix("samples/") {
+                Some(format!("samples/{sample}"))
+            } else if relative.starts_with("sample.") {
+                Some(format!("samples/{relative}"))
+            } else {
+                None
+            }
+        }
+    }
+}
+
 fn is_generated_artifact(path: &str) -> bool {
     matches!(
         path,
@@ -414,5 +470,77 @@ fn is_generated_artifact(path: &str) -> bool {
             | "src/parser.h"
             | "src/node-types.json"
             | "bindings/node/binding.cc"
-    )
+    ) || path.ends_with("/src/parser.c")
+        || path.ends_with("/src/parser.cc")
+        || path.ends_with("/src/parser.h")
+        || path.ends_with("/src/node-types.json")
+        || path.ends_with("/bindings/node/binding.cc")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_arborium_def_bundle_paths() {
+        let files = normalize_bundle_files(vec![
+            BundleFile {
+                path: "langs/group-acorn/css/def/grammar/grammar.js".to_owned(),
+                text: "module.exports = grammar({ name: 'css', rules: { stylesheet: _ => '' } });"
+                    .to_owned(),
+            },
+            BundleFile {
+                path: "langs/group-acorn/css/def/grammar/scanner.c".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "langs/group-acorn/css/def/queries/highlights.scm".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "langs/group-acorn/css/def/sample.css".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "langs/group-acorn/css/def/grammar/src/node-types.json".to_owned(),
+                text: String::new(),
+            },
+        ]);
+
+        let summary = summarize_bundle(&files);
+        assert_eq!(summary.grammar_js_path.as_deref(), Some("grammar.js"));
+        assert_eq!(summary.scanner_paths, vec!["src/scanner.c"]);
+        assert_eq!(summary.query_paths, vec!["queries/highlights.scm"]);
+        assert!(find_file(&files, "samples/sample.css").is_some());
+        assert_eq!(
+            summary.generated_files_ignored,
+            vec!["langs/group-acorn/css/def/grammar/src/node-types.json"]
+        );
+    }
+
+    #[test]
+    fn reports_grammar_js_bundle_as_needing_conversion() {
+        let request = PlaygroundRequest {
+            files: vec![BundleFile {
+                path: "langs/group-acorn/json/def/grammar/grammar.js".to_owned(),
+                text: "module.exports = grammar({ name: 'json', rules: { document: _ => '' } });"
+                    .to_owned(),
+            }],
+            input: String::new(),
+            run_corpus: false,
+        };
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(!response.ok);
+        assert_eq!(
+            response.bundle.grammar_js_path.as_deref(),
+            Some("grammar.js")
+        );
+        assert!(
+            response.diagnostics[0]
+                .message
+                .contains("convert grammar.js")
+        );
+    }
 }
