@@ -233,7 +233,7 @@ struct ScannerSelection {
     active_scanner: Option<String>,
 }
 
-const PLAYGROUND_RECOVERY_STEP_LIMIT: usize = 50_000;
+const PLAYGROUND_RECOVERY_STEP_LIMIT: usize = 1_000_000;
 
 /// Parse one playground request with Snark and return a JSON response.
 pub fn parse_bundle_json(request_json: &str) -> String {
@@ -1956,7 +1956,7 @@ mod tests {
     }
 
     #[test]
-    fn arborium_nginx_sample_reports_parse_failure() {
+    fn arborium_nginx_sample_reports_dirty_recovered_parse() {
         let def = std::path::Path::new("/Users/amos/oss/arborium/langs/group-maple/nginx/def");
         if !def.exists() {
             return;
@@ -1999,7 +1999,7 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("could not lex a token")
+                .contains("accepted parse contains")
         );
         assert_eq!(
             response
@@ -2009,8 +2009,11 @@ mod tests {
                 .map(|span| (span.start_row, span.start_column)),
             Some((110, 4))
         );
-        assert!(response.parse.is_none());
-        assert!(response.highlights.is_empty());
+        let parse = response.parse.as_ref().expect("recovered parse output");
+        assert!(parse.accepted_error_count > 0);
+        assert_eq!(parse.accepted_missing_count, 0);
+        assert!(parse.sexp.contains("(ERROR"));
+        assert!(!response.highlights.is_empty());
     }
 
     #[test]

@@ -69,10 +69,15 @@ fn main() {
         Ok(report) => report,
         Err(error) => {
             println!("parse failed: {error}");
-            match RuntimeParser::new(&validated, &parser, &table)
-                .expect("runtime should build")
-                .parse_recovering_compact_with_report(&input)
-            {
+            let recovery_limit = env::var("SNARK_NGINX_RECOVERY_LIMIT")
+                .ok()
+                .and_then(|limit| limit.parse().ok());
+            let mut recovery_runtime =
+                RuntimeParser::new(&validated, &parser, &table).expect("runtime should build");
+            if let Some(limit) = recovery_limit {
+                recovery_runtime = recovery_runtime.with_recovery_step_limit(limit);
+            }
+            match recovery_runtime.parse_recovering_compact_with_report(&input) {
                 Ok(report) => {
                     println!(
                         "recovering parse accepted with {} ERROR and {} MISSING nodes",
@@ -90,6 +95,28 @@ fn main() {
                 }
                 Err(recovery_error) => {
                     println!("recovering parse failed: {recovery_error}");
+                    if dump_errors {
+                        for step in recovery_error.trace().iter().rev().take(48).rev() {
+                            let action = match step.action {
+                                ParseAction::Shift { state, .. } => {
+                                    format!("shift {}", state.get())
+                                }
+                                ParseAction::ShiftExtra => "shift-extra".to_owned(),
+                                ParseAction::Reduce { production, .. } => {
+                                    format!("reduce {}", production.get())
+                                }
+                                ParseAction::Accept { .. } => "accept".to_owned(),
+                                ParseAction::Recover => "recover".to_owned(),
+                            };
+                            println!(
+                                "  recovery trace state {} byte {} lookahead {:?} action {}",
+                                step.state.get(),
+                                step.byte_position,
+                                step.lookahead,
+                                action
+                            );
+                        }
+                    }
                 }
             }
             println!("emit grammar.js: {:?}", emitted_at.duration_since(start));
