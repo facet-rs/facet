@@ -322,16 +322,29 @@ export function App() {
           </label>
         </div>
         <div className="file-list">
-          {visibleBundleFiles.map((file) => (
-            <div
-              key={file.path}
-              className={file.sourcePath === selectedSamplePath ? "file-row active" : "file-row"}
-              title={file.sourcePath === file.path ? file.path : `${file.path} from ${file.sourcePath}`}
-            >
-              <span>{file.path}</span>
-              <small>{file.text.length.toLocaleString()}b</small>
-            </div>
-          ))}
+          {visibleBundleFiles.map((file) =>
+            file.path.startsWith("samples/") ? (
+              <button
+                type="button"
+                key={file.sourcePath}
+                className={file.sourcePath === selectedSamplePath ? "file-row active" : "file-row"}
+                title={file.sourcePath === file.path ? file.path : `${file.path} from ${file.sourcePath}`}
+                onClick={() => updateSourceInput(file.text, file.sourcePath)}
+              >
+                <span>{file.path}</span>
+                <small>{file.text.length.toLocaleString()}b</small>
+              </button>
+            ) : (
+              <div
+                key={file.sourcePath}
+                className="file-row"
+                title={file.sourcePath === file.path ? file.path : `${file.path} from ${file.sourcePath}`}
+              >
+                <span>{file.path}</span>
+                <small>{file.text.length.toLocaleString()}b</small>
+              </div>
+            ),
+          )}
         </div>
         {!result && (
           <LocalBundleInventory
@@ -913,6 +926,7 @@ function renderDiagnosticSource(input: string, diagnostics: Diagnostic[]) {
       {markerText}
     </span>,
     input.slice(consumedEnd, lineEndIndex),
+    "\n",
     <span
       className="source-diagnostic-label"
       key={`diagnostic-label-${span.start_byte}`}
@@ -923,6 +937,7 @@ function renderDiagnosticSource(input: string, diagnostics: Diagnostic[]) {
       </small>
       <span>{diagnostic.message}</span>
     </span>,
+    "\n",
     input.slice(afterLineIndex),
   ];
 }
