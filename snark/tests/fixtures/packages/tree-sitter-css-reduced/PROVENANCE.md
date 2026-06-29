@@ -15,7 +15,6 @@ Included files:
 - `tree-sitter.json`
 - `LICENSE`
 - `src/grammar.json`
-- `src/node-types.json`
 - `src/scanner.c`
 - `queries/highlights.scm`
 - `test/corpus/declarations.txt`
@@ -28,5 +27,7 @@ Omitted files:
 
 - Generated implementation files such as `src/parser.c`; Snark does not inspect
   Tree-sitter's generated parser implementation.
+- Generated metadata files such as `src/node-types.json`; Snark derives public
+  node facts from the frozen `grammar.json`.
 - Language bindings, package-manager metadata, examples, scripts, and tests
   outside the selected parse/highlight oracle fixture slice.

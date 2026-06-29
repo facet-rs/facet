@@ -14,8 +14,8 @@ Weavy is the lowering and execution carrier. Snark owns parser semantics.
 Snark owns:
 
 - Tree-sitter package import and provenance.
-- Raw compatibility DTOs for `grammar.json`, `node-types.json`, scanner sources,
-  queries, corpus fixtures, and highlight fixtures.
+- Raw compatibility DTOs for `grammar.json`, scanner sources, queries, corpus
+  fixtures, and highlight fixtures.
 - Validation into stable Snark grammar facts.
 - Parser generation from validated grammar facts.
 - External scanner host ABI and scanner state replay.

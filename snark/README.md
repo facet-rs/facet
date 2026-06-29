@@ -5,12 +5,13 @@ Snark is a Tree-sitter-compatible grammar package and Weavy lowering foundation.
 The current layer imports and preserves Tree-sitter package inputs with
 provenance. It resolves `tree-sitter.json` grammar entries, grammar-relative
 `grammar.json`, external scanner sources, configured and fallback query files,
-`node-types.json`, and raw corpus/highlight fixtures.
+and raw corpus/highlight fixtures.
 
 Raw Tree-sitter JSON types are kept as compatibility DTOs. They are not the
 validated grammar IR, not a semantic oracle, and not the parser runtime API.
-Generated Tree-sitter implementation files such as `src/parser.c` are not Snark
-inputs, not oracle data, and not implementation references.
+Generated Tree-sitter implementation and metadata files such as `src/parser.c`
+and `src/node-types.json` are not Snark inputs, oracle data, or implementation
+references. Snark derives public node facts from the frozen `grammar.json`.
 
 Snark's runtime direction is to validate Tree-sitter grammar semantics into
 typed Snark symbols, productions, lexical rules, precedence/conflict facts,

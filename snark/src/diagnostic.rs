@@ -109,8 +109,6 @@ pub enum JsonDocumentKind {
     Grammar,
     /// `tree-sitter.json`.
     TreeSitterConfig,
-    /// `src/node-types.json`.
-    NodeTypes,
 }
 
 impl fmt::Display for JsonDocumentKind {
@@ -118,7 +116,6 @@ impl fmt::Display for JsonDocumentKind {
         match self {
             Self::Grammar => f.write_str("grammar.json"),
             Self::TreeSitterConfig => f.write_str("tree-sitter.json"),
-            Self::NodeTypes => f.write_str("node-types.json"),
         }
     }
 }

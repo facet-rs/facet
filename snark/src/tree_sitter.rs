@@ -10,7 +10,6 @@ use crate::{
     diagnostic::ImportError,
     grammar::RawGrammarFile,
     manifest::{QueryPaths, TreeSitterConfigJson, TreeSitterGrammarConfig},
-    node_types::NodeTypesJson,
     query::{QueryBundle, QueryFile, QuerySource, WellKnownQuery},
     scanner::{ExternalTokenTable, ScannerSource, TreeSitterScanner, TreeSitterScannerKind},
     source::{
@@ -28,8 +27,6 @@ pub struct ImportedGrammar {
     pub path: Option<PackageRelativePath>,
     /// Raw grammar JSON with source provenance.
     pub grammar: SourceFile<RawGrammarFile>,
-    /// Optional `node-types.json`.
-    pub node_types_json: Option<SourceFile<NodeTypesJson>>,
     /// Imported Tree-sitter scanners.
     pub scanners: Vec<TreeSitterScanner>,
     /// Imported query sources.
@@ -145,10 +142,6 @@ fn import_grammar(
     let grammar_source =
         read_source_string(root, &rel_under(path.as_ref(), "src/grammar.json")?, ids)?;
     let grammar = RawGrammarFile::from_source_file(root, grammar_source)?;
-    let node_types_json =
-        read_optional_source_string(root, &rel_under(path.as_ref(), "src/node-types.json")?, ids)?
-            .map(|source| NodeTypesJson::from_source_file(root, source))
-            .transpose()?;
     let scanners = import_scanners(root, path.as_ref(), &grammar.body.grammar, ids)?;
     let queries = import_queries(root, path.as_ref(), config.as_ref(), ids)?;
     let corpus = import_corpus(root, path.as_ref(), ids)?;
@@ -157,7 +150,6 @@ fn import_grammar(
         config,
         path,
         grammar,
-        node_types_json,
         scanners,
         queries,
         corpus,
@@ -901,19 +893,17 @@ mod tests {
         assert_eq!(grammar.grammar.body.grammar.rules.len(), 66);
         assert_eq!(grammar.grammar.body.grammar.externals.len(), 3);
         assert!(package.manifest.is_some());
-        assert!(grammar.node_types_json.is_some());
+        assert_eq!(
+            validated.rule(validated.start_rule()).name().as_str(),
+            "stylesheet"
+        );
+        assert!(validated.has_visible_node_kind("stylesheet"));
         let manifest = &package.manifest.as_ref().unwrap().body.config;
         assert_eq!(manifest.grammars[0].name, "css");
         assert_eq!(manifest.grammars[0].scope, "source.css");
         assert_eq!(
             manifest.grammars[0].highlights.as_ref().unwrap().as_slice(),
             ["queries/highlights.scm"]
-        );
-        let node_types = &grammar.node_types_json.as_ref().unwrap().body.node_types;
-        assert!(
-            node_types
-                .iter()
-                .any(|node| node.kind == "stylesheet" && node.root)
         );
         assert_eq!(grammar.scanners.len(), 1);
         assert_eq!(grammar.scanners[0].kind, TreeSitterScannerKind::C);
@@ -1039,9 +1029,6 @@ mod tests {
             grammar.grammar.path.as_str().to_owned(),
             grammar.grammar.id.get(),
         ));
-        if let Some(file) = &grammar.node_types_json {
-            source_ids.push((file.path.as_str().to_owned(), file.id.get()));
-        }
         for scanner in &grammar.scanners {
             source_ids.push((
                 scanner.source.path.as_str().to_owned(),
@@ -1063,14 +1050,13 @@ mod tests {
             [
                 ("tree-sitter.json".to_string(), 0),
                 ("src/grammar.json".to_string(), 1),
-                ("src/node-types.json".to_string(), 2),
-                ("src/scanner.c".to_string(), 3),
-                ("queries/highlights.scm".to_string(), 4),
-                ("test/corpus/declarations.txt".to_string(), 5),
-                ("test/corpus/selectors.txt".to_string(), 6),
-                ("test/corpus/statements.txt".to_string(), 7),
-                ("test/corpus/stylesheets.txt".to_string(), 8),
-                ("test/highlight/test_css.css".to_string(), 9),
+                ("src/scanner.c".to_string(), 2),
+                ("queries/highlights.scm".to_string(), 3),
+                ("test/corpus/declarations.txt".to_string(), 4),
+                ("test/corpus/selectors.txt".to_string(), 5),
+                ("test/corpus/statements.txt".to_string(), 6),
+                ("test/corpus/stylesheets.txt".to_string(), 7),
+                ("test/highlight/test_css.css".to_string(), 8),
             ]
         );
     }
@@ -3905,7 +3891,6 @@ mod tests {
             "enum TokenType { DESCENDANT_OP };",
         )
         .unwrap();
-        fs::write(root.join("src").join("node-types.json"), "[]").unwrap();
         fs::write(
             root.join("queries").join("highlights.scm"),
             "(tag_name) @tag",
@@ -3956,13 +3941,6 @@ mod tests {
                 .iter()
                 .any(|file| file.path.as_str() == "queries/brackets.scm")
         );
-        assert_eq!(
-            grammar
-                .node_types_json
-                .as_ref()
-                .map(|file| file.body.raw.as_str()),
-            Some("[]")
-        );
         assert!(
             grammar
                 .corpus
@@ -3989,7 +3967,6 @@ mod tests {
             fs::create_dir_all(grammar_root.join("src")).unwrap();
             fs::create_dir_all(grammar_root.join("queries")).unwrap();
             fs::write(grammar_root.join("src").join("grammar.json"), MINI_GRAMMAR).unwrap();
-            fs::write(grammar_root.join("src").join("node-types.json"), "[]").unwrap();
         }
         fs::write(first.join("queries").join("highlights.scm"), "(a) @tag").unwrap();
         fs::write(second.join("queries").join("base.scm"), "(base) @tag").unwrap();
@@ -4128,28 +4105,6 @@ mod tests {
         let diagnostic = error.diagnostic();
 
         assert_eq!(diagnostic.code, DiagnosticCode::NoGrammars);
-
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn malformed_node_types_json_reports_node_types_diagnostic() {
-        let root = test_package_root("snark-bad-node-types");
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(root.join("src").join("grammar.json"), MINI_GRAMMAR).unwrap();
-        fs::write(root.join("src").join("node-types.json"), r#"[{"type": 1}]"#).unwrap();
-
-        let error = TreeSitterPackageImporter::new(&root).import().unwrap_err();
-        let diagnostic = error.diagnostic();
-
-        assert_eq!(diagnostic.code, DiagnosticCode::JsonDecode);
-        assert!(
-            diagnostic
-                .notes
-                .iter()
-                .any(|note| note == "package path: src/node-types.json")
-        );
 
         fs::remove_dir_all(&root).unwrap();
     }

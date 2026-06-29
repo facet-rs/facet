@@ -9,13 +9,13 @@
 
 - `tree-sitter.json`
 - `src/grammar.json`
-- `src/node-types.json`
 - `queries/highlights.scm`
 - `test/corpus/main.txt`
 - `LICENSE`
 
 ## Omitted files
 
-Generated implementation files such as `src/parser.c` and generated bindings are
-omitted. Snark uses this fixture as clean-room package input and corpus oracle
-data only: raw grammar metadata, query source, and expected S-expressions.
+Generated implementation files such as `src/parser.c`, generated metadata files
+such as `src/node-types.json`, and generated bindings are omitted. Snark uses
+this fixture as clean-room package input and corpus oracle data only: raw grammar
+metadata, query source, and expected S-expressions.
