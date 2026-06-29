@@ -5,6 +5,10 @@ export type DslBundleFile = {
   text: string;
 };
 
+export type ProjectedDslBundleFile = DslBundleFile & {
+  sourcePath: string;
+};
+
 export type GrammarRoot = {
   id: string;
   label: string;
@@ -17,7 +21,7 @@ export async function filesWithGrammarJson(
   grammarRootId = preferredGrammarRootId(files),
 ): Promise<DslBundleFile[]> {
   const root = grammarRootForId(files, grammarRootId);
-  const rootFiles = filesForGrammarRoot(files, root);
+  const rootFiles = filesForGrammarRoot(files, root).map(({ path, text }) => ({ path, text }));
   if (rootFiles.some((file) => file.path === "src/grammar.json")) {
     return rootFiles;
   }
@@ -104,6 +108,13 @@ export function grammarRootForId(files: DslBundleFile[], rootId: string): Gramma
   return roots.find((root) => root.id === rootId) ?? roots[0] ?? null;
 }
 
+export function projectedFilesForGrammarRootId(
+  files: DslBundleFile[],
+  rootId = preferredGrammarRootId(files),
+): ProjectedDslBundleFile[] {
+  return filesForGrammarRoot(files, grammarRootForId(files, rootId));
+}
+
 function upsertGrammarRoot(roots: Map<string, GrammarRoot>, root: GrammarRoot) {
   const current = roots.get(root.id);
   if (!current || root.grammarPath.endsWith("src/grammar.json")) {
@@ -111,9 +122,9 @@ function upsertGrammarRoot(roots: Map<string, GrammarRoot>, root: GrammarRoot) {
   }
 }
 
-function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): DslBundleFile[] {
+function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): ProjectedDslBundleFile[] {
   if (!root || root.id === "") {
-    return sortedFiles(files);
+    return sortedFiles(files.map((file) => ({ ...file, sourcePath: file.path })));
   }
 
   const prefix = `${root.id}/`;
@@ -128,6 +139,7 @@ function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): 
               ? (normalizeArboriumDefPath(relative) ?? relative)
               : (normalizePackagePath(relative) ?? relative),
           text: file.text,
+          sourcePath: file.path,
         };
       }),
   );
@@ -315,7 +327,7 @@ function normalizePatternSourceLikeTreeSitter(source) {
 `;
 }
 
-function sortedFiles(files: DslBundleFile[]) {
+function sortedFiles<T extends DslBundleFile>(files: T[]): T[] {
   return [...files].sort((left, right) => left.path.localeCompare(right.path));
 }
 

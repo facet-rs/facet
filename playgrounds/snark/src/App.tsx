@@ -6,11 +6,16 @@ import {
   filesWithGrammarJson,
   grammarRootForId,
   preferredGrammarRootId,
+  projectedFilesForGrammarRootId,
 } from "./treeSitterDsl";
 
 type BundleFile = {
   path: string;
   text: string;
+};
+
+type SampleFile = BundleFile & {
+  sourcePath: string;
 };
 
 type Diagnostic = {
@@ -180,9 +185,14 @@ export function App() {
     () => grammarRootForId(files, selectedGrammarRoot),
     [files, selectedGrammarRoot],
   );
+  const activeGrammarRootId = activeGrammarRoot?.id ?? selectedGrammarRoot;
+  const projectedFiles = useMemo(
+    () => projectedFilesForGrammarRootId(files, activeGrammarRootId),
+    [files, activeGrammarRootId],
+  );
   const sampleFiles = useMemo(
-    () => sortedFiles(files).filter((file) => file.path.startsWith("samples/")),
-    [files],
+    () => sortedFiles(projectedFiles).filter((file): file is SampleFile => file.path.startsWith("samples/")),
+    [projectedFiles],
   );
   const highlightedSource = useMemo(
     () => renderHighlightedSource(input, result?.highlights ?? []),
@@ -202,6 +212,7 @@ export function App() {
     const next = sortedFiles(normalizeBrowserFiles(loaded));
     const nextGrammarRoot = preferredGrammarRootId(next);
     const nextRoot = grammarRootForId(next, nextGrammarRoot);
+    const nextProjectedFiles = projectedFilesForGrammarRootId(next, nextGrammarRoot);
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
     setSelectedPath(
@@ -213,9 +224,10 @@ export function App() {
             ? "grammar.js"
             : next[0].path,
     );
-    const firstSample = next.find((file) => file.path.startsWith("samples/"));
+    const firstSample = nextProjectedFiles.find((file) => file.path.startsWith("samples/"));
     if (firstSample) {
       setInput(firstSample.text);
+      setSelectedPath(firstSample.sourcePath);
     }
     setResult(null);
   }
@@ -234,7 +246,7 @@ export function App() {
       request: {
         input,
         run_corpus: runCorpus,
-        grammar_root: activeGrammarRoot?.id ?? selectedGrammarRoot,
+        grammar_root: activeGrammarRootId,
         files: sortedFiles(files).map((file) => ({
           path: file.path,
           bytes: new TextEncoder().encode(file.text).length,
@@ -252,7 +264,7 @@ export function App() {
       });
       const runnableFiles = await filesWithGrammarJson(
         files,
-        activeGrammarRoot?.id ?? selectedGrammarRoot,
+        activeGrammarRootId,
       ).catch((error: unknown) => {
         throw new PlaygroundRunError("grammar.js", errorMessage(error));
       });
@@ -351,16 +363,16 @@ export function App() {
             disabled={sampleFiles.length === 0}
             value=""
             onChange={(event) => {
-              const sample = sampleFiles.find((file) => file.path === event.currentTarget.value);
+              const sample = sampleFiles.find((file) => file.sourcePath === event.currentTarget.value);
               if (sample) {
                 setInput(sample.text);
-                setSelectedPath(sample.path);
+                setSelectedPath(sample.sourcePath);
               }
             }}
           >
             <option value="">Samples ({sampleFiles.length})</option>
             {sampleFiles.map((file) => (
-              <option key={file.path} value={file.path}>
+              <option key={file.sourcePath} value={file.sourcePath}>
                 {file.path}
               </option>
             ))}
