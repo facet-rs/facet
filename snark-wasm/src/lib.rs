@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 use facet::Facet;
 use snark::{
-    corpus::CorpusSource,
+    corpus::{CorpusSource, HighlightAssertion},
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     parser::{
@@ -14,6 +14,7 @@ use snark::{
         ScannerSnapshotId,
     },
     query::QuerySource,
+    runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
     validated::ValidatedGrammar,
 };
 use wasm_bindgen::prelude::*;
@@ -40,6 +41,7 @@ struct PlaygroundResponse {
     parse: Option<ParseOutput>,
     highlights: Vec<HighlightOutput>,
     corpus: Vec<CorpusOutput>,
+    highlight_tests: Vec<HighlightTestOutput>,
     limitations: Vec<String>,
 }
 
@@ -95,6 +97,30 @@ struct CorpusOutput {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, Facet)]
+struct HighlightTestOutput {
+    path: String,
+    passed: bool,
+    input: String,
+    assertion_count: usize,
+    passed_count: usize,
+    failed_count: usize,
+    assertions: Vec<HighlightAssertionOutput>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct HighlightAssertionOutput {
+    capture_name: String,
+    negative: bool,
+    passed: bool,
+    row: u32,
+    column: u32,
+    length: u32,
+    observed_captures: Vec<String>,
+    message: Option<String>,
+}
+
 struct PreparedGrammar {
     raw: RawGrammarJson,
     validated: ValidatedGrammar,
@@ -143,6 +169,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
             parse: None,
             highlights: Vec::new(),
             corpus: Vec::new(),
+            highlight_tests: Vec::new(),
             limitations: limitations(&files, None),
         };
     };
@@ -158,6 +185,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                 parse: None,
                 highlights: Vec::new(),
                 corpus: Vec::new(),
+                highlight_tests: Vec::new(),
                 limitations: limitations(&files, None),
             };
         }
@@ -214,6 +242,11 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
     } else {
         Vec::new()
     };
+    let highlight_tests = if request.run_corpus {
+        run_highlight_tests(&files, &prepared)
+    } else {
+        Vec::new()
+    };
 
     PlaygroundResponse {
         ok: diagnostics.is_empty(),
@@ -223,6 +256,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
         parse,
         highlights,
         corpus,
+        highlight_tests,
         limitations: limitations(&files, scanner_selection.active_scanner.as_deref()),
     }
 }
@@ -488,6 +522,159 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
     results
 }
 
+fn run_highlight_tests(
+    files: &[BundleFile],
+    prepared: &PreparedGrammar,
+) -> Vec<HighlightTestOutput> {
+    let mut results = Vec::new();
+    let scanner_selection = scanner_selection(files, &prepared.parser);
+    let query =
+        find_file(files, "queries/highlights.scm").map(|file| QuerySource(file.text.clone()));
+
+    for file in files
+        .iter()
+        .filter(|file| is_highlight_fixture_path(&file.path))
+    {
+        let Some(query) = query.as_ref() else {
+            results.push(highlight_test_error(
+                file,
+                "bundle contains highlight fixtures but no queries/highlights.scm".to_owned(),
+            ));
+            continue;
+        };
+        let assertions = match CorpusSource(file.text.clone()).parse_css_highlight_assertions() {
+            Ok(assertions) => assertions,
+            Err(error) => {
+                results.push(highlight_test_error(file, error.to_string()));
+                continue;
+            }
+        };
+        let runtime =
+            match RuntimeParser::new(&prepared.validated, &prepared.parser, &prepared.table) {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    results.push(highlight_test_error(file, error.to_string()));
+                    continue;
+                }
+            };
+        let report = match parse_with_optional_scanner(
+            runtime,
+            scanner_selection
+                .scanner
+                .as_ref()
+                .map(|scanner| scanner as &dyn ReducedExternalScanner),
+            &file.text,
+        ) {
+            Ok(report) => report,
+            Err(error) => {
+                results.push(highlight_test_error(file, error.to_string()));
+                continue;
+            }
+        };
+        let captures = query.execute_runtime_highlights(&prepared.parser, &report, &file.text);
+        let assertion_outputs = assertions
+            .iter()
+            .map(|assertion| highlight_assertion_output(assertion, &captures))
+            .collect::<Vec<_>>();
+        let passed_count = assertion_outputs
+            .iter()
+            .filter(|assertion| assertion.passed)
+            .count();
+        let failed_count = assertion_outputs.len() - passed_count;
+        results.push(HighlightTestOutput {
+            path: file.path.clone(),
+            passed: failed_count == 0,
+            input: file.text.clone(),
+            assertion_count: assertion_outputs.len(),
+            passed_count,
+            failed_count,
+            assertions: assertion_outputs,
+            error: None,
+        });
+    }
+
+    results
+}
+
+fn highlight_test_error(file: &BundleFile, error: String) -> HighlightTestOutput {
+    HighlightTestOutput {
+        path: file.path.clone(),
+        passed: false,
+        input: file.text.clone(),
+        assertion_count: 0,
+        passed_count: 0,
+        failed_count: 0,
+        assertions: Vec::new(),
+        error: Some(error),
+    }
+}
+
+fn highlight_assertion_output(
+    assertion: &HighlightAssertion,
+    captures: &[snark::query::HighlightCapture],
+) -> HighlightAssertionOutput {
+    let observed_captures = captures
+        .iter()
+        .filter(|capture| capture_matches_highlight_assertion(capture.points(), assertion))
+        .map(|capture| format!("@{} {:?}", capture.capture_name(), capture.text()))
+        .collect::<Vec<_>>();
+    let matched = captures.iter().any(|capture| {
+        capture.capture_name() == assertion.expected_capture_name
+            && capture_matches_highlight_assertion(capture.points(), assertion)
+    });
+    let passed = if assertion.negative {
+        !matched
+    } else {
+        matched
+    };
+    let message = if passed {
+        None
+    } else if assertion.negative {
+        Some(format!(
+            "unexpected capture @{} covered assertion range",
+            assertion.expected_capture_name
+        ))
+    } else {
+        Some(format!(
+            "missing capture @{} covering assertion range",
+            assertion.expected_capture_name
+        ))
+    };
+
+    HighlightAssertionOutput {
+        capture_name: assertion.expected_capture_name.clone(),
+        negative: assertion.negative,
+        passed,
+        row: u32::try_from(assertion.position.row).expect("highlight row fits in u32"),
+        column: u32::try_from(assertion.position.column).expect("highlight column fits in u32"),
+        length: u32::try_from(assertion.length).expect("highlight length fits in u32"),
+        observed_captures,
+        message,
+    }
+}
+
+fn capture_matches_highlight_assertion(points: PointRange, assertion: &HighlightAssertion) -> bool {
+    let assertion = highlight_assertion_range(assertion);
+    points.start() <= assertion.start() && assertion.end() <= points.end()
+}
+
+fn highlight_assertion_range(assertion: &HighlightAssertion) -> PointRange {
+    let start = PointBytes::new(
+        Row::new(u32::try_from(assertion.position.row).expect("highlight row fits in u32")),
+        Utf8ColumnBytes::new(
+            u32::try_from(assertion.position.column).expect("highlight column fits in u32"),
+        ),
+    );
+    let end = PointBytes::new(
+        Row::new(u32::try_from(assertion.position.row).expect("highlight row fits in u32")),
+        Utf8ColumnBytes::new(
+            u32::try_from(assertion.position.column + assertion.length)
+                .expect("highlight end column fits in u32"),
+        ),
+    );
+    PointRange::new(start, end).expect("highlight assertion range is not reversed")
+}
+
 fn parse_with_optional_scanner<'a>(
     runtime: RuntimeParser<'a>,
     scanner: Option<&'a dyn ReducedExternalScanner>,
@@ -522,6 +709,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
         parse: None,
         highlights: Vec::new(),
         corpus: Vec::new(),
+        highlight_tests: Vec::new(),
         limitations: vec![
             "Only src/grammar.json, handwritten scanner sources, queries, and corpus/highlight fixtures are accepted as bundle inputs.".to_owned(),
         ],
@@ -609,6 +797,10 @@ fn normalize_bundle_files(files: Vec<BundleFile>) -> Vec<BundleFile> {
 
 fn find_file<'a>(files: &'a [BundleFile], path: &str) -> Option<&'a BundleFile> {
     files.iter().find(|file| file.path == path)
+}
+
+fn is_highlight_fixture_path(path: &str) -> bool {
+    path.starts_with("test/highlight/") || path.starts_with("test/highlights/")
 }
 
 fn normalize_bundle_path(path: &str) -> String {
@@ -853,6 +1045,13 @@ mod tests {
                 )
                 .to_owned(),
             },
+            BundleFile {
+                path: "test/highlight/test_css.css".to_owned(),
+                text: include_str!(
+                    "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/test/highlight/test_css.css"
+                )
+                .to_owned(),
+            },
         ];
 
         let request = PlaygroundRequest {
@@ -885,7 +1084,7 @@ mod tests {
         );
 
         let request = PlaygroundRequest {
-            files,
+            files: files.clone(),
             input: "@namespace svg url(http://www.w3.org/1999/xhtml);\n".to_owned(),
             run_corpus: false,
         };
@@ -899,5 +1098,24 @@ mod tests {
                 "(stylesheet (namespace_statement (namespace_name) (call_expression (function_name) (arguments (plain_value)))))"
             )
         );
+
+        let request = PlaygroundRequest {
+            files,
+            input: "a:hover { color: red; }\n".to_owned(),
+            run_corpus: true,
+        };
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.corpus.len(), 0);
+        assert_eq!(response.highlight_tests.len(), 1);
+        assert_eq!(
+            response.highlight_tests[0].path,
+            "test/highlight/test_css.css"
+        );
+        assert_eq!(response.highlight_tests[0].assertion_count, 37);
+        assert_eq!(response.highlight_tests[0].failed_count, 0);
+        assert_eq!(response.highlight_tests[0].passed_count, 37);
     }
 }

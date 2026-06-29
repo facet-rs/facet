@@ -44,6 +44,28 @@ type CorpusOutput = {
   error: string | null;
 };
 
+type HighlightTestOutput = {
+  path: string;
+  passed: boolean;
+  input: string;
+  assertion_count: number;
+  passed_count: number;
+  failed_count: number;
+  assertions: HighlightAssertionOutput[];
+  error: string | null;
+};
+
+type HighlightAssertionOutput = {
+  capture_name: string;
+  negative: boolean;
+  passed: boolean;
+  row: number;
+  column: number;
+  length: number;
+  observed_captures: string[];
+  message: string | null;
+};
+
 type PlaygroundResponse = {
   ok: boolean;
   language: string | null;
@@ -61,6 +83,7 @@ type PlaygroundResponse = {
   parse: ParseOutput | null;
   highlights: HighlightOutput[];
   corpus: CorpusOutput[];
+  highlight_tests: HighlightTestOutput[];
   limitations: string[];
 };
 
@@ -142,6 +165,10 @@ export function App() {
   );
   const passedCorpus = result?.corpus.filter((caseResult) => caseResult.passed).length ?? 0;
   const failedCorpus = result ? result.corpus.length - passedCorpus : 0;
+  const passedHighlightAssertions =
+    result?.highlight_tests.reduce((sum, fixture) => sum + fixture.passed_count, 0) ?? 0;
+  const failedHighlightAssertions =
+    result?.highlight_tests.reduce((sum, fixture) => sum + fixture.failed_count, 0) ?? 0;
   const highlightedSource = useMemo(
     () => renderHighlightedSource(input, result?.highlights ?? []),
     [input, result?.highlights],
@@ -275,7 +302,7 @@ export function App() {
               checked={runCorpus}
               onChange={(event) => setRunCorpus(event.currentTarget.checked)}
             />
-            Corpus
+            Tests
           </label>
           <select
             aria-label="Load sample"
@@ -362,10 +389,12 @@ export function App() {
             </div>
           </section>
           <section>
-            <h2>Corpus</h2>
+            <h2>Tests</h2>
             <div className="corpus-summary">
-              <span>{passedCorpus} pass</span>
-              <span>{failedCorpus} fail</span>
+              <span>{passedCorpus} corpus pass</span>
+              <span>{failedCorpus} corpus fail</span>
+              <span>{passedHighlightAssertions} highlight pass</span>
+              <span>{failedHighlightAssertions} highlight fail</span>
             </div>
             <div className="corpus-list">
               {result?.corpus.map((caseResult, index) => (
@@ -374,6 +403,36 @@ export function App() {
                     {caseResult.case_name}
                   </summary>
                   <pre>{caseResult.error ?? caseResult.actual ?? ""}</pre>
+                </details>
+              ))}
+              {result?.highlight_tests.map((fixture) => (
+                <details key={fixture.path}>
+                  <summary className={fixture.passed ? "pass" : "fail"}>
+                    {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
+                  </summary>
+                  {fixture.error ? (
+                    <pre>{fixture.error}</pre>
+                  ) : (
+                    <div className="assertion-list">
+                      {fixture.assertions.map((assertion, index) => (
+                        <div
+                          className={assertion.passed ? "assertion-row pass" : "assertion-row fail"}
+                          key={`${fixture.path}-${assertion.row}-${assertion.column}-${index}`}
+                        >
+                          <span>
+                            {assertion.negative ? "!" : ""}@{assertion.capture_name}
+                          </span>
+                          <small>
+                            {assertion.row}:{assertion.column}+{assertion.length}
+                          </small>
+                          {assertion.message ? <code>{assertion.message}</code> : null}
+                          {assertion.observed_captures.length ? (
+                            <code>{assertion.observed_captures.join(", ")}</code>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </details>
               ))}
             </div>
@@ -569,6 +628,7 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
     parse: null,
     highlights: [],
     corpus: [],
+    highlight_tests: [],
     limitations: ["Tree-sitter grammar.js is evaluated in a browser Worker before Snark receives src/grammar.json."],
   };
 }
