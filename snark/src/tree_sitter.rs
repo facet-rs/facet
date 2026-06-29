@@ -1416,6 +1416,10 @@ mod tests {
             scanner.accepted.get() > 0,
             "expected Weavy to accept at least one reduced external token"
         );
+        assert!(
+            scanner.accepted_pseudo_class_selector_colon.get() > 0,
+            "expected Weavy to accept the pseudo-class selector colon external"
+        );
         assert_eq!(
             scanner.missing_valid_symbols.get(),
             0,
@@ -1586,6 +1590,71 @@ mod tests {
         );
 
         assert_same!(actual_tree, selector_cases[10].expected);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_pinned_css_descendant_selectors_through_weavy_external_scanner() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[10].name, "Descendant selectors");
+        let rust_report = parse_reduced_report_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[10].input,
+        );
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let scanner = RecordingCssReducedExternalScanner::default();
+        let weavy_report = crate::lower::weavy::parse_reduced_with_report_and_scanner(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[10].input,
+            Some(&scanner),
+        )
+        .unwrap();
+
+        assert_same!(weavy_report.tree(), rust_report.tree());
+        assert_same!(weavy_report.tree(), &selector_cases[10].expected);
+        assert!(
+            scanner.calls.get() > 0,
+            "expected Weavy to invoke the reduced external scanner"
+        );
+        assert!(
+            scanner.accepted_descendant_operator.get() > 0,
+            "expected Weavy to accept the descendant operator external"
+        );
+        assert_eq!(
+            scanner.missing_valid_symbols.get(),
+            0,
+            "expected every Weavy scanner call to carry a valid-symbol mask"
+        );
+        assert_eq!(
+            scanner.invalid_symbol_requests.get(),
+            0,
+            "expected Weavy scanner calls to respect the valid-symbol mask"
+        );
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -2352,6 +2421,8 @@ mod tests {
     struct RecordingCssReducedExternalScanner {
         calls: std::cell::Cell<usize>,
         accepted: std::cell::Cell<usize>,
+        accepted_pseudo_class_selector_colon: std::cell::Cell<usize>,
+        accepted_descendant_operator: std::cell::Cell<usize>,
         missing_valid_symbols: std::cell::Cell<usize>,
         invalid_symbol_requests: std::cell::Cell<usize>,
     }
@@ -2378,6 +2449,15 @@ mod tests {
             let result = CssReducedExternalScanner.scan(request)?;
             if result.is_some() {
                 self.accepted.set(self.accepted.get() + 1);
+                match request.external_symbol().name() {
+                    Some("_pseudo_class_selector_colon") => self
+                        .accepted_pseudo_class_selector_colon
+                        .set(self.accepted_pseudo_class_selector_colon.get() + 1),
+                    Some("_descendant_operator") => self
+                        .accepted_descendant_operator
+                        .set(self.accepted_descendant_operator.get() + 1),
+                    _ => {}
+                }
             }
             Ok(result)
         }
