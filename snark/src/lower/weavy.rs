@@ -2260,8 +2260,9 @@ impl<'a> ReducedWeavyStepper<'a> {
             parser_ir::ParserTerminalKind::String => Ok(self.input[byte_position..]
                 .starts_with(terminal.spelling())
                 .then_some(byte_position + terminal.spelling().len())),
-            parser_ir::ParserTerminalKind::Pattern => Ok(parser_ir::match_pattern(
+            parser_ir::ParserTerminalKind::Pattern => Ok(parser_ir::match_pattern_with_flags(
                 terminal.spelling(),
+                terminal.flags(),
                 self.input,
                 byte_position,
             )),
@@ -2347,9 +2348,12 @@ impl<'a> ReducedWeavyStepper<'a> {
             GrammarExpr::StringToken(value) => Ok(self.input[byte_position..]
                 .starts_with(value)
                 .then_some(byte_position + value.len())),
-            GrammarExpr::PatternToken { value, .. } => {
-                Ok(parser_ir::match_pattern(value, self.input, byte_position))
-            }
+            GrammarExpr::PatternToken { value, flags } => Ok(parser_ir::match_pattern_with_flags(
+                value,
+                flags.as_deref(),
+                self.input,
+                byte_position,
+            )),
             GrammarExpr::Until { markers } => Ok(parser_ir::match_until_markers(
                 markers.iter().map(String::as_str),
                 self.input,

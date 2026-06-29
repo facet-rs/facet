@@ -46,11 +46,13 @@ impl LexicalFacts {
                     expr: id,
                     kind: TerminalKind::String,
                     spelling: value.clone(),
+                    flags: None,
                 }),
-                GrammarExpr::PatternToken { value, .. } => terminals.push(TerminalFact {
+                GrammarExpr::PatternToken { value, flags } => terminals.push(TerminalFact {
                     expr: id,
                     kind: TerminalKind::Pattern,
                     spelling: value.clone(),
+                    flags: flags.clone(),
                 }),
                 _ => {}
             }
@@ -189,6 +191,8 @@ pub struct TerminalFact {
     pub kind: TerminalKind,
     /// Literal text or regex source.
     pub spelling: String,
+    /// Regex flags, for pattern terminals.
+    pub flags: Option<String>,
 }
 
 /// Terminal kind.

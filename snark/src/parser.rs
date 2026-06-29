@@ -819,13 +819,15 @@ fn seed_terminal_symbols(
     lexical_rules: &mut Vec<LexicalRule>,
 ) -> Vec<TerminalSymbol> {
     let mut terminals = Vec::<TerminalSymbol>::new();
-    let mut direct_terminal_by_key = HashMap::<(ParserTerminalKind, String), TerminalId>::new();
+    let mut direct_terminal_by_key =
+        HashMap::<(ParserTerminalKind, String, Option<String>), TerminalId>::new();
     for terminal in lexical.terminals() {
         let kind = match terminal.kind {
             TerminalKind::String => ParserTerminalKind::String,
             TerminalKind::Pattern => ParserTerminalKind::Pattern,
         };
-        let key = (kind, terminal.spelling.clone());
+        let flags = normalized_regex_flags(terminal.flags.as_deref());
+        let key = (kind, terminal.spelling.clone(), flags.clone());
         if let Some(id) = direct_terminal_by_key.get(&key).copied() {
             terminals[id.get() as usize]
                 .source_exprs
@@ -845,12 +847,14 @@ fn seed_terminal_symbols(
                 expr: terminal.expr,
                 kind,
                 spelling: terminal.spelling.clone(),
+                flags: flags.clone(),
             },
         );
         terminals.push(TerminalSymbol {
             id,
             kind,
             spelling: terminal.spelling.clone(),
+            flags,
             source_exprs: vec![terminal.expr],
             lexical_rule,
             lexical_root: None,
@@ -878,6 +882,7 @@ fn seed_terminal_symbols(
             id,
             kind,
             spelling: lexical_root_spelling(grammar, root.id),
+            flags: None,
             source_exprs: vec![root.id],
             lexical_rule,
             lexical_root: Some(root.id),
@@ -1840,6 +1845,7 @@ pub struct TerminalSymbol {
     id: TerminalId,
     kind: ParserTerminalKind,
     spelling: String,
+    flags: Option<String>,
     source_exprs: Vec<GrammarExprId>,
     lexical_rule: LexicalRuleId,
     lexical_root: Option<GrammarExprId>,
@@ -1860,6 +1866,11 @@ impl TerminalSymbol {
     /// Literal spelling or regex source.
     pub fn spelling(&self) -> &str {
         &self.spelling
+    }
+
+    /// Regex flags for pattern terminals.
+    pub fn flags(&self) -> Option<&str> {
+        self.flags.as_deref()
     }
 
     /// Grammar expression that introduced this terminal symbol.
@@ -2379,6 +2390,8 @@ pub enum LexicalRuleSource {
         kind: ParserTerminalKind,
         /// Literal or regex spelling.
         spelling: String,
+        /// Regex flags for pattern terminals.
+        flags: Option<String>,
     },
     /// Token or immediate-token lexical root.
     TokenRoot {
@@ -3737,7 +3750,7 @@ pub struct ReducedParser<'a> {
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
     first: Option<FirstFacts>,
     #[cfg(test)]
-    regex_patterns: HashMap<String, Option<Regex>>,
+    regex_patterns: HashMap<(String, Option<String>), Option<Regex>>,
     compiled_lex_modes: Vec<CompiledLexMode>,
     lex_cache: RefCell<HashMap<LexCacheKey, Result<ReducedToken, ReducedParseError>>>,
     lex_mode_cache:
@@ -3805,6 +3818,7 @@ pub(crate) enum CompiledLexExpr {
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledLexPattern {
     pub(crate) source: String,
+    flags: Option<String>,
     regex: Option<Regex>,
 }
 
@@ -4751,7 +4765,7 @@ impl<'a> ReducedParser<'a> {
                 .starts_with(terminal.spelling())
                 .then_some(byte_position + terminal.spelling().len())),
             ParserTerminalKind::Pattern => {
-                Ok(self.match_pattern(terminal.spelling(), input, byte_position))
+                Ok(self.match_pattern(terminal.spelling(), terminal.flags(), input, byte_position))
             }
             ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
                 let Some(root) = terminal.lexical_root() else {
@@ -4962,8 +4976,8 @@ impl<'a> ReducedParser<'a> {
             GrammarExpr::StringToken(value) => Ok(input[byte_position..]
                 .starts_with(value)
                 .then_some(byte_position + value.len())),
-            GrammarExpr::PatternToken { value, .. } => {
-                Ok(self.match_pattern(value, input, byte_position))
+            GrammarExpr::PatternToken { value, flags } => {
+                Ok(self.match_pattern(value, flags.as_deref(), input, byte_position))
             }
             GrammarExpr::Until { markers } => Ok(match_until_markers(
                 markers.iter().map(String::as_str),
@@ -5061,17 +5075,32 @@ impl<'a> ReducedParser<'a> {
     }
 
     #[cfg(test)]
-    fn match_pattern(&self, pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
-        if let Some(result) = match_known_pattern(pattern, input, byte_position) {
+    fn match_pattern(
+        &self,
+        pattern: &str,
+        flags: Option<&str>,
+        input: &str,
+        byte_position: usize,
+    ) -> Option<usize> {
+        if regex_flags_are_empty(flags)
+            && let Some(result) = match_known_pattern(pattern, input, byte_position)
+        {
             return result;
         }
-        self.match_regex_leaf(pattern, input, byte_position)
+        self.match_regex_leaf(pattern, flags, input, byte_position)
     }
 
     #[cfg(test)]
-    fn match_regex_leaf(&self, pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+    fn match_regex_leaf(
+        &self,
+        pattern: &str,
+        flags: Option<&str>,
+        input: &str,
+        byte_position: usize,
+    ) -> Option<usize> {
         let haystack = input.get(byte_position..)?;
-        let regex = self.regex_patterns.get(pattern)?.as_ref()?;
+        let key = (pattern.to_owned(), normalized_regex_flags(flags));
+        let regex = self.regex_patterns.get(&key)?.as_ref()?;
         regex
             .find(haystack)
             .filter(|match_| match_.start() == 0)
@@ -5246,12 +5275,24 @@ impl<'a> ReducedParser<'a> {
 const ASCII_IDENTIFIER_PATTERN: &str = "[A-Za-z_][A-Za-z0-9_]*";
 const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|endif\\b|for\\b|endfor\\b|set\\b|endset\\b|block\\b|endblock\\b|extends\\b|include\\b|import\\b|macro\\b|endmacro\\b|break\\b|continue\\b|as\\b|in\\b|is\\b|not\\b|and\\b|or\\b|true\\b|True\\b|false\\b|False\\b|none\\b|None\\b)[A-Za-z_][A-Za-z0-9_]*";
 
-#[cfg(any(test, feature = "weavy-lowering"))]
+#[cfg(test)]
 pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
-    if let Some(result) = match_known_pattern(pattern, input, byte_position) {
+    match_pattern_with_flags(pattern, None, input, byte_position)
+}
+
+#[cfg(any(test, feature = "weavy-lowering"))]
+pub(crate) fn match_pattern_with_flags(
+    pattern: &str,
+    flags: Option<&str>,
+    input: &str,
+    byte_position: usize,
+) -> Option<usize> {
+    if regex_flags_are_empty(flags)
+        && let Some(result) = match_known_pattern(pattern, input, byte_position)
+    {
         return result;
     }
-    match_cached_regex_leaf(pattern, input, byte_position)
+    match_cached_regex_leaf(pattern, flags, input, byte_position)
 }
 
 fn match_known_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<Option<usize>> {
@@ -5279,29 +5320,35 @@ fn match_known_pattern(pattern: &str, input: &str, byte_position: usize) -> Opti
 fn compile_regex_patterns(
     grammar: &ValidatedGrammar,
     parser: &ParserGrammar,
-) -> HashMap<String, Option<Regex>> {
+) -> HashMap<(String, Option<String>), Option<Regex>> {
     let mut patterns = HashMap::new();
     for (_, expr) in grammar.expressions() {
-        if let GrammarExpr::PatternToken { value, .. } = expr {
+        if let GrammarExpr::PatternToken { value, flags } = expr {
+            let key = (value.clone(), normalized_regex_flags(flags.as_deref()));
             patterns
-                .entry(value.clone())
-                .or_insert_with(|| compile_regex_leaf(value).ok());
+                .entry(key)
+                .or_insert_with(|| compile_regex_leaf(value, flags.as_deref()));
         }
     }
     for terminal in &parser.symbols.terminals {
         if terminal.kind() == ParserTerminalKind::Pattern {
+            let key = (
+                terminal.spelling().to_owned(),
+                normalized_regex_flags(terminal.flags()),
+            );
             patterns
-                .entry(terminal.spelling().to_owned())
-                .or_insert_with(|| compile_regex_leaf(terminal.spelling()).ok());
+                .entry(key)
+                .or_insert_with(|| compile_regex_leaf(terminal.spelling(), terminal.flags()));
         }
     }
     patterns
 }
 
-fn compile_pattern(pattern: &str) -> CompiledLexPattern {
+fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledLexPattern {
     CompiledLexPattern {
         source: pattern.to_owned(),
-        regex: compile_regex_leaf(pattern).ok(),
+        flags: normalized_regex_flags(flags),
+        regex: compile_regex_leaf(pattern, flags),
     }
 }
 
@@ -5310,7 +5357,9 @@ pub(crate) fn match_compiled_pattern(
     input: &str,
     byte_position: usize,
 ) -> Option<usize> {
-    if let Some(result) = match_known_pattern(&pattern.source, input, byte_position) {
+    if pattern.flags.is_none()
+        && let Some(result) = match_known_pattern(&pattern.source, input, byte_position)
+    {
         return result;
     }
     let haystack = input.get(byte_position..)?;
@@ -5401,7 +5450,7 @@ fn compile_terminal_matcher(
             CompiledTerminalMatcher::Expr(CompiledLexExpr::String(terminal.spelling().to_owned()))
         }
         ParserTerminalKind::Pattern => CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(
-            compile_pattern(terminal.spelling()),
+            compile_pattern(terminal.spelling(), terminal.flags()),
         )),
         ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
             let Some(root) = terminal.lexical_root() else {
@@ -5435,7 +5484,9 @@ fn compile_lex_expr_inner(
     match grammar.expr(expr) {
         GrammarExpr::Blank => CompiledLexExpr::Blank,
         GrammarExpr::StringToken(value) => CompiledLexExpr::String(value.clone()),
-        GrammarExpr::PatternToken { value, .. } => CompiledLexExpr::Pattern(compile_pattern(value)),
+        GrammarExpr::PatternToken { value, flags } => {
+            CompiledLexExpr::Pattern(compile_pattern(value, flags.as_deref()))
+        }
         GrammarExpr::Until { markers } => CompiledLexExpr::Until {
             markers: markers.clone(),
         },
@@ -5653,9 +5704,14 @@ pub(crate) fn match_nested_delimiters(
 }
 
 #[cfg(any(test, feature = "weavy-lowering"))]
-fn match_cached_regex_leaf(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+fn match_cached_regex_leaf(
+    pattern: &str,
+    flags: Option<&str>,
+    input: &str,
+    byte_position: usize,
+) -> Option<usize> {
     let haystack = input.get(byte_position..)?;
-    let regex = cached_regex(pattern)?;
+    let regex = cached_regex(pattern, flags)?;
     regex
         .find(haystack)
         .filter(|match_| match_.start() == 0)
@@ -5663,31 +5719,58 @@ fn match_cached_regex_leaf(pattern: &str, input: &str, byte_position: usize) -> 
 }
 
 #[cfg(any(test, feature = "weavy-lowering"))]
-fn cached_regex(pattern: &str) -> Option<Regex> {
-    static CACHE: OnceLock<Mutex<HashMap<String, Option<Regex>>>> = OnceLock::new();
+fn cached_regex(pattern: &str, flags: Option<&str>) -> Option<Regex> {
+    static CACHE: OnceLock<Mutex<HashMap<(String, Option<String>), Option<Regex>>>> =
+        OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (pattern.to_owned(), normalized_regex_flags(flags));
 
     {
         let cache = cache.lock().expect("regex cache poisoned");
-        if let Some(regex) = cache.get(pattern) {
+        if let Some(regex) = cache.get(&key) {
             return regex.clone();
         }
     }
 
-    let compiled = compile_regex_leaf(pattern).ok();
+    let compiled = compile_regex_leaf(pattern, flags);
     let mut cache = cache.lock().expect("regex cache poisoned");
-    let entry = cache
-        .entry(pattern.to_owned())
-        .or_insert_with(|| compiled.clone());
+    let entry = cache.entry(key).or_insert_with(|| compiled.clone());
     entry.clone()
 }
 
-fn compile_regex_leaf(pattern: &str) -> Result<Regex, regex::Error> {
-    Regex::new(&anchored_regex_source(pattern))
+fn compile_regex_leaf(pattern: &str, flags: Option<&str>) -> Option<Regex> {
+    Regex::new(&anchored_regex_source(pattern, flags)?).ok()
 }
 
-fn anchored_regex_source(pattern: &str) -> String {
-    format!("\\A(?:{})", rust_regex_source(pattern))
+fn anchored_regex_source(pattern: &str, flags: Option<&str>) -> Option<String> {
+    let body = rust_regex_source(pattern);
+    let flags = rust_regex_flags(flags)?;
+    Some(if flags.is_empty() {
+        format!("\\A(?:{})", body)
+    } else {
+        format!("\\A(?{}:{})", flags, body)
+    })
+}
+
+fn normalized_regex_flags(flags: Option<&str>) -> Option<String> {
+    flags.filter(|flags| !flags.is_empty()).map(str::to_owned)
+}
+
+#[cfg(any(test, feature = "weavy-lowering"))]
+fn regex_flags_are_empty(flags: Option<&str>) -> bool {
+    flags.is_none_or(str::is_empty)
+}
+
+fn rust_regex_flags(flags: Option<&str>) -> Option<String> {
+    let mut rust_flags = String::new();
+    for flag in flags.unwrap_or("").chars() {
+        match flag {
+            'i' | 'm' | 's' if !rust_flags.contains(flag) => rust_flags.push(flag),
+            'i' | 'm' | 's' | 'u' | 'g' | 'y' | 'd' => {}
+            _ => return None,
+        }
+    }
+    Some(rust_flags)
 }
 
 fn rust_regex_source(pattern: &str) -> String {
@@ -9047,6 +9130,19 @@ extras (
     }
 
     #[test]
+    fn matches_flagged_regex_leaf_shapes() {
+        assert_eq!(match_pattern("abc", "ABC", 0), None);
+        assert_eq!(
+            match_pattern_with_flags("abc", Some("i"), "ABC", 0),
+            Some(3)
+        );
+        assert_eq!(
+            match_pattern_with_flags("abc", Some("iu"), "ABC", 0),
+            Some(3)
+        );
+    }
+
+    #[test]
     fn parses_styx_authored_gingembre_interpolation_like_gingembre() {
         assert_styx_authored_gingembre_runtime("{{ x }}", "(template (interpolation (var_ref)))");
     }
@@ -10093,6 +10189,93 @@ extras (
                 );
             }
         }
+    }
+
+    fn flagged_regex_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "insensitive" },
+                    { "type": "SYMBOL", "name": "wrapped" }
+                  ]
+                },
+                "insensitive": {
+                  "type": "PATTERN",
+                  "value": "abc",
+                  "flags": "i"
+                },
+                "wrapped": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "PATTERN",
+                    "value": "xyz",
+                    "flags": "i"
+                  }
+                }
+              }
+            }"##,
+        )
+    }
+
+    #[test]
+    fn runtime_lexer_preserves_regex_flags() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
+        let input = "ABCXYZ";
+
+        for terminal in parser.symbols.terminals() {
+            let compiled = compile_lex_terminal(&validated, terminal);
+            for byte_position in [0usize, 3] {
+                let interpreted = reduced.match_terminal(terminal, input, byte_position);
+                let compiled = reduced.match_compiled_terminal(&compiled, input, byte_position);
+                assert_eq!(
+                    compiled,
+                    interpreted,
+                    "terminal `{}` at byte {byte_position}",
+                    terminal.spelling()
+                );
+            }
+        }
+
+        let report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        assert_eq!(
+            report.tree().to_sexp(),
+            "(source_file (insensitive) (wrapped))"
+        );
+        assert_eq!(report.accepted_count(), 1);
+        assert_eq!(report.failure_count(), 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn runtime_lexer_preserves_regex_flags_through_weavy_runtime() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let input = "ABCXYZ";
+        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan, &validated, &parser, &table, input,
+        )
+        .unwrap();
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_eq!(
+            weavy_report.tree().to_sexp(),
+            "(source_file (insensitive) (wrapped))"
+        );
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     fn lexical_symbol_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
