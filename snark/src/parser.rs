@@ -3954,6 +3954,7 @@ impl<'a> ReducedParser<'a> {
             stack: vec![ReducedStackEntry {
                 state: ParseStateId::from_index(0),
                 fragment: None,
+                extra: false,
             }],
             byte_position: 0,
             trace: Vec::new(),
@@ -4174,11 +4175,26 @@ impl<'a> ReducedParser<'a> {
                 branch.stack.push(ReducedStackEntry {
                     state,
                     fragment: Some(ReducedFragment::Hidden(Vec::new())),
+                    extra: false,
                 });
                 ReducedStepOutcome::Branch(branch)
             }
             ParseAction::ShiftExtra => {
                 branch.byte_position = token.end;
+                if let Some(fragment) = self.extra_fragment(token.lookahead) {
+                    let Some(state) = branch.stack.last().map(|entry| entry.state) else {
+                        return ReducedStepOutcome::Failed {
+                            branch: branch.id,
+                            error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
+                                .with_trace(branch.trace),
+                        };
+                    };
+                    branch.stack.push(ReducedStackEntry {
+                        state,
+                        fragment: Some(fragment),
+                        extra: true,
+                    });
+                }
                 ReducedStepOutcome::Branch(branch)
             }
             ParseAction::Reduce {
@@ -4224,6 +4240,7 @@ impl<'a> ReducedParser<'a> {
                 branch.stack.push(ReducedStackEntry {
                     state: goto_state,
                     fragment: Some(fragment),
+                    extra: false,
                 });
                 ReducedStepOutcome::Branch(branch)
             }
@@ -4320,7 +4337,9 @@ impl<'a> ReducedParser<'a> {
             let candidate = ReducedTokenCandidate {
                 lookahead: LookaheadSymbol::Terminal(*terminal),
                 end,
+                extra: false,
                 external: false,
+                immediate: terminal_row.kind() == ParserTerminalKind::ImmediateToken,
                 literal: terminal_row.kind() == ParserTerminalKind::String,
                 lexical_precedence: self.lexical_completion_precedence(terminal_row),
                 implicit_precedence: self.lexical_implicit_precedence(terminal_row),
@@ -4333,6 +4352,7 @@ impl<'a> ReducedParser<'a> {
                 &mut best,
                 ReducedTokenCandidate {
                     lookahead,
+                    extra: self.lookahead_shifts_only_extra(state, lookahead),
                     ..candidate
                 },
             );
@@ -4350,7 +4370,9 @@ impl<'a> ReducedParser<'a> {
             let candidate = ReducedTokenCandidate {
                 lookahead: LookaheadSymbol::External(*external),
                 end,
+                extra: false,
                 external: true,
+                immediate: false,
                 literal: true,
                 lexical_precedence: 0,
                 implicit_precedence: 0,
@@ -4612,6 +4634,19 @@ impl<'a> ReducedParser<'a> {
         }
     }
 
+    fn lookahead_shifts_only_extra(&self, state: &ParseState, lookahead: LookaheadSymbol) -> bool {
+        state
+            .entries()
+            .iter()
+            .find(|entry| entry.lookahead() == lookahead)
+            .is_some_and(|entry| {
+                entry
+                    .actions()
+                    .iter()
+                    .all(|action| matches!(action, ParseAction::ShiftExtra))
+            })
+    }
+
     fn reduce_fragment(
         &self,
         production: ProductionId,
@@ -4623,32 +4658,42 @@ impl<'a> ReducedParser<'a> {
         let metadata_row = &self.parser.production_metadata[metadata.get() as usize];
         let mut children = Vec::new();
         let mut popped = Vec::new();
-        for _ in 0..child_count {
+        let mut remaining_children = child_count;
+        while remaining_children > 0 {
             let entry = stack
                 .pop()
                 .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
             let Some(fragment) = entry.fragment else {
                 return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
             };
-            popped.push(fragment);
+            if !entry.extra {
+                remaining_children -= 1;
+            }
+            popped.push((entry.extra, fragment));
         }
         popped.reverse();
-        for (step, fragment) in production_row.steps().iter().zip(popped) {
+        let mut steps = production_row.steps().iter();
+        for (extra, fragment) in popped {
             let mut step_children = fragment.into_children();
-            if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
-                let alias_name = self.parser.aliases[alias.get() as usize].value.clone();
-                if step_children.is_empty() {
-                    step_children.push(SexpChild {
-                        field: None,
-                        value: SexpValue::Node(SexpNode {
-                            kind: alias_name,
-                            children: Vec::new(),
-                        }),
-                    });
-                } else {
-                    for child in &mut step_children {
-                        if let SexpValue::Node(node) = &mut child.value {
-                            node.kind.clone_from(&alias_name);
+            if !extra {
+                let Some(step) = steps.next() else {
+                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
+                };
+                if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
+                    let alias_name = self.parser.aliases[alias.get() as usize].value.clone();
+                    if step_children.is_empty() {
+                        step_children.push(SexpChild {
+                            field: None,
+                            value: SexpValue::Node(SexpNode {
+                                kind: alias_name,
+                                children: Vec::new(),
+                            }),
+                        });
+                    } else {
+                        for child in &mut step_children {
+                            if let SexpValue::Node(node) = &mut child.value {
+                                node.kind.clone_from(&alias_name);
+                            }
                         }
                     }
                 }
@@ -4664,6 +4709,33 @@ impl<'a> ReducedParser<'a> {
         } else {
             Ok(ReducedFragment::Hidden(children))
         }
+    }
+
+    fn extra_fragment(&self, lookahead: LookaheadSymbol) -> Option<ReducedFragment> {
+        let item_preparation = self.parser.item_preparation.as_ref()?;
+        let first = FirstFacts::new(self.parser, item_preparation.graph());
+        for extra in &self.parser.extra_roots {
+            let ParserSymbol::Nonterminal(nonterminal) = extra.symbol else {
+                continue;
+            };
+            if !first.first[nonterminal.get() as usize].contains(&lookahead) {
+                continue;
+            }
+            let Some(kind) = self
+                .parser
+                .public_node_kinds
+                .iter()
+                .find(|kind| kind.source() == PublicNodeKindSource::Rule(nonterminal))
+            else {
+                continue;
+            };
+            let kind = kind.name().to_owned();
+            return Some(ReducedFragment::Node(SexpNode {
+                kind,
+                children: Vec::new(),
+            }));
+        }
+        None
     }
 
     fn goto_state(
@@ -4734,11 +4806,32 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
             .next()
             .filter(|ch| !ch.is_ascii_hexdigit() && *ch != '\n' && *ch != '\r')
             .map(|ch| byte_position + ch.len_utf8()),
+        ".*" => match_json_line_comment_tail(input, byte_position),
+        "[^*]*\\*+([^/*][^*]*\\*+)*" => match_json_block_comment_body(input, byte_position),
+        "(\\\"|\\\\|\\/|b|f|n|r|t|u)" => input[byte_position..]
+            .chars()
+            .next()
+            .filter(|ch| matches!(ch, '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u'))
+            .map(|ch| byte_position + ch.len_utf8()),
         "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => {
             match_css_identifier(input, byte_position)
         }
         _ => None,
     }
+}
+
+fn match_json_line_comment_tail(input: &str, byte_position: usize) -> Option<usize> {
+    Some(
+        input[byte_position..]
+            .find(['\n', '\r'])
+            .map_or(input.len(), |offset| byte_position + offset),
+    )
+}
+
+fn match_json_block_comment_body(input: &str, byte_position: usize) -> Option<usize> {
+    input[byte_position..]
+        .find("*/")
+        .map(|offset| byte_position + offset + 1)
 }
 
 fn match_while(
@@ -4881,7 +4974,9 @@ struct ReducedToken {
 struct ReducedTokenCandidate {
     lookahead: LookaheadSymbol,
     end: usize,
+    extra: bool,
     external: bool,
+    immediate: bool,
     literal: bool,
     lexical_precedence: i32,
     implicit_precedence: i32,
@@ -4898,6 +4993,12 @@ fn reduced_candidate_order(
     left: ReducedTokenCandidate,
     right: ReducedTokenCandidate,
 ) -> ReducedCandidateOrder {
+    if left.immediate && !left.extra && right.extra {
+        return ReducedCandidateOrder::Greater;
+    }
+    if left.extra && right.immediate && !right.extra {
+        return ReducedCandidateOrder::Less;
+    }
     match left.end.cmp(&right.end) {
         std::cmp::Ordering::Greater => ReducedCandidateOrder::Greater,
         std::cmp::Ordering::Less => ReducedCandidateOrder::Less,
@@ -4964,6 +5065,7 @@ enum ReducedStepOutcome {
 struct ReducedStackEntry {
     state: ParseStateId,
     fragment: Option<ReducedFragment>,
+    extra: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6549,7 +6651,9 @@ mod tests {
         let direct_string = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 1,
+            extra: false,
             external: false,
+            immediate: false,
             literal: true,
             lexical_precedence: 0,
             implicit_precedence: 2,
@@ -6557,7 +6661,9 @@ mod tests {
         let immediate_string = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
             end: 1,
+            extra: false,
             external: false,
+            immediate: true,
             literal: false,
             lexical_precedence: 0,
             implicit_precedence: 3,
@@ -6578,7 +6684,9 @@ mod tests {
         let internal_string = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 1,
+            extra: false,
             external: false,
+            immediate: false,
             literal: true,
             lexical_precedence: 0,
             implicit_precedence: 2,
@@ -6586,7 +6694,9 @@ mod tests {
         let external_token = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::External(ExternalId::from_index(0)),
             end: 1,
+            extra: false,
             external: true,
+            immediate: false,
             literal: true,
             lexical_precedence: 0,
             implicit_precedence: 0,
@@ -6598,6 +6708,39 @@ mod tests {
         );
         assert_eq!(
             reduced_candidate_order(internal_string, external_token),
+            ReducedCandidateOrder::Less
+        );
+    }
+
+    #[test]
+    fn reduced_lexer_prefers_immediate_content_over_longer_extra() {
+        let immediate_content = ReducedTokenCandidate {
+            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
+            end: 2,
+            extra: false,
+            external: false,
+            immediate: true,
+            literal: false,
+            lexical_precedence: 0,
+            implicit_precedence: 3,
+        };
+        let comment_extra = ReducedTokenCandidate {
+            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
+            end: 8,
+            extra: true,
+            external: false,
+            immediate: false,
+            literal: false,
+            lexical_precedence: 0,
+            implicit_precedence: 0,
+        };
+
+        assert_eq!(
+            reduced_candidate_order(immediate_content, comment_extra),
+            ReducedCandidateOrder::Greater
+        );
+        assert_eq!(
+            reduced_candidate_order(comment_extra, immediate_content),
             ReducedCandidateOrder::Less
         );
     }

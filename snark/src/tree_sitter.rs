@@ -1789,6 +1789,72 @@ mod tests {
         assert_same!(actual_tree, cases[0].expected);
     }
 
+    #[test]
+    fn parses_pinned_json_string_content_corpus_case_without_external_scanner() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let main_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/main.txt")
+            .unwrap();
+        let cases = main_fixture.parse_cases().unwrap();
+
+        assert_eq!(cases[1].name, "String content");
+        let actual_tree = parse_reduced_without_external_scanner_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &cases[1].input,
+        );
+
+        assert_same!(actual_tree, cases[1].expected);
+    }
+
+    #[test]
+    fn parses_pinned_json_comments_corpus_case_with_visible_extras() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let main_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/main.txt")
+            .unwrap();
+        let cases = main_fixture.parse_cases().unwrap();
+
+        assert_eq!(cases[4].name, "Comments");
+        let actual_tree = parse_reduced_without_external_scanner_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &cases[4].input,
+        );
+
+        assert_same!(actual_tree, cases[4].expected);
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {
