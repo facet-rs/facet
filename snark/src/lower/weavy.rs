@@ -293,6 +293,8 @@ pub enum SnarkIntrinsic {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BranchRetireReason {
+    /// The branch accepted the input and left the live work queue.
+    Accepted,
     /// Another branch dominated this one.
     Dominated,
     /// The parse table had no viable action.

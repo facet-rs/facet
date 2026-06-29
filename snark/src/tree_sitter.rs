@@ -458,6 +458,7 @@ mod tests {
         parser::{
             LookaheadSymbol, ParseStateId, ParseTable, ParserGenerationStage, ParserGrammar,
             ReducedExternalScan, ReducedExternalScanner, ReducedParseReport, ReducedParser,
+            RuntimeParser,
         },
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
@@ -1932,6 +1933,73 @@ mod tests {
         assert!(
             report.failure_count() > 0,
             "expected at least one forked branch to be retired by later input"
+        );
+    }
+
+    #[test]
+    fn parses_pinned_css_important_declarations_through_runtime_stack_tree() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let declaration_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/declarations.txt")
+            .unwrap();
+        let declaration_cases = declaration_fixture.parse_cases().unwrap();
+
+        assert_eq!(declaration_cases[7].name, "Important declarations");
+        let rust_report = parse_reduced_report_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &declaration_cases[7].input,
+        );
+        let scanner = CssReducedExternalScanner;
+        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .with_external_scanner(&scanner)
+            .parse_with_report(&declaration_cases[7].input)
+            .unwrap();
+
+        assert_same!(runtime_report.tree(), rust_report.tree());
+        assert_same!(runtime_report.tree(), &declaration_cases[7].expected);
+        assert!(
+            runtime_report
+                .trace_events()
+                .iter()
+                .any(|event| matches!(event, crate::parser::TraceEvent::GlrSplit { .. })),
+            "expected runtime stack execution to emit a GLR split"
+        );
+        assert!(
+            runtime_report
+                .trace_events()
+                .iter()
+                .any(|event| matches!(event, crate::parser::TraceEvent::GlrRetire { .. })),
+            "expected runtime stack execution to retire a branch"
+        );
+        assert!(
+            runtime_report
+                .tree_events()
+                .iter()
+                .any(|event| matches!(event, crate::parser::TreeEvent::Reduce { .. })),
+            "expected runtime tree execution to emit reduce tree events"
+        );
+        assert!(
+            runtime_report.max_live_versions() > 1,
+            "expected more than one live runtime stack version"
+        );
+        assert!(
+            runtime_report.failure_count() > 0,
+            "expected at least one runtime forked branch to fail"
         );
     }
 

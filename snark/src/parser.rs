@@ -15,7 +15,7 @@ use std::{
 use crate::{
     corpus::{SexpChild, SexpNode, SexpValue},
     lexical::{LexicalFacts, TerminalKind},
-    runtime_input::{ByteRange, PointRange},
+    runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
     validated::{
         AliasId, FieldId, GrammarExpr, GrammarExprId, PrecedenceAssoc,
         PrecedenceEntry as ValidatedPrecedenceEntry, ReservedSetId, RuleId, StaticPrecedenceValue,
@@ -5140,6 +5140,857 @@ impl ReducedFragment {
     }
 }
 
+/// First runtime stack/tree parser over generated Snark parse tables.
+///
+/// This runtime executes the same grammar-derived action table as
+/// [`ReducedParser`], but keeps branch ids in the runtime `StackVersionId`
+/// domain and records tree construction through `TreeNodeId` plus structured
+/// `TraceEvent` / `TreeEvent` rows before normalizing the accepted runtime tree
+/// to the corpus S-expression view.
+pub struct RuntimeParser<'a> {
+    reduced: ReducedParser<'a>,
+}
+
+impl<'a> RuntimeParser<'a> {
+    /// Build a runtime parser over validated grammar facts and generated tables.
+    pub fn new(
+        grammar: &'a ValidatedGrammar,
+        parser: &'a ParserGrammar,
+        table: &'a ParseTable,
+    ) -> Result<Self, ReducedParseError> {
+        Ok(Self {
+            reduced: ReducedParser::new(grammar, parser, table)?,
+        })
+    }
+
+    /// Attach a reduced external scanner host for this first runtime slice.
+    pub fn with_external_scanner(mut self, scanner: &'a dyn ReducedExternalScanner) -> Self {
+        self.reduced = self.reduced.with_external_scanner(scanner);
+        self
+    }
+
+    /// Parse one input and return runtime stack/tree evidence.
+    pub fn parse_with_report(&self, input: &str) -> Result<RuntimeParseReport, ReducedParseError> {
+        let mut tree_store = RuntimeTreeStore::default();
+        let mut trace_events = Vec::new();
+        let mut tree_events = Vec::new();
+        trace_events.push(TraceEvent::ParseStart {
+            id: TraceEventId::from_index(0),
+            state: ParseStateId::from_index(0),
+        });
+        trace_events.push(TraceEvent::StateEnter {
+            id: TraceEventId::from_index(1),
+            version: StackVersionId::from_index(0),
+            state: ParseStateId::from_index(0),
+        });
+
+        let mut branches = VecDeque::from([RuntimeBranch {
+            version: StackVersionId::from_index(0),
+            stack: vec![RuntimeStackEntry {
+                state: ParseStateId::from_index(0),
+                fragment: None,
+                extra: false,
+                end_byte: 0,
+            }],
+            byte_position: 0,
+            trace: Vec::new(),
+        }]);
+        let mut accepted = Vec::<(SexpNode, Vec<ReducedTraceStep>)>::new();
+        let mut failures = Vec::<ReducedParseError>::new();
+        let mut next_version_index = 1usize;
+        let mut next_lookahead_index = 0usize;
+        let mut step_count = 0usize;
+        let step_limit = self.reduced.reduced_step_limit(input);
+        let mut max_live_versions = branches.len();
+
+        while let Some(branch) = branches.pop_front() {
+            step_count += 1;
+            if step_count > step_limit {
+                trace_events.push(TraceEvent::GlrRetire {
+                    version: branch.version,
+                    reason: BranchRetireReason::Limit,
+                });
+                trace_events.push(TraceEvent::ParseFinish {
+                    id: next_trace_id(&trace_events),
+                    outcome: ParseOutcome::Failed,
+                });
+                return Err(
+                    ReducedParseError::new(ReducedParseErrorKind::BranchStepLimit {
+                        limit: step_limit,
+                    })
+                    .with_trace(branch.trace),
+                );
+            }
+
+            for outcome in self.step_runtime_branch(
+                branch,
+                input,
+                &mut tree_store,
+                &mut trace_events,
+                &mut tree_events,
+                &mut next_version_index,
+                &mut next_lookahead_index,
+            ) {
+                match outcome {
+                    RuntimeStepOutcome::Branch(branch) => branches.push_back(branch),
+                    RuntimeStepOutcome::Accepted {
+                        version,
+                        node,
+                        trace,
+                    } => {
+                        trace_events.push(TraceEvent::GlrRetire {
+                            version,
+                            reason: BranchRetireReason::Accepted,
+                        });
+                        accepted.push((node, trace));
+                    }
+                    RuntimeStepOutcome::Failed { version, error } => {
+                        trace_events.push(TraceEvent::GlrRetire {
+                            version,
+                            reason: BranchRetireReason::NoAction,
+                        });
+                        failures.push(error);
+                    }
+                }
+            }
+            max_live_versions = max_live_versions.max(branches.len());
+        }
+
+        let Some((first_node, first_trace)) = accepted.first().cloned() else {
+            trace_events.push(TraceEvent::ParseFinish {
+                id: next_trace_id(&trace_events),
+                outcome: ParseOutcome::Failed,
+            });
+            return Err(select_reduced_failure(failures).unwrap_or_else(|| {
+                ReducedParseError::new(ReducedParseErrorKind::NoViableBranch { failure_count: 0 })
+            }));
+        };
+        if accepted.iter().all(|(node, _)| *node == first_node) {
+            trace_events.push(TraceEvent::ParseFinish {
+                id: next_trace_id(&trace_events),
+                outcome: ParseOutcome::Accepted,
+            });
+            return Ok(RuntimeParseReport {
+                tree: first_node,
+                trace_events,
+                tree_events,
+                accepted_count: accepted.len(),
+                failure_count: failures.len(),
+                max_live_versions,
+            });
+        }
+
+        trace_events.push(TraceEvent::ParseFinish {
+            id: next_trace_id(&trace_events),
+            outcome: ParseOutcome::Failed,
+        });
+        Err(
+            ReducedParseError::new(ReducedParseErrorKind::AmbiguousParse {
+                accepted_count: accepted.len(),
+                accepted: accepted.iter().map(|(node, _)| node.to_sexp()).collect(),
+            })
+            .with_trace(first_trace),
+        )
+    }
+
+    fn step_runtime_branch(
+        &self,
+        branch: RuntimeBranch,
+        input: &str,
+        tree_store: &mut RuntimeTreeStore,
+        trace_events: &mut Vec<TraceEvent>,
+        tree_events: &mut Vec<TreeEvent>,
+        next_version_index: &mut usize,
+        next_lookahead_index: &mut usize,
+    ) -> Vec<RuntimeStepOutcome> {
+        let source_version = branch.version;
+        let state = match branch.stack.last() {
+            Some(entry) => entry.state,
+            None => {
+                return vec![RuntimeStepOutcome::Failed {
+                    version: source_version,
+                    error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
+                        .with_trace(branch.trace),
+                }];
+            }
+        };
+        let state_row = match self.reduced.parse_state(state) {
+            Ok(state_row) => state_row,
+            Err(error) => {
+                return vec![RuntimeStepOutcome::Failed {
+                    version: source_version,
+                    error: error.with_trace(branch.trace),
+                }];
+            }
+        };
+        let token = match self.reduced.lex(state_row, input, branch.byte_position) {
+            Ok(token) => token,
+            Err(error) => {
+                return vec![RuntimeStepOutcome::Failed {
+                    version: source_version,
+                    error: error.with_trace(branch.trace),
+                }];
+            }
+        };
+        let lookahead = LookaheadTokenId::from_index(*next_lookahead_index);
+        *next_lookahead_index += 1;
+        trace_events.push(TraceEvent::Lex {
+            version: source_version,
+            mode: state_row.lex_mode(),
+            lookahead,
+        });
+        if let LookaheadSymbol::External(_) = token.lookahead {
+            let mode = &self.reduced.table.lexical_modes()[state_row.lex_mode().get() as usize];
+            if let Some(valid_symbols) = mode.valid_symbols() {
+                trace_events.push(TraceEvent::ExternalScanner {
+                    version: source_version,
+                    valid_symbols,
+                    before: None,
+                    after: None,
+                    result: Some(lookahead),
+                });
+            }
+        }
+        let Some(entry) = state_row
+            .entries()
+            .iter()
+            .find(|entry| entry.lookahead() == token.lookahead)
+        else {
+            return vec![RuntimeStepOutcome::Failed {
+                version: source_version,
+                error: ReducedParseError::new(ReducedParseErrorKind::NoAction {
+                    state,
+                    lookahead: token.lookahead,
+                    byte_position: branch.byte_position,
+                })
+                .with_trace(branch.trace),
+            }];
+        };
+
+        if entry.actions().len() > 1 {
+            let branches = (0..entry.actions().len())
+                .map(|_| {
+                    let version = StackVersionId::from_index(*next_version_index);
+                    *next_version_index += 1;
+                    version
+                })
+                .collect::<Vec<_>>();
+            let conflict = self.conflict_id(state, token.lookahead, entry.actions());
+            trace_events.push(TraceEvent::GlrSplit {
+                source: source_version,
+                conflict,
+                branches: branches.clone(),
+            });
+            let mut outcomes = Vec::new();
+            for (action, version) in entry.actions().iter().zip(branches) {
+                let mut branch = branch.clone();
+                branch.version = version;
+                branch.trace.push(ReducedTraceStep {
+                    state,
+                    byte_position: branch.byte_position,
+                    lookahead: token.lookahead,
+                    action: *action,
+                });
+                outcomes.push(self.apply_runtime_action(
+                    branch,
+                    token,
+                    lookahead,
+                    *action,
+                    input,
+                    tree_store,
+                    trace_events,
+                    tree_events,
+                ));
+            }
+            return outcomes;
+        }
+
+        let action = entry.actions()[0];
+        let mut branch = branch;
+        branch.trace.push(ReducedTraceStep {
+            state,
+            byte_position: branch.byte_position,
+            lookahead: token.lookahead,
+            action,
+        });
+        vec![self.apply_runtime_action(
+            branch,
+            token,
+            lookahead,
+            action,
+            input,
+            tree_store,
+            trace_events,
+            tree_events,
+        )]
+    }
+
+    fn apply_runtime_action(
+        &self,
+        mut branch: RuntimeBranch,
+        token: ReducedToken,
+        lookahead: LookaheadTokenId,
+        action: ParseAction,
+        input: &str,
+        tree_store: &mut RuntimeTreeStore,
+        trace_events: &mut Vec<TraceEvent>,
+        tree_events: &mut Vec<TreeEvent>,
+    ) -> RuntimeStepOutcome {
+        match action {
+            ParseAction::Shift { state, .. } => {
+                let start = branch.byte_position;
+                branch.byte_position = token.end;
+                let (bytes, points) = input_ranges(input, start, token.end);
+                tree_events.push(TreeEvent::Token {
+                    symbol: lookahead_parser_symbol(token.lookahead),
+                    lookahead,
+                    bytes,
+                    points,
+                    extra: false,
+                    named: false,
+                    keyword: KeywordStatus::Unchecked,
+                });
+                trace_events.push(TraceEvent::Tree(tree_events.last().unwrap().clone()));
+                trace_events.push(TraceEvent::Shift {
+                    version: branch.version,
+                    lookahead,
+                    state,
+                });
+                trace_events.push(TraceEvent::StateEnter {
+                    id: next_trace_id(trace_events),
+                    version: branch.version,
+                    state,
+                });
+                branch.stack.push(RuntimeStackEntry {
+                    state,
+                    fragment: Some(RuntimeFragment::Hidden {
+                        children: Vec::new(),
+                        start_byte: start,
+                        end_byte: token.end,
+                    }),
+                    extra: false,
+                    end_byte: token.end,
+                });
+                RuntimeStepOutcome::Branch(branch)
+            }
+            ParseAction::ShiftExtra => {
+                let start = branch.byte_position;
+                branch.byte_position = token.end;
+                if let Some(fragment) = self.runtime_extra_fragment(
+                    token.lookahead,
+                    tree_store,
+                    tree_events,
+                    input,
+                    start,
+                    token.end,
+                ) {
+                    let Some(state) = branch.stack.last().map(|entry| entry.state) else {
+                        return RuntimeStepOutcome::Failed {
+                            version: branch.version,
+                            error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
+                                .with_trace(branch.trace),
+                        };
+                    };
+                    branch.stack.push(RuntimeStackEntry {
+                        state,
+                        fragment: Some(fragment),
+                        extra: true,
+                        end_byte: token.end,
+                    });
+                }
+                RuntimeStepOutcome::Branch(branch)
+            }
+            ParseAction::Reduce {
+                production,
+                metadata,
+                symbol,
+                child_count,
+                ..
+            } => {
+                let fragment = match self.runtime_reduce_fragment(
+                    production,
+                    metadata,
+                    child_count,
+                    &mut branch.stack,
+                    tree_store,
+                    tree_events,
+                    input,
+                ) {
+                    Ok(fragment) => fragment,
+                    Err(error) => {
+                        return RuntimeStepOutcome::Failed {
+                            version: branch.version,
+                            error: error.with_trace(branch.trace),
+                        };
+                    }
+                };
+                trace_events.push(TraceEvent::Reduce {
+                    version: branch.version,
+                    production,
+                    metadata,
+                });
+                let head_state = match branch.stack.last() {
+                    Some(entry) => entry.state,
+                    None => {
+                        return RuntimeStepOutcome::Failed {
+                            version: branch.version,
+                            error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
+                                .with_trace(branch.trace),
+                        };
+                    }
+                };
+                let goto_state = match self.reduced.goto_state(head_state, symbol) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        return RuntimeStepOutcome::Failed {
+                            version: branch.version,
+                            error: error.with_trace(branch.trace),
+                        };
+                    }
+                };
+                let (_start_byte, end_byte) = fragment.byte_range();
+                branch.stack.push(RuntimeStackEntry {
+                    state: goto_state,
+                    fragment: Some(fragment),
+                    extra: false,
+                    end_byte,
+                });
+                trace_events.push(TraceEvent::StateEnter {
+                    id: next_trace_id(trace_events),
+                    version: branch.version,
+                    state: goto_state,
+                });
+                RuntimeStepOutcome::Branch(branch)
+            }
+            ParseAction::Accept {
+                production,
+                metadata,
+                child_count,
+                ..
+            } => {
+                if token.lookahead != LookaheadSymbol::Eof || branch.byte_position != input.len() {
+                    return RuntimeStepOutcome::Failed {
+                        version: branch.version,
+                        error: ReducedParseError::new(ReducedParseErrorKind::TrailingInput {
+                            byte_position: branch.byte_position,
+                        })
+                        .with_trace(branch.trace),
+                    };
+                }
+                let fragment = match self.runtime_reduce_fragment(
+                    production,
+                    metadata,
+                    child_count,
+                    &mut branch.stack,
+                    tree_store,
+                    tree_events,
+                    input,
+                ) {
+                    Ok(fragment) => fragment,
+                    Err(error) => {
+                        return RuntimeStepOutcome::Failed {
+                            version: branch.version,
+                            error: error.with_trace(branch.trace),
+                        };
+                    }
+                };
+                trace_events.push(TraceEvent::Reduce {
+                    version: branch.version,
+                    production,
+                    metadata,
+                });
+                match fragment {
+                    RuntimeFragment::Node {
+                        node,
+                        start_byte: _,
+                        end_byte: _,
+                    } => {
+                        let root =
+                            match self.finish_runtime_root(node, &mut branch.stack, tree_store) {
+                                Ok(node) => node,
+                                Err(error) => {
+                                    return RuntimeStepOutcome::Failed {
+                                        version: branch.version,
+                                        error: error.with_trace(branch.trace),
+                                    };
+                                }
+                            };
+                        RuntimeStepOutcome::Accepted {
+                            version: branch.version,
+                            node: root,
+                            trace: branch.trace,
+                        }
+                    }
+                    RuntimeFragment::Hidden { .. } => RuntimeStepOutcome::Failed {
+                        version: branch.version,
+                        error: ReducedParseError::new(ReducedParseErrorKind::AcceptedHiddenRoot)
+                            .with_trace(branch.trace),
+                    },
+                }
+            }
+            ParseAction::Recover => {
+                let state = branch
+                    .stack
+                    .last()
+                    .map(|entry| entry.state)
+                    .unwrap_or(ParseStateId::from_index(0));
+                trace_events.push(TraceEvent::Recover {
+                    version: branch.version,
+                    state,
+                });
+                RuntimeStepOutcome::Failed {
+                    version: branch.version,
+                    error: ReducedParseError::new(ReducedParseErrorKind::UnsupportedRecovery {
+                        state,
+                    })
+                    .with_trace(branch.trace),
+                }
+            }
+        }
+    }
+
+    fn runtime_reduce_fragment(
+        &self,
+        production: ProductionId,
+        metadata: ProductionMetadataId,
+        child_count: usize,
+        stack: &mut Vec<RuntimeStackEntry>,
+        tree_store: &mut RuntimeTreeStore,
+        tree_events: &mut Vec<TreeEvent>,
+        input: &str,
+    ) -> Result<RuntimeFragment, ReducedParseError> {
+        let production_row = &self.reduced.parser.productions[production.get() as usize];
+        let metadata_row = &self.reduced.parser.production_metadata[metadata.get() as usize];
+        let mut children = Vec::new();
+        let mut popped = Vec::new();
+        let mut remaining_children = child_count;
+        while remaining_children > 0 {
+            let entry = stack
+                .pop()
+                .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
+            let Some(fragment) = entry.fragment else {
+                return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
+            };
+            if !entry.extra {
+                remaining_children -= 1;
+            }
+            popped.push((entry.extra, fragment));
+        }
+        popped.reverse();
+        let start_byte = popped
+            .first()
+            .map(|(_, fragment)| fragment.byte_range().0)
+            .unwrap_or_else(|| stack.last().map(|entry| entry.end_byte).unwrap_or(0));
+        let end_byte = popped
+            .last()
+            .map(|(_, fragment)| fragment.byte_range().1)
+            .unwrap_or(start_byte);
+        let mut steps = production_row.steps().iter();
+        for (extra, fragment) in popped {
+            let mut step_children = fragment.into_children(tree_store);
+            if !extra {
+                let Some(step) = steps.next() else {
+                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
+                };
+                if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
+                    let alias_name = self.reduced.parser.aliases[alias.get() as usize]
+                        .value
+                        .clone();
+                    if step_children.is_empty() {
+                        step_children.push(SexpChild {
+                            field: None,
+                            value: SexpValue::Node(SexpNode {
+                                kind: alias_name,
+                                children: Vec::new(),
+                            }),
+                        });
+                    } else {
+                        for child in &mut step_children {
+                            if let SexpValue::Node(node) = &mut child.value {
+                                node.kind.clone_from(&alias_name);
+                            }
+                        }
+                    }
+                }
+            }
+            children.extend(step_children);
+        }
+
+        if let Some(public_node) = metadata_row.public_node() {
+            let kind = self.reduced.parser.public_node_kinds[public_node.get() as usize]
+                .name()
+                .to_owned();
+            let node = tree_store.push(SexpNode { kind, children });
+            let (bytes, points) = input_ranges(input, start_byte, end_byte);
+            let event = TreeEvent::Reduce {
+                production,
+                metadata,
+                node,
+                bytes,
+                points,
+            };
+            tree_events.push(event);
+            Ok(RuntimeFragment::Node {
+                node,
+                start_byte,
+                end_byte,
+            })
+        } else {
+            Ok(RuntimeFragment::Hidden {
+                children,
+                start_byte,
+                end_byte,
+            })
+        }
+    }
+
+    fn runtime_extra_fragment(
+        &self,
+        lookahead: LookaheadSymbol,
+        tree_store: &mut RuntimeTreeStore,
+        tree_events: &mut Vec<TreeEvent>,
+        input: &str,
+        start_byte: usize,
+        end_byte: usize,
+    ) -> Option<RuntimeFragment> {
+        let ReducedFragment::Node(node) = self.reduced.extra_fragment(lookahead)? else {
+            return None;
+        };
+        let node = tree_store.push(node);
+        let (bytes, points) = input_ranges(input, start_byte, end_byte);
+        tree_events.push(TreeEvent::CloseNode {
+            node,
+            bytes,
+            points,
+        });
+        Some(RuntimeFragment::Node {
+            node,
+            start_byte,
+            end_byte,
+        })
+    }
+
+    fn finish_runtime_root(
+        &self,
+        node: TreeNodeId,
+        stack: &mut Vec<RuntimeStackEntry>,
+        tree_store: &RuntimeTreeStore,
+    ) -> Result<SexpNode, ReducedParseError> {
+        let mut root = tree_store.node(node).clone();
+        let mut leading_children = Vec::new();
+        for entry in stack.drain(..) {
+            match (entry.extra, entry.fragment) {
+                (_, None) => {}
+                (true, Some(fragment)) => {
+                    leading_children.extend(fragment.into_children(tree_store));
+                }
+                (false, Some(_)) => {
+                    return Err(ReducedParseError::new(
+                        ReducedParseErrorKind::UnreducedStackEntry { state: entry.state },
+                    ));
+                }
+            }
+        }
+        if !leading_children.is_empty() {
+            leading_children.extend(root.children);
+            root.children = leading_children;
+        }
+        Ok(root)
+    }
+
+    fn conflict_id(
+        &self,
+        state: ParseStateId,
+        lookahead: LookaheadSymbol,
+        actions: &[ParseAction],
+    ) -> ConflictId {
+        self.reduced
+            .table
+            .conflicts()
+            .iter()
+            .find(|conflict| {
+                conflict.state() == state
+                    && conflict.lookahead() == lookahead
+                    && conflict.actions() == actions
+            })
+            .map(TableConflict::id)
+            .unwrap_or_else(|| ConflictId::from_index(0))
+    }
+}
+
+/// Runtime parse result with structured stack/tree evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeParseReport {
+    tree: SexpNode,
+    trace_events: Vec<TraceEvent>,
+    tree_events: Vec<TreeEvent>,
+    accepted_count: usize,
+    failure_count: usize,
+    max_live_versions: usize,
+}
+
+impl RuntimeParseReport {
+    /// Corpus-normalized accepted runtime tree.
+    pub const fn tree(&self) -> &SexpNode {
+        &self.tree
+    }
+
+    /// Structured parser trace events emitted during runtime execution.
+    pub fn trace_events(&self) -> &[TraceEvent] {
+        &self.trace_events
+    }
+
+    /// Runtime tree events emitted during runtime execution.
+    pub fn tree_events(&self) -> &[TreeEvent] {
+        &self.tree_events
+    }
+
+    /// Number of accepted runtime branches before identical-tree coalescing.
+    pub const fn accepted_count(&self) -> usize {
+        self.accepted_count
+    }
+
+    /// Number of branch failures observed while exploring the runtime table.
+    pub const fn failure_count(&self) -> usize {
+        self.failure_count
+    }
+
+    /// Maximum number of queued live runtime stack versions observed.
+    pub const fn max_live_versions(&self) -> usize {
+        self.max_live_versions
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeBranch {
+    version: StackVersionId,
+    stack: Vec<RuntimeStackEntry>,
+    byte_position: usize,
+    trace: Vec<ReducedTraceStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RuntimeStepOutcome {
+    Branch(RuntimeBranch),
+    Accepted {
+        version: StackVersionId,
+        node: SexpNode,
+        trace: Vec<ReducedTraceStep>,
+    },
+    Failed {
+        version: StackVersionId,
+        error: ReducedParseError,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeStackEntry {
+    state: ParseStateId,
+    fragment: Option<RuntimeFragment>,
+    extra: bool,
+    end_byte: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RuntimeFragment {
+    Hidden {
+        children: Vec<SexpChild>,
+        start_byte: usize,
+        end_byte: usize,
+    },
+    Node {
+        node: TreeNodeId,
+        start_byte: usize,
+        end_byte: usize,
+    },
+}
+
+impl RuntimeFragment {
+    fn into_children(self, tree_store: &RuntimeTreeStore) -> Vec<SexpChild> {
+        match self {
+            Self::Hidden { children, .. } => children,
+            Self::Node { node, .. } => vec![SexpChild {
+                field: None,
+                value: SexpValue::Node(tree_store.node(node).clone()),
+            }],
+        }
+    }
+
+    const fn byte_range(&self) -> (usize, usize) {
+        match self {
+            Self::Hidden {
+                start_byte,
+                end_byte,
+                ..
+            }
+            | Self::Node {
+                start_byte,
+                end_byte,
+                ..
+            } => (*start_byte, *end_byte),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct RuntimeTreeStore {
+    nodes: Vec<SexpNode>,
+}
+
+impl RuntimeTreeStore {
+    fn push(&mut self, node: SexpNode) -> TreeNodeId {
+        let id = TreeNodeId::from_index(self.nodes.len());
+        self.nodes.push(node);
+        id
+    }
+
+    fn node(&self, id: TreeNodeId) -> &SexpNode {
+        &self.nodes[id.get() as usize]
+    }
+}
+
+fn next_trace_id(events: &[TraceEvent]) -> TraceEventId {
+    TraceEventId::from_index(events.len())
+}
+
+fn lookahead_parser_symbol(lookahead: LookaheadSymbol) -> ParserSymbol {
+    match lookahead {
+        LookaheadSymbol::Terminal(terminal) | LookaheadSymbol::ReservedWord { terminal, .. } => {
+            ParserSymbol::Terminal(terminal)
+        }
+        LookaheadSymbol::External(external) => ParserSymbol::External(external),
+        LookaheadSymbol::Eof => ParserSymbol::Eof,
+        LookaheadSymbol::ErrorRecovery(internal) => ParserSymbol::Internal(internal),
+    }
+}
+
+fn input_ranges(input: &str, start: usize, end: usize) -> (ByteRange, PointRange) {
+    let start = start.min(input.len());
+    let end = end.min(input.len()).max(start);
+    let bytes = ByteRange::new(
+        ByteOffset::new(u32::try_from(start).expect("runtime byte offset fits u32")),
+        ByteOffset::new(u32::try_from(end).expect("runtime byte offset fits u32")),
+    )
+    .expect("runtime byte range is ordered");
+    let points = PointRange::new(input_point_at(input, start), input_point_at(input, end))
+        .expect("runtime point range is ordered");
+    (bytes, points)
+}
+
+fn input_point_at(input: &str, byte: usize) -> PointBytes {
+    let mut row = 0u32;
+    let mut column = 0u32;
+    for ch in input[..byte.min(input.len())].chars() {
+        if ch == '\n' {
+            row += 1;
+            column = 0;
+        } else {
+            column += u32::try_from(ch.len_utf8()).expect("UTF-8 codepoint length fits u32");
+        }
+    }
+    PointBytes::new(Row::new(row), Utf8ColumnBytes::new(column))
+}
+
 fn select_reduced_failure(failures: Vec<ReducedParseError>) -> Option<ReducedParseError> {
     let failure_count = failures.len();
     failures
@@ -5839,6 +6690,8 @@ pub enum ParseOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BranchRetireReason {
+    /// The branch accepted the input and left the live work queue.
+    Accepted,
     /// The branch was dominated by a lower-cost branch.
     Dominated,
     /// The branch reached an impossible action.
