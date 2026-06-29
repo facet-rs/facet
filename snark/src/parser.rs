@@ -5399,14 +5399,46 @@ fn terminal_lexical_completion_precedence(
 ) -> i32 {
     terminal
         .lexical_root()
-        .and_then(|root| match grammar.expr(root) {
-            GrammarExpr::Prec {
-                value: StaticPrecedenceValue::Integer(value),
-                ..
-            } => Some(*value),
-            _ => None,
-        })
+        .and_then(|root| lexical_expr_completion_precedence(grammar, root))
         .unwrap_or(0)
+}
+
+fn lexical_expr_completion_precedence(
+    grammar: &ValidatedGrammar,
+    expr: GrammarExprId,
+) -> Option<i32> {
+    match grammar.expr(expr) {
+        GrammarExpr::Prec {
+            value: StaticPrecedenceValue::Integer(value),
+            ..
+        } => Some(*value),
+        GrammarExpr::Prec {
+            value: StaticPrecedenceValue::Name(_),
+            content,
+            ..
+        } => lexical_expr_completion_precedence(grammar, *content),
+        GrammarExpr::Token(content)
+        | GrammarExpr::ImmediateToken(content)
+        | GrammarExpr::Field { content, .. }
+        | GrammarExpr::PrecDynamic { content, .. }
+        | GrammarExpr::Alias { content, .. }
+        | GrammarExpr::Reserved { content, .. } => {
+            lexical_expr_completion_precedence(grammar, *content)
+        }
+        GrammarExpr::Choice(members) | GrammarExpr::Seq(members) => members
+            .iter()
+            .filter_map(|member| lexical_expr_completion_precedence(grammar, *member))
+            .max(),
+        GrammarExpr::Repeat(content) | GrammarExpr::Repeat1(content) => {
+            lexical_expr_completion_precedence(grammar, *content)
+        }
+        GrammarExpr::Blank
+        | GrammarExpr::StringToken(_)
+        | GrammarExpr::PatternToken { .. }
+        | GrammarExpr::Until { .. }
+        | GrammarExpr::Nested { .. }
+        | GrammarExpr::Symbol(_) => None,
+    }
 }
 
 fn terminal_lexical_implicit_precedence(
@@ -5839,6 +5871,17 @@ fn reduced_candidate_order(
     if left.extra && right.immediate && !right.extra {
         return ReducedCandidateOrder::Less;
     }
+    if left.end == right.end && left.external && !right.external {
+        return ReducedCandidateOrder::Greater;
+    }
+    if left.end == right.end && !left.external && right.external {
+        return ReducedCandidateOrder::Less;
+    }
+    match left.lexical_precedence.cmp(&right.lexical_precedence) {
+        std::cmp::Ordering::Greater => return ReducedCandidateOrder::Greater,
+        std::cmp::Ordering::Less => return ReducedCandidateOrder::Less,
+        std::cmp::Ordering::Equal => {}
+    }
     match left.end.cmp(&right.end) {
         std::cmp::Ordering::Greater => ReducedCandidateOrder::Greater,
         std::cmp::Ordering::Less => ReducedCandidateOrder::Less,
@@ -5846,12 +5889,6 @@ fn reduced_candidate_order(
             ReducedCandidateOrder::Greater
         }
         std::cmp::Ordering::Equal if !left.external && right.external => {
-            ReducedCandidateOrder::Less
-        }
-        std::cmp::Ordering::Equal if left.lexical_precedence > right.lexical_precedence => {
-            ReducedCandidateOrder::Greater
-        }
-        std::cmp::Ordering::Equal if left.lexical_precedence < right.lexical_precedence => {
             ReducedCandidateOrder::Less
         }
         std::cmp::Ordering::Equal if left.implicit_precedence > right.implicit_precedence => {
@@ -9935,6 +9972,36 @@ extras (
     }
 
     #[test]
+    fn compiled_lexer_carries_precedence_inside_token_wrapper() {
+        let (validated, parser, _table) = prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "SYMBOL", "name": "context" },
+                "context": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "PREC",
+                    "value": -1,
+                    "content": { "type": "PATTERN", "value": "[^\\n]+" }
+                  }
+                }
+              }
+            }"##,
+        );
+
+        let compiled = parser
+            .symbols
+            .terminals()
+            .iter()
+            .map(|terminal| compile_lex_terminal(&validated, terminal))
+            .find(|terminal| terminal.lexical_precedence == -1)
+            .unwrap();
+
+        assert_eq!(compiled.lexical_precedence, -1);
+    }
+
+    #[test]
     fn lexical_primitives_parse_until_and_nested_tokens() {
         let (validated, parser, table) = prepared_with_validated(
             r##"{
@@ -10273,6 +10340,41 @@ extras (
         );
         assert_eq!(
             reduced_candidate_order(direct_string, immediate_string),
+            ReducedCandidateOrder::Less
+        );
+    }
+
+    #[test]
+    fn reduced_lexer_prefers_explicit_lexical_precedence_before_length() {
+        let structured_line = ReducedTokenCandidate {
+            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
+            end: 1,
+            extra: false,
+            external: false,
+            immediate: false,
+            literal: true,
+            lexical_precedence: 0,
+            implicit_precedence: 2,
+            scanner: None,
+        };
+        let low_precedence_context = ReducedTokenCandidate {
+            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
+            end: 32,
+            extra: false,
+            external: false,
+            immediate: false,
+            literal: false,
+            lexical_precedence: -1,
+            implicit_precedence: 0,
+            scanner: None,
+        };
+
+        assert_eq!(
+            reduced_candidate_order(structured_line, low_precedence_context),
+            ReducedCandidateOrder::Greater
+        );
+        assert_eq!(
+            reduced_candidate_order(low_precedence_context, structured_line),
             ReducedCandidateOrder::Less
         );
     }

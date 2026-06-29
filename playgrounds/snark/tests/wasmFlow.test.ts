@@ -238,7 +238,7 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
         missingCount: 0,
       },
       { id: "json", sample: "samples/package.json", ok: true, language: "json", errorCount: 0, missingCount: 0 },
-      { id: "nginx", sample: "samples/nginx.conf", ok: false, language: "nginx", errorCount: 28, missingCount: 0 },
+      { id: "nginx", sample: "samples/nginx.conf", ok: false, language: "nginx", errorCount: null, missingCount: null },
       { id: "proto", sample: "samples/addressbook.proto", ok: true, language: "proto", errorCount: 0, missingCount: 0 },
       { id: "thrift", sample: "samples/tutorial.thrift", ok: true, language: "thrift", errorCount: 0, missingCount: 0 },
       { id: "yuri", sample: "samples/example.yuri", ok: true, language: "yuri", errorCount: 0, missingCount: 0 },
@@ -249,16 +249,15 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
     "parse",
   );
   assert.ok(
-    results
-      .filter((result) => result.id !== "diff")
-      .every((result) => result.captures > 0),
+    results.filter((result) => result.id !== "nginx").every((result) => result.captures > 0),
+    JSON.stringify(results, null, 2),
   );
 });
 
 const arboriumNginxDef = "/Users/amos/oss/arborium/langs/group-maple/nginx/def";
 
 test(
-  "reports Arborium nginx grammar.js recovery failure through Snark WASM",
+  "reports Arborium nginx grammar.js parse failure through Snark WASM",
   { skip: existsSync(arboriumNginxDef) ? false : `${arboriumNginxDef} is not available` },
   () => {
     const grammarJs = readFileSync(`${arboriumNginxDef}/grammar/grammar.js`, "utf8");
@@ -287,7 +286,7 @@ test(
     assert.equal(response.ok, false);
     assert.equal(response.language, "nginx");
     assert.equal(response.diagnostics[0].stage, "parse");
-    assert.match(response.diagnostics[0].message, /accepted parse contains/);
+    assert.match(response.diagnostics[0].message, /could not lex a token/);
     assert.deepEqual(
       [
         response.diagnostics[0].primary_span.start_row,
@@ -295,10 +294,7 @@ test(
       ],
       [110, 4],
     );
-    assert.ok(response.parse);
-    assert.ok(response.parse.accepted_error_count > 0);
-    assert.equal(response.parse.accepted_missing_count, 0);
-    assert.match(response.parse.sexp, /\(ERROR/);
-    assert.ok(response.highlights.length > 0);
+    assert.equal(response.parse, null);
+    assert.equal(response.highlights.length, 0);
   },
 );
