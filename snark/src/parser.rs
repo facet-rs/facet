@@ -3727,6 +3727,7 @@ pub struct ReducedParser<'a> {
     parser: &'a ParserGrammar,
     table: &'a ParseTable,
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
+    first: Option<FirstFacts>,
 }
 
 /// External scanner host used by the reduced parser oracle.
@@ -4006,11 +4007,16 @@ impl<'a> ReducedParser<'a> {
                 stage: parser.stage(),
             }));
         }
+        let first = parser
+            .item_preparation
+            .as_ref()
+            .map(|item_preparation| FirstFacts::new(parser, item_preparation.graph()));
         Ok(Self {
             grammar,
             parser,
             table,
             external_scanner: None,
+            first,
         })
     }
 
@@ -4860,8 +4866,7 @@ impl<'a> ReducedParser<'a> {
     }
 
     fn extra_fragment(&self, lookahead: LookaheadSymbol) -> Option<ReducedFragment> {
-        let item_preparation = self.parser.item_preparation.as_ref()?;
-        let first = FirstFacts::new(self.parser, item_preparation.graph());
+        let first = self.first.as_ref()?;
         for extra in &self.parser.extra_roots {
             let ParserSymbol::Nonterminal(nonterminal) = extra.symbol else {
                 continue;
@@ -5445,6 +5450,7 @@ impl<'a> RuntimeParser<'a> {
             version: StackVersionId::from_index(0),
             state: ParseStateId::from_index(0),
         });
+        let line_index = InputLineIndex::new(input);
 
         let initial_branch = RuntimeBranch {
             version: StackVersionId::from_index(0),
@@ -5512,6 +5518,7 @@ impl<'a> RuntimeParser<'a> {
             for outcome in self.step_runtime_branch(
                 branch,
                 input,
+                &line_index,
                 &mut tree_store,
                 &mut trace_events,
                 &mut tree_events,
@@ -5616,6 +5623,7 @@ impl<'a> RuntimeParser<'a> {
         &self,
         branch: RuntimeBranch,
         input: &str,
+        line_index: &InputLineIndex,
         tree_store: &mut RuntimeTreeStore,
         trace_events: &mut Vec<TraceEvent>,
         tree_events: &mut Vec<TreeEvent>,
@@ -5664,6 +5672,7 @@ impl<'a> RuntimeParser<'a> {
                     && let Some(branch) = self.recover_runtime_no_token(
                         branch.clone(),
                         input,
+                        line_index,
                         tree_store,
                         trace_events,
                         tree_events,
@@ -5752,6 +5761,7 @@ impl<'a> RuntimeParser<'a> {
                     lookahead,
                     *action,
                     input,
+                    line_index,
                     tree_store,
                     trace_events,
                     tree_events,
@@ -5774,6 +5784,7 @@ impl<'a> RuntimeParser<'a> {
             lookahead,
             action,
             input,
+            line_index,
             tree_store,
             trace_events,
             tree_events,
@@ -5787,6 +5798,7 @@ impl<'a> RuntimeParser<'a> {
         lookahead: LookaheadTokenId,
         action: ParseAction,
         input: &str,
+        line_index: &InputLineIndex,
         tree_store: &mut RuntimeTreeStore,
         trace_events: &mut Vec<TraceEvent>,
         tree_events: &mut Vec<TreeEvent>,
@@ -5796,7 +5808,7 @@ impl<'a> RuntimeParser<'a> {
                 let start = branch.byte_position;
                 branch.byte_position = token.end;
                 branch.commit_scanner_snapshot(token);
-                let (bytes, points) = input_ranges(input, start, token.end);
+                let (bytes, points) = input_ranges(input, line_index, start, token.end);
                 tree_events.push(TreeEvent::Token {
                     version: branch.version,
                     symbol: lookahead_parser_symbol(token.lookahead),
@@ -5841,6 +5853,7 @@ impl<'a> RuntimeParser<'a> {
                     tree_store,
                     tree_events,
                     input,
+                    line_index,
                     start,
                     token.end,
                 ) {
@@ -5876,6 +5889,7 @@ impl<'a> RuntimeParser<'a> {
                     tree_store,
                     tree_events,
                     input,
+                    line_index,
                     false,
                 ) {
                     Ok(reduction) => reduction,
@@ -5957,6 +5971,7 @@ impl<'a> RuntimeParser<'a> {
                     tree_store,
                     tree_events,
                     input,
+                    line_index,
                     true,
                 ) {
                     Ok(reduction) => reduction,
@@ -6096,6 +6111,7 @@ impl<'a> RuntimeParser<'a> {
         &self,
         mut branch: RuntimeBranch,
         input: &str,
+        line_index: &InputLineIndex,
         tree_store: &mut RuntimeTreeStore,
         trace_events: &mut Vec<TraceEvent>,
         tree_events: &mut Vec<TreeEvent>,
@@ -6107,7 +6123,7 @@ impl<'a> RuntimeParser<'a> {
             kind: "ERROR".to_owned(),
             children: Vec::new(),
         });
-        let (bytes, points) = input_ranges(input, start_byte, end_byte);
+        let (bytes, points) = input_ranges(input, line_index, start_byte, end_byte);
         trace_events.push(TraceEvent::Recover {
             version: branch.version,
             state,
@@ -6146,6 +6162,7 @@ impl<'a> RuntimeParser<'a> {
         tree_store: &mut RuntimeTreeStore,
         tree_events: &mut Vec<TreeEvent>,
         input: &str,
+        line_index: &InputLineIndex,
         include_trailing_extras: bool,
     ) -> Result<RuntimeReduction, ReducedParseError> {
         let production_row = &self.reduced.parser.productions[production.get() as usize];
@@ -6225,7 +6242,8 @@ impl<'a> RuntimeParser<'a> {
                         kind: alias_name,
                         children: Vec::new(),
                     });
-                    let (bytes, points) = input_ranges(input, alias_range.0, alias_range.1);
+                    let (bytes, points) =
+                        input_ranges(input, line_index, alias_range.0, alias_range.1);
                     tree_events.push(TreeEvent::Alias {
                         version,
                         node: alias_node,
@@ -6255,7 +6273,7 @@ impl<'a> RuntimeParser<'a> {
                 .name()
                 .to_owned();
             let node = tree_store.push(SexpNode { kind, children });
-            let (bytes, points) = input_ranges(input, start_byte, end_byte);
+            let (bytes, points) = input_ranges(input, line_index, start_byte, end_byte);
             let event = TreeEvent::Reduce {
                 version,
                 production,
@@ -6302,6 +6320,7 @@ impl<'a> RuntimeParser<'a> {
         tree_store: &mut RuntimeTreeStore,
         tree_events: &mut Vec<TreeEvent>,
         input: &str,
+        line_index: &InputLineIndex,
         start_byte: usize,
         end_byte: usize,
     ) -> Option<RuntimeFragment> {
@@ -6316,7 +6335,7 @@ impl<'a> RuntimeParser<'a> {
             .find(|kind| kind.name() == node.kind)
             .map(PublicNodeKind::id);
         let node = tree_store.push(node);
-        let (bytes, points) = input_ranges(input, start_byte, end_byte);
+        let (bytes, points) = input_ranges(input, line_index, start_byte, end_byte);
         tree_events.push(TreeEvent::CloseNode {
             version,
             node,
@@ -6683,7 +6702,43 @@ fn lookahead_parser_symbol(lookahead: LookaheadSymbol) -> ParserSymbol {
     }
 }
 
-fn input_ranges(input: &str, start: usize, end: usize) -> (ByteRange, PointRange) {
+struct InputLineIndex {
+    line_starts: Vec<usize>,
+}
+
+impl InputLineIndex {
+    fn new(input: &str) -> Self {
+        let mut line_starts = vec![0];
+        for (byte, ch) in input.char_indices() {
+            if ch == '\n' {
+                line_starts.push(byte + ch.len_utf8());
+            }
+        }
+        Self { line_starts }
+    }
+
+    fn point_at(&self, input: &str, byte: usize) -> PointBytes {
+        let byte = byte.min(input.len());
+        let row = self
+            .line_starts
+            .partition_point(|line_start| *line_start <= byte)
+            .saturating_sub(1);
+        let line_start = self.line_starts[row];
+        PointBytes::new(
+            Row::new(u32::try_from(row).expect("runtime row fits u32")),
+            Utf8ColumnBytes::new(
+                u32::try_from(byte - line_start).expect("runtime UTF-8 column fits u32"),
+            ),
+        )
+    }
+}
+
+fn input_ranges(
+    input: &str,
+    line_index: &InputLineIndex,
+    start: usize,
+    end: usize,
+) -> (ByteRange, PointRange) {
     let start = start.min(input.len());
     let end = end.min(input.len()).max(start);
     let bytes = ByteRange::new(
@@ -6691,23 +6746,12 @@ fn input_ranges(input: &str, start: usize, end: usize) -> (ByteRange, PointRange
         ByteOffset::new(u32::try_from(end).expect("runtime byte offset fits u32")),
     )
     .expect("runtime byte range is ordered");
-    let points = PointRange::new(input_point_at(input, start), input_point_at(input, end))
-        .expect("runtime point range is ordered");
+    let points = PointRange::new(
+        line_index.point_at(input, start),
+        line_index.point_at(input, end),
+    )
+    .expect("runtime point range is ordered");
     (bytes, points)
-}
-
-fn input_point_at(input: &str, byte: usize) -> PointBytes {
-    let mut row = 0u32;
-    let mut column = 0u32;
-    for ch in input[..byte.min(input.len())].chars() {
-        if ch == '\n' {
-            row += 1;
-            column = 0;
-        } else {
-            column += u32::try_from(ch.len_utf8()).expect("UTF-8 codepoint length fits u32");
-        }
-    }
-    PointBytes::new(Row::new(row), Utf8ColumnBytes::new(column))
 }
 
 fn select_reduced_failure(failures: Vec<ReducedParseError>) -> Option<ReducedParseError> {
