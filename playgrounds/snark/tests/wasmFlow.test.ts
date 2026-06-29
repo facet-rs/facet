@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import test from "node:test";
 
 import { initSync, parseBundle } from "../../../snark-wasm/pkg/snark_wasm.js";
+import {
+  discoverGrammarRoots,
+  normalizeBundleFiles,
+  preferredGrammarRootId,
+  preferredSampleForGrammarRootId,
+  projectedFilesForGrammarRootId,
+  sortedFiles,
+  type DslBundleFile,
+} from "../src/bundlePaths.ts";
 import { emitGrammarJsonFromDsl } from "../src/treeSitterDslRuntime.ts";
 
 initSync({
@@ -13,6 +22,43 @@ const officialDsl = readFileSync(
   new URL("../../../snark-dsl/vendor/tree-sitter-generate-0.26.9/dsl.js", import.meta.url),
   "utf8",
 );
+
+function bundledFiles(id: string): DslBundleFile[] {
+  const root = new URL(`../src/bundled/${id}/`, import.meta.url);
+  return normalizeBundleFiles(
+    walkBundledFiles(root).map((path) => ({
+      path: `${id}/${path}`,
+      text: readFileSync(new URL(path, root), "utf8"),
+    })),
+  );
+}
+
+function walkBundledFiles(root: URL, prefix = ""): string[] {
+  const dir = new URL(prefix, root);
+  const paths: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const path = `${prefix}${name}`;
+    const child = new URL(path, root);
+    if (statSync(child).isDirectory()) {
+      paths.push(...walkBundledFiles(root, `${path}/`));
+    } else {
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
+function runnableFilesForBundle(files: DslBundleFile[]) {
+  const rootId = preferredGrammarRootId(files);
+  const root = discoverGrammarRoots(files).find((candidate) => candidate.id === rootId);
+  assert.ok(root, "bundle should have a grammar root");
+  const grammarJson = emitGrammarJsonFromDsl(officialDsl, files, root.grammarPath);
+  const projected = projectedFilesForGrammarRootId(files, rootId).map(({ path, text }) => ({
+    path,
+    text,
+  }));
+  return sortedFiles([...projected, { path: "src/grammar.json", text: grammarJson }]);
+}
 
 test("runs a grammar.js bundle through generated grammar.json, Snark WASM, and highlights", () => {
   const grammarJs = `
@@ -112,6 +158,101 @@ module.exports = grammar({
   });
   assert.equal(response.corpus[0].passed, true);
   assert.equal(response.highlight_tests[0].passed, true);
+});
+
+test("runs every vendored grammar sample through generated grammar.json and Snark WASM", () => {
+  const root = new URL("../src/bundled/", import.meta.url);
+  const grammarIds = readdirSync(root)
+    .filter((name) => statSync(new URL(name, root)).isDirectory())
+    .sort();
+
+  const results = grammarIds.map((id) => {
+    const files = bundledFiles(id);
+    const sample = preferredSampleForGrammarRootId(files);
+    assert.ok(sample, `${id} should have a preferred sample`);
+    const response = JSON.parse(
+      parseBundle(
+        JSON.stringify({
+          files: runnableFilesForBundle(files),
+          input: sample.text,
+          run_corpus: false,
+        }),
+      ),
+    );
+    return {
+      id,
+      sample: sample.path,
+      ok: response.ok,
+      language: response.language,
+      errorCount: response.parse?.accepted_error_count ?? null,
+      missingCount: response.parse?.accepted_missing_count ?? null,
+      captures: response.highlights.length,
+      diagnostics: response.diagnostics,
+    };
+  });
+
+  assert.deepEqual(
+    results.map((result) => ({
+      id: result.id,
+      sample: result.sample,
+      ok: result.ok,
+      language: result.language,
+      errorCount: result.errorCount,
+      missingCount: result.missingCount,
+    })),
+    [
+      { id: "capnp", sample: "samples/addressbook.capnp", ok: true, language: "capnp", errorCount: 0, missingCount: 0 },
+      { id: "cedar", sample: "samples/example.cedar", ok: true, language: "cedar", errorCount: 0, missingCount: 0 },
+      {
+        id: "cedarschema",
+        sample: "samples/example.cedarschema",
+        ok: true,
+        language: "cedarschema",
+        errorCount: 0,
+        missingCount: 0,
+      },
+      { id: "diff", sample: "samples/t-apply-1.patch", ok: true, language: "diff", errorCount: 0, missingCount: 0 },
+      { id: "dot", sample: "samples/crazy.gv", ok: true, language: "dot", errorCount: 0, missingCount: 0 },
+      {
+        id: "gingembre",
+        sample: "samples/blog-index.html",
+        ok: true,
+        language: "gingembre",
+        errorCount: 0,
+        missingCount: 0,
+      },
+      {
+        id: "gitattributes",
+        sample: "samples/example.gitattributes",
+        ok: true,
+        language: "gitattributes",
+        errorCount: 0,
+        missingCount: 0,
+      },
+      {
+        id: "graphql",
+        sample: "samples/starwars_schema.graphql",
+        ok: true,
+        language: "graphql",
+        errorCount: 0,
+        missingCount: 0,
+      },
+      { id: "json", sample: "samples/package.json", ok: true, language: "json", errorCount: 0, missingCount: 0 },
+      { id: "nginx", sample: "samples/nginx.conf", ok: false, language: "nginx", errorCount: 28, missingCount: 0 },
+      { id: "proto", sample: "samples/addressbook.proto", ok: true, language: "proto", errorCount: 0, missingCount: 0 },
+      { id: "thrift", sample: "samples/tutorial.thrift", ok: true, language: "thrift", errorCount: 0, missingCount: 0 },
+      { id: "yuri", sample: "samples/example.yuri", ok: true, language: "yuri", errorCount: 0, missingCount: 0 },
+    ],
+  );
+  assert.equal(
+    results.find((result) => result.id === "nginx")?.diagnostics[0]?.stage,
+    "parse",
+  );
+  assert.ok(
+    results
+      .filter((result) => result.id !== "diff")
+      .every((result) => result.captures > 0),
+  );
 });
 
 const arboriumNginxDef = "/Users/amos/oss/arborium/langs/group-maple/nginx/def";

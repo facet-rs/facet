@@ -64,12 +64,37 @@ export function firstSampleForGrammarRootId(
   );
 }
 
+export function preferredSampleForGrammarRootId(
+  files: DslBundleFile[],
+  rootId = preferredGrammarRootId(files),
+): ProjectedDslBundleFile | null {
+  const samples = projectedFilesForGrammarRootId(files, rootId).filter((file) =>
+    file.path.startsWith("samples/"),
+  );
+  return sortedSampleFiles(samples)[0] ?? firstSampleForGrammarRootId(files, rootId);
+}
+
+export function sortedSampleFiles<T extends DslBundleFile>(files: T[]): T[] {
+  return [...files].sort((left, right) => {
+    const leftError = isErrorSamplePath(left.path);
+    const rightError = isErrorSamplePath(right.path);
+    if (leftError !== rightError) {
+      return leftError ? 1 : -1;
+    }
+    return left.path.localeCompare(right.path);
+  });
+}
+
 export function normalizePath(path: string) {
   let normalized = path.replace(/\\/g, "/");
   while (normalized.startsWith("./")) {
     normalized = normalized.slice(2);
   }
   return normalized;
+}
+
+function isErrorSamplePath(path: string) {
+  return /(^|[-_/])(errors?|invalid|broken)([-_.\\/]|$)/i.test(path);
 }
 
 function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): ProjectedDslBundleFile[] {

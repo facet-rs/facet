@@ -5,6 +5,7 @@ import {
   discoverGrammarRoots,
   firstSampleForGrammarRootId,
   normalizeBundleFiles,
+  preferredSampleForGrammarRootId,
   projectedFilesForGrammarRootId,
   type DslBundleFile,
 } from "../src/bundlePaths.ts";
@@ -107,6 +108,20 @@ test("selects the first uploaded sample for a single uploaded grammar root", () 
   assert.deepEqual(firstSampleForGrammarRootId(files), {
     path: "samples/z-last.conf",
     sourcePath: "samples/z-last.conf",
+    text: "",
+  });
+});
+
+test("prefers non-error samples before error fixtures", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-nginx/grammar.js"),
+    file("tree-sitter-nginx/samples/nginx-errors.conf"),
+    file("tree-sitter-nginx/samples/nginx.conf"),
+  ]);
+
+  assert.deepEqual(preferredSampleForGrammarRootId(files), {
+    path: "samples/nginx.conf",
+    sourcePath: "samples/nginx.conf",
     text: "",
   });
 });

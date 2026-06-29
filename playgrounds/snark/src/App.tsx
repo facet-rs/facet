@@ -6,11 +6,12 @@ import { defaultVendoredRootId, vendoredFiles } from "./bundled";
 import {
   discoverGrammarRoots,
   filesWithGrammarJson,
-  firstSampleForGrammarRootId,
   grammarRootForId,
   normalizeBundleFiles,
   preferredGrammarRootId,
+  preferredSampleForGrammarRootId,
   projectedFilesForGrammarRootId,
+  sortedSampleFiles,
   sortedFiles,
   normalizePath,
   type DslBundleFile,
@@ -749,32 +750,10 @@ function isGeneratedPath(path: string) {
   );
 }
 
-function preferredSampleForGrammarRootId(files: BundleFile[], rootId: string) {
-  const samples = projectedFilesForGrammarRootId(files, rootId).filter((file): file is SampleFile =>
-    file.path.startsWith("samples/"),
-  );
-  return sortedSampleFiles(samples)[0] ?? firstSampleForGrammarRootId(files, rootId);
-}
-
-function sortedSampleFiles(files: SampleFile[]) {
-  return [...files].sort((left, right) => {
-    const leftError = isErrorSamplePath(left.path);
-    const rightError = isErrorSamplePath(right.path);
-    if (leftError !== rightError) {
-      return leftError ? 1 : -1;
-    }
-    return left.path.localeCompare(right.path);
-  });
-}
-
 function sortedRuntimeBundleFiles(files: ProjectedDslBundleFile[]) {
   const runtimeFiles = sortedFiles(files).filter((file) => isRuntimeBundlePath(file.path));
   const samples = sortedSampleFiles(runtimeFiles.filter((file): file is SampleFile => file.path.startsWith("samples/")));
   return [...runtimeFiles.filter((file) => !file.path.startsWith("samples/")), ...samples];
-}
-
-function isErrorSamplePath(path: string) {
-  return /(^|[-_/])(errors?|invalid|broken)([-_.\\/]|$)/i.test(path);
 }
 
 function isRuntimeBundlePath(path: string) {
