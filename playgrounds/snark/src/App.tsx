@@ -478,9 +478,17 @@ function StatusStrip({ result }: { result: PlaygroundResponse | null }) {
   if (testFailures > 0) {
     return (
       <div className="status-strip warn">
-        <span>Parse accepted {result.parse?.accepted_count ?? 0}</span>
+        {result.parse ? <span>Parse accepted {result.parse.accepted_count}</span> : null}
         <span>{corpusFailures} corpus fail</span>
         <span>{highlightFailures} highlight fail</span>
+      </div>
+    );
+  }
+  if (!result.parse && result.tests.requested) {
+    return (
+      <div className="status-strip ok">
+        <span>{result.tests.corpus_passed} corpus pass</span>
+        <span>{result.tests.highlight_assertions_passed} highlight pass</span>
       </div>
     );
   }

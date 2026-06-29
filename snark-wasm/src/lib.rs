@@ -247,44 +247,47 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
     let scanner_selection = scanner_selection(&files, &prepared.parser);
     bundle.active_scanner = scanner_selection.active_scanner.clone();
     let runtime = RuntimeParser::new(&prepared.validated, &prepared.parser, &prepared.table);
-    match runtime {
-        Ok(runtime) => match parse_with_optional_scanner(
-            runtime,
-            scanner_selection
-                .scanner
-                .as_ref()
-                .map(|scanner| scanner as &dyn ReducedExternalScanner),
-            &request.input,
-        ) {
-            Ok(report) => {
-                let accepted_tree_event_count = report.accepted_tree_events().len();
-                parse = Some(ParseOutput {
-                    sexp: report.tree().to_sexp(),
-                    accepted_count: report.accepted_count(),
-                    failure_count: report.failure_count(),
-                    max_live_versions: report.max_live_versions(),
-                    trace_event_count: report.trace_events().len(),
-                    tree_event_count: report.tree_events().len(),
-                    accepted_tree_event_count,
-                });
-                if let Some(query_file) = find_file(&files, "queries/highlights.scm") {
-                    highlights = highlight_outputs(
-                        &QuerySource(query_file.text.clone()),
-                        &prepared.parser,
-                        &report,
-                        &request.input,
-                    );
+    let should_parse_input = !request.input.is_empty() || !request.run_corpus;
+    if should_parse_input {
+        match runtime {
+            Ok(runtime) => match parse_with_optional_scanner(
+                runtime,
+                scanner_selection
+                    .scanner
+                    .as_ref()
+                    .map(|scanner| scanner as &dyn ReducedExternalScanner),
+                &request.input,
+            ) {
+                Ok(report) => {
+                    let accepted_tree_event_count = report.accepted_tree_events().len();
+                    parse = Some(ParseOutput {
+                        sexp: report.tree().to_sexp(),
+                        accepted_count: report.accepted_count(),
+                        failure_count: report.failure_count(),
+                        max_live_versions: report.max_live_versions(),
+                        trace_event_count: report.trace_events().len(),
+                        tree_event_count: report.tree_events().len(),
+                        accepted_tree_event_count,
+                    });
+                    if let Some(query_file) = find_file(&files, "queries/highlights.scm") {
+                        highlights = highlight_outputs(
+                            &QuerySource(query_file.text.clone()),
+                            &prepared.parser,
+                            &report,
+                            &request.input,
+                        );
+                    }
                 }
-            }
+                Err(error) => diagnostics.push(Diagnostic {
+                    stage: "parse".to_owned(),
+                    message: error.to_string(),
+                }),
+            },
             Err(error) => diagnostics.push(Diagnostic {
-                stage: "parse".to_owned(),
+                stage: "runtime".to_owned(),
                 message: error.to_string(),
             }),
-        },
-        Err(error) => diagnostics.push(Diagnostic {
-            stage: "runtime".to_owned(),
-            message: error.to_string(),
-        }),
+        }
     }
 
     let corpus = if request.run_corpus {
@@ -1394,6 +1397,47 @@ mod tests {
         assert!(response.tests.requested);
         assert_eq!(response.tests.corpus_passed, 0);
         assert_eq!(response.tests.corpus_failed, 0);
+        assert_eq!(response.tests.highlight_assertions_passed, 37);
+        assert_eq!(response.tests.highlight_assertions_failed, 0);
+        assert_eq!(response.tests.highlight_fixture_errors, 0);
+
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: include_str!(
+                        "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/grammar.json"
+                    )
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "src/scanner.c".to_owned(),
+                    text: snark_scanner_host::CSS_SCANNER_SOURCE.to_owned(),
+                },
+                BundleFile {
+                    path: "queries/highlights.scm".to_owned(),
+                    text: include_str!(
+                        "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/queries/highlights.scm"
+                    )
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "test/highlight/test_css.css".to_owned(),
+                    text: include_str!(
+                        "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/test/highlight/test_css.css"
+                    )
+                    .to_owned(),
+                },
+            ],
+            input: String::new(),
+            run_corpus: true,
+        };
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert!(response.parse.is_none());
+        assert_eq!(response.highlight_tests.len(), 1);
         assert_eq!(response.tests.highlight_assertions_passed, 37);
         assert_eq!(response.tests.highlight_assertions_failed, 0);
         assert_eq!(response.tests.highlight_fixture_errors, 0);
