@@ -11,6 +11,20 @@ use crate::source::SourceFile;
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct CorpusSource(pub String);
 
+impl CorpusSource {
+    /// Parse this source as a Tree-sitter parse corpus file.
+    pub fn parse_cases(&self) -> Result<Vec<CorpusCase>, CorpusParseError> {
+        parse_corpus_cases(&self.0)
+    }
+
+    /// Parse this source as a CSS highlight assertion file.
+    pub fn parse_css_highlight_assertions(
+        &self,
+    ) -> Result<Vec<HighlightAssertion>, HighlightParseError> {
+        parse_css_highlight_assertions(&self.0)
+    }
+}
+
 /// Imported corpus or highlight fixture.
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 pub struct CorpusFixture {
@@ -28,7 +42,7 @@ impl CorpusFixture {
                 kind: self.kind,
             }));
         }
-        parse_corpus_cases(&self.source.body.0)
+        self.source.body.parse_cases()
     }
 
     /// Parse this fixture as a CSS highlight assertion file.
@@ -44,7 +58,7 @@ impl CorpusFixture {
                 HighlightParseErrorKind::WrongKind { kind: self.kind },
             ));
         }
-        parse_css_highlight_assertions(&self.source.body.0)
+        self.source.body.parse_css_highlight_assertions()
     }
 }
 

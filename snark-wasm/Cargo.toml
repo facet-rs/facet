@@ -1,0 +1,21 @@
+[package]
+name = "snark-wasm"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WebAssembly bindings for Snark grammar playgrounds"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+facet.workspace = true
+facet-json.workspace = true
+snark = { path = "../snark", features = ["tree-sitter-import"] }
+wasm-bindgen.workspace = true
+
+[lints]
+workspace = true

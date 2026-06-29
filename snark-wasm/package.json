@@ -1,0 +1,15 @@
+{
+  "name": "@bearcove/snark-wasm",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "files": [
+    "pkg"
+  ],
+  "main": "pkg/snark_wasm.js",
+  "module": "pkg/snark_wasm.js",
+  "types": "pkg/snark_wasm.d.ts",
+  "scripts": {
+    "build": "cargo build --release --target wasm32-unknown-unknown -p snark-wasm && wasm-bindgen --out-dir pkg --target web ../target/wasm32-unknown-unknown/release/snark_wasm.wasm && rm -f pkg/.gitignore"
+  }
+}

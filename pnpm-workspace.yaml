@@ -6,8 +6,10 @@ packages:
   - "implementations/styx-js"
   - "tools/styx-webmd"
   - "styx-wasm"
+  - "snark-wasm"
   - "playgrounds/monaco"
   - "playgrounds/codemirror"
+  - "playgrounds/snark"
 allowBuilds:
   '@swc/core': true
   esbuild: true

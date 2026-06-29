@@ -6202,6 +6202,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "snark-wasm"
+version = "0.0.1"
+dependencies = [
+ "facet",
+ "facet-json",
+ "snark",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "socket2"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
