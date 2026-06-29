@@ -1801,6 +1801,112 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_pinned_css_important_declarations_through_weavy_glr_conflict() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let declaration_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/declarations.txt")
+            .unwrap();
+        let declaration_cases = declaration_fixture.parse_cases().unwrap();
+
+        assert_eq!(declaration_cases[7].name, "Important declarations");
+        let rust_report = parse_reduced_report_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &declaration_cases[7].input,
+        );
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_reduced_with_report(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &declaration_cases[7].input,
+        )
+        .unwrap();
+
+        assert_same!(weavy_report.tree(), rust_report.tree());
+        assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
+        let important_conflict = weavy_report.conflict_steps().iter().find(|step| {
+            if step.actions.len() < 2
+                || !step
+                    .actions
+                    .iter()
+                    .all(|action| matches!(action, crate::parser::ParseAction::Reduce { .. }))
+            {
+                return false;
+            }
+
+            let mut saw_accepted_descendant = false;
+            let mut saw_failed_descendant = false;
+            for outcome in &step.outcomes {
+                let branch = match outcome.result {
+                    crate::parser::ReducedConflictActionResult::Branch(branch)
+                    | crate::parser::ReducedConflictActionResult::Accepted(branch)
+                    | crate::parser::ReducedConflictActionResult::Failed(branch) => branch,
+                };
+                for result in weavy_report.branch_descendant_results(branch) {
+                    match result.outcome {
+                        crate::parser::ReducedBranchFinalOutcome::Accepted => {
+                            saw_accepted_descendant = true;
+                        }
+                        crate::parser::ReducedBranchFinalOutcome::Failed => {
+                            saw_failed_descendant = true;
+                        }
+                    }
+                }
+            }
+
+            saw_accepted_descendant && saw_failed_descendant
+        });
+        assert!(
+            important_conflict.is_some(),
+            "expected a Weavy reduce/reduce fork with accepted and failed descendants, got conflicts {:#?} and branch results {:#?}",
+            weavy_report.conflict_steps(),
+            weavy_report.branch_results()
+        );
+        assert!(
+            important_conflict.unwrap().outcomes.len() > 1,
+            "expected more than one Weavy action outcome for the important declaration conflict"
+        );
+        assert!(
+            weavy_report
+                .branch_parents()
+                .iter()
+                .any(|link| link.parent.is_some()),
+            "expected Weavy branch lineage for runtime fork"
+        );
+        assert!(
+            !weavy_report.branch_results().is_empty(),
+            "expected terminal Weavy branch outcomes for runtime fork"
+        );
+        assert!(
+            weavy_report.max_live_branches() > 1,
+            "expected more than one live reduced Weavy branch"
+        );
+        assert!(
+            weavy_report.failure_count() > 0,
+            "expected at least one Weavy forked branch to be retired by later input"
+        );
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
+    }
+
     #[test]
     fn parses_pinned_json_arrays_corpus_case_without_external_scanner() {
         let package = TreeSitterPackageImporter::new(JSON_FIXTURE)

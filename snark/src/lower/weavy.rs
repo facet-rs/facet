@@ -5,7 +5,11 @@
 //! incremental facts should become typed Snark intrinsics inside canonical
 //! Weavy programs.
 
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    error::Error,
+    fmt,
+};
 
 use weavy::{
     Control, RunError, RunStats, Step,
@@ -583,6 +587,23 @@ pub enum ReducedWeavyError {
     },
     /// Weavy program finished without accepting a tree.
     MissingAcceptedTree,
+    /// No reduced branch accepted the input.
+    NoViableBranch {
+        /// Number of failed or retired branches.
+        failure_count: usize,
+    },
+    /// Multiple accepted branches produced different reduced trees.
+    AmbiguousParse {
+        /// Number of accepted branches.
+        accepted_count: usize,
+        /// Accepted reduced trees.
+        accepted: Vec<String>,
+    },
+    /// Branch worklist exceeded the reduced execution limit.
+    BranchStepLimit {
+        /// Configured step limit.
+        limit: usize,
+    },
     /// A non-Snark canonical Weavy op appeared in the reduced parser plan.
     UnsupportedCanonicalOp,
 }
@@ -679,6 +700,22 @@ impl fmt::Display for ReducedWeavyError {
                 state.get()
             ),
             Self::MissingAcceptedTree => write!(f, "Weavy program finished without accepting"),
+            Self::NoViableBranch { failure_count } => {
+                write!(
+                    f,
+                    "no reduced Weavy branch accepted; {failure_count} branches failed"
+                )
+            }
+            Self::AmbiguousParse {
+                accepted_count,
+                accepted,
+            } => write!(
+                f,
+                "{accepted_count} reduced Weavy branches accepted with different reduced trees: {accepted:?}"
+            ),
+            Self::BranchStepLimit { limit } => {
+                write!(f, "reduced Weavy branch step limit {limit} was exceeded")
+            }
             Self::UnsupportedCanonicalOp => {
                 write!(f, "non-intrinsic canonical Weavy op is unsupported here")
             }
@@ -834,16 +871,443 @@ pub fn parse_reduced_with_plan(
     table: &parser_ir::ParseTable,
     input: &str,
 ) -> Result<(SexpNode, RunStats), ReducedWeavyError> {
-    let mut stepper = ReducedWeavyStepper::new(plan, grammar, parser, table, input)?;
-    let stats = match weavy::run_with_stats(plan.lowered(), &mut stepper) {
-        Ok(stats) => stats,
-        Err(RunError::MissingBlock(block)) => {
-            return Err(ReducedWeavyError::MissingBlock { block });
+    let report = parse_reduced_with_report(plan, grammar, parser, table, input)?;
+    Ok((report.tree, report.stats))
+}
+
+/// Execute a reduced parser plan through Weavy and return branch/conflict evidence.
+pub fn parse_reduced_with_report(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<ReducedWeavyReport, ReducedWeavyError> {
+    if parser.stage() != parser_ir::ParserGenerationStage::Productions {
+        return Err(ReducedWeavyError::WrongStage {
+            stage: parser.stage(),
+        });
+    }
+    let mut branches = VecDeque::from([ReducedWeavyBranch {
+        id: parser_ir::ReducedBranchId::from_index(0),
+        stack: vec![ReducedWeavyStackEntry {
+            state: parser_ir::ParseStateId::from_index(0),
+            fragment: None,
+            extra: false,
+        }],
+        byte_position: 0,
+    }]);
+    let mut accepted = Vec::<SexpNode>::new();
+    let mut failures = Vec::<ReducedWeavyError>::new();
+    let mut conflict_steps = Vec::new();
+    let mut branch_parents = vec![parser_ir::ReducedBranchParent {
+        branch: parser_ir::ReducedBranchId::from_index(0),
+        parent: None,
+    }];
+    let mut branch_results = Vec::new();
+    let mut next_branch_index = 1usize;
+    let mut step_count = 0usize;
+    let step_limit = reduced_weavy_step_limit(table, input);
+    let mut max_live_branches = branches.len();
+    let mut stats = RunStats::default();
+
+    while let Some(branch) = branches.pop_front() {
+        step_count += 1;
+        if step_count > step_limit {
+            return Err(ReducedWeavyError::BranchStepLimit { limit: step_limit });
         }
-        Err(RunError::Step(error)) => return Err(error),
+
+        for outcome in step_reduced_weavy_branch(
+            plan,
+            grammar,
+            parser,
+            table,
+            input,
+            branch,
+            &mut conflict_steps,
+            &mut branch_parents,
+            &mut next_branch_index,
+            &mut stats,
+        ) {
+            match outcome {
+                ReducedWeavyStepOutcome::Branch(branch) => branches.push_back(branch),
+                ReducedWeavyStepOutcome::Accepted { branch, node } => {
+                    branch_results.push(parser_ir::ReducedBranchResult {
+                        branch,
+                        outcome: parser_ir::ReducedBranchFinalOutcome::Accepted,
+                    });
+                    accepted.push(node);
+                }
+                ReducedWeavyStepOutcome::Failed { branch, error } => {
+                    branch_results.push(parser_ir::ReducedBranchResult {
+                        branch,
+                        outcome: parser_ir::ReducedBranchFinalOutcome::Failed,
+                    });
+                    failures.push(error);
+                }
+            }
+        }
+        max_live_branches = max_live_branches.max(branches.len());
+    }
+
+    let Some(first_node) = accepted.first().cloned() else {
+        return Err(ReducedWeavyError::NoViableBranch {
+            failure_count: failures.len(),
+        });
     };
-    let tree = stepper.tree.ok_or(ReducedWeavyError::MissingAcceptedTree)?;
-    Ok((tree, stats))
+    if accepted.iter().all(|node| *node == first_node) {
+        return Ok(ReducedWeavyReport {
+            tree: first_node,
+            stats,
+            accepted_count: accepted.len(),
+            failure_count: failures.len(),
+            max_live_branches,
+            conflict_steps,
+            branch_parents,
+            branch_results,
+        });
+    }
+
+    Err(ReducedWeavyError::AmbiguousParse {
+        accepted_count: accepted.len(),
+        accepted: accepted.iter().map(SexpNode::to_sexp).collect(),
+    })
+}
+
+/// Successful reduced Weavy parse plus branch/conflict evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReducedWeavyReport {
+    tree: SexpNode,
+    stats: RunStats,
+    accepted_count: usize,
+    failure_count: usize,
+    max_live_branches: usize,
+    conflict_steps: Vec<parser_ir::ReducedConflictStep>,
+    branch_parents: Vec<parser_ir::ReducedBranchParent>,
+    branch_results: Vec<parser_ir::ReducedBranchResult>,
+}
+
+impl ReducedWeavyReport {
+    /// Reduced Tree-sitter-style S-expression tree.
+    pub const fn tree(&self) -> &SexpNode {
+        &self.tree
+    }
+
+    /// Weavy runner execution counters accumulated over branch-local block runs.
+    pub const fn stats(&self) -> RunStats {
+        self.stats
+    }
+
+    /// Number of accepted branches before identical-tree coalescing.
+    pub const fn accepted_count(&self) -> usize {
+        self.accepted_count
+    }
+
+    /// Number of branch failures observed while exploring the table.
+    pub const fn failure_count(&self) -> usize {
+        self.failure_count
+    }
+
+    /// Maximum number of queued live branches observed.
+    pub const fn max_live_branches(&self) -> usize {
+        self.max_live_branches
+    }
+
+    /// Multi-action table cells reached during branch execution.
+    pub fn conflict_steps(&self) -> &[parser_ir::ReducedConflictStep] {
+        &self.conflict_steps
+    }
+
+    /// Parent links for branches created by runtime forks.
+    pub fn branch_parents(&self) -> &[parser_ir::ReducedBranchParent] {
+        &self.branch_parents
+    }
+
+    /// Final accepted/failed outcomes by branch id.
+    pub fn branch_results(&self) -> &[parser_ir::ReducedBranchResult] {
+        &self.branch_results
+    }
+
+    /// Final outcomes for a branch or any descendant branch.
+    pub fn branch_descendant_results(
+        &self,
+        branch: parser_ir::ReducedBranchId,
+    ) -> Vec<parser_ir::ReducedBranchResult> {
+        self.branch_results
+            .iter()
+            .copied()
+            .filter(|result| self.branch_descends_from(result.branch, branch))
+            .collect()
+    }
+
+    fn branch_descends_from(
+        &self,
+        mut branch: parser_ir::ReducedBranchId,
+        ancestor: parser_ir::ReducedBranchId,
+    ) -> bool {
+        loop {
+            if branch == ancestor {
+                return true;
+            }
+            let Some(parent) = self
+                .branch_parents
+                .iter()
+                .find(|link| link.branch == branch)
+                .and_then(|link| link.parent)
+            else {
+                return false;
+            };
+            branch = parent;
+        }
+    }
+}
+
+fn step_reduced_weavy_branch(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    branch: ReducedWeavyBranch,
+    conflict_steps: &mut Vec<parser_ir::ReducedConflictStep>,
+    branch_parents: &mut Vec<parser_ir::ReducedBranchParent>,
+    next_branch_index: &mut usize,
+    stats: &mut RunStats,
+) -> Vec<ReducedWeavyStepOutcome> {
+    let source_branch = branch.id;
+    let state = match branch.stack.last() {
+        Some(entry) => entry.state,
+        None => {
+            return vec![ReducedWeavyStepOutcome::Failed {
+                branch: source_branch,
+                error: ReducedWeavyError::EmptyStack,
+            }];
+        }
+    };
+    let dispatch = match run_reduced_weavy_state_probe(
+        plan,
+        grammar,
+        parser,
+        table,
+        input,
+        branch.clone(),
+        stats,
+    ) {
+        Ok(dispatch) => dispatch,
+        Err(error) => {
+            return vec![ReducedWeavyStepOutcome::Failed {
+                branch: source_branch,
+                error,
+            }];
+        }
+    };
+    let is_conflict = dispatch.actions.len() > 1;
+    let mut conflict_outcomes = Vec::new();
+    let mut outcomes = Vec::new();
+
+    for action in &dispatch.actions {
+        let mut action_branch = branch.clone();
+        if is_conflict {
+            let child = parser_ir::ReducedBranchId::from_index(*next_branch_index);
+            *next_branch_index += 1;
+            action_branch.id = child;
+            branch_parents.push(parser_ir::ReducedBranchParent {
+                branch: child,
+                parent: Some(source_branch),
+            });
+        }
+        let outcome = run_reduced_weavy_action(
+            plan,
+            grammar,
+            parser,
+            table,
+            input,
+            action_branch,
+            dispatch.token,
+            state,
+            *action,
+            stats,
+        );
+        if is_conflict {
+            conflict_outcomes.push(parser_ir::ReducedConflictActionOutcome {
+                action: *action,
+                result: match &outcome {
+                    ReducedWeavyStepOutcome::Branch(branch) => {
+                        parser_ir::ReducedConflictActionResult::Branch(branch.id)
+                    }
+                    ReducedWeavyStepOutcome::Accepted { branch, .. } => {
+                        parser_ir::ReducedConflictActionResult::Accepted(*branch)
+                    }
+                    ReducedWeavyStepOutcome::Failed { branch, .. } => {
+                        parser_ir::ReducedConflictActionResult::Failed(*branch)
+                    }
+                },
+            });
+        }
+        outcomes.push(outcome);
+    }
+
+    if is_conflict {
+        conflict_steps.push(parser_ir::ReducedConflictStep {
+            branch: source_branch,
+            state: dispatch.state,
+            byte_position: branch.byte_position,
+            lookahead: dispatch.token.lookahead,
+            actions: dispatch.actions,
+            outcomes: conflict_outcomes,
+        });
+    }
+
+    outcomes
+}
+
+fn run_reduced_weavy_state_probe(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    branch: ReducedWeavyBranch,
+    stats: &mut RunStats,
+) -> Result<ReducedWeavyDispatch, ReducedWeavyError> {
+    let state = branch
+        .stack
+        .last()
+        .ok_or(ReducedWeavyError::EmptyStack)?
+        .state;
+    let block = plan.state_block(state)?;
+    let mut stepper = ReducedWeavyStepper::from_branch(
+        plan,
+        grammar,
+        parser,
+        table,
+        input,
+        branch,
+        ReducedWeavyMode::ProbeState,
+    );
+    let run_stats = run_reduced_weavy_block(plan, block, &mut stepper)?;
+    add_run_stats(stats, run_stats);
+    stepper.dispatch.ok_or(ReducedWeavyError::NoAction {
+        state,
+        lookahead: stepper
+            .lookahead
+            .map(|token| token.lookahead)
+            .unwrap_or(parser_ir::LookaheadSymbol::Eof),
+        byte_position: stepper.byte_position,
+    })
+}
+
+fn run_reduced_weavy_action(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    branch: ReducedWeavyBranch,
+    token: ReducedWeavyToken,
+    state: parser_ir::ParseStateId,
+    action: parser_ir::ParseAction,
+    stats: &mut RunStats,
+) -> ReducedWeavyStepOutcome {
+    let block = match plan.action_block(state, token.lookahead, action) {
+        Ok(block) => block,
+        Err(error) => {
+            return ReducedWeavyStepOutcome::Failed {
+                branch: branch.id,
+                error,
+            };
+        }
+    };
+    let mut stepper = ReducedWeavyStepper::from_branch(
+        plan,
+        grammar,
+        parser,
+        table,
+        input,
+        branch,
+        ReducedWeavyMode::ApplyAction,
+    );
+    stepper.lookahead = Some(token);
+    let branch = stepper.branch;
+    match run_reduced_weavy_block(plan, block, &mut stepper) {
+        Ok(run_stats) => add_run_stats(stats, run_stats),
+        Err(error) => {
+            return ReducedWeavyStepOutcome::Failed { branch, error };
+        }
+    }
+    if let Some(node) = stepper.tree {
+        ReducedWeavyStepOutcome::Accepted { branch, node }
+    } else {
+        ReducedWeavyStepOutcome::Branch(ReducedWeavyBranch {
+            id: branch,
+            stack: stepper.stack,
+            byte_position: stepper.byte_position,
+        })
+    }
+}
+
+fn run_reduced_weavy_block(
+    plan: &ReducedWeavyPlan,
+    block: SnarkBlockId,
+    stepper: &mut ReducedWeavyStepper<'_>,
+) -> Result<RunStats, ReducedWeavyError> {
+    let trampoline = [WeavyOp::Control(ControlOp::CallBlock {
+        block,
+        base_offset: 0,
+    })];
+    match weavy::run_program_with_stats(&trampoline, &plan.lowered.blocks, stepper) {
+        Ok(stats) => Ok(stats),
+        Err(RunError::MissingBlock(block)) => Err(ReducedWeavyError::MissingBlock { block }),
+        Err(RunError::Step(error)) => Err(error),
+    }
+}
+
+fn add_run_stats(total: &mut RunStats, next: RunStats) {
+    total.step_count += next.step_count;
+    total.inline_call_count += next.inline_call_count;
+    total.block_call_count += next.block_call_count;
+    total.return_count += next.return_count;
+    total.continuation_resume_count += next.continuation_resume_count;
+    total.max_frame_depth = total.max_frame_depth.max(next.max_frame_depth);
+}
+
+fn reduced_weavy_step_limit(table: &parser_ir::ParseTable, input: &str) -> usize {
+    let input_budget = input.len().saturating_mul(4096);
+    let table_budget = table.states().len().saturating_mul(64);
+    10_000usize.max(input_budget.saturating_add(table_budget))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReducedWeavyBranch {
+    id: parser_ir::ReducedBranchId,
+    stack: Vec<ReducedWeavyStackEntry>,
+    byte_position: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReducedWeavyStepOutcome {
+    Branch(ReducedWeavyBranch),
+    Accepted {
+        branch: parser_ir::ReducedBranchId,
+        node: SexpNode,
+    },
+    Failed {
+        branch: parser_ir::ReducedBranchId,
+        error: ReducedWeavyError,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReducedWeavyDispatch {
+    state: parser_ir::ParseStateId,
+    token: ReducedWeavyToken,
+    actions: Vec<parser_ir::ParseAction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReducedWeavyMode {
+    ProbeState,
+    ApplyAction,
 }
 
 struct ReducedWeavyStepper<'a> {
@@ -856,36 +1320,35 @@ struct ReducedWeavyStepper<'a> {
     byte_position: usize,
     lookahead: Option<ReducedWeavyToken>,
     tree: Option<SexpNode>,
+    mode: ReducedWeavyMode,
+    dispatch: Option<ReducedWeavyDispatch>,
+    branch: parser_ir::ReducedBranchId,
 }
 
 impl<'a> ReducedWeavyStepper<'a> {
-    fn new(
+    fn from_branch(
         plan: &'a ReducedWeavyPlan,
         grammar: &'a ValidatedGrammar,
         parser: &'a parser_ir::ParserGrammar,
         table: &'a parser_ir::ParseTable,
         input: &'a str,
-    ) -> Result<Self, ReducedWeavyError> {
-        if parser.stage() != parser_ir::ParserGenerationStage::Productions {
-            return Err(ReducedWeavyError::WrongStage {
-                stage: parser.stage(),
-            });
-        }
-        Ok(Self {
+        branch: ReducedWeavyBranch,
+        mode: ReducedWeavyMode,
+    ) -> Self {
+        Self {
             plan,
             grammar,
             parser,
             table,
             input,
-            stack: vec![ReducedWeavyStackEntry {
-                state: parser_ir::ParseStateId::from_index(0),
-                fragment: None,
-                extra: false,
-            }],
-            byte_position: 0,
+            stack: branch.stack,
+            byte_position: branch.byte_position,
             lookahead: None,
             tree: None,
-        })
+            mode,
+            dispatch: None,
+            branch: branch.id,
+        }
     }
 
     fn step_intrinsic<'program>(
@@ -921,6 +1384,14 @@ impl<'a> ReducedWeavyStepper<'a> {
                         lookahead: token.lookahead,
                         byte_position: self.byte_position,
                     })?;
+                if self.mode == ReducedWeavyMode::ProbeState {
+                    self.dispatch = Some(ReducedWeavyDispatch {
+                        state,
+                        token,
+                        actions: entry.actions().to_vec(),
+                    });
+                    return Ok(Control::Return);
+                }
                 let [action] = entry.actions() else {
                     return Err(ReducedWeavyError::UnsupportedConflict {
                         state,
@@ -951,6 +1422,9 @@ impl<'a> ReducedWeavyStepper<'a> {
                     fragment: Some(ReducedWeavyFragment::Hidden(Vec::new())),
                     extra: false,
                 });
+                if self.mode == ReducedWeavyMode::ApplyAction {
+                    return Ok(Control::Continue);
+                }
                 Ok(Control::CallBlock(self.plan.state_block(state)?))
             }
             SnarkIntrinsic::ShiftExtra { state, .. } => {
@@ -966,6 +1440,9 @@ impl<'a> ReducedWeavyStepper<'a> {
                         fragment: Some(fragment),
                         extra: true,
                     });
+                }
+                if self.mode == ReducedWeavyMode::ApplyAction {
+                    return Ok(Control::Continue);
                 }
                 Ok(Control::CallBlock(self.plan.state_block(state)?))
             }
@@ -993,6 +1470,9 @@ impl<'a> ReducedWeavyStepper<'a> {
                     fragment: Some(fragment),
                     extra: false,
                 });
+                if self.mode == ReducedWeavyMode::ApplyAction {
+                    return Ok(Control::Continue);
+                }
                 Ok(Control::CallBlock(self.plan.state_block(goto)?))
             }
             SnarkIntrinsic::Accept {
