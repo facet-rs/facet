@@ -209,18 +209,20 @@ export function App() {
   async function run() {
     setBusy(true);
     try {
-      await wasmReady;
-      const runnableFiles = await filesWithGrammarJson(files);
-      const response = parseBundle(
-        JSON.stringify({
-          files: runnableFiles,
-          input,
-          run_corpus: runCorpus,
-        }),
-      );
+      await wasmReady.catch((error: unknown) => {
+        throw new PlaygroundRunError("wasm", errorMessage(error));
+      });
+      const runnableFiles = await filesWithGrammarJson(files).catch((error: unknown) => {
+        throw new PlaygroundRunError("grammar.js", errorMessage(error));
+      });
+      const response = callParseBundle(runnableFiles, input, runCorpus);
       setResult(JSON.parse(response) as PlaygroundResponse);
     } catch (error) {
-      setResult(responseWithDiagnostic("grammar.js", error instanceof Error ? error.message : String(error), files));
+      const diagnostic =
+        error instanceof PlaygroundRunError
+          ? { stage: error.stage, message: error.message }
+          : { stage: "playground", message: errorMessage(error) };
+      setResult(responseWithDiagnostic(diagnostic.stage, diagnostic.message, files));
     } finally {
       setBusy(false);
     }
@@ -675,6 +677,33 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
     highlight_tests: [],
     limitations: ["Tree-sitter grammar.js is evaluated in a browser Worker before Snark receives src/grammar.json."],
   };
+}
+
+class PlaygroundRunError extends Error {
+  readonly stage: string;
+
+  constructor(stage: string, message: string) {
+    super(message);
+    this.stage = stage;
+  }
+}
+
+function callParseBundle(files: BundleFile[], input: string, runCorpus: boolean) {
+  try {
+    return parseBundle(
+      JSON.stringify({
+        files,
+        input,
+        run_corpus: runCorpus,
+      }),
+    );
+  } catch (error) {
+    throw new PlaygroundRunError("snark", errorMessage(error));
+  }
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function isGeneratedPath(path: string) {
