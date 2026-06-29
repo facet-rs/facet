@@ -1124,6 +1124,7 @@ pub fn parse_runtime_with_report_and_scanner(
             stage: parser.stage(),
         });
     }
+    let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = Vec::new();
@@ -1177,6 +1178,7 @@ pub fn parse_runtime_with_report_and_scanner(
             grammar,
             parser,
             table,
+            &compiled_lex_modes,
             input,
             external_scanner,
             branch,
@@ -1586,6 +1588,7 @@ fn step_runtime_weavy_branch(
     grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
+    compiled_lex_modes: &[parser_ir::CompiledLexMode],
     input: &str,
     external_scanner: Option<&dyn ReducedExternalScanner>,
     branch: RuntimeWeavyBranch,
@@ -1611,6 +1614,7 @@ fn step_runtime_weavy_branch(
         grammar,
         parser,
         table,
+        compiled_lex_modes,
         input,
         external_scanner,
         branch.clone(),
@@ -1656,6 +1660,7 @@ fn step_runtime_weavy_branch(
                     grammar,
                     parser,
                     table,
+                    compiled_lex_modes,
                     input,
                     external_scanner,
                     branch,
@@ -1678,6 +1683,7 @@ fn step_runtime_weavy_branch(
         grammar,
         parser,
         table,
+        compiled_lex_modes,
         input,
         external_scanner,
         branch,
@@ -1697,6 +1703,7 @@ fn run_runtime_weavy_state_probe(
     grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
+    compiled_lex_modes: &[parser_ir::CompiledLexMode],
     input: &str,
     external_scanner: Option<&dyn ReducedExternalScanner>,
     branch: RuntimeWeavyBranch,
@@ -1717,6 +1724,7 @@ fn run_runtime_weavy_state_probe(
         grammar,
         parser,
         table,
+        compiled_lex_modes,
         input,
         external_scanner,
         branch,
@@ -1747,6 +1755,7 @@ fn run_runtime_weavy_action(
     grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
+    compiled_lex_modes: &[parser_ir::CompiledLexMode],
     input: &str,
     external_scanner: Option<&dyn ReducedExternalScanner>,
     branch: RuntimeWeavyBranch,
@@ -1773,6 +1782,7 @@ fn run_runtime_weavy_action(
         grammar,
         parser,
         table,
+        compiled_lex_modes,
         input,
         external_scanner,
         branch,
@@ -2632,6 +2642,7 @@ struct RuntimeWeavyStepper<'a> {
     grammar: &'a ValidatedGrammar,
     parser: &'a parser_ir::ParserGrammar,
     table: &'a parser_ir::ParseTable,
+    compiled_lex_modes: &'a [parser_ir::CompiledLexMode],
     input: &'a str,
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
     stack: Vec<RuntimeWeavyStackEntry>,
@@ -2656,6 +2667,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         grammar: &'a ValidatedGrammar,
         parser: &'a parser_ir::ParserGrammar,
         table: &'a parser_ir::ParseTable,
+        compiled_lex_modes: &'a [parser_ir::CompiledLexMode],
         input: &'a str,
         external_scanner: Option<&'a dyn ReducedExternalScanner>,
         branch: RuntimeWeavyBranch,
@@ -2670,6 +2682,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             grammar,
             parser,
             table,
+            compiled_lex_modes,
             input,
             external_scanner,
             stack: branch.stack,
@@ -2972,23 +2985,328 @@ impl<'a> RuntimeWeavyStepper<'a> {
         state: &parser_ir::ParseState,
         byte_position: usize,
     ) -> Result<ReducedWeavyToken, ReducedWeavyError> {
-        let probe = ReducedWeavyStepper {
-            plan: self.plan,
-            grammar: self.grammar,
-            parser: self.parser,
-            table: self.table,
-            input: self.input,
-            external_scanner: self.external_scanner,
-            stack: Vec::new(),
+        if byte_position == self.input.len() {
+            return Ok(ReducedWeavyToken {
+                lookahead: parser_ir::LookaheadSymbol::Eof,
+                end: byte_position,
+                scanner: None,
+            });
+        }
+        let mode = self
+            .table
+            .lexical_modes()
+            .get(state.lex_mode().get() as usize)
+            .ok_or(ReducedWeavyError::MissingLexMode {
+                mode: state.lex_mode(),
+            })?;
+        let compiled_mode = self
+            .compiled_lex_modes
+            .get(mode.id().get() as usize)
+            .ok_or(ReducedWeavyError::MissingLexMode { mode: mode.id() })?;
+        let mut best = None::<ReducedWeavyTokenCandidate>;
+        let mut best_rejected = None::<ReducedWeavyTokenCandidate>;
+        let direct_pattern_ends =
+            self.match_compiled_direct_pattern_set(compiled_mode, byte_position)?;
+        for terminal_row in &compiled_mode.terminals {
+            let Some(end) = self.match_compiled_terminal_with_set(
+                terminal_row,
+                byte_position,
+                &direct_pattern_ends,
+            )?
+            else {
+                continue;
+            };
+            if end == byte_position {
+                continue;
+            }
+            let candidate = ReducedWeavyTokenCandidate {
+                lookahead: parser_ir::LookaheadSymbol::Terminal(terminal_row.terminal),
+                end,
+                extra: false,
+                external: false,
+                immediate: terminal_row.immediate,
+                literal: terminal_row.literal,
+                lexical_precedence: terminal_row.lexical_precedence,
+                implicit_precedence: terminal_row.implicit_precedence,
+                scanner: None,
+            };
+            let Some(lookahead) = self.lookahead_for_terminal(state, terminal_row.terminal) else {
+                push_reduced_weavy_candidate(&mut best_rejected, candidate);
+                continue;
+            };
+            push_reduced_weavy_candidate(
+                &mut best,
+                ReducedWeavyTokenCandidate {
+                    lookahead,
+                    extra: self.lookahead_shifts_only_extra(state, lookahead),
+                    ..candidate
+                },
+            );
+        }
+        if let Some(candidate) = best {
+            best_rejected = best_rejected.filter(|rejected| {
+                reduced_weavy_candidate_order(*rejected, candidate)
+                    == ReducedWeavyCandidateOrder::Greater
+            });
+        }
+        if self.external_scanner.is_some() {
+            for external in mode.externals() {
+                let Some(scanner_result) =
+                    self.match_external(state, mode, *external, byte_position)?
+                else {
+                    continue;
+                };
+                let candidate = ReducedWeavyTokenCandidate {
+                    lookahead: parser_ir::LookaheadSymbol::External(*external),
+                    end: scanner_result.end_byte(),
+                    extra: false,
+                    external: true,
+                    immediate: false,
+                    literal: true,
+                    lexical_precedence: 0,
+                    implicit_precedence: 0,
+                    scanner: Some(scanner_result),
+                };
+                if !state
+                    .entries()
+                    .iter()
+                    .any(|entry| entry.lookahead() == candidate.lookahead)
+                {
+                    push_reduced_weavy_candidate(&mut best_rejected, candidate);
+                    continue;
+                }
+                push_reduced_weavy_candidate(&mut best, candidate);
+            }
+        }
+        if let Some(candidate) = best {
+            return Ok(ReducedWeavyToken {
+                lookahead: candidate.lookahead,
+                end: candidate.end,
+                scanner: candidate.scanner,
+            });
+        }
+        if !mode.externals().is_empty() {
+            return Err(ReducedWeavyError::UnsupportedExternalScanner {
+                state: state.id(),
+                external_count: mode.externals().len(),
+            });
+        }
+        if let Some(rejected) = best_rejected {
+            return Err(ReducedWeavyError::NoAction {
+                state: state.id(),
+                lookahead: rejected.lookahead,
+                byte_position,
+            });
+        }
+        Err(ReducedWeavyError::NoToken {
+            state: state.id(),
             byte_position,
-            scanner_snapshot: self.scanner_snapshot,
-            lookahead: None,
-            tree: None,
-            mode: ReducedWeavyMode::ProbeState,
-            dispatch: None,
-            branch: parser_ir::ReducedBranchId::from_index(0),
+            expected: self.mode_token_spellings(mode),
+        })
+    }
+
+    fn lookahead_for_terminal(
+        &self,
+        state: &parser_ir::ParseState,
+        terminal: parser_ir::TerminalId,
+    ) -> Option<parser_ir::LookaheadSymbol> {
+        state
+            .entries()
+            .iter()
+            .find_map(|entry| match entry.lookahead() {
+                parser_ir::LookaheadSymbol::Terminal(candidate) if candidate == terminal => {
+                    Some(entry.lookahead())
+                }
+                parser_ir::LookaheadSymbol::ReservedWord {
+                    terminal: candidate,
+                    ..
+                } if candidate == terminal => Some(entry.lookahead()),
+                _ => None,
+            })
+    }
+
+    fn mode_token_spellings(&self, mode: &parser_ir::LexMode) -> Vec<String> {
+        let mut spellings = mode
+            .terminals()
+            .iter()
+            .map(|terminal| self.parser.symbols().terminals()[terminal.get() as usize].spelling())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        spellings.extend(mode.externals().iter().map(|external| {
+            self.parser.symbols().externals()[external.get() as usize]
+                .name()
+                .unwrap_or("<anonymous-external>")
+                .to_owned()
+        }));
+        spellings
+    }
+
+    fn match_compiled_terminal_with_set(
+        &self,
+        terminal: &parser_ir::CompiledLexTerminal,
+        byte_position: usize,
+        direct_pattern_ends: &[Option<usize>],
+    ) -> Result<Option<usize>, ReducedWeavyError> {
+        if let Some(set_index) = terminal.direct_pattern_index {
+            return Ok(direct_pattern_ends.get(set_index).copied().flatten());
+        }
+        self.match_compiled_terminal(terminal, byte_position)
+    }
+
+    fn match_compiled_terminal(
+        &self,
+        terminal: &parser_ir::CompiledLexTerminal,
+        byte_position: usize,
+    ) -> Result<Option<usize>, ReducedWeavyError> {
+        match &terminal.matcher {
+            parser_ir::CompiledTerminalMatcher::Expr(expr) => {
+                self.match_compiled_lex_expr(expr, byte_position)
+            }
+            parser_ir::CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => {
+                Err(ReducedWeavyError::UnsupportedTerminal {
+                    terminal: *terminal,
+                    spelling: spelling.clone(),
+                })
+            }
+        }
+    }
+
+    fn match_compiled_direct_pattern_set(
+        &self,
+        mode: &parser_ir::CompiledLexMode,
+        byte_position: usize,
+    ) -> Result<Vec<Option<usize>>, ReducedWeavyError> {
+        let Some(pattern_set) = &mode.direct_pattern_set else {
+            return Ok(Vec::new());
         };
-        probe.lex(state, byte_position)
+        let mut ends = vec![None; pattern_set.terminal_indices.len()];
+        let Some(haystack) = self.input.get(byte_position..) else {
+            return Ok(ends);
+        };
+        let matches = pattern_set.regex_set.matches(haystack);
+        for set_index in matches.iter() {
+            let terminal_index = pattern_set.terminal_indices[set_index];
+            let terminal = &mode.terminals[terminal_index];
+            ends[set_index] = self.match_compiled_terminal(terminal, byte_position)?;
+        }
+        Ok(ends)
+    }
+
+    fn match_compiled_lex_expr(
+        &self,
+        expr: &parser_ir::CompiledLexExpr,
+        byte_position: usize,
+    ) -> Result<Option<usize>, ReducedWeavyError> {
+        match expr {
+            parser_ir::CompiledLexExpr::Blank => Ok(Some(byte_position)),
+            parser_ir::CompiledLexExpr::String(value) => Ok(self.input[byte_position..]
+                .starts_with(value)
+                .then_some(byte_position + value.len())),
+            parser_ir::CompiledLexExpr::Pattern(value) => {
+                Ok(parser_ir::match_pattern(value, self.input, byte_position))
+            }
+            parser_ir::CompiledLexExpr::Seq(members) => {
+                let mut position = byte_position;
+                for member in members {
+                    let Some(end) = self.match_compiled_lex_expr(member, position)? else {
+                        return Ok(None);
+                    };
+                    position = end;
+                }
+                Ok(Some(position))
+            }
+            parser_ir::CompiledLexExpr::Choice(members) => {
+                let mut best = None;
+                for member in members {
+                    if let Some(end) = self.match_compiled_lex_expr(member, byte_position)?
+                        && best.is_none_or(|best| end > best)
+                    {
+                        best = Some(end);
+                    }
+                }
+                Ok(best)
+            }
+            parser_ir::CompiledLexExpr::Repeat(content) => {
+                let mut position = byte_position;
+                while let Some(end) = self.match_compiled_lex_expr(content, position)? {
+                    if end == position {
+                        break;
+                    }
+                    position = end;
+                }
+                Ok(Some(position))
+            }
+            parser_ir::CompiledLexExpr::Repeat1(content) => {
+                let Some(mut position) = self.match_compiled_lex_expr(content, byte_position)?
+                else {
+                    return Ok(None);
+                };
+                if position == byte_position {
+                    return Ok(None);
+                }
+                while let Some(end) = self.match_compiled_lex_expr(content, position)? {
+                    if end == position {
+                        break;
+                    }
+                    position = end;
+                }
+                Ok(Some(position))
+            }
+            parser_ir::CompiledLexExpr::UnsupportedSymbol(expr) => {
+                Err(ReducedWeavyError::UnsupportedLexicalSymbol { expr: *expr })
+            }
+        }
+    }
+
+    fn match_external(
+        &self,
+        state: &parser_ir::ParseState,
+        mode: &parser_ir::LexMode,
+        external: parser_ir::ExternalId,
+        byte_position: usize,
+    ) -> Result<Option<ReducedExternalScanResult>, ReducedWeavyError> {
+        let Some(scanner) = self.external_scanner else {
+            return Err(ReducedWeavyError::UnsupportedExternalScanner {
+                state: state.id(),
+                external_count: mode.externals().len(),
+            });
+        };
+        let external_row = &self.parser.symbols().externals()[external.get() as usize];
+        let valid_symbols = mode
+            .valid_symbols()
+            .map(|valid_symbols| &self.table.valid_symbol_sets()[valid_symbols.get() as usize]);
+        scanner
+            .scan(ReducedExternalScan::new(
+                state.id(),
+                external,
+                external_row,
+                valid_symbols,
+                self.input,
+                byte_position,
+                self.scanner_snapshot,
+            ))
+            .map_err(|error| ReducedWeavyError::ExternalScannerError {
+                state: state.id(),
+                external,
+                message: error.to_string(),
+            })
+    }
+
+    fn lookahead_shifts_only_extra(
+        &self,
+        state: &parser_ir::ParseState,
+        lookahead: parser_ir::LookaheadSymbol,
+    ) -> bool {
+        state
+            .entries()
+            .iter()
+            .find(|entry| entry.lookahead() == lookahead)
+            .is_some_and(|entry| {
+                entry
+                    .actions()
+                    .iter()
+                    .all(|action| matches!(action, parser_ir::ParseAction::ShiftExtra))
+            })
     }
 
     fn runtime_reduce_fragment(

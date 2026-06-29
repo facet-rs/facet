@@ -3751,30 +3751,30 @@ struct LexModeCacheKey {
 }
 
 #[derive(Debug, Clone)]
-struct CompiledLexMode {
-    terminals: Vec<CompiledLexTerminal>,
-    direct_pattern_set: Option<CompiledLexPatternSet>,
+pub(crate) struct CompiledLexMode {
+    pub(crate) terminals: Vec<CompiledLexTerminal>,
+    pub(crate) direct_pattern_set: Option<CompiledLexPatternSet>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CompiledLexTerminal {
-    terminal: TerminalId,
-    matcher: CompiledTerminalMatcher,
-    immediate: bool,
-    literal: bool,
-    lexical_precedence: i32,
-    implicit_precedence: i32,
-    direct_pattern_index: Option<usize>,
+pub(crate) struct CompiledLexTerminal {
+    pub(crate) terminal: TerminalId,
+    pub(crate) matcher: CompiledTerminalMatcher,
+    pub(crate) immediate: bool,
+    pub(crate) literal: bool,
+    pub(crate) lexical_precedence: i32,
+    pub(crate) implicit_precedence: i32,
+    pub(crate) direct_pattern_index: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
-struct CompiledLexPatternSet {
-    regex_set: RegexSet,
-    terminal_indices: Vec<usize>,
+pub(crate) struct CompiledLexPatternSet {
+    pub(crate) regex_set: RegexSet,
+    pub(crate) terminal_indices: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CompiledTerminalMatcher {
+pub(crate) enum CompiledTerminalMatcher {
     Expr(CompiledLexExpr),
     UnsupportedTerminal {
         terminal: TerminalId,
@@ -3783,7 +3783,7 @@ enum CompiledTerminalMatcher {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CompiledLexExpr {
+pub(crate) enum CompiledLexExpr {
     Blank,
     String(String),
     Pattern(String),
@@ -5227,7 +5227,7 @@ fn compile_regex_patterns(
     patterns
 }
 
-fn compile_lex_modes(
+pub(crate) fn compile_lex_modes(
     grammar: &ValidatedGrammar,
     parser: &ParserGrammar,
     table: &ParseTable,
