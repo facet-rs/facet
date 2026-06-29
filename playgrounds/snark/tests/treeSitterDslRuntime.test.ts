@@ -71,3 +71,42 @@ module.exports = grammar({
     content: { type: "PATTERN", value: "[a-z]+" },
   });
 });
+
+test("resolves inherited Arborium grammar modules by tree-sitter package name", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "group-acorn/css/def/grammar/grammar.js",
+        text: `
+module.exports = grammar({
+  name: "css",
+  rules: {
+    stylesheet: $ => "a",
+  },
+});
+`,
+      },
+      {
+        path: "group-acorn/scss/def/grammar/grammar.js",
+        text: `
+const CSS = require("tree-sitter-css/grammar");
+module.exports = grammar(CSS, {
+  name: "scss",
+  rules: {
+    stylesheet: $ => "b",
+  },
+});
+`,
+      },
+    ],
+    "group-acorn/scss/def/grammar/grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "scss");
+  assert.deepEqual(grammar.rules.stylesheet, {
+    type: "STRING",
+    value: "b",
+  });
+});
