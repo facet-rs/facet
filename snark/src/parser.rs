@@ -3729,7 +3729,55 @@ pub struct ReducedParser<'a> {
 /// External scanner host used by the reduced parser oracle.
 pub trait ReducedExternalScanner {
     /// Try to scan one external token for a branch-local parser state.
-    fn scan(&self, request: ReducedExternalScan<'_>) -> Result<Option<usize>, ReducedParseError>;
+    fn scan(
+        &self,
+        request: ReducedExternalScan<'_>,
+    ) -> Result<Option<ReducedExternalScanResult>, ReducedParseError>;
+}
+
+/// Result of one reduced external scanner call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReducedExternalScanResult {
+    end_byte: usize,
+    before: Option<ScannerSnapshotId>,
+    after: Option<ScannerSnapshotId>,
+}
+
+impl ReducedExternalScanResult {
+    /// Build a scanner result for a token ending at `end_byte`.
+    pub const fn new(end_byte: usize) -> Self {
+        Self {
+            end_byte,
+            before: None,
+            after: None,
+        }
+    }
+
+    /// Attach serialized scanner state snapshots observed around the call.
+    pub const fn with_snapshots(
+        mut self,
+        before: Option<ScannerSnapshotId>,
+        after: Option<ScannerSnapshotId>,
+    ) -> Self {
+        self.before = before;
+        self.after = after;
+        self
+    }
+
+    /// Accepted token end byte.
+    pub const fn end_byte(&self) -> usize {
+        self.end_byte
+    }
+
+    /// Scanner snapshot before the call.
+    pub const fn before(&self) -> Option<ScannerSnapshotId> {
+        self.before
+    }
+
+    /// Scanner snapshot after the call.
+    pub const fn after(&self) -> Option<ScannerSnapshotId> {
+        self.after
+    }
 }
 
 /// Branch-local external scanner request.
@@ -4343,6 +4391,7 @@ impl<'a> ReducedParser<'a> {
             return Ok(ReducedToken {
                 lookahead: LookaheadSymbol::Eof,
                 end: byte_position,
+                scanner: None,
             });
         }
         let mode = self
@@ -4373,6 +4422,7 @@ impl<'a> ReducedParser<'a> {
                 literal: terminal_row.kind() == ParserTerminalKind::String,
                 lexical_precedence: self.lexical_completion_precedence(terminal_row),
                 implicit_precedence: self.lexical_implicit_precedence(terminal_row),
+                scanner: None,
             };
             let Some(lookahead) = self.lookahead_for_terminal(state, *terminal) else {
                 push_reduced_candidate(&mut best_rejected, candidate);
@@ -4393,19 +4443,21 @@ impl<'a> ReducedParser<'a> {
             });
         }
         for external in mode.externals() {
-            let Some(end) = self.match_external(state, mode, *external, input, byte_position)?
+            let Some(scanner_result) =
+                self.match_external(state, mode, *external, input, byte_position)?
             else {
                 continue;
             };
             let candidate = ReducedTokenCandidate {
                 lookahead: LookaheadSymbol::External(*external),
-                end,
+                end: scanner_result.end_byte(),
                 extra: false,
                 external: true,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
                 implicit_precedence: 0,
+                scanner: Some(scanner_result),
             };
             if !state
                 .entries()
@@ -4421,6 +4473,7 @@ impl<'a> ReducedParser<'a> {
             return Ok(ReducedToken {
                 lookahead: candidate.lookahead,
                 end: candidate.end,
+                scanner: candidate.scanner,
             });
         }
         if let Some(rejected) = best_rejected {
@@ -4565,7 +4618,7 @@ impl<'a> ReducedParser<'a> {
         external: ExternalId,
         input: &str,
         byte_position: usize,
-    ) -> Result<Option<usize>, ReducedParseError> {
+    ) -> Result<Option<ReducedExternalScanResult>, ReducedParseError> {
         let Some(scanner) = self.external_scanner else {
             return Err(ReducedParseError::new(
                 ReducedParseErrorKind::UnsupportedExternalScanner {
@@ -5022,6 +5075,7 @@ fn skip_pattern_whitespace(input: &str, byte_position: usize) -> usize {
 struct ReducedToken {
     lookahead: LookaheadSymbol,
     end: usize,
+    scanner: Option<ReducedExternalScanResult>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5034,6 +5088,7 @@ struct ReducedTokenCandidate {
     literal: bool,
     lexical_precedence: i32,
     implicit_precedence: i32,
+    scanner: Option<ReducedExternalScanResult>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5342,11 +5397,12 @@ impl<'a> RuntimeParser<'a> {
         if let LookaheadSymbol::External(_) = token.lookahead {
             let mode = &self.reduced.table.lexical_modes()[state_row.lex_mode().get() as usize];
             if let Some(valid_symbols) = mode.valid_symbols() {
+                let scanner = token.scanner;
                 trace_events.push(TraceEvent::ExternalScanner {
                     version: source_version,
                     valid_symbols,
-                    before: None,
-                    after: None,
+                    before: scanner.and_then(|scanner| scanner.before()),
+                    after: scanner.and_then(|scanner| scanner.after()),
                     result: Some(lookahead),
                 });
             }
@@ -7600,6 +7656,7 @@ mod tests {
             literal: true,
             lexical_precedence: 0,
             implicit_precedence: 2,
+            scanner: None,
         };
         let immediate_string = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
@@ -7610,6 +7667,7 @@ mod tests {
             literal: false,
             lexical_precedence: 0,
             implicit_precedence: 3,
+            scanner: None,
         };
 
         assert_eq!(
@@ -7633,6 +7691,7 @@ mod tests {
             literal: true,
             lexical_precedence: 0,
             implicit_precedence: 2,
+            scanner: None,
         };
         let external_token = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::External(ExternalId::from_index(0)),
@@ -7643,6 +7702,7 @@ mod tests {
             literal: true,
             lexical_precedence: 0,
             implicit_precedence: 0,
+            scanner: None,
         };
 
         assert_eq!(
@@ -7666,6 +7726,7 @@ mod tests {
             literal: false,
             lexical_precedence: 0,
             implicit_precedence: 3,
+            scanner: None,
         };
         let comment_extra = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
@@ -7676,6 +7737,7 @@ mod tests {
             literal: false,
             lexical_precedence: 0,
             implicit_precedence: 0,
+            scanner: None,
         };
 
         assert_eq!(

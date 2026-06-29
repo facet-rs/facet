@@ -22,7 +22,7 @@ use weavy::{
 use crate::{
     corpus::{SexpChild, SexpNode, SexpValue},
     parser as parser_ir,
-    parser::{ReducedExternalScan, ReducedExternalScanner},
+    parser::{ReducedExternalScan, ReducedExternalScanResult, ReducedExternalScanner},
     runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
     validated::{GrammarExpr, GrammarExprId, StaticPrecedenceValue, ValidatedGrammar},
 };
@@ -2063,6 +2063,7 @@ impl<'a> ReducedWeavyStepper<'a> {
             return Ok(ReducedWeavyToken {
                 lookahead: parser_ir::LookaheadSymbol::Eof,
                 end: byte_position,
+                scanner: None,
             });
         }
         let mode = self
@@ -2091,6 +2092,7 @@ impl<'a> ReducedWeavyStepper<'a> {
                 literal: terminal_row.kind() == parser_ir::ParserTerminalKind::String,
                 lexical_precedence: self.lexical_completion_precedence(terminal_row),
                 implicit_precedence: self.lexical_implicit_precedence(terminal_row),
+                scanner: None,
             };
             let Some(lookahead) = self.lookahead_for_terminal(state, *terminal) else {
                 push_reduced_weavy_candidate(&mut best_rejected, candidate);
@@ -2113,18 +2115,21 @@ impl<'a> ReducedWeavyStepper<'a> {
         }
         if self.external_scanner.is_some() {
             for external in mode.externals() {
-                let Some(end) = self.match_external(state, mode, *external, byte_position)? else {
+                let Some(scanner_result) =
+                    self.match_external(state, mode, *external, byte_position)?
+                else {
                     continue;
                 };
                 let candidate = ReducedWeavyTokenCandidate {
                     lookahead: parser_ir::LookaheadSymbol::External(*external),
-                    end,
+                    end: scanner_result.end_byte(),
                     extra: false,
                     external: true,
                     immediate: false,
                     literal: true,
                     lexical_precedence: 0,
                     implicit_precedence: 0,
+                    scanner: Some(scanner_result),
                 };
                 if !state
                     .entries()
@@ -2141,6 +2146,7 @@ impl<'a> ReducedWeavyStepper<'a> {
             return Ok(ReducedWeavyToken {
                 lookahead: candidate.lookahead,
                 end: candidate.end,
+                scanner: candidate.scanner,
             });
         }
         if !mode.externals().is_empty() {
@@ -2240,7 +2246,7 @@ impl<'a> ReducedWeavyStepper<'a> {
         mode: &parser_ir::LexMode,
         external: parser_ir::ExternalId,
         byte_position: usize,
-    ) -> Result<Option<usize>, ReducedWeavyError> {
+    ) -> Result<Option<ReducedExternalScanResult>, ReducedWeavyError> {
         let Some(scanner) = self.external_scanner else {
             return Err(ReducedWeavyError::UnsupportedExternalScanner {
                 state: state.id(),
@@ -2652,12 +2658,13 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     lookahead: self.lookahead_id,
                 });
                 if let Some(valid_symbols) = valid_symbols {
+                    let scanner = token.scanner;
                     self.trace_events
                         .push(parser_ir::TraceEvent::ExternalScanner {
                             version: self.version,
                             valid_symbols,
-                            before: None,
-                            after: None,
+                            before: scanner.and_then(|scanner| scanner.before()),
+                            after: scanner.and_then(|scanner| scanner.after()),
                             result: Some(self.lookahead_id),
                         });
                 }
@@ -3115,6 +3122,7 @@ impl<'program> Step<'program, SnarkBlockId, SnarkWeavyOp> for RuntimeWeavySteppe
 struct ReducedWeavyToken {
     lookahead: parser_ir::LookaheadSymbol,
     end: usize,
+    scanner: Option<ReducedExternalScanResult>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3127,6 +3135,7 @@ struct ReducedWeavyTokenCandidate {
     literal: bool,
     lexical_precedence: i32,
     implicit_precedence: i32,
+    scanner: Option<ReducedExternalScanResult>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
