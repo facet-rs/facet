@@ -457,7 +457,7 @@ mod tests {
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
         parser::{
             LookaheadSymbol, ParseStateId, ParseTable, ParserGenerationStage, ParserGrammar,
-            ReducedParser,
+            ReducedExternalScan, ReducedExternalScanner, ReducedParser,
         },
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
@@ -1271,6 +1271,71 @@ mod tests {
         assert_same!(actual_tree, selector_cases[5].expected);
     }
 
+    #[test]
+    fn parses_pinned_css_nth_child_selectors_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(
+            selector_cases[6].name,
+            ":nth-child and :nth-last-child selectors"
+        );
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[6].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[6].expected);
+    }
+
+    #[test]
+    fn parses_pinned_css_descendant_selectors_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[10].name, "Descendant selectors");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[10].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[10].expected);
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {
@@ -1286,8 +1351,10 @@ mod tests {
         parse_table: &ParseTable,
         input: &str,
     ) -> SexpNode {
+        let scanner = CssReducedExternalScanner;
         ReducedParser::new(validated, parser_grammar, parse_table)
             .unwrap()
+            .with_external_scanner(&scanner)
             .parse(input)
             .unwrap_or_else(|error| {
                 let state = match error.kind() {
@@ -1329,6 +1396,120 @@ mod tests {
                     error.kind()
                 );
             })
+    }
+
+    struct CssReducedExternalScanner;
+
+    impl ReducedExternalScanner for CssReducedExternalScanner {
+        fn scan(
+            &self,
+            request: ReducedExternalScan<'_>,
+        ) -> Result<Option<usize>, crate::parser::ReducedParseError> {
+            if let Some(valid_symbols) = request.valid_symbols()
+                && !valid_symbols.externals().contains(&request.external())
+            {
+                return Ok(None);
+            }
+            Ok(match request.external_symbol().name() {
+                Some("_pseudo_class_selector_colon") => {
+                    scan_css_pseudo_class_selector_colon(request.input(), request.byte_position())
+                }
+                Some("_descendant_operator") => {
+                    scan_css_descendant_operator(request.input(), request.byte_position())
+                }
+                _ => None,
+            })
+        }
+    }
+
+    fn scan_css_pseudo_class_selector_colon(input: &str, byte_position: usize) -> Option<usize> {
+        let mut position = skip_css_whitespace(input, byte_position);
+        if !input[position..].starts_with(':') {
+            return None;
+        }
+        position += ':'.len_utf8();
+        if input[position..].starts_with(':') {
+            return None;
+        }
+        let mark_end = position;
+        let mut scan = position;
+        let mut in_comment = false;
+        while scan < input.len() {
+            let ch = input[scan..].chars().next()?;
+            if ch == ';' || ch == '}' {
+                return None;
+            }
+            if ch == '{' && !in_comment {
+                return Some(mark_end);
+            }
+            if ch == '/' && !in_comment {
+                scan += ch.len_utf8();
+                if input[scan..].starts_with('*') {
+                    scan += '*'.len_utf8();
+                    in_comment = true;
+                }
+                continue;
+            }
+            if ch == '*' && in_comment {
+                scan += ch.len_utf8();
+                if input[scan..].starts_with('/') {
+                    scan += '/'.len_utf8();
+                    in_comment = false;
+                }
+                continue;
+            }
+            scan += ch.len_utf8();
+        }
+        Some(mark_end)
+    }
+
+    fn scan_css_descendant_operator(input: &str, byte_position: usize) -> Option<usize> {
+        let first = input[byte_position..].chars().next()?;
+        if !first.is_whitespace() {
+            return None;
+        }
+        let mark_end = skip_css_whitespace(input, byte_position);
+        let next = input[mark_end..].chars().next()?;
+        if css_selector_start(next) {
+            return Some(mark_end);
+        }
+        if next == ':' {
+            let mut scan = mark_end + next.len_utf8();
+            if input[scan..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+            {
+                return None;
+            }
+            while scan < input.len() {
+                let ch = input[scan..].chars().next()?;
+                if ch == ';' || ch == '}' {
+                    return None;
+                }
+                if ch == '{' {
+                    return Some(mark_end);
+                }
+                scan += ch.len_utf8();
+            }
+        }
+        None
+    }
+
+    fn skip_css_whitespace(input: &str, byte_position: usize) -> usize {
+        let mut position = byte_position;
+        while let Some(ch) = input[position..]
+            .chars()
+            .next()
+            .filter(|ch| ch.is_whitespace())
+        {
+            position += ch.len_utf8();
+        }
+        position
+    }
+
+    fn css_selector_start(ch: char) -> bool {
+        ch == '#' || ch == '.' || ch == '[' || ch == '-' || ch == '*' || ch.is_alphanumeric()
     }
 
     fn describe_parse_state(

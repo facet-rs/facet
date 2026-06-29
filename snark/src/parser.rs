@@ -192,7 +192,13 @@ impl ParserGrammar {
         let terminals = seed_terminal_symbols(grammar, lexical, &mut lexical_rules);
         let terminal_by_expr = terminals
             .iter()
-            .map(|terminal| (terminal.source_expr(), terminal.id()))
+            .flat_map(|terminal| {
+                terminal
+                    .source_exprs()
+                    .iter()
+                    .copied()
+                    .map(move |expr| (expr, terminal.id()))
+            })
             .collect::<HashMap<_, _>>();
         let externals = lexical
             .external_tokens()
@@ -508,7 +514,13 @@ impl ParserGrammar {
             .symbols
             .terminals
             .iter()
-            .map(|terminal| (terminal.source_expr(), terminal.id()))
+            .flat_map(|terminal| {
+                terminal
+                    .source_exprs()
+                    .iter()
+                    .copied()
+                    .map(move |expr| (expr, terminal.id()))
+            })
             .collect::<HashMap<_, _>>();
         for expr in grammar.extras() {
             if extra_root_symbol(grammar, &terminal_by_expr, *expr).is_none() {
@@ -800,40 +812,45 @@ fn seed_terminal_symbols(
     lexical: &LexicalFacts,
     lexical_rules: &mut Vec<LexicalRule>,
 ) -> Vec<TerminalSymbol> {
-    let mut terminals = lexical
-        .terminals()
-        .iter()
-        .enumerate()
-        .map(|(index, terminal)| {
-            let id = TerminalId::from_index(index);
-            let kind = match terminal.kind {
-                TerminalKind::String => ParserTerminalKind::String,
-                TerminalKind::Pattern => ParserTerminalKind::Pattern,
-            };
-            let public_names = match terminal.kind {
-                TerminalKind::String => vec![terminal.spelling.clone()],
-                TerminalKind::Pattern => Vec::new(),
-            };
-            let lexical_rule = push_lexical_rule(
-                lexical_rules,
-                id,
-                LexicalRuleSource::Terminal {
-                    expr: terminal.expr,
-                    kind,
-                    spelling: terminal.spelling.clone(),
-                },
-            );
-            TerminalSymbol {
-                id,
+    let mut terminals = Vec::<TerminalSymbol>::new();
+    let mut direct_terminal_by_key = HashMap::<(ParserTerminalKind, String), TerminalId>::new();
+    for terminal in lexical.terminals() {
+        let kind = match terminal.kind {
+            TerminalKind::String => ParserTerminalKind::String,
+            TerminalKind::Pattern => ParserTerminalKind::Pattern,
+        };
+        let key = (kind, terminal.spelling.clone());
+        if let Some(id) = direct_terminal_by_key.get(&key).copied() {
+            terminals[id.get() as usize]
+                .source_exprs
+                .push(terminal.expr);
+            continue;
+        }
+        let id = TerminalId::from_index(terminals.len());
+        direct_terminal_by_key.insert(key, id);
+        let public_names = match terminal.kind {
+            TerminalKind::String => vec![terminal.spelling.clone()],
+            TerminalKind::Pattern => Vec::new(),
+        };
+        let lexical_rule = push_lexical_rule(
+            lexical_rules,
+            id,
+            LexicalRuleSource::Terminal {
+                expr: terminal.expr,
                 kind,
                 spelling: terminal.spelling.clone(),
-                source_expr: terminal.expr,
-                lexical_rule,
-                lexical_root: None,
-                public_names,
-            }
-        })
-        .collect::<Vec<_>>();
+            },
+        );
+        terminals.push(TerminalSymbol {
+            id,
+            kind,
+            spelling: terminal.spelling.clone(),
+            source_exprs: vec![terminal.expr],
+            lexical_rule,
+            lexical_root: None,
+            public_names,
+        });
+    }
     for root in lexical.lexical_roots() {
         let kind = match root.kind {
             crate::lexical::LexicalRootKind::Token => ParserTerminalKind::Token,
@@ -855,7 +872,7 @@ fn seed_terminal_symbols(
             id,
             kind,
             spelling: lexical_root_spelling(grammar, root.id),
-            source_expr: root.id,
+            source_exprs: vec![root.id],
             lexical_rule,
             lexical_root: Some(root.id),
             public_names,
@@ -1220,7 +1237,13 @@ impl<'a> ProductionNormalizer<'a> {
             .symbols
             .terminals
             .iter()
-            .map(|terminal| (terminal.source_expr, terminal.id))
+            .flat_map(|terminal| {
+                terminal
+                    .source_exprs()
+                    .iter()
+                    .copied()
+                    .map(move |expr| (expr, terminal.id))
+            })
             .collect::<HashMap<_, _>>();
         let public_node_by_rule = parser
             .public_node_kinds
@@ -1796,7 +1819,7 @@ pub struct TerminalSymbol {
     id: TerminalId,
     kind: ParserTerminalKind,
     spelling: String,
-    source_expr: GrammarExprId,
+    source_exprs: Vec<GrammarExprId>,
     lexical_rule: LexicalRuleId,
     lexical_root: Option<GrammarExprId>,
     public_names: Vec<String>,
@@ -1819,8 +1842,13 @@ impl TerminalSymbol {
     }
 
     /// Grammar expression that introduced this terminal symbol.
-    pub const fn source_expr(&self) -> GrammarExprId {
-        self.source_expr
+    pub fn source_expr(&self) -> GrammarExprId {
+        self.source_exprs[0]
+    }
+
+    /// Grammar expressions that canonicalize to this terminal symbol.
+    pub fn source_exprs(&self) -> &[GrammarExprId] {
+        &self.source_exprs
     }
 
     /// Parser-owned lexical rule that describes this terminal.
@@ -1840,7 +1868,7 @@ impl TerminalSymbol {
 }
 
 /// Parser terminal kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ParserTerminalKind {
     /// Literal string token.
@@ -3084,6 +3112,7 @@ impl<'a> LrTableBuilder<'a> {
                     }
                 }
             }
+            resolve_associative_shift_reduce_conflicts(&mut entries, self.grammar);
             let lex_mode = lex_mode_from_entries(
                 &entries,
                 &mut lexical_modes,
@@ -3335,6 +3364,51 @@ fn push_action(
     }
 }
 
+fn resolve_associative_shift_reduce_conflicts(
+    entries: &mut BTreeMap<LookaheadSymbol, Vec<ParseAction>>,
+    grammar: &ParserGrammar,
+) {
+    for actions in entries.values_mut() {
+        if actions.len() < 2
+            || !actions
+                .iter()
+                .any(|action| matches!(action, ParseAction::Shift { .. }))
+        {
+            continue;
+        }
+
+        let mut has_left_reduce = false;
+        let mut has_right_reduce = false;
+        for action in actions.iter() {
+            let Some(metadata) = reduce_action_metadata(grammar, action) else {
+                continue;
+            };
+            match metadata.associativity() {
+                Associativity::Left => has_left_reduce = true,
+                Associativity::Right => has_right_reduce = true,
+                Associativity::None => {}
+            }
+        }
+
+        match (has_left_reduce, has_right_reduce) {
+            (true, false) => actions.retain(|action| !matches!(action, ParseAction::Shift { .. })),
+            (false, true) => actions.retain(|action| !matches!(action, ParseAction::Reduce { .. })),
+            _ => {}
+        }
+    }
+}
+
+fn reduce_action_metadata<'a>(
+    grammar: &'a ParserGrammar,
+    action: &ParseAction,
+) -> Option<&'a ProductionMetadata> {
+    let metadata = match *action {
+        ParseAction::Reduce { metadata, .. } => metadata,
+        _ => return None,
+    };
+    grammar.production_metadata.get(metadata.get() as usize)
+}
+
 fn lex_mode_from_entries(
     entries: &BTreeMap<LookaheadSymbol, Vec<ParseAction>>,
     lexical_modes: &mut Vec<LexMode>,
@@ -3459,6 +3533,56 @@ pub struct ReducedParser<'a> {
     grammar: &'a ValidatedGrammar,
     parser: &'a ParserGrammar,
     table: &'a ParseTable,
+    external_scanner: Option<&'a dyn ReducedExternalScanner>,
+}
+
+/// External scanner host used by the reduced parser oracle.
+pub trait ReducedExternalScanner {
+    /// Try to scan one external token for a branch-local parser state.
+    fn scan(&self, request: ReducedExternalScan<'_>) -> Result<Option<usize>, ReducedParseError>;
+}
+
+/// Branch-local external scanner request.
+#[derive(Debug, Clone, Copy)]
+pub struct ReducedExternalScan<'a> {
+    state: ParseStateId,
+    external: ExternalId,
+    external_symbol: &'a ExternalSymbol,
+    valid_symbols: Option<&'a ValidSymbolSet>,
+    input: &'a str,
+    byte_position: usize,
+}
+
+impl ReducedExternalScan<'_> {
+    /// Parse state requesting the scanner call.
+    pub const fn state(&self) -> ParseStateId {
+        self.state
+    }
+
+    /// External token requested by the lexical mode.
+    pub const fn external(&self) -> ExternalId {
+        self.external
+    }
+
+    /// External symbol metadata.
+    pub const fn external_symbol(&self) -> &ExternalSymbol {
+        self.external_symbol
+    }
+
+    /// Valid-symbol set for this parser state, if any.
+    pub const fn valid_symbols(&self) -> Option<&ValidSymbolSet> {
+        self.valid_symbols
+    }
+
+    /// Source input being parsed.
+    pub const fn input(&self) -> &str {
+        self.input
+    }
+
+    /// Branch-local byte position before scanner execution.
+    pub const fn byte_position(&self) -> usize {
+        self.byte_position
+    }
 }
 
 impl<'a> ReducedParser<'a> {
@@ -3477,7 +3601,14 @@ impl<'a> ReducedParser<'a> {
             grammar,
             parser,
             table,
+            external_scanner: None,
         })
+    }
+
+    /// Attach a reduced external scanner host.
+    pub fn with_external_scanner(mut self, scanner: &'a dyn ReducedExternalScanner) -> Self {
+        self.external_scanner = Some(scanner);
+        self
     }
 
     /// Parse one input into a reduced Tree-sitter-style S-expression node.
@@ -3527,6 +3658,7 @@ impl<'a> ReducedParser<'a> {
         Err(
             ReducedParseError::new(ReducedParseErrorKind::AmbiguousParse {
                 accepted_count: accepted.len(),
+                accepted: accepted.iter().map(|(node, _)| node.to_sexp()).collect(),
             })
             .with_trace(first_trace),
         )
@@ -3561,40 +3693,37 @@ impl<'a> ReducedParser<'a> {
                 return vec![ReducedStepOutcome::Failed(error.with_trace(branch.trace))];
             }
         };
-        let tokens = match self.lex(state_row, input, branch.byte_position) {
-            Ok(tokens) => tokens,
+        let token = match self.lex(state_row, input, branch.byte_position) {
+            Ok(token) => token,
             Err(error) => {
                 return vec![ReducedStepOutcome::Failed(error.with_trace(branch.trace))];
             }
         };
-        let mut outcomes = Vec::new();
-        for token in tokens {
-            let Some(entry) = state_row
-                .entries()
-                .iter()
-                .find(|entry| entry.lookahead() == token.lookahead)
-            else {
-                outcomes.push(ReducedStepOutcome::Failed(
-                    ReducedParseError::new(ReducedParseErrorKind::NoAction {
-                        state,
-                        lookahead: token.lookahead,
-                        byte_position: branch.byte_position,
-                    })
-                    .with_trace(branch.trace.clone()),
-                ));
-                continue;
-            };
-
-            for action in entry.actions() {
-                let mut branch = branch.clone();
-                branch.trace.push(ReducedTraceStep {
+        let Some(entry) = state_row
+            .entries()
+            .iter()
+            .find(|entry| entry.lookahead() == token.lookahead)
+        else {
+            return vec![ReducedStepOutcome::Failed(
+                ReducedParseError::new(ReducedParseErrorKind::NoAction {
                     state,
-                    byte_position: branch.byte_position,
                     lookahead: token.lookahead,
-                    action: *action,
-                });
-                outcomes.push(self.apply_action(branch, token, *action, input));
-            }
+                    byte_position: branch.byte_position,
+                })
+                .with_trace(branch.trace),
+            )];
+        };
+
+        let mut outcomes = Vec::new();
+        for action in entry.actions() {
+            let mut branch = branch.clone();
+            branch.trace.push(ReducedTraceStep {
+                state,
+                byte_position: branch.byte_position,
+                lookahead: token.lookahead,
+                action: *action,
+            });
+            outcomes.push(self.apply_action(branch, token, *action, input));
         }
         outcomes
     }
@@ -3710,12 +3839,12 @@ impl<'a> ReducedParser<'a> {
         state: &ParseState,
         input: &str,
         byte_position: usize,
-    ) -> Result<Vec<ReducedToken>, ReducedParseError> {
+    ) -> Result<ReducedToken, ReducedParseError> {
         if byte_position == input.len() {
-            return Ok(vec![ReducedToken {
+            return Ok(ReducedToken {
                 lookahead: LookaheadSymbol::Eof,
                 end: byte_position,
-            }]);
+            });
         }
         let mode = self
             .table
@@ -3726,7 +3855,7 @@ impl<'a> ReducedParser<'a> {
                     mode: state.lex_mode(),
                 })
             })?;
-        let mut best = Vec::<ReducedTokenCandidate>::new();
+        let mut best = None::<ReducedTokenCandidate>;
         let mut best_rejected = None::<ReducedTokenCandidate>;
         for terminal in mode.terminals() {
             let terminal_row = &self.parser.symbols.terminals[terminal.get() as usize];
@@ -3739,10 +3868,11 @@ impl<'a> ReducedParser<'a> {
             let candidate = ReducedTokenCandidate {
                 lookahead: LookaheadSymbol::Terminal(*terminal),
                 end,
+                external: false,
                 literal: terminal_row.kind() == ParserTerminalKind::String,
             };
             let Some(lookahead) = self.lookahead_for_terminal(state, *terminal) else {
-                push_rejected_reduced_candidate(&mut best_rejected, candidate);
+                push_reduced_candidate(&mut best_rejected, candidate);
                 continue;
             };
             push_reduced_candidate(
@@ -3753,19 +3883,20 @@ impl<'a> ReducedParser<'a> {
                 },
             );
         }
-        if let Some(candidate) = best.first().copied() {
+        if let Some(candidate) = best {
             best_rejected = best_rejected.filter(|rejected| {
                 reduced_candidate_order(*rejected, candidate) == ReducedCandidateOrder::Greater
             });
         }
         for external in mode.externals() {
-            let Some(end) = self.match_external(state.id(), *external, input, byte_position)?
+            let Some(end) = self.match_external(state, mode, *external, input, byte_position)?
             else {
                 continue;
             };
             let candidate = ReducedTokenCandidate {
                 lookahead: LookaheadSymbol::External(*external),
                 end,
+                external: true,
                 literal: true,
             };
             if !state
@@ -3773,19 +3904,16 @@ impl<'a> ReducedParser<'a> {
                 .iter()
                 .any(|entry| entry.lookahead() == candidate.lookahead)
             {
-                push_rejected_reduced_candidate(&mut best_rejected, candidate);
+                push_reduced_candidate(&mut best_rejected, candidate);
                 continue;
             }
             push_reduced_candidate(&mut best, candidate);
         }
-        if !best.is_empty() {
-            return Ok(best
-                .into_iter()
-                .map(|candidate| ReducedToken {
-                    lookahead: candidate.lookahead,
-                    end: candidate.end,
-                })
-                .collect());
+        if let Some(candidate) = best {
+            return Ok(ReducedToken {
+                lookahead: candidate.lookahead,
+                end: candidate.end,
+            });
         }
         if let Some(rejected) = best_rejected {
             return Err(ReducedParseError::new(ReducedParseErrorKind::NoAction {
@@ -3876,24 +4004,32 @@ impl<'a> ReducedParser<'a> {
 
     fn match_external(
         &self,
-        state: ParseStateId,
+        state: &ParseState,
+        mode: &LexMode,
         external: ExternalId,
         input: &str,
         byte_position: usize,
     ) -> Result<Option<usize>, ReducedParseError> {
-        let external_row = &self.parser.symbols.externals[external.get() as usize];
-        match external_row.name() {
-            Some("_pseudo_class_selector_colon") => {
-                Ok(match_css_pseudo_class_selector_colon(input, byte_position))
-            }
-            Some("_descendant_operator") => Ok(match_css_descendant_operator(input, byte_position)),
-            _ => Err(ReducedParseError::new(
+        let Some(scanner) = self.external_scanner else {
+            return Err(ReducedParseError::new(
                 ReducedParseErrorKind::UnsupportedExternalScanner {
-                    state,
-                    external_count: 1,
+                    state: state.id(),
+                    external_count: mode.externals().len(),
                 },
-            )),
-        }
+            ));
+        };
+        let external_row = &self.parser.symbols.externals[external.get() as usize];
+        let valid_symbols = mode
+            .valid_symbols()
+            .map(|valid_symbols| &self.table.valid_symbol_sets()[valid_symbols.get() as usize]);
+        scanner.scan(ReducedExternalScan {
+            state: state.id(),
+            external,
+            external_symbol: external_row,
+            valid_symbols,
+            input,
+            byte_position,
+        })
     }
 
     fn match_lexical_expr(
@@ -4151,10 +4287,10 @@ fn match_css_nth_functional_notation(input: &str, byte_position: usize) -> Optio
         return None;
     }
     position += 'n'.len_utf8();
-    position = skip_css_whitespace(input, position);
+    position = skip_pattern_whitespace(input, position);
     if input[position..].starts_with('+') {
         position += '+'.len_utf8();
-        position = skip_css_whitespace(input, position);
+        position = skip_pattern_whitespace(input, position);
         let digits = match_while(input, position, |ch| ch.is_ascii_digit(), 1)?;
         position = digits;
     }
@@ -4169,81 +4305,7 @@ fn css_ident_continue(ch: char) -> bool {
     css_ident_start(ch) || ch.is_ascii_digit() || ch == '-'
 }
 
-fn match_css_pseudo_class_selector_colon(input: &str, byte_position: usize) -> Option<usize> {
-    let mut position = skip_css_whitespace(input, byte_position);
-    if !input[position..].starts_with(':') {
-        return None;
-    }
-    position += ':'.len_utf8();
-    if input[position..].starts_with(':') {
-        return None;
-    }
-    let mark_end = position;
-    let mut scan = position;
-    let mut in_comment = false;
-    while scan < input.len() {
-        let ch = input[scan..].chars().next()?;
-        if ch == ';' || ch == '}' {
-            return None;
-        }
-        if ch == '{' && !in_comment {
-            return Some(mark_end);
-        }
-        if ch == '/' && !in_comment {
-            scan += ch.len_utf8();
-            if input[scan..].starts_with('*') {
-                scan += '*'.len_utf8();
-                in_comment = true;
-            }
-            continue;
-        }
-        if ch == '*' && in_comment {
-            scan += ch.len_utf8();
-            if input[scan..].starts_with('/') {
-                scan += '/'.len_utf8();
-                in_comment = false;
-            }
-            continue;
-        }
-        scan += ch.len_utf8();
-    }
-    Some(mark_end)
-}
-
-fn match_css_descendant_operator(input: &str, byte_position: usize) -> Option<usize> {
-    let first = input[byte_position..].chars().next()?;
-    if !first.is_whitespace() {
-        return None;
-    }
-    let mark_end = skip_css_whitespace(input, byte_position);
-    let next = input[mark_end..].chars().next()?;
-    if css_selector_start(next) {
-        return Some(mark_end);
-    }
-    if next == ':' {
-        let mut scan = mark_end + next.len_utf8();
-        if input[scan..]
-            .chars()
-            .next()
-            .is_some_and(char::is_whitespace)
-        {
-            return None;
-        }
-        while scan < input.len() {
-            let ch = input[scan..].chars().next()?;
-            if ch == ';' || ch == '}' {
-                return None;
-            }
-            if ch == '{' {
-                return Some(mark_end);
-            }
-            scan += ch.len_utf8();
-        }
-    }
-    None
-}
-
-fn skip_css_whitespace(input: &str, byte_position: usize) -> usize {
+fn skip_pattern_whitespace(input: &str, byte_position: usize) -> usize {
     let mut position = byte_position;
     while let Some(ch) = input[position..]
         .chars()
@@ -4253,10 +4315,6 @@ fn skip_css_whitespace(input: &str, byte_position: usize) -> usize {
         position += ch.len_utf8();
     }
     position
-}
-
-fn css_selector_start(ch: char) -> bool {
-    ch == '#' || ch == '.' || ch == '[' || ch == '-' || ch == '*' || ch.is_alphanumeric()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4269,6 +4327,7 @@ struct ReducedToken {
 struct ReducedTokenCandidate {
     lookahead: LookaheadSymbol,
     end: usize,
+    external: bool,
     literal: bool,
 }
 
@@ -4286,6 +4345,12 @@ fn reduced_candidate_order(
     match left.end.cmp(&right.end) {
         std::cmp::Ordering::Greater => ReducedCandidateOrder::Greater,
         std::cmp::Ordering::Less => ReducedCandidateOrder::Less,
+        std::cmp::Ordering::Equal if left.external && !right.external => {
+            ReducedCandidateOrder::Greater
+        }
+        std::cmp::Ordering::Equal if !left.external && right.external => {
+            ReducedCandidateOrder::Less
+        }
         std::cmp::Ordering::Equal if left.literal && !right.literal => {
             ReducedCandidateOrder::Greater
         }
@@ -4295,38 +4360,13 @@ fn reduced_candidate_order(
 }
 
 fn push_reduced_candidate(
-    candidates: &mut Vec<ReducedTokenCandidate>,
+    candidate_slot: &mut Option<ReducedTokenCandidate>,
     candidate: ReducedTokenCandidate,
 ) {
-    let Some(current) = candidates.first().copied() else {
-        candidates.push(candidate);
-        return;
-    };
-    match reduced_candidate_order(candidate, current) {
-        ReducedCandidateOrder::Greater => {
-            candidates.clear();
-            candidates.push(candidate);
-        }
-        ReducedCandidateOrder::Equal => {
-            if !candidates
-                .iter()
-                .any(|existing| existing.lookahead == candidate.lookahead)
-            {
-                candidates.push(candidate);
-            }
-        }
-        ReducedCandidateOrder::Less => {}
-    }
-}
-
-fn push_rejected_reduced_candidate(
-    rejected: &mut Option<ReducedTokenCandidate>,
-    candidate: ReducedTokenCandidate,
-) {
-    match rejected {
+    match candidate_slot {
         Some(current)
             if reduced_candidate_order(*current, candidate) != ReducedCandidateOrder::Less => {}
-        _ => *rejected = Some(candidate),
+        _ => *candidate_slot = Some(candidate),
     }
 }
 
@@ -4426,7 +4466,7 @@ pub struct ReducedTraceStep {
     pub byte_position: usize,
     /// Lookahead selected by the lexical mode.
     pub lookahead: LookaheadSymbol,
-    /// Action selected by the deterministic reduced parser.
+    /// Action explored by the reduced parser branch.
     pub action: ParseAction,
 }
 
@@ -4517,9 +4557,12 @@ impl fmt::Display for ReducedParseError {
             ReducedParseErrorKind::BranchStepLimit { limit } => {
                 write!(f, "reduced parser exceeded branch step limit {limit}")
             }
-            ReducedParseErrorKind::AmbiguousParse { accepted_count } => write!(
+            ReducedParseErrorKind::AmbiguousParse {
+                accepted_count,
+                accepted,
+            } => write!(
                 f,
-                "reduced parser accepted {accepted_count} different reduced trees"
+                "reduced parser accepted {accepted_count} different reduced trees: {accepted:?}"
             ),
         }
     }
@@ -4627,6 +4670,8 @@ pub enum ReducedParseErrorKind {
     AmbiguousParse {
         /// Number of accepted branches.
         accepted_count: usize,
+        /// Accepted reduced S-expression projections.
+        accepted: Vec<String>,
     },
 }
 
@@ -5231,7 +5276,7 @@ mod tests {
     }
 
     #[test]
-    fn anonymous_literal_provenance_keeps_all_contributing_terminals() {
+    fn anonymous_literal_provenance_keeps_all_contributing_expressions() {
         let grammar = normalize(
             r##"{
               "name": "mini",
@@ -5255,8 +5300,9 @@ mod tests {
             .find(|literal| literal.literal() == "+")
             .unwrap();
 
-        assert_eq!(public_literal.terminals().len(), 2);
-        assert_ne!(public_literal.terminals()[0], public_literal.terminals()[1]);
+        assert_eq!(public_literal.terminals().len(), 1);
+        let terminal = &grammar.symbols().terminals()[public_literal.terminals()[0].get() as usize];
+        assert_eq!(terminal.source_exprs().len(), 2);
         assert_eq!(
             grammar
                 .public_node_kinds()
