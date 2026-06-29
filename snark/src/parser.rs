@@ -3561,37 +3561,40 @@ impl<'a> ReducedParser<'a> {
                 return vec![ReducedStepOutcome::Failed(error.with_trace(branch.trace))];
             }
         };
-        let token = match self.lex(state_row, input, branch.byte_position) {
-            Ok(token) => token,
+        let tokens = match self.lex(state_row, input, branch.byte_position) {
+            Ok(tokens) => tokens,
             Err(error) => {
                 return vec![ReducedStepOutcome::Failed(error.with_trace(branch.trace))];
             }
         };
-        let Some(entry) = state_row
-            .entries()
-            .iter()
-            .find(|entry| entry.lookahead() == token.lookahead)
-        else {
-            return vec![ReducedStepOutcome::Failed(
-                ReducedParseError::new(ReducedParseErrorKind::NoAction {
-                    state,
-                    lookahead: token.lookahead,
-                    byte_position: branch.byte_position,
-                })
-                .with_trace(branch.trace),
-            )];
-        };
-
         let mut outcomes = Vec::new();
-        for action in entry.actions() {
-            let mut branch = branch.clone();
-            branch.trace.push(ReducedTraceStep {
-                state,
-                byte_position: branch.byte_position,
-                lookahead: token.lookahead,
-                action: *action,
-            });
-            outcomes.push(self.apply_action(branch, token, *action, input));
+        for token in tokens {
+            let Some(entry) = state_row
+                .entries()
+                .iter()
+                .find(|entry| entry.lookahead() == token.lookahead)
+            else {
+                outcomes.push(ReducedStepOutcome::Failed(
+                    ReducedParseError::new(ReducedParseErrorKind::NoAction {
+                        state,
+                        lookahead: token.lookahead,
+                        byte_position: branch.byte_position,
+                    })
+                    .with_trace(branch.trace.clone()),
+                ));
+                continue;
+            };
+
+            for action in entry.actions() {
+                let mut branch = branch.clone();
+                branch.trace.push(ReducedTraceStep {
+                    state,
+                    byte_position: branch.byte_position,
+                    lookahead: token.lookahead,
+                    action: *action,
+                });
+                outcomes.push(self.apply_action(branch, token, *action, input));
+            }
         }
         outcomes
     }
@@ -3707,12 +3710,12 @@ impl<'a> ReducedParser<'a> {
         state: &ParseState,
         input: &str,
         byte_position: usize,
-    ) -> Result<ReducedToken, ReducedParseError> {
+    ) -> Result<Vec<ReducedToken>, ReducedParseError> {
         if byte_position == input.len() {
-            return Ok(ReducedToken {
+            return Ok(vec![ReducedToken {
                 lookahead: LookaheadSymbol::Eof,
                 end: byte_position,
-            });
+            }]);
         }
         let mode = self
             .table
@@ -3723,7 +3726,8 @@ impl<'a> ReducedParser<'a> {
                     mode: state.lex_mode(),
                 })
             })?;
-        let mut best = None::<(TerminalId, usize, bool)>;
+        let mut best = Vec::<ReducedTokenCandidate>::new();
+        let mut best_rejected = None::<ReducedTokenCandidate>;
         for terminal in mode.terminals() {
             let terminal_row = &self.parser.symbols.terminals[terminal.get() as usize];
             let Some(end) = self.match_terminal(terminal_row, input, byte_position)? else {
@@ -3732,42 +3736,69 @@ impl<'a> ReducedParser<'a> {
             if end == byte_position {
                 continue;
             }
-            let literal = terminal_row.kind() == ParserTerminalKind::String;
-            match best {
-                Some((_, best_end, best_literal))
-                    if best_end > end || (best_end == end && best_literal && !literal) => {}
-                _ => best = Some((*terminal, end, literal)),
-            }
+            let candidate = ReducedTokenCandidate {
+                lookahead: LookaheadSymbol::Terminal(*terminal),
+                end,
+                literal: terminal_row.kind() == ParserTerminalKind::String,
+            };
+            let Some(lookahead) = self.lookahead_for_terminal(state, *terminal) else {
+                push_rejected_reduced_candidate(&mut best_rejected, candidate);
+                continue;
+            };
+            push_reduced_candidate(
+                &mut best,
+                ReducedTokenCandidate {
+                    lookahead,
+                    ..candidate
+                },
+            );
         }
-        let Some((terminal, end, _)) = best else {
-            if !mode.externals().is_empty() {
-                return Err(ReducedParseError::new(
-                    ReducedParseErrorKind::UnsupportedExternalScanner {
-                        state: state.id(),
-                        external_count: mode.externals().len(),
-                    },
-                ));
+        if let Some(candidate) = best.first().copied() {
+            best_rejected = best_rejected.filter(|rejected| {
+                reduced_candidate_order(*rejected, candidate) == ReducedCandidateOrder::Greater
+            });
+        }
+        for external in mode.externals() {
+            let Some(end) = self.match_external(state.id(), *external, input, byte_position)?
+            else {
+                continue;
+            };
+            let candidate = ReducedTokenCandidate {
+                lookahead: LookaheadSymbol::External(*external),
+                end,
+                literal: true,
+            };
+            if !state
+                .entries()
+                .iter()
+                .any(|entry| entry.lookahead() == candidate.lookahead)
+            {
+                push_rejected_reduced_candidate(&mut best_rejected, candidate);
+                continue;
             }
-            return Err(ReducedParseError::new(ReducedParseErrorKind::NoToken {
-                state: state.id(),
-                byte_position,
-                expected: self
-                    .mode_terminal_spellings(mode)
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect(),
-            }));
-        };
-        let lookahead = self
-            .lookahead_for_terminal(state, terminal)
-            .ok_or_else(|| {
-                ReducedParseError::new(ReducedParseErrorKind::NoAction {
-                    state: state.id(),
-                    lookahead: LookaheadSymbol::Terminal(terminal),
-                    byte_position,
+            push_reduced_candidate(&mut best, candidate);
+        }
+        if !best.is_empty() {
+            return Ok(best
+                .into_iter()
+                .map(|candidate| ReducedToken {
+                    lookahead: candidate.lookahead,
+                    end: candidate.end,
                 })
-            })?;
-        Ok(ReducedToken { lookahead, end })
+                .collect());
+        }
+        if let Some(rejected) = best_rejected {
+            return Err(ReducedParseError::new(ReducedParseErrorKind::NoAction {
+                state: state.id(),
+                lookahead: rejected.lookahead,
+                byte_position,
+            }));
+        }
+        Err(ReducedParseError::new(ReducedParseErrorKind::NoToken {
+            state: state.id(),
+            byte_position,
+            expected: self.mode_token_spellings(mode).into_iter().collect(),
+        }))
     }
 
     fn lookahead_for_terminal(
@@ -3790,11 +3821,20 @@ impl<'a> ReducedParser<'a> {
             })
     }
 
-    fn mode_terminal_spellings(&self, mode: &LexMode) -> Vec<&str> {
-        mode.terminals()
+    fn mode_token_spellings(&self, mode: &LexMode) -> Vec<String> {
+        let mut spellings: Vec<String> = mode
+            .terminals()
             .iter()
             .map(|terminal| self.parser.symbols.terminals[terminal.get() as usize].spelling())
-            .collect()
+            .map(str::to_owned)
+            .collect();
+        spellings.extend(mode.externals().iter().map(|external| {
+            self.parser.symbols.externals[external.get() as usize]
+                .name()
+                .unwrap_or("<anonymous-external>")
+                .to_owned()
+        }));
+        spellings
     }
 
     fn match_terminal(
@@ -3831,6 +3871,28 @@ impl<'a> ReducedParser<'a> {
                 };
                 self.match_lexical_expr(*content, input, byte_position)
             }
+        }
+    }
+
+    fn match_external(
+        &self,
+        state: ParseStateId,
+        external: ExternalId,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Option<usize>, ReducedParseError> {
+        let external_row = &self.parser.symbols.externals[external.get() as usize];
+        match external_row.name() {
+            Some("_pseudo_class_selector_colon") => {
+                Ok(match_css_pseudo_class_selector_colon(input, byte_position))
+            }
+            Some("_descendant_operator") => Ok(match_css_descendant_operator(input, byte_position)),
+            _ => Err(ReducedParseError::new(
+                ReducedParseErrorKind::UnsupportedExternalScanner {
+                    state,
+                    external_count: 1,
+                },
+            )),
         }
     }
 
@@ -3933,11 +3995,21 @@ impl<'a> ReducedParser<'a> {
         popped.reverse();
         for (step, fragment) in production_row.steps().iter().zip(popped) {
             let mut step_children = fragment.into_children();
-            if let Some(alias) = step.alias() {
+            if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
                 let alias_name = self.parser.aliases[alias.get() as usize].value.clone();
-                for child in &mut step_children {
-                    if let SexpValue::Node(node) = &mut child.value {
-                        node.kind.clone_from(&alias_name);
+                if step_children.is_empty() {
+                    step_children.push(SexpChild {
+                        field: None,
+                        value: SexpValue::Node(SexpNode {
+                            kind: alias_name,
+                            children: Vec::new(),
+                        }),
+                    });
+                } else {
+                    for child in &mut step_children {
+                        if let SexpValue::Node(node) = &mut child.value {
+                            node.kind.clone_from(&alias_name);
+                        }
                     }
                 }
             }
@@ -3980,6 +4052,19 @@ fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usi
             .map(|ch| byte_position + ch.len_utf8()),
         "\\s+" => match_while(input, byte_position, char::is_whitespace, 1),
         "\\d+" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 1),
+        "-?(\\d)*n\\s*(\\+\\s*\\d+)?" => match_css_nth_functional_notation(input, byte_position),
+        "[^\\\\'\\n]+" => match_while(
+            input,
+            byte_position,
+            |ch| ch != '\\' && ch != '\'' && ch != '\n',
+            1,
+        ),
+        "[^\\\\\"\\n]+" => match_while(
+            input,
+            byte_position,
+            |ch| ch != '\\' && ch != '"' && ch != '\n',
+            1,
+        ),
         "[a-zA-Z%]+" => match_while(
             input,
             byte_position,
@@ -4050,6 +4135,32 @@ fn match_css_identifier(input: &str, byte_position: usize) -> Option<usize> {
     Some(position)
 }
 
+fn match_css_nth_functional_notation(input: &str, byte_position: usize) -> Option<usize> {
+    let mut position = byte_position;
+    if input[position..].starts_with('-') {
+        position += '-'.len_utf8();
+    }
+    while let Some(ch) = input[position..]
+        .chars()
+        .next()
+        .filter(|ch| ch.is_ascii_digit())
+    {
+        position += ch.len_utf8();
+    }
+    if !input[position..].starts_with('n') {
+        return None;
+    }
+    position += 'n'.len_utf8();
+    position = skip_css_whitespace(input, position);
+    if input[position..].starts_with('+') {
+        position += '+'.len_utf8();
+        position = skip_css_whitespace(input, position);
+        let digits = match_while(input, position, |ch| ch.is_ascii_digit(), 1)?;
+        position = digits;
+    }
+    Some(position)
+}
+
 fn css_ident_start(ch: char) -> bool {
     ch.is_ascii_alphabetic() || ch == '_' || !ch.is_ascii()
 }
@@ -4058,10 +4169,165 @@ fn css_ident_continue(ch: char) -> bool {
     css_ident_start(ch) || ch.is_ascii_digit() || ch == '-'
 }
 
+fn match_css_pseudo_class_selector_colon(input: &str, byte_position: usize) -> Option<usize> {
+    let mut position = skip_css_whitespace(input, byte_position);
+    if !input[position..].starts_with(':') {
+        return None;
+    }
+    position += ':'.len_utf8();
+    if input[position..].starts_with(':') {
+        return None;
+    }
+    let mark_end = position;
+    let mut scan = position;
+    let mut in_comment = false;
+    while scan < input.len() {
+        let ch = input[scan..].chars().next()?;
+        if ch == ';' || ch == '}' {
+            return None;
+        }
+        if ch == '{' && !in_comment {
+            return Some(mark_end);
+        }
+        if ch == '/' && !in_comment {
+            scan += ch.len_utf8();
+            if input[scan..].starts_with('*') {
+                scan += '*'.len_utf8();
+                in_comment = true;
+            }
+            continue;
+        }
+        if ch == '*' && in_comment {
+            scan += ch.len_utf8();
+            if input[scan..].starts_with('/') {
+                scan += '/'.len_utf8();
+                in_comment = false;
+            }
+            continue;
+        }
+        scan += ch.len_utf8();
+    }
+    Some(mark_end)
+}
+
+fn match_css_descendant_operator(input: &str, byte_position: usize) -> Option<usize> {
+    let first = input[byte_position..].chars().next()?;
+    if !first.is_whitespace() {
+        return None;
+    }
+    let mark_end = skip_css_whitespace(input, byte_position);
+    let next = input[mark_end..].chars().next()?;
+    if css_selector_start(next) {
+        return Some(mark_end);
+    }
+    if next == ':' {
+        let mut scan = mark_end + next.len_utf8();
+        if input[scan..]
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+        {
+            return None;
+        }
+        while scan < input.len() {
+            let ch = input[scan..].chars().next()?;
+            if ch == ';' || ch == '}' {
+                return None;
+            }
+            if ch == '{' {
+                return Some(mark_end);
+            }
+            scan += ch.len_utf8();
+        }
+    }
+    None
+}
+
+fn skip_css_whitespace(input: &str, byte_position: usize) -> usize {
+    let mut position = byte_position;
+    while let Some(ch) = input[position..]
+        .chars()
+        .next()
+        .filter(|ch| ch.is_whitespace())
+    {
+        position += ch.len_utf8();
+    }
+    position
+}
+
+fn css_selector_start(ch: char) -> bool {
+    ch == '#' || ch == '.' || ch == '[' || ch == '-' || ch == '*' || ch.is_alphanumeric()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ReducedToken {
     lookahead: LookaheadSymbol,
     end: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReducedTokenCandidate {
+    lookahead: LookaheadSymbol,
+    end: usize,
+    literal: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReducedCandidateOrder {
+    Less,
+    Equal,
+    Greater,
+}
+
+fn reduced_candidate_order(
+    left: ReducedTokenCandidate,
+    right: ReducedTokenCandidate,
+) -> ReducedCandidateOrder {
+    match left.end.cmp(&right.end) {
+        std::cmp::Ordering::Greater => ReducedCandidateOrder::Greater,
+        std::cmp::Ordering::Less => ReducedCandidateOrder::Less,
+        std::cmp::Ordering::Equal if left.literal && !right.literal => {
+            ReducedCandidateOrder::Greater
+        }
+        std::cmp::Ordering::Equal if !left.literal && right.literal => ReducedCandidateOrder::Less,
+        std::cmp::Ordering::Equal => ReducedCandidateOrder::Equal,
+    }
+}
+
+fn push_reduced_candidate(
+    candidates: &mut Vec<ReducedTokenCandidate>,
+    candidate: ReducedTokenCandidate,
+) {
+    let Some(current) = candidates.first().copied() else {
+        candidates.push(candidate);
+        return;
+    };
+    match reduced_candidate_order(candidate, current) {
+        ReducedCandidateOrder::Greater => {
+            candidates.clear();
+            candidates.push(candidate);
+        }
+        ReducedCandidateOrder::Equal => {
+            if !candidates
+                .iter()
+                .any(|existing| existing.lookahead == candidate.lookahead)
+            {
+                candidates.push(candidate);
+            }
+        }
+        ReducedCandidateOrder::Less => {}
+    }
+}
+
+fn push_rejected_reduced_candidate(
+    rejected: &mut Option<ReducedTokenCandidate>,
+    candidate: ReducedTokenCandidate,
+) {
+    match rejected {
+        Some(current)
+            if reduced_candidate_order(*current, candidate) != ReducedCandidateOrder::Less => {}
+        _ => *rejected = Some(candidate),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

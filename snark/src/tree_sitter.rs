@@ -455,7 +455,10 @@ mod tests {
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
-        parser::{ParseTable, ParserGenerationStage, ParserGrammar, ReducedParser},
+        parser::{
+            LookaheadSymbol, ParseStateId, ParseTable, ParserGenerationStage, ParserGrammar,
+            ReducedParser,
+        },
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
         validated::{ExternalTokenDecl, ValidatedGrammar},
@@ -1237,6 +1240,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_pinned_css_pseudo_class_selectors_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[5].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[5].expected);
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {
@@ -1269,15 +1303,110 @@ mod tests {
                     crate::parser::ReducedParseErrorKind::MissingGoto { state, .. } => Some(*state),
                     _ => None,
                 };
-                let state_dump = state
-                    .and_then(|state| parse_table.states().get(state.get() as usize))
-                    .map(|state| {
-                        let item_set = &parse_table.item_sets()[state.item_set().get() as usize];
-                        format!("state={state:#?}\nitem_set={item_set:#?}")
-                    })
-                    .unwrap_or_else(|| "state=<none>".to_owned());
-                panic!("{error:#?}\n{state_dump}");
+                let mut states = Vec::new();
+                if let Some(state) = state {
+                    states.push(state);
+                }
+                if let Some(last) = error.trace().last() {
+                    if !states.contains(&last.state) {
+                        states.push(last.state);
+                    }
+                }
+                let state_dump = states
+                    .into_iter()
+                    .map(|state| describe_parse_state(parser_grammar, parse_table, state))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let trace_tail = error
+                    .trace()
+                    .iter()
+                    .rev()
+                    .take(12)
+                    .copied()
+                    .collect::<Vec<_>>();
+                panic!(
+                    "kind={:#?}\ntrace_tail={trace_tail:#?}\n{state_dump}",
+                    error.kind()
+                );
             })
+    }
+
+    fn describe_parse_state(
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+        state: ParseStateId,
+    ) -> String {
+        let Some(state_row) = parse_table.states().get(state.get() as usize) else {
+            return format!("state={} <missing>", state.get());
+        };
+        let entries = state_row
+            .entries()
+            .iter()
+            .map(|entry| {
+                format!(
+                    "  {} => {:?}",
+                    describe_lookahead(parser_grammar, entry.lookahead()),
+                    entry.actions()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let item_set = &parse_table.item_sets()[state_row.item_set().get() as usize];
+        let items = item_set
+            .items()
+            .iter()
+            .map(|item| {
+                let production = &parser_grammar.productions()[item.production().get() as usize];
+                format!(
+                    "  production={} dot={}\n{production:#?}",
+                    item.production().get(),
+                    item.dot()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "state={} item_set={}\nentries:\n{entries}\nitems:\n{items}",
+            state_row.id().get(),
+            state_row.item_set().get()
+        )
+    }
+
+    fn describe_lookahead(parser_grammar: &ParserGrammar, lookahead: LookaheadSymbol) -> String {
+        match lookahead {
+            LookaheadSymbol::Terminal(terminal) => {
+                let terminal_row = &parser_grammar.symbols().terminals()[terminal.get() as usize];
+                format!(
+                    "terminal#{} {:?} {:?} root={:?}",
+                    terminal.get(),
+                    terminal_row.kind(),
+                    terminal_row.spelling(),
+                    terminal_row.lexical_root()
+                )
+            }
+            LookaheadSymbol::External(external) => {
+                let external_row = &parser_grammar.symbols().externals()[external.get() as usize];
+                format!(
+                    "external#{} {:?}",
+                    external.get(),
+                    external_row.name().unwrap_or("<anonymous-external>")
+                )
+            }
+            LookaheadSymbol::Eof => "eof".to_owned(),
+            LookaheadSymbol::ReservedWord { terminal, context } => {
+                let terminal_row = &parser_grammar.symbols().terminals()[terminal.get() as usize];
+                format!(
+                    "reserved terminal#{} {:?} {:?} context#{}",
+                    terminal.get(),
+                    terminal_row.kind(),
+                    terminal_row.spelling(),
+                    context.get()
+                )
+            }
+            LookaheadSymbol::ErrorRecovery(internal) => {
+                format!("error-recovery#{}", internal.get())
+            }
+        }
     }
 
     fn css_highlight_assertions() -> Vec<HighlightAssertion> {
