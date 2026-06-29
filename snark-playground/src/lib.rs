@@ -196,6 +196,8 @@ struct ScannerSelection {
     active_scanner: Option<String>,
 }
 
+const PLAYGROUND_RECOVERY_STEP_LIMIT: usize = 50_000;
+
 /// Parse one playground request with Snark and return a JSON response.
 pub fn parse_bundle_json(request_json: &str) -> String {
     response_json(playground_response(request_json))
@@ -795,7 +797,8 @@ fn parse_source_with_optional_recovery<'a>(
     let runtime = match scanner {
         Some(scanner) => runtime.with_external_scanner(scanner),
         None => runtime,
-    };
+    }
+    .with_recovery_step_limit(PLAYGROUND_RECOVERY_STEP_LIMIT);
     match runtime.parse_compact_with_report(input) {
         Ok(report) => Ok(PlaygroundParseReport {
             report,
@@ -1824,7 +1827,7 @@ mod tests {
     }
 
     #[test]
-    fn arborium_nginx_sample_recovers_but_is_not_clean() {
+    fn arborium_nginx_sample_reports_parse_failure() {
         let def = std::path::Path::new("/Users/amos/oss/arborium/langs/group-maple/nginx/def");
         if !def.exists() {
             return;
@@ -1867,7 +1870,7 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("accepted parse contains")
+                .contains("could not lex a token")
         );
         assert_eq!(
             response
@@ -1877,11 +1880,8 @@ mod tests {
                 .map(|span| (span.start_row, span.start_column)),
             Some((110, 4))
         );
-        let parse = response.parse.as_ref().expect("recovered parse is shown");
-        assert!(parse.accepted_error_count > 0);
-        assert_eq!(parse.accepted_missing_count, 0);
-        assert!(parse.sexp.contains("(ERROR"));
-        assert!(!response.highlights.is_empty());
+        assert!(response.parse.is_none());
+        assert!(response.highlights.is_empty());
     }
 
     #[test]

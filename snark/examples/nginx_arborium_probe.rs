@@ -69,6 +69,29 @@ fn main() {
         Ok(report) => report,
         Err(error) => {
             println!("parse failed: {error}");
+            match RuntimeParser::new(&validated, &parser, &table)
+                .expect("runtime should build")
+                .parse_recovering_compact_with_report(&input)
+            {
+                Ok(report) => {
+                    println!(
+                        "recovering parse accepted with {} ERROR and {} MISSING nodes",
+                        report
+                            .accepted_tree_events()
+                            .iter()
+                            .filter(|event| matches!(event, TreeEvent::Error { .. }))
+                            .count(),
+                        report
+                            .accepted_tree_events()
+                            .iter()
+                            .filter(|event| matches!(event, TreeEvent::Missing { .. }))
+                            .count()
+                    );
+                }
+                Err(recovery_error) => {
+                    println!("recovering parse failed: {recovery_error}");
+                }
+            }
             println!("emit grammar.js: {:?}", emitted_at.duration_since(start));
             println!(
                 "prepare parser: {:?}",

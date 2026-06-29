@@ -5987,6 +5987,7 @@ impl ReducedFragment {
 /// to the corpus S-expression view.
 pub struct RuntimeParser<'a> {
     reduced: ReducedParser<'a>,
+    recovery_step_limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6020,12 +6021,19 @@ impl<'a> RuntimeParser<'a> {
     ) -> Result<Self, ReducedParseError> {
         Ok(Self {
             reduced: ReducedParser::new(grammar, parser, table)?,
+            recovery_step_limit: None,
         })
     }
 
     /// Attach a reduced external scanner host for this first runtime slice.
     pub fn with_external_scanner(mut self, scanner: &'a dyn ReducedExternalScanner) -> Self {
         self.reduced = self.reduced.with_external_scanner(scanner);
+        self
+    }
+
+    /// Bound recovery branch execution for latency-sensitive callers.
+    pub fn with_recovery_step_limit(mut self, limit: usize) -> Self {
+        self.recovery_step_limit = Some(limit);
         self
     }
 
@@ -6132,9 +6140,9 @@ impl<'a> RuntimeParser<'a> {
         let mut step_count = 0usize;
         let step_limit = match recovery {
             RuntimeRecoveryMode::Strict => self.reduced.reduced_step_limit(input),
-            RuntimeRecoveryMode::SkipInvalidInput => {
-                self.reduced.reduced_recovery_step_limit(input)
-            }
+            RuntimeRecoveryMode::SkipInvalidInput => self
+                .recovery_step_limit
+                .unwrap_or_else(|| self.reduced.reduced_recovery_step_limit(input)),
         };
         let mut max_live_versions = branches.len();
 
@@ -10079,7 +10087,10 @@ extras (
         .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        assert_eq!(weavy_report.tree().to_sexp(), "(source_file (text) (comment))");
+        assert_eq!(
+            weavy_report.tree().to_sexp(),
+            "(source_file (text) (comment))"
+        );
         assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
         assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
         assert!(weavy_report.stats().block_call_count > 0);
