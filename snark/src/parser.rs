@@ -4956,8 +4956,28 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
         "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => {
             match_css_identifier(input, byte_position)
         }
+        "and\\b" => match_ascii_keyword(input, byte_position, "and"),
+        "in\\b" => match_ascii_keyword(input, byte_position, "in"),
+        "is\\b" => match_ascii_keyword(input, byte_position, "is"),
+        "not\\b" => match_ascii_keyword(input, byte_position, "not"),
+        "or\\b" => match_ascii_keyword(input, byte_position, "or"),
         _ => None,
     }
+}
+
+fn match_ascii_keyword(input: &str, byte_position: usize, keyword: &str) -> Option<usize> {
+    if !input[byte_position..].starts_with(keyword) {
+        return None;
+    }
+    let end = byte_position + keyword.len();
+    if input[end..]
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| *byte == b'_' || byte.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    Some(end)
 }
 
 fn match_gingembre_identifier(input: &str, byte_position: usize) -> Option<usize> {
@@ -7203,9 +7223,9 @@ rules {
             type SEQ
             members (
                 {type SYMBOL, name _expr}
-                {type STRING, value "is"}
+                {type PATTERN, value r"is\b"}
                 {type CHOICE, members (
-                    {type STRING, value "not"}
+                    {type PATTERN, value r"not\b"}
                     {type BLANK}
                 )}
                 {type CHOICE, members (
@@ -7269,7 +7289,7 @@ rules {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
-                    {type STRING, value "or"}
+                    {type PATTERN, value r"or\b"}
                     {type SYMBOL, name _expr}
                 )
             }}
@@ -7277,7 +7297,7 @@ rules {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
-                    {type STRING, value "and"}
+                    {type PATTERN, value r"and\b"}
                     {type SYMBOL, name _expr}
                 )
             }}
@@ -7292,10 +7312,10 @@ rules {
                         {type STRING, value ">"}
                         {type STRING, value "<="}
                         {type STRING, value ">="}
-                        {type STRING, value "in"}
+                        {type PATTERN, value r"in\b"}
                         {type SEQ, members (
-                            {type STRING, value "not"}
-                            {type STRING, value "in"}
+                            {type PATTERN, value r"not\b"}
+                            {type PATTERN, value r"in\b"}
                         )}
                     )}
                     {type SYMBOL, name _expr}
@@ -7476,6 +7496,15 @@ extras (
     #[test]
     fn rejects_styx_authored_gingembre_statement_keyword_like_gingembre() {
         assert_styx_authored_gingembre_rejects_like_gingembre("{{ if }}");
+    }
+
+    #[test]
+    fn rejects_styx_authored_gingembre_word_operator_prefixes_like_gingembre() {
+        assert_styx_authored_gingembre_rejects_like_gingembre("{{ a orx }}");
+        assert_styx_authored_gingembre_rejects_like_gingembre("{{ a andx }}");
+        assert_styx_authored_gingembre_rejects_like_gingembre("{{ a inbox }}");
+        assert_styx_authored_gingembre_rejects_like_gingembre("{{ a notin xs }}");
+        assert_styx_authored_gingembre_rejects_like_gingembre("{{ value isx }}");
     }
 
     #[test]
