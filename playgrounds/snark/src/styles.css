@@ -309,7 +309,6 @@ textarea {
 }
 
 .source-diagnostic-marker {
-  position: relative;
   display: inline-block;
   min-width: 0.6em;
   border-bottom: 2px solid #b24b2b;
@@ -318,15 +317,12 @@ textarea {
 }
 
 .source-diagnostic-label {
-  position: absolute;
-  z-index: 4;
-  top: 0;
-  left: 100%;
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
   gap: 6px;
   align-items: baseline;
-  max-width: min(560px, 64vw);
-  margin-left: 8px;
+  width: calc(100% - 2px);
+  margin: 2px 0 4px;
   padding: 3px 6px;
   border: 1px solid #efb29f;
   border-radius: 6px;
@@ -337,6 +333,7 @@ textarea {
   font-size: 12px;
   line-height: 1.25;
   pointer-events: none;
+  white-space: normal;
 }
 
 .source-diagnostic-label strong,

@@ -882,6 +882,9 @@ function renderDiagnosticSource(input: string, diagnostics: Diagnostic[]) {
   const rawMarker = input.slice(markerIndex, markerEnd);
   const markerText = rawMarker && rawMarker !== "\n" ? rawMarker : " ";
   const consumedEnd = markerText === rawMarker ? markerEnd : markerIndex;
+  const lineEnd = input.indexOf("\n", consumedEnd);
+  const lineEndIndex = lineEnd === -1 ? input.length : lineEnd;
+  const afterLineIndex = lineEnd === -1 ? lineEndIndex : lineEndIndex + 1;
 
   return [
     input.slice(0, markerIndex),
@@ -891,15 +894,19 @@ function renderDiagnosticSource(input: string, diagnostics: Diagnostic[]) {
       title={diagnostic.message}
     >
       {markerText}
-      <span className="source-diagnostic-label">
-        <strong>{diagnostic.stage}</strong>
-        <small>
-          {span.start_row + 1}:{span.start_column + 1}
-        </small>
-        <span>{diagnostic.message}</span>
-      </span>
     </span>,
-    input.slice(consumedEnd),
+    input.slice(consumedEnd, lineEndIndex),
+    <span
+      className="source-diagnostic-label"
+      key={`diagnostic-label-${span.start_byte}`}
+    >
+      <strong>{diagnostic.stage}</strong>
+      <small>
+        {span.start_row + 1}:{span.start_column + 1}
+      </small>
+      <span>{diagnostic.message}</span>
+    </span>,
+    input.slice(afterLineIndex),
   ];
 }
 
