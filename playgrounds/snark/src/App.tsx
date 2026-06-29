@@ -222,6 +222,11 @@ export function App() {
     setResult(null);
   }
 
+  function updateSourceInput(nextInput: string) {
+    setInput(nextInput);
+    setResult(null);
+  }
+
   async function run() {
     setBusy(true);
     try {
@@ -318,7 +323,7 @@ export function App() {
               onChange={(event) => {
                 const sample = sampleFiles.find((file) => file.sourcePath === event.currentTarget.value);
                 if (sample) {
-                  setInput(sample.text);
+                  updateSourceInput(sample.text);
                 }
               }}
             >
@@ -334,7 +339,7 @@ export function App() {
 
         <label className="editor-block source-editor">
           <span>Source</span>
-          <textarea value={input} onChange={(event) => setInput(event.currentTarget.value)} />
+          <textarea value={input} onChange={(event) => updateSourceInput(event.currentTarget.value)} />
         </label>
       </section>
 
@@ -392,7 +397,7 @@ export function App() {
                       {caseResult.case_name}
                     </summary>
                     <div className="test-actions">
-                      <button type="button" onClick={() => setInput(caseResult.input)}>
+                      <button type="button" onClick={() => updateSourceInput(caseResult.input)}>
                         Use input
                       </button>
                     </div>
@@ -424,7 +429,7 @@ export function App() {
                       {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
                     </summary>
                     <div className="test-actions">
-                      <button type="button" onClick={() => setInput(fixture.input)}>
+                      <button type="button" onClick={() => updateSourceInput(fixture.input)}>
                         Use fixture
                       </button>
                     </div>
