@@ -1413,6 +1413,10 @@ mod tests {
             0,
             "expected runtime scanner calls to respect the valid-symbol mask"
         );
+        assert!(
+            scanner.requests_with_snapshot.get() > 0,
+            "expected a later runtime scanner request to receive the branch-local snapshot committed by an accepted external token"
+        );
         let scanner_events = runtime_report.trace_events().iter().filter_map(|event| {
             if let crate::parser::TraceEvent::ExternalScanner {
                 before,
@@ -1437,7 +1441,19 @@ mod tests {
                 .all(|(before, after, result)| before.is_some()
                     && after.is_some()
                     && result.is_some()),
-            "expected runtime external-scanner trace events to carry scanner snapshots"
+            "expected runtime accepted external-scanner results to carry scanner snapshots"
+        );
+        assert!(
+            scanner_events
+                .iter()
+                .any(|(before, after, _)| before != after),
+            "expected runtime scanner snapshots to advance on accepted external tokens"
+        );
+        assert!(
+            scanner_events
+                .iter()
+                .any(|(before, _, _)| before.is_some_and(|before| before.get() > 0)),
+            "expected runtime scanner traces to observe a committed branch-local scanner snapshot"
         );
     }
 
@@ -1574,6 +1590,10 @@ mod tests {
             0,
             "expected Weavy runtime scanner calls to respect the valid-symbol mask"
         );
+        assert!(
+            weavy_scanner.requests_with_snapshot.get() > 0,
+            "expected a later Weavy runtime scanner request to receive the branch-local snapshot committed by an accepted external token"
+        );
         let scanner_events = weavy_report.trace_events().iter().filter_map(|event| {
             if let crate::parser::TraceEvent::ExternalScanner {
                 before,
@@ -1598,7 +1618,19 @@ mod tests {
                 .all(|(before, after, result)| before.is_some()
                     && after.is_some()
                     && result.is_some()),
-            "expected Weavy runtime external-scanner trace events to carry scanner snapshots"
+            "expected Weavy runtime accepted external-scanner results to carry scanner snapshots"
+        );
+        assert!(
+            scanner_events
+                .iter()
+                .any(|(before, after, _)| before != after),
+            "expected Weavy runtime scanner snapshots to advance on accepted external tokens"
+        );
+        assert!(
+            scanner_events
+                .iter()
+                .any(|(before, _, _)| before.is_some_and(|before| before.get() > 0)),
+            "expected Weavy runtime scanner traces to observe a committed branch-local scanner snapshot"
         );
         assert!(weavy_report.stats().step_count > 0);
         assert!(weavy_report.stats().block_call_count > 0);
@@ -2729,10 +2761,11 @@ mod tests {
                 _ => None,
             };
             Ok(end.map(|end| {
-                ReducedExternalScanResult::new(end).with_snapshots(
-                    Some(ScannerSnapshotId::from_index(0)),
-                    Some(ScannerSnapshotId::from_index(0)),
-                )
+                let before = request
+                    .scanner_snapshot()
+                    .unwrap_or_else(|| ScannerSnapshotId::from_index(0));
+                let after = ScannerSnapshotId::from_index(before.get() as usize + 1);
+                ReducedExternalScanResult::new(end).with_snapshots(Some(before), Some(after))
             }))
         }
     }
@@ -2743,6 +2776,7 @@ mod tests {
         accepted: std::cell::Cell<usize>,
         accepted_pseudo_class_selector_colon: std::cell::Cell<usize>,
         accepted_descendant_operator: std::cell::Cell<usize>,
+        requests_with_snapshot: std::cell::Cell<usize>,
         missing_valid_symbols: std::cell::Cell<usize>,
         invalid_symbol_requests: std::cell::Cell<usize>,
     }
@@ -2753,6 +2787,10 @@ mod tests {
             request: ReducedExternalScan<'_>,
         ) -> Result<Option<ReducedExternalScanResult>, crate::parser::ReducedParseError> {
             self.calls.set(self.calls.get() + 1);
+            if request.scanner_snapshot().is_some() {
+                self.requests_with_snapshot
+                    .set(self.requests_with_snapshot.get() + 1);
+            }
             match request.valid_symbols() {
                 Some(valid_symbols) if valid_symbols.externals().contains(&request.external()) => {}
                 Some(_) => {

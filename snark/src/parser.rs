@@ -3789,6 +3789,7 @@ pub struct ReducedExternalScan<'a> {
     valid_symbols: Option<&'a ValidSymbolSet>,
     input: &'a str,
     byte_position: usize,
+    scanner_snapshot: Option<ScannerSnapshotId>,
 }
 
 impl ReducedExternalScan<'_> {
@@ -3800,6 +3801,7 @@ impl ReducedExternalScan<'_> {
         valid_symbols: Option<&'a ValidSymbolSet>,
         input: &'a str,
         byte_position: usize,
+        scanner_snapshot: Option<ScannerSnapshotId>,
     ) -> ReducedExternalScan<'a> {
         ReducedExternalScan {
             state,
@@ -3808,6 +3810,7 @@ impl ReducedExternalScan<'_> {
             valid_symbols,
             input,
             byte_position,
+            scanner_snapshot,
         }
     }
 
@@ -3839,6 +3842,11 @@ impl ReducedExternalScan<'_> {
     /// Branch-local byte position before scanner execution.
     pub const fn byte_position(&self) -> usize {
         self.byte_position
+    }
+
+    /// Branch-local scanner snapshot before scanner execution.
+    pub const fn scanner_snapshot(&self) -> Option<ScannerSnapshotId> {
+        self.scanner_snapshot
     }
 }
 
@@ -4024,6 +4032,7 @@ impl<'a> ReducedParser<'a> {
                 extra: false,
             }],
             byte_position: 0,
+            scanner_snapshot: None,
             trace: Vec::new(),
         }]);
         let mut accepted = Vec::<(SexpNode, Vec<ReducedTraceStep>)>::new();
@@ -4149,7 +4158,12 @@ impl<'a> ReducedParser<'a> {
                 }];
             }
         };
-        let token = match self.lex(state_row, input, branch.byte_position) {
+        let token = match self.lex(
+            state_row,
+            input,
+            branch.byte_position,
+            branch.scanner_snapshot,
+        ) {
             Ok(token) => token,
             Err(error) => {
                 return vec![ReducedStepOutcome::Failed {
@@ -4239,6 +4253,7 @@ impl<'a> ReducedParser<'a> {
         match action {
             ParseAction::Shift { state, .. } => {
                 branch.byte_position = token.end;
+                branch.commit_scanner_snapshot(token);
                 branch.stack.push(ReducedStackEntry {
                     state,
                     fragment: Some(ReducedFragment::Hidden(Vec::new())),
@@ -4248,6 +4263,7 @@ impl<'a> ReducedParser<'a> {
             }
             ParseAction::ShiftExtra => {
                 branch.byte_position = token.end;
+                branch.commit_scanner_snapshot(token);
                 if let Some(fragment) = self.extra_fragment(token.lookahead) {
                     let Some(state) = branch.stack.last().map(|entry| entry.state) else {
                         return ReducedStepOutcome::Failed {
@@ -4386,6 +4402,7 @@ impl<'a> ReducedParser<'a> {
         state: &ParseState,
         input: &str,
         byte_position: usize,
+        scanner_snapshot: Option<ScannerSnapshotId>,
     ) -> Result<ReducedToken, ReducedParseError> {
         if byte_position == input.len() {
             return Ok(ReducedToken {
@@ -4443,8 +4460,14 @@ impl<'a> ReducedParser<'a> {
             });
         }
         for external in mode.externals() {
-            let Some(scanner_result) =
-                self.match_external(state, mode, *external, input, byte_position)?
+            let Some(scanner_result) = self.match_external(
+                state,
+                mode,
+                *external,
+                input,
+                byte_position,
+                scanner_snapshot,
+            )?
             else {
                 continue;
             };
@@ -4618,6 +4641,7 @@ impl<'a> ReducedParser<'a> {
         external: ExternalId,
         input: &str,
         byte_position: usize,
+        scanner_snapshot: Option<ScannerSnapshotId>,
     ) -> Result<Option<ReducedExternalScanResult>, ReducedParseError> {
         let Some(scanner) = self.external_scanner else {
             return Err(ReducedParseError::new(
@@ -4638,6 +4662,7 @@ impl<'a> ReducedParser<'a> {
             valid_symbols,
             input,
             byte_position,
+            scanner_snapshot,
         })
     }
 
@@ -5153,7 +5178,16 @@ struct ReducedBranch {
     id: ReducedBranchId,
     stack: Vec<ReducedStackEntry>,
     byte_position: usize,
+    scanner_snapshot: Option<ScannerSnapshotId>,
     trace: Vec<ReducedTraceStep>,
+}
+
+impl ReducedBranch {
+    fn commit_scanner_snapshot(&mut self, token: ReducedToken) {
+        if let Some(scanner) = token.scanner {
+            self.scanner_snapshot = scanner.after();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5248,6 +5282,7 @@ impl<'a> RuntimeParser<'a> {
                 end_byte: 0,
             }],
             byte_position: 0,
+            scanner_snapshot: None,
             trace: Vec::new(),
         }]);
         let mut accepted = Vec::<(SexpNode, Vec<ReducedTraceStep>)>::new();
@@ -5378,7 +5413,12 @@ impl<'a> RuntimeParser<'a> {
                 }];
             }
         };
-        let token = match self.reduced.lex(state_row, input, branch.byte_position) {
+        let token = match self.reduced.lex(
+            state_row,
+            input,
+            branch.byte_position,
+            branch.scanner_snapshot,
+        ) {
             Ok(token) => token,
             Err(error) => {
                 return vec![RuntimeStepOutcome::Failed {
@@ -5496,6 +5536,7 @@ impl<'a> RuntimeParser<'a> {
             ParseAction::Shift { state, .. } => {
                 let start = branch.byte_position;
                 branch.byte_position = token.end;
+                branch.commit_scanner_snapshot(token);
                 let (bytes, points) = input_ranges(input, start, token.end);
                 tree_events.push(TreeEvent::Token {
                     version: branch.version,
@@ -5533,6 +5574,7 @@ impl<'a> RuntimeParser<'a> {
             ParseAction::ShiftExtra => {
                 let start = branch.byte_position;
                 branch.byte_position = token.end;
+                branch.commit_scanner_snapshot(token);
                 if let Some(fragment) = self.runtime_extra_fragment(
                     branch.version,
                     token.lookahead,
@@ -5930,7 +5972,16 @@ struct RuntimeBranch {
     version: StackVersionId,
     stack: Vec<RuntimeStackEntry>,
     byte_position: usize,
+    scanner_snapshot: Option<ScannerSnapshotId>,
     trace: Vec<ReducedTraceStep>,
+}
+
+impl RuntimeBranch {
+    fn commit_scanner_snapshot(&mut self, token: ReducedToken) {
+        if let Some(scanner) = token.scanner {
+            self.scanner_snapshot = scanner.after();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

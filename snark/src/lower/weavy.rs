@@ -931,6 +931,7 @@ pub fn parse_reduced_with_report_and_scanner(
             extra: false,
         }],
         byte_position: 0,
+        scanner_snapshot: None,
     }]);
     let mut accepted = Vec::<SexpNode>::new();
     let mut failures = Vec::<ReducedWeavyError>::new();
@@ -1146,6 +1147,7 @@ pub fn parse_runtime_with_report_and_scanner(
             end_byte: 0,
         }],
         byte_position: 0,
+        scanner_snapshot: None,
     }]);
     let mut accepted = Vec::<SexpNode>::new();
     let mut failures = Vec::<ReducedWeavyError>::new();
@@ -1477,6 +1479,7 @@ fn run_reduced_weavy_action(
             id: branch,
             stack: stepper.stack,
             byte_position: stepper.byte_position,
+            scanner_snapshot: stepper.scanner_snapshot,
         })
     }
 }
@@ -1517,6 +1520,7 @@ struct ReducedWeavyBranch {
     id: parser_ir::ReducedBranchId,
     stack: Vec<ReducedWeavyStackEntry>,
     byte_position: usize,
+    scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1537,6 +1541,7 @@ struct RuntimeWeavyBranch {
     version: parser_ir::StackVersionId,
     stack: Vec<RuntimeWeavyStackEntry>,
     byte_position: usize,
+    scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1776,6 +1781,7 @@ fn run_runtime_weavy_action(
             version,
             stack: stepper.stack,
             byte_position: stepper.byte_position,
+            scanner_snapshot: stepper.scanner_snapshot,
         })
     }
 }
@@ -1836,6 +1842,7 @@ struct ReducedWeavyStepper<'a> {
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
     stack: Vec<ReducedWeavyStackEntry>,
     byte_position: usize,
+    scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
     lookahead: Option<ReducedWeavyToken>,
     tree: Option<SexpNode>,
     mode: ReducedWeavyMode,
@@ -1863,6 +1870,7 @@ impl<'a> ReducedWeavyStepper<'a> {
             external_scanner,
             stack: branch.stack,
             byte_position: branch.byte_position,
+            scanner_snapshot: branch.scanner_snapshot,
             lookahead: None,
             tree: None,
             mode,
@@ -1933,6 +1941,9 @@ impl<'a> ReducedWeavyStepper<'a> {
                     expected: Vec::new(),
                 })?;
                 self.byte_position = token.end;
+                if let Some(scanner) = token.scanner {
+                    self.scanner_snapshot = scanner.after();
+                }
                 Ok(Control::Continue)
             }
             SnarkIntrinsic::Shift { state, .. } => {
@@ -2265,6 +2276,7 @@ impl<'a> ReducedWeavyStepper<'a> {
                 valid_symbols,
                 self.input,
                 byte_position,
+                self.scanner_snapshot,
             ))
             .map_err(|error| ReducedWeavyError::ExternalScannerError {
                 state: state.id(),
@@ -2581,6 +2593,7 @@ struct RuntimeWeavyStepper<'a> {
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
     stack: Vec<RuntimeWeavyStackEntry>,
     byte_position: usize,
+    scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
     committed_start: Option<usize>,
     lookahead: Option<ReducedWeavyToken>,
     lookahead_id: parser_ir::LookaheadTokenId,
@@ -2618,6 +2631,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             external_scanner,
             stack: branch.stack,
             byte_position: branch.byte_position,
+            scanner_snapshot: branch.scanner_snapshot,
             committed_start: None,
             lookahead: None,
             lookahead_id,
@@ -2719,6 +2733,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 })?;
                 self.committed_start = Some(self.byte_position);
                 self.byte_position = token.end;
+                if let Some(scanner) = token.scanner {
+                    self.scanner_snapshot = scanner.after();
+                }
                 Ok(Control::Continue)
             }
             SnarkIntrinsic::Shift { state, .. } => {
@@ -2909,6 +2926,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             external_scanner: self.external_scanner,
             stack: Vec::new(),
             byte_position,
+            scanner_snapshot: self.scanner_snapshot,
             lookahead: None,
             tree: None,
             mode: ReducedWeavyMode::ProbeState,
@@ -3023,6 +3041,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             external_scanner: self.external_scanner,
             stack: Vec::new(),
             byte_position: start_byte,
+            scanner_snapshot: self.scanner_snapshot,
             lookahead: None,
             tree: None,
             mode: ReducedWeavyMode::ProbeState,
