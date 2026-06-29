@@ -5483,19 +5483,20 @@ fn compile_lex_expr_inner(
     }
 }
 
-fn terminal_lexical_completion_precedence(
+pub(crate) fn terminal_lexical_completion_precedence(
     grammar: &ValidatedGrammar,
     terminal: &TerminalSymbol,
 ) -> i32 {
     terminal
         .lexical_root()
-        .and_then(|root| lexical_expr_completion_precedence(grammar, root))
+        .and_then(|root| lexical_expr_completion_precedence(grammar, root, &mut Vec::new()))
         .unwrap_or(0)
 }
 
 fn lexical_expr_completion_precedence(
     grammar: &ValidatedGrammar,
     expr: GrammarExprId,
+    rule_stack: &mut Vec<RuleId>,
 ) -> Option<i32> {
     match grammar.expr(expr) {
         GrammarExpr::Prec {
@@ -5506,32 +5507,42 @@ fn lexical_expr_completion_precedence(
             value: StaticPrecedenceValue::Name(_),
             content,
             ..
-        } => lexical_expr_completion_precedence(grammar, *content),
+        } => lexical_expr_completion_precedence(grammar, *content, rule_stack),
         GrammarExpr::Token(content)
         | GrammarExpr::ImmediateToken(content)
         | GrammarExpr::Field { content, .. }
         | GrammarExpr::PrecDynamic { content, .. }
         | GrammarExpr::Alias { content, .. }
         | GrammarExpr::Reserved { content, .. } => {
-            lexical_expr_completion_precedence(grammar, *content)
+            lexical_expr_completion_precedence(grammar, *content, rule_stack)
         }
         GrammarExpr::Choice(members) | GrammarExpr::Seq(members) => members
             .iter()
-            .filter_map(|member| lexical_expr_completion_precedence(grammar, *member))
+            .filter_map(|member| lexical_expr_completion_precedence(grammar, *member, rule_stack))
             .max(),
         GrammarExpr::Repeat(content) | GrammarExpr::Repeat1(content) => {
-            lexical_expr_completion_precedence(grammar, *content)
+            lexical_expr_completion_precedence(grammar, *content, rule_stack)
+        }
+        GrammarExpr::Symbol(SymbolRef::Rule(rule)) => {
+            if rule_stack.contains(rule) {
+                return None;
+            }
+            rule_stack.push(*rule);
+            let precedence =
+                lexical_expr_completion_precedence(grammar, grammar.rule(*rule).expr(), rule_stack);
+            rule_stack.pop();
+            precedence
         }
         GrammarExpr::Blank
         | GrammarExpr::StringToken(_)
         | GrammarExpr::PatternToken { .. }
         | GrammarExpr::Until { .. }
         | GrammarExpr::Nested { .. }
-        | GrammarExpr::Symbol(_) => None,
+        | GrammarExpr::Symbol(SymbolRef::External(_)) => None,
     }
 }
 
-fn terminal_lexical_implicit_precedence(
+pub(crate) fn terminal_lexical_implicit_precedence(
     grammar: &ValidatedGrammar,
     terminal: &TerminalSymbol,
 ) -> i32 {
@@ -5540,19 +5551,23 @@ fn terminal_lexical_implicit_precedence(
         ParserTerminalKind::Pattern => 0,
         ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => terminal
             .lexical_root()
-            .map(|root| lexical_expr_implicit_precedence(grammar, root))
+            .map(|root| lexical_expr_implicit_precedence(grammar, root, &mut Vec::new()))
             .unwrap_or(0),
     }
 }
 
-fn lexical_expr_implicit_precedence(grammar: &ValidatedGrammar, expr: GrammarExprId) -> i32 {
+fn lexical_expr_implicit_precedence(
+    grammar: &ValidatedGrammar,
+    expr: GrammarExprId,
+    rule_stack: &mut Vec<RuleId>,
+) -> i32 {
     match grammar.expr(expr) {
         GrammarExpr::StringToken(_) => 2,
         GrammarExpr::PatternToken { .. }
         | GrammarExpr::Until { .. }
         | GrammarExpr::Nested { .. } => 0,
         GrammarExpr::ImmediateToken(content) => {
-            lexical_expr_implicit_precedence(grammar, *content) + 1
+            lexical_expr_implicit_precedence(grammar, *content, rule_stack) + 1
         }
         GrammarExpr::Token(content)
         | GrammarExpr::Field { content, .. }
@@ -5560,10 +5575,20 @@ fn lexical_expr_implicit_precedence(grammar: &ValidatedGrammar, expr: GrammarExp
         | GrammarExpr::PrecDynamic { content, .. }
         | GrammarExpr::Alias { content, .. }
         | GrammarExpr::Reserved { content, .. } => {
-            lexical_expr_implicit_precedence(grammar, *content)
+            lexical_expr_implicit_precedence(grammar, *content, rule_stack)
+        }
+        GrammarExpr::Symbol(SymbolRef::Rule(rule)) => {
+            if rule_stack.contains(rule) {
+                return 0;
+            }
+            rule_stack.push(*rule);
+            let precedence =
+                lexical_expr_implicit_precedence(grammar, grammar.rule(*rule).expr(), rule_stack);
+            rule_stack.pop();
+            precedence
         }
         GrammarExpr::Blank
-        | GrammarExpr::Symbol(_)
+        | GrammarExpr::Symbol(SymbolRef::External(_))
         | GrammarExpr::Choice(_)
         | GrammarExpr::Seq(_)
         | GrammarExpr::Repeat(_)
@@ -10144,9 +10169,10 @@ extras (
                   "content": {
                     "type": "PREC",
                     "value": -1,
-                    "content": { "type": "PATTERN", "value": "[^\\n]+" }
+                    "content": { "type": "SYMBOL", "name": "context_body" }
                   }
-                }
+                },
+                "context_body": { "type": "PATTERN", "value": "[^\\n]+" }
               }
             }"##,
         );
@@ -10160,6 +10186,33 @@ extras (
             .unwrap();
 
         assert_eq!(compiled.lexical_precedence, -1);
+    }
+
+    #[test]
+    fn compiled_lexer_carries_implicit_precedence_through_symbol_reference() {
+        let (validated, parser, _table) = prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "SYMBOL", "name": "context" },
+                "context": {
+                  "type": "TOKEN",
+                  "content": { "type": "SYMBOL", "name": "context_body" }
+                },
+                "context_body": { "type": "STRING", "value": "x" }
+              }
+            }"##,
+        );
+
+        let compiled = parser
+            .symbols
+            .terminals()
+            .iter()
+            .map(|terminal| compile_lex_terminal(&validated, terminal))
+            .find(|terminal| terminal.implicit_precedence == 2)
+            .unwrap();
+
+        assert_eq!(compiled.implicit_precedence, 2);
     }
 
     fn lexical_primitives_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {

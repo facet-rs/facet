@@ -24,9 +24,7 @@ use crate::{
     parser as parser_ir,
     parser::{ReducedExternalScan, ReducedExternalScanResult, ReducedExternalScanner},
     runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
-    validated::{
-        GrammarExpr, GrammarExprId, RuleId, StaticPrecedenceValue, SymbolRef, ValidatedGrammar,
-    },
+    validated::{GrammarExpr, GrammarExprId, RuleId, SymbolRef, ValidatedGrammar},
 };
 
 /// A lowered Snark program carried by canonical Weavy ops.
@@ -2323,54 +2321,11 @@ impl<'a> ReducedWeavyStepper<'a> {
     }
 
     fn lexical_completion_precedence(&self, terminal: &parser_ir::TerminalSymbol) -> i32 {
-        terminal
-            .lexical_root()
-            .and_then(|root| match self.grammar.expr(root) {
-                GrammarExpr::Prec {
-                    value: StaticPrecedenceValue::Integer(value),
-                    ..
-                } => Some(*value),
-                _ => None,
-            })
-            .unwrap_or(0)
+        parser_ir::terminal_lexical_completion_precedence(self.grammar, terminal)
     }
 
     fn lexical_implicit_precedence(&self, terminal: &parser_ir::TerminalSymbol) -> i32 {
-        match terminal.kind() {
-            parser_ir::ParserTerminalKind::String => 2,
-            parser_ir::ParserTerminalKind::Pattern => 0,
-            parser_ir::ParserTerminalKind::Token
-            | parser_ir::ParserTerminalKind::ImmediateToken => terminal
-                .lexical_root()
-                .map(|root| self.lexical_expr_implicit_precedence(root))
-                .unwrap_or(0),
-        }
-    }
-
-    fn lexical_expr_implicit_precedence(&self, expr: GrammarExprId) -> i32 {
-        match self.grammar.expr(expr) {
-            GrammarExpr::StringToken(_) => 2,
-            GrammarExpr::PatternToken { .. }
-            | GrammarExpr::Until { .. }
-            | GrammarExpr::Nested { .. } => 0,
-            GrammarExpr::ImmediateToken(content) => {
-                self.lexical_expr_implicit_precedence(*content) + 1
-            }
-            GrammarExpr::Token(content)
-            | GrammarExpr::Field { content, .. }
-            | GrammarExpr::Prec { content, .. }
-            | GrammarExpr::PrecDynamic { content, .. }
-            | GrammarExpr::Alias { content, .. }
-            | GrammarExpr::Reserved { content, .. } => {
-                self.lexical_expr_implicit_precedence(*content)
-            }
-            GrammarExpr::Blank
-            | GrammarExpr::Symbol(_)
-            | GrammarExpr::Choice(_)
-            | GrammarExpr::Seq(_)
-            | GrammarExpr::Repeat(_)
-            | GrammarExpr::Repeat1(_) => 0,
-        }
+        parser_ir::terminal_lexical_implicit_precedence(self.grammar, terminal)
     }
 
     fn match_lexical_expr(
