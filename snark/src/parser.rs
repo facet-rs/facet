@@ -5586,6 +5586,7 @@ impl<'a> RuntimeParser<'a> {
                     state,
                     fragment: Some(RuntimeFragment::Hidden {
                         children: Vec::new(),
+                        visible_nodes: Vec::new(),
                         start_byte: start,
                         end_byte: token.end,
                     }),
@@ -5788,6 +5789,7 @@ impl<'a> RuntimeParser<'a> {
         let production_row = &self.reduced.parser.productions[production.get() as usize];
         let metadata_row = &self.reduced.parser.production_metadata[metadata.get() as usize];
         let mut children = Vec::new();
+        let mut visible_nodes = Vec::new();
         let mut popped = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
@@ -5816,10 +5818,8 @@ impl<'a> RuntimeParser<'a> {
         let mut field_events = Vec::new();
         for (extra, fragment) in popped {
             let alias_range = fragment.byte_range();
-            let mut field_child = match &fragment {
-                RuntimeFragment::Node { node, .. } => Some(*node),
-                RuntimeFragment::Hidden { .. } => None,
-            };
+            let mut step_visible_nodes = fragment.visible_nodes().to_vec();
+            let mut field_child = fragment.single_visible_node();
             let mut step_children = fragment.into_children(tree_store);
             if !extra {
                 let Some(step) = steps.next() else {
@@ -5860,8 +5860,10 @@ impl<'a> RuntimeParser<'a> {
                         bytes,
                         points,
                     });
-                    if named && field_child.is_none() {
+                    if named {
                         field_child = Some(alias_node);
+                        step_visible_nodes.clear();
+                        step_visible_nodes.push(alias_node);
                     }
                 }
                 if let Some(field) = step.field() {
@@ -5869,6 +5871,7 @@ impl<'a> RuntimeParser<'a> {
                 }
                 structural_index += 1;
             }
+            visible_nodes.extend(step_visible_nodes);
             children.extend(step_children);
         }
 
@@ -5904,6 +5907,7 @@ impl<'a> RuntimeParser<'a> {
         } else {
             Ok(RuntimeFragment::Hidden {
                 children,
+                visible_nodes,
                 start_byte,
                 end_byte,
             })
@@ -6087,6 +6091,7 @@ struct RuntimeStackEntry {
 enum RuntimeFragment {
     Hidden {
         children: Vec<SexpChild>,
+        visible_nodes: Vec<TreeNodeId>,
         start_byte: usize,
         end_byte: usize,
     },
@@ -6098,6 +6103,22 @@ enum RuntimeFragment {
 }
 
 impl RuntimeFragment {
+    fn visible_nodes(&self) -> &[TreeNodeId] {
+        match self {
+            Self::Hidden { visible_nodes, .. } => visible_nodes,
+            Self::Node { node, .. } => std::slice::from_ref(node),
+        }
+    }
+
+    fn single_visible_node(&self) -> Option<TreeNodeId> {
+        let visible_nodes = self.visible_nodes();
+        if visible_nodes.len() == 1 {
+            Some(visible_nodes[0])
+        } else {
+            None
+        }
+    }
+
     fn into_children(self, tree_store: &RuntimeTreeStore) -> Vec<SexpChild> {
         match self {
             Self::Hidden { children, .. } => children,

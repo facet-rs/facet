@@ -2789,6 +2789,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     state,
                     fragment: Some(RuntimeWeavyFragment::Hidden {
                         children: Vec::new(),
+                        visible_nodes: Vec::new(),
                         start_byte: start,
                         end_byte: token.end,
                     }),
@@ -2961,6 +2962,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let production_row = &self.parser.productions()[production.get() as usize];
         let metadata_row = &self.parser.production_metadata()[metadata.get() as usize];
         let mut children = Vec::new();
+        let mut visible_nodes = Vec::new();
         let mut popped = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
@@ -2987,10 +2989,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut field_events = Vec::new();
         for (extra, fragment) in popped {
             let alias_range = fragment.byte_range();
-            let mut field_child = match &fragment {
-                RuntimeWeavyFragment::Node { node, .. } => Some(*node),
-                RuntimeWeavyFragment::Hidden { .. } => None,
-            };
+            let mut step_visible_nodes = fragment.visible_nodes().to_vec();
+            let mut field_child = fragment.single_visible_node();
             let mut step_children = fragment.into_children(self.tree_store);
             if !extra {
                 let Some(step) = steps.next() else {
@@ -3032,8 +3032,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         bytes,
                         points,
                     });
-                    if named && field_child.is_none() {
+                    if named {
                         field_child = Some(alias_node);
+                        step_visible_nodes.clear();
+                        step_visible_nodes.push(alias_node);
                     }
                 }
                 if let Some(field) = step.field() {
@@ -3041,6 +3043,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 }
                 structural_index += 1;
             }
+            visible_nodes.extend(step_visible_nodes);
             children.extend(step_children);
         }
 
@@ -3075,6 +3078,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         } else {
             Ok(RuntimeWeavyFragment::Hidden {
                 children,
+                visible_nodes,
                 start_byte,
                 end_byte,
             })
@@ -3391,6 +3395,7 @@ struct RuntimeWeavyStackEntry {
 enum RuntimeWeavyFragment {
     Hidden {
         children: Vec<SexpChild>,
+        visible_nodes: Vec<parser_ir::TreeNodeId>,
         start_byte: usize,
         end_byte: usize,
     },
@@ -3402,6 +3407,22 @@ enum RuntimeWeavyFragment {
 }
 
 impl RuntimeWeavyFragment {
+    fn visible_nodes(&self) -> &[parser_ir::TreeNodeId] {
+        match self {
+            Self::Hidden { visible_nodes, .. } => visible_nodes,
+            Self::Node { node, .. } => std::slice::from_ref(node),
+        }
+    }
+
+    fn single_visible_node(&self) -> Option<parser_ir::TreeNodeId> {
+        let visible_nodes = self.visible_nodes();
+        if visible_nodes.len() == 1 {
+            Some(visible_nodes[0])
+        } else {
+            None
+        }
+    }
+
     const fn byte_range(&self) -> (usize, usize) {
         match self {
             Self::Hidden {

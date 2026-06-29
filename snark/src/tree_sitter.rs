@@ -2774,6 +2774,19 @@ mod tests {
             &runtime_report,
             &cases[0].input,
         );
+        let field_regression_query = QuerySource(
+            r#"
+(pair
+  key: (_) @json.key
+  value: (_) @json.value)
+"#
+            .to_owned(),
+        );
+        let field_captures = field_regression_query.execute_runtime_highlights(
+            &parser_grammar,
+            &runtime_report,
+            &cases[0].input,
+        );
 
         assert_same!(runtime_report.tree(), &cases[0].expected);
         assert_eq!(
@@ -2785,6 +2798,8 @@ mod tests {
             ["\"stuff\"", "\"good\""],
             "the broad string query should still see both key and value strings"
         );
+        assert_eq!(capture_texts(&field_captures, "json.key"), ["\"stuff\""]);
+        assert_eq!(capture_texts(&field_captures, "json.value"), ["\"good\""]);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -2834,8 +2849,27 @@ mod tests {
             &runtime_report,
             &cases[0].input,
         );
+        let field_regression_query = QuerySource(
+            r#"
+(pair
+  key: (_) @json.key
+  value: (_) @json.value)
+"#
+            .to_owned(),
+        );
+        let runtime_field_captures = field_regression_query.execute_runtime_highlights(
+            &parser_grammar,
+            &runtime_report,
+            &cases[0].input,
+        );
         let weavy_captures = highlights_query
             .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &weavy_report.accepted_tree_events(),
+                &cases[0].input,
+            );
+        let weavy_field_captures = field_regression_query
             .execute_runtime_highlights_from_tree_events(
                 &parser_grammar,
                 &weavy_report.accepted_tree_events(),
@@ -2851,9 +2885,14 @@ mod tests {
             runtime_report.accepted_tree_events()
         );
         assert_eq!(weavy_captures, runtime_captures);
+        assert_eq!(weavy_field_captures, runtime_field_captures);
         assert_eq!(
             capture_texts(&weavy_captures, "string.special.key"),
             ["\"stuff\""]
+        );
+        assert_eq!(
+            capture_texts(&weavy_field_captures, "json.value"),
+            ["\"good\""]
         );
         assert!(weavy_report.stats().step_count > 0);
         assert!(weavy_report.stats().block_call_count > 0);

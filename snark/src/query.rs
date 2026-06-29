@@ -300,6 +300,9 @@ fn execute_runtime_highlights(
             }
             HighlightTarget::Literal(literal) => {
                 for token in tokens.iter().filter(|token| &token.text == literal) {
+                    if rule.field_name.is_some() {
+                        continue;
+                    }
                     if !rule
                         .parent_kind
                         .as_ref()
@@ -695,7 +698,6 @@ struct RuntimeHighlightToken {
 struct RuntimeHighlightField {
     parent: TreeNodeId,
     child: Option<TreeNodeId>,
-    structural_index: usize,
     field_name: String,
 }
 
@@ -792,15 +794,10 @@ fn runtime_highlight_fields(
         .iter()
         .filter_map(|event| match event {
             TreeEvent::Field {
-                node,
-                child,
-                field,
-                structural_index,
-                ..
+                node, child, field, ..
             } => Some(RuntimeHighlightField {
                 parent: *node,
                 child: *child,
-                structural_index: *structural_index,
                 field_name: parser.fields()[field.get() as usize].name().to_owned(),
             }),
             _ => None,
@@ -814,25 +811,24 @@ fn node_satisfies_edge_constraints(
     nodes: &[RuntimeHighlightNode],
     fields: &[RuntimeHighlightField],
 ) -> bool {
+    if let Some(field_name) = &rule.field_name {
+        return fields.iter().any(|field| {
+            if field.child != Some(node.id) || &field.field_name != field_name {
+                return false;
+            }
+            let Some(parent) = nodes.iter().find(|candidate| candidate.id == field.parent) else {
+                return false;
+            };
+            rule.parent_kind
+                .as_ref()
+                .is_none_or(|parent_kind| &parent.kind == parent_kind)
+        });
+    }
     let parent = direct_parent_node(node, nodes);
     if let Some(parent_kind) = &rule.parent_kind
         && !parent.is_some_and(|parent| &parent.kind == parent_kind)
     {
         return false;
-    }
-    if let Some(field_name) = &rule.field_name {
-        let Some(parent) = parent else {
-            return false;
-        };
-        let Some(structural_index) = structural_child_index(parent, node, nodes) else {
-            return false;
-        };
-        return fields.iter().any(|field| {
-            field.parent == parent.id
-                && &field.field_name == field_name
-                && (field.child == Some(node.id)
-                    || (field.child.is_none() && field.structural_index == structural_index))
-        });
     }
     true
 }
@@ -847,19 +843,6 @@ fn direct_parent_node<'a>(
             candidate.id != node.id && byte_range_strictly_contains(candidate.bytes, node.bytes)
         })
         .min_by_key(|candidate| byte_range_len(candidate.bytes))
-}
-
-fn structural_child_index(
-    parent: &RuntimeHighlightNode,
-    node: &RuntimeHighlightNode,
-    nodes: &[RuntimeHighlightNode],
-) -> Option<usize> {
-    let mut children = nodes
-        .iter()
-        .filter(|candidate| direct_parent_node(candidate, nodes).is_some_and(|p| p.id == parent.id))
-        .collect::<Vec<_>>();
-    children.sort_by_key(|child| (child.bytes.start(), child.bytes.end(), child.id.get()));
-    children.iter().position(|child| child.id == node.id)
 }
 
 fn token_has_direct_parent_kind(
