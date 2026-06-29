@@ -3452,9 +3452,9 @@ impl TableConflict {
 /// Reduced named-node parser used to drive corpus S-expression oracles.
 ///
 /// This is the first executable LR slice: it consumes Snark-generated parser
-/// tables, accepts only deterministic shift/reduce action cells, and emits the
-/// same reduced named-node shape used by Tree-sitter corpus fixtures. It is not
-/// the final recoverable/incremental GLR runtime.
+/// tables and emits the named-node subset of Tree-sitter corpus S-expressions
+/// currently supported by this reduced oracle. It is not the final recoverable,
+/// incremental, field/atom-complete GLR runtime.
 pub struct ReducedParser<'a> {
     grammar: &'a ValidatedGrammar,
     parser: &'a ParserGrammar,
@@ -3482,113 +3482,54 @@ impl<'a> ReducedParser<'a> {
 
     /// Parse one input into a reduced Tree-sitter-style S-expression node.
     pub fn parse(&self, input: &str) -> Result<SexpNode, ReducedParseError> {
-        let mut stack = vec![ReducedStackEntry {
-            state: ParseStateId::from_index(0),
-            fragment: None,
-        }];
-        let mut byte_position = 0usize;
-        let mut trace = Vec::new();
+        let mut branches = VecDeque::from([ReducedBranch {
+            stack: vec![ReducedStackEntry {
+                state: ParseStateId::from_index(0),
+                fragment: None,
+            }],
+            byte_position: 0,
+            trace: Vec::new(),
+        }]);
+        let mut accepted = Vec::<(SexpNode, Vec<ReducedTraceStep>)>::new();
+        let mut failures = Vec::<ReducedParseError>::new();
+        let mut step_count = 0usize;
+        let step_limit = self.reduced_step_limit(input);
 
-        loop {
-            let state = stack
-                .last()
-                .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))
-                .map_err(|error| error.with_trace(trace.clone()))?
-                .state;
-            let state_row = self.parse_state(state)?;
-            let token = self
-                .lex(state_row, input, byte_position)
-                .map_err(|error| error.with_trace(trace.clone()))?;
-            let entry = state_row
-                .entries()
-                .iter()
-                .find(|entry| entry.lookahead() == token.lookahead)
-                .ok_or_else(|| {
-                    ReducedParseError::new(ReducedParseErrorKind::NoAction {
-                        state,
-                        lookahead: token.lookahead,
-                        byte_position,
-                    })
-                })
-                .map_err(|error| error.with_trace(trace.clone()))?;
-            let [action] = entry.actions() else {
+        while let Some(branch) = branches.pop_front() {
+            step_count += 1;
+            if step_count > step_limit {
                 return Err(
-                    ReducedParseError::new(ReducedParseErrorKind::AmbiguousAction {
-                        state,
-                        lookahead: token.lookahead,
-                        action_count: entry.actions().len(),
+                    ReducedParseError::new(ReducedParseErrorKind::BranchStepLimit {
+                        limit: step_limit,
                     })
-                    .with_trace(trace),
+                    .with_trace(branch.trace),
                 );
-            };
-            trace.push(ReducedTraceStep {
-                state,
-                byte_position,
-                lookahead: token.lookahead,
-                action: *action,
-            });
-            match *action {
-                ParseAction::Shift { state, .. } => {
-                    byte_position = token.end;
-                    stack.push(ReducedStackEntry {
-                        state,
-                        fragment: Some(ReducedFragment::Hidden(Vec::new())),
-                    });
-                }
-                ParseAction::ShiftExtra => {
-                    byte_position = token.end;
-                }
-                ParseAction::Reduce {
-                    production,
-                    metadata,
-                    symbol,
-                    child_count,
-                    ..
-                } => {
-                    let fragment = self
-                        .reduce_fragment(production, metadata, child_count, &mut stack)
-                        .map_err(|error| error.with_trace(trace.clone()))?;
-                    let goto_state = self
-                        .goto_state(stack.last().unwrap().state, symbol)
-                        .map_err(|error| error.with_trace(trace.clone()))?;
-                    stack.push(ReducedStackEntry {
-                        state: goto_state,
-                        fragment: Some(fragment),
-                    });
-                }
-                ParseAction::Accept {
-                    production,
-                    metadata,
-                    child_count,
-                    ..
-                } => {
-                    if token.lookahead != LookaheadSymbol::Eof || byte_position != input.len() {
-                        return Err(
-                            ReducedParseError::new(ReducedParseErrorKind::TrailingInput {
-                                byte_position,
-                            })
-                            .with_trace(trace),
-                        );
-                    }
-                    let fragment = self
-                        .reduce_fragment(production, metadata, child_count, &mut stack)
-                        .map_err(|error| error.with_trace(trace.clone()))?;
-                    return match fragment {
-                        ReducedFragment::Node(node) => Ok(node),
-                        ReducedFragment::Hidden(_) => Err(ReducedParseError::new(
-                            ReducedParseErrorKind::AcceptedHiddenRoot,
-                        )
-                        .with_trace(trace)),
-                    };
-                }
-                ParseAction::Recover => {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnsupportedRecovery { state },
-                    )
-                    .with_trace(trace));
+            }
+
+            for outcome in self.step_branch(branch, input) {
+                match outcome {
+                    ReducedStepOutcome::Branch(branch) => branches.push_back(branch),
+                    ReducedStepOutcome::Accepted(node, trace) => accepted.push((node, trace)),
+                    ReducedStepOutcome::Failed(error) => failures.push(error),
                 }
             }
         }
+
+        let Some((first_node, first_trace)) = accepted.first().cloned() else {
+            return Err(select_reduced_failure(failures).unwrap_or_else(|| {
+                ReducedParseError::new(ReducedParseErrorKind::NoViableBranch { failure_count: 0 })
+            }));
+        };
+        if accepted.iter().all(|(node, _)| *node == first_node) {
+            return Ok(first_node);
+        }
+
+        Err(
+            ReducedParseError::new(ReducedParseErrorKind::AmbiguousParse {
+                accepted_count: accepted.len(),
+            })
+            .with_trace(first_trace),
+        )
     }
 
     fn parse_state(&self, state: ParseStateId) -> Result<&ParseState, ReducedParseError> {
@@ -3596,6 +3537,169 @@ impl<'a> ReducedParser<'a> {
             .states()
             .get(state.get() as usize)
             .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::MissingState { state }))
+    }
+
+    fn reduced_step_limit(&self, input: &str) -> usize {
+        let input_budget = input.len().saturating_mul(4096);
+        let table_budget = self.table.states().len().saturating_mul(64);
+        10_000usize.max(input_budget.saturating_add(table_budget))
+    }
+
+    fn step_branch(&self, branch: ReducedBranch, input: &str) -> Vec<ReducedStepOutcome> {
+        let state = match branch.stack.last() {
+            Some(entry) => entry.state,
+            None => {
+                return vec![ReducedStepOutcome::Failed(
+                    ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
+                        .with_trace(branch.trace),
+                )];
+            }
+        };
+        let state_row = match self.parse_state(state) {
+            Ok(state_row) => state_row,
+            Err(error) => {
+                return vec![ReducedStepOutcome::Failed(error.with_trace(branch.trace))];
+            }
+        };
+        let token = match self.lex(state_row, input, branch.byte_position) {
+            Ok(token) => token,
+            Err(error) => {
+                return vec![ReducedStepOutcome::Failed(error.with_trace(branch.trace))];
+            }
+        };
+        let Some(entry) = state_row
+            .entries()
+            .iter()
+            .find(|entry| entry.lookahead() == token.lookahead)
+        else {
+            return vec![ReducedStepOutcome::Failed(
+                ReducedParseError::new(ReducedParseErrorKind::NoAction {
+                    state,
+                    lookahead: token.lookahead,
+                    byte_position: branch.byte_position,
+                })
+                .with_trace(branch.trace),
+            )];
+        };
+
+        let mut outcomes = Vec::new();
+        for action in entry.actions() {
+            let mut branch = branch.clone();
+            branch.trace.push(ReducedTraceStep {
+                state,
+                byte_position: branch.byte_position,
+                lookahead: token.lookahead,
+                action: *action,
+            });
+            outcomes.push(self.apply_action(branch, token, *action, input));
+        }
+        outcomes
+    }
+
+    fn apply_action(
+        &self,
+        mut branch: ReducedBranch,
+        token: ReducedToken,
+        action: ParseAction,
+        input: &str,
+    ) -> ReducedStepOutcome {
+        match action {
+            ParseAction::Shift { state, .. } => {
+                branch.byte_position = token.end;
+                branch.stack.push(ReducedStackEntry {
+                    state,
+                    fragment: Some(ReducedFragment::Hidden(Vec::new())),
+                });
+                ReducedStepOutcome::Branch(branch)
+            }
+            ParseAction::ShiftExtra => {
+                branch.byte_position = token.end;
+                ReducedStepOutcome::Branch(branch)
+            }
+            ParseAction::Reduce {
+                production,
+                metadata,
+                symbol,
+                child_count,
+                ..
+            } => {
+                let fragment = match self.reduce_fragment(
+                    production,
+                    metadata,
+                    child_count,
+                    &mut branch.stack,
+                ) {
+                    Ok(fragment) => fragment,
+                    Err(error) => {
+                        return ReducedStepOutcome::Failed(error.with_trace(branch.trace));
+                    }
+                };
+                let head_state = match branch.stack.last() {
+                    Some(entry) => entry.state,
+                    None => {
+                        return ReducedStepOutcome::Failed(
+                            ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
+                                .with_trace(branch.trace),
+                        );
+                    }
+                };
+                let goto_state = match self.goto_state(head_state, symbol) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        return ReducedStepOutcome::Failed(error.with_trace(branch.trace));
+                    }
+                };
+                branch.stack.push(ReducedStackEntry {
+                    state: goto_state,
+                    fragment: Some(fragment),
+                });
+                ReducedStepOutcome::Branch(branch)
+            }
+            ParseAction::Accept {
+                production,
+                metadata,
+                child_count,
+                ..
+            } => {
+                if token.lookahead != LookaheadSymbol::Eof || branch.byte_position != input.len() {
+                    return ReducedStepOutcome::Failed(
+                        ReducedParseError::new(ReducedParseErrorKind::TrailingInput {
+                            byte_position: branch.byte_position,
+                        })
+                        .with_trace(branch.trace),
+                    );
+                }
+                let fragment = match self.reduce_fragment(
+                    production,
+                    metadata,
+                    child_count,
+                    &mut branch.stack,
+                ) {
+                    Ok(fragment) => fragment,
+                    Err(error) => {
+                        return ReducedStepOutcome::Failed(error.with_trace(branch.trace));
+                    }
+                };
+                match fragment {
+                    ReducedFragment::Node(node) => ReducedStepOutcome::Accepted(node, branch.trace),
+                    ReducedFragment::Hidden(_) => ReducedStepOutcome::Failed(
+                        ReducedParseError::new(ReducedParseErrorKind::AcceptedHiddenRoot)
+                            .with_trace(branch.trace),
+                    ),
+                }
+            }
+            ParseAction::Recover => {
+                let state = branch
+                    .stack
+                    .last()
+                    .map(|entry| entry.state)
+                    .unwrap_or(ParseStateId::from_index(0));
+                ReducedStepOutcome::Failed(
+                    ReducedParseError::new(ReducedParseErrorKind::UnsupportedRecovery { state })
+                        .with_trace(branch.trace),
+                )
+            }
+        }
     }
 
     fn lex(
@@ -3961,6 +4065,20 @@ struct ReducedToken {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ReducedBranch {
+    stack: Vec<ReducedStackEntry>,
+    byte_position: usize,
+    trace: Vec<ReducedTraceStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReducedStepOutcome {
+    Branch(ReducedBranch),
+    Accepted(SexpNode, Vec<ReducedTraceStep>),
+    Failed(ReducedParseError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ReducedStackEntry {
     state: ParseStateId,
     fragment: Option<ReducedFragment>,
@@ -3982,6 +4100,24 @@ impl ReducedFragment {
             }],
         }
     }
+}
+
+fn select_reduced_failure(failures: Vec<ReducedParseError>) -> Option<ReducedParseError> {
+    let failure_count = failures.len();
+    failures
+        .into_iter()
+        .max_by_key(|error| {
+            error
+                .trace
+                .last()
+                .map(|step| (step.byte_position, error.trace.len()))
+                .unwrap_or((0, 0))
+        })
+        .or_else(|| {
+            Some(ReducedParseError::new(
+                ReducedParseErrorKind::NoViableBranch { failure_count },
+            ))
+        })
 }
 
 /// Error produced by the reduced parser slice.
@@ -4106,6 +4242,19 @@ impl fmt::Display for ReducedParseError {
             ReducedParseErrorKind::UnsupportedRecovery { state } => {
                 write!(f, "state {} requires recovery", state.get())
             }
+            ReducedParseErrorKind::NoViableBranch { failure_count } => {
+                write!(
+                    f,
+                    "all reduced parser branches failed ({failure_count} failures)"
+                )
+            }
+            ReducedParseErrorKind::BranchStepLimit { limit } => {
+                write!(f, "reduced parser exceeded branch step limit {limit}")
+            }
+            ReducedParseErrorKind::AmbiguousParse { accepted_count } => write!(
+                f,
+                "reduced parser accepted {accepted_count} different reduced trees"
+            ),
         }
     }
 }
@@ -4197,6 +4346,21 @@ pub enum ReducedParseErrorKind {
     UnsupportedRecovery {
         /// Current state.
         state: ParseStateId,
+    },
+    /// No branch accepted the input.
+    NoViableBranch {
+        /// Number of branch failures observed.
+        failure_count: usize,
+    },
+    /// Reduced branch execution exceeded its guard.
+    BranchStepLimit {
+        /// Step limit that was exceeded.
+        limit: usize,
+    },
+    /// More than one distinct reduced tree was accepted.
+    AmbiguousParse {
+        /// Number of accepted branches.
+        accepted_count: usize,
     },
 }
 
