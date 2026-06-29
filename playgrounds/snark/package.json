@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter @bearcove/snark-wasm run build && vite",
     "build": "pnpm --filter @bearcove/snark-wasm run build && tsc --noEmit && vite build",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:paths": "node --experimental-strip-types --test tests/bundlePaths.test.ts"
   },
   "dependencies": {
