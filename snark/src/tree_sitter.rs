@@ -2242,6 +2242,7 @@ mod tests {
 
         for (case_index, case_name) in [
             (0usize, "Import statements"),
+            (1, "Namespace statements"),
             (5, "Charset statements"),
             (3, "Media statements"),
         ] {
@@ -2295,6 +2296,7 @@ mod tests {
 
         for (case_index, case_name) in [
             (0usize, "Import statements"),
+            (1, "Namespace statements"),
             (5, "Charset statements"),
             (3, "Media statements"),
         ] {

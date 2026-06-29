@@ -2000,10 +2000,11 @@ impl<'a> ReducedWeavyStepper<'a> {
                 child_count,
                 ..
             } => {
-                let fragment = self.reduce_fragment(
+                let reduction = self.reduce_fragment(
                     parser_production(*production),
                     parser_metadata(*metadata),
                     *child_count,
+                    false,
                 )?;
                 let head_state = self
                     .stack
@@ -2014,9 +2015,16 @@ impl<'a> ReducedWeavyStepper<'a> {
                 let goto = self.goto_state(head_state, symbol)?;
                 self.stack.push(ReducedWeavyStackEntry {
                     state: goto,
-                    fragment: Some(fragment),
+                    fragment: Some(reduction.fragment),
                     extra: false,
                 });
+                for fragment in reduction.trailing_extras {
+                    self.stack.push(ReducedWeavyStackEntry {
+                        state: goto,
+                        fragment: Some(fragment),
+                        extra: true,
+                    });
+                }
                 if self.mode == ReducedWeavyMode::ApplyAction {
                     return Ok(Control::Continue);
                 }
@@ -2044,12 +2052,13 @@ impl<'a> ReducedWeavyStepper<'a> {
                         byte_position: self.byte_position,
                     });
                 }
-                let fragment = self.reduce_fragment(
+                let reduction = self.reduce_fragment(
                     parser_production(*production),
                     parser_metadata(*metadata),
                     *child_count,
+                    true,
                 )?;
-                let ReducedWeavyFragment::Node(node) = fragment else {
+                let ReducedWeavyFragment::Node(node) = reduction.fragment else {
                     return Err(ReducedWeavyError::AcceptedHiddenRoot);
                 };
                 let node = self.finish_accepted_root(node)?;
@@ -2444,10 +2453,22 @@ impl<'a> ReducedWeavyStepper<'a> {
         production: parser_ir::ProductionId,
         metadata: parser_ir::ProductionMetadataId,
         child_count: usize,
-    ) -> Result<ReducedWeavyFragment, ReducedWeavyError> {
+        include_trailing_extras: bool,
+    ) -> Result<ReducedWeavyReduction, ReducedWeavyError> {
         let production_row = &self.parser.productions()[production.get() as usize];
         let metadata_row = &self.parser.production_metadata()[metadata.get() as usize];
         let mut children = Vec::new();
+        let mut trailing_extras = Vec::new();
+        if !include_trailing_extras {
+            while self.stack.last().is_some_and(|entry| entry.extra) {
+                let entry = self.stack.pop().ok_or(ReducedWeavyError::EmptyStack)?;
+                let Some(fragment) = entry.fragment else {
+                    return Err(ReducedWeavyError::EmptyStack);
+                };
+                trailing_extras.push(fragment);
+            }
+            trailing_extras.reverse();
+        }
         let mut popped = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
@@ -2496,9 +2517,15 @@ impl<'a> ReducedWeavyStepper<'a> {
             let kind = self.parser.public_node_kinds()[public_node.get() as usize]
                 .name()
                 .to_owned();
-            Ok(ReducedWeavyFragment::Node(SexpNode { kind, children }))
+            Ok(ReducedWeavyReduction {
+                fragment: ReducedWeavyFragment::Node(SexpNode { kind, children }),
+                trailing_extras,
+            })
         } else {
-            Ok(ReducedWeavyFragment::Hidden(children))
+            Ok(ReducedWeavyReduction {
+                fragment: ReducedWeavyFragment::Hidden(children),
+                trailing_extras,
+            })
         }
     }
 
@@ -2833,7 +2860,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
             } => {
                 let production = parser_production(*production);
                 let metadata = parser_metadata(*metadata);
-                let fragment = self.runtime_reduce_fragment(production, metadata, *child_count)?;
+                let reduction =
+                    self.runtime_reduce_fragment(production, metadata, *child_count, false)?;
                 self.trace_events.push(parser_ir::TraceEvent::Reduce {
                     version: self.version,
                     production,
@@ -2846,13 +2874,22 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     .state;
                 let symbol = parser_nonterminal(*symbol);
                 let goto = self.goto_state(head_state, symbol)?;
-                let (_start_byte, end_byte) = fragment.byte_range();
+                let (_start_byte, end_byte) = reduction.fragment.byte_range();
                 self.stack.push(RuntimeWeavyStackEntry {
                     state: goto,
-                    fragment: Some(fragment),
+                    fragment: Some(reduction.fragment),
                     extra: false,
                     end_byte,
                 });
+                for fragment in reduction.trailing_extras {
+                    let (_, end_byte) = fragment.byte_range();
+                    self.stack.push(RuntimeWeavyStackEntry {
+                        state: goto,
+                        fragment: Some(fragment),
+                        extra: true,
+                        end_byte,
+                    });
+                }
                 self.trace_events.push(parser_ir::TraceEvent::StateEnter {
                     id: next_runtime_weavy_trace_id(self.trace_events),
                     version: self.version,
@@ -2887,13 +2924,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 }
                 let production = parser_production(*production);
                 let metadata = parser_metadata(*metadata);
-                let fragment = self.runtime_reduce_fragment(production, metadata, *child_count)?;
+                let reduction =
+                    self.runtime_reduce_fragment(production, metadata, *child_count, true)?;
                 self.trace_events.push(parser_ir::TraceEvent::Reduce {
                     version: self.version,
                     production,
                     metadata,
                 });
-                let RuntimeWeavyFragment::Node { node, .. } = fragment else {
+                let RuntimeWeavyFragment::Node { node, .. } = reduction.fragment else {
                     return Err(ReducedWeavyError::AcceptedHiddenRoot);
                 };
                 self.tree = Some(self.finish_runtime_root(node)?);
@@ -2958,11 +2996,23 @@ impl<'a> RuntimeWeavyStepper<'a> {
         production: parser_ir::ProductionId,
         metadata: parser_ir::ProductionMetadataId,
         child_count: usize,
-    ) -> Result<RuntimeWeavyFragment, ReducedWeavyError> {
+        include_trailing_extras: bool,
+    ) -> Result<RuntimeWeavyReduction, ReducedWeavyError> {
         let production_row = &self.parser.productions()[production.get() as usize];
         let metadata_row = &self.parser.production_metadata()[metadata.get() as usize];
         let mut children = Vec::new();
         let mut visible_nodes = Vec::new();
+        let mut trailing_extras = Vec::new();
+        if !include_trailing_extras {
+            while self.stack.last().is_some_and(|entry| entry.extra) {
+                let entry = self.stack.pop().ok_or(ReducedWeavyError::EmptyStack)?;
+                let Some(fragment) = entry.fragment else {
+                    return Err(ReducedWeavyError::EmptyStack);
+                };
+                trailing_extras.push(fragment);
+            }
+            trailing_extras.reverse();
+        }
         let mut popped = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
@@ -3070,17 +3120,23 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     structural_index,
                 });
             }
-            Ok(RuntimeWeavyFragment::Node {
-                node,
-                start_byte,
-                end_byte,
+            Ok(RuntimeWeavyReduction {
+                fragment: RuntimeWeavyFragment::Node {
+                    node,
+                    start_byte,
+                    end_byte,
+                },
+                trailing_extras,
             })
         } else {
-            Ok(RuntimeWeavyFragment::Hidden {
-                children,
-                visible_nodes,
-                start_byte,
-                end_byte,
+            Ok(RuntimeWeavyReduction {
+                fragment: RuntimeWeavyFragment::Hidden {
+                    children,
+                    visible_nodes,
+                    start_byte,
+                    end_byte,
+                },
+                trailing_extras,
             })
         }
     }
@@ -3378,6 +3434,12 @@ enum ReducedWeavyFragment {
     Node(SexpNode),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReducedWeavyReduction {
+    fragment: ReducedWeavyFragment,
+    trailing_extras: Vec<ReducedWeavyFragment>,
+}
+
 impl ReducedWeavyFragment {
     fn into_children(self) -> Vec<SexpChild> {
         match self {
@@ -3411,6 +3473,12 @@ enum RuntimeWeavyFragment {
         start_byte: usize,
         end_byte: usize,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RuntimeWeavyReduction {
+    fragment: RuntimeWeavyFragment,
+    trailing_extras: Vec<RuntimeWeavyFragment>,
 }
 
 impl RuntimeWeavyFragment {

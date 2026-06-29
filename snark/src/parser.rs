@@ -4287,13 +4287,14 @@ impl<'a> ReducedParser<'a> {
                 child_count,
                 ..
             } => {
-                let fragment = match self.reduce_fragment(
+                let reduction = match self.reduce_fragment(
                     production,
                     metadata,
                     child_count,
                     &mut branch.stack,
+                    false,
                 ) {
-                    Ok(fragment) => fragment,
+                    Ok(reduction) => reduction,
                     Err(error) => {
                         return ReducedStepOutcome::Failed {
                             branch: branch.id,
@@ -4322,9 +4323,16 @@ impl<'a> ReducedParser<'a> {
                 };
                 branch.stack.push(ReducedStackEntry {
                     state: goto_state,
-                    fragment: Some(fragment),
+                    fragment: Some(reduction.fragment),
                     extra: false,
                 });
+                for fragment in reduction.trailing_extras {
+                    branch.stack.push(ReducedStackEntry {
+                        state: goto_state,
+                        fragment: Some(fragment),
+                        extra: true,
+                    });
+                }
                 ReducedStepOutcome::Branch(branch)
             }
             ParseAction::Accept {
@@ -4342,13 +4350,14 @@ impl<'a> ReducedParser<'a> {
                         .with_trace(branch.trace),
                     };
                 }
-                let fragment = match self.reduce_fragment(
+                let reduction = match self.reduce_fragment(
                     production,
                     metadata,
                     child_count,
                     &mut branch.stack,
+                    true,
                 ) {
-                    Ok(fragment) => fragment,
+                    Ok(reduction) => reduction,
                     Err(error) => {
                         return ReducedStepOutcome::Failed {
                             branch: branch.id,
@@ -4356,7 +4365,7 @@ impl<'a> ReducedParser<'a> {
                         };
                     }
                 };
-                match fragment {
+                match reduction.fragment {
                     ReducedFragment::Node(node) => {
                         let node = match self.finish_accepted_root(node, &mut branch.stack) {
                             Ok(node) => node,
@@ -4761,10 +4770,24 @@ impl<'a> ReducedParser<'a> {
         metadata: ProductionMetadataId,
         child_count: usize,
         stack: &mut Vec<ReducedStackEntry>,
-    ) -> Result<ReducedFragment, ReducedParseError> {
+        include_trailing_extras: bool,
+    ) -> Result<ReducedReduction, ReducedParseError> {
         let production_row = &self.parser.productions[production.get() as usize];
         let metadata_row = &self.parser.production_metadata[metadata.get() as usize];
         let mut children = Vec::new();
+        let mut trailing_extras = Vec::new();
+        if !include_trailing_extras {
+            while stack.last().is_some_and(|entry| entry.extra) {
+                let entry = stack
+                    .pop()
+                    .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
+                let Some(fragment) = entry.fragment else {
+                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
+                };
+                trailing_extras.push(fragment);
+            }
+            trailing_extras.reverse();
+        }
         let mut popped = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
@@ -4813,9 +4836,15 @@ impl<'a> ReducedParser<'a> {
             let kind = self.parser.public_node_kinds[public_node.get() as usize]
                 .name()
                 .to_owned();
-            Ok(ReducedFragment::Node(SexpNode { kind, children }))
+            Ok(ReducedReduction {
+                fragment: ReducedFragment::Node(SexpNode { kind, children }),
+                trailing_extras,
+            })
         } else {
-            Ok(ReducedFragment::Hidden(children))
+            Ok(ReducedReduction {
+                fragment: ReducedFragment::Hidden(children),
+                trailing_extras,
+            })
         }
     }
 
@@ -4964,7 +4993,259 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
         "is\\b" => match_ascii_keyword(input, byte_position, "is"),
         "not\\b" => match_ascii_keyword(input, byte_position, "not"),
         "or\\b" => match_ascii_keyword(input, byte_position, "or"),
-        _ => None,
+        _ => match_regex_subset(pattern, input, byte_position),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RegexAtom {
+    Literal(char),
+    Any,
+    Class(RegexClass),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegexClass {
+    negated: bool,
+    items: Vec<RegexClassItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RegexClassItem {
+    Char(char),
+    Range(char, char),
+    Whitespace,
+    Digit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RegexRepeat {
+    ExactlyOne,
+    ZeroOrMore,
+    OneOrMore,
+    ZeroOrOne,
+    Range { min: usize, max: Option<usize> },
+}
+
+fn match_regex_subset(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+    input.get(byte_position..)?;
+    let mut pattern_position = 0usize;
+    let mut input_position = byte_position;
+    while pattern_position < pattern.len() {
+        let atom = parse_regex_atom(pattern, &mut pattern_position)?;
+        let repeat = parse_regex_repeat(pattern, &mut pattern_position)?;
+        input_position = match_regex_atom_repeat(&atom, repeat, input, input_position)?;
+    }
+    Some(input_position)
+}
+
+fn parse_regex_atom(pattern: &str, position: &mut usize) -> Option<RegexAtom> {
+    let ch = next_pattern_char(pattern, position)?;
+    match ch {
+        '[' => parse_regex_class(pattern, position).map(RegexAtom::Class),
+        '.' => Some(RegexAtom::Any),
+        '\\' => parse_regex_escape(pattern, position).map(|item| match item {
+            RegexClassItem::Whitespace | RegexClassItem::Digit => RegexAtom::Class(RegexClass {
+                negated: false,
+                items: vec![item],
+            }),
+            RegexClassItem::Char(ch) => RegexAtom::Literal(ch),
+            RegexClassItem::Range(_, _) => unreachable!("escaped atoms are not ranges"),
+        }),
+        '(' | ')' | '|' | '^' | '$' => None,
+        '*' | '+' | '?' | '{' | '}' => None,
+        ch => Some(RegexAtom::Literal(ch)),
+    }
+}
+
+fn parse_regex_class(pattern: &str, position: &mut usize) -> Option<RegexClass> {
+    let mut negated = false;
+    if pattern.get(*position..)?.starts_with('^') {
+        *position += '^'.len_utf8();
+        negated = true;
+    }
+
+    let mut items = Vec::new();
+    while *position < pattern.len() {
+        if pattern.get(*position..)?.starts_with(']') {
+            *position += ']'.len_utf8();
+            return Some(RegexClass { negated, items });
+        }
+        let start = parse_regex_class_item(pattern, position)?;
+        if pattern.get(*position..)?.starts_with('-') {
+            let after_dash = *position + '-'.len_utf8();
+            if !pattern.get(after_dash..)?.starts_with(']') {
+                *position = after_dash;
+                let end = parse_regex_class_item(pattern, position)?;
+                match (start, end) {
+                    (RegexClassItem::Char(start), RegexClassItem::Char(end)) => {
+                        items.push(RegexClassItem::Range(start, end));
+                    }
+                    _ => return None,
+                }
+                continue;
+            }
+        }
+        items.push(start);
+    }
+    None
+}
+
+fn parse_regex_class_item(pattern: &str, position: &mut usize) -> Option<RegexClassItem> {
+    let ch = next_pattern_char(pattern, position)?;
+    if ch == '\\' {
+        parse_regex_escape(pattern, position)
+    } else {
+        Some(RegexClassItem::Char(ch))
+    }
+}
+
+fn parse_regex_escape(pattern: &str, position: &mut usize) -> Option<RegexClassItem> {
+    let ch = next_pattern_char(pattern, position)?;
+    match ch {
+        's' => Some(RegexClassItem::Whitespace),
+        'd' => Some(RegexClassItem::Digit),
+        'x' => {
+            let hex = pattern.get(*position..(*position + 2))?;
+            if !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                return None;
+            }
+            *position += 2;
+            let value = u32::from_str_radix(hex, 16).ok()?;
+            char::from_u32(value).map(RegexClassItem::Char)
+        }
+        ch => Some(RegexClassItem::Char(ch)),
+    }
+}
+
+fn parse_regex_repeat(pattern: &str, position: &mut usize) -> Option<RegexRepeat> {
+    let Some(rest) = pattern.get(*position..) else {
+        return Some(RegexRepeat::ExactlyOne);
+    };
+    if rest.starts_with('*') {
+        *position += '*'.len_utf8();
+        return Some(RegexRepeat::ZeroOrMore);
+    }
+    if rest.starts_with('+') {
+        *position += '+'.len_utf8();
+        return Some(RegexRepeat::OneOrMore);
+    }
+    if rest.starts_with('?') {
+        *position += '?'.len_utf8();
+        return Some(RegexRepeat::ZeroOrOne);
+    }
+    if !rest.starts_with('{') {
+        return Some(RegexRepeat::ExactlyOne);
+    }
+
+    *position += '{'.len_utf8();
+    let min = parse_regex_usize(pattern, position)?;
+    let mut max = Some(min);
+    if pattern.get(*position..)?.starts_with(',') {
+        *position += ','.len_utf8();
+        max = if pattern.get(*position..)?.starts_with('}') {
+            None
+        } else {
+            Some(parse_regex_usize(pattern, position)?)
+        };
+    }
+    if !pattern.get(*position..)?.starts_with('}') {
+        return None;
+    }
+    *position += '}'.len_utf8();
+    Some(RegexRepeat::Range { min, max })
+}
+
+fn parse_regex_usize(pattern: &str, position: &mut usize) -> Option<usize> {
+    let start = *position;
+    while pattern
+        .as_bytes()
+        .get(*position)
+        .is_some_and(u8::is_ascii_digit)
+    {
+        *position += 1;
+    }
+    (start != *position)
+        .then(|| pattern[start..*position].parse().ok())
+        .flatten()
+}
+
+fn next_pattern_char(pattern: &str, position: &mut usize) -> Option<char> {
+    let ch = pattern.get(*position..)?.chars().next()?;
+    *position += ch.len_utf8();
+    Some(ch)
+}
+
+fn match_regex_atom_repeat(
+    atom: &RegexAtom,
+    repeat: RegexRepeat,
+    input: &str,
+    byte_position: usize,
+) -> Option<usize> {
+    match repeat {
+        RegexRepeat::ExactlyOne => match_regex_atom_once(atom, input, byte_position),
+        RegexRepeat::ZeroOrOne => {
+            Some(match_regex_atom_once(atom, input, byte_position).unwrap_or(byte_position))
+        }
+        RegexRepeat::ZeroOrMore => {
+            Some(match_regex_atom_greedy(atom, input, byte_position, 0, None)?.0)
+        }
+        RegexRepeat::OneOrMore => {
+            Some(match_regex_atom_greedy(atom, input, byte_position, 1, None)?.0)
+        }
+        RegexRepeat::Range { min, max } => {
+            Some(match_regex_atom_greedy(atom, input, byte_position, min, max)?.0)
+        }
+    }
+}
+
+fn match_regex_atom_greedy(
+    atom: &RegexAtom,
+    input: &str,
+    byte_position: usize,
+    min: usize,
+    max: Option<usize>,
+) -> Option<(usize, usize)> {
+    let mut position = byte_position;
+    let mut count = 0usize;
+    while max.is_none_or(|max| count < max) {
+        let Some(end) = match_regex_atom_once(atom, input, position) else {
+            break;
+        };
+        if end == position {
+            break;
+        }
+        position = end;
+        count += 1;
+    }
+    (count >= min).then_some((position, count))
+}
+
+fn match_regex_atom_once(atom: &RegexAtom, input: &str, byte_position: usize) -> Option<usize> {
+    let ch = input.get(byte_position..)?.chars().next()?;
+    let matches = match atom {
+        RegexAtom::Literal(expected) => ch == *expected,
+        RegexAtom::Any => ch != '\n',
+        RegexAtom::Class(class) => class.matches(ch),
+    };
+    matches.then_some(byte_position + ch.len_utf8())
+}
+
+impl RegexClass {
+    fn matches(&self, ch: char) -> bool {
+        let matched = self.items.iter().any(|item| item.matches(ch));
+        matched != self.negated
+    }
+}
+
+impl RegexClassItem {
+    fn matches(&self, ch: char) -> bool {
+        match self {
+            Self::Char(expected) => ch == *expected,
+            Self::Range(start, end) => *start <= ch && ch <= *end,
+            Self::Whitespace => ch.is_whitespace(),
+            Self::Digit => ch.is_ascii_digit(),
+        }
     }
 }
 
@@ -5362,6 +5643,12 @@ enum ReducedFragment {
     Node(SexpNode),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReducedReduction {
+    fragment: ReducedFragment,
+    trailing_extras: Vec<ReducedFragment>,
+}
+
 impl ReducedFragment {
     fn into_children(self) -> Vec<SexpChild> {
         match self {
@@ -5754,7 +6041,7 @@ impl<'a> RuntimeParser<'a> {
                 child_count,
                 ..
             } => {
-                let fragment = match self.runtime_reduce_fragment(
+                let reduction = match self.runtime_reduce_fragment(
                     branch.version,
                     production,
                     metadata,
@@ -5763,8 +6050,9 @@ impl<'a> RuntimeParser<'a> {
                     tree_store,
                     tree_events,
                     input,
+                    false,
                 ) {
-                    Ok(fragment) => fragment,
+                    Ok(reduction) => reduction,
                     Err(error) => {
                         return RuntimeStepOutcome::Failed {
                             version: branch.version,
@@ -5796,13 +6084,22 @@ impl<'a> RuntimeParser<'a> {
                         };
                     }
                 };
-                let (_start_byte, end_byte) = fragment.byte_range();
+                let (_start_byte, end_byte) = reduction.fragment.byte_range();
                 branch.stack.push(RuntimeStackEntry {
                     state: goto_state,
-                    fragment: Some(fragment),
+                    fragment: Some(reduction.fragment),
                     extra: false,
                     end_byte,
                 });
+                for fragment in reduction.trailing_extras {
+                    let (_, end_byte) = fragment.byte_range();
+                    branch.stack.push(RuntimeStackEntry {
+                        state: goto_state,
+                        fragment: Some(fragment),
+                        extra: true,
+                        end_byte,
+                    });
+                }
                 trace_events.push(TraceEvent::StateEnter {
                     id: next_trace_id(trace_events),
                     version: branch.version,
@@ -5825,7 +6122,7 @@ impl<'a> RuntimeParser<'a> {
                         .with_trace(branch.trace),
                     };
                 }
-                let fragment = match self.runtime_reduce_fragment(
+                let reduction = match self.runtime_reduce_fragment(
                     branch.version,
                     production,
                     metadata,
@@ -5834,8 +6131,9 @@ impl<'a> RuntimeParser<'a> {
                     tree_store,
                     tree_events,
                     input,
+                    true,
                 ) {
-                    Ok(fragment) => fragment,
+                    Ok(reduction) => reduction,
                     Err(error) => {
                         return RuntimeStepOutcome::Failed {
                             version: branch.version,
@@ -5848,7 +6146,7 @@ impl<'a> RuntimeParser<'a> {
                     production,
                     metadata,
                 });
-                match fragment {
+                match reduction.fragment {
                     RuntimeFragment::Node {
                         node,
                         start_byte: _,
@@ -5908,11 +6206,25 @@ impl<'a> RuntimeParser<'a> {
         tree_store: &mut RuntimeTreeStore,
         tree_events: &mut Vec<TreeEvent>,
         input: &str,
-    ) -> Result<RuntimeFragment, ReducedParseError> {
+        include_trailing_extras: bool,
+    ) -> Result<RuntimeReduction, ReducedParseError> {
         let production_row = &self.reduced.parser.productions[production.get() as usize];
         let metadata_row = &self.reduced.parser.production_metadata[metadata.get() as usize];
         let mut children = Vec::new();
         let mut visible_nodes = Vec::new();
+        let mut trailing_extras = Vec::new();
+        if !include_trailing_extras {
+            while stack.last().is_some_and(|entry| entry.extra) {
+                let entry = stack
+                    .pop()
+                    .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
+                let Some(fragment) = entry.fragment else {
+                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
+                };
+                trailing_extras.push(fragment);
+            }
+            trailing_extras.reverse();
+        }
         let mut popped = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
@@ -6022,17 +6334,23 @@ impl<'a> RuntimeParser<'a> {
                     structural_index,
                 });
             }
-            Ok(RuntimeFragment::Node {
-                node,
-                start_byte,
-                end_byte,
+            Ok(RuntimeReduction {
+                fragment: RuntimeFragment::Node {
+                    node,
+                    start_byte,
+                    end_byte,
+                },
+                trailing_extras,
             })
         } else {
-            Ok(RuntimeFragment::Hidden {
-                children,
-                visible_nodes,
-                start_byte,
-                end_byte,
+            Ok(RuntimeReduction {
+                fragment: RuntimeFragment::Hidden {
+                    children,
+                    visible_nodes,
+                    start_byte,
+                    end_byte,
+                },
+                trailing_extras,
             })
         }
     }
@@ -6231,6 +6549,12 @@ enum RuntimeFragment {
         start_byte: usize,
         end_byte: usize,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeReduction {
+    fragment: RuntimeFragment,
+    trailing_extras: Vec<RuntimeFragment>,
 }
 
 impl RuntimeFragment {
@@ -7669,6 +7993,20 @@ extras (
             match_pattern("'([^'\\\\]|\\\\.)*'", "'\\é'", 0),
             Some("'\\é'".len())
         );
+    }
+
+    #[test]
+    fn matches_css_plain_value_regex_subset() {
+        assert_eq!(match_pattern("[a-zA-Z]", "http", 0), Some(1));
+        assert_eq!(match_pattern("[-_]", "-rest", 0), Some(1));
+        assert_eq!(match_pattern("[a-zA-Z0-9-_]", "_", 0), Some(1));
+        assert_eq!(match_pattern("[^/\\s,;!{}()\\[\\]]", ":", 0), Some(1));
+        assert_eq!(match_pattern("[^/\\s,;!{}()\\[\\]]", "/", 0), None);
+        assert_eq!(
+            match_pattern("\\/[^\\*\\s,;!{}()\\[\\]]", "/1999", 0),
+            Some(2)
+        );
+        assert_eq!(match_pattern("\\/[^\\*\\s,;!{}()\\[\\]]", "/*", 0), None);
     }
 
     #[test]

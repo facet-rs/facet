@@ -735,27 +735,29 @@ mod tests {
 
     #[test]
     fn uses_source_matched_css_scanner_for_runtime_parse() {
+        let files = vec![
+            BundleFile {
+                path: "src/grammar.json".to_owned(),
+                text: include_str!(
+                    "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/grammar.json"
+                )
+                .to_owned(),
+            },
+            BundleFile {
+                path: "src/scanner.c".to_owned(),
+                text: snark_scanner_host::CSS_SCANNER_SOURCE.to_owned(),
+            },
+            BundleFile {
+                path: "queries/highlights.scm".to_owned(),
+                text: include_str!(
+                    "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/queries/highlights.scm"
+                )
+                .to_owned(),
+            },
+        ];
+
         let request = PlaygroundRequest {
-            files: vec![
-                BundleFile {
-                    path: "src/grammar.json".to_owned(),
-                    text: include_str!(
-                        "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/grammar.json"
-                    )
-                    .to_owned(),
-                },
-                BundleFile {
-                    path: "src/scanner.c".to_owned(),
-                    text: snark_scanner_host::CSS_SCANNER_SOURCE.to_owned(),
-                },
-                BundleFile {
-                    path: "queries/highlights.scm".to_owned(),
-                    text: include_str!(
-                        "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/queries/highlights.scm"
-                    )
-                    .to_owned(),
-                },
-            ],
+            files: files.clone(),
             input: "a:hover { color: red; }\n".to_owned(),
             run_corpus: false,
         };
@@ -781,6 +783,22 @@ mod tests {
                 .iter()
                 .any(|capture| capture.capture_name == "punctuation.delimiter"
                     && capture.text == ":")
+        );
+
+        let request = PlaygroundRequest {
+            files,
+            input: "@namespace svg url(http://www.w3.org/1999/xhtml);\n".to_owned(),
+            run_corpus: false,
+        };
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(
+            response.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some(
+                "(stylesheet (namespace_statement (namespace_name) (call_expression (function_name) (arguments (plain_value)))))"
+            )
         );
     }
 }
