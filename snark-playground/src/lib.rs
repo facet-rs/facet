@@ -15,7 +15,7 @@ use snark::{
     parser::{
         ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
         ReducedExternalScanner, ReducedParseError, ReducedParseErrorKind, RuntimeParseReport,
-        RuntimeParser, ScannerSnapshotId, TreeEvent,
+        RuntimeParser, RuntimeParserPlan, ScannerSnapshotId, TreeEvent,
     },
     query::QuerySource,
     runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
@@ -24,6 +24,17 @@ use snark::{
 #[derive(Debug, Clone, Facet)]
 struct PlaygroundRequest {
     files: Vec<BundleFile>,
+    input: String,
+    run_corpus: bool,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlaygroundSessionRequest {
+    files: Vec<BundleFile>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlaygroundParseRequest {
     input: String,
     run_corpus: bool,
 }
@@ -189,6 +200,18 @@ struct PreparedGrammar {
     validated: ValidatedGrammar,
     parser: ParserGrammar,
     table: ParseTable,
+    runtime_plan: RuntimeParserPlan,
+}
+
+impl PreparedGrammar {
+    fn runtime(&self) -> Result<RuntimeParser<'_>, ReducedParseError> {
+        RuntimeParser::new_with_plan(
+            &self.validated,
+            &self.parser,
+            &self.table,
+            &self.runtime_plan,
+        )
+    }
 }
 
 struct ScannerSelection {
@@ -203,6 +226,101 @@ pub fn parse_bundle_json(request_json: &str) -> String {
     response_json(playground_response(request_json))
 }
 
+/// Prepared playground session that can parse many inputs for one grammar bundle.
+pub struct PlaygroundSession {
+    files: Vec<BundleFile>,
+    bundle: BundleSummary,
+    prepared: PreparedGrammar,
+}
+
+impl PlaygroundSession {
+    /// Prepare one grammar bundle for repeated parsing.
+    pub fn prepare_json(request_json: &str) -> Result<Self, String> {
+        let request = facet_json::from_str::<PlaygroundSessionRequest>(request_json)
+            .map_err(|error| format!("could not decode playground session JSON: {error}"))?;
+        Self::prepare_files(request.files).map_err(|response| {
+            response
+                .diagnostics
+                .first()
+                .map(|diagnostic| diagnostic.message.clone())
+                .unwrap_or_else(|| "could not prepare playground session".to_owned())
+        })
+    }
+
+    /// Parse one input with this prepared session and return a JSON response.
+    pub fn parse_json(&self, request_json: &str) -> String {
+        let request = match facet_json::from_str::<PlaygroundParseRequest>(request_json) {
+            Ok(request) => request,
+            Err(error) => {
+                return response_json(response_with_diagnostic(
+                    "request",
+                    format!("could not decode playground parse JSON: {error}"),
+                ));
+            }
+        };
+        response_json(self.response(&request.input, request.run_corpus))
+    }
+
+    fn prepare_files(files: Vec<BundleFile>) -> Result<Self, PlaygroundResponse> {
+        let files = normalize_bundle_files(files);
+        let mut bundle = summarize_bundle(&files);
+        let Some(grammar_file) = find_file(&files, "src/grammar.json") else {
+            let message = match &bundle.grammar_js_path {
+                Some(path) => format!(
+                    "bundle contains {path}, but the playground backend consumes src/grammar.json; the playground shell should evaluate grammar.js into an in-memory src/grammar.json before parsing"
+                ),
+                None => "bundle does not contain src/grammar.json".to_owned(),
+            };
+            return Err(PlaygroundResponse {
+                ok: false,
+                language: None,
+                diagnostics: vec![Diagnostic {
+                    stage: "bundle".to_owned(),
+                    message,
+                    primary_span: None,
+                }],
+                bundle,
+                parse: None,
+                highlights: Vec::new(),
+                corpus: Vec::new(),
+                highlight_tests: Vec::new(),
+                tests: TestSummary::not_requested(),
+                limitations: Vec::new(),
+            });
+        };
+
+        let prepared = match prepare_grammar(&grammar_file.text) {
+            Ok(prepared) => prepared,
+            Err((stage, message)) => {
+                return Err(PlaygroundResponse {
+                    ok: false,
+                    language: None,
+                    diagnostics: vec![diagnostic(&stage, message, None)],
+                    bundle,
+                    parse: None,
+                    highlights: Vec::new(),
+                    corpus: Vec::new(),
+                    highlight_tests: Vec::new(),
+                    tests: TestSummary::not_requested(),
+                    limitations: Vec::new(),
+                });
+            }
+        };
+
+        let scanner_selection = scanner_selection(&files, &prepared.parser);
+        bundle.active_scanner = scanner_selection.active_scanner;
+        Ok(Self {
+            files,
+            bundle,
+            prepared,
+        })
+    }
+
+    fn response(&self, input: &str, run_corpus: bool) -> PlaygroundResponse {
+        playground_response_for_session(self, input, run_corpus)
+    }
+}
+
 fn playground_response(request_json: &str) -> PlaygroundResponse {
     let request = match facet_json::from_str::<PlaygroundRequest>(request_json) {
         Ok(request) => request,
@@ -213,58 +331,29 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
             );
         }
     };
-    let files = normalize_bundle_files(request.files);
-    let mut bundle = summarize_bundle(&files);
-    let Some(grammar_file) = find_file(&files, "src/grammar.json") else {
-        let message = match &bundle.grammar_js_path {
-            Some(path) => format!(
-                "bundle contains {path}, but the playground backend consumes src/grammar.json; the playground shell should evaluate grammar.js into an in-memory src/grammar.json before parsing"
-            ),
-            None => "bundle does not contain src/grammar.json".to_owned(),
-        };
-        return PlaygroundResponse {
-            ok: false,
-            language: None,
-            diagnostics: vec![Diagnostic {
-                stage: "bundle".to_owned(),
-                message,
-                primary_span: None,
-            }],
-            bundle,
-            parse: None,
-            highlights: Vec::new(),
-            corpus: Vec::new(),
-            highlight_tests: Vec::new(),
-            tests: TestSummary::not_requested(),
-            limitations: Vec::new(),
-        };
+    let input = request.input;
+    let run_corpus = request.run_corpus;
+    let session = match PlaygroundSession::prepare_files(request.files) {
+        Ok(session) => session,
+        Err(response) => return response,
     };
+    session.response(&input, run_corpus)
+}
 
-    let prepared = match prepare_grammar(&grammar_file.text) {
-        Ok(prepared) => prepared,
-        Err((stage, message)) => {
-            return PlaygroundResponse {
-                ok: false,
-                language: None,
-                diagnostics: vec![diagnostic(&stage, message, None)],
-                bundle,
-                parse: None,
-                highlights: Vec::new(),
-                corpus: Vec::new(),
-                highlight_tests: Vec::new(),
-                tests: TestSummary::not_requested(),
-                limitations: Vec::new(),
-            };
-        }
-    };
-
+fn playground_response_for_session(
+    session: &PlaygroundSession,
+    input: &str,
+    run_corpus: bool,
+) -> PlaygroundResponse {
+    let files = &session.files;
+    let prepared = &session.prepared;
+    let bundle = session.bundle.clone();
     let mut diagnostics = Vec::new();
     let mut parse = None;
     let mut highlights = Vec::new();
-    let scanner_selection = scanner_selection(&files, &prepared.parser);
-    bundle.active_scanner = scanner_selection.active_scanner.clone();
-    let runtime = RuntimeParser::new(&prepared.validated, &prepared.parser, &prepared.table);
-    let should_parse_input = !request.input.is_empty() || !request.run_corpus;
+    let scanner_selection = scanner_selection(files, &prepared.parser);
+    let runtime = prepared.runtime();
+    let should_parse_input = !input.is_empty() || !run_corpus;
     if should_parse_input {
         match runtime {
             Ok(runtime) => match parse_source_with_optional_recovery(
@@ -273,7 +362,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                     .scanner
                     .as_ref()
                     .map(|scanner| scanner as &dyn ReducedExternalScanner),
-                &request.input,
+                input,
             ) {
                 Ok(playground_report) => {
                     let report = playground_report.report;
@@ -302,38 +391,36 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                                 .strict_error
                                 .as_ref()
                                 .and_then(|error| reduced_error_byte(error))
-                                .and_then(|byte| diagnostic_span(&request.input, byte))
-                                .or_else(|| accepted_problem_span(&accepted_tree_events, &request.input)),
+                                .and_then(|byte| diagnostic_span(input, byte))
+                                .or_else(|| accepted_problem_span(&accepted_tree_events, input)),
                         ));
                     }
-                    if let Some(query_file) = find_file(&files, "queries/highlights.scm") {
+                    if let Some(query_file) = find_file(files, "queries/highlights.scm") {
                         highlights = highlight_outputs(
                             &QuerySource(query_file.text.clone()),
                             &prepared.parser,
                             &report,
-                            &request.input,
+                            input,
                         );
                     }
                 }
-                Err(error) => {
-                    diagnostics.push(reduced_error_diagnostic("parse", &error, &request.input))
-                }
+                Err(error) => diagnostics.push(reduced_error_diagnostic("parse", &error, input)),
             },
             Err(error) => diagnostics.push(diagnostic("runtime", error.to_string(), None)),
         }
     }
 
-    let corpus = if request.run_corpus {
-        run_corpus_cases(&files, &prepared)
+    let corpus = if run_corpus {
+        run_corpus_cases(files, prepared)
     } else {
         Vec::new()
     };
-    let highlight_tests = if request.run_corpus {
-        run_highlight_tests(&files, &prepared)
+    let highlight_tests = if run_corpus {
+        run_highlight_tests(files, prepared)
     } else {
         Vec::new()
     };
-    let tests = TestSummary::from_results(request.run_corpus, &corpus, &highlight_tests);
+    let tests = TestSummary::from_results(run_corpus, &corpus, &highlight_tests);
 
     PlaygroundResponse {
         ok: diagnostics.is_empty(),
@@ -375,11 +462,14 @@ fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, Strin
         .map_err(|error| ("prepare".to_owned(), error.to_string()))?;
     let table = ParseTable::from_grammar(&parser)
         .map_err(|error| ("table".to_owned(), error.to_string()))?;
+    let runtime_plan = RuntimeParserPlan::new(&validated, &parser, &table)
+        .map_err(|error| ("runtime".to_owned(), error.to_string()))?;
     Ok(PreparedGrammar {
         raw,
         validated,
         parser,
         table,
+        runtime_plan,
     })
 }
 
@@ -572,22 +662,21 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
             }
         };
         for case in cases {
-            let runtime =
-                match RuntimeParser::new(&prepared.validated, &prepared.parser, &prepared.table) {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        results.push(CorpusOutput {
-                            path: file.path.clone(),
-                            case_name: case.name,
-                            passed: false,
-                            input: case.input,
-                            expected: case.expected.to_sexp(),
-                            actual: None,
-                            error: Some(error.to_string()),
-                        });
-                        continue;
-                    }
-                };
+            let runtime = match prepared.runtime() {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    results.push(CorpusOutput {
+                        path: file.path.clone(),
+                        case_name: case.name,
+                        passed: false,
+                        input: case.input,
+                        expected: case.expected.to_sexp(),
+                        actual: None,
+                        error: Some(error.to_string()),
+                    });
+                    continue;
+                }
+            };
             match parse_strict_with_optional_scanner(
                 runtime,
                 scanner_selection
@@ -651,14 +740,13 @@ fn run_highlight_tests(
                 continue;
             }
         };
-        let runtime =
-            match RuntimeParser::new(&prepared.validated, &prepared.parser, &prepared.table) {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    results.push(highlight_test_error(file, error.to_string()));
-                    continue;
-                }
-            };
+        let runtime = match prepared.runtime() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                results.push(highlight_test_error(file, error.to_string()));
+                continue;
+            }
+        };
         let report = match parse_strict_with_optional_scanner(
             runtime,
             scanner_selection

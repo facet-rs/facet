@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import init, { parseBundle } from "@bearcove/snark-wasm";
+import init, { SnarkPlaygroundSession } from "@bearcove/snark-wasm";
 import { SourceEditor } from "./editor";
 import { captureClass } from "./highlight";
 import { defaultVendoredRootId, vendoredFiles } from "./bundled";
@@ -137,6 +137,7 @@ export function App() {
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
   const parseRequestId = useRef(0);
+  const preparedSessionRef = useRef<{ key: string; session: SnarkPlaygroundSession } | null>(null);
 
   const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
   const activeGrammarRoot = useMemo(
@@ -213,6 +214,7 @@ export function App() {
     const next = normalizeBundleFiles(loaded);
     const nextGrammarRoot = preferredGrammarRootId(next);
     const nextSample = preferredSampleForGrammarRootId(next, nextGrammarRoot);
+    preparedSessionRef.current = null;
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
     setSelectedSamplePath(nextSample?.path ?? "");
@@ -231,13 +233,33 @@ export function App() {
       await wasmReady.catch((error: unknown) => {
         throw new PlaygroundRunError("wasm", errorMessage(error));
       });
-      const runnableFiles = await filesWithGrammarJson(
-        files,
-        activeGrammarRootId,
-      ).catch((error: unknown) => {
-        throw new PlaygroundRunError("grammar.js", errorMessage(error));
-      });
-      const response = callParseBundle(runnableFiles, input, runBundledTests);
+      const key = sessionCacheKey(activeGrammarRootId, projectedFiles);
+      let session = preparedSessionRef.current?.key === key ? preparedSessionRef.current.session : null;
+      if (!session) {
+        const runnableFiles = await filesWithGrammarJson(
+          files,
+          activeGrammarRootId,
+        ).catch((error: unknown) => {
+          throw new PlaygroundRunError("grammar.js", errorMessage(error));
+        });
+        try {
+          session = new SnarkPlaygroundSession(JSON.stringify({ files: runnableFiles }));
+        } catch (error) {
+          throw new PlaygroundRunError("snark", errorMessage(error));
+        }
+        preparedSessionRef.current = { key, session };
+      }
+      let response: string;
+      try {
+        response = session.parse(
+          JSON.stringify({
+            input,
+            run_corpus: runBundledTests,
+          }),
+        );
+      } catch (error) {
+        throw new PlaygroundRunError("snark", errorMessage(error));
+      }
       return JSON.parse(response) as PlaygroundResponse;
     } catch (error) {
       const diagnostic =
@@ -715,18 +737,11 @@ class PlaygroundRunError extends Error {
   }
 }
 
-function callParseBundle(files: BundleFile[], input: string, runBundledTests: boolean) {
-  try {
-    return parseBundle(
-      JSON.stringify({
-        files,
-        input,
-        run_corpus: runBundledTests,
-      }),
-    );
-  } catch (error) {
-    throw new PlaygroundRunError("snark", errorMessage(error));
-  }
+function sessionCacheKey(grammarRootId: string, files: BundleFile[]) {
+  return JSON.stringify({
+    grammarRootId,
+    files: sortedFiles(files).map(({ path, text }) => [path, text]),
+  });
 }
 
 function errorMessage(error: unknown) {

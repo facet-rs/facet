@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import test from "node:test";
 
-import { initSync, parseBundle } from "../../../snark-wasm/pkg/snark_wasm.js";
+import { SnarkPlaygroundSession, initSync, parseBundle } from "../../../snark-wasm/pkg/snark_wasm.js";
 import {
   discoverGrammarRoots,
   normalizeBundleFiles,
@@ -104,6 +104,54 @@ module.exports = grammar({
       ["variable", "beta"],
     ],
   );
+});
+
+test("reuses a prepared Snark WASM session across inputs", () => {
+  const grammarJs = `
+module.exports = grammar({
+  name: "tiny_session",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[a-z]+/,
+  },
+});
+`;
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [{ path: "grammar.js", text: grammarJs }],
+    "grammar.js",
+  );
+  const session = new SnarkPlaygroundSession(
+    JSON.stringify({
+      files: [
+        { path: "grammar.js", text: grammarJs },
+        { path: "src/grammar.json", text: grammarJson },
+      ],
+    }),
+  );
+
+  const first = JSON.parse(
+    session.parse(
+      JSON.stringify({
+        input: "alpha",
+        run_corpus: false,
+      }),
+    ),
+  );
+  const second = JSON.parse(
+    session.parse(
+      JSON.stringify({
+        input: "beta gamma",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(first.ok, true);
+  assert.equal(first.parse.sexp, "(document (word))");
+  assert.equal(second.ok, true);
+  assert.equal(second.parse.sexp, "(document (word) (word))");
 });
 
 test("runs bundled corpus and highlight tests through generated grammar.json", () => {

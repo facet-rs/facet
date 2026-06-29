@@ -3748,13 +3748,63 @@ pub struct ReducedParser<'a> {
     parser: &'a ParserGrammar,
     table: &'a ParseTable,
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
-    first: Option<FirstFacts>,
+    runtime_plan: RuntimePlanRef<'a>,
     #[cfg(test)]
     regex_patterns: HashMap<(String, Option<String>), Option<Regex>>,
-    compiled_lex_modes: Vec<CompiledLexMode>,
     lex_cache: RefCell<HashMap<LexCacheKey, Result<ReducedToken, ReducedParseError>>>,
     lex_mode_cache:
         RefCell<HashMap<LexModeCacheKey, Result<Vec<ReducedTokenCandidate>, ReducedParseError>>>,
+}
+
+#[derive(Debug)]
+enum RuntimePlanRef<'a> {
+    Owned(RuntimeParserPlan),
+    Borrowed(&'a RuntimeParserPlan),
+}
+
+impl RuntimePlanRef<'_> {
+    fn get(&self) -> &RuntimeParserPlan {
+        match self {
+            Self::Owned(plan) => plan,
+            Self::Borrowed(plan) => plan,
+        }
+    }
+}
+
+/// Reusable runtime parser setup for a prepared grammar/table.
+///
+/// This carries the grammar-derived lexer automata and first-set facts that are
+/// expensive to rebuild for every parse. It is intentionally tied to the
+/// grammar/table pair used to construct it; callers must keep those inputs
+/// stable while reusing the plan.
+#[derive(Debug)]
+pub struct RuntimeParserPlan {
+    first: Option<FirstFacts>,
+    compiled_lex_modes: Vec<CompiledLexMode>,
+}
+
+impl RuntimeParserPlan {
+    /// Build a reusable runtime plan over validated grammar facts and a parse table.
+    pub fn new(
+        grammar: &ValidatedGrammar,
+        parser: &ParserGrammar,
+        table: &ParseTable,
+    ) -> Result<Self, ReducedParseError> {
+        if parser.stage() != ParserGenerationStage::Productions {
+            return Err(ReducedParseError::new(ReducedParseErrorKind::WrongStage {
+                stage: parser.stage(),
+            }));
+        }
+        let first = parser
+            .item_preparation
+            .as_ref()
+            .map(|item_preparation| FirstFacts::new(parser, item_preparation.graph()));
+        let compiled_lex_modes = compile_lex_modes(grammar, parser, table);
+        Ok(Self {
+            first,
+            compiled_lex_modes,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -4094,29 +4144,50 @@ impl<'a> ReducedParser<'a> {
         parser: &'a ParserGrammar,
         table: &'a ParseTable,
     ) -> Result<Self, ReducedParseError> {
+        let runtime_plan = RuntimeParserPlan::new(grammar, parser, table)?;
+        Self::with_runtime_plan(grammar, parser, table, RuntimePlanRef::Owned(runtime_plan))
+    }
+
+    fn with_runtime_plan(
+        grammar: &'a ValidatedGrammar,
+        parser: &'a ParserGrammar,
+        table: &'a ParseTable,
+        runtime_plan: RuntimePlanRef<'a>,
+    ) -> Result<Self, ReducedParseError> {
         if parser.stage() != ParserGenerationStage::Productions {
             return Err(ReducedParseError::new(ReducedParseErrorKind::WrongStage {
                 stage: parser.stage(),
             }));
         }
-        let first = parser
-            .item_preparation
-            .as_ref()
-            .map(|item_preparation| FirstFacts::new(parser, item_preparation.graph()));
-        let compiled_lex_modes = compile_lex_modes(grammar, parser, table);
+        #[cfg(not(test))]
+        let _ = grammar;
         Ok(Self {
             #[cfg(test)]
             grammar,
             parser,
             table,
             external_scanner: None,
-            first,
+            runtime_plan,
             #[cfg(test)]
             regex_patterns: compile_regex_patterns(grammar, parser),
-            compiled_lex_modes,
             lex_cache: RefCell::new(HashMap::new()),
             lex_mode_cache: RefCell::new(HashMap::new()),
         })
+    }
+
+    /// Build a reduced parser that borrows a reusable runtime plan.
+    pub fn new_with_plan(
+        grammar: &'a ValidatedGrammar,
+        parser: &'a ParserGrammar,
+        table: &'a ParseTable,
+        runtime_plan: &'a RuntimeParserPlan,
+    ) -> Result<Self, ReducedParseError> {
+        Self::with_runtime_plan(
+            grammar,
+            parser,
+            table,
+            RuntimePlanRef::Borrowed(runtime_plan),
+        )
     }
 
     /// Attach a reduced external scanner host.
@@ -4686,7 +4757,7 @@ impl<'a> ReducedParser<'a> {
         byte_position: usize,
     ) -> Result<Vec<ReducedTokenCandidate>, ReducedParseError> {
         let mut candidates = Vec::new();
-        let compiled_mode = &self.compiled_lex_modes[mode.id().get() as usize];
+        let compiled_mode = &self.runtime_plan.get().compiled_lex_modes[mode.id().get() as usize];
         let direct_pattern_ends =
             self.match_compiled_direct_pattern_set(compiled_mode, input, byte_position)?;
         for terminal_row in &compiled_mode.terminals {
@@ -5205,7 +5276,7 @@ impl<'a> ReducedParser<'a> {
     }
 
     fn extra_fragment(&self, lookahead: LookaheadSymbol) -> Option<ReducedFragment> {
-        let first = self.first.as_ref()?;
+        let first = self.runtime_plan.get().first.as_ref()?;
         for extra in &self.parser.extra_roots {
             let ParserSymbol::Nonterminal(nonterminal) = extra.symbol else {
                 continue;
@@ -6219,6 +6290,19 @@ impl<'a> RuntimeParser<'a> {
     ) -> Result<Self, ReducedParseError> {
         Ok(Self {
             reduced: ReducedParser::new(grammar, parser, table)?,
+            recovery_step_limit: None,
+        })
+    }
+
+    /// Build a runtime parser that borrows a reusable runtime plan.
+    pub fn new_with_plan(
+        grammar: &'a ValidatedGrammar,
+        parser: &'a ParserGrammar,
+        table: &'a ParseTable,
+        runtime_plan: &'a RuntimeParserPlan,
+    ) -> Result<Self, ReducedParseError> {
+        Ok(Self {
+            reduced: ReducedParser::new_with_plan(grammar, parser, table, runtime_plan)?,
             recovery_step_limit: None,
         })
     }
@@ -10251,6 +10335,25 @@ extras (
         );
         assert_eq!(report.accepted_count(), 1);
         assert_eq!(report.failure_count(), 0);
+    }
+
+    #[test]
+    fn runtime_parser_can_reuse_compiled_runtime_plan() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let plan = RuntimeParserPlan::new(&validated, &parser, &table).unwrap();
+        let input = "ABCXYZ";
+        let fresh = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report(input)
+            .unwrap();
+        let reused = RuntimeParser::new_with_plan(&validated, &parser, &table, &plan)
+            .unwrap()
+            .parse_compact_with_report(input)
+            .unwrap();
+
+        rediff::assert_same!(reused.tree(), fresh.tree());
+        assert_eq!(reused.trace_events(), fresh.trace_events());
+        assert_eq!(reused.tree_events(), fresh.tree_events());
     }
 
     #[cfg(feature = "weavy-lowering")]
