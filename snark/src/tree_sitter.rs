@@ -2054,6 +2054,8 @@ mod tests {
             weavy_report.max_live_versions(),
             runtime_report.max_live_versions()
         );
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
         assert!(
             weavy_report
                 .trace_events()

@@ -5442,6 +5442,7 @@ impl<'a> RuntimeParser<'a> {
                 branch.byte_position = token.end;
                 let (bytes, points) = input_ranges(input, start, token.end);
                 tree_events.push(TreeEvent::Token {
+                    version: branch.version,
                     symbol: lookahead_parser_symbol(token.lookahead),
                     lookahead,
                     bytes,
@@ -5477,6 +5478,7 @@ impl<'a> RuntimeParser<'a> {
                 let start = branch.byte_position;
                 branch.byte_position = token.end;
                 if let Some(fragment) = self.runtime_extra_fragment(
+                    branch.version,
                     token.lookahead,
                     tree_store,
                     tree_events,
@@ -5508,6 +5510,7 @@ impl<'a> RuntimeParser<'a> {
                 ..
             } => {
                 let fragment = match self.runtime_reduce_fragment(
+                    branch.version,
                     production,
                     metadata,
                     child_count,
@@ -5578,6 +5581,7 @@ impl<'a> RuntimeParser<'a> {
                     };
                 }
                 let fragment = match self.runtime_reduce_fragment(
+                    branch.version,
                     production,
                     metadata,
                     child_count,
@@ -5651,6 +5655,7 @@ impl<'a> RuntimeParser<'a> {
 
     fn runtime_reduce_fragment(
         &self,
+        version: StackVersionId,
         production: ProductionId,
         metadata: ProductionMetadataId,
         child_count: usize,
@@ -5723,6 +5728,7 @@ impl<'a> RuntimeParser<'a> {
             let node = tree_store.push(SexpNode { kind, children });
             let (bytes, points) = input_ranges(input, start_byte, end_byte);
             let event = TreeEvent::Reduce {
+                version,
                 production,
                 metadata,
                 node,
@@ -5746,6 +5752,7 @@ impl<'a> RuntimeParser<'a> {
 
     fn runtime_extra_fragment(
         &self,
+        version: StackVersionId,
         lookahead: LookaheadSymbol,
         tree_store: &mut RuntimeTreeStore,
         tree_events: &mut Vec<TreeEvent>,
@@ -5759,6 +5766,7 @@ impl<'a> RuntimeParser<'a> {
         let node = tree_store.push(node);
         let (bytes, points) = input_ranges(input, start_byte, end_byte);
         tree_events.push(TreeEvent::CloseNode {
+            version,
             node,
             bytes,
             points,
@@ -6449,6 +6457,8 @@ impl BranchRanking {
 pub enum TreeEvent {
     /// A node was opened.
     OpenNode {
+        /// Stack version that emitted this tree event.
+        version: StackVersionId,
         /// Runtime tree node.
         node: TreeNodeId,
         /// Public or internal symbol.
@@ -6460,6 +6470,8 @@ pub enum TreeEvent {
     },
     /// A token was shifted.
     Token {
+        /// Stack version that emitted this tree event.
+        version: StackVersionId,
         /// Token symbol.
         symbol: ParserSymbol,
         /// Lookahead token source.
@@ -6477,6 +6489,8 @@ pub enum TreeEvent {
     },
     /// A production was reduced into a parent node.
     Reduce {
+        /// Stack version that emitted this tree event.
+        version: StackVersionId,
         /// Reduced production.
         production: ProductionId,
         /// Reduced production metadata.
@@ -6490,6 +6504,8 @@ pub enum TreeEvent {
     },
     /// A missing token was inserted by recovery.
     Missing {
+        /// Stack version that emitted this tree event.
+        version: StackVersionId,
         /// Missing symbol.
         symbol: ParserSymbol,
         /// Byte range.
@@ -6499,6 +6515,8 @@ pub enum TreeEvent {
     },
     /// An error node was emitted.
     Error {
+        /// Stack version that emitted this tree event.
+        version: StackVersionId,
         /// Runtime tree node.
         node: TreeNodeId,
         /// Byte range.
@@ -6510,6 +6528,8 @@ pub enum TreeEvent {
     },
     /// A node was finished.
     CloseNode {
+        /// Stack version that emitted this tree event.
+        version: StackVersionId,
         /// Runtime tree node.
         node: TreeNodeId,
         /// Byte range.
@@ -6519,6 +6539,8 @@ pub enum TreeEvent {
     },
     /// A reusable subtree was accepted.
     ReuseNode {
+        /// Stack version that emitted this tree event.
+        version: StackVersionId,
         /// Runtime tree node.
         node: TreeNodeId,
         /// Byte range.
@@ -6530,6 +6552,8 @@ pub enum TreeEvent {
     },
     /// A field was attached at a structural child index.
     Field {
+        /// Stack version that emitted this tree event.
+        version: StackVersionId,
         /// Parent runtime tree node.
         node: TreeNodeId,
         /// Field id.
@@ -6539,6 +6563,8 @@ pub enum TreeEvent {
     },
     /// An alias was attached at a structural child index.
     Alias {
+        /// Stack version that emitted this tree event.
+        version: StackVersionId,
         /// Parent runtime tree node.
         node: TreeNodeId,
         /// Alias id.
