@@ -215,13 +215,9 @@ export function App() {
     );
     const next = sortedFiles(normalizeBrowserFiles(loaded));
     const nextGrammarRoot = preferredGrammarRootId(next);
-    const nextProjectedFiles = projectedFilesForGrammarRootId(next, nextGrammarRoot);
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
-    const firstSample = nextProjectedFiles.find((file) => file.path.startsWith("samples/"));
-    if (firstSample) {
-      setInput(firstSample.text);
-    }
+    setInput("");
     setResult(null);
   }
 
