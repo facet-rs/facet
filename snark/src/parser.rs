@@ -3774,6 +3774,56 @@ impl ReducedExternalScan<'_> {
     }
 }
 
+/// Successful reduced parse plus branch/conflict evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReducedParseReport {
+    tree: SexpNode,
+    accepted_count: usize,
+    failure_count: usize,
+    max_live_branches: usize,
+    conflict_steps: Vec<ReducedConflictStep>,
+}
+
+impl ReducedParseReport {
+    /// Reduced Tree-sitter-style S-expression tree.
+    pub const fn tree(&self) -> &SexpNode {
+        &self.tree
+    }
+
+    /// Number of accepted branches before identical-tree coalescing.
+    pub const fn accepted_count(&self) -> usize {
+        self.accepted_count
+    }
+
+    /// Number of branch failures observed while exploring the table.
+    pub const fn failure_count(&self) -> usize {
+        self.failure_count
+    }
+
+    /// Maximum number of queued live branches observed.
+    pub const fn max_live_branches(&self) -> usize {
+        self.max_live_branches
+    }
+
+    /// Multi-action table cells reached during branch execution.
+    pub fn conflict_steps(&self) -> &[ReducedConflictStep] {
+        &self.conflict_steps
+    }
+}
+
+/// One multi-action table cell reached by the reduced parser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReducedConflictStep {
+    /// Parse state containing the conflict.
+    pub state: ParseStateId,
+    /// Input byte offset before selecting the conflicted action.
+    pub byte_position: usize,
+    /// Lookahead that selected the conflicted action cell.
+    pub lookahead: LookaheadSymbol,
+    /// Actions explored from this cell.
+    pub actions: Vec<ParseAction>,
+}
+
 impl<'a> ReducedParser<'a> {
     /// Build a reduced parser over validated grammar facts and generated tables.
     pub fn new(
@@ -3802,6 +3852,11 @@ impl<'a> ReducedParser<'a> {
 
     /// Parse one input into a reduced Tree-sitter-style S-expression node.
     pub fn parse(&self, input: &str) -> Result<SexpNode, ReducedParseError> {
+        self.parse_with_report(input).map(|report| report.tree)
+    }
+
+    /// Parse one input and return branch/conflict evidence for oracle tests.
+    pub fn parse_with_report(&self, input: &str) -> Result<ReducedParseReport, ReducedParseError> {
         let mut branches = VecDeque::from([ReducedBranch {
             stack: vec![ReducedStackEntry {
                 state: ParseStateId::from_index(0),
@@ -3812,8 +3867,10 @@ impl<'a> ReducedParser<'a> {
         }]);
         let mut accepted = Vec::<(SexpNode, Vec<ReducedTraceStep>)>::new();
         let mut failures = Vec::<ReducedParseError>::new();
+        let mut conflict_steps = Vec::new();
         let mut step_count = 0usize;
         let step_limit = self.reduced_step_limit(input);
+        let mut max_live_branches = branches.len();
 
         while let Some(branch) = branches.pop_front() {
             step_count += 1;
@@ -3826,13 +3883,14 @@ impl<'a> ReducedParser<'a> {
                 );
             }
 
-            for outcome in self.step_branch(branch, input) {
+            for outcome in self.step_branch(branch, input, &mut conflict_steps) {
                 match outcome {
                     ReducedStepOutcome::Branch(branch) => branches.push_back(branch),
                     ReducedStepOutcome::Accepted(node, trace) => accepted.push((node, trace)),
                     ReducedStepOutcome::Failed(error) => failures.push(error),
                 }
             }
+            max_live_branches = max_live_branches.max(branches.len());
         }
 
         let Some((first_node, first_trace)) = accepted.first().cloned() else {
@@ -3841,7 +3899,13 @@ impl<'a> ReducedParser<'a> {
             }));
         };
         if accepted.iter().all(|(node, _)| *node == first_node) {
-            return Ok(first_node);
+            return Ok(ReducedParseReport {
+                tree: first_node,
+                accepted_count: accepted.len(),
+                failure_count: failures.len(),
+                max_live_branches,
+                conflict_steps,
+            });
         }
 
         Err(
@@ -3866,7 +3930,12 @@ impl<'a> ReducedParser<'a> {
         10_000usize.max(input_budget.saturating_add(table_budget))
     }
 
-    fn step_branch(&self, branch: ReducedBranch, input: &str) -> Vec<ReducedStepOutcome> {
+    fn step_branch(
+        &self,
+        branch: ReducedBranch,
+        input: &str,
+        conflict_steps: &mut Vec<ReducedConflictStep>,
+    ) -> Vec<ReducedStepOutcome> {
         let state = match branch.stack.last() {
             Some(entry) => entry.state,
             None => {
@@ -3902,6 +3971,15 @@ impl<'a> ReducedParser<'a> {
                 .with_trace(branch.trace),
             )];
         };
+
+        if entry.actions().len() > 1 {
+            conflict_steps.push(ReducedConflictStep {
+                state,
+                byte_position: branch.byte_position,
+                lookahead: token.lookahead,
+                actions: entry.actions().to_vec(),
+            });
+        }
 
         let mut outcomes = Vec::new();
         for action in entry.actions() {

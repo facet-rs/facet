@@ -457,7 +457,7 @@ mod tests {
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
         parser::{
             LookaheadSymbol, ParseStateId, ParseTable, ParserGenerationStage, ParserGrammar,
-            ReducedExternalScan, ReducedExternalScanner, ReducedParser,
+            ReducedExternalScan, ReducedExternalScanner, ReducedParseReport, ReducedParser,
         },
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
@@ -1615,6 +1615,56 @@ mod tests {
         assert_same!(actual_tree, declaration_cases[0].expected);
     }
 
+    #[test]
+    fn parses_pinned_css_important_declarations_via_glr_conflict() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let declaration_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/declarations.txt")
+            .unwrap();
+        let declaration_cases = declaration_fixture.parse_cases().unwrap();
+
+        assert_eq!(declaration_cases[7].name, "Important declarations");
+        let report = parse_reduced_report_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &declaration_cases[7].input,
+        );
+
+        assert_same!(report.tree(), &declaration_cases[7].expected);
+        assert!(
+            report.conflict_steps().iter().any(|step| {
+                step.actions.len() > 1
+                    && step
+                        .actions
+                        .iter()
+                        .all(|action| matches!(action, crate::parser::ParseAction::Reduce { .. }))
+            }),
+            "expected a runtime reduce/reduce GLR fork, got {:#?}",
+            report.conflict_steps()
+        );
+        assert!(
+            report.max_live_branches() > 1,
+            "expected more than one live reduced parser branch"
+        );
+        assert!(
+            report.failure_count() > 0,
+            "expected at least one forked branch to be retired by later input"
+        );
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {
@@ -1630,11 +1680,22 @@ mod tests {
         parse_table: &ParseTable,
         input: &str,
     ) -> SexpNode {
+        parse_reduced_report_or_panic(validated, parser_grammar, parse_table, input)
+            .tree()
+            .clone()
+    }
+
+    fn parse_reduced_report_or_panic(
+        validated: &ValidatedGrammar,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+        input: &str,
+    ) -> ReducedParseReport {
         let scanner = CssReducedExternalScanner;
         ReducedParser::new(validated, parser_grammar, parse_table)
             .unwrap()
             .with_external_scanner(&scanner)
-            .parse(input)
+            .parse_with_report(input)
             .unwrap_or_else(|error| {
                 let state = match error.kind() {
                     crate::parser::ReducedParseErrorKind::NoToken { state, .. }
