@@ -3736,6 +3736,7 @@ pub struct ReducedParser<'a> {
     table: &'a ParseTable,
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
     first: Option<FirstFacts>,
+    #[cfg(test)]
     regex_patterns: HashMap<String, Option<Regex>>,
     compiled_lex_modes: Vec<CompiledLexMode>,
     lex_cache: RefCell<HashMap<LexCacheKey, Result<ReducedToken, ReducedParseError>>>,
@@ -3761,7 +3762,7 @@ pub(crate) struct CompiledLexMode {
     pub(crate) direct_pattern_set: Option<CompiledLexPatternSet>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct CompiledLexTerminal {
     pub(crate) terminal: TerminalId,
     pub(crate) matcher: CompiledTerminalMatcher,
@@ -3778,7 +3779,7 @@ pub(crate) struct CompiledLexPatternSet {
     pub(crate) terminal_indices: Vec<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) enum CompiledTerminalMatcher {
     Expr(CompiledLexExpr),
     UnsupportedTerminal {
@@ -3787,11 +3788,11 @@ pub(crate) enum CompiledTerminalMatcher {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) enum CompiledLexExpr {
     Blank,
     String(String),
-    Pattern(String),
+    Pattern(CompiledLexPattern),
     Until { markers: Vec<String> },
     Nested { open: String, close: String },
     Seq(Vec<CompiledLexExpr>),
@@ -3799,6 +3800,12 @@ pub(crate) enum CompiledLexExpr {
     Repeat(Box<CompiledLexExpr>),
     Repeat1(Box<CompiledLexExpr>),
     UnsupportedSymbol(GrammarExprId),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompiledLexPattern {
+    pub(crate) source: String,
+    regex: Option<Regex>,
 }
 
 /// External scanner host used by the reduced parser oracle.
@@ -4082,7 +4089,6 @@ impl<'a> ReducedParser<'a> {
             .item_preparation
             .as_ref()
             .map(|item_preparation| FirstFacts::new(parser, item_preparation.graph()));
-        let regex_patterns = compile_regex_patterns(grammar, parser);
         let compiled_lex_modes = compile_lex_modes(grammar, parser, table);
         Ok(Self {
             #[cfg(test)]
@@ -4091,7 +4097,8 @@ impl<'a> ReducedParser<'a> {
             table,
             external_scanner: None,
             first,
-            regex_patterns,
+            #[cfg(test)]
+            regex_patterns: compile_regex_patterns(grammar, parser),
             compiled_lex_modes,
             lex_cache: RefCell::new(HashMap::new()),
             lex_mode_cache: RefCell::new(HashMap::new()),
@@ -4835,7 +4842,9 @@ impl<'a> ReducedParser<'a> {
             CompiledLexExpr::String(value) => Ok(input[byte_position..]
                 .starts_with(value)
                 .then_some(byte_position + value.len())),
-            CompiledLexExpr::Pattern(value) => Ok(self.match_pattern(value, input, byte_position)),
+            CompiledLexExpr::Pattern(pattern) => {
+                Ok(match_compiled_pattern(pattern, input, byte_position))
+            }
             CompiledLexExpr::Until { markers } => Ok(match_until_markers(
                 markers.iter().map(String::as_str),
                 input,
@@ -5015,6 +5024,7 @@ impl<'a> ReducedParser<'a> {
         }
     }
 
+    #[cfg(test)]
     fn match_pattern(&self, pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
         if let Some(result) = match_known_pattern(pattern, input, byte_position) {
             return result;
@@ -5022,6 +5032,7 @@ impl<'a> ReducedParser<'a> {
         self.match_regex_leaf(pattern, input, byte_position)
     }
 
+    #[cfg(test)]
     fn match_regex_leaf(&self, pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
         let haystack = input.get(byte_position..)?;
         let regex = self.regex_patterns.get(pattern)?.as_ref()?;
@@ -5228,6 +5239,7 @@ fn match_known_pattern(pattern: &str, input: &str, byte_position: usize) -> Opti
     }
 }
 
+#[cfg(test)]
 fn compile_regex_patterns(
     grammar: &ValidatedGrammar,
     parser: &ParserGrammar,
@@ -5248,6 +5260,30 @@ fn compile_regex_patterns(
         }
     }
     patterns
+}
+
+fn compile_pattern(pattern: &str) -> CompiledLexPattern {
+    CompiledLexPattern {
+        source: pattern.to_owned(),
+        regex: compile_regex_leaf(pattern).ok(),
+    }
+}
+
+pub(crate) fn match_compiled_pattern(
+    pattern: &CompiledLexPattern,
+    input: &str,
+    byte_position: usize,
+) -> Option<usize> {
+    if let Some(result) = match_known_pattern(&pattern.source, input, byte_position) {
+        return result;
+    }
+    let haystack = input.get(byte_position..)?;
+    pattern
+        .regex
+        .as_ref()?
+        .find(haystack)
+        .filter(|match_| match_.start() == 0)
+        .map(|match_| byte_position + match_.end())
 }
 
 pub(crate) fn compile_lex_modes(
@@ -5286,11 +5322,10 @@ fn compile_direct_pattern_set(
         else {
             continue;
         };
-        let source = anchored_regex_source(pattern);
-        if Regex::new(&source).is_err() {
+        let Some(regex) = &pattern.regex else {
             continue;
-        }
-        regex_sources.push(source);
+        };
+        regex_sources.push(regex.as_str().to_owned());
         terminal_indices.push(terminal_index);
     }
     if regex_sources.is_empty() {
@@ -5330,7 +5365,9 @@ fn compile_terminal_matcher(
             CompiledTerminalMatcher::Expr(CompiledLexExpr::String(terminal.spelling().to_owned()))
         }
         ParserTerminalKind::Pattern => {
-            CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(terminal.spelling().to_owned()))
+            CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(compile_pattern(
+                terminal.spelling(),
+            )))
         }
         ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
             let Some(root) = terminal.lexical_root() else {
@@ -5356,7 +5393,7 @@ fn compile_lex_expr(grammar: &ValidatedGrammar, expr: GrammarExprId) -> Compiled
     match grammar.expr(expr) {
         GrammarExpr::Blank => CompiledLexExpr::Blank,
         GrammarExpr::StringToken(value) => CompiledLexExpr::String(value.clone()),
-        GrammarExpr::PatternToken { value, .. } => CompiledLexExpr::Pattern(value.clone()),
+        GrammarExpr::PatternToken { value, .. } => CompiledLexExpr::Pattern(compile_pattern(value)),
         GrammarExpr::Until { markers } => CompiledLexExpr::Until {
             markers: markers.clone(),
         },

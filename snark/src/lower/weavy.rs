@@ -3215,9 +3215,11 @@ impl<'a> RuntimeWeavyStepper<'a> {
             parser_ir::CompiledLexExpr::String(value) => Ok(self.input[byte_position..]
                 .starts_with(value)
                 .then_some(byte_position + value.len())),
-            parser_ir::CompiledLexExpr::Pattern(value) => {
-                Ok(parser_ir::match_pattern(value, self.input, byte_position))
-            }
+            parser_ir::CompiledLexExpr::Pattern(pattern) => Ok(parser_ir::match_compiled_pattern(
+                pattern,
+                self.input,
+                byte_position,
+            )),
             parser_ir::CompiledLexExpr::Until { markers } => Ok(parser_ir::match_until_markers(
                 markers.iter().map(String::as_str),
                 self.input,
