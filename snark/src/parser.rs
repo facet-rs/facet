@@ -6,11 +6,12 @@
 //! state. It is not a recursive recognizer and it never consumes generated
 //! Tree-sitter implementation files.
 
+#[cfg(any(test, feature = "weavy-lowering"))]
+use std::sync::{Mutex, OnceLock};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
-    sync::{Mutex, OnceLock},
 };
 
 use regex::Regex;
@@ -3728,6 +3729,7 @@ pub struct ReducedParser<'a> {
     table: &'a ParseTable,
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
     first: Option<FirstFacts>,
+    regex_patterns: HashMap<String, Option<Regex>>,
 }
 
 /// External scanner host used by the reduced parser oracle.
@@ -4011,12 +4013,14 @@ impl<'a> ReducedParser<'a> {
             .item_preparation
             .as_ref()
             .map(|item_preparation| FirstFacts::new(parser, item_preparation.graph()));
+        let regex_patterns = compile_regex_patterns(grammar, parser);
         Ok(Self {
             grammar,
             parser,
             table,
             external_scanner: None,
             first,
+            regex_patterns,
         })
     }
 
@@ -4586,7 +4590,7 @@ impl<'a> ReducedParser<'a> {
                 .starts_with(terminal.spelling())
                 .then_some(byte_position + terminal.spelling().len())),
             ParserTerminalKind::Pattern => {
-                Ok(match_pattern(terminal.spelling(), input, byte_position))
+                Ok(self.match_pattern(terminal.spelling(), input, byte_position))
             }
             ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
                 let Some(root) = terminal.lexical_root() else {
@@ -4704,7 +4708,7 @@ impl<'a> ReducedParser<'a> {
                 .starts_with(value)
                 .then_some(byte_position + value.len())),
             GrammarExpr::PatternToken { value, .. } => {
-                Ok(match_pattern(value, input, byte_position))
+                Ok(self.match_pattern(value, input, byte_position))
             }
             GrammarExpr::Token(content)
             | GrammarExpr::ImmediateToken(content)
@@ -4766,6 +4770,22 @@ impl<'a> ReducedParser<'a> {
                 ReducedParseErrorKind::UnsupportedLexicalSymbol { expr },
             )),
         }
+    }
+
+    fn match_pattern(&self, pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+        if let Some(result) = match_known_pattern(pattern, input, byte_position) {
+            return result;
+        }
+        self.match_regex_leaf(pattern, input, byte_position)
+    }
+
+    fn match_regex_leaf(&self, pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+        let haystack = input.get(byte_position..)?;
+        let regex = self.regex_patterns.get(pattern)?.as_ref()?;
+        regex
+            .find(haystack)
+            .filter(|match_| match_.start() == 0)
+            .map(|match_| byte_position + match_.end())
     }
 
     fn lookahead_shifts_only_extra(&self, state: &ParseState, lookahead: LookaheadSymbol) -> bool {
@@ -4936,26 +4956,59 @@ impl<'a> ReducedParser<'a> {
 const ASCII_IDENTIFIER_PATTERN: &str = "[A-Za-z_][A-Za-z0-9_]*";
 const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|endif\\b|for\\b|endfor\\b|set\\b|endset\\b|block\\b|endblock\\b|extends\\b|include\\b|import\\b|macro\\b|endmacro\\b|break\\b|continue\\b|as\\b|in\\b|is\\b|not\\b|and\\b|or\\b|true\\b|True\\b|false\\b|False\\b|none\\b|None\\b)[A-Za-z_][A-Za-z0-9_]*";
 
+#[cfg(any(test, feature = "weavy-lowering"))]
 pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+    if let Some(result) = match_known_pattern(pattern, input, byte_position) {
+        return result;
+    }
+    match_cached_regex_leaf(pattern, input, byte_position)
+}
+
+fn match_known_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<Option<usize>> {
     match pattern {
-        "-?(\\d)*n\\s*(\\+\\s*\\d+)?" => match_css_nth_functional_notation(input, byte_position),
-        GINGEMBRE_IDENTIFIER_PATTERN => match_gingembre_identifier(input, byte_position),
-        "[0-9a-fA-F]{1,6}\\s?" => match_css_hex_escape_tail(input, byte_position),
-        ".*" => match_json_line_comment_tail(input, byte_position),
-        "[^*]*\\*+([^/*][^*]*\\*+)*" => match_json_block_comment_body(input, byte_position),
-        "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => {
-            match_css_identifier(input, byte_position)
+        "-?(\\d)*n\\s*(\\+\\s*\\d+)?" => {
+            Some(match_css_nth_functional_notation(input, byte_position))
         }
-        "and\\b" => match_ascii_keyword(input, byte_position, "and"),
-        "in\\b" => match_ascii_keyword(input, byte_position, "in"),
-        "is\\b" => match_ascii_keyword(input, byte_position, "is"),
-        "not\\b" => match_ascii_keyword(input, byte_position, "not"),
-        "or\\b" => match_ascii_keyword(input, byte_position, "or"),
-        _ => match_regex_leaf(pattern, input, byte_position),
+        GINGEMBRE_IDENTIFIER_PATTERN => Some(match_gingembre_identifier(input, byte_position)),
+        "[0-9a-fA-F]{1,6}\\s?" => Some(match_css_hex_escape_tail(input, byte_position)),
+        ".*" => Some(match_json_line_comment_tail(input, byte_position)),
+        "[^*]*\\*+([^/*][^*]*\\*+)*" => Some(match_json_block_comment_body(input, byte_position)),
+        "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => {
+            Some(match_css_identifier(input, byte_position))
+        }
+        "and\\b" => Some(match_ascii_keyword(input, byte_position, "and")),
+        "in\\b" => Some(match_ascii_keyword(input, byte_position, "in")),
+        "is\\b" => Some(match_ascii_keyword(input, byte_position, "is")),
+        "not\\b" => Some(match_ascii_keyword(input, byte_position, "not")),
+        "or\\b" => Some(match_ascii_keyword(input, byte_position, "or")),
+        _ => None,
     }
 }
 
-fn match_regex_leaf(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+fn compile_regex_patterns(
+    grammar: &ValidatedGrammar,
+    parser: &ParserGrammar,
+) -> HashMap<String, Option<Regex>> {
+    let mut patterns = HashMap::new();
+    for (_, expr) in grammar.expressions() {
+        if let GrammarExpr::PatternToken { value, .. } = expr {
+            patterns
+                .entry(value.clone())
+                .or_insert_with(|| compile_regex_leaf(value).ok());
+        }
+    }
+    for terminal in &parser.symbols.terminals {
+        if terminal.kind() == ParserTerminalKind::Pattern {
+            patterns
+                .entry(terminal.spelling().to_owned())
+                .or_insert_with(|| compile_regex_leaf(terminal.spelling()).ok());
+        }
+    }
+    patterns
+}
+
+#[cfg(any(test, feature = "weavy-lowering"))]
+fn match_cached_regex_leaf(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
     let haystack = input.get(byte_position..)?;
     let regex = cached_regex(pattern)?;
     regex
@@ -4964,6 +5017,7 @@ fn match_regex_leaf(pattern: &str, input: &str, byte_position: usize) -> Option<
         .map(|match_| byte_position + match_.end())
 }
 
+#[cfg(any(test, feature = "weavy-lowering"))]
 fn cached_regex(pattern: &str) -> Option<Regex> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<Regex>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
