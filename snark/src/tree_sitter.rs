@@ -1132,6 +1132,111 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_pinned_css_class_selectors_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[2].name, "Class selectors");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[2].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[2].expected);
+        assert_eq!(
+            actual_tree.to_sexp(),
+            "(stylesheet (rule_set (selectors (class_selector (class_name (identifier)))) (block)) (rule_set (selectors (class_selector (tag_name) (class_name (identifier))) (class_selector (class_selector (class_name (identifier))) (class_name (identifier)))) (block)))"
+        );
+    }
+
+    #[test]
+    fn parses_pinned_css_id_selectors_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[3].name, "Id selectors");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[3].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[3].expected);
+        assert_eq!(
+            actual_tree.to_sexp(),
+            "(stylesheet (rule_set (selectors (id_selector (id_name)) (id_selector (tag_name) (id_name))) (block)))"
+        );
+    }
+
+    #[test]
+    fn parses_pinned_css_attribute_selectors_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[4].name, "Attribute selectors");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[4].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[4].expected);
+        assert_eq!(
+            actual_tree.to_sexp(),
+            "(stylesheet (rule_set (selectors (attribute_selector (attribute_name))) (block)) (rule_set (selectors (attribute_selector (attribute_name) (plain_value))) (block)) (rule_set (selectors (attribute_selector (attribute_name) (plain_value))) (block)) (rule_set (selectors (attribute_selector (tag_name) (attribute_name))) (block)))"
+        );
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {
