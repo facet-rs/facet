@@ -4610,6 +4610,7 @@ impl<'a> ReducedParser<'a> {
             return Ok(ReducedToken {
                 lookahead: LookaheadSymbol::Eof,
                 end: byte_position,
+                inspected_end: byte_position,
                 scanner: None,
             });
         }
@@ -4693,6 +4694,7 @@ impl<'a> ReducedParser<'a> {
             let candidate = ReducedTokenCandidate {
                 lookahead: LookaheadSymbol::External(*external),
                 end: scanner_result.end_byte(),
+                inspected_end: scanner_result.end_byte(),
                 extra: false,
                 external: true,
                 immediate: false,
@@ -4715,6 +4717,7 @@ impl<'a> ReducedParser<'a> {
             return Ok(ReducedToken {
                 lookahead: candidate.lookahead,
                 end: candidate.end,
+                inspected_end: candidate.inspected_end,
                 scanner: candidate.scanner,
             });
         }
@@ -4761,7 +4764,7 @@ impl<'a> ReducedParser<'a> {
         let direct_pattern_ends =
             self.match_compiled_direct_pattern_set(compiled_mode, input, byte_position)?;
         for terminal_row in &compiled_mode.terminals {
-            let Some(end) = self.match_compiled_terminal_with_set(
+            let Some(match_) = self.match_compiled_terminal_with_set(
                 terminal_row,
                 input,
                 byte_position,
@@ -4770,12 +4773,13 @@ impl<'a> ReducedParser<'a> {
             else {
                 continue;
             };
-            if end == byte_position {
+            if match_.end == byte_position {
                 continue;
             }
             candidates.push(ReducedTokenCandidate {
                 lookahead: LookaheadSymbol::Terminal(terminal_row.terminal),
-                end,
+                end: match_.end,
+                inspected_end: match_.inspected_end,
                 extra: false,
                 external: false,
                 immediate: terminal_row.immediate,
@@ -4867,7 +4871,7 @@ impl<'a> ReducedParser<'a> {
         terminal: &CompiledLexTerminal,
         input: &str,
         byte_position: usize,
-    ) -> Result<Option<usize>, ReducedParseError> {
+    ) -> Result<Option<LexMatch>, ReducedParseError> {
         match &terminal.matcher {
             CompiledTerminalMatcher::Expr(expr) => {
                 self.match_compiled_lex_expr(expr, input, byte_position)
@@ -4886,8 +4890,8 @@ impl<'a> ReducedParser<'a> {
         terminal: &CompiledLexTerminal,
         input: &str,
         byte_position: usize,
-        direct_pattern_ends: &[Option<usize>],
-    ) -> Result<Option<usize>, ReducedParseError> {
+        direct_pattern_ends: &[Option<LexMatch>],
+    ) -> Result<Option<LexMatch>, ReducedParseError> {
         if let Some(set_index) = terminal.direct_pattern_index {
             return Ok(direct_pattern_ends.get(set_index).copied().flatten());
         }
@@ -4899,7 +4903,7 @@ impl<'a> ReducedParser<'a> {
         mode: &CompiledLexMode,
         input: &str,
         byte_position: usize,
-    ) -> Result<Vec<Option<usize>>, ReducedParseError> {
+    ) -> Result<Vec<Option<LexMatch>>, ReducedParseError> {
         let Some(pattern_set) = &mode.direct_pattern_set else {
             return Ok(Vec::new());
         };
@@ -4921,70 +4925,84 @@ impl<'a> ReducedParser<'a> {
         expr: &CompiledLexExpr,
         input: &str,
         byte_position: usize,
-    ) -> Result<Option<usize>, ReducedParseError> {
+    ) -> Result<Option<LexMatch>, ReducedParseError> {
         match expr {
-            CompiledLexExpr::Blank => Ok(Some(byte_position)),
+            CompiledLexExpr::Blank => Ok(Some(LexMatch::new(byte_position, byte_position))),
             CompiledLexExpr::String(value) => Ok(input[byte_position..]
                 .starts_with(value)
-                .then_some(byte_position + value.len())),
+                .then_some(LexMatch::new(
+                    byte_position + value.len(),
+                    byte_position + value.len(),
+                ))),
             CompiledLexExpr::Pattern(pattern) => {
                 Ok(match_compiled_pattern(pattern, input, byte_position))
             }
-            CompiledLexExpr::Until { markers } => Ok(match_until_markers(
+            CompiledLexExpr::Until { markers } => Ok(match_until_markers_with_inspection(
                 markers.iter().map(String::as_str),
                 input,
                 byte_position,
             )),
-            CompiledLexExpr::Nested { open, close } => {
-                Ok(match_nested_delimiters(open, close, input, byte_position))
-            }
+            CompiledLexExpr::Nested { open, close } => Ok(match_nested_delimiters_with_inspection(
+                open,
+                close,
+                input,
+                byte_position,
+            )),
             CompiledLexExpr::Seq(members) => {
                 let mut position = byte_position;
+                let mut inspected_end = byte_position;
                 for member in members {
-                    let Some(end) = self.match_compiled_lex_expr(member, input, position)? else {
+                    let Some(match_) = self.match_compiled_lex_expr(member, input, position)?
+                    else {
                         return Ok(None);
                     };
-                    position = end;
+                    position = match_.end;
+                    inspected_end = inspected_end.max(match_.inspected_end);
                 }
-                Ok(Some(position))
+                Ok(Some(LexMatch::new(position, inspected_end)))
             }
             CompiledLexExpr::Choice(members) => {
-                let mut best = None;
+                let mut best = None::<LexMatch>;
                 for member in members {
-                    if let Some(end) = self.match_compiled_lex_expr(member, input, byte_position)?
-                        && best.is_none_or(|best| end > best)
+                    if let Some(match_) =
+                        self.match_compiled_lex_expr(member, input, byte_position)?
+                        && best.is_none_or(|best| match_.end > best.end)
                     {
-                        best = Some(end);
+                        best = Some(match_);
                     }
                 }
                 Ok(best)
             }
             CompiledLexExpr::Repeat(content) => {
                 let mut position = byte_position;
-                while let Some(end) = self.match_compiled_lex_expr(content, input, position)? {
-                    if end == position {
+                let mut inspected_end = byte_position;
+                while let Some(match_) = self.match_compiled_lex_expr(content, input, position)? {
+                    inspected_end = inspected_end.max(match_.inspected_end);
+                    if match_.end == position {
                         break;
                     }
-                    position = end;
+                    position = match_.end;
                 }
-                Ok(Some(position))
+                Ok(Some(LexMatch::new(position, inspected_end)))
             }
             CompiledLexExpr::Repeat1(content) => {
-                let Some(mut position) =
-                    self.match_compiled_lex_expr(content, input, byte_position)?
+                let Some(first) = self.match_compiled_lex_expr(content, input, byte_position)?
                 else {
                     return Ok(None);
                 };
+                let mut position = first.end;
+                let mut inspected_end = first.inspected_end;
                 if position == byte_position {
                     return Ok(None);
                 }
-                while let Some(end) = self.match_compiled_lex_expr(content, input, position)? {
-                    if end == position {
+                while let Some(match_) = self.match_compiled_lex_expr(content, input, position)? {
+                    inspected_end = inspected_end.max(match_.inspected_end);
+                    if match_.end == position {
                         break;
                     }
-                    position = end;
+                    position = match_.end;
                 }
-                Ok(Some(position))
+                Ok(Some(LexMatch::new(position, inspected_end)))
             }
             CompiledLexExpr::UnsupportedSymbol(expr) => Err(ReducedParseError::new(
                 ReducedParseErrorKind::UnsupportedLexicalSymbol { expr: *expr },
@@ -5427,11 +5445,11 @@ pub(crate) fn match_compiled_pattern(
     pattern: &CompiledLexPattern,
     input: &str,
     byte_position: usize,
-) -> Option<usize> {
+) -> Option<LexMatch> {
     if pattern.flags.is_none()
         && let Some(result) = match_known_pattern(&pattern.source, input, byte_position)
     {
-        return result;
+        return result.map(|end| LexMatch::new(end, pattern_inspected_end(input, end)));
     }
     let haystack = input.get(byte_position..)?;
     pattern
@@ -5439,7 +5457,10 @@ pub(crate) fn match_compiled_pattern(
         .as_ref()?
         .find(haystack)
         .filter(|match_| match_.start() == 0)
-        .map(|match_| byte_position + match_.end())
+        .map(|match_| {
+            let end = byte_position + match_.end();
+            LexMatch::new(end, pattern_inspected_end(input, end))
+        })
 }
 
 pub(crate) fn compile_lex_modes(
@@ -5718,11 +5739,20 @@ fn lexical_expr_implicit_precedence(
     }
 }
 
+#[cfg(any(test, feature = "weavy-lowering"))]
 pub(crate) fn match_until_markers<'a>(
     markers: impl IntoIterator<Item = &'a str>,
     input: &str,
     byte_position: usize,
 ) -> Option<usize> {
+    match_until_markers_with_inspection(markers, input, byte_position).map(|match_| match_.end)
+}
+
+fn match_until_markers_with_inspection<'a>(
+    markers: impl IntoIterator<Item = &'a str>,
+    input: &str,
+    byte_position: usize,
+) -> Option<LexMatch> {
     let haystack = input.get(byte_position..)?;
     let markers = markers
         .into_iter()
@@ -5731,20 +5761,33 @@ pub(crate) fn match_until_markers<'a>(
     if markers.iter().any(|marker| haystack.starts_with(*marker)) {
         return None;
     }
-    let end = markers
+    let end_and_marker_len = markers
         .iter()
-        .filter_map(|marker| haystack.find(*marker))
+        .filter_map(|marker| haystack.find(*marker).map(|offset| (offset, marker.len())))
         .min()
-        .map_or(input.len(), |offset| byte_position + offset);
-    (end > byte_position).then_some(end)
+        .map_or((input.len() - byte_position, 0), |pair| pair);
+    let end = byte_position + end_and_marker_len.0;
+    let inspected_end = end + end_and_marker_len.1;
+    (end > byte_position).then_some(LexMatch::new(end, inspected_end))
 }
 
+#[cfg(any(test, feature = "weavy-lowering"))]
 pub(crate) fn match_nested_delimiters(
     open: &str,
     close: &str,
     input: &str,
     byte_position: usize,
 ) -> Option<usize> {
+    match_nested_delimiters_with_inspection(open, close, input, byte_position)
+        .map(|match_| match_.end)
+}
+
+fn match_nested_delimiters_with_inspection(
+    open: &str,
+    close: &str,
+    input: &str,
+    byte_position: usize,
+) -> Option<LexMatch> {
     if open.is_empty() || close.is_empty() {
         return None;
     }
@@ -5760,7 +5803,7 @@ pub(crate) fn match_nested_delimiters(
             position += close.len();
             depth -= 1;
             if depth == 0 {
-                return Some(position);
+                return Some(LexMatch::new(position, position));
             }
             continue;
         }
@@ -5771,7 +5814,17 @@ pub(crate) fn match_nested_delimiters(
         }
         position += rest.chars().next()?.len_utf8();
     }
-    Some(input.len())
+    Some(LexMatch::new(input.len(), input.len()))
+}
+
+fn pattern_inspected_end(input: &str, end: usize) -> usize {
+    if end >= input.len() {
+        return input.len();
+    }
+    input[end..]
+        .chars()
+        .next()
+        .map_or(end, |ch| end + ch.len_utf8())
 }
 
 #[cfg(any(test, feature = "weavy-lowering"))]
@@ -6107,6 +6160,7 @@ fn skip_pattern_whitespace(input: &str, byte_position: usize) -> usize {
 struct ReducedToken {
     lookahead: LookaheadSymbol,
     end: usize,
+    inspected_end: usize,
     scanner: Option<ReducedExternalScanResult>,
 }
 
@@ -6114,6 +6168,7 @@ struct ReducedToken {
 struct ReducedTokenCandidate {
     lookahead: LookaheadSymbol,
     end: usize,
+    inspected_end: usize,
     extra: bool,
     external: bool,
     immediate: bool,
@@ -6121,6 +6176,18 @@ struct ReducedTokenCandidate {
     lexical_precedence: i32,
     implicit_precedence: i32,
     scanner: Option<ReducedExternalScanResult>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LexMatch {
+    pub(crate) end: usize,
+    pub(crate) inspected_end: usize,
+}
+
+impl LexMatch {
+    const fn new(end: usize, inspected_end: usize) -> Self {
+        Self { end, inspected_end }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6381,12 +6448,13 @@ impl RuntimeReuseIndex {
             else {
                 continue;
             };
-            let lookahead_end_byte = shift_byte(node.lookahead_end_byte, edit.old_end_byte, delta);
-            let before_edit = end_byte <= edit.start_byte;
-            let after_edit = start_byte >= edit.new_end_byte;
-            if !before_edit && !after_edit {
+            let reusable_before_edit =
+                node.end_byte <= edit.start_byte && node.lookahead_end_byte <= edit.start_byte;
+            let reusable_after_edit = node.start_byte >= edit.old_end_byte;
+            if !reusable_before_edit && !reusable_after_edit {
                 continue;
             }
+            let lookahead_end_byte = shift_byte(node.lookahead_end_byte, edit.old_end_byte, delta);
             let shifted = RuntimeReusableNode {
                 start_byte,
                 end_byte,
@@ -7149,6 +7217,7 @@ impl<'a> RuntimeParser<'a> {
                 node,
                 start_byte: reusable.start_byte,
                 end_byte: reusable.end_byte,
+                lookahead_end_byte: reusable.lookahead_end_byte,
                 start_scanner_snapshot: reusable.entry_scanner_snapshot,
             }),
             extra: false,
@@ -7232,6 +7301,7 @@ impl<'a> RuntimeParser<'a> {
                         visible_nodes: Vec::new(),
                         start_byte: start,
                         end_byte: token.end,
+                        lookahead_end_byte: token.inspected_end,
                         start_scanner_snapshot,
                     }),
                     extra: false,
@@ -7254,6 +7324,7 @@ impl<'a> RuntimeParser<'a> {
                         line_index,
                         start,
                         token.end,
+                        token.inspected_end,
                         start_scanner_snapshot,
                     )
                 } else {
@@ -7266,6 +7337,7 @@ impl<'a> RuntimeParser<'a> {
                         line_index,
                         start,
                         token.end,
+                        token.inspected_end,
                         start_scanner_snapshot,
                     )
                 };
@@ -7361,6 +7433,7 @@ impl<'a> RuntimeParser<'a> {
                     node,
                     start_byte,
                     end_byte,
+                    lookahead_end_byte,
                     start_scanner_snapshot,
                 } = &reduction.fragment
                     && start_byte < end_byte
@@ -7374,7 +7447,7 @@ impl<'a> RuntimeParser<'a> {
                         exit_scanner_snapshot: branch.scanner_snapshot,
                         start_byte: *start_byte,
                         end_byte: *end_byte,
-                        lookahead_end_byte: *end_byte,
+                        lookahead_end_byte: *lookahead_end_byte,
                         contains_error: false,
                     });
                 }
@@ -7468,6 +7541,7 @@ impl<'a> RuntimeParser<'a> {
                         node,
                         start_byte: _,
                         end_byte: _,
+                        lookahead_end_byte: _,
                         ..
                     } => {
                         let root =
@@ -7647,6 +7721,7 @@ impl<'a> RuntimeParser<'a> {
                 node,
                 start_byte,
                 end_byte,
+                lookahead_end_byte: end_byte,
                 start_scanner_snapshot: branch.scanner_snapshot,
             }),
             extra: true,
@@ -7709,6 +7784,11 @@ impl<'a> RuntimeParser<'a> {
             .last()
             .map(|(_, fragment)| fragment.byte_range().1)
             .unwrap_or(start_byte);
+        let lookahead_end_byte = popped
+            .iter()
+            .map(|(_, fragment)| fragment.lookahead_end_byte())
+            .max()
+            .unwrap_or(end_byte);
         let start_scanner_snapshot = popped
             .first()
             .map(|(_, fragment)| fragment.start_scanner_snapshot())
@@ -7805,6 +7885,7 @@ impl<'a> RuntimeParser<'a> {
                     node,
                     start_byte,
                     end_byte,
+                    lookahead_end_byte,
                     start_scanner_snapshot,
                 },
                 trailing_extras,
@@ -7816,6 +7897,7 @@ impl<'a> RuntimeParser<'a> {
                     visible_nodes,
                     start_byte,
                     end_byte,
+                    lookahead_end_byte,
                     start_scanner_snapshot,
                 },
                 trailing_extras,
@@ -7833,6 +7915,7 @@ impl<'a> RuntimeParser<'a> {
         line_index: &InputLineIndex,
         start_byte: usize,
         end_byte: usize,
+        lookahead_end_byte: usize,
         start_scanner_snapshot: Option<ScannerSnapshotId>,
     ) -> Option<RuntimeFragment> {
         let ReducedFragment::Node(node) = self.reduced.extra_fragment(lookahead)? else {
@@ -7858,6 +7941,7 @@ impl<'a> RuntimeParser<'a> {
             node,
             start_byte,
             end_byte,
+            lookahead_end_byte,
             start_scanner_snapshot,
         })
     }
@@ -8103,12 +8187,14 @@ enum RuntimeFragment {
         visible_nodes: Vec<TreeNodeId>,
         start_byte: usize,
         end_byte: usize,
+        lookahead_end_byte: usize,
         start_scanner_snapshot: Option<ScannerSnapshotId>,
     },
     Node {
         node: TreeNodeId,
         start_byte: usize,
         end_byte: usize,
+        lookahead_end_byte: usize,
         start_scanner_snapshot: Option<ScannerSnapshotId>,
     },
 }
@@ -8158,6 +8244,17 @@ impl RuntimeFragment {
                 end_byte,
                 ..
             } => (*start_byte, *end_byte),
+        }
+    }
+
+    const fn lookahead_end_byte(&self) -> usize {
+        match self {
+            Self::Hidden {
+                lookahead_end_byte, ..
+            }
+            | Self::Node {
+                lookahead_end_byte, ..
+            } => *lookahead_end_byte,
         }
     }
 
@@ -10751,7 +10848,9 @@ extras (
             let compiled = compile_lex_terminal(&validated, terminal);
             for byte_position in [0usize, 3, 7, 8, 14, 18] {
                 let interpreted = reduced.match_terminal(terminal, input, byte_position);
-                let compiled = reduced.match_compiled_terminal(&compiled, input, byte_position);
+                let compiled = reduced
+                    .match_compiled_terminal(&compiled, input, byte_position)
+                    .map(|result| result.map(|match_| match_.end));
                 assert_eq!(
                     compiled,
                     interpreted,
@@ -10802,7 +10901,9 @@ extras (
             let compiled = compile_lex_terminal(&validated, terminal);
             for byte_position in [0usize, 3] {
                 let interpreted = reduced.match_terminal(terminal, input, byte_position);
-                let compiled = reduced.match_compiled_terminal(&compiled, input, byte_position);
+                let compiled = reduced
+                    .match_compiled_terminal(&compiled, input, byte_position)
+                    .map(|result| result.map(|match_| match_.end));
                 assert_eq!(
                     compiled,
                     interpreted,
@@ -10871,6 +10972,30 @@ extras (
             "incremental reparse should reuse at least one accepted subtree"
         );
         assert_eq!(session.last_input(), Some("abcXYZ"));
+    }
+
+    #[test]
+    fn runtime_parse_session_does_not_reuse_node_that_peeked_into_edit() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let mut session = RuntimeParseSession::new(runtime);
+        session.parse_compact("ABCXYZ").unwrap();
+
+        let edit = RuntimeInputEdit::new(3, 6, 6);
+        let reparsed = session.reparse_compact(edit, "ABCxyz").unwrap().clone();
+        let scratch = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report("ABCxyz")
+            .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert!(
+            !reparsed
+                .tree_events()
+                .iter()
+                .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
+            "node that inspected the edit boundary must not be reused"
+        );
     }
 
     #[test]
@@ -11077,7 +11202,9 @@ extras (
             let compiled = compile_lex_terminal(&validated, terminal);
             for byte_position in [0usize, 6, 15, 26] {
                 let interpreted = reduced.match_terminal(terminal, input, byte_position);
-                let compiled = reduced.match_compiled_terminal(&compiled, input, byte_position);
+                let compiled = reduced
+                    .match_compiled_terminal(&compiled, input, byte_position)
+                    .map(|result| result.map(|match_| match_.end));
                 assert_eq!(
                     compiled,
                     interpreted,
@@ -11377,6 +11504,7 @@ extras (
         let direct_string = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 1,
+            inspected_end: 1,
             extra: false,
             external: false,
             immediate: false,
@@ -11388,6 +11516,7 @@ extras (
         let immediate_string = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
             end: 1,
+            inspected_end: 1,
             extra: false,
             external: false,
             immediate: true,
@@ -11412,6 +11541,7 @@ extras (
         let structured_line = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 1,
+            inspected_end: 1,
             extra: false,
             external: false,
             immediate: false,
@@ -11423,6 +11553,7 @@ extras (
         let low_precedence_context = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
             end: 32,
+            inspected_end: 32,
             extra: false,
             external: false,
             immediate: false,
@@ -11447,6 +11578,7 @@ extras (
         let internal_string = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 1,
+            inspected_end: 1,
             extra: false,
             external: false,
             immediate: false,
@@ -11458,6 +11590,7 @@ extras (
         let external_token = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::External(ExternalId::from_index(0)),
             end: 1,
+            inspected_end: 1,
             extra: false,
             external: true,
             immediate: false,
@@ -11482,6 +11615,7 @@ extras (
         let immediate_content = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 2,
+            inspected_end: 2,
             extra: false,
             external: false,
             immediate: true,
@@ -11493,6 +11627,7 @@ extras (
         let comment_extra = ReducedTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
             end: 8,
+            inspected_end: 8,
             extra: true,
             external: false,
             immediate: false,
