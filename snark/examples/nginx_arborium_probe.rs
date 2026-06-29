@@ -61,7 +61,7 @@ fn main() {
     }
     let report = RuntimeParser::new(&validated, &parser, &table)
         .expect("runtime should build")
-        .parse_recovering_with_report(&input)
+        .parse_recovering_compact_with_report(&input)
         .expect("recovering parse should return a report");
     let parsed_at = Instant::now();
 

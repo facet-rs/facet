@@ -5870,6 +5870,22 @@ enum RuntimeRecoveryMode {
     SkipInvalidInput,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeTraceDetail {
+    Full,
+    Lineage,
+}
+
+fn push_full_runtime_trace(
+    trace_events: &mut Vec<TraceEvent>,
+    detail: RuntimeTraceDetail,
+    event: TraceEvent,
+) {
+    if detail == RuntimeTraceDetail::Full {
+        trace_events.push(event);
+    }
+}
+
 impl<'a> RuntimeParser<'a> {
     /// Build a runtime parser over validated grammar facts and generated tables.
     pub fn new(
@@ -5890,7 +5906,19 @@ impl<'a> RuntimeParser<'a> {
 
     /// Parse one input and return runtime stack/tree evidence.
     pub fn parse_with_report(&self, input: &str) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.parse_with_report_mode(input, RuntimeRecoveryMode::Strict)
+        self.parse_with_report_mode(input, RuntimeRecoveryMode::Strict, RuntimeTraceDetail::Full)
+    }
+
+    /// Parse one input, retaining only trace events needed for accepted lineage filtering.
+    pub fn parse_compact_with_report(
+        &self,
+        input: &str,
+    ) -> Result<RuntimeParseReport, ReducedParseError> {
+        self.parse_with_report_mode(
+            input,
+            RuntimeRecoveryMode::Strict,
+            RuntimeTraceDetail::Lineage,
+        )
     }
 
     /// Parse one input, preserving recoverable error ranges as `ERROR` nodes.
@@ -5898,27 +5926,53 @@ impl<'a> RuntimeParser<'a> {
         &self,
         input: &str,
     ) -> Result<RuntimeParseReport, ReducedParseError> {
-        self.parse_with_report_mode(input, RuntimeRecoveryMode::SkipInvalidInput)
+        self.parse_with_report_mode(
+            input,
+            RuntimeRecoveryMode::SkipInvalidInput,
+            RuntimeTraceDetail::Full,
+        )
+    }
+
+    /// Parse with recovery, retaining only trace events needed for accepted lineage filtering.
+    pub fn parse_recovering_compact_with_report(
+        &self,
+        input: &str,
+    ) -> Result<RuntimeParseReport, ReducedParseError> {
+        self.parse_with_report_mode(
+            input,
+            RuntimeRecoveryMode::SkipInvalidInput,
+            RuntimeTraceDetail::Lineage,
+        )
     }
 
     fn parse_with_report_mode(
         &self,
         input: &str,
         recovery: RuntimeRecoveryMode,
+        trace_detail: RuntimeTraceDetail,
     ) -> Result<RuntimeParseReport, ReducedParseError> {
         self.reduced.clear_lex_cache();
         let mut tree_store = RuntimeTreeStore::default();
         let mut trace_events = Vec::new();
         let mut tree_events = Vec::new();
-        trace_events.push(TraceEvent::ParseStart {
-            id: TraceEventId::from_index(0),
-            state: ParseStateId::from_index(0),
-        });
-        trace_events.push(TraceEvent::StateEnter {
-            id: TraceEventId::from_index(1),
-            version: StackVersionId::from_index(0),
-            state: ParseStateId::from_index(0),
-        });
+        push_full_runtime_trace(
+            &mut trace_events,
+            trace_detail,
+            TraceEvent::ParseStart {
+                id: TraceEventId::from_index(0),
+                state: ParseStateId::from_index(0),
+            },
+        );
+        let initial_state_enter_id = next_trace_id(&trace_events);
+        push_full_runtime_trace(
+            &mut trace_events,
+            trace_detail,
+            TraceEvent::StateEnter {
+                id: initial_state_enter_id,
+                version: StackVersionId::from_index(0),
+                state: ParseStateId::from_index(0),
+            },
+        );
         let line_index = InputLineIndex::new(input);
 
         let initial_branch = RuntimeBranch {
@@ -5933,13 +5987,15 @@ impl<'a> RuntimeParser<'a> {
             scanner_snapshot: None,
             error_cost: 0,
             trace: Vec::new(),
+            tree_events: Vec::new(),
         };
         let mut queued_recovery_costs = HashMap::new();
         if recovery == RuntimeRecoveryMode::SkipInvalidInput {
             queued_recovery_costs.insert(RuntimeBranchKey::from_branch(&initial_branch), 0);
         }
         let mut branches = VecDeque::from([initial_branch]);
-        let mut accepted = Vec::<(StackVersionId, SexpNode, Vec<ReducedTraceStep>, u32)>::new();
+        let mut accepted =
+            Vec::<(StackVersionId, SexpNode, Vec<ReducedTraceStep>, u32, Vec<TreeEvent>)>::new();
         let mut failures = Vec::<ReducedParseError>::new();
         let mut next_version_index = 1usize;
         let mut next_lookahead_index = 0usize;
@@ -5959,19 +6015,27 @@ impl<'a> RuntimeParser<'a> {
                     .get(&key)
                     .is_some_and(|best_cost| branch.error_cost > *best_cost)
                 {
-                    trace_events.push(TraceEvent::GlrRetire {
-                        version: branch.version,
-                        reason: BranchRetireReason::Dominated,
-                    });
+                    push_full_runtime_trace(
+                        &mut trace_events,
+                        trace_detail,
+                        TraceEvent::GlrRetire {
+                            version: branch.version,
+                            reason: BranchRetireReason::Dominated,
+                        },
+                    );
                     continue;
                 }
             }
             step_count += 1;
             if step_count > step_limit {
-                trace_events.push(TraceEvent::GlrRetire {
-                    version: branch.version,
-                    reason: BranchRetireReason::Limit,
-                });
+                push_full_runtime_trace(
+                    &mut trace_events,
+                    trace_detail,
+                    TraceEvent::GlrRetire {
+                        version: branch.version,
+                        reason: BranchRetireReason::Limit,
+                    },
+                );
                 trace_events.push(TraceEvent::ParseFinish {
                     id: next_trace_id(&trace_events),
                     outcome: ParseOutcome::Failed,
@@ -5994,11 +6058,13 @@ impl<'a> RuntimeParser<'a> {
                 &mut next_version_index,
                 &mut next_lookahead_index,
                 recovery,
+                trace_detail,
             ) {
                 match outcome {
                     RuntimeStepOutcome::Branch(branch) => enqueue_runtime_branch(
                         branch,
                         recovery,
+                        trace_detail,
                         &mut queued_recovery_costs,
                         &mut trace_events,
                         &mut branches,
@@ -6008,18 +6074,27 @@ impl<'a> RuntimeParser<'a> {
                         node,
                         trace,
                         error_cost,
+                        tree_events,
                     } => {
-                        trace_events.push(TraceEvent::GlrRetire {
-                            version,
-                            reason: BranchRetireReason::Accepted,
-                        });
-                        accepted.push((version, node, trace, error_cost));
+                        push_full_runtime_trace(
+                            &mut trace_events,
+                            trace_detail,
+                            TraceEvent::GlrRetire {
+                                version,
+                                reason: BranchRetireReason::Accepted,
+                            },
+                        );
+                        accepted.push((version, node, trace, error_cost, tree_events));
                     }
                     RuntimeStepOutcome::Failed { version, error } => {
-                        trace_events.push(TraceEvent::GlrRetire {
-                            version,
-                            reason: BranchRetireReason::NoAction,
-                        });
+                        push_full_runtime_trace(
+                            &mut trace_events,
+                            trace_detail,
+                            TraceEvent::GlrRetire {
+                                version,
+                                reason: BranchRetireReason::NoAction,
+                            },
+                        );
                         failures.push(error);
                     }
                 }
@@ -6029,7 +6104,7 @@ impl<'a> RuntimeParser<'a> {
 
         let Some(min_error_cost) = accepted
             .iter()
-            .map(|(_, _, _, error_cost)| *error_cost)
+            .map(|(_, _, _, error_cost, _)| *error_cost)
             .min()
         else {
             trace_events.push(TraceEvent::ParseFinish {
@@ -6042,16 +6117,16 @@ impl<'a> RuntimeParser<'a> {
         };
         let best_accepted = accepted
             .iter()
-            .filter(|(_, _, _, error_cost)| *error_cost == min_error_cost)
+            .filter(|(_, _, _, error_cost, _)| *error_cost == min_error_cost)
             .collect::<Vec<_>>();
-        let Some((first_version, first_node, first_trace, _)) =
+        let Some((first_version, first_node, first_trace, _, first_tree_events)) =
             best_accepted.first().map(|accepted| (*accepted).clone())
         else {
             unreachable!("accepted branches have a minimum recovery cost");
         };
         if best_accepted
             .iter()
-            .all(|(_, node, _, _)| *node == first_node)
+            .all(|(_, node, _, _, _)| *node == first_node)
         {
             trace_events.push(TraceEvent::ParseFinish {
                 id: next_trace_id(&trace_events),
@@ -6064,7 +6139,11 @@ impl<'a> RuntimeParser<'a> {
             return Ok(RuntimeParseReport {
                 tree: first_node,
                 trace_events,
-                tree_events,
+                tree_events: if trace_detail == RuntimeTraceDetail::Full {
+                    tree_events
+                } else {
+                    first_tree_events
+                },
                 accepted_version: first_version,
                 accepted_count: best_accepted.len(),
                 failure_count: failures.len(),
@@ -6081,7 +6160,7 @@ impl<'a> RuntimeParser<'a> {
                 accepted_count: best_accepted.len(),
                 accepted: best_accepted
                     .iter()
-                    .map(|(_, node, _, _)| node.to_sexp())
+                    .map(|(_, node, _, _, _)| node.to_sexp())
                     .collect(),
             })
             .with_trace(first_trace),
@@ -6099,6 +6178,7 @@ impl<'a> RuntimeParser<'a> {
         next_version_index: &mut usize,
         next_lookahead_index: &mut usize,
         recovery: RuntimeRecoveryMode,
+        trace_detail: RuntimeTraceDetail,
     ) -> Vec<RuntimeStepOutcome> {
         let source_version = branch.version;
         let state = match branch.stack.last() {
@@ -6131,8 +6211,12 @@ impl<'a> RuntimeParser<'a> {
                 if recovery == RuntimeRecoveryMode::SkipInvalidInput
                     && matches!(error.kind(), ReducedParseErrorKind::NoToken { .. })
                     && input[branch.byte_position..].starts_with(['{', '}'])
-                    && let Some(branch) =
-                        self.recover_runtime_to_viable_stack(branch.clone(), input, trace_events)
+                    && let Some(branch) = self.recover_runtime_to_viable_stack(
+                        branch.clone(),
+                        input,
+                        trace_events,
+                        trace_detail,
+                    )
                 {
                     return vec![RuntimeStepOutcome::Branch(branch)];
                 }
@@ -6145,6 +6229,7 @@ impl<'a> RuntimeParser<'a> {
                         tree_store,
                         trace_events,
                         tree_events,
+                        trace_detail,
                     )
                 {
                     return vec![RuntimeStepOutcome::Branch(branch)];
@@ -6157,22 +6242,30 @@ impl<'a> RuntimeParser<'a> {
         };
         let lookahead = LookaheadTokenId::from_index(*next_lookahead_index);
         *next_lookahead_index += 1;
-        trace_events.push(TraceEvent::Lex {
-            version: source_version,
-            mode: state_row.lex_mode(),
-            lookahead,
-        });
+        push_full_runtime_trace(
+            trace_events,
+            trace_detail,
+            TraceEvent::Lex {
+                version: source_version,
+                mode: state_row.lex_mode(),
+                lookahead,
+            },
+        );
         if let LookaheadSymbol::External(_) = token.lookahead {
             let mode = &self.reduced.table.lexical_modes()[state_row.lex_mode().get() as usize];
             if let Some(valid_symbols) = mode.valid_symbols() {
                 let scanner = token.scanner;
-                trace_events.push(TraceEvent::ExternalScanner {
-                    version: source_version,
-                    valid_symbols,
-                    before: scanner.and_then(|scanner| scanner.before()),
-                    after: scanner.and_then(|scanner| scanner.after()),
-                    result: Some(lookahead),
-                });
+                push_full_runtime_trace(
+                    trace_events,
+                    trace_detail,
+                    TraceEvent::ExternalScanner {
+                        version: source_version,
+                        valid_symbols,
+                        before: scanner.and_then(|scanner| scanner.before()),
+                        after: scanner.and_then(|scanner| scanner.after()),
+                        result: Some(lookahead),
+                    },
+                );
             }
         }
         let Some(entry) = state_row
@@ -6185,6 +6278,7 @@ impl<'a> RuntimeParser<'a> {
                     branch.clone(),
                     token.lookahead,
                     trace_events,
+                    trace_detail,
                 )
             {
                 return vec![RuntimeStepOutcome::Branch(branch)];
@@ -6234,6 +6328,7 @@ impl<'a> RuntimeParser<'a> {
                     tree_store,
                     trace_events,
                     tree_events,
+                    trace_detail,
                 ));
             }
             return outcomes;
@@ -6257,6 +6352,7 @@ impl<'a> RuntimeParser<'a> {
             tree_store,
             trace_events,
             tree_events,
+            trace_detail,
         )]
     }
 
@@ -6271,6 +6367,7 @@ impl<'a> RuntimeParser<'a> {
         tree_store: &mut RuntimeTreeStore,
         trace_events: &mut Vec<TraceEvent>,
         tree_events: &mut Vec<TreeEvent>,
+        trace_detail: RuntimeTraceDetail,
     ) -> RuntimeStepOutcome {
         match action {
             ParseAction::Shift { state, .. } => {
@@ -6278,7 +6375,7 @@ impl<'a> RuntimeParser<'a> {
                 branch.byte_position = token.end;
                 branch.commit_scanner_snapshot(token);
                 let (bytes, points) = input_ranges(input, line_index, start, token.end);
-                tree_events.push(TreeEvent::Token {
+                let tree_event = TreeEvent::Token {
                     version: branch.version,
                     symbol: lookahead_parser_symbol(token.lookahead),
                     lookahead,
@@ -6287,18 +6384,31 @@ impl<'a> RuntimeParser<'a> {
                     extra: false,
                     named: false,
                     keyword: KeywordStatus::Unchecked,
-                });
-                trace_events.push(TraceEvent::Tree(tree_events.last().unwrap().clone()));
-                trace_events.push(TraceEvent::Shift {
-                    version: branch.version,
-                    lookahead,
-                    state,
-                });
-                trace_events.push(TraceEvent::StateEnter {
-                    id: next_trace_id(trace_events),
-                    version: branch.version,
-                    state,
-                });
+                };
+                if trace_detail == RuntimeTraceDetail::Full {
+                    tree_events.push(tree_event.clone());
+                    trace_events.push(TraceEvent::Tree(tree_event));
+                } else {
+                    branch.tree_events.push(tree_event);
+                }
+                push_full_runtime_trace(
+                    trace_events,
+                    trace_detail,
+                    TraceEvent::Shift {
+                        version: branch.version,
+                        lookahead,
+                        state,
+                    },
+                );
+                push_full_runtime_trace(
+                    trace_events,
+                    trace_detail,
+                    TraceEvent::StateEnter {
+                        id: next_trace_id(trace_events),
+                        version: branch.version,
+                        state,
+                    },
+                );
                 branch.stack.push(RuntimeStackEntry {
                     state,
                     fragment: Some(RuntimeFragment::Hidden {
@@ -6316,16 +6426,30 @@ impl<'a> RuntimeParser<'a> {
                 let start = branch.byte_position;
                 branch.byte_position = token.end;
                 branch.commit_scanner_snapshot(token);
-                if let Some(fragment) = self.runtime_extra_fragment(
-                    branch.version,
-                    token.lookahead,
-                    tree_store,
-                    tree_events,
-                    input,
-                    line_index,
-                    start,
-                    token.end,
-                ) {
+                let fragment = if trace_detail == RuntimeTraceDetail::Full {
+                    self.runtime_extra_fragment(
+                        branch.version,
+                        token.lookahead,
+                        tree_store,
+                        tree_events,
+                        input,
+                        line_index,
+                        start,
+                        token.end,
+                    )
+                } else {
+                    self.runtime_extra_fragment(
+                        branch.version,
+                        token.lookahead,
+                        tree_store,
+                        &mut branch.tree_events,
+                        input,
+                        line_index,
+                        start,
+                        token.end,
+                    )
+                };
+                if let Some(fragment) = fragment {
                     let Some(state) = branch.stack.last().map(|entry| entry.state) else {
                         return RuntimeStepOutcome::Failed {
                             version: branch.version,
@@ -6349,18 +6473,33 @@ impl<'a> RuntimeParser<'a> {
                 child_count,
                 ..
             } => {
-                let reduction = match self.runtime_reduce_fragment(
-                    branch.version,
-                    production,
-                    metadata,
-                    child_count,
-                    &mut branch.stack,
-                    tree_store,
-                    tree_events,
-                    input,
-                    line_index,
-                    false,
-                ) {
+                let reduction = match if trace_detail == RuntimeTraceDetail::Full {
+                    self.runtime_reduce_fragment(
+                        branch.version,
+                        production,
+                        metadata,
+                        child_count,
+                        &mut branch.stack,
+                        tree_store,
+                        tree_events,
+                        input,
+                        line_index,
+                        false,
+                    )
+                } else {
+                    self.runtime_reduce_fragment(
+                        branch.version,
+                        production,
+                        metadata,
+                        child_count,
+                        &mut branch.stack,
+                        tree_store,
+                        &mut branch.tree_events,
+                        input,
+                        line_index,
+                        false,
+                    )
+                } {
                     Ok(reduction) => reduction,
                     Err(error) => {
                         return RuntimeStepOutcome::Failed {
@@ -6369,11 +6508,15 @@ impl<'a> RuntimeParser<'a> {
                         };
                     }
                 };
-                trace_events.push(TraceEvent::Reduce {
-                    version: branch.version,
-                    production,
-                    metadata,
-                });
+                push_full_runtime_trace(
+                    trace_events,
+                    trace_detail,
+                    TraceEvent::Reduce {
+                        version: branch.version,
+                        production,
+                        metadata,
+                    },
+                );
                 let head_state = match branch.stack.last() {
                     Some(entry) => entry.state,
                     None => {
@@ -6409,11 +6552,15 @@ impl<'a> RuntimeParser<'a> {
                         end_byte,
                     });
                 }
-                trace_events.push(TraceEvent::StateEnter {
-                    id: next_trace_id(trace_events),
-                    version: branch.version,
-                    state: goto_state,
-                });
+                push_full_runtime_trace(
+                    trace_events,
+                    trace_detail,
+                    TraceEvent::StateEnter {
+                        id: next_trace_id(trace_events),
+                        version: branch.version,
+                        state: goto_state,
+                    },
+                );
                 RuntimeStepOutcome::Branch(branch)
             }
             ParseAction::Accept {
@@ -6431,18 +6578,33 @@ impl<'a> RuntimeParser<'a> {
                         .with_trace(branch.trace),
                     };
                 }
-                let reduction = match self.runtime_reduce_fragment(
-                    branch.version,
-                    production,
-                    metadata,
-                    child_count,
-                    &mut branch.stack,
-                    tree_store,
-                    tree_events,
-                    input,
-                    line_index,
-                    true,
-                ) {
+                let reduction = match if trace_detail == RuntimeTraceDetail::Full {
+                    self.runtime_reduce_fragment(
+                        branch.version,
+                        production,
+                        metadata,
+                        child_count,
+                        &mut branch.stack,
+                        tree_store,
+                        tree_events,
+                        input,
+                        line_index,
+                        true,
+                    )
+                } else {
+                    self.runtime_reduce_fragment(
+                        branch.version,
+                        production,
+                        metadata,
+                        child_count,
+                        &mut branch.stack,
+                        tree_store,
+                        &mut branch.tree_events,
+                        input,
+                        line_index,
+                        true,
+                    )
+                } {
                     Ok(reduction) => reduction,
                     Err(error) => {
                         return RuntimeStepOutcome::Failed {
@@ -6451,11 +6613,15 @@ impl<'a> RuntimeParser<'a> {
                         };
                     }
                 };
-                trace_events.push(TraceEvent::Reduce {
-                    version: branch.version,
-                    production,
-                    metadata,
-                });
+                push_full_runtime_trace(
+                    trace_events,
+                    trace_detail,
+                    TraceEvent::Reduce {
+                        version: branch.version,
+                        production,
+                        metadata,
+                    },
+                );
                 match reduction.fragment {
                     RuntimeFragment::Node {
                         node,
@@ -6477,6 +6643,7 @@ impl<'a> RuntimeParser<'a> {
                             node: root,
                             trace: branch.trace,
                             error_cost: branch.error_cost,
+                            tree_events: branch.tree_events,
                         }
                     }
                     RuntimeFragment::Hidden { .. } => RuntimeStepOutcome::Failed {
@@ -6492,10 +6659,14 @@ impl<'a> RuntimeParser<'a> {
                     .last()
                     .map(|entry| entry.state)
                     .unwrap_or(ParseStateId::from_index(0));
-                trace_events.push(TraceEvent::Recover {
-                    version: branch.version,
-                    state,
-                });
+                push_full_runtime_trace(
+                    trace_events,
+                    trace_detail,
+                    TraceEvent::Recover {
+                        version: branch.version,
+                        state,
+                    },
+                );
                 RuntimeStepOutcome::Failed {
                     version: branch.version,
                     error: ReducedParseError::new(ReducedParseErrorKind::UnsupportedRecovery {
@@ -6512,6 +6683,7 @@ impl<'a> RuntimeParser<'a> {
         mut branch: RuntimeBranch,
         input: &str,
         trace_events: &mut Vec<TraceEvent>,
+        trace_detail: RuntimeTraceDetail,
     ) -> Option<RuntimeBranch> {
         if self.reduced.external_scanner.is_some() || branch.stack.len() <= 1 {
             return None;
@@ -6534,10 +6706,14 @@ impl<'a> RuntimeParser<'a> {
                 branch.error_cost = branch
                     .error_cost
                     .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
-                trace_events.push(TraceEvent::Recover {
-                    version: branch.version,
-                    state,
-                });
+                push_full_runtime_trace(
+                    trace_events,
+                    trace_detail,
+                    TraceEvent::Recover {
+                        version: branch.version,
+                        state,
+                    },
+                );
                 return Some(branch);
             }
         }
@@ -6549,6 +6725,7 @@ impl<'a> RuntimeParser<'a> {
         mut branch: RuntimeBranch,
         lookahead: LookaheadSymbol,
         trace_events: &mut Vec<TraceEvent>,
+        trace_detail: RuntimeTraceDetail,
     ) -> Option<RuntimeBranch> {
         let original_len = branch.stack.len();
         if original_len <= 1 {
@@ -6566,10 +6743,14 @@ impl<'a> RuntimeParser<'a> {
                 branch.error_cost = branch
                     .error_cost
                     .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
-                trace_events.push(TraceEvent::Recover {
-                    version: branch.version,
-                    state,
-                });
+                push_full_runtime_trace(
+                    trace_events,
+                    trace_detail,
+                    TraceEvent::Recover {
+                        version: branch.version,
+                        state,
+                    },
+                );
                 return Some(branch);
             }
         }
@@ -6584,6 +6765,7 @@ impl<'a> RuntimeParser<'a> {
         tree_store: &mut RuntimeTreeStore,
         trace_events: &mut Vec<TraceEvent>,
         tree_events: &mut Vec<TreeEvent>,
+        trace_detail: RuntimeTraceDetail,
     ) -> Option<RuntimeBranch> {
         let state = branch.stack.last().map(|entry| entry.state)?;
         let start_byte = branch.byte_position;
@@ -6593,17 +6775,26 @@ impl<'a> RuntimeParser<'a> {
             children: Vec::new(),
         });
         let (bytes, points) = input_ranges(input, line_index, start_byte, end_byte);
-        trace_events.push(TraceEvent::Recover {
-            version: branch.version,
-            state,
-        });
-        tree_events.push(TreeEvent::Error {
+        push_full_runtime_trace(
+            trace_events,
+            trace_detail,
+            TraceEvent::Recover {
+                version: branch.version,
+                state,
+            },
+        );
+        let tree_event = TreeEvent::Error {
             version: branch.version,
             node,
             bytes,
             points,
             error_cost: u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX),
-        });
+        };
+        if trace_detail == RuntimeTraceDetail::Full {
+            tree_events.push(tree_event);
+        } else {
+            branch.tree_events.push(tree_event);
+        }
         branch.error_cost = branch
             .error_cost
             .saturating_add(u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX));
@@ -6958,6 +7149,7 @@ struct RuntimeBranch {
     scanner_snapshot: Option<ScannerSnapshotId>,
     error_cost: u32,
     trace: Vec<ReducedTraceStep>,
+    tree_events: Vec<TreeEvent>,
 }
 
 impl RuntimeBranch {
@@ -6988,6 +7180,7 @@ impl RuntimeBranchKey {
 fn enqueue_runtime_branch(
     branch: RuntimeBranch,
     recovery: RuntimeRecoveryMode,
+    trace_detail: RuntimeTraceDetail,
     queued_recovery_costs: &mut HashMap<RuntimeBranchKey, u32>,
     trace_events: &mut Vec<TraceEvent>,
     branches: &mut VecDeque<RuntimeBranch>,
@@ -6999,17 +7192,23 @@ fn enqueue_runtime_branch(
     let key = RuntimeBranchKey::from_branch(&branch);
     match queued_recovery_costs.get(&key).copied() {
         Some(best_cost) if branch.error_cost > best_cost => {
-            trace_events.push(TraceEvent::GlrRetire {
+            push_full_runtime_trace(
+                trace_events,
+                trace_detail,
+                TraceEvent::GlrRetire {
+                    version: branch.version,
+                    reason: BranchRetireReason::Dominated,
+                },
+            );
+        }
+        Some(best_cost) if branch.error_cost == best_cost => push_full_runtime_trace(
+            trace_events,
+            trace_detail,
+            TraceEvent::GlrRetire {
                 version: branch.version,
                 reason: BranchRetireReason::Dominated,
-            });
-        }
-        Some(best_cost) if branch.error_cost == best_cost => {
-            trace_events.push(TraceEvent::GlrRetire {
-                version: branch.version,
-                reason: BranchRetireReason::Dominated,
-            })
-        }
+            },
+        ),
         _ => {
             queued_recovery_costs.insert(key, branch.error_cost);
             branches.push_back(branch);
@@ -7025,6 +7224,7 @@ enum RuntimeStepOutcome {
         node: SexpNode,
         trace: Vec<ReducedTraceStep>,
         error_cost: u32,
+        tree_events: Vec<TreeEvent>,
     },
     Failed {
         version: StackVersionId,

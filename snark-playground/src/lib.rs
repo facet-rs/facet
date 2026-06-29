@@ -783,9 +783,9 @@ fn parse_with_optional_scanner<'a>(
         None => runtime,
     };
     if recover {
-        runtime.parse_recovering_with_report(input)
+        runtime.parse_recovering_compact_with_report(input)
     } else {
-        runtime.parse_with_report(input)
+        runtime.parse_compact_with_report(input)
     }
 }
 

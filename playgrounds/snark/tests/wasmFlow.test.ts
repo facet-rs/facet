@@ -150,6 +150,9 @@ test(
     assert.equal(response.parse.sexp.includes("(ERROR"), true, response.parse.sexp);
     assert.equal(response.parse.accepted_error_count > 0, true);
     assert.equal(response.parse.accepted_missing_count, 0);
+    assert.equal(response.parse.tree_event_count, response.parse.accepted_tree_event_count);
+    assert.equal(response.parse.tree_event_count < 10_000, true, response.parse.tree_event_count);
+    assert.equal(response.parse.trace_event_count < 10_000, true, response.parse.trace_event_count);
     assert.equal(response.highlights.length, 255);
   },
 );
