@@ -6399,9 +6399,9 @@ impl RuntimeInputEdit {
 
 /// Persistent runtime parse session for the incremental parser seam.
 ///
-/// This session already preserves the previous input and accepted report. The
-/// current reparse path deliberately falls back to a full parse; subtree reuse
-/// will plug in here while keeping full parse as the differential oracle.
+/// This session preserves the previous input and accepted report, then builds a
+/// conservative index of reusable named-node subtrees for reparses. Full parses
+/// remain the differential oracle for reuse tests.
 pub struct RuntimeParseSession<'a> {
     parser: RuntimeParser<'a>,
     last_input: Option<String>,
@@ -10891,6 +10891,49 @@ extras (
         )
     }
 
+    fn extra_comment_reuse_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "left" },
+                    { "type": "SYMBOL", "name": "right" }
+                  ]
+                },
+                "left": { "type": "STRING", "value": "a" },
+                "right": { "type": "STRING", "value": "b" },
+                "comment": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "PATTERN",
+                    "value": "#[^\\n]*"
+                  }
+                }
+              },
+              "extras": [
+                { "type": "SYMBOL", "name": "comment" },
+                { "type": "PATTERN", "value": "\\s+" }
+              ]
+            }"##,
+        )
+    }
+
+    fn reused_byte_ranges(report: &RuntimeParseReport) -> Vec<(usize, usize)> {
+        report
+            .tree_events()
+            .iter()
+            .filter_map(|event| match event {
+                TreeEvent::ReuseNode { bytes, .. } => {
+                    Some((bytes.start().get() as usize, bytes.end().get() as usize))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn runtime_lexer_preserves_regex_flags() {
         let (validated, parser, table) = flagged_regex_fixture();
@@ -10971,6 +11014,7 @@ extras (
                 .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
             "incremental reparse should reuse at least one accepted subtree"
         );
+        assert_eq!(reused_byte_ranges(&reparsed), vec![(3, 6)]);
         assert_eq!(session.last_input(), Some("abcXYZ"));
     }
 
@@ -10996,6 +11040,32 @@ extras (
                 .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
             "node that inspected the edit boundary must not be reused"
         );
+    }
+
+    #[test]
+    fn runtime_parse_session_reuses_suffix_across_edited_extra() {
+        let (validated, parser, table) = extra_comment_reuse_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let mut session = RuntimeParseSession::new(runtime);
+        let first = session.parse_compact("a#old\nb").unwrap().clone();
+        assert_eq!(
+            first.tree().to_sexp(),
+            "(source_file (left) (comment) (right))"
+        );
+
+        let edit = RuntimeInputEdit::new(2, 5, 5);
+        let reparsed = session.reparse_compact(edit, "a#new\nb").unwrap().clone();
+        let scratch = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report("a#new\nb")
+            .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert_eq!(
+            reparsed.tree().to_sexp(),
+            "(source_file (left) (comment) (right))"
+        );
+        assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 1), (6, 7)]);
     }
 
     #[test]
