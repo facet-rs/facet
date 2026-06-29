@@ -75,6 +75,7 @@ select:disabled {
 
 h1,
 h2,
+h3,
 p {
   margin: 0;
 }
@@ -89,6 +90,12 @@ h2 {
   font-weight: 700;
   color: #51605b;
   text-transform: uppercase;
+}
+
+h3 {
+  font-size: 12px;
+  font-weight: 700;
+  color: #51605b;
 }
 
 .pane-header p {
@@ -280,6 +287,11 @@ textarea:focus {
   background: #fde8df;
 }
 
+.status-strip.warn {
+  color: #765a0d;
+  background: #fff0bd;
+}
+
 .status-strip.idle {
   color: #54615c;
   background: #f5f7f6;
@@ -452,6 +464,20 @@ summary {
 
 .assertion-row code:last-child {
   grid-column: 1 / -1;
+}
+
+.test-detail-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.test-detail-grid section {
+  min-height: 0;
+  padding: 8px;
+  border: 1px solid #e2e8e5;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 summary.pass,

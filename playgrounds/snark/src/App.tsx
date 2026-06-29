@@ -402,7 +402,26 @@ export function App() {
                   <summary className={caseResult.passed ? "pass" : "fail"}>
                     {caseResult.case_name}
                   </summary>
-                  <pre>{caseResult.error ?? caseResult.actual ?? ""}</pre>
+                  <div className="test-detail-grid">
+                    {caseResult.error ? (
+                      <section>
+                        <h3>Error</h3>
+                        <pre>{caseResult.error}</pre>
+                      </section>
+                    ) : null}
+                    <section>
+                      <h3>Input</h3>
+                      <pre>{caseResult.input}</pre>
+                    </section>
+                    <section>
+                      <h3>Expected</h3>
+                      <pre>{caseResult.expected}</pre>
+                    </section>
+                    <section>
+                      <h3>Actual</h3>
+                      <pre>{caseResult.actual ?? ""}</pre>
+                    </section>
+                  </div>
                 </details>
               ))}
               {result?.highlight_tests.map((fixture) => (
@@ -456,6 +475,21 @@ function StatusStrip({ result }: { result: PlaygroundResponse | null }) {
   }
   if (!result.ok) {
     return <div className="status-strip error">Parse failed</div>;
+  }
+  const corpusFailures = result.corpus.filter((caseResult) => !caseResult.passed).length;
+  const highlightFailures = result.highlight_tests.reduce(
+    (sum, fixture) => sum + (fixture.error ? 1 : fixture.failed_count),
+    0,
+  );
+  const testFailures = corpusFailures + highlightFailures;
+  if (testFailures > 0) {
+    return (
+      <div className="status-strip warn">
+        <span>Parse accepted {result.parse?.accepted_count ?? 0}</span>
+        <span>{corpusFailures} corpus fail</span>
+        <span>{highlightFailures} highlight fail</span>
+      </div>
+    );
   }
   return (
     <div className="status-strip ok">
