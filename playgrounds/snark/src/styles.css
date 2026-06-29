@@ -15,7 +15,8 @@ body {
 
 button,
 textarea,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -30,6 +31,10 @@ button {
 
 button:disabled {
   cursor: progress;
+  opacity: 0.7;
+}
+
+select:disabled {
   opacity: 0.7;
 }
 
@@ -193,6 +198,16 @@ h2 {
   gap: 6px;
   min-height: 34px;
   padding: 0 8px;
+}
+
+.sample-select {
+  min-width: 0;
+  max-width: min(240px, 40%);
+  min-height: 34px;
+  border: 1px solid #b8c2bd;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #182024;
 }
 
 .editor-grid {

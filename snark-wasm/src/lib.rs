@@ -55,6 +55,7 @@ struct BundleSummary {
     grammar_js_path: Option<String>,
     query_paths: Vec<String>,
     corpus_paths: Vec<String>,
+    sample_paths: Vec<String>,
     generated_files_ignored: Vec<String>,
     scanner_paths: Vec<String>,
     active_scanner: Option<String>,
@@ -513,6 +514,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
             grammar_js_path: None,
             query_paths: Vec::new(),
             corpus_paths: Vec::new(),
+            sample_paths: Vec::new(),
             generated_files_ignored: Vec::new(),
             scanner_paths: Vec::new(),
             active_scanner: None,
@@ -546,6 +548,11 @@ fn summarize_bundle(files: &[BundleFile]) -> BundleSummary {
                     || file.path.starts_with("test/highlight/")
                     || file.path.starts_with("test/highlights/")
             })
+            .map(|file| file.path.clone())
+            .collect(),
+        sample_paths: files
+            .iter()
+            .filter(|file| file.path.starts_with("samples/"))
             .map(|file| file.path.clone())
             .collect(),
         generated_files_ignored: files
@@ -611,6 +618,9 @@ fn normalize_bundle_path(path: &str) -> String {
             return mapped;
         }
     }
+    if let Some(mapped) = normalize_package_path(&path) {
+        return mapped;
+    }
     path
 }
 
@@ -633,6 +643,11 @@ fn normalize_arborium_def_path(relative: &str) -> Option<String> {
         "grammar/grammar.json" | "grammar/src/grammar.json" => Some("src/grammar.json".to_owned()),
         "grammar/scanner.c" => Some("src/scanner.c".to_owned()),
         "grammar/scanner.cc" => Some("src/scanner.cc".to_owned()),
+        "grammar/src/parser.c" => Some("src/parser.c".to_owned()),
+        "grammar/src/parser.cc" => Some("src/parser.cc".to_owned()),
+        "grammar/src/parser.h" => Some("src/parser.h".to_owned()),
+        "grammar/src/node-types.json" => Some("src/node-types.json".to_owned()),
+        "grammar/bindings/node/binding.cc" => Some("bindings/node/binding.cc".to_owned()),
         _ => {
             if relative.starts_with("queries/")
                 || relative.starts_with("test/corpus/")
@@ -649,6 +664,51 @@ fn normalize_arborium_def_path(relative: &str) -> Option<String> {
             }
         }
     }
+}
+
+fn normalize_package_path(path: &str) -> Option<String> {
+    match path {
+        "grammar.js"
+        | "src/grammar.json"
+        | "src/scanner.c"
+        | "src/scanner.cc"
+        | "src/parser.c"
+        | "src/parser.cc"
+        | "src/parser.h"
+        | "src/node-types.json"
+        | "bindings/node/binding.cc" => return Some(path.to_owned()),
+        _ => {}
+    }
+
+    for suffix in [
+        "/grammar.js",
+        "/src/grammar.json",
+        "/src/scanner.c",
+        "/src/scanner.cc",
+        "/src/parser.c",
+        "/src/parser.cc",
+        "/src/parser.h",
+        "/src/node-types.json",
+        "/bindings/node/binding.cc",
+    ] {
+        if path.ends_with(suffix) {
+            return Some(suffix.trim_start_matches('/').to_owned());
+        }
+    }
+
+    for token in [
+        "/queries/",
+        "/test/corpus/",
+        "/test/highlight/",
+        "/test/highlights/",
+        "/samples/",
+    ] {
+        if let Some((_, relative)) = path.split_once(token) {
+            return Some(format!("{}{relative}", token.trim_start_matches('/')));
+        }
+    }
+
+    None
 }
 
 fn is_generated_artifact(path: &str) -> bool {
@@ -691,6 +751,10 @@ mod tests {
                 text: String::new(),
             },
             BundleFile {
+                path: "prepared-css/samples/showcase.css".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
                 path: "langs/group-acorn/css/def/grammar/src/node-types.json".to_owned(),
                 text: String::new(),
             },
@@ -701,10 +765,45 @@ mod tests {
         assert_eq!(summary.scanner_paths, vec!["src/scanner.c"]);
         assert_eq!(summary.query_paths, vec!["queries/highlights.scm"]);
         assert!(find_file(&files, "samples/sample.css").is_some());
+        assert!(find_file(&files, "samples/showcase.css").is_some());
         assert_eq!(
-            summary.generated_files_ignored,
-            vec!["langs/group-acorn/css/def/grammar/src/node-types.json"]
+            summary.sample_paths,
+            vec!["samples/sample.css", "samples/showcase.css"]
         );
+        assert_eq!(summary.generated_files_ignored, vec!["src/node-types.json"]);
+    }
+
+    #[test]
+    fn normalizes_prepared_bundle_root_paths() {
+        let files = normalize_bundle_files(vec![
+            BundleFile {
+                path: "snark-json/src/grammar.json".to_owned(),
+                text: "{}".to_owned(),
+            },
+            BundleFile {
+                path: "snark-json/queries/highlights.scm".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "snark-json/test/corpus/main.txt".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "snark-json/samples/sample.json".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "snark-json/src/parser.c".to_owned(),
+                text: String::new(),
+            },
+        ]);
+
+        let summary = summarize_bundle(&files);
+        assert_eq!(summary.grammar_path.as_deref(), Some("src/grammar.json"));
+        assert_eq!(summary.query_paths, vec!["queries/highlights.scm"]);
+        assert_eq!(summary.corpus_paths, vec!["test/corpus/main.txt"]);
+        assert_eq!(summary.sample_paths, vec!["samples/sample.json"]);
+        assert_eq!(summary.generated_files_ignored, vec!["src/parser.c"]);
     }
 
     #[test]

@@ -51,6 +51,7 @@ type PlaygroundResponse = {
     grammar_js_path: string | null;
     query_paths: string[];
     corpus_paths: string[];
+    sample_paths: string[];
     generated_files_ignored: string[];
     scanner_paths: string[];
     active_scanner: string | null;
@@ -133,6 +134,10 @@ export function App() {
     () => files.find((file) => file.path === selectedPath) ?? files[0],
     [files, selectedPath],
   );
+  const sampleFiles = useMemo(
+    () => sortedFiles(files).filter((file) => file.path.startsWith("samples/")),
+    [files],
+  );
   const passedCorpus = result?.corpus.filter((caseResult) => caseResult.passed).length ?? 0;
   const failedCorpus = result ? result.corpus.length - passedCorpus : 0;
 
@@ -148,6 +153,10 @@ export function App() {
     );
     setFiles(sortedFiles(next));
     setSelectedPath(next.some((file) => file.path === "src/grammar.json") ? "src/grammar.json" : next[0].path);
+    const firstSample = sortedFiles(next).find((file) => file.path.startsWith("samples/"));
+    if (firstSample) {
+      setInput(firstSample.text);
+    }
     setResult(null);
   }
 
@@ -224,6 +233,10 @@ export function App() {
               <dd>{result.bundle.corpus_paths.length}</dd>
             </div>
             <div>
+              <dt>samples</dt>
+              <dd>{result.bundle.sample_paths.length}</dd>
+            </div>
+            <div>
               <dt>ignored</dt>
               <dd>{result.bundle.generated_files_ignored.length}</dd>
             </div>
@@ -248,6 +261,26 @@ export function App() {
             />
             Corpus
           </label>
+          <select
+            aria-label="Load sample"
+            className="sample-select"
+            disabled={sampleFiles.length === 0}
+            value=""
+            onChange={(event) => {
+              const sample = sampleFiles.find((file) => file.path === event.currentTarget.value);
+              if (sample) {
+                setInput(sample.text);
+                setSelectedPath(sample.path);
+              }
+            }}
+          >
+            <option value="">Samples ({sampleFiles.length})</option>
+            {sampleFiles.map((file) => (
+              <option key={file.path} value={file.path}>
+                {file.path}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             className="secondary"
@@ -358,5 +391,115 @@ function StatusStrip({ result }: { result: PlaygroundResponse | null }) {
 
 function normalizeBrowserPath(file: File) {
   const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-  return (relative && relative.length > 0 ? relative : file.name).replace(/\\/g, "/");
+  return normalizeBundlePath(relative && relative.length > 0 ? relative : file.name);
+}
+
+function normalizeBundlePath(path: string) {
+  const normalized = normalizePath(path);
+  const arborium = arboriumDefRelative(normalized);
+  if (arborium) {
+    const mapped = normalizeArboriumDefPath(arborium);
+    if (mapped) {
+      return mapped;
+    }
+  }
+  return normalizePackagePath(normalized) ?? normalized;
+}
+
+function normalizePath(path: string) {
+  let normalized = path.replace(/\\/g, "/");
+  while (normalized.startsWith("./")) {
+    normalized = normalized.slice(2);
+  }
+  return normalized;
+}
+
+function arboriumDefRelative(path: string) {
+  if (path.startsWith("def/")) {
+    return path.slice("def/".length);
+  }
+  const marker = "/def/";
+  const index = path.indexOf(marker);
+  return index >= 0 ? path.slice(index + marker.length) : null;
+}
+
+function normalizeArboriumDefPath(relative: string) {
+  switch (relative) {
+    case "grammar/grammar.js":
+      return "grammar.js";
+    case "grammar/grammar.json":
+    case "grammar/src/grammar.json":
+      return "src/grammar.json";
+    case "grammar/scanner.c":
+      return "src/scanner.c";
+    case "grammar/scanner.cc":
+      return "src/scanner.cc";
+    case "grammar/src/parser.c":
+      return "src/parser.c";
+    case "grammar/src/parser.cc":
+      return "src/parser.cc";
+    case "grammar/src/parser.h":
+      return "src/parser.h";
+    case "grammar/src/node-types.json":
+      return "src/node-types.json";
+    case "grammar/bindings/node/binding.cc":
+      return "bindings/node/binding.cc";
+    default:
+      break;
+  }
+  if (
+    relative.startsWith("queries/") ||
+    relative.startsWith("test/corpus/") ||
+    relative.startsWith("test/highlight/") ||
+    relative.startsWith("test/highlights/")
+  ) {
+    return relative;
+  }
+  if (relative.startsWith("samples/")) {
+    return relative;
+  }
+  if (relative.startsWith("sample.")) {
+    return `samples/${relative}`;
+  }
+  return null;
+}
+
+function normalizePackagePath(path: string) {
+  if (
+    [
+      "grammar.js",
+      "src/grammar.json",
+      "src/scanner.c",
+      "src/scanner.cc",
+      "src/parser.c",
+      "src/parser.cc",
+      "src/parser.h",
+      "src/node-types.json",
+      "bindings/node/binding.cc",
+    ].includes(path)
+  ) {
+    return path;
+  }
+  for (const suffix of [
+    "/grammar.js",
+    "/src/grammar.json",
+    "/src/scanner.c",
+    "/src/scanner.cc",
+    "/src/parser.c",
+    "/src/parser.cc",
+    "/src/parser.h",
+    "/src/node-types.json",
+    "/bindings/node/binding.cc",
+  ]) {
+    if (path.endsWith(suffix)) {
+      return suffix.slice(1);
+    }
+  }
+  for (const token of ["/queries/", "/test/corpus/", "/test/highlight/", "/test/highlights/", "/samples/"]) {
+    const index = path.indexOf(token);
+    if (index >= 0) {
+      return path.slice(index + 1);
+    }
+  }
+  return null;
 }
