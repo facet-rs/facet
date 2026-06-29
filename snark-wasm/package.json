@@ -12,6 +12,7 @@
   "types": "pkg/snark_wasm.d.ts",
   "scripts": {
     "build": "cargo build --release --target wasm32-unknown-unknown -p snark-wasm && wasm-bindgen --out-dir pkg --target web ../target/wasm32-unknown-unknown/release/snark_wasm.wasm && rm -f pkg/.gitignore",
-    "grammar-js-to-json": "node scripts/grammar-js-to-json.mjs"
+    "grammar-js-to-json": "node scripts/grammar-js-to-json.mjs",
+    "prepare-bundle": "node scripts/prepare-bundle.mjs"
   }
 }
