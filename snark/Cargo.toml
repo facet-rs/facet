@@ -34,6 +34,8 @@ indexmap.workspace = true
 weavy = { workspace = true, optional = true }
 
 [dev-dependencies]
+facet-styx = { workspace = true }
+gingembre-syntax = { path = "../gingembre-syntax" }
 rediff = { path = "../rediff" }
 snark-scanner-host = { path = "../snark-scanner-host" }
 

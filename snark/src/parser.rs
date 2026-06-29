@@ -7016,7 +7016,12 @@ pub enum PredicateOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{grammar::RawGrammarJson, lexical::LexicalFacts, validated::ValidatedGrammar};
+    use crate::{
+        corpus::{SexpChild, SexpNode, SexpValue},
+        grammar::RawGrammarJson,
+        lexical::LexicalFacts,
+        validated::ValidatedGrammar,
+    };
 
     fn normalize(input: &str) -> ParserGrammar {
         let raw = RawGrammarJson::from_tree_sitter_json_str(input).unwrap();
@@ -7027,6 +7032,122 @@ mod tests {
 
     fn prepared(input: &str) -> ParserGrammar {
         normalize(input).prepare_productions_for_items().unwrap()
+    }
+
+    fn authored_gingembre_styx() -> &'static str {
+        r#"
+name gingembre
+
+rules {
+    template {type SYMBOL, name interpolation}
+    interpolation {
+        type SEQ
+        members (
+            {type STRING, value "{{"}
+            {type SYMBOL, name var_ref}
+            {type STRING, value "}}"}
+        )
+    }
+    var_ref {
+        type TOKEN
+        content {
+            type PATTERN
+            value r"(--|-?[a-zA-Z_\xA0-\xFF])[a-zA-Z0-9-_\xA0-\xFF]*"
+        }
+    }
+}
+
+extras (
+    {type PATTERN, value r"\s+"}
+)
+"#
+    }
+
+    fn authored_gingembre_runtime_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        use facet_styx::RenderError;
+
+        let source = authored_gingembre_styx();
+        let raw: RawGrammarJson = facet_styx::from_str(source)
+            .unwrap_or_else(|error| panic!("{}", error.render("gingembre-snark.styx", source)));
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = ParseTable::from_grammar(&parser).unwrap();
+        (validated, parser, table)
+    }
+
+    fn gingembre_named_projection(input: &str) -> SexpNode {
+        let parse = gingembre_syntax::parse(input);
+        assert!(
+            parse.errors.is_empty(),
+            "gingembre parser reported errors for {input:?}: {:?}",
+            parse.errors
+        );
+        let root = gingembre_node_projection(parse.syntax()).unwrap();
+        assert_eq!(root.to_sexp(), "(template (interpolation (var_ref)))");
+        root
+    }
+
+    fn gingembre_node_projection(node: &gingembre_syntax::ResolvedNode) -> Option<SexpNode> {
+        let kind = match node.kind() {
+            gingembre_syntax::SyntaxKind::Template => "template",
+            gingembre_syntax::SyntaxKind::Interpolation => "interpolation",
+            gingembre_syntax::SyntaxKind::VarRef => "var_ref",
+            _ => return None,
+        };
+        let children = node
+            .children()
+            .filter_map(|child| {
+                gingembre_node_projection(&child).map(|node| SexpChild {
+                    field: None,
+                    value: SexpValue::Node(node),
+                })
+            })
+            .collect();
+        Some(SexpNode {
+            kind: kind.to_owned(),
+            children,
+        })
+    }
+
+    #[test]
+    fn parses_styx_authored_gingembre_interpolation_like_gingembre() {
+        let input = "{{ x }}";
+        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let expected = gingembre_named_projection(input);
+
+        rediff::assert_same!(report.tree(), &expected);
+        assert_eq!(report.accepted_count(), 1);
+        assert_eq!(report.failure_count(), 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_styx_authored_gingembre_interpolation_through_weavy_runtime() {
+        let input = "{{ x }}";
+        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan, &validated, &parser, &table, input,
+        )
+        .unwrap();
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]

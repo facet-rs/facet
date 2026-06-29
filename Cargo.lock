@@ -6186,6 +6186,8 @@ version = "0.0.1"
 dependencies = [
  "facet",
  "facet-json",
+ "facet-styx",
+ "gingembre-syntax",
  "indexmap 2.14.0",
  "rediff",
  "snark-scanner-host",
