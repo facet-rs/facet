@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 facet.workspace = true
 facet-json.workspace = true
+margin.workspace = true
 snark = { path = "../snark", features = ["tree-sitter-import"] }
 snark-scanner-host = { path = "../snark-scanner-host" }
 wasm-bindgen.workspace = true

@@ -23,6 +23,16 @@ type SampleFile = BundleFile & {
 type Diagnostic = {
   stage: string;
   message: string;
+  primary_span: DiagnosticSpan | null;
+};
+
+type DiagnosticSpan = {
+  start_byte: number;
+  end_byte: number;
+  start_row: number;
+  start_column: number;
+  end_row: number;
+  end_column: number;
 };
 
 type ParseOutput = {
@@ -393,7 +403,7 @@ export function App() {
             />
           </div>
         </label>
-        <SourceDiagnostics input={input} result={result} />
+        <SourceDiagnostics result={result} />
       </section>
 
       <section className="pane result-pane" aria-label="Parse results">
@@ -700,7 +710,7 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
   return {
     ok: false,
     language: null,
-    diagnostics: [{ stage, message }],
+    diagnostics: [{ stage, message, primary_span: null }],
     bundle: {
       grammar_path: files.some((file) => file.path === "src/grammar.json") ? "src/grammar.json" : null,
       grammar_js_path: files.some((file) => file.path === "grammar.js") ? "grammar.js" : null,
@@ -841,117 +851,56 @@ function renderSourceLayer(input: string, result: PlaygroundResponse | null) {
   return renderHighlightedSource(input, result.highlights);
 }
 
-function SourceDiagnostics({
-  input,
-  result,
-}: {
-  input: string;
-  result: PlaygroundResponse | null;
-}) {
-  if (!result?.diagnostics.length) {
+function SourceDiagnostics({ result }: { result: PlaygroundResponse | null }) {
+  const unplaced = result?.diagnostics.filter((diagnostic) => !diagnostic.primary_span) ?? [];
+  if (!unplaced.length) {
     return null;
   }
 
   return (
     <div className="source-diagnostics">
-      {result.diagnostics.map((diagnostic, index) => {
-        const location = diagnosticLocation(input, diagnostic.message);
-        return (
-          <div className="source-diagnostic" key={`${diagnostic.stage}-${index}`}>
-            <strong>{diagnostic.stage}</strong>
-            {location ? (
-              <small>
-                line {location.row + 1}, column {location.column + 1}, byte {location.byte}
-              </small>
-            ) : null}
-            <code>{diagnostic.message}</code>
-          </div>
-        );
-      })}
+      {unplaced.map((diagnostic, index) => (
+        <div className="source-diagnostic" key={`${diagnostic.stage}-${index}`}>
+          <strong>{diagnostic.stage}</strong>
+          <code>{diagnostic.message}</code>
+        </div>
+      ))}
     </div>
   );
 }
 
 function renderDiagnosticSource(input: string, diagnostics: Diagnostic[]) {
-  const location = diagnostics
-    .map((diagnostic) => diagnosticLocation(input, diagnostic.message))
-    .find((candidate): candidate is DiagnosticLocation => candidate !== null);
-  if (!location) {
+  const diagnostic = diagnostics.find((candidate) => candidate.primary_span);
+  if (!diagnostic?.primary_span) {
     return null;
   }
+  const span = diagnostic.primary_span;
 
   const byteToStringIndex = byteOffsetMap(input);
-  const markerIndex = byteToStringIndex[location.byte] ?? input.length;
-  const markedChar = codePointAtStringIndex(input, markerIndex);
-  const markerText = markedChar && markedChar !== "\n" ? markedChar : " ";
-  const markerEnd = markerText === markedChar ? markerIndex + markedChar.length : markerIndex;
+  const markerIndex = byteToStringIndex[span.start_byte] ?? input.length;
+  const markerEnd = byteToStringIndex[span.end_byte] ?? markerIndex;
+  const rawMarker = input.slice(markerIndex, markerEnd);
+  const markerText = rawMarker && rawMarker !== "\n" ? rawMarker : " ";
+  const consumedEnd = markerText === rawMarker ? markerEnd : markerIndex;
 
   return [
     input.slice(0, markerIndex),
     <span
       className="source-diagnostic-marker"
-      key={`diagnostic-${location.byte}`}
-      title={`Parse diagnostic at byte ${location.byte}`}
+      key={`diagnostic-${span.start_byte}`}
+      title={diagnostic.message}
     >
       {markerText}
+      <span className="source-diagnostic-label">
+        <strong>{diagnostic.stage}</strong>
+        <small>
+          {span.start_row + 1}:{span.start_column + 1}
+        </small>
+        <span>{diagnostic.message}</span>
+      </span>
     </span>,
-    input.slice(markerEnd),
+    input.slice(consumedEnd),
   ];
-}
-
-type DiagnosticLocation = {
-  byte: number;
-  row: number;
-  column: number;
-};
-
-function diagnosticLocation(input: string, message: string): DiagnosticLocation | null {
-  const byte = diagnosticByte(message);
-  if (byte === null) {
-    return null;
-  }
-  return pointForByte(input, byte);
-}
-
-function diagnosticByte(message: string) {
-  const match = /\bbyte\s+(\d+)\b/.exec(message);
-  if (!match) {
-    return null;
-  }
-  const byte = Number.parseInt(match[1] ?? "", 10);
-  return Number.isFinite(byte) ? byte : null;
-}
-
-function pointForByte(input: string, byte: number): DiagnosticLocation {
-  const encoder = new TextEncoder();
-  const totalBytes = encoder.encode(input).length;
-  const target = Math.max(0, Math.min(byte, totalBytes));
-  let row = 0;
-  let column = 0;
-  let byteOffset = 0;
-
-  for (const char of input) {
-    const charBytes = encoder.encode(char).length;
-    if (byteOffset + charBytes > target) {
-      break;
-    }
-    if (char === "\n") {
-      row += 1;
-      column = 0;
-    } else {
-      column += charBytes;
-    }
-    byteOffset += charBytes;
-    if (byteOffset >= target) {
-      break;
-    }
-  }
-
-  return { byte: target, row, column };
-}
-
-function codePointAtStringIndex(input: string, index: number) {
-  return Array.from(input.slice(index))[0] ?? null;
 }
 
 function nonOverlappingCaptures(

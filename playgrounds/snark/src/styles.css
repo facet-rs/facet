@@ -309,11 +309,50 @@ textarea {
 }
 
 .source-diagnostic-marker {
+  position: relative;
   display: inline-block;
   min-width: 0.6em;
   border-bottom: 2px solid #b24b2b;
   background: #fde8df;
   color: #7e2a19;
+}
+
+.source-diagnostic-label {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 100%;
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  max-width: min(560px, 64vw);
+  margin-left: 8px;
+  padding: 3px 6px;
+  border: 1px solid #efb29f;
+  border-radius: 6px;
+  background: #fff7f2;
+  box-shadow: 0 2px 8px rgb(45 32 24 / 14%);
+  color: #7e2a19;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  pointer-events: none;
+}
+
+.source-diagnostic-label strong,
+.source-diagnostic-label small,
+.source-diagnostic-label span {
+  min-width: 0;
+}
+
+.source-diagnostic-label small {
+  color: #8f5b4c;
+}
+
+.source-diagnostic-label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .source-diagnostics {

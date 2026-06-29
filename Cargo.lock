@@ -6598,6 +6598,7 @@ version = "0.0.1"
 dependencies = [
  "facet",
  "facet-json",
+ "margin",
  "snark",
  "snark-scanner-host",
  "wasm-bindgen",

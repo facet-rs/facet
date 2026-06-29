@@ -4,14 +4,18 @@
 use std::{cell::RefCell, collections::BTreeSet};
 
 use facet::Facet;
+use margin::{
+    Annotation, AnnotationRole, Diagnostics as MarginDiagnostics, LayoutOptions, Report, Severity,
+    Source, SourceId, Span, plan,
+};
 use snark::{
     corpus::{CorpusSource, HighlightAssertion},
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     parser::{
         ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
-        ReducedExternalScanner, ReducedParseError, RuntimeParseReport, RuntimeParser,
-        ScannerSnapshotId,
+        ReducedExternalScanner, ReducedParseError, ReducedParseErrorKind, RuntimeParseReport,
+        RuntimeParser, ScannerSnapshotId,
     },
     query::QuerySource,
     runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
@@ -50,6 +54,17 @@ struct PlaygroundResponse {
 struct Diagnostic {
     stage: String,
     message: String,
+    primary_span: Option<DiagnosticSpan>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct DiagnosticSpan {
+    start_byte: u32,
+    end_byte: u32,
+    start_row: u32,
+    start_column: u32,
+    end_row: u32,
+    end_column: u32,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -212,6 +227,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
             diagnostics: vec![Diagnostic {
                 stage: "bundle".to_owned(),
                 message,
+                primary_span: None,
             }],
             bundle,
             parse: None,
@@ -229,7 +245,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
             return PlaygroundResponse {
                 ok: false,
                 language: None,
-                diagnostics: vec![Diagnostic { stage, message }],
+                diagnostics: vec![diagnostic(&stage, message, None)],
                 bundle,
                 parse: None,
                 highlights: Vec::new(),
@@ -278,15 +294,13 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                         );
                     }
                 }
-                Err(error) => diagnostics.push(Diagnostic {
-                    stage: "parse".to_owned(),
-                    message: error.to_string(),
-                }),
+                Err(error) => diagnostics.push(reduced_error_diagnostic(
+                    "parse",
+                    &error,
+                    &request.input,
+                )),
             },
-            Err(error) => diagnostics.push(Diagnostic {
-                stage: "runtime".to_owned(),
-                message: error.to_string(),
-            }),
+            Err(error) => diagnostics.push(diagnostic("runtime", error.to_string(), None)),
         }
     }
 
@@ -743,14 +757,100 @@ fn parse_with_optional_scanner<'a>(
     }
 }
 
+fn diagnostic(stage: &str, message: String, primary_span: Option<DiagnosticSpan>) -> Diagnostic {
+    Diagnostic {
+        stage: stage.to_owned(),
+        message,
+        primary_span,
+    }
+}
+
+fn reduced_error_diagnostic(stage: &str, error: &ReducedParseError, input: &str) -> Diagnostic {
+    let span = reduced_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
+    diagnostic(stage, error.to_string(), span)
+}
+
+fn reduced_error_byte(error: &ReducedParseError) -> Option<usize> {
+    match error.kind() {
+        ReducedParseErrorKind::NoToken { byte_position, .. }
+        | ReducedParseErrorKind::NoAction { byte_position, .. }
+        | ReducedParseErrorKind::TrailingInput { byte_position } => Some(*byte_position),
+        _ => error.trace().last().map(|step| step.byte_position),
+    }
+}
+
+fn diagnostic_span(input: &str, byte: usize) -> Option<DiagnosticSpan> {
+    let start = char_boundary_at_or_before(input, byte.min(input.len()));
+    let end = next_char_boundary(input, start);
+    let source_id = SourceId("source".to_owned());
+    let source = Source {
+        id: source_id.clone(),
+        name: "source".to_owned(),
+        hyperlink: None,
+        text: input.to_owned(),
+    };
+    let diagnostics = MarginDiagnostics {
+        sources: vec![source],
+        reports: vec![Report {
+            severity: Severity::Error,
+            title: "parse diagnostic".to_owned(),
+            annotations: vec![Annotation {
+                spans: vec![Span::new(source_id.0.as_str(), start, end)],
+                role: AnnotationRole::PrimaryLabel,
+                syntax_class: None,
+                message: None,
+                priority: 100,
+            }],
+            notes: Vec::new(),
+            sections: Vec::new(),
+        }],
+    };
+    let plan = plan(&diagnostics, &LayoutOptions::default()).ok()?;
+    let segment = plan
+        .reports
+        .first()?
+        .windows
+        .first()?
+        .annotations
+        .first()?
+        .segments
+        .first()?;
+    Some(DiagnosticSpan {
+        start_byte: usize_to_u32(start)?,
+        end_byte: usize_to_u32(end)?,
+        start_row: usize_to_u32(segment.line_number.checked_sub(1)?)?,
+        start_column: usize_to_u32(segment.start_column)?,
+        end_row: usize_to_u32(segment.line_number.checked_sub(1)?)?,
+        end_column: usize_to_u32(segment.end_column)?,
+    })
+}
+
+fn char_boundary_at_or_before(input: &str, mut byte: usize) -> usize {
+    while byte > 0 && !input.is_char_boundary(byte) {
+        byte -= 1;
+    }
+    byte
+}
+
+fn next_char_boundary(input: &str, start: usize) -> usize {
+    if start >= input.len() {
+        return start;
+    }
+    input[start..]
+        .chars()
+        .next()
+        .map_or(start, |ch| start + ch.len_utf8())
+}
+
+fn usize_to_u32(value: usize) -> Option<u32> {
+    u32::try_from(value).ok()
+}
+
 fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse {
     PlaygroundResponse {
         ok: false,
         language: None,
-        diagnostics: vec![Diagnostic {
-            stage: stage.to_owned(),
-            message,
-        }],
+        diagnostics: vec![diagnostic(stage, message, None)],
         bundle: BundleSummary {
             grammar_path: None,
             grammar_js_path: None,
@@ -1524,6 +1624,67 @@ mod tests {
                 ("variable", "www"),
                 ("variable", "www"),
             ]
+        );
+    }
+
+    #[test]
+    fn parse_errors_include_margin_resolved_primary_span() {
+        let input = "ok\n#";
+        let span = diagnostic_span(input, 3).expect("diagnostic byte resolves through margin");
+        assert_eq!(span.start_byte, 3);
+        assert_eq!(span.end_byte, 4);
+        assert_eq!(span.start_row, 1);
+        assert_eq!(span.start_column, 0);
+        assert_eq!(span.end_row, 1);
+        assert_eq!(span.end_column, 1);
+
+        let request = PlaygroundRequest {
+            files: vec![BundleFile {
+                path: "src/grammar.json".to_owned(),
+                text: r#"{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
+  "name": "diagnostic_smoke",
+  "rules": {
+    "document": {
+      "type": "REPEAT1",
+      "content": { "type": "SYMBOL", "name": "word" }
+    },
+    "word": {
+      "type": "PATTERN",
+      "value": "\\w+"
+    }
+  },
+  "extras": [{ "type": "PATTERN", "value": "\\s" }],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                .to_owned(),
+            }],
+            input: input.to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(!response.ok);
+        assert_eq!(response.diagnostics[0].stage, "parse");
+        assert_eq!(
+            response.diagnostics[0]
+                .primary_span
+                .as_ref()
+                .map(|span| (
+                    span.start_byte,
+                    span.end_byte,
+                    span.start_row,
+                    span.start_column,
+                    span.end_row,
+                    span.end_column,
+                )),
+            Some((3, 4, 1, 0, 1, 1))
         );
     }
 }
