@@ -3309,6 +3309,7 @@ mod tests {
     struct CssReducedExternalScanner {
         scanner: RefCell<snark_scanner_host::CssScanner>,
         external_ordinals: Vec<(crate::parser::ExternalId, usize)>,
+        snapshots: RefCell<Vec<Vec<u8>>>,
     }
 
     impl CssReducedExternalScanner {
@@ -3351,6 +3352,7 @@ mod tests {
             Self {
                 scanner: RefCell::new(snark_scanner_host::CssScanner::new()),
                 external_ordinals,
+                snapshots: RefCell::new(vec![Vec::new()]),
             }
         }
 
@@ -3379,6 +3381,25 @@ mod tests {
             }
             Some(mask)
         }
+
+        fn snapshot_bytes(&self, snapshot: Option<ScannerSnapshotId>) -> Vec<u8> {
+            let snapshot = snapshot.unwrap_or_else(|| ScannerSnapshotId::from_index(0));
+            self.snapshots
+                .borrow()
+                .get(snapshot.get() as usize)
+                .unwrap_or_else(|| panic!("scanner snapshot {} should be interned", snapshot.get()))
+                .clone()
+        }
+
+        fn intern_snapshot(&self, bytes: &[u8]) -> ScannerSnapshotId {
+            let mut snapshots = self.snapshots.borrow_mut();
+            if let Some(index) = snapshots.iter().position(|snapshot| snapshot == bytes) {
+                return ScannerSnapshotId::from_index(index);
+            }
+            let index = snapshots.len();
+            snapshots.push(bytes.to_vec());
+            ScannerSnapshotId::from_index(index)
+        }
     }
 
     impl ReducedExternalScanner for CssReducedExternalScanner {
@@ -3395,18 +3416,22 @@ mod tests {
             if request_ordinal >= mask.len() || !mask[request_ordinal] {
                 return Ok(None);
             }
+            let before = request
+                .scanner_snapshot()
+                .unwrap_or_else(|| ScannerSnapshotId::from_index(0));
+            let snapshot = self.snapshot_bytes(Some(before));
             let scan = self
                 .scanner
                 .borrow_mut()
-                .scan(request.input(), request.byte_position(), &mask, &[])
+                .scan(request.input(), request.byte_position(), &mask, &snapshot)
                 .expect("CSS valid-symbol mask width should match imported external ordinals");
             if !scan.accepted() || scan.result_symbol() != Some(request_ordinal) {
                 return Ok(None);
             }
-            let empty_snapshot = ScannerSnapshotId::from_index(0);
+            let after = self.intern_snapshot(scan.serialized_state());
             Ok(Some(
                 ReducedExternalScanResult::new(scan.end_byte())
-                    .with_snapshots(Some(empty_snapshot), Some(empty_snapshot)),
+                    .with_snapshots(Some(before), Some(after)),
             ))
         }
     }
