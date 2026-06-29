@@ -1855,6 +1855,54 @@ mod tests {
         assert_same!(actual_tree, cases[4].expected);
     }
 
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_pinned_json_comments_through_weavy_lowering() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let main_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/main.txt")
+            .unwrap();
+        let cases = main_fixture.parse_cases().unwrap();
+
+        assert_eq!(cases[4].name, "Comments");
+        let rust_report = unwrap_reduced_report_or_panic(
+            ReducedParser::new(&validated, &parser_grammar, &parse_table)
+                .unwrap()
+                .parse_with_report(&cases[4].input),
+            &parser_grammar,
+            &parse_table,
+        );
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &cases[4].input,
+        )
+        .unwrap();
+
+        assert_same!(&weavy_tree, rust_report.tree());
+        assert_same!(weavy_tree, cases[4].expected);
+        assert!(stats.step_count > 0);
+        assert!(stats.block_call_count > 0);
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {

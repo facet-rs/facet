@@ -870,6 +870,7 @@ impl<'a> ReducedWeavyStepper<'a> {
             stack: vec![ReducedWeavyStackEntry {
                 state: parser_ir::ParseStateId::from_index(0),
                 fragment: None,
+                extra: false,
             }],
             byte_position: 0,
             lookahead: None,
@@ -938,11 +939,24 @@ impl<'a> ReducedWeavyStepper<'a> {
                 self.stack.push(ReducedWeavyStackEntry {
                     state,
                     fragment: Some(ReducedWeavyFragment::Hidden(Vec::new())),
+                    extra: false,
                 });
                 Ok(Control::CallBlock(self.plan.state_block(state)?))
             }
             SnarkIntrinsic::ShiftExtra { state, .. } => {
                 let state = parser_state(*state);
+                let token = self.lookahead.ok_or(ReducedWeavyError::NoToken {
+                    state,
+                    byte_position: self.byte_position,
+                    expected: Vec::new(),
+                })?;
+                if let Some(fragment) = self.extra_fragment(token.lookahead) {
+                    self.stack.push(ReducedWeavyStackEntry {
+                        state,
+                        fragment: Some(fragment),
+                        extra: true,
+                    });
+                }
                 Ok(Control::CallBlock(self.plan.state_block(state)?))
             }
             SnarkIntrinsic::Reduce {
@@ -967,6 +981,7 @@ impl<'a> ReducedWeavyStepper<'a> {
                 self.stack.push(ReducedWeavyStackEntry {
                     state: goto,
                     fragment: Some(fragment),
+                    extra: false,
                 });
                 Ok(Control::CallBlock(self.plan.state_block(goto)?))
             }
@@ -1059,7 +1074,9 @@ impl<'a> ReducedWeavyStepper<'a> {
             let candidate = ReducedWeavyTokenCandidate {
                 lookahead: parser_ir::LookaheadSymbol::Terminal(*terminal),
                 end,
+                extra: false,
                 external: false,
+                immediate: terminal_row.kind() == parser_ir::ParserTerminalKind::ImmediateToken,
                 literal: terminal_row.kind() == parser_ir::ParserTerminalKind::String,
                 lexical_precedence: self.lexical_completion_precedence(terminal_row),
                 implicit_precedence: self.lexical_implicit_precedence(terminal_row),
@@ -1072,6 +1089,7 @@ impl<'a> ReducedWeavyStepper<'a> {
                 &mut best,
                 ReducedWeavyTokenCandidate {
                     lookahead,
+                    extra: self.lookahead_shifts_only_extra(state, lookahead),
                     ..candidate
                 },
             );
@@ -1294,6 +1312,23 @@ impl<'a> ReducedWeavyStepper<'a> {
         }
     }
 
+    fn lookahead_shifts_only_extra(
+        &self,
+        state: &parser_ir::ParseState,
+        lookahead: parser_ir::LookaheadSymbol,
+    ) -> bool {
+        state
+            .entries()
+            .iter()
+            .find(|entry| entry.lookahead() == lookahead)
+            .is_some_and(|entry| {
+                entry
+                    .actions()
+                    .iter()
+                    .all(|action| matches!(action, parser_ir::ParseAction::ShiftExtra))
+            })
+    }
+
     fn reduce_fragment(
         &mut self,
         production: parser_ir::ProductionId,
@@ -1304,32 +1339,42 @@ impl<'a> ReducedWeavyStepper<'a> {
         let metadata_row = &self.parser.production_metadata()[metadata.get() as usize];
         let mut children = Vec::new();
         let mut popped = Vec::new();
-        for _ in 0..child_count {
+        let mut remaining_children = child_count;
+        while remaining_children > 0 {
             let entry = self.stack.pop().ok_or(ReducedWeavyError::EmptyStack)?;
             let Some(fragment) = entry.fragment else {
                 return Err(ReducedWeavyError::EmptyStack);
             };
-            popped.push(fragment);
+            if !entry.extra {
+                remaining_children -= 1;
+            }
+            popped.push((entry.extra, fragment));
         }
         popped.reverse();
-        for (step, fragment) in production_row.steps().iter().zip(popped) {
+        let mut steps = production_row.steps().iter();
+        for (extra, fragment) in popped {
             let mut step_children = fragment.into_children();
-            if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
-                let alias_name = self.parser.aliases()[alias.get() as usize]
-                    .value()
-                    .to_owned();
-                if step_children.is_empty() {
-                    step_children.push(SexpChild {
-                        field: None,
-                        value: SexpValue::Node(SexpNode {
-                            kind: alias_name,
-                            children: Vec::new(),
-                        }),
-                    });
-                } else {
-                    for child in &mut step_children {
-                        if let SexpValue::Node(node) = &mut child.value {
-                            node.kind.clone_from(&alias_name);
+            if !extra {
+                let Some(step) = steps.next() else {
+                    return Err(ReducedWeavyError::EmptyStack);
+                };
+                if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
+                    let alias_name = self.parser.aliases()[alias.get() as usize]
+                        .value()
+                        .to_owned();
+                    if step_children.is_empty() {
+                        step_children.push(SexpChild {
+                            field: None,
+                            value: SexpValue::Node(SexpNode {
+                                kind: alias_name,
+                                children: Vec::new(),
+                            }),
+                        });
+                    } else {
+                        for child in &mut step_children {
+                            if let SexpValue::Node(node) = &mut child.value {
+                                node.kind.clone_from(&alias_name);
+                            }
                         }
                     }
                 }
@@ -1345,6 +1390,33 @@ impl<'a> ReducedWeavyStepper<'a> {
         } else {
             Ok(ReducedWeavyFragment::Hidden(children))
         }
+    }
+
+    fn extra_fragment(
+        &self,
+        lookahead: parser_ir::LookaheadSymbol,
+    ) -> Option<ReducedWeavyFragment> {
+        let first = reduced_weavy_first_sets(self.parser)?;
+        for extra in self.parser.extra_roots() {
+            let parser_ir::ParserSymbol::Nonterminal(nonterminal) = extra.symbol() else {
+                continue;
+            };
+            if !first[nonterminal.get() as usize].contains(&lookahead) {
+                continue;
+            }
+            let Some(kind) =
+                self.parser.public_node_kinds().iter().find(|kind| {
+                    kind.source() == parser_ir::PublicNodeKindSource::Rule(nonterminal)
+                })
+            else {
+                continue;
+            };
+            return Some(ReducedWeavyFragment::Node(SexpNode {
+                kind: kind.name().to_owned(),
+                children: Vec::new(),
+            }));
+        }
+        None
     }
 
     fn goto_state(
@@ -1404,7 +1476,9 @@ struct ReducedWeavyToken {
 struct ReducedWeavyTokenCandidate {
     lookahead: parser_ir::LookaheadSymbol,
     end: usize,
+    extra: bool,
     external: bool,
+    immediate: bool,
     literal: bool,
     lexical_precedence: i32,
     implicit_precedence: i32,
@@ -1421,6 +1495,12 @@ fn reduced_weavy_candidate_order(
     left: ReducedWeavyTokenCandidate,
     right: ReducedWeavyTokenCandidate,
 ) -> ReducedWeavyCandidateOrder {
+    if left.immediate && !left.extra && right.extra {
+        return ReducedWeavyCandidateOrder::Greater;
+    }
+    if left.extra && right.immediate && !right.extra {
+        return ReducedWeavyCandidateOrder::Less;
+    }
     match left.end.cmp(&right.end) {
         std::cmp::Ordering::Greater => ReducedWeavyCandidateOrder::Greater,
         std::cmp::Ordering::Less => ReducedWeavyCandidateOrder::Less,
@@ -1464,10 +1544,92 @@ fn push_reduced_weavy_candidate(
     }
 }
 
+fn reduced_weavy_first_sets(
+    parser: &parser_ir::ParserGrammar,
+) -> Option<Vec<Vec<parser_ir::LookaheadSymbol>>> {
+    let graph = parser.item_preparation()?.graph();
+    let mut nullable = vec![false; parser.symbols().nonterminals().len()];
+    for nonterminal in graph.nullable() {
+        nullable[nonterminal.get() as usize] = true;
+    }
+    let mut first = vec![Vec::new(); parser.symbols().nonterminals().len()];
+    loop {
+        let mut changed = false;
+        for production in parser.productions() {
+            let symbols = reduced_weavy_first_of_steps(production.steps(), &nullable, &first);
+            let lhs = production.lhs().get() as usize;
+            for symbol in symbols {
+                if !first[lhs].contains(&symbol) {
+                    first[lhs].push(symbol);
+                    first[lhs].sort();
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return Some(first);
+        }
+    }
+}
+
+fn reduced_weavy_first_of_steps(
+    steps: &[parser_ir::ProductionStep],
+    nullable: &[bool],
+    first: &[Vec<parser_ir::LookaheadSymbol>],
+) -> Vec<parser_ir::LookaheadSymbol> {
+    let mut out = Vec::new();
+    for step in steps {
+        if let Some(lookahead) = reduced_weavy_lookahead_for_step(step) {
+            reduced_weavy_push_lookahead(&mut out, lookahead);
+            return out;
+        }
+        let parser_ir::ParserSymbol::Nonterminal(nonterminal) = step.symbol() else {
+            return out;
+        };
+        for lookahead in &first[nonterminal.get() as usize] {
+            reduced_weavy_push_lookahead(&mut out, *lookahead);
+        }
+        if !nullable[nonterminal.get() as usize] {
+            return out;
+        }
+    }
+    out
+}
+
+fn reduced_weavy_lookahead_for_step(
+    step: &parser_ir::ProductionStep,
+) -> Option<parser_ir::LookaheadSymbol> {
+    match step.symbol() {
+        parser_ir::ParserSymbol::Terminal(terminal) => Some(match step.reserved_context() {
+            Some(context) => parser_ir::LookaheadSymbol::ReservedWord { terminal, context },
+            None => parser_ir::LookaheadSymbol::Terminal(terminal),
+        }),
+        parser_ir::ParserSymbol::External(external) => {
+            Some(parser_ir::LookaheadSymbol::External(external))
+        }
+        parser_ir::ParserSymbol::Eof => Some(parser_ir::LookaheadSymbol::Eof),
+        parser_ir::ParserSymbol::Internal(internal) => {
+            Some(parser_ir::LookaheadSymbol::ErrorRecovery(internal))
+        }
+        parser_ir::ParserSymbol::Nonterminal(_) => None,
+    }
+}
+
+fn reduced_weavy_push_lookahead(
+    out: &mut Vec<parser_ir::LookaheadSymbol>,
+    lookahead: parser_ir::LookaheadSymbol,
+) {
+    if !out.contains(&lookahead) {
+        out.push(lookahead);
+        out.sort();
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ReducedWeavyStackEntry {
     state: parser_ir::ParseStateId,
     fragment: Option<ReducedWeavyFragment>,
+    extra: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
