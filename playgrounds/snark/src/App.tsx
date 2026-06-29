@@ -167,9 +167,11 @@ const defaultFiles: BundleFile[] = [
 export function App() {
   const [files, setFiles] = useState<BundleFile[]>(defaultFiles);
   const [selectedGrammarRoot, setSelectedGrammarRoot] = useState("");
+  const [selectedSamplePath, setSelectedSamplePath] = useState("");
   const [input, setInput] = useState("alpha 42 beta");
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editorScroll, setEditorScroll] = useState({ left: 0, top: 0 });
 
   const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
   const activeGrammarRoot = useMemo(
@@ -200,9 +202,13 @@ export function App() {
     [projectedFiles],
   );
   const highlightedSource = useMemo(
-    () => (result ? renderHighlightedSource(input, result.highlights) : ""),
-    [input, result?.highlights],
+    () =>
+      result?.ok && result.parse && result.highlights.length > 0
+        ? renderHighlightedSource(input, result.highlights)
+        : null,
+    [input, result?.highlights, result?.ok, result?.parse],
   );
+  const hasHighlightedSource = highlightedSource !== null;
 
   async function loadFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) {
@@ -218,12 +224,14 @@ export function App() {
     const nextGrammarRoot = preferredGrammarRootId(next);
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
+    setSelectedSamplePath("");
     setInput("");
     setResult(null);
   }
 
-  function updateSourceInput(nextInput: string) {
+  function updateSourceInput(nextInput: string, samplePath = "") {
     setInput(nextInput);
+    setSelectedSamplePath(samplePath);
     setResult(null);
   }
 
@@ -274,7 +282,7 @@ export function App() {
           {visibleBundleFiles.map((file) => (
             <div
               key={file.path}
-              className="file-row"
+              className={file.sourcePath === selectedSamplePath ? "file-row active" : "file-row"}
               title={file.sourcePath === file.path ? file.path : `${file.path} from ${file.sourcePath}`}
             >
               <span>{file.path}</span>
@@ -305,6 +313,7 @@ export function App() {
               value={activeGrammarRoot?.id ?? ""}
               onChange={(event) => {
                 setSelectedGrammarRoot(event.currentTarget.value);
+                setSelectedSamplePath("");
                 setResult(null);
               }}
             >
@@ -319,11 +328,13 @@ export function App() {
             <select
               aria-label="Sample"
               className="sample-select"
-              value=""
+              value={selectedSamplePath}
               onChange={(event) => {
                 const sample = sampleFiles.find((file) => file.sourcePath === event.currentTarget.value);
                 if (sample) {
-                  updateSourceInput(sample.text);
+                  updateSourceInput(sample.text, sample.sourcePath);
+                } else {
+                  setSelectedSamplePath("");
                 }
               }}
             >
@@ -339,7 +350,27 @@ export function App() {
 
         <label className="editor-block source-editor">
           <span>Source</span>
-          <textarea value={input} onChange={(event) => updateSourceInput(event.currentTarget.value)} />
+          <div className={hasHighlightedSource ? "source-input with-highlights" : "source-input"}>
+            {hasHighlightedSource ? (
+              <pre
+                aria-hidden="true"
+                className="source-highlight-layer"
+                style={{ transform: `translate(${-editorScroll.left}px, ${-editorScroll.top}px)` }}
+              >
+                {highlightedSource}
+              </pre>
+            ) : null}
+            <textarea
+              value={input}
+              onChange={(event) => updateSourceInput(event.currentTarget.value)}
+              onScroll={(event) =>
+                setEditorScroll({
+                  left: event.currentTarget.scrollLeft,
+                  top: event.currentTarget.scrollTop,
+                })
+              }
+            />
+          </div>
         </label>
       </section>
 
@@ -362,8 +393,7 @@ export function App() {
             <pre>{result?.parse?.sexp ?? ""}</pre>
           </section>
           <section>
-            <h2>Highlights</h2>
-            <pre className="highlighted-source">{highlightedSource}</pre>
+            <h2>Captures</h2>
             <div className="capture-list">
               {result?.highlights.map((capture, index) => (
                 <div className="capture-row" key={`${capture.capture_name}-${capture.start_byte}-${index}`}>
@@ -513,16 +543,15 @@ function StatusStrip({ result }: { result: PlaygroundResponse | null }) {
 }
 
 function BundleInventory({ result }: { result: PlaygroundResponse }) {
+  const grammarInput = result.bundle.grammar_js_path
+    ? `${result.bundle.grammar_js_path} -> ${result.bundle.grammar_path ?? "src/grammar.json"}`
+    : (result.bundle.grammar_path ?? "missing");
   return (
     <div className="bundle-inventory">
       <dl className="bundle-facts">
         <div>
           <dt>grammar</dt>
-          <dd>{result.bundle.grammar_path ?? "missing"}</dd>
-        </div>
-        <div>
-          <dt>grammar.js</dt>
-          <dd>{result.bundle.grammar_js_path ?? "none"}</dd>
+          <dd title={grammarInput}>{grammarInput}</dd>
         </div>
         <div>
           <dt>queries</dt>
@@ -570,10 +599,9 @@ function LocalBundleInventory({
   files: { path: string; sourcePath: string }[];
   grammarRootLabel: string;
 }) {
-  const grammarPath =
-    files.find((file) => file.path === "src/grammar.json")?.path ??
-    files.find((file) => file.path === "grammar.js")?.path ??
-    "missing";
+  const grammarJsonPath = files.find((file) => file.path === "src/grammar.json")?.path;
+  const grammarJsPath = files.find((file) => file.path === "grammar.js")?.path;
+  const grammarPath = grammarJsonPath ?? (grammarJsPath ? `${grammarJsPath} -> src/grammar.json` : "missing");
   const queryCount = files.filter((file) => file.path.startsWith("queries/")).length;
   const corpusCount = files.filter(
     (file) =>

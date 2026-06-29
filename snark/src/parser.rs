@@ -5016,6 +5016,7 @@ enum RegexClassItem {
     Range(char, char),
     Whitespace,
     Digit,
+    Word,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5045,10 +5046,12 @@ fn parse_regex_atom(pattern: &str, position: &mut usize) -> Option<RegexAtom> {
         '[' => parse_regex_class(pattern, position).map(RegexAtom::Class),
         '.' => Some(RegexAtom::Any),
         '\\' => parse_regex_escape(pattern, position).map(|item| match item {
-            RegexClassItem::Whitespace | RegexClassItem::Digit => RegexAtom::Class(RegexClass {
-                negated: false,
-                items: vec![item],
-            }),
+            RegexClassItem::Whitespace | RegexClassItem::Digit | RegexClassItem::Word => {
+                RegexAtom::Class(RegexClass {
+                    negated: false,
+                    items: vec![item],
+                })
+            }
             RegexClassItem::Char(ch) => RegexAtom::Literal(ch),
             RegexClassItem::Range(_, _) => unreachable!("escaped atoms are not ranges"),
         }),
@@ -5105,6 +5108,7 @@ fn parse_regex_escape(pattern: &str, position: &mut usize) -> Option<RegexClassI
     match ch {
         's' => Some(RegexClassItem::Whitespace),
         'd' => Some(RegexClassItem::Digit),
+        'w' => Some(RegexClassItem::Word),
         'x' => {
             let hex = pattern.get(*position..(*position + 2))?;
             if !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
@@ -5245,6 +5249,7 @@ impl RegexClassItem {
             Self::Range(start, end) => *start <= ch && ch <= *end,
             Self::Whitespace => ch.is_whitespace(),
             Self::Digit => ch.is_ascii_digit(),
+            Self::Word => ch == '_' || ch.is_ascii_alphanumeric(),
         }
     }
 }
@@ -8007,6 +8012,13 @@ extras (
             Some(2)
         );
         assert_eq!(match_pattern("\\/[^\\*\\s,;!{}()\\[\\]]", "/*", 0), None);
+    }
+
+    #[test]
+    fn matches_common_word_regex_subset() {
+        assert_eq!(match_pattern("\\w+", "www-data", 0), Some(3));
+        assert_eq!(match_pattern("\\w+", "_worker1", 0), Some(8));
+        assert_eq!(match_pattern("\\w+", "-worker", 0), None);
     }
 
     #[test]

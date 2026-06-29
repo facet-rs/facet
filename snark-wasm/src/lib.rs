@@ -1442,4 +1442,88 @@ mod tests {
         assert_eq!(response.tests.highlight_assertions_failed, 0);
         assert_eq!(response.tests.highlight_fixture_errors, 0);
     }
+
+    #[test]
+    fn parses_word_pattern_bundle_through_playground_response() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
+  "name": "nginx_smoke",
+  "rules": {
+    "source_file": {
+      "type": "REPEAT",
+      "content": { "type": "SYMBOL", "name": "directive" }
+    },
+    "directive": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "identifier" },
+        {
+          "type": "REPEAT",
+          "content": { "type": "SYMBOL", "name": "argument" }
+        },
+        { "type": "STRING", "value": ";" }
+      ]
+    },
+    "argument": {
+      "type": "CHOICE",
+      "members": [
+        { "type": "SYMBOL", "name": "identifier" },
+        { "type": "SYMBOL", "name": "number" }
+      ]
+    },
+    "identifier": {
+      "type": "PATTERN",
+      "value": "\\w+"
+    },
+    "number": {
+      "type": "PATTERN",
+      "value": "\\d+"
+    }
+  },
+  "extras": [{ "type": "PATTERN", "value": "\\s" }],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/highlights.scm".to_owned(),
+                    text: "(identifier) @variable\n".to_owned(),
+                },
+            ],
+            input: "user www www;\n".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.language.as_deref(), Some("nginx_smoke"));
+        assert_eq!(
+            response.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some(
+                "(source_file (directive (identifier) (argument (identifier)) (argument (identifier))))"
+            )
+        );
+        assert_eq!(
+            response
+                .highlights
+                .iter()
+                .map(|capture| (capture.capture_name.as_str(), capture.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("variable", "user"),
+                ("variable", "www"),
+                ("variable", "www"),
+            ]
+        );
+    }
 }

@@ -142,6 +142,11 @@ h3 {
   text-align: left;
 }
 
+.file-row.active {
+  border-color: #2d6e64;
+  background: #e6f4f1;
+}
+
 .file-row span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -238,6 +243,8 @@ h3 {
 }
 
 .source-editor {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
@@ -250,8 +257,19 @@ h3 {
   font-weight: 700;
 }
 
-textarea {
+.source-input {
+  position: relative;
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+textarea {
+  position: absolute;
+  inset: 0;
+  flex: 1;
+  height: 100%;
   min-height: 0;
   width: 100%;
   resize: none;
@@ -262,6 +280,32 @@ textarea {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.source-highlight-layer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 12px;
+  color: #151b1e;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  pointer-events: none;
+}
+
+.source-input.with-highlights textarea {
+  background: transparent;
+  color: transparent;
+  caret-color: #151b1e;
+}
+
+.source-input.with-highlights textarea::selection {
+  background: rgb(80 132 190 / 28%);
+  color: transparent;
 }
 
 textarea:focus {
