@@ -222,10 +222,11 @@ export function App() {
     );
     const next = sortedFiles(normalizeBundleFiles(loaded));
     const nextGrammarRoot = preferredGrammarRootId(next);
+    const nextSample = firstSampleForGrammarRoot(next, nextGrammarRoot);
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
-    setSelectedSamplePath("");
-    setInput("");
+    setSelectedSamplePath(nextSample?.sourcePath ?? "");
+    setInput(nextSample?.text ?? "");
     setResult(null);
   }
 
@@ -312,8 +313,11 @@ export function App() {
               className="grammar-select"
               value={activeGrammarRoot?.id ?? ""}
               onChange={(event) => {
-                setSelectedGrammarRoot(event.currentTarget.value);
-                setSelectedSamplePath("");
+                const nextGrammarRoot = event.currentTarget.value;
+                const nextSample = firstSampleForGrammarRoot(files, nextGrammarRoot);
+                setSelectedGrammarRoot(nextGrammarRoot);
+                setSelectedSamplePath(nextSample?.sourcePath ?? "");
+                setInput(nextSample?.text ?? "");
                 setResult(null);
               }}
             >
@@ -673,6 +677,14 @@ function BundlePathList({ title, paths }: { title: string; paths: string[] }) {
 function rawBrowserPath(file: File) {
   const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
   return normalizePath(relative && relative.length > 0 ? relative : file.name);
+}
+
+function firstSampleForGrammarRoot(files: BundleFile[], grammarRootId: string): SampleFile | null {
+  return (
+    sortedFiles(projectedFilesForGrammarRootId(files, grammarRootId)).find(
+      (file): file is SampleFile => file.path.startsWith("samples/"),
+    ) ?? null
+  );
 }
 
 function responseWithDiagnostic(stage: string, message: string, files: BundleFile[]): PlaygroundResponse {

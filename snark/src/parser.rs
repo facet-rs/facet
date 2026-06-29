@@ -5019,6 +5019,12 @@ enum RegexClassItem {
     Word,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegexPiece {
+    atom: RegexAtom,
+    repeat: RegexRepeat,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RegexRepeat {
     ExactlyOne,
@@ -5031,13 +5037,13 @@ enum RegexRepeat {
 fn match_regex_subset(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
     input.get(byte_position..)?;
     let mut pattern_position = 0usize;
-    let mut input_position = byte_position;
+    let mut pieces = Vec::new();
     while pattern_position < pattern.len() {
         let atom = parse_regex_atom(pattern, &mut pattern_position)?;
         let repeat = parse_regex_repeat(pattern, &mut pattern_position)?;
-        input_position = match_regex_atom_repeat(&atom, repeat, input, input_position)?;
+        pieces.push(RegexPiece { atom, repeat });
     }
-    Some(input_position)
+    match_regex_pieces(&pieces, input, byte_position)
 }
 
 fn parse_regex_atom(pattern: &str, position: &mut usize) -> Option<RegexAtom> {
@@ -5180,38 +5186,60 @@ fn next_pattern_char(pattern: &str, position: &mut usize) -> Option<char> {
     Some(ch)
 }
 
-fn match_regex_atom_repeat(
+fn match_regex_pieces(pieces: &[RegexPiece], input: &str, byte_position: usize) -> Option<usize> {
+    let Some((piece, rest)) = pieces.split_first() else {
+        return Some(byte_position);
+    };
+    let positions =
+        match_regex_atom_repeat_positions(&piece.atom, piece.repeat, input, byte_position);
+    for position in positions.into_iter().rev() {
+        if let Some(end) = match_regex_pieces(rest, input, position) {
+            return Some(end);
+        }
+    }
+    None
+}
+
+fn match_regex_atom_repeat_positions(
     atom: &RegexAtom,
     repeat: RegexRepeat,
     input: &str,
     byte_position: usize,
-) -> Option<usize> {
+) -> Vec<usize> {
     match repeat {
-        RegexRepeat::ExactlyOne => match_regex_atom_once(atom, input, byte_position),
+        RegexRepeat::ExactlyOne => match_regex_atom_once(atom, input, byte_position)
+            .into_iter()
+            .collect(),
         RegexRepeat::ZeroOrOne => {
-            Some(match_regex_atom_once(atom, input, byte_position).unwrap_or(byte_position))
+            let mut positions = vec![byte_position];
+            positions.extend(match_regex_atom_once(atom, input, byte_position));
+            positions
         }
         RegexRepeat::ZeroOrMore => {
-            Some(match_regex_atom_greedy(atom, input, byte_position, 0, None)?.0)
+            match_regex_atom_repeated_positions(atom, input, byte_position, 0, None)
         }
         RegexRepeat::OneOrMore => {
-            Some(match_regex_atom_greedy(atom, input, byte_position, 1, None)?.0)
+            match_regex_atom_repeated_positions(atom, input, byte_position, 1, None)
         }
         RegexRepeat::Range { min, max } => {
-            Some(match_regex_atom_greedy(atom, input, byte_position, min, max)?.0)
+            match_regex_atom_repeated_positions(atom, input, byte_position, min, max)
         }
     }
 }
 
-fn match_regex_atom_greedy(
+fn match_regex_atom_repeated_positions(
     atom: &RegexAtom,
     input: &str,
     byte_position: usize,
     min: usize,
     max: Option<usize>,
-) -> Option<(usize, usize)> {
+) -> Vec<usize> {
+    let mut positions = Vec::new();
     let mut position = byte_position;
     let mut count = 0usize;
+    if count >= min {
+        positions.push(position);
+    }
     while max.is_none_or(|max| count < max) {
         let Some(end) = match_regex_atom_once(atom, input, position) else {
             break;
@@ -5221,8 +5249,11 @@ fn match_regex_atom_greedy(
         }
         position = end;
         count += 1;
+        if count >= min {
+            positions.push(position);
+        }
     }
-    (count >= min).then_some((position, count))
+    positions
 }
 
 fn match_regex_atom_once(atom: &RegexAtom, input: &str, byte_position: usize) -> Option<usize> {
@@ -8019,6 +8050,18 @@ extras (
         assert_eq!(match_pattern("\\w+", "www-data", 0), Some(3));
         assert_eq!(match_pattern("\\w+", "_worker1", 0), Some(8));
         assert_eq!(match_pattern("\\w+", "-worker", 0), None);
+    }
+
+    #[test]
+    fn backtracks_repeated_regex_atoms_for_nginx_arguments() {
+        assert_eq!(
+            match_pattern("[\\w/\\-\\.]*[A-Za-z][\\w/\\-=,?]+", "www", 0),
+            Some(3)
+        );
+        assert_eq!(
+            match_pattern("[\\w/\\-\\.]*[A-Za-z][\\w/\\-=,?]+", "www-data", 0),
+            Some(8)
+        );
     }
 
     #[test]
