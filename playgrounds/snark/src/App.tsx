@@ -402,6 +402,11 @@ export function App() {
                   <summary className={caseResult.passed ? "pass" : "fail"}>
                     {caseResult.case_name}
                   </summary>
+                  <div className="test-actions">
+                    <button type="button" onClick={() => setInput(caseResult.input)}>
+                      Load input
+                    </button>
+                  </div>
                   <div className="test-detail-grid">
                     {caseResult.error ? (
                       <section>
@@ -429,6 +434,11 @@ export function App() {
                   <summary className={fixture.passed ? "pass" : "fail"}>
                     {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
                   </summary>
+                  <div className="test-actions">
+                    <button type="button" onClick={() => setInput(fixture.input)}>
+                      Load fixture
+                    </button>
+                  </div>
                   {fixture.error ? (
                     <pre>{fixture.error}</pre>
                   ) : (

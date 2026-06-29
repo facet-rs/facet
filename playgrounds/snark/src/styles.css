@@ -472,6 +472,18 @@ summary {
   margin-top: 8px;
 }
 
+.test-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.test-actions button {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 .test-detail-grid section {
   min-height: 0;
   padding: 8px;
