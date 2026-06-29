@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import init, { parseBundle } from "@bearcove/snark-wasm";
 import { filesWithGrammarJson } from "./treeSitterDsl";
@@ -141,6 +142,10 @@ export function App() {
   );
   const passedCorpus = result?.corpus.filter((caseResult) => caseResult.passed).length ?? 0;
   const failedCorpus = result ? result.corpus.length - passedCorpus : 0;
+  const highlightedSource = useMemo(
+    () => renderHighlightedSource(input, result?.highlights ?? []),
+    [input, result?.highlights],
+  );
 
   async function loadFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) {
@@ -341,10 +346,13 @@ export function App() {
           </section>
           <section>
             <h2>Highlights</h2>
+            <pre className="highlighted-source">{highlightedSource}</pre>
             <div className="capture-list">
               {result?.highlights.map((capture, index) => (
                 <div className="capture-row" key={`${capture.capture_name}-${capture.start_byte}-${index}`}>
-                  <span>@{capture.capture_name}</span>
+                  <span className={`capture-chip ${captureClass(capture.capture_name)}`}>
+                    @{capture.capture_name}
+                  </span>
                   <code>{capture.text}</code>
                   <small>
                     {capture.start_row}:{capture.start_column}-{capture.end_row}:{capture.end_column}
@@ -580,4 +588,120 @@ function isGeneratedPath(path: string) {
     path.endsWith("/src/node-types.json") ||
     path.endsWith("/bindings/node/binding.cc")
   );
+}
+
+function renderHighlightedSource(input: string, captures: HighlightOutput[]) {
+  if (input.length === 0) {
+    return "";
+  }
+  const byteToStringIndex = byteOffsetMap(input);
+  const selected = nonOverlappingCaptures(captures, byteToStringIndex, input.length);
+  if (selected.length === 0) {
+    return input;
+  }
+
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  for (const capture of selected) {
+    if (capture.startIndex > cursor) {
+      nodes.push(input.slice(cursor, capture.startIndex));
+    }
+    nodes.push(
+      <span
+        className={`source-capture ${captureClass(capture.capture.capture_name)}`}
+        key={`${capture.capture.capture_name}-${capture.capture.start_byte}-${capture.capture.end_byte}`}
+        title={`@${capture.capture.capture_name}`}
+      >
+        {input.slice(capture.startIndex, capture.endIndex)}
+      </span>,
+    );
+    cursor = capture.endIndex;
+  }
+  if (cursor < input.length) {
+    nodes.push(input.slice(cursor));
+  }
+  return nodes;
+}
+
+function nonOverlappingCaptures(
+  captures: HighlightOutput[],
+  byteToStringIndex: number[],
+  inputLength: number,
+) {
+  return captures
+    .map((capture) => ({
+      capture,
+      startIndex: byteToStringIndex[capture.start_byte] ?? inputLength,
+      endIndex: byteToStringIndex[capture.end_byte] ?? inputLength,
+    }))
+    .filter((capture) => capture.startIndex < capture.endIndex)
+    .sort((left, right) => {
+      if (left.startIndex !== right.startIndex) {
+        return left.startIndex - right.startIndex;
+      }
+      if (left.endIndex !== right.endIndex) {
+        return right.endIndex - left.endIndex;
+      }
+      return left.capture.capture_name.localeCompare(right.capture.capture_name);
+    })
+    .reduce<Array<{ capture: HighlightOutput; startIndex: number; endIndex: number }>>(
+      (selected, capture) => {
+        const previous = selected[selected.length - 1];
+        if (!previous || capture.startIndex >= previous.endIndex) {
+          selected.push(capture);
+        }
+        return selected;
+      },
+      [],
+    );
+}
+
+function byteOffsetMap(input: string) {
+  const encoder = new TextEncoder();
+  const totalBytes = encoder.encode(input).length;
+  const map = new Array<number>(totalBytes + 1);
+  let byteOffset = 0;
+  let stringIndex = 0;
+  map[0] = 0;
+  for (const char of input) {
+    const nextByteOffset = byteOffset + encoder.encode(char).length;
+    const nextStringIndex = stringIndex + char.length;
+    for (let byte = byteOffset; byte < nextByteOffset; byte += 1) {
+      map[byte] = stringIndex;
+    }
+    map[nextByteOffset] = nextStringIndex;
+    byteOffset = nextByteOffset;
+    stringIndex = nextStringIndex;
+  }
+  return map;
+}
+
+function captureClass(captureName: string) {
+  const first = captureName.split(".")[0] ?? captureName;
+  switch (first) {
+    case "attribute":
+    case "property":
+      return "capture-property";
+    case "comment":
+      return "capture-comment";
+    case "constant":
+    case "number":
+      return "capture-number";
+    case "function":
+    case "method":
+      return "capture-function";
+    case "keyword":
+    case "operator":
+      return "capture-keyword";
+    case "punctuation":
+      return "capture-punctuation";
+    case "string":
+      return "capture-string";
+    case "type":
+      return "capture-type";
+    case "variable":
+      return "capture-variable";
+    default:
+      return "capture-default";
+  }
 }
