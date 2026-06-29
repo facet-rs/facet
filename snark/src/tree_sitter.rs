@@ -1644,16 +1644,58 @@ mod tests {
         );
 
         assert_same!(report.tree(), &declaration_cases[7].expected);
+        let important_conflict = report.conflict_steps().iter().find(|step| {
+            if step.actions.len() < 2
+                || !step
+                    .actions
+                    .iter()
+                    .all(|action| matches!(action, crate::parser::ParseAction::Reduce { .. }))
+            {
+                return false;
+            }
+
+            let mut saw_accepted_descendant = false;
+            let mut saw_failed_descendant = false;
+            for outcome in &step.outcomes {
+                let branch = match outcome.result {
+                    crate::parser::ReducedConflictActionResult::Branch(branch)
+                    | crate::parser::ReducedConflictActionResult::Accepted(branch)
+                    | crate::parser::ReducedConflictActionResult::Failed(branch) => branch,
+                };
+                for result in report.branch_descendant_results(branch) {
+                    match result.outcome {
+                        crate::parser::ReducedBranchFinalOutcome::Accepted => {
+                            saw_accepted_descendant = true;
+                        }
+                        crate::parser::ReducedBranchFinalOutcome::Failed => {
+                            saw_failed_descendant = true;
+                        }
+                    }
+                }
+            }
+
+            saw_accepted_descendant && saw_failed_descendant
+        });
         assert!(
-            report.conflict_steps().iter().any(|step| {
-                step.actions.len() > 1
-                    && step
-                        .actions
-                        .iter()
-                        .all(|action| matches!(action, crate::parser::ParseAction::Reduce { .. }))
-            }),
-            "expected a runtime reduce/reduce GLR fork, got {:#?}",
-            report.conflict_steps()
+            important_conflict.is_some(),
+            "expected a reduce/reduce fork with accepted and failed descendants, got conflicts {:#?} and branch results {:#?}",
+            report.conflict_steps(),
+            report.branch_results()
+        );
+        assert!(
+            important_conflict.unwrap().outcomes.len() > 1,
+            "expected more than one action outcome for the important declaration conflict"
+        );
+        assert!(
+            report
+                .branch_parents()
+                .iter()
+                .any(|link| link.parent.is_some()),
+            "expected branch lineage for runtime fork"
+        );
+        assert!(
+            !report.branch_results().is_empty(),
+            "expected terminal branch outcomes for runtime fork"
         );
         assert!(
             report.max_live_branches() > 1,
