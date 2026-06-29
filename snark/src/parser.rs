@@ -4966,7 +4966,45 @@ fn match_gingembre_identifier(input: &str, byte_position: usize) -> Option<usize
         .iter()
         .take_while(|byte| **byte == b'_' || byte.is_ascii_alphanumeric())
         .count();
+    let word = &input[byte_position..byte_position + len];
+    if is_gingembre_keyword(word) {
+        return None;
+    }
     Some(byte_position + len)
+}
+
+fn is_gingembre_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "if" | "elif"
+            | "else"
+            | "endif"
+            | "for"
+            | "endfor"
+            | "set"
+            | "endset"
+            | "block"
+            | "endblock"
+            | "extends"
+            | "include"
+            | "import"
+            | "macro"
+            | "endmacro"
+            | "break"
+            | "continue"
+            | "as"
+            | "in"
+            | "is"
+            | "not"
+            | "and"
+            | "or"
+            | "true"
+            | "True"
+            | "false"
+            | "False"
+            | "none"
+            | "None"
+    )
 }
 
 fn match_json_line_comment_tail(input: &str, byte_position: usize) -> Option<usize> {
@@ -7080,13 +7118,24 @@ rules {
         type CHOICE
         members (
             {type SYMBOL, name var_ref}
+            {type SYMBOL, name literal}
             {type SYMBOL, name field_expr}
             {type SYMBOL, name call_expr}
+            {type SYMBOL, name binary_expr}
         )
     }
     var_ref {
         type SYMBOL
         name _ident
+    }
+    literal {
+        type CHOICE
+        members (
+            {type STRING, value "true"}
+            {type STRING, value "false"}
+            {type STRING, value "none"}
+            {type SYMBOL, name _int}
+        )
     }
     field_expr {
         type SEQ
@@ -7107,26 +7156,78 @@ rules {
         type SEQ
         members (
             {type STRING, value "("}
-            {type SYMBOL, name arg}
-            {type REPEAT, content {
-                type SEQ
-                members (
-                    {type STRING, value ","}
-                    {type SYMBOL, name arg}
-                )
-            }}
+            {type CHOICE, members (
+                {type BLANK}
+                {type SEQ, members (
+                    {type SYMBOL, name _arg_item}
+                    {type REPEAT, content {
+                        type SEQ
+                        members (
+                            {type STRING, value ","}
+                            {type SYMBOL, name _arg_item}
+                        )
+                    }}
+                    {type CHOICE, members (
+                        {type STRING, value ","}
+                        {type BLANK}
+                    )}
+                )}
+            )}
             {type STRING, value ")"}
+        )
+    }
+    _arg_item {
+        type CHOICE
+        members (
+            {type SYMBOL, name arg}
+            {type SYMBOL, name kw_arg}
         )
     }
     arg {
         type SYMBOL
         name _expr
     }
+    kw_arg {
+        type SEQ
+        members (
+            {type SYMBOL, name _ident}
+            {type STRING, value "="}
+            {type SYMBOL, name _expr}
+        )
+    }
+    binary_expr {
+        type CHOICE
+        members (
+            {type PREC_LEFT, value 1, content {
+                type SEQ
+                members (
+                    {type SYMBOL, name _expr}
+                    {type STRING, value "+"}
+                    {type SYMBOL, name _expr}
+                )
+            }}
+            {type PREC_LEFT, value 2, content {
+                type SEQ
+                members (
+                    {type SYMBOL, name _expr}
+                    {type STRING, value "*"}
+                    {type SYMBOL, name _expr}
+                )
+            }}
+        )
+    }
     _ident {
         type TOKEN
         content {
             type PATTERN
             value r"[A-Za-z_][A-Za-z0-9_]*"
+        }
+    }
+    _int {
+        type TOKEN
+        content {
+            type PATTERN
+            value r"\d+"
         }
     }
 }
@@ -7168,11 +7269,14 @@ extras (
         let kind = match node.kind() {
             gingembre_syntax::SyntaxKind::Template => "template",
             gingembre_syntax::SyntaxKind::Interpolation => "interpolation",
+            gingembre_syntax::SyntaxKind::Literal => "literal",
             gingembre_syntax::SyntaxKind::VarRef => "var_ref",
             gingembre_syntax::SyntaxKind::FieldExpr => "field_expr",
             gingembre_syntax::SyntaxKind::CallExpr => "call_expr",
+            gingembre_syntax::SyntaxKind::BinaryExpr => "binary_expr",
             gingembre_syntax::SyntaxKind::ArgList => "arg_list",
             gingembre_syntax::SyntaxKind::Arg => "arg",
+            gingembre_syntax::SyntaxKind::KwArg => "kw_arg",
             _ => return None,
         };
         let children = node
@@ -7204,6 +7308,20 @@ extras (
         assert_eq!(report.failure_count(), 0);
     }
 
+    fn assert_styx_authored_gingembre_rejects_like_gingembre(input: &str) {
+        let gingembre = gingembre_syntax::parse(input);
+        assert!(
+            !gingembre.errors.is_empty(),
+            "gingembre unexpectedly accepted {input:?}"
+        );
+
+        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let result = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input);
+        assert!(result.is_err(), "snark unexpectedly accepted {input:?}");
+    }
+
     #[test]
     fn parses_styx_authored_gingembre_interpolation_like_gingembre() {
         assert_styx_authored_gingembre_runtime("{{ x }}", "(template (interpolation (var_ref)))");
@@ -7212,6 +7330,24 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_trim_interpolation_like_gingembre() {
         assert_styx_authored_gingembre_runtime("{{- x -}}", "(template (interpolation (var_ref)))");
+    }
+
+    #[test]
+    fn parses_styx_authored_gingembre_literals_like_gingembre() {
+        assert_styx_authored_gingembre_runtime(
+            "{{ true }}",
+            "(template (interpolation (literal)))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ none }}",
+            "(template (interpolation (literal)))",
+        );
+        assert_styx_authored_gingembre_runtime("{{ 42 }}", "(template (interpolation (literal)))");
+    }
+
+    #[test]
+    fn rejects_styx_authored_gingembre_statement_keyword_like_gingembre() {
+        assert_styx_authored_gingembre_rejects_like_gingembre("{{ if }}");
     }
 
     #[test]
@@ -7227,6 +7363,38 @@ extras (
         assert_styx_authored_gingembre_runtime(
             "{{ greet(user.name, suffix) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (field_expr (var_ref))) (arg (var_ref))))))",
+        );
+    }
+
+    #[test]
+    fn parses_styx_authored_gingembre_call_arg_shapes_like_gingembre() {
+        assert_styx_authored_gingembre_runtime(
+            "{{ greet() }}",
+            "(template (interpolation (call_expr (var_ref) (arg_list))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ greet(suffix,) }}",
+            "(template (interpolation (call_expr (var_ref) (arg_list (arg (var_ref))))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ greet(name=user.name) }}",
+            "(template (interpolation (call_expr (var_ref) (arg_list (kw_arg (field_expr (var_ref)))))))",
+        );
+    }
+
+    #[test]
+    fn parses_styx_authored_gingembre_binary_precedence_like_gingembre() {
+        assert_styx_authored_gingembre_runtime(
+            "{{ a + b * c }}",
+            "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ a * b + c }}",
+            "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ a + b + c }}",
+            "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
     }
 
@@ -7250,6 +7418,32 @@ extras (
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (field_expr (var_ref))) (arg (var_ref))))))"
+        );
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert!(weavy_report.stats().block_call_count > 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_styx_authored_gingembre_binary_precedence_through_weavy_runtime() {
+        let input = "{{ a + b * c }}";
+        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan, &validated, &parser, &table, input,
+        )
+        .unwrap();
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        assert_eq!(
+            weavy_report.tree().to_sexp(),
+            "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))"
         );
         assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
         assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
