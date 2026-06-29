@@ -6341,6 +6341,90 @@ pub struct RuntimeParseSession<'a> {
     last_report: Option<RuntimeParseReport>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RuntimeReuseKey {
+    byte_position: usize,
+    entry_state: ParseStateId,
+    scanner_snapshot: Option<ScannerSnapshotId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeReusableNode {
+    node: TreeNodeId,
+    tree: SexpNode,
+    symbol: NonterminalId,
+    entry_state: ParseStateId,
+    entry_scanner_snapshot: Option<ScannerSnapshotId>,
+    exit_scanner_snapshot: Option<ScannerSnapshotId>,
+    start_byte: usize,
+    end_byte: usize,
+    lookahead_end_byte: usize,
+    contains_error: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeReuseIndex {
+    nodes: HashMap<RuntimeReuseKey, RuntimeReusableNode>,
+}
+
+impl RuntimeReuseIndex {
+    fn from_report(report: &RuntimeParseReport, edit: RuntimeInputEdit) -> Self {
+        let delta = edit.new_end_byte as isize - edit.old_end_byte as isize;
+        let mut nodes = HashMap::new();
+        for node in report.reusable_nodes.iter().filter(|node| {
+            !node.contains_error
+                && edit
+                    .reuse_position(node.start_byte, node.end_byte)
+                    .is_some()
+        }) {
+            let Some((start_byte, end_byte)) = edit.reuse_position(node.start_byte, node.end_byte)
+            else {
+                continue;
+            };
+            let lookahead_end_byte = shift_byte(node.lookahead_end_byte, edit.old_end_byte, delta);
+            let before_edit = end_byte <= edit.start_byte;
+            let after_edit = start_byte >= edit.new_end_byte;
+            if !before_edit && !after_edit {
+                continue;
+            }
+            let shifted = RuntimeReusableNode {
+                start_byte,
+                end_byte,
+                lookahead_end_byte,
+                ..node.clone()
+            };
+            let key = RuntimeReuseKey {
+                byte_position: shifted.start_byte,
+                entry_state: shifted.entry_state,
+                scanner_snapshot: shifted.entry_scanner_snapshot,
+            };
+            nodes.entry(key).or_insert(shifted);
+        }
+        Self { nodes }
+    }
+
+    fn get(
+        &self,
+        byte_position: usize,
+        entry_state: ParseStateId,
+        scanner_snapshot: Option<ScannerSnapshotId>,
+    ) -> Option<&RuntimeReusableNode> {
+        self.nodes.get(&RuntimeReuseKey {
+            byte_position,
+            entry_state,
+            scanner_snapshot,
+        })
+    }
+}
+
+fn shift_byte(byte: usize, old_end_byte: usize, delta: isize) -> usize {
+    if byte >= old_end_byte {
+        byte.saturating_add_signed(delta)
+    } else {
+        byte
+    }
+}
+
 impl<'a> RuntimeParseSession<'a> {
     /// Start a persistent runtime parse session.
     pub const fn new(parser: RuntimeParser<'a>) -> Self {
@@ -6379,9 +6463,9 @@ impl<'a> RuntimeParseSession<'a> {
     /// Reparse after an edit and make the new input the session baseline.
     ///
     /// This is the stable API seam for incremental reuse. It validates that the
-    /// edit describes the old and new inputs, then currently delegates to a full
-    /// parse. Future subtree reuse must preserve this method's full-parse
-    /// equivalence.
+    /// edit describes the old and new inputs, builds a conservative reusable-node
+    /// index from the previous accepted report, and reparses with full-parse tree
+    /// equivalence as the oracle.
     pub fn reparse_compact(
         &mut self,
         edit: RuntimeInputEdit,
@@ -6391,7 +6475,39 @@ impl<'a> RuntimeParseSession<'a> {
         if let Some(old_input) = self.last_input.as_deref() {
             edit.validate_against(old_input, &new_input)?;
         }
-        self.parse_compact(new_input)
+        let reuse_index = self
+            .last_report
+            .as_ref()
+            .map(|report| RuntimeReuseIndex::from_report(report, edit));
+        let report = if let Some(reuse_index) = reuse_index.as_ref() {
+            self.parser
+                .parse_compact_with_reuse_index(&new_input, reuse_index)?
+        } else {
+            self.parser.parse_compact_with_report(&new_input)?
+        };
+        self.last_input = Some(new_input);
+        self.last_report = Some(report);
+        Ok(self
+            .last_report
+            .as_ref()
+            .expect("session report was just installed"))
+    }
+}
+
+impl RuntimeInputEdit {
+    fn reuse_position(&self, start_byte: usize, end_byte: usize) -> Option<(usize, usize)> {
+        if self.old_end_byte == self.start_byte {
+            if start_byte < self.start_byte && self.start_byte < end_byte {
+                return None;
+            }
+        } else if start_byte < self.old_end_byte && self.start_byte < end_byte {
+            return None;
+        }
+        let delta = self.new_end_byte as isize - self.old_end_byte as isize;
+        Some((
+            shift_byte(start_byte, self.old_end_byte, delta),
+            shift_byte(end_byte, self.old_end_byte, delta),
+        ))
     }
 }
 
@@ -6502,6 +6618,29 @@ impl<'a> RuntimeParser<'a> {
         recovery: RuntimeRecoveryMode,
         trace_detail: RuntimeTraceDetail,
     ) -> Result<RuntimeParseReport, ReducedParseError> {
+        self.parse_with_report_mode_reuse(input, recovery, trace_detail, None)
+    }
+
+    fn parse_compact_with_reuse_index(
+        &self,
+        input: &str,
+        reuse_index: &RuntimeReuseIndex,
+    ) -> Result<RuntimeParseReport, ReducedParseError> {
+        self.parse_with_report_mode_reuse(
+            input,
+            RuntimeRecoveryMode::Strict,
+            RuntimeTraceDetail::Lineage,
+            Some(reuse_index),
+        )
+    }
+
+    fn parse_with_report_mode_reuse(
+        &self,
+        input: &str,
+        recovery: RuntimeRecoveryMode,
+        trace_detail: RuntimeTraceDetail,
+        reuse_index: Option<&RuntimeReuseIndex>,
+    ) -> Result<RuntimeParseReport, ReducedParseError> {
         self.reduced.clear_lex_cache();
         let mut tree_store = RuntimeTreeStore::default();
         let mut trace_events = Vec::new();
@@ -6539,6 +6678,7 @@ impl<'a> RuntimeParser<'a> {
             error_cost: 0,
             trace: Vec::new(),
             tree_events: Vec::new(),
+            reusable_nodes: Vec::new(),
         };
         let mut queued_recovery_costs = HashMap::new();
         if recovery == RuntimeRecoveryMode::SkipInvalidInput {
@@ -6551,6 +6691,7 @@ impl<'a> RuntimeParser<'a> {
             Vec<ReducedTraceStep>,
             u32,
             Vec<TreeEvent>,
+            Vec<RuntimeReusableNode>,
         )>::new();
         let mut failures = Vec::<ReducedParseError>::new();
         let mut next_version_index = 1usize;
@@ -6615,6 +6756,7 @@ impl<'a> RuntimeParser<'a> {
                 &mut next_lookahead_index,
                 recovery,
                 trace_detail,
+                reuse_index,
             ) {
                 match outcome {
                     RuntimeStepOutcome::Branch(branch) => enqueue_runtime_branch(
@@ -6631,6 +6773,7 @@ impl<'a> RuntimeParser<'a> {
                         trace,
                         error_cost,
                         tree_events,
+                        reusable_nodes,
                     } => {
                         push_full_runtime_trace(
                             &mut trace_events,
@@ -6640,7 +6783,14 @@ impl<'a> RuntimeParser<'a> {
                                 reason: BranchRetireReason::Accepted,
                             },
                         );
-                        accepted.push((version, node, trace, error_cost, tree_events));
+                        accepted.push((
+                            version,
+                            node,
+                            trace,
+                            error_cost,
+                            tree_events,
+                            reusable_nodes,
+                        ));
                     }
                     RuntimeStepOutcome::Failed { version, error } => {
                         push_full_runtime_trace(
@@ -6660,7 +6810,7 @@ impl<'a> RuntimeParser<'a> {
 
         let Some(min_error_cost) = accepted
             .iter()
-            .map(|(_, _, _, error_cost, _)| *error_cost)
+            .map(|(_, _, _, error_cost, _, _)| *error_cost)
             .min()
         else {
             trace_events.push(TraceEvent::ParseFinish {
@@ -6673,17 +6823,30 @@ impl<'a> RuntimeParser<'a> {
         };
         let best_accepted = accepted
             .iter()
-            .filter(|(_, _, _, error_cost, _)| *error_cost == min_error_cost)
+            .filter(|(_, _, _, error_cost, _, _)| *error_cost == min_error_cost)
             .collect::<Vec<_>>();
-        let Some((first_version, first_node, first_trace, _, first_tree_events)) =
-            best_accepted.first().map(|accepted| (*accepted).clone())
+        let Some((
+            first_version,
+            first_node,
+            first_trace,
+            _,
+            first_tree_events,
+            first_reusable_nodes,
+        )) = best_accepted.first().map(|accepted| (*accepted).clone())
         else {
             unreachable!("accepted branches have a minimum recovery cost");
         };
         if best_accepted
             .iter()
-            .all(|(_, node, _, _, _)| *node == first_node)
+            .all(|(_, node, _, _, _, _)| *node == first_node)
         {
+            let accepted_tree_events = if trace_detail == RuntimeTraceDetail::Full {
+                tree_events_for_version_lineage(first_version, &trace_events, &tree_events)
+            } else {
+                first_tree_events.clone()
+            };
+            let reusable_nodes =
+                mark_reusable_nodes_with_errors(first_reusable_nodes, &accepted_tree_events);
             trace_events.push(TraceEvent::ParseFinish {
                 id: next_trace_id(&trace_events),
                 outcome: if min_error_cost == 0 {
@@ -6694,6 +6857,8 @@ impl<'a> RuntimeParser<'a> {
             });
             return Ok(RuntimeParseReport {
                 tree: first_node,
+                tree_store,
+                reusable_nodes,
                 trace_events,
                 tree_events: if trace_detail == RuntimeTraceDetail::Full {
                     tree_events
@@ -6716,7 +6881,7 @@ impl<'a> RuntimeParser<'a> {
                 accepted_count: best_accepted.len(),
                 accepted: best_accepted
                     .iter()
-                    .map(|(_, node, _, _, _)| node.to_sexp())
+                    .map(|(_, node, _, _, _, _)| node.to_sexp())
                     .collect(),
             })
             .with_trace(first_trace),
@@ -6735,6 +6900,7 @@ impl<'a> RuntimeParser<'a> {
         next_lookahead_index: &mut usize,
         recovery: RuntimeRecoveryMode,
         trace_detail: RuntimeTraceDetail,
+        reuse_index: Option<&RuntimeReuseIndex>,
     ) -> Vec<RuntimeStepOutcome> {
         let source_version = branch.version;
         let state = match branch.stack.last() {
@@ -6756,6 +6922,20 @@ impl<'a> RuntimeParser<'a> {
                 }];
             }
         };
+        if let Some(reuse_index) = reuse_index
+            && let Some(branch) = self.try_reuse_runtime_node(
+                branch.clone(),
+                reuse_index,
+                input,
+                line_index,
+                tree_store,
+                trace_events,
+                tree_events,
+                trace_detail,
+            )
+        {
+            return vec![RuntimeStepOutcome::Branch(branch)];
+        }
         let token = match self.reduced.lex(
             state_row,
             input,
@@ -6923,6 +7103,74 @@ impl<'a> RuntimeParser<'a> {
         )]
     }
 
+    fn try_reuse_runtime_node(
+        &self,
+        mut branch: RuntimeBranch,
+        reuse_index: &RuntimeReuseIndex,
+        input: &str,
+        line_index: &InputLineIndex,
+        tree_store: &mut RuntimeTreeStore,
+        trace_events: &mut Vec<TraceEvent>,
+        tree_events: &mut Vec<TreeEvent>,
+        trace_detail: RuntimeTraceDetail,
+    ) -> Option<RuntimeBranch> {
+        let entry_state = branch.stack.last().map(|entry| entry.state)?;
+        let reusable =
+            reuse_index.get(branch.byte_position, entry_state, branch.scanner_snapshot)?;
+        let goto_state = self.reduced.goto_state(entry_state, reusable.symbol).ok()?;
+        let node = tree_store.push(reusable.tree.clone());
+        let (bytes, points) =
+            input_ranges(input, line_index, reusable.start_byte, reusable.end_byte);
+        let tree_event = TreeEvent::ReuseNode {
+            version: branch.version,
+            node,
+            bytes,
+            points,
+            scanner_snapshot: reusable.entry_scanner_snapshot,
+        };
+        if trace_detail == RuntimeTraceDetail::Full {
+            tree_events.push(tree_event.clone());
+            trace_events.push(TraceEvent::Tree(tree_event));
+        } else {
+            branch.tree_events.push(tree_event);
+        }
+        push_full_runtime_trace(
+            trace_events,
+            trace_detail,
+            TraceEvent::StateEnter {
+                id: next_trace_id(trace_events),
+                version: branch.version,
+                state: goto_state,
+            },
+        );
+        branch.stack.push(RuntimeStackEntry {
+            state: goto_state,
+            fragment: Some(RuntimeFragment::Node {
+                node,
+                start_byte: reusable.start_byte,
+                end_byte: reusable.end_byte,
+                start_scanner_snapshot: reusable.entry_scanner_snapshot,
+            }),
+            extra: false,
+            end_byte: reusable.end_byte,
+        });
+        branch.byte_position = reusable.end_byte;
+        branch.scanner_snapshot = reusable.exit_scanner_snapshot;
+        branch.reusable_nodes.push(RuntimeReusableNode {
+            node,
+            tree: reusable.tree.clone(),
+            symbol: reusable.symbol,
+            entry_state,
+            entry_scanner_snapshot: reusable.entry_scanner_snapshot,
+            exit_scanner_snapshot: reusable.exit_scanner_snapshot,
+            start_byte: reusable.start_byte,
+            end_byte: reusable.end_byte,
+            lookahead_end_byte: reusable.lookahead_end_byte,
+            contains_error: false,
+        });
+        Some(branch)
+    }
+
     fn apply_runtime_action(
         &self,
         mut branch: RuntimeBranch,
@@ -6939,6 +7187,7 @@ impl<'a> RuntimeParser<'a> {
         match action {
             ParseAction::Shift { state, .. } => {
                 let start = branch.byte_position;
+                let start_scanner_snapshot = branch.scanner_snapshot;
                 branch.byte_position = token.end;
                 branch.commit_scanner_snapshot(token);
                 let (bytes, points) = input_ranges(input, line_index, start, token.end);
@@ -6983,6 +7232,7 @@ impl<'a> RuntimeParser<'a> {
                         visible_nodes: Vec::new(),
                         start_byte: start,
                         end_byte: token.end,
+                        start_scanner_snapshot,
                     }),
                     extra: false,
                     end_byte: token.end,
@@ -6991,6 +7241,7 @@ impl<'a> RuntimeParser<'a> {
             }
             ParseAction::ShiftExtra => {
                 let start = branch.byte_position;
+                let start_scanner_snapshot = branch.scanner_snapshot;
                 branch.byte_position = token.end;
                 branch.commit_scanner_snapshot(token);
                 let fragment = if trace_detail == RuntimeTraceDetail::Full {
@@ -7003,6 +7254,7 @@ impl<'a> RuntimeParser<'a> {
                         line_index,
                         start,
                         token.end,
+                        start_scanner_snapshot,
                     )
                 } else {
                     self.runtime_extra_fragment(
@@ -7014,6 +7266,7 @@ impl<'a> RuntimeParser<'a> {
                         line_index,
                         start,
                         token.end,
+                        start_scanner_snapshot,
                     )
                 };
                 if let Some(fragment) = fragment {
@@ -7104,6 +7357,27 @@ impl<'a> RuntimeParser<'a> {
                     }
                 };
                 let (_start_byte, end_byte) = reduction.fragment.byte_range();
+                if let RuntimeFragment::Node {
+                    node,
+                    start_byte,
+                    end_byte,
+                    start_scanner_snapshot,
+                } = &reduction.fragment
+                    && start_byte < end_byte
+                {
+                    branch.reusable_nodes.push(RuntimeReusableNode {
+                        node: *node,
+                        tree: tree_store.node(*node).clone(),
+                        symbol,
+                        entry_state: head_state,
+                        entry_scanner_snapshot: *start_scanner_snapshot,
+                        exit_scanner_snapshot: branch.scanner_snapshot,
+                        start_byte: *start_byte,
+                        end_byte: *end_byte,
+                        lookahead_end_byte: *end_byte,
+                        contains_error: false,
+                    });
+                }
                 branch.stack.push(RuntimeStackEntry {
                     state: goto_state,
                     fragment: Some(reduction.fragment),
@@ -7194,6 +7468,7 @@ impl<'a> RuntimeParser<'a> {
                         node,
                         start_byte: _,
                         end_byte: _,
+                        ..
                     } => {
                         let root =
                             match self.finish_runtime_root(node, &mut branch.stack, tree_store) {
@@ -7211,6 +7486,7 @@ impl<'a> RuntimeParser<'a> {
                             trace: branch.trace,
                             error_cost: branch.error_cost,
                             tree_events: branch.tree_events,
+                            reusable_nodes: branch.reusable_nodes,
                         }
                     }
                     RuntimeFragment::Hidden { .. } => RuntimeStepOutcome::Failed {
@@ -7371,6 +7647,7 @@ impl<'a> RuntimeParser<'a> {
                 node,
                 start_byte,
                 end_byte,
+                start_scanner_snapshot: branch.scanner_snapshot,
             }),
             extra: true,
             end_byte,
@@ -7432,6 +7709,10 @@ impl<'a> RuntimeParser<'a> {
             .last()
             .map(|(_, fragment)| fragment.byte_range().1)
             .unwrap_or(start_byte);
+        let start_scanner_snapshot = popped
+            .first()
+            .map(|(_, fragment)| fragment.start_scanner_snapshot())
+            .unwrap_or(None);
         let mut steps = production_row.steps().iter();
         let mut structural_index = 0usize;
         let mut field_events = Vec::new();
@@ -7524,6 +7805,7 @@ impl<'a> RuntimeParser<'a> {
                     node,
                     start_byte,
                     end_byte,
+                    start_scanner_snapshot,
                 },
                 trailing_extras,
             })
@@ -7534,6 +7816,7 @@ impl<'a> RuntimeParser<'a> {
                     visible_nodes,
                     start_byte,
                     end_byte,
+                    start_scanner_snapshot,
                 },
                 trailing_extras,
             })
@@ -7550,6 +7833,7 @@ impl<'a> RuntimeParser<'a> {
         line_index: &InputLineIndex,
         start_byte: usize,
         end_byte: usize,
+        start_scanner_snapshot: Option<ScannerSnapshotId>,
     ) -> Option<RuntimeFragment> {
         let ReducedFragment::Node(node) = self.reduced.extra_fragment(lookahead)? else {
             return None;
@@ -7574,6 +7858,7 @@ impl<'a> RuntimeParser<'a> {
             node,
             start_byte,
             end_byte,
+            start_scanner_snapshot,
         })
     }
 
@@ -7654,6 +7939,8 @@ fn runtime_recovery_end(input: &str, start_byte: usize) -> Option<usize> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeParseReport {
     tree: SexpNode,
+    tree_store: RuntimeTreeStore,
+    reusable_nodes: Vec<RuntimeReusableNode>,
     trace_events: Vec<TraceEvent>,
     tree_events: Vec<TreeEvent>,
     accepted_version: StackVersionId,
@@ -7717,6 +8004,7 @@ struct RuntimeBranch {
     error_cost: u32,
     trace: Vec<ReducedTraceStep>,
     tree_events: Vec<TreeEvent>,
+    reusable_nodes: Vec<RuntimeReusableNode>,
 }
 
 impl RuntimeBranch {
@@ -7792,6 +8080,7 @@ enum RuntimeStepOutcome {
         trace: Vec<ReducedTraceStep>,
         error_cost: u32,
         tree_events: Vec<TreeEvent>,
+        reusable_nodes: Vec<RuntimeReusableNode>,
     },
     Failed {
         version: StackVersionId,
@@ -7814,11 +8103,13 @@ enum RuntimeFragment {
         visible_nodes: Vec<TreeNodeId>,
         start_byte: usize,
         end_byte: usize,
+        start_scanner_snapshot: Option<ScannerSnapshotId>,
     },
     Node {
         node: TreeNodeId,
         start_byte: usize,
         end_byte: usize,
+        start_scanner_snapshot: Option<ScannerSnapshotId>,
     },
 }
 
@@ -7867,6 +8158,19 @@ impl RuntimeFragment {
                 end_byte,
                 ..
             } => (*start_byte, *end_byte),
+        }
+    }
+
+    const fn start_scanner_snapshot(&self) -> Option<ScannerSnapshotId> {
+        match self {
+            Self::Hidden {
+                start_scanner_snapshot,
+                ..
+            }
+            | Self::Node {
+                start_scanner_snapshot,
+                ..
+            } => *start_scanner_snapshot,
         }
     }
 }
@@ -7925,6 +8229,30 @@ fn stack_version_lineage(
         }
     }
     lineage
+}
+
+fn mark_reusable_nodes_with_errors(
+    mut nodes: Vec<RuntimeReusableNode>,
+    tree_events: &[TreeEvent],
+) -> Vec<RuntimeReusableNode> {
+    let error_ranges = tree_events
+        .iter()
+        .filter_map(|event| match event {
+            TreeEvent::Error { bytes, .. } | TreeEvent::Missing { bytes, .. } => {
+                Some((bytes.start().get() as usize, bytes.end().get() as usize))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if error_ranges.is_empty() {
+        return nodes;
+    }
+    for node in &mut nodes {
+        node.contains_error = error_ranges.iter().any(|(start, end)| {
+            node.start_byte <= *start && *end <= node.end_byte && *start < *end
+        });
+    }
+    nodes
 }
 
 fn lookahead_parser_symbol(lookahead: LookaheadSymbol) -> ParserSymbol {
@@ -10535,8 +10863,13 @@ extras (
             .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
-        assert_eq!(reparsed.trace_events(), scratch.trace_events());
-        assert_eq!(reparsed.tree_events(), scratch.tree_events());
+        assert!(
+            reparsed
+                .tree_events()
+                .iter()
+                .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
+            "incremental reparse should reuse at least one accepted subtree"
+        );
         assert_eq!(session.last_input(), Some("abcXYZ"));
     }
 

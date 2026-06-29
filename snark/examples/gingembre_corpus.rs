@@ -21,9 +21,10 @@ use snark::{
 };
 
 fn main() {
-    let grammar_js = env::args_os().nth(1).map(PathBuf::from).unwrap_or_else(|| {
-        repo_root().join("playgrounds/snark/src/bundled/gingembre/grammar.js")
-    });
+    let grammar_js = env::args_os()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root().join("playgrounds/snark/src/bundled/gingembre/grammar.js"));
     let corpus_root = env::args_os()
         .nth(2)
         .map(PathBuf::from)
@@ -69,8 +70,8 @@ fn main() {
 
     for path in &files {
         let input = std::fs::read_to_string(path).unwrap_or_default();
-        let runtime = RuntimeParser::new(&validated, &parser, &table)
-            .expect("runtime should build");
+        let runtime =
+            RuntimeParser::new(&validated, &parser, &table).expect("runtime should build");
         let report = match runtime.parse_recovering_with_report(&input) {
             Ok(report) => report,
             Err(error) => {
@@ -101,7 +102,9 @@ fn main() {
             println!(
                 "DIRTY {:<60} errors={errors} missing={missing}{}",
                 rel(path, &corpus_root),
-                first.map(|b| format!(" first_error_byte={b}")).unwrap_or_default(),
+                first
+                    .map(|b| format!(" first_error_byte={b}"))
+                    .unwrap_or_default(),
             );
         }
     }
@@ -148,7 +151,10 @@ fn collect_templates(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
 }
 
 fn rel(path: &std::path::Path, root: &std::path::Path) -> String {
-    path.strip_prefix(root).unwrap_or(path).display().to_string()
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 fn repo_root() -> PathBuf {

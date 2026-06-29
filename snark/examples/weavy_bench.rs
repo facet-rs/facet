@@ -31,7 +31,10 @@ fn main() {
     let input_file = env::args_os().nth(2).map(PathBuf::from).unwrap_or_else(|| {
         repo.join("playgrounds/snark/src/bundled/gingembre/samples/docs-base.html")
     });
-    let iters: usize = env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(50);
+    let iters: usize = env::args()
+        .nth(3)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
 
     let input = std::fs::read_to_string(&input_file).expect("input file");
     let grammar_json =

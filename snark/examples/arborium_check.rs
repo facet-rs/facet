@@ -81,7 +81,10 @@ fn main() {
 
     let _ = panic::take_hook();
     println!("\n==== summary ====");
-    println!("scanner-free defs: {}", usable.len() + emit_fail + build_fail);
+    println!(
+        "scanner-free defs: {}",
+        usable.len() + emit_fail + build_fail
+    );
     println!("usable in snark:   {ok}  ({parse_dirty} parsed a sample with errors)");
     println!("emit failures:     {emit_fail}");
     println!("build failures:    {build_fail}");
@@ -98,7 +101,8 @@ enum CheckErr {
 }
 
 fn check_one(def: &Path, grammar_js: &Path) -> Result<CheckOk, CheckErr> {
-    let grammar_json = snark_dsl::emit_with_boa(grammar_js).map_err(|e| CheckErr::Emit(e.to_string()))?;
+    let grammar_json =
+        snark_dsl::emit_with_boa(grammar_js).map_err(|e| CheckErr::Emit(e.to_string()))?;
     let raw = RawGrammarJson::from_tree_sitter_json_str(&grammar_json)
         .map_err(|e| CheckErr::Build(e.to_string()))?;
     let validated = ValidatedGrammar::from_raw(&raw).map_err(|e| CheckErr::Build(e.to_string()))?;
@@ -134,7 +138,8 @@ fn collect_defs(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if path.join("grammar/grammar.js").is_file() && path.file_name().is_some_and(|n| n == "def")
+            if path.join("grammar/grammar.js").is_file()
+                && path.file_name().is_some_and(|n| n == "def")
             {
                 out.push(path);
             } else {
@@ -172,5 +177,7 @@ fn first_line(s: &str) -> String {
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
 }
