@@ -7,7 +7,7 @@ Generated Tree-sitter implementation and metadata files are ignored:
 `src/parser.c`, `src/parser.cc`, `src/parser.h`, `src/node-types.json`, and
 `bindings/node/binding.cc` are not inputs.
 
-## Arborium Source Bundles
+## Authored `grammar.js` Bundles
 
 Arborium language sources usually look like this:
 
@@ -16,11 +16,12 @@ langs/group-acorn/json/def/grammar/grammar.js
 langs/group-acorn/json/def/queries/highlights.scm
 ```
 
-The playground normalizes `def/queries/...`, `def/test/...`, samples, and
-handwritten scanner sources into the package paths Snark expects. It does not
-execute `grammar.js` in the browser.
+Normal Tree-sitter package sources usually keep `grammar.js` at the package
+root, queries under `queries/`, corpus fixtures under `test/corpus/`, and
+handwritten scanners under `src/scanner.c`.
 
-Prepare an Arborium language bundle first:
+The playground does not execute `grammar.js` in the browser. Prepare a bundle
+first:
 
 ```bash
 pnpm --filter @bearcove/snark-wasm prepare-bundle \
@@ -30,7 +31,10 @@ pnpm --filter @bearcove/snark-wasm prepare-bundle \
 
 That writes a playground-loadable directory containing `src/grammar.json`,
 queries, samples, corpus fixtures when present, and handwritten scanner sources
-when present. The lower-level converter is also available:
+when present. Arborium grammar inheritance such as
+`require("tree-sitter-javascript/grammar")` is resolved from local Arborium
+authored grammar sources when available. The lower-level converter is also
+available:
 
 ```bash
 pnpm --filter @bearcove/snark-wasm grammar-js-to-json \

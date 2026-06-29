@@ -32,6 +32,7 @@ function main() {
     copyTreeIfPresent(path.join(source.defRoot, "test", "highlight"), path.join(out, "test", "highlight"), copied);
     copyTreeIfPresent(path.join(source.defRoot, "test", "highlights"), path.join(out, "test", "highlights"), copied);
     copyScannerSources(path.join(source.defRoot, "grammar"), path.join(out, "src"), copied);
+    copyScannerSources(path.join(source.defRoot, "src"), path.join(out, "src"), copied);
     copyArboriumSamples(source.defRoot, out, copied);
   }
 
@@ -91,6 +92,8 @@ function usage(code) {
       "The output contains src/grammar.json plus allowed query, corpus, sample,",
       "and handwritten scanner files when present. Generated parser artifacts",
       "and node metadata are not copied.",
+      "Arborium tree-sitter-* grammar dependencies are resolved from local",
+      "authored grammar.js sources when possible.",
       "",
     ].join("\n"),
   );

@@ -5,6 +5,7 @@ import path from "node:path";
 import vm from "node:vm";
 
 const moduleCache = new Map();
+const arboriumGrammarCache = new Map();
 
 function main() {
   const { grammarPath, outPath } = parseArgs(process.argv.slice(2));
@@ -70,6 +71,8 @@ function usage(code) {
       "usage: grammar-js-to-json <grammar.js> [--out src/grammar.json]",
       "",
       "Executes authored Tree-sitter grammar DSL and emits declarative grammar JSON.",
+      "When run inside an Arborium checkout, tree-sitter-* grammar dependencies",
+      "are resolved from sibling authored grammar.js sources when possible.",
       "Generated parser artifacts such as parser.c and node-types.json are not read.",
       "",
     ].join("\n"),
@@ -134,7 +137,15 @@ function makeRequire(parentFilename) {
       return nodeRequire(specifier);
     }
 
-    const resolved = nodeRequire.resolve(specifier);
+    let resolved;
+    try {
+      resolved = nodeRequire.resolve(specifier);
+    } catch (error) {
+      resolved = resolveArboriumGrammarDependency(specifier, parentFilename);
+      if (!resolved) {
+        throw error;
+      }
+    }
     if (resolved.endsWith(".json")) {
       return JSON.parse(fs.readFileSync(resolved, "utf8"));
     }
@@ -146,6 +157,66 @@ function makeRequire(parentFilename) {
     }
     return nodeRequire(specifier);
   };
+}
+
+function resolveArboriumGrammarDependency(specifier, parentFilename) {
+  const match = /^tree-sitter-([^/]+)\/grammar(?:\.js)?$/.exec(specifier);
+  if (!match) {
+    return null;
+  }
+
+  const arboriumRoot = findArboriumRoot(path.dirname(parentFilename));
+  if (!arboriumRoot) {
+    return null;
+  }
+
+  const grammarId = match[1];
+  const cacheKey = `${arboriumRoot}\0${grammarId}`;
+  if (arboriumGrammarCache.has(cacheKey)) {
+    return arboriumGrammarCache.get(cacheKey);
+  }
+
+  const resolved = findArboriumGrammarById(path.join(arboriumRoot, "langs"), grammarId);
+  arboriumGrammarCache.set(cacheKey, resolved);
+  return resolved;
+}
+
+function findArboriumRoot(startDir) {
+  let current = startDir;
+  while (true) {
+    if (fs.existsSync(path.join(current, "langs")) && fs.statSync(path.join(current, "langs")).isDirectory()) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
+function findArboriumGrammarById(langsDir, grammarId) {
+  if (!fs.existsSync(langsDir)) {
+    return null;
+  }
+
+  const stack = [langsDir];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const child = path.join(dir, entry.name);
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const grammarPath = path.join(child, "def", "grammar", "grammar.js");
+      if (entry.name === grammarId && isFile(grammarPath)) {
+        return grammarPath;
+      }
+      stack.push(child);
+    }
+  }
+  return null;
 }
 
 function resolveJsPath(filename) {
@@ -160,6 +231,14 @@ function resolveJsPath(filename) {
     return indexPath;
   }
   throw new Error(`could not resolve JavaScript module ${filename}`);
+}
+
+function isFile(input) {
+  try {
+    return fs.statSync(input).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function alias(rule, value) {
@@ -447,7 +526,7 @@ function grammar(baseGrammarOrOptions, maybeOptions) {
       if (!Array.isArray(list)) {
         throw new Error("Grammar precedences must be an array of arrays");
       }
-      return list.map(normalize);
+      return list.map(normalizePrecedenceEntry);
     });
   }
 
@@ -524,6 +603,20 @@ function normalize(value) {
     return value;
   }
   throw new TypeError(`Invalid rule: ${String(value)}`);
+}
+
+function normalizePrecedenceEntry(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  const symbol = symbolFrom(value);
+  if (symbol) {
+    return {
+      type: "SYMBOL",
+      name: symbol.name,
+    };
+  }
+  throw new TypeError(`Invalid precedence entry: ${String(value)}`);
 }
 
 function symbolFrom(value) {
