@@ -206,6 +206,23 @@ export function App() {
     );
   }
 
+  function exportResult() {
+    if (!result) {
+      return;
+    }
+    downloadJson("snark-playground-result.json", {
+      request: {
+        input,
+        run_corpus: runCorpus,
+        files: sortedFiles(files).map((file) => ({
+          path: file.path,
+          bytes: new TextEncoder().encode(file.text).length,
+        })),
+      },
+      response: result,
+    });
+  }
+
   async function run() {
     setBusy(true);
     try {
@@ -297,6 +314,9 @@ export function App() {
         <div className="toolbar">
           <button type="button" onClick={() => void run()} disabled={busy}>
             {busy ? "Running" : "Run"}
+          </button>
+          <button type="button" onClick={exportResult} disabled={!result}>
+            Export JSON
           </button>
           <label className="check-row">
             <input
@@ -704,6 +724,18 @@ function callParseBundle(files: BundleFile[], input: string, runCorpus: boolean)
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function downloadJson(filename: string, value: unknown) {
+  const blob = new Blob([JSON.stringify(value, null, 2) + "\n"], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function isGeneratedPath(path: string) {
