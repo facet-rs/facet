@@ -10,7 +10,10 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
+    sync::{Mutex, OnceLock},
 };
+
+use regex::Regex;
 
 use crate::{
     corpus::{SexpChild, SexpNode, SexpValue},
@@ -4916,75 +4919,17 @@ impl<'a> ReducedParser<'a> {
     }
 }
 
+#[cfg(test)]
 const ASCII_IDENTIFIER_PATTERN: &str = "[A-Za-z_][A-Za-z0-9_]*";
 const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|endif\\b|for\\b|endfor\\b|set\\b|endset\\b|block\\b|endblock\\b|extends\\b|include\\b|import\\b|macro\\b|endmacro\\b|break\\b|continue\\b|as\\b|in\\b|is\\b|not\\b|and\\b|or\\b|true\\b|True\\b|false\\b|False\\b|none\\b|None\\b)[A-Za-z_][A-Za-z0-9_]*";
 
 pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
     match pattern {
-        "\\s" => input[byte_position..]
-            .chars()
-            .next()
-            .filter(|ch| ch.is_whitespace())
-            .map(|ch| byte_position + ch.len_utf8()),
-        "\\s+" => match_while(input, byte_position, char::is_whitespace, 1),
-        "\\d+" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 1),
-        "\\d+\\.\\d+" => match_gingembre_float(input, byte_position),
-        "\\d*" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 0),
-        "[1-9]" => input[byte_position..]
-            .chars()
-            .next()
-            .filter(|ch| matches!(ch, '1'..='9'))
-            .map(|ch| byte_position + ch.len_utf8()),
-        "[eE]" => input[byte_position..]
-            .chars()
-            .next()
-            .filter(|ch| *ch == 'e' || *ch == 'E')
-            .map(|ch| byte_position + ch.len_utf8()),
         "-?(\\d)*n\\s*(\\+\\s*\\d+)?" => match_css_nth_functional_notation(input, byte_position),
-        "[^\\\\'\\n]+" => match_while(
-            input,
-            byte_position,
-            |ch| ch != '\\' && ch != '\'' && ch != '\n',
-            1,
-        ),
-        "[^\\\\\"\\n]+" => match_while(
-            input,
-            byte_position,
-            |ch| ch != '\\' && ch != '"' && ch != '\n',
-            1,
-        ),
-        "[a-zA-Z%]+" => match_while(
-            input,
-            byte_position,
-            |ch| ch.is_ascii_alphabetic() || ch == '%',
-            1,
-        ),
-        ASCII_IDENTIFIER_PATTERN => match_ascii_identifier(input, byte_position),
         GINGEMBRE_IDENTIFIER_PATTERN => match_gingembre_identifier(input, byte_position),
-        "\"([^\"\\\\]|\\\\.)*\"" => match_gingembre_quoted_string(input, byte_position, b'"'),
-        "'([^'\\\\]|\\\\.)*'" => match_gingembre_quoted_string(input, byte_position, b'\''),
-        "[a-zA-Z0-9-_\\xA0-\\xFF]+" => match_while(
-            input,
-            byte_position,
-            |ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || !ch.is_ascii(),
-            1,
-        ),
-        "[0-9a-fA-F]{3,8}" => {
-            match_bounded_while(input, byte_position, |ch| ch.is_ascii_hexdigit(), 3, 8)
-        }
         "[0-9a-fA-F]{1,6}\\s?" => match_css_hex_escape_tail(input, byte_position),
-        "[^0-9a-fA-F\\n\\r]" => input[byte_position..]
-            .chars()
-            .next()
-            .filter(|ch| !ch.is_ascii_hexdigit() && *ch != '\n' && *ch != '\r')
-            .map(|ch| byte_position + ch.len_utf8()),
         ".*" => match_json_line_comment_tail(input, byte_position),
         "[^*]*\\*+([^/*][^*]*\\*+)*" => match_json_block_comment_body(input, byte_position),
-        "(\\\"|\\\\|\\/|b|f|n|r|t|u)" => input[byte_position..]
-            .chars()
-            .next()
-            .filter(|ch| matches!(ch, '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u'))
-            .map(|ch| byte_position + ch.len_utf8()),
         "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => {
             match_css_identifier(input, byte_position)
         }
@@ -4993,296 +4938,84 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
         "is\\b" => match_ascii_keyword(input, byte_position, "is"),
         "not\\b" => match_ascii_keyword(input, byte_position, "not"),
         "or\\b" => match_ascii_keyword(input, byte_position, "or"),
-        _ => match_regex_subset(pattern, input, byte_position),
+        _ => match_regex_leaf(pattern, input, byte_position),
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RegexAtom {
-    Literal(char),
-    Any,
-    Class(RegexClass),
+fn match_regex_leaf(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+    let haystack = input.get(byte_position..)?;
+    let regex = cached_regex(pattern)?;
+    regex
+        .find(haystack)
+        .filter(|match_| match_.start() == 0)
+        .map(|match_| byte_position + match_.end())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RegexClass {
-    negated: bool,
-    items: Vec<RegexClassItem>,
-}
+fn cached_regex(pattern: &str) -> Option<Regex> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<Regex>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RegexClassItem {
-    Char(char),
-    Range(char, char),
-    Whitespace,
-    Digit,
-    Word,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RegexPiece {
-    atom: RegexAtom,
-    repeat: RegexRepeat,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RegexRepeat {
-    ExactlyOne,
-    ZeroOrMore,
-    OneOrMore,
-    ZeroOrOne,
-    Range { min: usize, max: Option<usize> },
-}
-
-fn match_regex_subset(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
-    input.get(byte_position..)?;
-    let mut pattern_position = 0usize;
-    let mut pieces = Vec::new();
-    while pattern_position < pattern.len() {
-        let atom = parse_regex_atom(pattern, &mut pattern_position)?;
-        let repeat = parse_regex_repeat(pattern, &mut pattern_position)?;
-        pieces.push(RegexPiece { atom, repeat });
-    }
-    match_regex_pieces(&pieces, input, byte_position)
-}
-
-fn parse_regex_atom(pattern: &str, position: &mut usize) -> Option<RegexAtom> {
-    let ch = next_pattern_char(pattern, position)?;
-    match ch {
-        '[' => parse_regex_class(pattern, position).map(RegexAtom::Class),
-        '.' => Some(RegexAtom::Any),
-        '\\' => parse_regex_escape(pattern, position).map(|item| match item {
-            RegexClassItem::Whitespace | RegexClassItem::Digit | RegexClassItem::Word => {
-                RegexAtom::Class(RegexClass {
-                    negated: false,
-                    items: vec![item],
-                })
-            }
-            RegexClassItem::Char(ch) => RegexAtom::Literal(ch),
-            RegexClassItem::Range(_, _) => unreachable!("escaped atoms are not ranges"),
-        }),
-        '(' | ')' | '|' | '^' | '$' => None,
-        '*' | '+' | '?' | '{' | '}' => None,
-        ch => Some(RegexAtom::Literal(ch)),
-    }
-}
-
-fn parse_regex_class(pattern: &str, position: &mut usize) -> Option<RegexClass> {
-    let mut negated = false;
-    if pattern.get(*position..)?.starts_with('^') {
-        *position += '^'.len_utf8();
-        negated = true;
-    }
-
-    let mut items = Vec::new();
-    while *position < pattern.len() {
-        if pattern.get(*position..)?.starts_with(']') {
-            *position += ']'.len_utf8();
-            return Some(RegexClass { negated, items });
-        }
-        let start = parse_regex_class_item(pattern, position)?;
-        if pattern.get(*position..)?.starts_with('-') {
-            let after_dash = *position + '-'.len_utf8();
-            if !pattern.get(after_dash..)?.starts_with(']') {
-                *position = after_dash;
-                let end = parse_regex_class_item(pattern, position)?;
-                match (start, end) {
-                    (RegexClassItem::Char(start), RegexClassItem::Char(end)) => {
-                        items.push(RegexClassItem::Range(start, end));
-                    }
-                    _ => return None,
-                }
-                continue;
-            }
-        }
-        items.push(start);
-    }
-    None
-}
-
-fn parse_regex_class_item(pattern: &str, position: &mut usize) -> Option<RegexClassItem> {
-    let ch = next_pattern_char(pattern, position)?;
-    if ch == '\\' {
-        parse_regex_escape(pattern, position)
-    } else {
-        Some(RegexClassItem::Char(ch))
-    }
-}
-
-fn parse_regex_escape(pattern: &str, position: &mut usize) -> Option<RegexClassItem> {
-    let ch = next_pattern_char(pattern, position)?;
-    match ch {
-        's' => Some(RegexClassItem::Whitespace),
-        'd' => Some(RegexClassItem::Digit),
-        'w' => Some(RegexClassItem::Word),
-        'x' => {
-            let hex = pattern.get(*position..(*position + 2))?;
-            if !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
-                return None;
-            }
-            *position += 2;
-            let value = u32::from_str_radix(hex, 16).ok()?;
-            char::from_u32(value).map(RegexClassItem::Char)
-        }
-        ch => Some(RegexClassItem::Char(ch)),
-    }
-}
-
-fn parse_regex_repeat(pattern: &str, position: &mut usize) -> Option<RegexRepeat> {
-    let Some(rest) = pattern.get(*position..) else {
-        return Some(RegexRepeat::ExactlyOne);
-    };
-    if rest.starts_with('*') {
-        *position += '*'.len_utf8();
-        return Some(RegexRepeat::ZeroOrMore);
-    }
-    if rest.starts_with('+') {
-        *position += '+'.len_utf8();
-        return Some(RegexRepeat::OneOrMore);
-    }
-    if rest.starts_with('?') {
-        *position += '?'.len_utf8();
-        return Some(RegexRepeat::ZeroOrOne);
-    }
-    if !rest.starts_with('{') {
-        return Some(RegexRepeat::ExactlyOne);
-    }
-
-    *position += '{'.len_utf8();
-    let min = parse_regex_usize(pattern, position)?;
-    let mut max = Some(min);
-    if pattern.get(*position..)?.starts_with(',') {
-        *position += ','.len_utf8();
-        max = if pattern.get(*position..)?.starts_with('}') {
-            None
-        } else {
-            Some(parse_regex_usize(pattern, position)?)
-        };
-    }
-    if !pattern.get(*position..)?.starts_with('}') {
-        return None;
-    }
-    *position += '}'.len_utf8();
-    Some(RegexRepeat::Range { min, max })
-}
-
-fn parse_regex_usize(pattern: &str, position: &mut usize) -> Option<usize> {
-    let start = *position;
-    while pattern
-        .as_bytes()
-        .get(*position)
-        .is_some_and(u8::is_ascii_digit)
     {
-        *position += 1;
-    }
-    (start != *position)
-        .then(|| pattern[start..*position].parse().ok())
-        .flatten()
-}
-
-fn next_pattern_char(pattern: &str, position: &mut usize) -> Option<char> {
-    let ch = pattern.get(*position..)?.chars().next()?;
-    *position += ch.len_utf8();
-    Some(ch)
-}
-
-fn match_regex_pieces(pieces: &[RegexPiece], input: &str, byte_position: usize) -> Option<usize> {
-    let Some((piece, rest)) = pieces.split_first() else {
-        return Some(byte_position);
-    };
-    let positions =
-        match_regex_atom_repeat_positions(&piece.atom, piece.repeat, input, byte_position);
-    for position in positions.into_iter().rev() {
-        if let Some(end) = match_regex_pieces(rest, input, position) {
-            return Some(end);
+        let cache = cache.lock().expect("regex cache poisoned");
+        if let Some(regex) = cache.get(pattern) {
+            return regex.clone();
         }
     }
-    None
+
+    let compiled = compile_regex_leaf(pattern).ok();
+    let mut cache = cache.lock().expect("regex cache poisoned");
+    let entry = cache
+        .entry(pattern.to_owned())
+        .or_insert_with(|| compiled.clone());
+    entry.clone()
 }
 
-fn match_regex_atom_repeat_positions(
-    atom: &RegexAtom,
-    repeat: RegexRepeat,
-    input: &str,
-    byte_position: usize,
-) -> Vec<usize> {
-    match repeat {
-        RegexRepeat::ExactlyOne => match_regex_atom_once(atom, input, byte_position)
-            .into_iter()
-            .collect(),
-        RegexRepeat::ZeroOrOne => {
-            let mut positions = vec![byte_position];
-            positions.extend(match_regex_atom_once(atom, input, byte_position));
-            positions
-        }
-        RegexRepeat::ZeroOrMore => {
-            match_regex_atom_repeated_positions(atom, input, byte_position, 0, None)
-        }
-        RegexRepeat::OneOrMore => {
-            match_regex_atom_repeated_positions(atom, input, byte_position, 1, None)
-        }
-        RegexRepeat::Range { min, max } => {
-            match_regex_atom_repeated_positions(atom, input, byte_position, min, max)
-        }
-    }
+fn compile_regex_leaf(pattern: &str) -> Result<Regex, regex::Error> {
+    Regex::new(&format!("\\A(?:{})", rust_regex_source(pattern)))
 }
 
-fn match_regex_atom_repeated_positions(
-    atom: &RegexAtom,
-    input: &str,
-    byte_position: usize,
-    min: usize,
-    max: Option<usize>,
-) -> Vec<usize> {
-    let mut positions = Vec::new();
-    let mut position = byte_position;
-    let mut count = 0usize;
-    if count >= min {
-        positions.push(position);
-    }
-    while max.is_none_or(|max| count < max) {
-        let Some(end) = match_regex_atom_once(atom, input, position) else {
+fn rust_regex_source(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+
+        let Some(escaped) = chars.next() else {
+            out.push('\\');
             break;
         };
-        if end == position {
-            break;
-        }
-        position = end;
-        count += 1;
-        if count >= min {
-            positions.push(position);
-        }
-    }
-    positions
-}
 
-fn match_regex_atom_once(atom: &RegexAtom, input: &str, byte_position: usize) -> Option<usize> {
-    let ch = input.get(byte_position..)?.chars().next()?;
-    let matches = match atom {
-        RegexAtom::Literal(expected) => ch == *expected,
-        RegexAtom::Any => ch != '\n',
-        RegexAtom::Class(class) => class.matches(ch),
-    };
-    matches.then_some(byte_position + ch.len_utf8())
-}
-
-impl RegexClass {
-    fn matches(&self, ch: char) -> bool {
-        let matched = self.items.iter().any(|item| item.matches(ch));
-        matched != self.negated
-    }
-}
-
-impl RegexClassItem {
-    fn matches(&self, ch: char) -> bool {
-        match self {
-            Self::Char(expected) => ch == *expected,
-            Self::Range(start, end) => *start <= ch && ch <= *end,
-            Self::Whitespace => ch.is_whitespace(),
-            Self::Digit => ch.is_ascii_digit(),
-            Self::Word => ch == '_' || ch.is_ascii_alphanumeric(),
+        if escaped == '/' {
+            out.push('/');
+            continue;
         }
+
+        if escaped == 'u' {
+            let mut hex = String::with_capacity(4);
+            for _ in 0..4 {
+                let Some(hex_ch) = chars.peek().copied().filter(|ch| ch.is_ascii_hexdigit()) else {
+                    out.push('\\');
+                    out.push('u');
+                    out.push_str(&hex);
+                    out.extend(chars);
+                    return out;
+                };
+                chars.next();
+                hex.push(hex_ch);
+            }
+            out.push_str("\\u{");
+            out.push_str(&hex);
+            out.push('}');
+            continue;
+        }
+
+        out.push('\\');
+        out.push(escaped);
     }
+    out
 }
 
 fn match_ascii_keyword(input: &str, byte_position: usize, keyword: &str) -> Option<usize> {
@@ -5320,45 +5053,6 @@ fn match_ascii_identifier(input: &str, byte_position: usize) -> Option<usize> {
         .take_while(|byte| **byte == b'_' || byte.is_ascii_alphanumeric())
         .count();
     Some(byte_position + len)
-}
-
-fn match_gingembre_float(input: &str, byte_position: usize) -> Option<usize> {
-    let bytes = input[byte_position..].as_bytes();
-    let leading_digits = bytes
-        .iter()
-        .take_while(|byte| byte.is_ascii_digit())
-        .count();
-    if leading_digits == 0 || bytes.get(leading_digits) != Some(&b'.') {
-        return None;
-    }
-    let fractional_digits = bytes[leading_digits + 1..]
-        .iter()
-        .take_while(|byte| byte.is_ascii_digit())
-        .count();
-    (fractional_digits > 0).then_some(byte_position + leading_digits + 1 + fractional_digits)
-}
-
-fn match_gingembre_quoted_string(input: &str, byte_position: usize, quote: u8) -> Option<usize> {
-    let bytes = input.as_bytes();
-    if bytes.get(byte_position) != Some(&quote) {
-        return None;
-    }
-
-    let mut cursor = byte_position + 1;
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'\\' => {
-                cursor += 1;
-                let escaped = input[cursor..].chars().next()?;
-                cursor += escaped.len_utf8();
-            }
-            byte if byte == quote => return Some(cursor + 1),
-            _ => {
-                cursor += input[cursor..].chars().next().map_or(1, char::len_utf8);
-            }
-        }
-    }
-    None
 }
 
 fn is_gingembre_keyword(word: &str) -> bool {
@@ -5419,25 +5113,6 @@ fn match_while(
     let mut count = 0usize;
     for ch in input[byte_position..].chars() {
         if !predicate(ch) {
-            break;
-        }
-        position += ch.len_utf8();
-        count += 1;
-    }
-    (count >= min_chars).then_some(position)
-}
-
-fn match_bounded_while(
-    input: &str,
-    byte_position: usize,
-    predicate: impl Fn(char) -> bool,
-    min_chars: usize,
-    max_chars: usize,
-) -> Option<usize> {
-    let mut position = byte_position;
-    let mut count = 0usize;
-    for ch in input[byte_position..].chars() {
-        if count >= max_chars || !predicate(ch) {
             break;
         }
         position += ch.len_utf8();
@@ -8062,6 +7737,19 @@ extras (
             match_pattern("[\\w/\\-\\.]*[A-Za-z][\\w/\\-=,?]+", "www-data", 0),
             Some(8)
         );
+    }
+
+    #[test]
+    fn matches_nginx_js_regex_leaf_shapes() {
+        assert_eq!(
+            match_pattern("#.*\\n", "# https://nginx.org/en/docs/\nuser www-data;", 0),
+            Some("# https://nginx.org/en/docs/\n".len())
+        );
+        assert_eq!(
+            match_pattern("[\\s\\p{Zs}\\uFEFF\\u2060\\u200B]", "\u{FEFF}rest", 0),
+            Some("\u{FEFF}".len())
+        );
+        assert_eq!(match_pattern("\\w+:\\/\\/", "http://host", 0), Some(7));
     }
 
     #[test]

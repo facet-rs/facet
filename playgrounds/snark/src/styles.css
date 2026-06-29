@@ -297,6 +297,11 @@ textarea {
   pointer-events: none;
 }
 
+.source-input.with-diagnostic textarea,
+.source-input.with-diagnostic .source-highlight-layer {
+  padding-bottom: 78px;
+}
+
 .source-input.with-highlights textarea {
   background: transparent;
   color: transparent;
@@ -316,40 +321,50 @@ textarea {
   color: #7e2a19;
 }
 
-.source-diagnostic-label {
+.source-diagnostic-overlay {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  left: 10px;
+  z-index: 2;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  gap: 6px;
-  align-items: baseline;
-  width: calc(100% - 2px);
-  margin: 2px 0 4px;
-  padding: 3px 6px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 9px 11px;
   border: 1px solid #efb29f;
   border-radius: 6px;
   background: #fff7f2;
   box-shadow: 0 2px 8px rgb(45 32 24 / 14%);
   color: #7e2a19;
-  font-family: inherit;
   font-size: 12px;
-  line-height: 1.25;
+  line-height: 1.35;
   pointer-events: none;
-  white-space: normal;
 }
 
-.source-diagnostic-label strong,
-.source-diagnostic-label small,
-.source-diagnostic-label span {
+.source-diagnostic-overlay div {
+  display: inline-flex;
+  gap: 7px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.source-diagnostic-overlay strong,
+.source-diagnostic-overlay small,
+.source-diagnostic-overlay code {
   min-width: 0;
 }
 
-.source-diagnostic-label small {
+.source-diagnostic-overlay small {
   color: #8f5b4c;
 }
 
-.source-diagnostic-label span {
+.source-diagnostic-overlay code {
+  max-height: 3.1em;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: #5b6662;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  white-space: normal;
 }
 
 .source-diagnostics {

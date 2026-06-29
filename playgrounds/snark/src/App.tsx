@@ -411,7 +411,15 @@ export function App() {
 
         <label className="editor-block source-editor">
           <span>Source</span>
-          <div className={hasHighlightedSource ? "source-input with-highlights" : "source-input"}>
+          <div
+            className={[
+              "source-input",
+              hasHighlightedSource ? "with-highlights" : "",
+              placedDiagnostic(result) ? "with-diagnostic" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
             {hasHighlightedSource ? (
               <pre
                 aria-hidden="true"
@@ -431,6 +439,7 @@ export function App() {
                 })
               }
             />
+            <SourceDiagnosticOverlay result={result} />
           </div>
         </label>
         <SourceDiagnostics result={result} />
@@ -881,6 +890,30 @@ function renderSourceLayer(input: string, result: PlaygroundResponse | null) {
   return renderHighlightedSource(input, result.highlights);
 }
 
+function placedDiagnostic(result: PlaygroundResponse | null) {
+  return result?.diagnostics.find((candidate) => candidate.primary_span) ?? null;
+}
+
+function SourceDiagnosticOverlay({ result }: { result: PlaygroundResponse | null }) {
+  const diagnostic = placedDiagnostic(result);
+  const span = diagnostic?.primary_span;
+  if (!diagnostic || !span) {
+    return null;
+  }
+
+  return (
+    <div className="source-diagnostic-overlay">
+      <div>
+        <strong>{diagnostic.stage}</strong>
+        <small>
+          {span.start_row + 1}:{span.start_column + 1}
+        </small>
+      </div>
+      <code>{diagnostic.message}</code>
+    </div>
+  );
+}
+
 function SourceDiagnostics({ result }: { result: PlaygroundResponse | null }) {
   const unplaced = result?.diagnostics.filter((diagnostic) => !diagnostic.primary_span) ?? [];
   if (!unplaced.length) {
@@ -912,9 +945,6 @@ function renderDiagnosticSource(input: string, diagnostics: Diagnostic[]) {
   const rawMarker = input.slice(markerIndex, markerEnd);
   const markerText = rawMarker && rawMarker !== "\n" ? rawMarker : " ";
   const consumedEnd = markerText === rawMarker ? markerEnd : markerIndex;
-  const lineEnd = input.indexOf("\n", consumedEnd);
-  const lineEndIndex = lineEnd === -1 ? input.length : lineEnd;
-  const afterLineIndex = lineEnd === -1 ? lineEndIndex : lineEndIndex + 1;
 
   return [
     input.slice(0, markerIndex),
@@ -925,20 +955,7 @@ function renderDiagnosticSource(input: string, diagnostics: Diagnostic[]) {
     >
       {markerText}
     </span>,
-    input.slice(consumedEnd, lineEndIndex),
-    "\n",
-    <span
-      className="source-diagnostic-label"
-      key={`diagnostic-label-${span.start_byte}`}
-    >
-      <strong>{diagnostic.stage}</strong>
-      <small>
-        {span.start_row + 1}:{span.start_column + 1}
-      </small>
-      <span>{diagnostic.message}</span>
-    </span>,
-    "\n",
-    input.slice(afterLineIndex),
+    input.slice(consumedEnd),
   ];
 }
 

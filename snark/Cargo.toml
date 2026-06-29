@@ -31,6 +31,7 @@ weavy-lowering = ["dep:weavy"]
 facet = { workspace = true, features = ["indexmap"] }
 facet-json = { workspace = true, optional = true }
 indexmap.workspace = true
+regex.workspace = true
 weavy = { workspace = true, optional = true }
 
 [dev-dependencies]

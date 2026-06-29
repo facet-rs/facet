@@ -104,11 +104,18 @@ cstree gives four things; only two are load-bearing at our scale:
 
 1. **Homogeneous untyped nodes** → generic algorithms. *Keep* — but reflection gives the
    same uniformity dynamically (walk any facet tree, each node carries a span).
-2. **Interning + structural sharing** → memory/incremental reuse for million-line crate
-   graphs. **We don't have those** — config/template/doc files are kilobytes; cross-file
-   incrementality lives in picante, not intra-file green-node reuse. Drop.
-3. **Red-green lazy navigation** → cheap parent/offset at huge scale. Same — eager
-   parent+span is free at our sizes. Drop.
+2. **Interning + structural sharing** → two *separable* concerns, and the 2025-06
+   incremental-reparse decision splits them:
+   - **structural sharing (immutable, shared subtrees)** is now **foundational, not
+     deferred** — it's what intra-tree incremental reparse (subtree reuse) requires, and
+     Snark must be a drop-in Tree-sitter replacement, so incremental reparse is a headline
+     feature, not a scale optimization. `Node<K>` children are shared immutable handles
+     (`Arc`/interned), designed in from line one (see "Tree shape" below). Retrofitting
+     sharing onto an owned tree later rewrites everything that touched the tree.
+   - **interning for memory** (dedup identical subtrees to shrink footprint) stays
+     deferrable — that's the million-line-file concern we don't have yet.
+3. **Red-green lazy navigation** → cheap parent/offset at huge scale. Eager parent+span is
+   fine at our sizes. Drop (but positions are *relative extents*, see "Tree shape").
 4. **Losslessness + offset cursor** → needed for LSP/formatting at any scale. *Keep* —
    but it's a convention (keep all trivia tokens, carry spans), not cstree-only.
 
@@ -118,15 +125,18 @@ So a facet-native lossless CST is strictly *more* leverage: the whole tree refle
 visitor — all written **once**, parameterized over each lang's kind enum.
 
 ```rust
-enum VixKind { /* … */ }                              // per-lang, facet-derived
-struct Node<K> { kind: K, span: Span, children: Vec<NodeOrToken<K>> }  // facet-derived
+enum VixKind { /* … */ }                                   // per-lang, facet-derived
+struct Node<K> { kind: K, len: u32, children: Arc<[NodeOrToken<K>]> }  // facet-derived
 ```
 
-If a lang ever parses multi-megabyte inputs, interning/sharing become *internal*
-representation swaps (`Vec` → arena+dedup, `Arc` the children) under the same reflected
-API — a known, bounded future patch. Starting on cstree and wanting reflection later is
-the painful migration (its green nodes are exactly what facet can't see into). So: start
-facet-native, defer the scale tricks.
+Two representation commitments are **foundational** (cheap now, brutal to retrofit) — see
+"Tree shape" for why: nodes store **relative extents** (`len`, not absolute `span` — derive
+absolute position by walking from root), and children are **shared immutable handles**
+(`Arc`/interned), so an incremental reparse reuses an unchanged subtree by pointer. Only
+**interning for memory** (deduping identical subtrees) stays a deferrable scale patch.
+Starting on cstree and wanting reflection later is the painful migration (its green nodes
+are exactly what facet can't see into); start facet-native, but bake in relative extents +
+sharing from line one.
 
 ### The carve
 
@@ -151,6 +161,44 @@ facet-native, defer the scale tricks.
 Open knob: how a lang declares kinds — `impl SyntaxKind for VixKind` (trait) vs a
 `#[derive(SyntaxKind)]` macro in the infra crate that wires it up (incl. which kinds are
 trivia).
+
+### Tree shape: CST, AST, and incremental reparse
+
+**Tree-sitter's tree *is* the CST layer.** It's a lossless concrete tree of named +
+anonymous nodes with fields and extras — the same shape as `Node<K>`. So the correspondence
+is a *representation choice*, not a transform: Snark materializes its parse as `Node<K>`
+where `K` is the grammar's named symbols as a facet-derived `SyntaxKind`. The SexpNode Snark
+emits today is just the debug/oracle projection of that.
+
+One tree, two lenses:
+- **CST = lossless `Node<K>`** (every token, trivia, anonymous node). **LSP** consumes this
+  directly: position→node, selection, formatting, highlighting.
+- **Typed AST = a generated *view* over the CST**, not a second tree — zero-cost typed
+  accessors (rust-analyzer model) whose schema is the grammar's **fields + supertypes**
+  (which Tree-sitter grammars carry and authored styx grammars declare; Snark already
+  validates them). **Lowering** reads this clean view (anonymous/aux nodes hidden) → weavy.
+  Note: this is *why* removing the generated `node-types.json` was right — the AST schema is
+  re-derived from the grammar, which is also the only option for authored styx grammars.
+
+**Incremental reparse is foundational, ratcheted via an oracle.** Snark is a drop-in
+Tree-sitter replacement, so intra-tree subtree reuse is a headline feature, designed into
+the CST layer (the next integration piece) rather than retrofitted. Three pillars:
+1. **Relative extents** (node stores `len`; absolute position derived from root) — edit is
+   O(path-to-edit), reused subtrees keep their bytes. *Also* satisfies early-cutoff
+   position-independence (back-end seam) — one decision, both payoffs.
+2. **Immutable shared subtrees** (`Arc`/interned) — reuse = share the old subtree by pointer.
+3. **Reuse-aware parse-loop seam** — the GLR driver takes an optional old-tree cursor +
+   reuse predicate (start "never reuse"; fill in the algorithm later).
+
+Oracle (we already own the ground truth): `incremental_reparse(old_tree, edit)` **must
+rediff-equal** `parse_from_scratch(new_source)`, over an edit corpus (random-edit property
+testing makes it infinite). Ratchet the reuse algorithm the same oracle-driven way as the
+batch parser.
+
+Two interactions to design for early: reuse validity depends on **external-scanner state**
+at the boundary (Snark already carries per-branch scanner snapshots — the invalidation hook
+plugs in there), and the **weavy lowering must be re-entrant** (resumable from a stack state
+with a reused subtree pushed) before it ossifies.
 
 ### Settled stack
 
@@ -179,6 +227,34 @@ picante-over-weavy.
   under picante must be pure modulo declared (query) inputs.
 - **Memoization granularity.** Which weavy ops are picante query boundaries vs plain
   execution — too fine = per-node overhead, too coarse = over-recompute.
+
+### Incrementality granularity: definition-level, not file-level
+
+Two *independent* axes hide under "incremental": **parse cost** (how fast the new CST is
+produced — that's intra-tree subtree reuse, see "Tree shape") and **invalidation
+granularity** (which downstream work recomputes). This section is the second.
+
+Goal: editing *one* macro/function must not re-render pages that use only the *others* in
+the same file. Mechanism is the salsa/rust-analyzer **firewall + early cutoff**, not a
+literal per-function input:
+1. `parse(file) → CST` reruns on every edit (cheap, whole-file).
+2. A firewall query `definition(file, name) → DefAst` keyed at **definition granularity** —
+   one tracked value per macro/function.
+3. Consumers depend on the **specific `definition(file, name)`s they use**, not on
+   `parse(file)` nor the whole def-map.
+
+picante's **early cutoff** (a query reran but returned an *equal* value → don't invalidate
+dependents; `facet-hash` gives the value identity) then does it: editing macro A reruns the
+parse, but `definition(file, B)` returns an equal value → backdated → B's consumers never
+recompute. Confirm picante does early cutoff, not just dependency invalidation — everything
+hinges on it.
+
+**The gotcha that silently breaks it: absolute spans defeat early cutoff.** Editing A shifts
+every definition below it; if `definition(file, B)`'s cutoff value carries absolute
+positions, it looks "changed" and B's consumers recompute anyway. So the **cutoff value must
+be position-independent** (relative extents / structure only); absolute positions live in a
+side table for diagnostics/LSP and do *not* gate recompute. This is the same relative-extent
+decision as "Tree shape" pillar #1 — front-end CST and back-end early-cutoff converge on it.
 
 ### Resolving sync/async and JIT cost (the two sharp edges)
 

@@ -6572,6 +6572,7 @@ dependencies = [
  "gingembre-syntax",
  "indexmap 2.14.0",
  "rediff",
+ "regex",
  "snark-scanner-host",
  "weavy",
 ]

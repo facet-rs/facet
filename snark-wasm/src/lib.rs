@@ -1544,18 +1544,25 @@ mod tests {
     }
 
     #[test]
-    fn parses_word_pattern_bundle_through_playground_response() {
+    fn parses_nginx_shaped_pattern_bundle_through_playground_response() {
         let request = PlaygroundRequest {
             files: vec![
                 BundleFile {
                     path: "src/grammar.json".to_owned(),
-                    text: r#"{
+                    text: r##"{
   "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
   "name": "nginx_smoke",
   "rules": {
-    "source_file": {
+    "conf": {
       "type": "REPEAT",
       "content": { "type": "SYMBOL", "name": "directive" }
+    },
+    "comment": {
+      "type": "TOKEN",
+      "content": {
+        "type": "PATTERN",
+        "value": "#.*\\n"
+      }
     },
     "directive": {
       "type": "SEQ",
@@ -1572,7 +1579,8 @@ mod tests {
       "type": "CHOICE",
       "members": [
         { "type": "SYMBOL", "name": "identifier" },
-        { "type": "SYMBOL", "name": "number" }
+        { "type": "SYMBOL", "name": "number" },
+        { "type": "SYMBOL", "name": "generic" }
       ]
     },
     "identifier": {
@@ -1582,23 +1590,33 @@ mod tests {
     "number": {
       "type": "PATTERN",
       "value": "\\d+"
+    },
+    "generic": {
+      "type": "PATTERN",
+      "value": "[\\w/\\-\\.]*[A-Za-z][\\w/\\-=,?]+"
     }
   },
-  "extras": [{ "type": "PATTERN", "value": "\\s" }],
+  "extras": [
+    { "type": "SYMBOL", "name": "comment" },
+    { "type": "PATTERN", "value": "[\\s\\p{Zs}\\uFEFF\\u2060\\u200B]" }
+  ],
   "conflicts": [],
   "precedences": [],
   "externals": [],
   "inline": [],
   "supertypes": []
-}"#
+}"##
                     .to_owned(),
                 },
                 BundleFile {
                     path: "queries/highlights.scm".to_owned(),
-                    text: "(identifier) @variable\n".to_owned(),
+                    text: "(identifier) @variable\n(generic) @string\n(comment) @comment\n"
+                        .to_owned(),
                 },
             ],
-            input: "user www www;\n".to_owned(),
+            input:
+                "# https://nginx.org/en/docs/ngx_core_module.html#user\nuser www-data;\npid /var/run/nginx.pid;\n"
+                    .to_owned(),
             run_corpus: false,
         };
 
@@ -1610,19 +1628,35 @@ mod tests {
         assert_eq!(
             response.parse.as_ref().map(|parse| parse.sexp.as_str()),
             Some(
-                "(source_file (directive (identifier) (argument (identifier)) (argument (identifier))))"
+                "(conf (comment) (directive (identifier) (argument (generic))) (directive (identifier) (argument (generic))))"
             )
         );
+        let mut captures = response
+            .highlights
+            .iter()
+            .map(|capture| {
+                (
+                    capture.start_byte,
+                    capture.capture_name.as_str(),
+                    capture.text.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        captures.sort();
         assert_eq!(
-            response
-                .highlights
-                .iter()
-                .map(|capture| (capture.capture_name.as_str(), capture.text.as_str()))
+            captures
+                .into_iter()
+                .map(|(_, capture_name, text)| (capture_name, text))
                 .collect::<Vec<_>>(),
             vec![
+                (
+                    "comment",
+                    "# https://nginx.org/en/docs/ngx_core_module.html#user\n",
+                ),
                 ("variable", "user"),
-                ("variable", "www"),
-                ("variable", "www"),
+                ("string", "www-data"),
+                ("variable", "pid"),
+                ("string", "/var/run/nginx.pid"),
             ]
         );
     }
