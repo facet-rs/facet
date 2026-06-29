@@ -1768,7 +1768,7 @@ mod tests {
                         .to_owned(),
                 },
             ],
-            input: "map type {\n  default \"ok\";\n  \"\" \"no-store\";\n  after value;\n}\n".to_owned(),
+            input: "map type {\n  default \"ok\";\n  \"\" \"no-store\";\n  after value;\n}\nmap other {\n  \"\" \"same-origin\";\n  tail value;\n}\n".to_owned(),
             run_corpus: false,
         };
 
@@ -1797,6 +1797,10 @@ mod tests {
         assert!(
             capture_texts.contains(&"value"),
             "expected captures after recovered line: {capture_texts:?}"
+        );
+        assert!(
+            capture_texts.contains(&"tail"),
+            "expected captures after second recovered block line: {capture_texts:?}"
         );
     }
 

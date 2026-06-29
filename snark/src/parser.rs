@@ -5645,6 +5645,17 @@ impl<'a> RuntimeParser<'a> {
             Err(error) => {
                 if recovery == RuntimeRecoveryMode::SkipInvalidInput
                     && matches!(error.kind(), ReducedParseErrorKind::NoToken { .. })
+                    && input[branch.byte_position..].starts_with(['{', '}'])
+                    && let Some(branch) = self.recover_runtime_to_viable_stack(
+                        branch.clone(),
+                        input,
+                        trace_events,
+                    )
+                {
+                    return vec![RuntimeStepOutcome::Branch(branch)];
+                }
+                if recovery == RuntimeRecoveryMode::SkipInvalidInput
+                    && matches!(error.kind(), ReducedParseErrorKind::NoToken { .. })
                     && let Some(branch) = self.recover_runtime_no_token(
                         branch.clone(),
                         input,
@@ -5686,6 +5697,15 @@ impl<'a> RuntimeParser<'a> {
             .iter()
             .find(|entry| entry.lookahead() == token.lookahead)
         else {
+            if recovery == RuntimeRecoveryMode::SkipInvalidInput
+                && let Some(branch) = self.recover_runtime_to_action_state(
+                    branch.clone(),
+                    token.lookahead,
+                    trace_events,
+                )
+            {
+                return vec![RuntimeStepOutcome::Branch(branch)];
+            }
             return vec![RuntimeStepOutcome::Failed {
                 version: source_version,
                 error: ReducedParseError::new(ReducedParseErrorKind::NoAction {
@@ -5998,6 +6018,70 @@ impl<'a> RuntimeParser<'a> {
         }
     }
 
+    fn recover_runtime_to_viable_stack(
+        &self,
+        mut branch: RuntimeBranch,
+        input: &str,
+        trace_events: &mut Vec<TraceEvent>,
+    ) -> Option<RuntimeBranch> {
+        if self.reduced.external_scanner.is_some() || branch.stack.len() <= 1 {
+            return None;
+        }
+        let original_len = branch.stack.len();
+        for len in (1..original_len).rev() {
+            let state = branch.stack[len - 1].state;
+            let state_row = self.reduced.parse_state(state).ok()?;
+            if self
+                .reduced
+                .lex(state_row, input, branch.byte_position, branch.scanner_snapshot)
+                .is_ok()
+            {
+                branch.stack.truncate(len);
+                branch.error_cost = branch
+                    .error_cost
+                    .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
+                trace_events.push(TraceEvent::Recover {
+                    version: branch.version,
+                    state,
+                });
+                return Some(branch);
+            }
+        }
+        None
+    }
+
+    fn recover_runtime_to_action_state(
+        &self,
+        mut branch: RuntimeBranch,
+        lookahead: LookaheadSymbol,
+        trace_events: &mut Vec<TraceEvent>,
+    ) -> Option<RuntimeBranch> {
+        let original_len = branch.stack.len();
+        if original_len <= 1 {
+            return None;
+        }
+        for len in (1..original_len).rev() {
+            let state = branch.stack[len - 1].state;
+            let state_row = self.reduced.parse_state(state).ok()?;
+            if state_row
+                .entries()
+                .iter()
+                .any(|entry| entry.lookahead() == lookahead)
+            {
+                branch.stack.truncate(len);
+                branch.error_cost = branch
+                    .error_cost
+                    .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
+                trace_events.push(TraceEvent::Recover {
+                    version: branch.version,
+                    state,
+                });
+                return Some(branch);
+            }
+        }
+        None
+    }
+
     fn recover_runtime_no_token(
         &self,
         mut branch: RuntimeBranch,
@@ -6289,6 +6373,9 @@ fn runtime_recovery_end(input: &str, start_byte: usize) -> Option<usize> {
     if start_byte >= input.len() {
         return None;
     }
+    if input[start_byte..].starts_with(['{', '}']) {
+        return None;
+    }
     let mut end = start_byte;
     for ch in input[start_byte..].chars() {
         let previous_end = end;
@@ -6387,7 +6474,7 @@ impl RuntimeBranch {
 struct RuntimeBranchKey {
     byte_position: usize,
     scanner_snapshot: Option<ScannerSnapshotId>,
-    stack: Vec<(ParseStateId, bool, usize)>,
+    stack: Vec<ParseStateId>,
 }
 
 impl RuntimeBranchKey {
@@ -6398,7 +6485,7 @@ impl RuntimeBranchKey {
             stack: branch
                 .stack
                 .iter()
-                .map(|entry| (entry.state, entry.extra, entry.end_byte))
+                .map(|entry| entry.state)
                 .collect(),
         }
     }
