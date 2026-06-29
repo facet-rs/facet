@@ -1491,6 +1491,37 @@ mod tests {
         assert_same!(actual_tree, selector_cases[15].expected);
     }
 
+    #[test]
+    fn parses_pinned_css_function_calls_declaration_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let declaration_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/declarations.txt")
+            .unwrap();
+        let declaration_cases = declaration_fixture.parse_cases().unwrap();
+
+        assert_eq!(declaration_cases[0].name, "Function calls");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &declaration_cases[0].input,
+        );
+
+        assert_same!(actual_tree, declaration_cases[0].expected);
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {
@@ -1532,6 +1563,11 @@ mod tests {
                 if let Some(last) = error.trace().last() {
                     if !states.contains(&last.state) {
                         states.push(last.state);
+                    }
+                }
+                for trace in error.trace().iter().rev().take(12) {
+                    if !states.contains(&trace.state) {
+                        states.push(trace.state);
                     }
                 }
                 let state_dump = states

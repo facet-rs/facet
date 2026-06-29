@@ -4059,6 +4059,8 @@ impl<'a> ReducedParser<'a> {
                 end,
                 external: false,
                 literal: terminal_row.kind() == ParserTerminalKind::String,
+                lexical_precedence: self.lexical_completion_precedence(terminal_row),
+                implicit_precedence: self.lexical_implicit_precedence(terminal_row),
             };
             let Some(lookahead) = self.lookahead_for_terminal(state, *terminal) else {
                 push_reduced_candidate(&mut best_rejected, candidate);
@@ -4087,6 +4089,8 @@ impl<'a> ReducedParser<'a> {
                 end,
                 external: true,
                 literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
             };
             if !state
                 .entries()
@@ -4188,6 +4192,54 @@ impl<'a> ReducedParser<'a> {
                 };
                 self.match_lexical_expr(*content, input, byte_position)
             }
+        }
+    }
+
+    fn lexical_completion_precedence(&self, terminal: &TerminalSymbol) -> i32 {
+        terminal
+            .lexical_root()
+            .and_then(|root| match self.grammar.expr(root) {
+                GrammarExpr::Prec {
+                    value: StaticPrecedenceValue::Integer(value),
+                    ..
+                } => Some(*value),
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+
+    fn lexical_implicit_precedence(&self, terminal: &TerminalSymbol) -> i32 {
+        match terminal.kind() {
+            ParserTerminalKind::String => 2,
+            ParserTerminalKind::Pattern => 0,
+            ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => terminal
+                .lexical_root()
+                .map(|root| self.lexical_expr_implicit_precedence(root))
+                .unwrap_or(0),
+        }
+    }
+
+    fn lexical_expr_implicit_precedence(&self, expr: GrammarExprId) -> i32 {
+        match self.grammar.expr(expr) {
+            GrammarExpr::StringToken(_) => 2,
+            GrammarExpr::PatternToken { .. } => 0,
+            GrammarExpr::ImmediateToken(content) => {
+                self.lexical_expr_implicit_precedence(*content) + 1
+            }
+            GrammarExpr::Token(content)
+            | GrammarExpr::Field { content, .. }
+            | GrammarExpr::Prec { content, .. }
+            | GrammarExpr::PrecDynamic { content, .. }
+            | GrammarExpr::Alias { content, .. }
+            | GrammarExpr::Reserved { content, .. } => {
+                self.lexical_expr_implicit_precedence(*content)
+            }
+            GrammarExpr::Blank
+            | GrammarExpr::Symbol(_)
+            | GrammarExpr::Choice(_)
+            | GrammarExpr::Seq(_)
+            | GrammarExpr::Repeat(_)
+            | GrammarExpr::Repeat1(_) => 0,
         }
     }
 
@@ -4377,6 +4429,12 @@ fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usi
             .map(|ch| byte_position + ch.len_utf8()),
         "\\s+" => match_while(input, byte_position, char::is_whitespace, 1),
         "\\d+" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 1),
+        "\\d*" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 0),
+        "[eE]" => input[byte_position..]
+            .chars()
+            .next()
+            .filter(|ch| *ch == 'e' || *ch == 'E')
+            .map(|ch| byte_position + ch.len_utf8()),
         "-?(\\d)*n\\s*(\\+\\s*\\d+)?" => match_css_nth_functional_notation(input, byte_position),
         "[^\\\\'\\n]+" => match_while(
             input,
@@ -4557,6 +4615,8 @@ struct ReducedTokenCandidate {
     end: usize,
     external: bool,
     literal: bool,
+    lexical_precedence: i32,
+    implicit_precedence: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4577,6 +4637,18 @@ fn reduced_candidate_order(
             ReducedCandidateOrder::Greater
         }
         std::cmp::Ordering::Equal if !left.external && right.external => {
+            ReducedCandidateOrder::Less
+        }
+        std::cmp::Ordering::Equal if left.lexical_precedence > right.lexical_precedence => {
+            ReducedCandidateOrder::Greater
+        }
+        std::cmp::Ordering::Equal if left.lexical_precedence < right.lexical_precedence => {
+            ReducedCandidateOrder::Less
+        }
+        std::cmp::Ordering::Equal if left.implicit_precedence > right.implicit_precedence => {
+            ReducedCandidateOrder::Greater
+        }
+        std::cmp::Ordering::Equal if left.implicit_precedence < right.implicit_precedence => {
             ReducedCandidateOrder::Less
         }
         std::cmp::Ordering::Equal if left.literal && !right.literal => {
@@ -6194,6 +6266,64 @@ mod tests {
         resolve_static_conflicts(&mut entries, &BTreeMap::new(), &grammar);
 
         assert_eq!(entries[&lookahead], vec![reduce_action(high)]);
+    }
+
+    #[test]
+    fn reduced_lexer_prefers_higher_implicit_precedence_for_equal_length_candidates() {
+        let direct_string = ReducedTokenCandidate {
+            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
+            end: 1,
+            external: false,
+            literal: true,
+            lexical_precedence: 0,
+            implicit_precedence: 2,
+        };
+        let immediate_string = ReducedTokenCandidate {
+            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
+            end: 1,
+            external: false,
+            literal: false,
+            lexical_precedence: 0,
+            implicit_precedence: 3,
+        };
+
+        assert_eq!(
+            reduced_candidate_order(immediate_string, direct_string),
+            ReducedCandidateOrder::Greater
+        );
+        assert_eq!(
+            reduced_candidate_order(direct_string, immediate_string),
+            ReducedCandidateOrder::Less
+        );
+    }
+
+    #[test]
+    fn reduced_lexer_prefers_external_candidate_before_internal_precedence() {
+        let internal_string = ReducedTokenCandidate {
+            lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
+            end: 1,
+            external: false,
+            literal: true,
+            lexical_precedence: 0,
+            implicit_precedence: 2,
+        };
+        let external_token = ReducedTokenCandidate {
+            lookahead: LookaheadSymbol::External(ExternalId::from_index(0)),
+            end: 1,
+            external: true,
+            literal: true,
+            lexical_precedence: 0,
+            implicit_precedence: 0,
+        };
+
+        assert_eq!(
+            reduced_candidate_order(external_token, internal_string),
+            ReducedCandidateOrder::Greater
+        );
+        assert_eq!(
+            reduced_candidate_order(internal_string, external_token),
+            ReducedCandidateOrder::Less
+        );
     }
 
     #[test]
