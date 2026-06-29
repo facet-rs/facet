@@ -15,7 +15,7 @@ use std::{
     fmt,
 };
 
-use regex::Regex;
+use regex::{Regex, RegexSet};
 
 use crate::{
     corpus::{SexpChild, SexpNode, SexpValue},
@@ -3725,19 +3725,73 @@ impl TableConflict {
 /// currently supported by this reduced oracle. It is not the final recoverable,
 /// incremental, field/atom-complete GLR runtime.
 pub struct ReducedParser<'a> {
+    #[cfg(test)]
     grammar: &'a ValidatedGrammar,
     parser: &'a ParserGrammar,
     table: &'a ParseTable,
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
     first: Option<FirstFacts>,
     regex_patterns: HashMap<String, Option<Regex>>,
+    compiled_lex_modes: Vec<CompiledLexMode>,
     lex_cache: RefCell<HashMap<LexCacheKey, Result<ReducedToken, ReducedParseError>>>,
+    lex_mode_cache:
+        RefCell<HashMap<LexModeCacheKey, Result<Vec<ReducedTokenCandidate>, ReducedParseError>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct LexCacheKey {
     state: ParseStateId,
     byte_position: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct LexModeCacheKey {
+    mode: LexModeId,
+    byte_position: usize,
+}
+
+#[derive(Debug, Clone)]
+struct CompiledLexMode {
+    terminals: Vec<CompiledLexTerminal>,
+    direct_pattern_set: Option<CompiledLexPatternSet>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompiledLexTerminal {
+    terminal: TerminalId,
+    matcher: CompiledTerminalMatcher,
+    immediate: bool,
+    literal: bool,
+    lexical_precedence: i32,
+    implicit_precedence: i32,
+    direct_pattern_index: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct CompiledLexPatternSet {
+    regex_set: RegexSet,
+    terminal_indices: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CompiledTerminalMatcher {
+    Expr(CompiledLexExpr),
+    UnsupportedTerminal {
+        terminal: TerminalId,
+        spelling: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CompiledLexExpr {
+    Blank,
+    String(String),
+    Pattern(String),
+    Seq(Vec<CompiledLexExpr>),
+    Choice(Vec<CompiledLexExpr>),
+    Repeat(Box<CompiledLexExpr>),
+    Repeat1(Box<CompiledLexExpr>),
+    UnsupportedSymbol(GrammarExprId),
 }
 
 /// External scanner host used by the reduced parser oracle.
@@ -4022,14 +4076,18 @@ impl<'a> ReducedParser<'a> {
             .as_ref()
             .map(|item_preparation| FirstFacts::new(parser, item_preparation.graph()));
         let regex_patterns = compile_regex_patterns(grammar, parser);
+        let compiled_lex_modes = compile_lex_modes(grammar, parser, table);
         Ok(Self {
+            #[cfg(test)]
             grammar,
             parser,
             table,
             external_scanner: None,
             first,
             regex_patterns,
+            compiled_lex_modes,
             lex_cache: RefCell::new(HashMap::new()),
+            lex_mode_cache: RefCell::new(HashMap::new()),
         })
     }
 
@@ -4149,6 +4207,7 @@ impl<'a> ReducedParser<'a> {
 
     fn clear_lex_cache(&self) {
         self.lex_cache.borrow_mut().clear();
+        self.lex_mode_cache.borrow_mut().clear();
     }
 
     fn reduced_step_limit(&self, input: &str) -> usize {
@@ -4489,26 +4548,20 @@ impl<'a> ReducedParser<'a> {
     ) -> Result<ReducedToken, ReducedParseError> {
         let mut best = None::<ReducedTokenCandidate>;
         let mut best_rejected = None::<ReducedTokenCandidate>;
-        for terminal in mode.terminals() {
-            let terminal_row = &self.parser.symbols.terminals[terminal.get() as usize];
-            let Some(end) = self.match_terminal(terminal_row, input, byte_position)? else {
-                continue;
+        for candidate in self.match_terminal_candidates_for_mode(mode, input, byte_position)? {
+            let terminal = match candidate.lookahead {
+                LookaheadSymbol::Terminal(terminal) => terminal,
+                LookaheadSymbol::ReservedWord { terminal, .. } => terminal,
+                LookaheadSymbol::External(_) => {
+                    push_reduced_candidate(&mut best_rejected, candidate);
+                    continue;
+                }
+                LookaheadSymbol::Eof | LookaheadSymbol::ErrorRecovery(_) => {
+                    push_reduced_candidate(&mut best_rejected, candidate);
+                    continue;
+                }
             };
-            if end == byte_position {
-                continue;
-            }
-            let candidate = ReducedTokenCandidate {
-                lookahead: LookaheadSymbol::Terminal(*terminal),
-                end,
-                extra: false,
-                external: false,
-                immediate: terminal_row.kind() == ParserTerminalKind::ImmediateToken,
-                literal: terminal_row.kind() == ParserTerminalKind::String,
-                lexical_precedence: self.lexical_completion_precedence(terminal_row),
-                implicit_precedence: self.lexical_implicit_precedence(terminal_row),
-                scanner: None,
-            };
-            let Some(lookahead) = self.lookahead_for_terminal(state, *terminal) else {
+            let Some(lookahead) = self.lookahead_for_terminal(state, terminal) else {
                 push_reduced_candidate(&mut best_rejected, candidate);
                 continue;
             };
@@ -4580,6 +4633,62 @@ impl<'a> ReducedParser<'a> {
         }))
     }
 
+    fn match_terminal_candidates_for_mode(
+        &self,
+        mode: &LexMode,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Vec<ReducedTokenCandidate>, ReducedParseError> {
+        let key = LexModeCacheKey {
+            mode: mode.id(),
+            byte_position,
+        };
+        if let Some(cached) = self.lex_mode_cache.borrow().get(&key).cloned() {
+            return cached;
+        }
+        let result = self.match_terminal_candidates_for_mode_uncached(mode, input, byte_position);
+        self.lex_mode_cache.borrow_mut().insert(key, result.clone());
+        result
+    }
+
+    fn match_terminal_candidates_for_mode_uncached(
+        &self,
+        mode: &LexMode,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Vec<ReducedTokenCandidate>, ReducedParseError> {
+        let mut candidates = Vec::new();
+        let compiled_mode = &self.compiled_lex_modes[mode.id().get() as usize];
+        let direct_pattern_ends =
+            self.match_compiled_direct_pattern_set(compiled_mode, input, byte_position)?;
+        for terminal_row in &compiled_mode.terminals {
+            let Some(end) = self.match_compiled_terminal_with_set(
+                terminal_row,
+                input,
+                byte_position,
+                &direct_pattern_ends,
+            )?
+            else {
+                continue;
+            };
+            if end == byte_position {
+                continue;
+            }
+            candidates.push(ReducedTokenCandidate {
+                lookahead: LookaheadSymbol::Terminal(terminal_row.terminal),
+                end,
+                extra: false,
+                external: false,
+                immediate: terminal_row.immediate,
+                literal: terminal_row.literal,
+                lexical_precedence: terminal_row.lexical_precedence,
+                implicit_precedence: terminal_row.implicit_precedence,
+                scanner: None,
+            });
+        }
+        Ok(candidates)
+    }
+
     fn lookahead_for_terminal(
         &self,
         state: &ParseState,
@@ -4616,6 +4725,7 @@ impl<'a> ReducedParser<'a> {
         spellings
     }
 
+    #[cfg(test)]
     fn match_terminal(
         &self,
         terminal: &TerminalSymbol,
@@ -4653,51 +4763,123 @@ impl<'a> ReducedParser<'a> {
         }
     }
 
-    fn lexical_completion_precedence(&self, terminal: &TerminalSymbol) -> i32 {
-        terminal
-            .lexical_root()
-            .and_then(|root| match self.grammar.expr(root) {
-                GrammarExpr::Prec {
-                    value: StaticPrecedenceValue::Integer(value),
-                    ..
-                } => Some(*value),
-                _ => None,
-            })
-            .unwrap_or(0)
-    }
-
-    fn lexical_implicit_precedence(&self, terminal: &TerminalSymbol) -> i32 {
-        match terminal.kind() {
-            ParserTerminalKind::String => 2,
-            ParserTerminalKind::Pattern => 0,
-            ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => terminal
-                .lexical_root()
-                .map(|root| self.lexical_expr_implicit_precedence(root))
-                .unwrap_or(0),
+    fn match_compiled_terminal(
+        &self,
+        terminal: &CompiledLexTerminal,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Option<usize>, ReducedParseError> {
+        match &terminal.matcher {
+            CompiledTerminalMatcher::Expr(expr) => {
+                self.match_compiled_lex_expr(expr, input, byte_position)
+            }
+            CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => Err(
+                ReducedParseError::new(ReducedParseErrorKind::UnsupportedTerminal {
+                    terminal: *terminal,
+                    spelling: spelling.clone(),
+                }),
+            ),
         }
     }
 
-    fn lexical_expr_implicit_precedence(&self, expr: GrammarExprId) -> i32 {
-        match self.grammar.expr(expr) {
-            GrammarExpr::StringToken(_) => 2,
-            GrammarExpr::PatternToken { .. } => 0,
-            GrammarExpr::ImmediateToken(content) => {
-                self.lexical_expr_implicit_precedence(*content) + 1
+    fn match_compiled_terminal_with_set(
+        &self,
+        terminal: &CompiledLexTerminal,
+        input: &str,
+        byte_position: usize,
+        direct_pattern_ends: &[Option<usize>],
+    ) -> Result<Option<usize>, ReducedParseError> {
+        if let Some(set_index) = terminal.direct_pattern_index {
+            return Ok(direct_pattern_ends.get(set_index).copied().flatten());
+        }
+        self.match_compiled_terminal(terminal, input, byte_position)
+    }
+
+    fn match_compiled_direct_pattern_set(
+        &self,
+        mode: &CompiledLexMode,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Vec<Option<usize>>, ReducedParseError> {
+        let Some(pattern_set) = &mode.direct_pattern_set else {
+            return Ok(Vec::new());
+        };
+        let mut ends = vec![None; pattern_set.terminal_indices.len()];
+        let Some(haystack) = input.get(byte_position..) else {
+            return Ok(ends);
+        };
+        let matches = pattern_set.regex_set.matches(haystack);
+        for set_index in matches.iter() {
+            let terminal_index = pattern_set.terminal_indices[set_index];
+            let terminal = &mode.terminals[terminal_index];
+            ends[set_index] = self.match_compiled_terminal(terminal, input, byte_position)?;
+        }
+        Ok(ends)
+    }
+
+    fn match_compiled_lex_expr(
+        &self,
+        expr: &CompiledLexExpr,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Option<usize>, ReducedParseError> {
+        match expr {
+            CompiledLexExpr::Blank => Ok(Some(byte_position)),
+            CompiledLexExpr::String(value) => Ok(input[byte_position..]
+                .starts_with(value)
+                .then_some(byte_position + value.len())),
+            CompiledLexExpr::Pattern(value) => Ok(self.match_pattern(value, input, byte_position)),
+            CompiledLexExpr::Seq(members) => {
+                let mut position = byte_position;
+                for member in members {
+                    let Some(end) = self.match_compiled_lex_expr(member, input, position)? else {
+                        return Ok(None);
+                    };
+                    position = end;
+                }
+                Ok(Some(position))
             }
-            GrammarExpr::Token(content)
-            | GrammarExpr::Field { content, .. }
-            | GrammarExpr::Prec { content, .. }
-            | GrammarExpr::PrecDynamic { content, .. }
-            | GrammarExpr::Alias { content, .. }
-            | GrammarExpr::Reserved { content, .. } => {
-                self.lexical_expr_implicit_precedence(*content)
+            CompiledLexExpr::Choice(members) => {
+                let mut best = None;
+                for member in members {
+                    if let Some(end) = self.match_compiled_lex_expr(member, input, byte_position)?
+                        && best.is_none_or(|best| end > best)
+                    {
+                        best = Some(end);
+                    }
+                }
+                Ok(best)
             }
-            GrammarExpr::Blank
-            | GrammarExpr::Symbol(_)
-            | GrammarExpr::Choice(_)
-            | GrammarExpr::Seq(_)
-            | GrammarExpr::Repeat(_)
-            | GrammarExpr::Repeat1(_) => 0,
+            CompiledLexExpr::Repeat(content) => {
+                let mut position = byte_position;
+                while let Some(end) = self.match_compiled_lex_expr(content, input, position)? {
+                    if end == position {
+                        break;
+                    }
+                    position = end;
+                }
+                Ok(Some(position))
+            }
+            CompiledLexExpr::Repeat1(content) => {
+                let Some(mut position) =
+                    self.match_compiled_lex_expr(content, input, byte_position)?
+                else {
+                    return Ok(None);
+                };
+                if position == byte_position {
+                    return Ok(None);
+                }
+                while let Some(end) = self.match_compiled_lex_expr(content, input, position)? {
+                    if end == position {
+                        break;
+                    }
+                    position = end;
+                }
+                Ok(Some(position))
+            }
+            CompiledLexExpr::UnsupportedSymbol(expr) => Err(ReducedParseError::new(
+                ReducedParseErrorKind::UnsupportedLexicalSymbol { expr: *expr },
+            )),
         }
     }
 
@@ -4733,6 +4915,7 @@ impl<'a> ReducedParser<'a> {
         })
     }
 
+    #[cfg(test)]
     fn match_lexical_expr(
         &self,
         expr: GrammarExprId,
@@ -5044,6 +5227,196 @@ fn compile_regex_patterns(
     patterns
 }
 
+fn compile_lex_modes(
+    grammar: &ValidatedGrammar,
+    parser: &ParserGrammar,
+    table: &ParseTable,
+) -> Vec<CompiledLexMode> {
+    table
+        .lexical_modes()
+        .iter()
+        .map(|mode| {
+            let mut terminals = mode
+                .terminals()
+                .iter()
+                .map(|terminal| {
+                    let terminal_row = &parser.symbols.terminals[terminal.get() as usize];
+                    compile_lex_terminal(grammar, terminal_row)
+                })
+                .collect::<Vec<_>>();
+            let direct_pattern_set = compile_direct_pattern_set(&mut terminals);
+            CompiledLexMode {
+                terminals,
+                direct_pattern_set,
+            }
+        })
+        .collect()
+}
+
+fn compile_direct_pattern_set(
+    terminals: &mut [CompiledLexTerminal],
+) -> Option<CompiledLexPatternSet> {
+    let mut regex_sources = Vec::new();
+    let mut terminal_indices = Vec::new();
+    for (terminal_index, terminal) in terminals.iter().enumerate() {
+        let CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(pattern)) = &terminal.matcher
+        else {
+            continue;
+        };
+        let source = anchored_regex_source(pattern);
+        if Regex::new(&source).is_err() {
+            continue;
+        }
+        regex_sources.push(source);
+        terminal_indices.push(terminal_index);
+    }
+    if regex_sources.is_empty() {
+        return None;
+    }
+    let regex_set = RegexSet::new(&regex_sources).ok()?;
+    for (set_index, terminal_index) in terminal_indices.iter().copied().enumerate() {
+        terminals[terminal_index].direct_pattern_index = Some(set_index);
+    }
+    Some(CompiledLexPatternSet {
+        regex_set,
+        terminal_indices,
+    })
+}
+
+fn compile_lex_terminal(
+    grammar: &ValidatedGrammar,
+    terminal: &TerminalSymbol,
+) -> CompiledLexTerminal {
+    CompiledLexTerminal {
+        terminal: terminal.id(),
+        matcher: compile_terminal_matcher(grammar, terminal),
+        immediate: terminal.kind() == ParserTerminalKind::ImmediateToken,
+        literal: terminal.kind() == ParserTerminalKind::String,
+        lexical_precedence: terminal_lexical_completion_precedence(grammar, terminal),
+        implicit_precedence: terminal_lexical_implicit_precedence(grammar, terminal),
+        direct_pattern_index: None,
+    }
+}
+
+fn compile_terminal_matcher(
+    grammar: &ValidatedGrammar,
+    terminal: &TerminalSymbol,
+) -> CompiledTerminalMatcher {
+    match terminal.kind() {
+        ParserTerminalKind::String => {
+            CompiledTerminalMatcher::Expr(CompiledLexExpr::String(terminal.spelling().to_owned()))
+        }
+        ParserTerminalKind::Pattern => {
+            CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(terminal.spelling().to_owned()))
+        }
+        ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
+            let Some(root) = terminal.lexical_root() else {
+                return CompiledTerminalMatcher::UnsupportedTerminal {
+                    terminal: terminal.id(),
+                    spelling: terminal.spelling().to_owned(),
+                };
+            };
+            let (GrammarExpr::Token(content) | GrammarExpr::ImmediateToken(content)) =
+                grammar.expr(root)
+            else {
+                return CompiledTerminalMatcher::UnsupportedTerminal {
+                    terminal: terminal.id(),
+                    spelling: terminal.spelling().to_owned(),
+                };
+            };
+            CompiledTerminalMatcher::Expr(compile_lex_expr(grammar, *content))
+        }
+    }
+}
+
+fn compile_lex_expr(grammar: &ValidatedGrammar, expr: GrammarExprId) -> CompiledLexExpr {
+    match grammar.expr(expr) {
+        GrammarExpr::Blank => CompiledLexExpr::Blank,
+        GrammarExpr::StringToken(value) => CompiledLexExpr::String(value.clone()),
+        GrammarExpr::PatternToken { value, .. } => CompiledLexExpr::Pattern(value.clone()),
+        GrammarExpr::Token(content)
+        | GrammarExpr::ImmediateToken(content)
+        | GrammarExpr::Field { content, .. }
+        | GrammarExpr::Prec { content, .. }
+        | GrammarExpr::PrecDynamic { content, .. }
+        | GrammarExpr::Alias { content, .. }
+        | GrammarExpr::Reserved { content, .. } => compile_lex_expr(grammar, *content),
+        GrammarExpr::Choice(members) => CompiledLexExpr::Choice(
+            members
+                .iter()
+                .map(|member| compile_lex_expr(grammar, *member))
+                .collect(),
+        ),
+        GrammarExpr::Seq(members) => CompiledLexExpr::Seq(
+            members
+                .iter()
+                .map(|member| compile_lex_expr(grammar, *member))
+                .collect(),
+        ),
+        GrammarExpr::Repeat(content) => {
+            CompiledLexExpr::Repeat(Box::new(compile_lex_expr(grammar, *content)))
+        }
+        GrammarExpr::Repeat1(content) => {
+            CompiledLexExpr::Repeat1(Box::new(compile_lex_expr(grammar, *content)))
+        }
+        GrammarExpr::Symbol(_) => CompiledLexExpr::UnsupportedSymbol(expr),
+    }
+}
+
+fn terminal_lexical_completion_precedence(
+    grammar: &ValidatedGrammar,
+    terminal: &TerminalSymbol,
+) -> i32 {
+    terminal
+        .lexical_root()
+        .and_then(|root| match grammar.expr(root) {
+            GrammarExpr::Prec {
+                value: StaticPrecedenceValue::Integer(value),
+                ..
+            } => Some(*value),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+fn terminal_lexical_implicit_precedence(
+    grammar: &ValidatedGrammar,
+    terminal: &TerminalSymbol,
+) -> i32 {
+    match terminal.kind() {
+        ParserTerminalKind::String => 2,
+        ParserTerminalKind::Pattern => 0,
+        ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => terminal
+            .lexical_root()
+            .map(|root| lexical_expr_implicit_precedence(grammar, root))
+            .unwrap_or(0),
+    }
+}
+
+fn lexical_expr_implicit_precedence(grammar: &ValidatedGrammar, expr: GrammarExprId) -> i32 {
+    match grammar.expr(expr) {
+        GrammarExpr::StringToken(_) => 2,
+        GrammarExpr::PatternToken { .. } => 0,
+        GrammarExpr::ImmediateToken(content) => {
+            lexical_expr_implicit_precedence(grammar, *content) + 1
+        }
+        GrammarExpr::Token(content)
+        | GrammarExpr::Field { content, .. }
+        | GrammarExpr::Prec { content, .. }
+        | GrammarExpr::PrecDynamic { content, .. }
+        | GrammarExpr::Alias { content, .. }
+        | GrammarExpr::Reserved { content, .. } => {
+            lexical_expr_implicit_precedence(grammar, *content)
+        }
+        GrammarExpr::Blank
+        | GrammarExpr::Symbol(_)
+        | GrammarExpr::Choice(_)
+        | GrammarExpr::Seq(_)
+        | GrammarExpr::Repeat(_)
+        | GrammarExpr::Repeat1(_) => 0,
+    }
+}
+
 #[cfg(any(test, feature = "weavy-lowering"))]
 fn match_cached_regex_leaf(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
     let haystack = input.get(byte_position..)?;
@@ -5075,7 +5448,11 @@ fn cached_regex(pattern: &str) -> Option<Regex> {
 }
 
 fn compile_regex_leaf(pattern: &str) -> Result<Regex, regex::Error> {
-    Regex::new(&format!("\\A(?:{})", rust_regex_source(pattern)))
+    Regex::new(&anchored_regex_source(pattern))
+}
+
+fn anchored_regex_source(pattern: &str) -> String {
+    format!("\\A(?:{})", rust_regex_source(pattern))
 }
 
 fn rust_regex_source(pattern: &str) -> String {
@@ -7633,6 +8010,18 @@ mod tests {
         normalize(input).prepare_productions_for_items().unwrap()
     }
 
+    fn prepared_with_validated(input: &str) -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(input).unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = ParseTable::from_grammar(&parser).unwrap();
+        (validated, parser, table)
+    }
+
     fn authored_gingembre_styx() -> &'static str {
         r#"
 name gingembre
@@ -9176,6 +9565,69 @@ extras (
                         && entry.actions().contains(&ParseAction::ShiftExtra)
                 )
         );
+    }
+
+    #[test]
+    fn compiled_lexer_matches_interpreted_terminal_matcher() {
+        let (validated, parser, table) = prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "CHOICE",
+                  "members": [
+                    { "type": "STRING", "value": "=>" },
+                    { "type": "PATTERN", "value": "[a-z]+" },
+                    { "type": "SYMBOL", "name": "complex" },
+                    { "type": "SYMBOL", "name": "run" }
+                  ]
+                },
+                "complex": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "SEQ",
+                    "members": [
+                      { "type": "STRING", "value": "a" },
+                      {
+                        "type": "REPEAT",
+                        "content": {
+                          "type": "CHOICE",
+                          "members": [
+                            { "type": "STRING", "value": "b" },
+                            { "type": "PATTERN", "value": "\\d" }
+                          ]
+                        }
+                      },
+                      { "type": "STRING", "value": "z" }
+                    ]
+                  }
+                },
+                "run": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "REPEAT1",
+                    "content": { "type": "PATTERN", "value": "[xy]" }
+                  }
+                }
+              }
+            }"##,
+        );
+        let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
+        let input = "=> abc ab3bz yxy q";
+
+        for terminal in parser.symbols.terminals() {
+            let compiled = compile_lex_terminal(&validated, terminal);
+            for byte_position in [0usize, 3, 7, 8, 14, 18] {
+                let interpreted = reduced.match_terminal(terminal, input, byte_position);
+                let compiled = reduced.match_compiled_terminal(&compiled, input, byte_position);
+                assert_eq!(
+                    compiled,
+                    interpreted,
+                    "terminal `{}` at byte {byte_position}",
+                    terminal.spelling()
+                );
+            }
+        }
     }
 
     #[test]
