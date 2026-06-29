@@ -10001,9 +10001,8 @@ extras (
         assert_eq!(compiled.lexical_precedence, -1);
     }
 
-    #[test]
-    fn lexical_primitives_parse_until_and_nested_tokens() {
-        let (validated, parser, table) = prepared_with_validated(
+    fn lexical_primitives_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        prepared_with_validated(
             r##"{
               "name": "mini",
               "rules": {
@@ -10031,7 +10030,12 @@ extras (
                 }
               }
             }"##,
-        );
+        )
+    }
+
+    #[test]
+    fn lexical_primitives_parse_until_and_nested_tokens() {
+        let (validated, parser, table) = lexical_primitives_fixture();
         let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
         let input = "hello {# outer {# inner #} done #}";
 
@@ -10057,6 +10061,28 @@ extras (
         assert_eq!(report.tree().to_sexp(), "(source_file (text) (comment))");
         assert_eq!(report.accepted_count(), 1);
         assert_eq!(report.failure_count(), 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn lexical_primitives_parse_through_weavy_runtime() {
+        let (validated, parser, table) = lexical_primitives_fixture();
+        let input = "hello {# outer {# inner #} done #}";
+        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan, &validated, &parser, &table, input,
+        )
+        .unwrap();
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_eq!(weavy_report.tree().to_sexp(), "(source_file (text) (comment))");
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
