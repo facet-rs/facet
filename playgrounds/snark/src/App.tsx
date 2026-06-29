@@ -308,25 +308,26 @@ export function App() {
               ))}
             </select>
           ) : null}
-          <select
-            aria-label="Sample"
-            className="sample-select"
-            disabled={sampleFiles.length === 0}
-            value=""
-            onChange={(event) => {
-              const sample = sampleFiles.find((file) => file.sourcePath === event.currentTarget.value);
-              if (sample) {
-                setInput(sample.text);
-              }
-            }}
-          >
-            <option value="">Samples ({sampleFiles.length})</option>
-            {sampleFiles.map((file) => (
-              <option key={file.sourcePath} value={file.sourcePath}>
-                {file.path}
-              </option>
-            ))}
-          </select>
+          {sampleFiles.length > 0 ? (
+            <select
+              aria-label="Sample"
+              className="sample-select"
+              value=""
+              onChange={(event) => {
+                const sample = sampleFiles.find((file) => file.sourcePath === event.currentTarget.value);
+                if (sample) {
+                  setInput(sample.text);
+                }
+              }}
+            >
+              <option value="">Samples ({sampleFiles.length})</option>
+              {sampleFiles.map((file) => (
+                <option key={file.sourcePath} value={file.sourcePath}>
+                  {file.path}
+                </option>
+              ))}
+            </select>
+          ) : null}
         </div>
 
         <label className="editor-block source-editor">
@@ -370,88 +371,88 @@ export function App() {
               ))}
             </div>
           </section>
-          {result ? (
-          <section>
-            <h2>Tests</h2>
-            <div className="corpus-summary">
-              <span>{result.tests.corpus_passed} corpus pass</span>
-              <span>{result.tests.corpus_failed} corpus fail</span>
-              <span>{result.tests.highlight_assertions_passed} highlight pass</span>
-              <span>
-                {result.tests.highlight_assertions_failed + result.tests.highlight_fixture_errors}{" "}
-                highlight fail
-              </span>
-            </div>
-            <div className="corpus-list">
-              {result.corpus.map((caseResult, index) => (
-                <details key={`${caseResult.path}-${caseResult.case_name}-${index}`}>
-                  <summary className={caseResult.passed ? "pass" : "fail"}>
-                    {caseResult.case_name}
-                  </summary>
-                  <div className="test-actions">
-                    <button type="button" onClick={() => setInput(caseResult.input)}>
-                      Use input
-                    </button>
-                  </div>
-                  <div className="test-detail-grid">
-                    {caseResult.error ? (
-                      <section>
-                        <h3>Error</h3>
-                        <pre>{caseResult.error}</pre>
-                      </section>
-                    ) : null}
-                    <section>
-                      <h3>Input</h3>
-                      <pre>{caseResult.input}</pre>
-                    </section>
-                    <section>
-                      <h3>Expected</h3>
-                      <pre>{caseResult.expected}</pre>
-                    </section>
-                    <section>
-                      <h3>Actual</h3>
-                      <pre>{caseResult.actual ?? ""}</pre>
-                    </section>
-                  </div>
-                </details>
-              ))}
-              {result.highlight_tests.map((fixture) => (
-                <details key={fixture.path}>
-                  <summary className={fixture.passed ? "pass" : "fail"}>
-                    {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
-                  </summary>
-                  <div className="test-actions">
-                    <button type="button" onClick={() => setInput(fixture.input)}>
-                      Use fixture
-                    </button>
-                  </div>
-                  {fixture.error ? (
-                    <pre>{fixture.error}</pre>
-                  ) : (
-                    <div className="assertion-list">
-                      {fixture.assertions.map((assertion, index) => (
-                        <div
-                          className={assertion.passed ? "assertion-row pass" : "assertion-row fail"}
-                          key={`${fixture.path}-${assertion.row}-${assertion.column}-${index}`}
-                        >
-                          <span>
-                            {assertion.negative ? "!" : ""}@{assertion.capture_name}
-                          </span>
-                          <small>
-                            {assertion.row}:{assertion.column}+{assertion.length}
-                          </small>
-                          {assertion.message ? <code>{assertion.message}</code> : null}
-                          {assertion.observed_captures.length ? (
-                            <code>{assertion.observed_captures.join(", ")}</code>
-                          ) : null}
-                        </div>
-                      ))}
+          {result?.tests.requested ? (
+            <section>
+              <h2>Tests</h2>
+              <div className="corpus-summary">
+                <span>{result.tests.corpus_passed} corpus pass</span>
+                <span>{result.tests.corpus_failed} corpus fail</span>
+                <span>{result.tests.highlight_assertions_passed} highlight pass</span>
+                <span>
+                  {result.tests.highlight_assertions_failed + result.tests.highlight_fixture_errors}{" "}
+                  highlight fail
+                </span>
+              </div>
+              <div className="corpus-list">
+                {result.corpus.map((caseResult, index) => (
+                  <details key={`${caseResult.path}-${caseResult.case_name}-${index}`}>
+                    <summary className={caseResult.passed ? "pass" : "fail"}>
+                      {caseResult.case_name}
+                    </summary>
+                    <div className="test-actions">
+                      <button type="button" onClick={() => setInput(caseResult.input)}>
+                        Use input
+                      </button>
                     </div>
-                  )}
-                </details>
-              ))}
-            </div>
-          </section>
+                    <div className="test-detail-grid">
+                      {caseResult.error ? (
+                        <section>
+                          <h3>Error</h3>
+                          <pre>{caseResult.error}</pre>
+                        </section>
+                      ) : null}
+                      <section>
+                        <h3>Input</h3>
+                        <pre>{caseResult.input}</pre>
+                      </section>
+                      <section>
+                        <h3>Expected</h3>
+                        <pre>{caseResult.expected}</pre>
+                      </section>
+                      <section>
+                        <h3>Actual</h3>
+                        <pre>{caseResult.actual ?? ""}</pre>
+                      </section>
+                    </div>
+                  </details>
+                ))}
+                {result.highlight_tests.map((fixture) => (
+                  <details key={fixture.path}>
+                    <summary className={fixture.passed ? "pass" : "fail"}>
+                      {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
+                    </summary>
+                    <div className="test-actions">
+                      <button type="button" onClick={() => setInput(fixture.input)}>
+                        Use fixture
+                      </button>
+                    </div>
+                    {fixture.error ? (
+                      <pre>{fixture.error}</pre>
+                    ) : (
+                      <div className="assertion-list">
+                        {fixture.assertions.map((assertion, index) => (
+                          <div
+                            className={assertion.passed ? "assertion-row pass" : "assertion-row fail"}
+                            key={`${fixture.path}-${assertion.row}-${assertion.column}-${index}`}
+                          >
+                            <span>
+                              {assertion.negative ? "!" : ""}@{assertion.capture_name}
+                            </span>
+                            <small>
+                              {assertion.row}:{assertion.column}+{assertion.length}
+                            </small>
+                            {assertion.message ? <code>{assertion.message}</code> : null}
+                            {assertion.observed_captures.length ? (
+                              <code>{assertion.observed_captures.join(", ")}</code>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </details>
+                ))}
+              </div>
+            </section>
           ) : null}
         </div>
         {result?.limitations.length ? (
