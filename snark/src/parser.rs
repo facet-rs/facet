@@ -4899,6 +4899,7 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
             .map(|ch| byte_position + ch.len_utf8()),
         "\\s+" => match_while(input, byte_position, char::is_whitespace, 1),
         "\\d+" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 1),
+        "\\d+\\.\\d+" => match_gingembre_float(input, byte_position),
         "\\d*" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 0),
         "[1-9]" => input[byte_position..]
             .chars()
@@ -4931,6 +4932,8 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
         ),
         ASCII_IDENTIFIER_PATTERN => match_ascii_identifier(input, byte_position),
         GINGEMBRE_IDENTIFIER_PATTERN => match_gingembre_identifier(input, byte_position),
+        "\"([^\"\\\\]|\\\\.)*\"" => match_gingembre_quoted_string(input, byte_position, b'"'),
+        "'([^'\\\\]|\\\\.)*'" => match_gingembre_quoted_string(input, byte_position, b'\''),
         "[a-zA-Z0-9-_\\xA0-\\xFF]+" => match_while(
             input,
             byte_position,
@@ -5000,6 +5003,46 @@ fn match_ascii_identifier(input: &str, byte_position: usize) -> Option<usize> {
         .take_while(|byte| **byte == b'_' || byte.is_ascii_alphanumeric())
         .count();
     Some(byte_position + len)
+}
+
+fn match_gingembre_float(input: &str, byte_position: usize) -> Option<usize> {
+    let bytes = input[byte_position..].as_bytes();
+    let leading_digits = bytes
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if leading_digits == 0 || bytes.get(leading_digits) != Some(&b'.') {
+        return None;
+    }
+    let fractional_digits = bytes[leading_digits + 1..]
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    (fractional_digits > 0).then_some(byte_position + leading_digits + 1 + fractional_digits)
+}
+
+fn match_gingembre_quoted_string(input: &str, byte_position: usize, quote: u8) -> Option<usize> {
+    let bytes = input.as_bytes();
+    if bytes.get(byte_position) != Some(&quote) {
+        return None;
+    }
+
+    let mut cursor = byte_position + 1;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'\\' => {
+                if cursor + 1 >= bytes.len() {
+                    return None;
+                }
+                cursor += 2;
+            }
+            byte if byte == quote => return Some(cursor + 1),
+            _ => {
+                cursor += input[cursor..].chars().next().map_or(1, char::len_utf8);
+            }
+        }
+    }
+    None
 }
 
 fn is_gingembre_keyword(word: &str) -> bool {
@@ -7152,6 +7195,9 @@ rules {
             {type SYMBOL, name call_expr}
             {type SYMBOL, name index_expr}
             {type SYMBOL, name optional_expr}
+            {type SYMBOL, name paren_expr}
+            {type SYMBOL, name list_lit}
+            {type SYMBOL, name dict_lit}
             {type SYMBOL, name filter_expr}
             {type SYMBOL, name test_expr}
             {type SYMBOL, name unary_expr}
@@ -7171,6 +7217,9 @@ rules {
             {type SYMBOL, name call_expr}
             {type SYMBOL, name index_expr}
             {type SYMBOL, name optional_expr}
+            {type SYMBOL, name paren_expr}
+            {type SYMBOL, name list_lit}
+            {type SYMBOL, name dict_lit}
         )
     }
     literal {
@@ -7179,7 +7228,9 @@ rules {
             {type STRING, value "true"}
             {type STRING, value "false"}
             {type STRING, value "none"}
+            {type SYMBOL, name _float}
             {type SYMBOL, name _int}
+            {type SYMBOL, name _string}
         )
     }
     field_expr {
@@ -7228,6 +7279,74 @@ rules {
                 {type STRING, value "?"}
             )
         }
+    }
+    paren_expr {
+        type SEQ
+        members (
+            {type STRING, value "("}
+            {type SYMBOL, name _expr}
+            {type STRING, value ")"}
+        )
+    }
+    list_lit {
+        type SEQ
+        members (
+            {type STRING, value "["}
+            {type CHOICE, members (
+                {type BLANK}
+                {type SEQ, members (
+                    {type SYMBOL, name _list_item}
+                    {type REPEAT, content {
+                        type SEQ
+                        members (
+                            {type STRING, value ","}
+                            {type SYMBOL, name _list_item}
+                        )
+                    }}
+                    {type CHOICE, members (
+                        {type STRING, value ","}
+                        {type BLANK}
+                    )}
+                )}
+            )}
+            {type STRING, value "]"}
+        )
+    }
+    _list_item {
+        type SYMBOL
+        name _expr
+    }
+    dict_lit {
+        type SEQ
+        members (
+            {type STRING, value "{"}
+            {type CHOICE, members (
+                {type BLANK}
+                {type SEQ, members (
+                    {type SYMBOL, name _dict_item}
+                    {type REPEAT, content {
+                        type SEQ
+                        members (
+                            {type STRING, value ","}
+                            {type SYMBOL, name _dict_item}
+                        )
+                    }}
+                    {type CHOICE, members (
+                        {type STRING, value ","}
+                        {type BLANK}
+                    )}
+                )}
+            )}
+            {type STRING, value "}"}
+        )
+    }
+    _dict_item {
+        type SEQ
+        members (
+            {type SYMBOL, name _expr}
+            {type STRING, value ":"}
+            {type SYMBOL, name _expr}
+        )
     }
     filter_expr {
         type PREC_LEFT
@@ -7418,6 +7537,23 @@ rules {
             value r"\d+"
         }
     }
+    _float {
+        type TOKEN
+        content {
+            type PATTERN
+            value r"\d+\.\d+"
+        }
+    }
+    _string {
+        type TOKEN
+        content {
+            type CHOICE
+            members (
+                {type PATTERN, value "\"([^\"\\\\]|\\\\.)*\""}
+                {type PATTERN, value "'([^'\\\\]|\\\\.)*'"}
+            )
+        }
+    }
 }
 
 extras (
@@ -7463,6 +7599,9 @@ extras (
             gingembre_syntax::SyntaxKind::CallExpr => "call_expr",
             gingembre_syntax::SyntaxKind::IndexExpr => "index_expr",
             gingembre_syntax::SyntaxKind::OptionalExpr => "optional_expr",
+            gingembre_syntax::SyntaxKind::ParenExpr => "paren_expr",
+            gingembre_syntax::SyntaxKind::ListLit => "list_lit",
+            gingembre_syntax::SyntaxKind::DictLit => "dict_lit",
             gingembre_syntax::SyntaxKind::FilterExpr => "filter_expr",
             gingembre_syntax::SyntaxKind::TestExpr => "test_expr",
             gingembre_syntax::SyntaxKind::UnaryExpr => "unary_expr",
@@ -7542,6 +7681,19 @@ extras (
             "(template (interpolation (literal)))",
         );
         assert_styx_authored_gingembre_runtime("{{ 42 }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_runtime(
+            "{{ 1.25 }}",
+            "(template (interpolation (literal)))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            r#"{{ "x" }}"#,
+            "(template (interpolation (literal)))",
+        );
+        assert_styx_authored_gingembre_runtime("{{ 'x' }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_runtime(
+            r#"{{ "a\"b" }}"#,
+            "(template (interpolation (literal)))",
+        );
     }
 
     #[test]
@@ -7619,6 +7771,24 @@ extras (
         assert_styx_authored_gingembre_runtime(
             "{{ fetch()[0]? | default(none) }}",
             "(template (interpolation (filter_expr (optional_expr (index_expr (call_expr (var_ref) (arg_list)) (literal))) (arg_list (arg (literal))))))",
+        );
+    }
+
+    #[test]
+    fn parses_styx_authored_gingembre_compound_primaries_like_gingembre() {
+        assert_styx_authored_gingembre_runtime(
+            "{{ (a + b) * c }}",
+            "(template (interpolation (binary_expr (paren_expr (binary_expr (var_ref) (var_ref))) (var_ref))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ [1, user.name, none,] }}",
+            "(template (interpolation (list_lit (literal) (field_expr (var_ref)) (literal))))",
+        );
+        assert_styx_authored_gingembre_runtime("{{ [] }}", "(template (interpolation (list_lit)))");
+        assert_styx_authored_gingembre_runtime("{{ {} }}", "(template (interpolation (dict_lit)))");
+        assert_styx_authored_gingembre_runtime(
+            r#"{{ {"name": user.name, "ok": true,} }}"#,
+            "(template (interpolation (dict_lit (literal) (field_expr (var_ref)) (literal) (literal))))",
         );
     }
 
@@ -7782,6 +7952,32 @@ extras (
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (filter_expr (optional_expr (index_expr (call_expr (var_ref) (arg_list)) (literal))) (arg_list (arg (literal))))))"
+        );
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert!(weavy_report.stats().block_call_count > 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_styx_authored_gingembre_compound_primaries_through_weavy_runtime() {
+        let input = r#"{{ {"name": user.name, "ok": true,} }}"#;
+        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan, &validated, &parser, &table, input,
+        )
+        .unwrap();
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        assert_eq!(
+            weavy_report.tree().to_sexp(),
+            "(template (interpolation (dict_lit (literal) (field_expr (var_ref)) (literal) (literal))))"
         );
         assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
         assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
