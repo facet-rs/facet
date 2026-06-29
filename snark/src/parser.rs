@@ -7,7 +7,7 @@
 //! Tree-sitter implementation files.
 
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
 };
@@ -1349,6 +1349,7 @@ impl<'a> ProductionNormalizer<'a> {
                 for sequence in &mut sequences {
                     sequence.static_precedence = Some(precedence.clone());
                     sequence.associativity = associativity;
+                    sequence.apply_static_precedence(precedence.clone());
                 }
                 Ok(sequences)
             }
@@ -1536,6 +1537,7 @@ impl<'a> ProductionNormalizer<'a> {
                     alias: step.alias,
                     alias_named: step.alias_named,
                     reserved_context: step.reserved_context,
+                    static_precedence: step.static_precedence,
                     structural_index,
                 }
             })
@@ -1619,6 +1621,7 @@ impl SequenceDraft {
                 alias: None,
                 alias_named: None,
                 reserved_context: None,
+                static_precedence: None,
             }],
             ..Self::default()
         }
@@ -1657,6 +1660,12 @@ impl SequenceDraft {
             step.reserved_context = Some(reserved_context);
         }
     }
+
+    fn apply_static_precedence(&mut self, precedence: StaticPrecedence) {
+        for step in &mut self.steps {
+            step.static_precedence = Some(precedence.clone());
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1666,6 +1675,7 @@ struct StepDraft {
     alias: Option<AliasId>,
     alias_named: Option<bool>,
     reserved_context: Option<ReservedContextId>,
+    static_precedence: Option<StaticPrecedence>,
 }
 
 fn combine_sequences(left: Vec<SequenceDraft>, right: Vec<SequenceDraft>) -> Vec<SequenceDraft> {
@@ -2009,6 +2019,7 @@ pub struct ProductionStep {
     alias: Option<AliasId>,
     alias_named: Option<bool>,
     reserved_context: Option<ReservedContextId>,
+    static_precedence: Option<StaticPrecedence>,
     structural_index: usize,
 }
 
@@ -2036,6 +2047,11 @@ impl ProductionStep {
     /// Reserved-word context applied at this structural child index.
     pub const fn reserved_context(&self) -> Option<ReservedContextId> {
         self.reserved_context
+    }
+
+    /// Static precedence applied at this structural child index.
+    pub const fn static_precedence(&self) -> Option<&StaticPrecedence> {
+        self.static_precedence.as_ref()
     }
 
     /// Structural child index used for fields and aliases.
@@ -2538,7 +2554,7 @@ pub enum PrecedenceGroupEntry {
 }
 
 /// Static precedence fact.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum StaticPrecedence {
     /// Integer precedence.
@@ -3042,12 +3058,13 @@ impl<'a> LrTableBuilder<'a> {
         for item_set in item_sets {
             let state = ParseStateId::from_index(states.len());
             let mut entries = BTreeMap::<LookaheadSymbol, Vec<ParseAction>>::new();
-            let mut shift_metadata = BTreeMap::<LookaheadSymbol, Vec<ProductionMetadataId>>::new();
+            let mut shift_precedences =
+                BTreeMap::<LookaheadSymbol, Vec<Option<StaticPrecedence>>>::new();
             let mut gotos = Vec::new();
             for transition in &transitions_by_from[item_set.id.get() as usize] {
                 match transition.symbol {
                     ParserSymbol::Terminal(_) | ParserSymbol::External(_) => {
-                        for (lookahead, metadata) in
+                        for (lookahead, precedence) in
                             self.transition_lookaheads(item_set, transition.symbol)
                         {
                             push_action(
@@ -3058,9 +3075,9 @@ impl<'a> LrTableBuilder<'a> {
                                     repetition: false,
                                 },
                             );
-                            let metadatas = shift_metadata.entry(lookahead).or_default();
-                            if !metadatas.contains(&metadata) {
-                                metadatas.push(metadata);
+                            let precedences = shift_precedences.entry(lookahead).or_default();
+                            if !precedences.contains(&precedence) {
+                                precedences.push(precedence);
                             }
                         }
                     }
@@ -3119,7 +3136,7 @@ impl<'a> LrTableBuilder<'a> {
                     }
                 }
             }
-            resolve_shift_reduce_conflicts(&mut entries, &shift_metadata, self.grammar);
+            resolve_static_conflicts(&mut entries, &shift_precedences, self.grammar);
             let lex_mode = lex_mode_from_entries(
                 &entries,
                 &mut lexical_modes,
@@ -3154,7 +3171,7 @@ impl<'a> LrTableBuilder<'a> {
         &self,
         item_set: &ItemSet,
         symbol: ParserSymbol,
-    ) -> Vec<(LookaheadSymbol, ProductionMetadataId)> {
+    ) -> Vec<(LookaheadSymbol, Option<StaticPrecedence>)> {
         let mut lookaheads = Vec::new();
         for item in &item_set.items {
             let production = &self.grammar.productions[item.production.get() as usize];
@@ -3163,7 +3180,7 @@ impl<'a> LrTableBuilder<'a> {
             };
             if step.symbol == symbol {
                 if let Some(lookahead) = lookahead_for_step(step) {
-                    lookaheads.push((lookahead, production.metadata));
+                    lookaheads.push((lookahead, step.static_precedence.clone()));
                 }
             }
         }
@@ -3373,12 +3390,17 @@ fn push_action(
     }
 }
 
-fn resolve_shift_reduce_conflicts(
+fn resolve_static_conflicts(
     entries: &mut BTreeMap<LookaheadSymbol, Vec<ParseAction>>,
-    shift_metadata: &BTreeMap<LookaheadSymbol, Vec<ProductionMetadataId>>,
+    shift_precedences: &BTreeMap<LookaheadSymbol, Vec<Option<StaticPrecedence>>>,
     grammar: &ParserGrammar,
 ) {
     for (lookahead, actions) in entries.iter_mut() {
+        if actions.len() < 2 {
+            continue;
+        }
+
+        resolve_reduce_reduce_conflicts(actions, grammar);
         if actions.len() < 2
             || !actions
                 .iter()
@@ -3387,60 +3409,128 @@ fn resolve_shift_reduce_conflicts(
             continue;
         }
 
-        let shift_precedence = shift_metadata.get(lookahead).and_then(|metadatas| {
-            strongest_metadata_precedence(grammar, metadatas.iter().copied())
-        });
-        let reduce_precedence = strongest_metadata_precedence(
-            grammar,
-            actions.iter().filter_map(|action| {
-                reduce_action_metadata(grammar, action).map(ProductionMetadata::id)
-            }),
-        );
-
-        let precedence_order = shift_precedence
-            .zip(reduce_precedence)
-            .and_then(|(shift, reduce)| compare_static_precedence(grammar, shift, reduce));
-
-        match precedence_order {
-            Some(std::cmp::Ordering::Greater) => {
-                actions.retain(|action| !matches!(action, ParseAction::Reduce { .. }));
-            }
-            Some(std::cmp::Ordering::Less) => {
-                actions.retain(|action| !matches!(action, ParseAction::Shift { .. }));
-            }
-            Some(std::cmp::Ordering::Equal) => {
-                resolve_equal_precedence_associativity(actions, grammar, reduce_precedence);
-            }
-            None => {}
+        let shifts = shift_precedences
+            .get(lookahead)
+            .cloned()
+            .unwrap_or_else(|| vec![None]);
+        let decisions = actions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, action)| {
+                reduce_action_metadata(grammar, action).map(|metadata| {
+                    (
+                        index,
+                        resolve_reduce_against_shifts(grammar, metadata, &shifts),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        if decisions.is_empty() {
+            continue;
         }
+
+        let remove_reduces = decisions
+            .iter()
+            .filter_map(|(index, decision)| {
+                (*decision == StaticConflictDecision::ReduceLoses).then_some(*index)
+            })
+            .collect::<BTreeSet<_>>();
+        let remaining_decisions = decisions
+            .iter()
+            .filter(|(index, _)| !remove_reduces.contains(index))
+            .map(|(_, decision)| *decision)
+            .collect::<Vec<_>>();
+        let remove_shift = !remaining_decisions.is_empty()
+            && remaining_decisions
+                .iter()
+                .all(|decision| *decision == StaticConflictDecision::ShiftLoses);
+
+        let mut index = 0usize;
+        actions.retain(|action| {
+            let keep = match action {
+                ParseAction::Shift { .. } => !remove_shift,
+                ParseAction::Reduce { .. } => !remove_reduces.contains(&index),
+                _ => true,
+            };
+            index += 1;
+            keep
+        });
     }
 }
 
-fn resolve_equal_precedence_associativity(
-    actions: &mut Vec<ParseAction>,
-    grammar: &ParserGrammar,
-    precedence: Option<&StaticPrecedence>,
-) {
-    let mut has_left_reduce = false;
-    let mut has_right_reduce = false;
-    for action in actions.iter() {
-        let Some(metadata) = reduce_action_metadata(grammar, action) else {
-            continue;
-        };
-        if !metadata_precedence_matches(grammar, metadata, precedence) {
-            continue;
-        }
-        match metadata.associativity() {
-            Associativity::Left => has_left_reduce = true,
-            Associativity::Right => has_right_reduce = true,
-            Associativity::None => {}
+fn resolve_reduce_reduce_conflicts(actions: &mut Vec<ParseAction>, grammar: &ParserGrammar) {
+    let reduce_indices = actions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, action)| reduce_action_metadata(grammar, action).map(|_| index))
+        .collect::<Vec<_>>();
+    if reduce_indices.len() < 2 {
+        return;
+    }
+
+    let mut strongest = Vec::<usize>::new();
+    for index in reduce_indices {
+        let precedence = reduce_action_metadata(grammar, &actions[index])
+            .and_then(ProductionMetadata::static_precedence);
+        match strongest.first().copied() {
+            None => strongest.push(index),
+            Some(current_index) => {
+                let current = reduce_action_metadata(grammar, &actions[current_index])
+                    .and_then(ProductionMetadata::static_precedence);
+                match compare_static_precedence_options(grammar, precedence, current) {
+                    std::cmp::Ordering::Greater => {
+                        strongest.clear();
+                        strongest.push(index);
+                    }
+                    std::cmp::Ordering::Equal => strongest.push(index),
+                    std::cmp::Ordering::Less => {}
+                }
+            }
         }
     }
 
-    match (has_left_reduce, has_right_reduce) {
-        (true, false) => actions.retain(|action| !matches!(action, ParseAction::Shift { .. })),
-        (false, true) => actions.retain(|action| !matches!(action, ParseAction::Reduce { .. })),
-        _ => {}
+    let strongest = strongest.into_iter().collect::<BTreeSet<_>>();
+    let mut index = 0usize;
+    actions.retain(|action| {
+        let keep = !matches!(action, ParseAction::Reduce { .. }) || strongest.contains(&index);
+        index += 1;
+        keep
+    });
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StaticConflictDecision {
+    ShiftLoses,
+    ReduceLoses,
+    Unresolved,
+}
+
+fn resolve_reduce_against_shifts(
+    grammar: &ParserGrammar,
+    reduce_metadata: &ProductionMetadata,
+    shifts: &[Option<StaticPrecedence>],
+) -> StaticConflictDecision {
+    let reduce_precedence = reduce_metadata.static_precedence();
+    let mut saw_shift_greater = false;
+    let mut saw_reduce_greater = false;
+    let mut saw_equal = false;
+    for shift in shifts {
+        match compare_static_precedence_options(grammar, shift.as_ref(), reduce_precedence) {
+            std::cmp::Ordering::Greater => saw_shift_greater = true,
+            std::cmp::Ordering::Less => saw_reduce_greater = true,
+            std::cmp::Ordering::Equal => saw_equal = true,
+        }
+    }
+
+    match (saw_shift_greater, saw_reduce_greater, saw_equal) {
+        (true, false, false) => StaticConflictDecision::ReduceLoses,
+        (false, true, false) => StaticConflictDecision::ShiftLoses,
+        (false, false, true) => match reduce_metadata.associativity() {
+            Associativity::Left => StaticConflictDecision::ShiftLoses,
+            Associativity::Right => StaticConflictDecision::ReduceLoses,
+            Associativity::None => StaticConflictDecision::Unresolved,
+        },
+        _ => StaticConflictDecision::Unresolved,
     }
 }
 
@@ -3455,40 +3545,18 @@ fn reduce_action_metadata<'a>(
     grammar.production_metadata.get(metadata.get() as usize)
 }
 
-fn strongest_metadata_precedence(
+fn compare_static_precedence_options(
     grammar: &ParserGrammar,
-    metadatas: impl IntoIterator<Item = ProductionMetadataId>,
-) -> Option<&StaticPrecedence> {
-    let mut strongest = None;
-    for metadata in metadatas {
-        let Some(precedence) = grammar
-            .production_metadata
-            .get(metadata.get() as usize)
-            .and_then(ProductionMetadata::static_precedence)
-        else {
-            continue;
-        };
-        if strongest.is_none_or(|current| {
-            compare_static_precedence(grammar, precedence, current)
-                == Some(std::cmp::Ordering::Greater)
-        }) {
-            strongest = Some(precedence);
-        }
-    }
-    strongest
-}
-
-fn metadata_precedence_matches(
-    grammar: &ParserGrammar,
-    metadata: &ProductionMetadata,
-    precedence: Option<&StaticPrecedence>,
-) -> bool {
-    match (metadata.static_precedence(), precedence) {
-        (Some(left), Some(right)) => {
-            compare_static_precedence(grammar, left, right) == Some(std::cmp::Ordering::Equal)
-        }
-        (None, None) => true,
-        _ => false,
+    left: Option<&StaticPrecedence>,
+    right: Option<&StaticPrecedence>,
+) -> std::cmp::Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => compare_static_precedence(grammar, left, right),
+        (Some(StaticPrecedence::Integer(left)), None) => left.cmp(&0),
+        (None, Some(StaticPrecedence::Integer(right))) => 0.cmp(right),
+        (None, None)
+        | (Some(StaticPrecedence::Named(_)), None)
+        | (None, Some(StaticPrecedence::Named(_))) => std::cmp::Ordering::Equal,
     }
 }
 
@@ -3496,18 +3564,16 @@ fn compare_static_precedence(
     grammar: &ParserGrammar,
     left: &StaticPrecedence,
     right: &StaticPrecedence,
-) -> Option<std::cmp::Ordering> {
+) -> std::cmp::Ordering {
     match (left, right) {
-        (StaticPrecedence::Integer(left), StaticPrecedence::Integer(right)) => {
-            Some(left.cmp(right))
-        }
+        (StaticPrecedence::Integer(left), StaticPrecedence::Integer(right)) => left.cmp(right),
         (StaticPrecedence::Named(left), StaticPrecedence::Named(right)) if left == right => {
-            Some(std::cmp::Ordering::Equal)
+            std::cmp::Ordering::Equal
         }
         (StaticPrecedence::Named(left), StaticPrecedence::Named(right)) => {
             compare_named_precedence(grammar, left, right)
         }
-        _ => None,
+        _ => std::cmp::Ordering::Equal,
     }
 }
 
@@ -3515,7 +3581,7 @@ fn compare_named_precedence(
     grammar: &ParserGrammar,
     left: &str,
     right: &str,
-) -> Option<std::cmp::Ordering> {
+) -> std::cmp::Ordering {
     for group in &grammar.precedence_groups {
         let left_index = group.entries().iter().position(|entry| match entry {
             PrecedenceGroupEntry::Name(name) => name == left,
@@ -3526,10 +3592,10 @@ fn compare_named_precedence(
             PrecedenceGroupEntry::Nonterminal(_) => false,
         });
         if let (Some(left_index), Some(right_index)) = (left_index, right_index) {
-            return Some(left_index.cmp(&right_index));
+            return right_index.cmp(&left_index);
         }
     }
-    None
+    std::cmp::Ordering::Equal
 }
 
 fn lex_mode_from_entries(
@@ -4330,6 +4396,18 @@ fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usi
             |ch| ch.is_ascii_alphabetic() || ch == '%',
             1,
         ),
+        "[a-zA-Z0-9-_\\xA0-\\xFF]+" => match_while(
+            input,
+            byte_position,
+            |ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || !ch.is_ascii(),
+            1,
+        ),
+        "[0-9a-fA-F]{1,6}\\s?" => match_css_hex_escape_tail(input, byte_position),
+        "[^0-9a-fA-F\\n\\r]" => input[byte_position..]
+            .chars()
+            .next()
+            .filter(|ch| !ch.is_ascii_hexdigit() && *ch != '\n' && *ch != '\r')
+            .map(|ch| byte_position + ch.len_utf8()),
         "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => {
             match_css_identifier(input, byte_position)
         }
@@ -4388,6 +4466,33 @@ fn match_css_identifier(input: &str, byte_position: usize) -> Option<usize> {
         .chars()
         .next()
         .filter(|ch| css_ident_continue(*ch))
+    {
+        position += ch.len_utf8();
+    }
+    Some(position)
+}
+
+fn match_css_hex_escape_tail(input: &str, byte_position: usize) -> Option<usize> {
+    let mut position = byte_position;
+    let mut count = 0usize;
+    while count < 6 {
+        let Some(ch) = input[position..]
+            .chars()
+            .next()
+            .filter(|ch| ch.is_ascii_hexdigit())
+        else {
+            break;
+        };
+        position += ch.len_utf8();
+        count += 1;
+    }
+    if count == 0 {
+        return None;
+    }
+    if let Some(ch) = input[position..]
+        .chars()
+        .next()
+        .filter(|ch| ch.is_whitespace())
     {
         position += ch.len_utf8();
     }
@@ -5487,7 +5592,15 @@ mod tests {
             grammar.productions()[0].steps()[0].reserved_context(),
             Some(ReservedContextId::from_index(0))
         );
+        assert_eq!(
+            grammar.productions()[0].steps()[0].static_precedence(),
+            Some(&StaticPrecedence::Named("tight".to_owned()))
+        );
         assert_eq!(grammar.productions()[0].steps()[1].reserved_context(), None);
+        assert_eq!(
+            grammar.productions()[0].steps()[1].static_precedence(),
+            None
+        );
         assert_eq!(grammar.reserved_contexts()[0].entries().len(), 1);
     }
 
@@ -5865,6 +5978,222 @@ mod tests {
                 .iter()
                 .all(|action| matches!(action, ParseAction::Reduce { .. }))
         );
+    }
+
+    fn precedence_fixture() -> ParserGrammar {
+        prepared(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "CHOICE",
+                  "members": [
+                    { "type": "SYMBOL", "name": "tight_left" },
+                    { "type": "SYMBOL", "name": "loose_left" },
+                    { "type": "SYMBOL", "name": "integer_high" },
+                    { "type": "SYMBOL", "name": "integer_mid" },
+                    { "type": "SYMBOL", "name": "integer_low" },
+                    { "type": "SYMBOL", "name": "unlisted_left" }
+                  ]
+                },
+                "tight_left": {
+                  "type": "PREC_LEFT",
+                  "value": "tight",
+                  "content": { "type": "STRING", "value": "x" }
+                },
+                "loose_left": {
+                  "type": "PREC_LEFT",
+                  "value": "loose",
+                  "content": { "type": "STRING", "value": "x" }
+                },
+                "integer_high": {
+                  "type": "PREC_LEFT",
+                  "value": 2,
+                  "content": { "type": "STRING", "value": "x" }
+                },
+                "integer_mid": {
+                  "type": "PREC_LEFT",
+                  "value": 1,
+                  "content": { "type": "STRING", "value": "x" }
+                },
+                "integer_low": {
+                  "type": "PREC_LEFT",
+                  "value": -1,
+                  "content": { "type": "STRING", "value": "x" }
+                },
+                "unlisted_left": {
+                  "type": "PREC_LEFT",
+                  "value": "unlisted",
+                  "content": { "type": "STRING", "value": "x" }
+                }
+              },
+              "precedences": [
+                ["tight", "loose"]
+              ]
+            }"##,
+        )
+    }
+
+    fn metadata_id_with(
+        grammar: &ParserGrammar,
+        precedence: &StaticPrecedence,
+    ) -> ProductionMetadataId {
+        grammar
+            .production_metadata()
+            .iter()
+            .find(|metadata| metadata.static_precedence() == Some(precedence))
+            .map(ProductionMetadata::id)
+            .unwrap()
+    }
+
+    fn reduce_action(metadata: ProductionMetadataId) -> ParseAction {
+        ParseAction::Reduce {
+            production: ProductionId::from_index(0),
+            metadata,
+            symbol: NonterminalId::from_index(0),
+            child_count: 1,
+            dynamic_precedence: 0,
+        }
+    }
+
+    #[test]
+    fn named_precedence_groups_treat_earlier_entries_as_stronger() {
+        let grammar = precedence_fixture();
+
+        assert_eq!(
+            compare_static_precedence(
+                &grammar,
+                &StaticPrecedence::Named("tight".to_owned()),
+                &StaticPrecedence::Named("loose".to_owned())
+            ),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_static_precedence(
+                &grammar,
+                &StaticPrecedence::Named("loose".to_owned()),
+                &StaticPrecedence::Named("tight".to_owned())
+            ),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn static_conflict_resolution_treats_missing_integer_precedence_as_zero() {
+        let grammar = precedence_fixture();
+        let low = metadata_id_with(&grammar, &StaticPrecedence::Integer(-1));
+        let high = metadata_id_with(&grammar, &StaticPrecedence::Integer(1));
+        let lookahead = LookaheadSymbol::Eof;
+
+        let mut entries = BTreeMap::from([(
+            lookahead,
+            vec![
+                ParseAction::Shift {
+                    state: ParseStateId::from_index(1),
+                    repetition: false,
+                },
+                reduce_action(low),
+            ],
+        )]);
+        resolve_static_conflicts(
+            &mut entries,
+            &BTreeMap::from([(lookahead, vec![None])]),
+            &grammar,
+        );
+        assert!(matches!(
+            entries[&lookahead].as_slice(),
+            [ParseAction::Shift { .. }]
+        ));
+
+        let mut entries = BTreeMap::from([(
+            lookahead,
+            vec![
+                ParseAction::Shift {
+                    state: ParseStateId::from_index(1),
+                    repetition: false,
+                },
+                reduce_action(high),
+            ],
+        )]);
+        resolve_static_conflicts(
+            &mut entries,
+            &BTreeMap::from([(lookahead, vec![None])]),
+            &grammar,
+        );
+        assert_eq!(entries[&lookahead], vec![reduce_action(high)]);
+    }
+
+    #[test]
+    fn static_conflict_resolution_keeps_mixed_shift_precedence_cells_unresolved() {
+        let grammar = precedence_fixture();
+        let mid = metadata_id_with(&grammar, &StaticPrecedence::Integer(1));
+        let lookahead = LookaheadSymbol::Eof;
+        let mut entries = BTreeMap::from([(
+            lookahead,
+            vec![
+                ParseAction::Shift {
+                    state: ParseStateId::from_index(1),
+                    repetition: false,
+                },
+                reduce_action(mid),
+            ],
+        )]);
+        let shifts = BTreeMap::from([(
+            lookahead,
+            vec![
+                Some(StaticPrecedence::Integer(2)),
+                Some(StaticPrecedence::Integer(0)),
+            ],
+        )]);
+
+        resolve_static_conflicts(&mut entries, &shifts, &grammar);
+
+        assert_eq!(entries[&lookahead].len(), 2);
+        assert!(
+            entries[&lookahead]
+                .iter()
+                .any(|action| matches!(action, ParseAction::Shift { .. }))
+        );
+        assert!(entries[&lookahead].contains(&reduce_action(mid)));
+    }
+
+    #[test]
+    fn static_conflict_resolution_uses_associativity_for_unordered_named_ties() {
+        let grammar = precedence_fixture();
+        let unlisted = metadata_id_with(&grammar, &StaticPrecedence::Named("unlisted".to_owned()));
+        let lookahead = LookaheadSymbol::Eof;
+        let mut entries = BTreeMap::from([(
+            lookahead,
+            vec![
+                ParseAction::Shift {
+                    state: ParseStateId::from_index(1),
+                    repetition: false,
+                },
+                reduce_action(unlisted),
+            ],
+        )]);
+        let shifts = BTreeMap::from([(
+            lookahead,
+            vec![Some(StaticPrecedence::Named("other".to_owned()))],
+        )]);
+
+        resolve_static_conflicts(&mut entries, &shifts, &grammar);
+
+        assert_eq!(entries[&lookahead], vec![reduce_action(unlisted)]);
+    }
+
+    #[test]
+    fn static_conflict_resolution_prunes_lower_precedence_reduce_reduce_actions() {
+        let grammar = precedence_fixture();
+        let low = metadata_id_with(&grammar, &StaticPrecedence::Integer(-1));
+        let high = metadata_id_with(&grammar, &StaticPrecedence::Integer(2));
+        let lookahead = LookaheadSymbol::Eof;
+        let mut entries =
+            BTreeMap::from([(lookahead, vec![reduce_action(low), reduce_action(high)])]);
+
+        resolve_static_conflicts(&mut entries, &BTreeMap::new(), &grammar);
+
+        assert_eq!(entries[&lookahead], vec![reduce_action(high)]);
     }
 
     #[test]
