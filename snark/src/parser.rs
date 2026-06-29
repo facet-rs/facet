@@ -933,6 +933,8 @@ fn direct_public_literal_name(grammar: &ValidatedGrammar, expr: GrammarExprId) -
         | GrammarExpr::Reserved { content, .. } => direct_public_literal_name(grammar, *content),
         GrammarExpr::Blank
         | GrammarExpr::PatternToken { .. }
+        | GrammarExpr::Until { .. }
+        | GrammarExpr::Nested { .. }
         | GrammarExpr::Symbol(_)
         | GrammarExpr::Choice(_)
         | GrammarExpr::Seq(_)
@@ -1302,7 +1304,10 @@ impl<'a> ProductionNormalizer<'a> {
         let expr_value = self.grammar.expr(expr).clone();
         let mut sequences = match expr_value {
             GrammarExpr::Blank => Ok(vec![SequenceDraft::default()]),
-            GrammarExpr::StringToken(_) | GrammarExpr::PatternToken { .. } => {
+            GrammarExpr::StringToken(_)
+            | GrammarExpr::PatternToken { .. }
+            | GrammarExpr::Until { .. }
+            | GrammarExpr::Nested { .. } => {
                 Ok(vec![SequenceDraft::single(self.terminal_symbol(expr)?)])
             }
             GrammarExpr::Token(_) | GrammarExpr::ImmediateToken(_) => {
@@ -3787,6 +3792,8 @@ pub(crate) enum CompiledLexExpr {
     Blank,
     String(String),
     Pattern(String),
+    Until { markers: Vec<String> },
+    Nested { open: String, close: String },
     Seq(Vec<CompiledLexExpr>),
     Choice(Vec<CompiledLexExpr>),
     Repeat(Box<CompiledLexExpr>),
@@ -4829,6 +4836,14 @@ impl<'a> ReducedParser<'a> {
                 .starts_with(value)
                 .then_some(byte_position + value.len())),
             CompiledLexExpr::Pattern(value) => Ok(self.match_pattern(value, input, byte_position)),
+            CompiledLexExpr::Until { markers } => Ok(match_until_markers(
+                markers.iter().map(String::as_str),
+                input,
+                byte_position,
+            )),
+            CompiledLexExpr::Nested { open, close } => {
+                Ok(match_nested_delimiters(open, close, input, byte_position))
+            }
             CompiledLexExpr::Seq(members) => {
                 let mut position = byte_position;
                 for member in members {
@@ -4929,6 +4944,14 @@ impl<'a> ReducedParser<'a> {
                 .then_some(byte_position + value.len())),
             GrammarExpr::PatternToken { value, .. } => {
                 Ok(self.match_pattern(value, input, byte_position))
+            }
+            GrammarExpr::Until { markers } => Ok(match_until_markers(
+                markers.iter().map(String::as_str),
+                input,
+                byte_position,
+            )),
+            GrammarExpr::Nested { open, close } => {
+                Ok(match_nested_delimiters(open, close, input, byte_position))
             }
             GrammarExpr::Token(content)
             | GrammarExpr::ImmediateToken(content)
@@ -5334,6 +5357,13 @@ fn compile_lex_expr(grammar: &ValidatedGrammar, expr: GrammarExprId) -> Compiled
         GrammarExpr::Blank => CompiledLexExpr::Blank,
         GrammarExpr::StringToken(value) => CompiledLexExpr::String(value.clone()),
         GrammarExpr::PatternToken { value, .. } => CompiledLexExpr::Pattern(value.clone()),
+        GrammarExpr::Until { markers } => CompiledLexExpr::Until {
+            markers: markers.clone(),
+        },
+        GrammarExpr::Nested { open, close } => CompiledLexExpr::Nested {
+            open: open.clone(),
+            close: close.clone(),
+        },
         GrammarExpr::Token(content)
         | GrammarExpr::ImmediateToken(content)
         | GrammarExpr::Field { content, .. }
@@ -5396,7 +5426,9 @@ fn terminal_lexical_implicit_precedence(
 fn lexical_expr_implicit_precedence(grammar: &ValidatedGrammar, expr: GrammarExprId) -> i32 {
     match grammar.expr(expr) {
         GrammarExpr::StringToken(_) => 2,
-        GrammarExpr::PatternToken { .. } => 0,
+        GrammarExpr::PatternToken { .. }
+        | GrammarExpr::Until { .. }
+        | GrammarExpr::Nested { .. } => 0,
         GrammarExpr::ImmediateToken(content) => {
             lexical_expr_implicit_precedence(grammar, *content) + 1
         }
@@ -5415,6 +5447,62 @@ fn lexical_expr_implicit_precedence(grammar: &ValidatedGrammar, expr: GrammarExp
         | GrammarExpr::Repeat(_)
         | GrammarExpr::Repeat1(_) => 0,
     }
+}
+
+pub(crate) fn match_until_markers<'a>(
+    markers: impl IntoIterator<Item = &'a str>,
+    input: &str,
+    byte_position: usize,
+) -> Option<usize> {
+    let haystack = input.get(byte_position..)?;
+    let markers = markers
+        .into_iter()
+        .filter(|marker| !marker.is_empty())
+        .collect::<Vec<_>>();
+    if markers.iter().any(|marker| haystack.starts_with(*marker)) {
+        return None;
+    }
+    let end = markers
+        .iter()
+        .filter_map(|marker| haystack.find(*marker))
+        .min()
+        .map_or(input.len(), |offset| byte_position + offset);
+    (end > byte_position).then_some(end)
+}
+
+pub(crate) fn match_nested_delimiters(
+    open: &str,
+    close: &str,
+    input: &str,
+    byte_position: usize,
+) -> Option<usize> {
+    if open.is_empty() || close.is_empty() {
+        return None;
+    }
+    let haystack = input.get(byte_position..)?;
+    if !haystack.starts_with(open) {
+        return None;
+    }
+    let mut position = byte_position + open.len();
+    let mut depth = 1usize;
+    while position < input.len() {
+        let rest = input.get(position..)?;
+        if rest.starts_with(close) {
+            position += close.len();
+            depth -= 1;
+            if depth == 0 {
+                return Some(position);
+            }
+            continue;
+        }
+        if rest.starts_with(open) {
+            position += open.len();
+            depth += 1;
+            continue;
+        }
+        position += rest.chars().next()?.len_utf8();
+    }
+    Some(input.len())
 }
 
 #[cfg(any(test, feature = "weavy-lowering"))]
@@ -9844,6 +9932,64 @@ extras (
                 );
             }
         }
+    }
+
+    #[test]
+    fn lexical_primitives_parse_until_and_nested_tokens() {
+        let (validated, parser, table) = prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "text" },
+                    { "type": "SYMBOL", "name": "comment" }
+                  ]
+                },
+                "text": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "UNTIL",
+                    "markers": ["{{", "{#"]
+                  }
+                },
+                "comment": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "NESTED",
+                    "open": "{#",
+                    "close": "#}"
+                  }
+                }
+              }
+            }"##,
+        );
+        let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
+        let input = "hello {# outer {# inner #} done #}";
+
+        for terminal in parser.symbols.terminals() {
+            let compiled = compile_lex_terminal(&validated, terminal);
+            for byte_position in [0usize, 6, 15, 26] {
+                let interpreted = reduced.match_terminal(terminal, input, byte_position);
+                let compiled = reduced.match_compiled_terminal(&compiled, input, byte_position);
+                assert_eq!(
+                    compiled,
+                    interpreted,
+                    "terminal `{}` at byte {byte_position}",
+                    terminal.spelling()
+                );
+            }
+        }
+
+        let report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+
+        assert_eq!(report.tree().to_sexp(), "(source_file (text) (comment))");
+        assert_eq!(report.accepted_count(), 1);
+        assert_eq!(report.failure_count(), 0);
     }
 
     #[test]

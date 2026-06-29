@@ -31,7 +31,7 @@ export function emitGrammarJsonFromDsl(
       "exports",
       "require",
       "__default",
-      `${prelude}\n${commonJsSource}\n; return module.exports;`,
+      `${prelude}\n${snarkDslExtensions()}\n${commonJsSource}\n; return module.exports;`,
     );
     module.exports = fn(module, module.exports, require, defaultExportValue);
     return module.exports;
@@ -113,6 +113,18 @@ function officialDslPrelude(dslSource: string) {
     throw new Error("official Tree-sitter DSL entrypoint marker was not found");
   }
   return dslSource.slice(0, index);
+}
+
+function snarkDslExtensions() {
+  return `
+globalThis.until = function until(...markers) {
+  return { type: "UNTIL", markers: markers.flat() };
+};
+
+globalThis.nested = function nested(open, close) {
+  return { type: "NESTED", open, close };
+};
+`;
 }
 
 function resolveRequire(specifier: string, dirname: string, modules: Map<string, string>) {

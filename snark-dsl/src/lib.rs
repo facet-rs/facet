@@ -77,6 +77,7 @@ pub fn emit_source_with_boa(grammar_source: &str, source_name: &str) -> Result<S
         "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;",
         "commonjs-shim.js",
     )?;
+    eval(&mut context, SNARK_DSL_EXTENSIONS, "snark-dsl-extensions.js")?;
     eval(&mut context, grammar_source, source_name)?;
     eval_to_string(&mut context, EMIT_SCRIPT, "emit.js", "emit")
 }
@@ -196,6 +197,17 @@ pub fn grammar_arg(arg: Option<&OsStr>) -> PathBuf {
 }
 
 #[cfg(feature = "boa")]
+const SNARK_DSL_EXTENSIONS: &str = r#"
+globalThis.until = function until(...markers) {
+  return { type: "UNTIL", markers: markers.flat() };
+};
+
+globalThis.nested = function nested(open, close) {
+  return { type: "NESTED", open, close };
+};
+"#;
+
+#[cfg(feature = "boa")]
 const EMIT_SCRIPT: &str = r#"
 const grammarObj = module.exports && module.exports.grammar
   ? module.exports.grammar
@@ -273,6 +285,21 @@ mod tests {
         assert!(json.contains("\"name\": \"mini\""));
         assert!(json.contains("\"source_file\""));
         assert!(json.contains("\"PATTERN\""));
+    }
+
+    #[cfg(feature = "boa")]
+    #[test]
+    fn emits_snark_lexical_primitives_with_boa() {
+        let json = emit_source_with_boa(
+            "module.exports = grammar({ name: 'mini', rules: { source_file: $ => seq(token(until('{{', '{#')), token(nested('{#', '#}'))) } });",
+            "mini/grammar.js",
+        )
+        .unwrap();
+
+        assert!(json.contains("\"type\": \"UNTIL\""));
+        assert!(json.contains("\"markers\""));
+        assert!(json.contains("\"type\": \"NESTED\""));
+        assert!(json.contains("\"open\": \"{#\""));
     }
 
     #[cfg(feature = "native")]

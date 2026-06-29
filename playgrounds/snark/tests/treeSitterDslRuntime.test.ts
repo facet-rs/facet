@@ -72,6 +72,43 @@ module.exports = grammar({
   });
 });
 
+test("emits Snark lexical primitive nodes from grammar.js", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+module.exports = grammar({
+  name: "tiny_primitives",
+  rules: {
+    document: $ => seq(token(until("{{", "{#")), token(nested("{#", "#}"))),
+  },
+});
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.deepEqual(grammar.rules.document.members[0], {
+    type: "TOKEN",
+    content: {
+      type: "UNTIL",
+      markers: ["{{", "{#"],
+    },
+  });
+  assert.deepEqual(grammar.rules.document.members[1], {
+    type: "TOKEN",
+    content: {
+      type: "NESTED",
+      open: "{#",
+      close: "#}",
+    },
+  });
+});
+
 test("resolves ESM namespace imports and named exports in grammar modules", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,

@@ -471,6 +471,13 @@ impl ValidationBuilder {
                 value: value.clone(),
                 flags: flags.clone(),
             },
+            RawRuleJson::Until { markers } => GrammarExpr::Until {
+                markers: markers.clone(),
+            },
+            RawRuleJson::Nested { open, close } => GrammarExpr::Nested {
+                open: open.clone(),
+                close: close.clone(),
+            },
             RawRuleJson::Symbol { name } => GrammarExpr::Symbol(self.resolve_symbol(name)?),
             RawRuleJson::Choice { members } => {
                 let members = members
@@ -879,6 +886,18 @@ pub enum GrammarExpr {
         /// Regex flags.
         flags: Option<String>,
     },
+    /// Consume until one of the marker strings, or EOF.
+    Until {
+        /// Marker strings that terminate the token without being consumed.
+        markers: Vec<String>,
+    },
+    /// Balanced nested delimiter token.
+    Nested {
+        /// Opening delimiter.
+        open: String,
+        /// Closing delimiter.
+        close: String,
+    },
     /// Resolved symbol reference.
     Symbol(SymbolRef),
     /// Ordered choice.
@@ -1124,6 +1143,7 @@ fn raw_rule_kind(rule: &RawRuleJson) -> &'static str {
         RawRuleJson::Choice { .. } => "CHOICE",
         RawRuleJson::Field { .. } => "FIELD",
         RawRuleJson::ImmediateToken { .. } => "IMMEDIATE_TOKEN",
+        RawRuleJson::Nested { .. } => "NESTED",
         RawRuleJson::Pattern { .. } => "PATTERN",
         RawRuleJson::Prec { .. } => "PREC",
         RawRuleJson::PrecDynamic { .. } => "PREC_DYNAMIC",
@@ -1136,6 +1156,7 @@ fn raw_rule_kind(rule: &RawRuleJson) -> &'static str {
         RawRuleJson::String { .. } => "STRING",
         RawRuleJson::Symbol { .. } => "SYMBOL",
         RawRuleJson::Token { .. } => "TOKEN",
+        RawRuleJson::Until { .. } => "UNTIL",
     }
 }
 

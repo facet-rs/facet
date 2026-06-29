@@ -180,6 +180,16 @@ impl<'grammar> ScannerlessParser<'grammar> {
                     Ok(None)
                 }
             }
+            RawRuleJson::Until { markers } => {
+                Ok(
+                    match_until_markers(markers.iter().map(String::as_str), input, position)
+                        .map(|end| (Vec::new(), end)),
+                )
+            }
+            RawRuleJson::Nested { open, close } => {
+                Ok(match_nested_delimiters(open, close, input, position)
+                    .map(|end| (Vec::new(), end)))
+            }
             RawRuleJson::Symbol { name } => {
                 let Some((node, end)) = self.parse_named_rule(name, input, position)? else {
                     return Ok(None);
@@ -319,6 +329,16 @@ impl<'grammar> ScannerlessParser<'grammar> {
             RawRuleJson::Pattern { value, .. } => {
                 Ok(match_pattern(value, input, position).map(|end| (Vec::new(), end)))
             }
+            RawRuleJson::Until { markers } => {
+                Ok(
+                    match_until_markers(markers.iter().map(String::as_str), input, position)
+                        .map(|end| (Vec::new(), end)),
+                )
+            }
+            RawRuleJson::Nested { open, close } => {
+                Ok(match_nested_delimiters(open, close, input, position)
+                    .map(|end| (Vec::new(), end)))
+            }
             RawRuleJson::Token { content } | RawRuleJson::ImmediateToken { content } => {
                 self.parse_extra(content, input, position)
             }
@@ -443,6 +463,57 @@ fn byte_range(start: usize, end: usize) -> Result<ByteRange, ParseError> {
             offset: ByteOffset::new(start as u32),
         }
     })
+}
+
+fn match_until_markers<'a>(
+    markers: impl IntoIterator<Item = &'a str>,
+    input: &str,
+    position: usize,
+) -> Option<usize> {
+    let haystack = input.get(position..)?;
+    let markers = markers
+        .into_iter()
+        .filter(|marker| !marker.is_empty())
+        .collect::<Vec<_>>();
+    if markers.iter().any(|marker| haystack.starts_with(*marker)) {
+        return None;
+    }
+    let end = markers
+        .iter()
+        .filter_map(|marker| haystack.find(*marker))
+        .min()
+        .map_or(input.len(), |offset| position + offset);
+    (end > position).then_some(end)
+}
+
+fn match_nested_delimiters(open: &str, close: &str, input: &str, position: usize) -> Option<usize> {
+    if open.is_empty() || close.is_empty() {
+        return None;
+    }
+    let haystack = input.get(position..)?;
+    if !haystack.starts_with(open) {
+        return None;
+    }
+    let mut position = position + open.len();
+    let mut depth = 1usize;
+    while position < input.len() {
+        let rest = input.get(position..)?;
+        if rest.starts_with(close) {
+            position += close.len();
+            depth -= 1;
+            if depth == 0 {
+                return Some(position);
+            }
+            continue;
+        }
+        if rest.starts_with(open) {
+            position += open.len();
+            depth += 1;
+            continue;
+        }
+        position += rest.chars().next()?.len_utf8();
+    }
+    Some(input.len())
 }
 
 fn match_pattern(pattern: &str, input: &str, position: usize) -> Option<usize> {

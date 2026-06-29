@@ -2348,7 +2348,9 @@ impl<'a> ReducedWeavyStepper<'a> {
     fn lexical_expr_implicit_precedence(&self, expr: GrammarExprId) -> i32 {
         match self.grammar.expr(expr) {
             GrammarExpr::StringToken(_) => 2,
-            GrammarExpr::PatternToken { .. } => 0,
+            GrammarExpr::PatternToken { .. }
+            | GrammarExpr::Until { .. }
+            | GrammarExpr::Nested { .. } => 0,
             GrammarExpr::ImmediateToken(content) => {
                 self.lexical_expr_implicit_precedence(*content) + 1
             }
@@ -2382,6 +2384,17 @@ impl<'a> ReducedWeavyStepper<'a> {
             GrammarExpr::PatternToken { value, .. } => {
                 Ok(parser_ir::match_pattern(value, self.input, byte_position))
             }
+            GrammarExpr::Until { markers } => Ok(parser_ir::match_until_markers(
+                markers.iter().map(String::as_str),
+                self.input,
+                byte_position,
+            )),
+            GrammarExpr::Nested { open, close } => Ok(parser_ir::match_nested_delimiters(
+                open,
+                close,
+                self.input,
+                byte_position,
+            )),
             GrammarExpr::Token(content)
             | GrammarExpr::ImmediateToken(content)
             | GrammarExpr::Field { content, .. }
@@ -3205,6 +3218,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
             parser_ir::CompiledLexExpr::Pattern(value) => {
                 Ok(parser_ir::match_pattern(value, self.input, byte_position))
             }
+            parser_ir::CompiledLexExpr::Until { markers } => Ok(parser_ir::match_until_markers(
+                markers.iter().map(String::as_str),
+                self.input,
+                byte_position,
+            )),
+            parser_ir::CompiledLexExpr::Nested { open, close } => Ok(
+                parser_ir::match_nested_delimiters(open, close, self.input, byte_position),
+            ),
             parser_ir::CompiledLexExpr::Seq(members) => {
                 let mut position = byte_position;
                 for member in members {

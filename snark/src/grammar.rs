@@ -266,6 +266,18 @@ pub enum RawRuleJson {
         /// Optional regex flags.
         flags: Option<String>,
     },
+    /// Consume until one of the marker strings, or EOF.
+    Until {
+        /// Marker strings that terminate the token without being consumed.
+        markers: Vec<String>,
+    },
+    /// Balanced nested delimiter token.
+    Nested {
+        /// Opening delimiter.
+        open: String,
+        /// Closing delimiter.
+        close: String,
+    },
     /// Reference to another rule or token.
     Symbol {
         /// Referenced symbol name.
