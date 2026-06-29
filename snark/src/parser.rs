@@ -4932,6 +4932,9 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
             |ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || !ch.is_ascii(),
             1,
         ),
+        "[0-9a-fA-F]{3,8}" => {
+            match_bounded_while(input, byte_position, |ch| ch.is_ascii_hexdigit(), 3, 8)
+        }
         "[0-9a-fA-F]{1,6}\\s?" => match_css_hex_escape_tail(input, byte_position),
         "[^0-9a-fA-F\\n\\r]" => input[byte_position..]
             .chars()
@@ -4976,6 +4979,25 @@ fn match_while(
     let mut count = 0usize;
     for ch in input[byte_position..].chars() {
         if !predicate(ch) {
+            break;
+        }
+        position += ch.len_utf8();
+        count += 1;
+    }
+    (count >= min_chars).then_some(position)
+}
+
+fn match_bounded_while(
+    input: &str,
+    byte_position: usize,
+    predicate: impl Fn(char) -> bool,
+    min_chars: usize,
+    max_chars: usize,
+) -> Option<usize> {
+    let mut position = byte_position;
+    let mut count = 0usize;
+    for ch in input[byte_position..].chars() {
+        if count >= max_chars || !predicate(ch) {
             break;
         }
         position += ch.len_utf8();
@@ -5789,32 +5811,51 @@ impl<'a> RuntimeParser<'a> {
             .map(|(_, fragment)| fragment.byte_range().1)
             .unwrap_or(start_byte);
         let mut steps = production_row.steps().iter();
+        let mut structural_index = 0usize;
         for (extra, fragment) in popped {
+            let alias_range = fragment.byte_range();
             let mut step_children = fragment.into_children(tree_store);
             if !extra {
                 let Some(step) = steps.next() else {
                     return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
                 };
-                if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
+                if let (Some(alias), Some(named)) = (step.alias(), step.alias_named()) {
                     let alias_name = self.reduced.parser.aliases[alias.get() as usize]
                         .value
                         .clone();
-                    if step_children.is_empty() {
-                        step_children.push(SexpChild {
-                            field: None,
-                            value: SexpValue::Node(SexpNode {
-                                kind: alias_name,
-                                children: Vec::new(),
-                            }),
-                        });
-                    } else {
-                        for child in &mut step_children {
-                            if let SexpValue::Node(node) = &mut child.value {
-                                node.kind.clone_from(&alias_name);
+                    if named {
+                        if step_children.is_empty() {
+                            step_children.push(SexpChild {
+                                field: None,
+                                value: SexpValue::Node(SexpNode {
+                                    kind: alias_name.clone(),
+                                    children: Vec::new(),
+                                }),
+                            });
+                        } else {
+                            for child in &mut step_children {
+                                if let SexpValue::Node(node) = &mut child.value {
+                                    node.kind.clone_from(&alias_name);
+                                }
                             }
                         }
                     }
+                    let alias_node = tree_store.push(SexpNode {
+                        kind: alias_name,
+                        children: Vec::new(),
+                    });
+                    let (bytes, points) = input_ranges(input, alias_range.0, alias_range.1);
+                    tree_events.push(TreeEvent::Alias {
+                        version,
+                        node: alias_node,
+                        alias,
+                        named,
+                        structural_index,
+                        bytes,
+                        points,
+                    });
                 }
+                structural_index += 1;
             }
             children.extend(step_children);
         }
@@ -6668,11 +6709,11 @@ pub enum TreeEvent {
         /// Structural child index.
         structural_index: usize,
     },
-    /// An alias was attached at a structural child index.
+    /// An alias emitted or renamed a runtime tree node at a structural child index.
     Alias {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Parent runtime tree node.
+        /// Runtime tree node carrying the alias.
         node: TreeNodeId,
         /// Alias id.
         alias: AliasId,
@@ -6680,6 +6721,10 @@ pub enum TreeEvent {
         named: bool,
         /// Structural child index.
         structural_index: usize,
+        /// Byte range.
+        bytes: ByteRange,
+        /// Point range.
+        points: PointRange,
     },
 }
 

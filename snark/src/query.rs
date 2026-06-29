@@ -4,6 +4,8 @@ use std::collections::BTreeSet;
 
 use facet::Facet;
 
+use crate::parser::{ParserGrammar, ParserSymbol, RuntimeParseReport, TreeEvent, TreeNodeId};
+use crate::runtime_input::{ByteRange, PointRange};
 use crate::source::SourceFile;
 
 /// Raw Tree-sitter query source.
@@ -33,6 +35,52 @@ impl QuerySource {
     /// wildcard/anchor operators, and quantifiers are not reported.
     pub fn named_node_references(&self) -> BTreeSet<String> {
         named_node_references(&self.0)
+    }
+
+    /// Execute the supported highlight-query subset against a runtime parse.
+    ///
+    /// This is the first oracle-driven evaluator slice: named node captures,
+    /// anonymous literal captures, direct parent/child captures, and `#match?`
+    /// predicates over captured text. Unsupported query constructs are ignored
+    /// rather than approximated.
+    pub fn execute_runtime_highlights(
+        &self,
+        parser: &ParserGrammar,
+        report: &RuntimeParseReport,
+        input: &str,
+    ) -> Vec<HighlightCapture> {
+        execute_runtime_highlights(&self.0, parser, report, input)
+    }
+}
+
+/// One query capture produced by the supported runtime highlight evaluator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HighlightCapture {
+    capture_name: String,
+    bytes: ByteRange,
+    points: PointRange,
+    text: String,
+}
+
+impl HighlightCapture {
+    /// Capture name without the leading `@`.
+    pub fn capture_name(&self) -> &str {
+        &self.capture_name
+    }
+
+    /// Captured byte range.
+    pub const fn bytes(&self) -> ByteRange {
+        self.bytes
+    }
+
+    /// Captured point range.
+    pub const fn points(&self) -> PointRange {
+        self.points
+    }
+
+    /// Captured source text.
+    pub fn text(&self) -> &str {
+        &self.text
     }
 }
 
@@ -181,6 +229,481 @@ pub fn named_node_references(query: &str) -> BTreeSet<String> {
         }
     }
     nodes
+}
+
+fn execute_runtime_highlights(
+    query: &str,
+    parser: &ParserGrammar,
+    report: &RuntimeParseReport,
+    input: &str,
+) -> Vec<HighlightCapture> {
+    let rules = highlight_rules(query);
+    let nodes = runtime_highlight_nodes(parser, report, input);
+    let tokens = runtime_highlight_tokens(parser, report, input);
+    let mut captures = Vec::new();
+
+    for rule in &rules {
+        match &rule.target {
+            HighlightTarget::Node(kind) => {
+                for node in nodes.iter().filter(|node| &node.kind == kind) {
+                    if !rule
+                        .parent_kind
+                        .as_ref()
+                        .is_none_or(|parent| node_has_ancestor_kind(node, parent, &nodes))
+                    {
+                        continue;
+                    }
+                    if rule
+                        .predicates
+                        .iter()
+                        .all(|predicate| predicate.matches(&node.text))
+                    {
+                        captures.push(HighlightCapture {
+                            capture_name: rule.capture_name.clone(),
+                            bytes: node.bytes,
+                            points: node.points,
+                            text: node.text.clone(),
+                        });
+                    }
+                }
+            }
+            HighlightTarget::Literal(literal) => {
+                for token in tokens.iter().filter(|token| &token.text == literal) {
+                    if rule
+                        .predicates
+                        .iter()
+                        .all(|predicate| predicate.matches(&token.text))
+                    {
+                        captures.push(HighlightCapture {
+                            capture_name: rule.capture_name.clone(),
+                            bytes: token.bytes,
+                            points: token.points,
+                            text: token.text.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    captures
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HighlightRule {
+    capture_name: String,
+    target: HighlightTarget,
+    parent_kind: Option<String>,
+    predicates: Vec<HighlightPredicate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HighlightTarget {
+    Node(String),
+    Literal(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HighlightPredicate {
+    MatchPrefix(String),
+    MatchContains(String),
+}
+
+impl HighlightPredicate {
+    fn from_match_pattern(pattern: String) -> Self {
+        if let Some(prefix) = pattern.strip_prefix('^') {
+            Self::MatchPrefix(prefix.to_owned())
+        } else {
+            Self::MatchContains(pattern)
+        }
+    }
+
+    fn matches(&self, text: &str) -> bool {
+        match self {
+            Self::MatchPrefix(prefix) => text.starts_with(prefix),
+            Self::MatchContains(needle) => text.contains(needle),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HighlightPredicateBinding {
+    capture_name: String,
+    predicate: HighlightPredicate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedHighlightItem {
+    target: Option<HighlightTarget>,
+    capture_targets: Vec<HighlightTarget>,
+    rules: Vec<HighlightRule>,
+    predicates: Vec<HighlightPredicateBinding>,
+}
+
+fn highlight_rules(query: &str) -> Vec<HighlightRule> {
+    let mut scanner = QueryScanner::new(query);
+    let mut tokens = Vec::new();
+    while let Some(token) = scanner.next_token() {
+        tokens.push(token);
+    }
+    let mut parser = HighlightQueryParser { tokens, index: 0 };
+    parser.parse_all()
+}
+
+struct HighlightQueryParser {
+    tokens: Vec<QueryToken>,
+    index: usize,
+}
+
+impl HighlightQueryParser {
+    fn parse_all(&mut self) -> Vec<HighlightRule> {
+        let mut rules = Vec::new();
+        while self.index < self.tokens.len() {
+            let item = self.parse_item(None);
+            rules.extend(item.rules);
+        }
+        rules
+    }
+
+    fn parse_item(&mut self, parent_kind: Option<&str>) -> ParsedHighlightItem {
+        let mut item = match self.next() {
+            Some(QueryToken::OpenParen) => self.parse_form(parent_kind),
+            Some(QueryToken::OpenBracket) => self.parse_list(parent_kind),
+            Some(QueryToken::String(literal)) => ParsedHighlightItem {
+                target: Some(HighlightTarget::Literal(literal.clone())),
+                capture_targets: vec![HighlightTarget::Literal(literal)],
+                rules: Vec::new(),
+                predicates: Vec::new(),
+            },
+            Some(QueryToken::Symbol(_))
+            | Some(QueryToken::CloseParen)
+            | Some(QueryToken::CloseBracket)
+            | None => ParsedHighlightItem {
+                target: None,
+                capture_targets: Vec::new(),
+                rules: Vec::new(),
+                predicates: Vec::new(),
+            },
+        };
+
+        let captures = self.consume_captures();
+        let capture_targets = if let Some(target) = &item.target {
+            vec![target.clone()]
+        } else {
+            item.capture_targets.clone()
+        };
+        for target in capture_targets {
+            for capture_name in &captures {
+                item.rules.push(HighlightRule {
+                    capture_name: capture_name.clone(),
+                    target: target.clone(),
+                    parent_kind: parent_kind.map(str::to_owned),
+                    predicates: Vec::new(),
+                });
+            }
+        }
+        apply_predicates(&mut item.rules, &item.predicates);
+        item
+    }
+
+    fn parse_form(&mut self, parent_kind: Option<&str>) -> ParsedHighlightItem {
+        match self.peek() {
+            Some(QueryToken::Symbol(symbol)) if symbol.starts_with('#') => self.parse_predicate(),
+            Some(QueryToken::Symbol(symbol)) if is_named_node_reference(symbol) => {
+                let kind = match self.next() {
+                    Some(QueryToken::Symbol(kind)) => kind,
+                    _ => unreachable!("peeked a symbol before consuming a symbol"),
+                };
+                let mut item = ParsedHighlightItem {
+                    target: Some(HighlightTarget::Node(kind.clone())),
+                    capture_targets: vec![HighlightTarget::Node(kind.clone())],
+                    rules: Vec::new(),
+                    predicates: Vec::new(),
+                };
+                while !self.consume_close_paren() {
+                    let child = self.parse_item(Some(&kind));
+                    item.rules.extend(child.rules);
+                    item.predicates.extend(child.predicates);
+                    if self.index >= self.tokens.len() {
+                        break;
+                    }
+                }
+                apply_predicates(&mut item.rules, &item.predicates);
+                item
+            }
+            _ => {
+                let mut item = ParsedHighlightItem {
+                    target: None,
+                    capture_targets: Vec::new(),
+                    rules: Vec::new(),
+                    predicates: Vec::new(),
+                };
+                while !self.consume_close_paren() {
+                    let child = self.parse_item(parent_kind);
+                    item.rules.extend(child.rules);
+                    item.predicates.extend(child.predicates);
+                    if self.index >= self.tokens.len() {
+                        break;
+                    }
+                }
+                apply_predicates(&mut item.rules, &item.predicates);
+                item
+            }
+        }
+    }
+
+    fn parse_list(&mut self, parent_kind: Option<&str>) -> ParsedHighlightItem {
+        let mut item = ParsedHighlightItem {
+            target: None,
+            capture_targets: Vec::new(),
+            rules: Vec::new(),
+            predicates: Vec::new(),
+        };
+        while !self.consume_close_bracket() {
+            let child = self.parse_item(parent_kind);
+            if let Some(target) = child.target.clone() {
+                item.capture_targets.push(target);
+            } else {
+                item.capture_targets.extend(child.capture_targets.clone());
+            }
+            item.rules.extend(child.rules);
+            item.predicates.extend(child.predicates);
+            if self.index >= self.tokens.len() {
+                break;
+            }
+        }
+        item
+    }
+
+    fn parse_predicate(&mut self) -> ParsedHighlightItem {
+        let op = match self.next() {
+            Some(QueryToken::Symbol(op)) => op,
+            _ => unreachable!("peeked a predicate before consuming one"),
+        };
+        let mut symbols = Vec::new();
+        let mut strings = Vec::new();
+        while !self.consume_close_paren() {
+            match self.next() {
+                Some(QueryToken::Symbol(symbol)) => symbols.push(symbol),
+                Some(QueryToken::String(string)) => strings.push(string),
+                Some(QueryToken::OpenParen) => {
+                    let _ = self.parse_form(None);
+                }
+                Some(QueryToken::OpenBracket) => {
+                    let _ = self.parse_list(None);
+                }
+                Some(QueryToken::CloseParen) | Some(QueryToken::CloseBracket) | None => break,
+            }
+            if self.index >= self.tokens.len() {
+                break;
+            }
+        }
+        let predicates = if op == "#match?" {
+            symbols
+                .iter()
+                .find_map(|symbol| symbol.strip_prefix('@'))
+                .zip(strings.into_iter().next())
+                .filter(|(capture, _)| {
+                    !capture.is_empty() && capture.chars().all(is_capture_name_char)
+                })
+                .map(|(capture_name, pattern)| HighlightPredicateBinding {
+                    capture_name: capture_name.to_owned(),
+                    predicate: HighlightPredicate::from_match_pattern(pattern),
+                })
+                .into_iter()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        ParsedHighlightItem {
+            target: None,
+            capture_targets: Vec::new(),
+            rules: Vec::new(),
+            predicates,
+        }
+    }
+
+    fn consume_captures(&mut self) -> Vec<String> {
+        let mut captures = Vec::new();
+        while let Some(QueryToken::Symbol(symbol)) = self.peek() {
+            let Some(capture) = symbol.strip_prefix('@') else {
+                break;
+            };
+            if capture.is_empty() || !capture.chars().all(is_capture_name_char) {
+                break;
+            }
+            let capture = capture.to_owned();
+            self.index += 1;
+            captures.push(capture);
+        }
+        captures
+    }
+
+    fn consume_close_paren(&mut self) -> bool {
+        if matches!(self.peek(), Some(QueryToken::CloseParen)) {
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_close_bracket(&mut self) -> bool {
+        if matches!(self.peek(), Some(QueryToken::CloseBracket)) {
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn peek(&self) -> Option<&QueryToken> {
+        self.tokens.get(self.index)
+    }
+
+    fn next(&mut self) -> Option<QueryToken> {
+        let token = self.tokens.get(self.index).cloned();
+        if token.is_some() {
+            self.index += 1;
+        }
+        token
+    }
+}
+
+fn apply_predicates(rules: &mut [HighlightRule], predicates: &[HighlightPredicateBinding]) {
+    for predicate in predicates {
+        for rule in rules
+            .iter_mut()
+            .filter(|rule| rule.capture_name == predicate.capture_name)
+        {
+            rule.predicates.push(predicate.predicate.clone());
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeHighlightNode {
+    id: TreeNodeId,
+    kind: String,
+    bytes: ByteRange,
+    points: PointRange,
+    text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeHighlightToken {
+    text: String,
+    bytes: ByteRange,
+    points: PointRange,
+}
+
+fn runtime_highlight_nodes(
+    parser: &ParserGrammar,
+    report: &RuntimeParseReport,
+    input: &str,
+) -> Vec<RuntimeHighlightNode> {
+    report
+        .tree_events()
+        .iter()
+        .filter_map(|event| match event {
+            TreeEvent::Reduce {
+                metadata,
+                node,
+                bytes,
+                points,
+                ..
+            } => {
+                let metadata_row = &parser.production_metadata()[metadata.get() as usize];
+                let public_node = metadata_row.public_node()?;
+                let kind = parser.public_node_kinds()[public_node.get() as usize]
+                    .name()
+                    .to_owned();
+                Some(RuntimeHighlightNode {
+                    id: *node,
+                    kind,
+                    bytes: *bytes,
+                    points: *points,
+                    text: input_text(input, *bytes).to_owned(),
+                })
+            }
+            TreeEvent::Alias {
+                node,
+                alias,
+                named: true,
+                bytes,
+                points,
+                ..
+            } => {
+                let kind = parser.aliases()[alias.get() as usize].value().to_owned();
+                Some(RuntimeHighlightNode {
+                    id: *node,
+                    kind,
+                    bytes: *bytes,
+                    points: *points,
+                    text: input_text(input, *bytes).to_owned(),
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn runtime_highlight_tokens(
+    parser: &ParserGrammar,
+    report: &RuntimeParseReport,
+    input: &str,
+) -> Vec<RuntimeHighlightToken> {
+    report
+        .tree_events()
+        .iter()
+        .filter_map(|event| match event {
+            TreeEvent::Token {
+                symbol,
+                bytes,
+                points,
+                ..
+            } => {
+                let text = input_text(input, *bytes);
+                let query_visible = match symbol {
+                    ParserSymbol::Terminal(terminal) => {
+                        let terminal = &parser.symbols().terminals()[terminal.get() as usize];
+                        terminal.public_names().iter().any(|name| name == text)
+                            || terminal.spelling() == text
+                    }
+                    ParserSymbol::External(_) => true,
+                    _ => false,
+                };
+                query_visible.then(|| RuntimeHighlightToken {
+                    text: text.to_owned(),
+                    bytes: *bytes,
+                    points: *points,
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn node_has_ancestor_kind(
+    node: &RuntimeHighlightNode,
+    ancestor_kind: &str,
+    nodes: &[RuntimeHighlightNode],
+) -> bool {
+    nodes.iter().any(|ancestor| {
+        ancestor.id != node.id
+            && ancestor.kind == ancestor_kind
+            && byte_range_contains(ancestor.bytes, node.bytes)
+    })
+}
+
+fn byte_range_contains(outer: ByteRange, inner: ByteRange) -> bool {
+    outer.start() <= inner.start() && inner.end() <= outer.end()
+}
+
+fn input_text(input: &str, bytes: ByteRange) -> &str {
+    let start = bytes.start().get() as usize;
+    let end = bytes.end().get() as usize;
+    input.get(start..end).unwrap_or("")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

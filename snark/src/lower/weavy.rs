@@ -2967,32 +2967,52 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .map(|(_, fragment)| fragment.byte_range().1)
             .unwrap_or(start_byte);
         let mut steps = production_row.steps().iter();
+        let mut structural_index = 0usize;
         for (extra, fragment) in popped {
+            let alias_range = fragment.byte_range();
             let mut step_children = fragment.into_children(self.tree_store);
             if !extra {
                 let Some(step) = steps.next() else {
                     return Err(ReducedWeavyError::EmptyStack);
                 };
-                if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
+                if let (Some(alias), Some(named)) = (step.alias(), step.alias_named()) {
                     let alias_name = self.parser.aliases()[alias.get() as usize]
                         .value()
                         .to_owned();
-                    if step_children.is_empty() {
-                        step_children.push(SexpChild {
-                            field: None,
-                            value: SexpValue::Node(SexpNode {
-                                kind: alias_name,
-                                children: Vec::new(),
-                            }),
-                        });
-                    } else {
-                        for child in &mut step_children {
-                            if let SexpValue::Node(node) = &mut child.value {
-                                node.kind.clone_from(&alias_name);
+                    if named {
+                        if step_children.is_empty() {
+                            step_children.push(SexpChild {
+                                field: None,
+                                value: SexpValue::Node(SexpNode {
+                                    kind: alias_name.clone(),
+                                    children: Vec::new(),
+                                }),
+                            });
+                        } else {
+                            for child in &mut step_children {
+                                if let SexpValue::Node(node) = &mut child.value {
+                                    node.kind.clone_from(&alias_name);
+                                }
                             }
                         }
                     }
+                    let alias_node = self.tree_store.push(SexpNode {
+                        kind: alias_name,
+                        children: Vec::new(),
+                    });
+                    let (bytes, points) =
+                        runtime_weavy_input_ranges(self.input, alias_range.0, alias_range.1);
+                    self.tree_events.push(parser_ir::TreeEvent::Alias {
+                        version: self.version,
+                        node: alias_node,
+                        alias,
+                        named,
+                        structural_index,
+                        bytes,
+                        points,
+                    });
                 }
+                structural_index += 1;
             }
             children.extend(step_children);
         }

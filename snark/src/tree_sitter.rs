@@ -461,6 +461,7 @@ mod tests {
             ReducedParseReport, ReducedParser, RuntimeParser, ScannerSnapshotId,
         },
         query::WellKnownQuery,
+        runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
         scanner::TreeSitterScannerKind,
         validated::{ExternalTokenDecl, ValidatedGrammar},
     };
@@ -1067,6 +1068,75 @@ mod tests {
                 ("test/corpus/stylesheets.txt".to_string(), 8),
                 ("test/highlight/test_css.css".to_string(), 9),
             ]
+        );
+    }
+
+    #[test]
+    fn executes_pinned_css_highlight_assertions_through_runtime_query() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        let highlight_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
+            .unwrap();
+        let assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
+        let scanner = CssReducedExternalScanner;
+        let report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .with_external_scanner(&scanner)
+            .parse_with_report(&highlight_fixture.source.body.0)
+            .unwrap();
+        let captures = highlights_query.body.execute_runtime_highlights(
+            &parser_grammar,
+            &report,
+            &highlight_fixture.source.body.0,
+        );
+
+        assert_eq!(assertions.len(), 37);
+        for assertion in &assertions {
+            let matched = captures.iter().any(|capture| {
+                capture.capture_name() == assertion.expected_capture_name
+                    && capture_contains_highlight_assertion(capture.points(), assertion)
+            });
+            if !matched {
+                panic!(
+                    "missing highlight capture `{}` at {}:{}, produced captures at that point: {:?}, same-name captures: {:?}",
+                    assertion.expected_capture_name,
+                    assertion.position.row,
+                    assertion.position.column,
+                    captures
+                        .iter()
+                        .filter(|capture| {
+                            capture_contains_highlight_assertion(capture.points(), assertion)
+                        })
+                        .map(|capture| (capture.capture_name(), capture.text()))
+                        .collect::<Vec<_>>(),
+                    captures
+                        .iter()
+                        .filter(|capture| capture.capture_name() == assertion.expected_capture_name)
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+        assert!(
+            captures.iter().any(|capture| {
+                capture.capture_name() == "variable" && capture.text().starts_with("--")
+            }),
+            "expected #match? to capture custom-property values"
         );
     }
 
@@ -2641,6 +2711,17 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    fn capture_contains_highlight_assertion(
+        points: PointRange,
+        assertion: &HighlightAssertion,
+    ) -> bool {
+        let point = PointBytes::new(
+            Row::new(u32::try_from(assertion.position.row).unwrap()),
+            Utf8ColumnBytes::new(u32::try_from(assertion.position.column).unwrap()),
+        );
+        points.start() <= point && point < points.end()
     }
 
     fn parse_reduced_or_panic(
