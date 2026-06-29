@@ -1,34 +1,64 @@
 :root {
-  --bg: #0e1116;
-  --rail: #11151b;
-  --panel: #131820;
-  --code-bg: #0b0e13;
-  --line: #232a33;
-  --line-soft: #1a1f28;
-  --text: #d8dee5;
-  --text-dim: #8c97a4;
-  --text-faint: #5c6671;
-  --accent: #e3b25a;
-  --accent-soft: rgb(227 178 90 / 14%);
-  --ok: #5cc089;
-  --ok-bg: rgb(92 192 137 / 13%);
-  --err: #f07a68;
-  --err-bg: rgb(240 122 104 / 12%);
-  --warn: #e3b25a;
-  --warn-bg: rgb(227 178 90 / 13%);
+  color-scheme: light dark;
+
+  /* surfaces */
+  --bg: light-dark(#f4f6f8, #0e1116);
+  --rail: light-dark(#eceff2, #11151b);
+  --panel: light-dark(#eef1f4, #131820);
+  --code-bg: light-dark(#fbfcfd, #0b0e13);
+  --hover: light-dark(#e4e8ec, #19202a);
+  --chip-bg: light-dark(#ffffff, #161c25);
+
+  /* lines */
+  --line: light-dark(#d3d9df, #232a33);
+  --line-soft: light-dark(#e2e6eb, #1a1f28);
+
+  /* text */
+  --text: light-dark(#1b2228, #d8dee5);
+  --text-dim: light-dark(#586471, #8c97a4);
+  --text-faint: light-dark(#8a95a1, #5c6671);
+
+  /* accent + status */
+  --accent: light-dark(#b07d12, #e3b25a);
+  --accent-ink: light-dark(#fffaf0, #1a130a);
+  --accent-soft: light-dark(rgb(176 125 18 / 13%), rgb(227 178 90 / 14%));
+  --ok: light-dark(#1f9d63, #5cc089);
+  --ok-bg: light-dark(rgb(31 157 99 / 12%), rgb(92 192 137 / 13%));
+  --err: light-dark(#cf3d24, #f07a68);
+  --err-bg: light-dark(rgb(207 61 36 / 10%), rgb(240 122 104 / 12%));
+  --warn: light-dark(#9a6f10, #e3b25a);
+  --warn-bg: light-dark(rgb(176 125 18 / 13%), rgb(227 178 90 / 13%));
+
+  /* diagnostics */
+  --lint-bg: light-dark(#fdf1ee, #1c1316);
+  --lint-ink: light-dark(#8a3320, #e8c4bd);
+  --errtok-ink: light-dark(#7e1f0e, #ffd9d1);
+
+  /* syntax captures */
+  --cap-property: light-dark(#1d6fd6, #7fb2ff);
+  --cap-comment: light-dark(#6f7d68, #6b7a6b);
+  --cap-number: light-dark(#7a3fb0, #c9a2ff);
+  --cap-function: light-dark(#1f7fa8, #6fc3e8);
+  --cap-keyword: light-dark(#c25a23, #f0976b);
+  --cap-punct: light-dark(#5a6773, #93a0ad);
+  --cap-string: light-dark(#1f8a4c, #8cd29a);
+  --cap-type: light-dark(#9a6a10, #e3b25a);
+  --cap-variable: light-dark(#2a323a, #d8dee5);
+  --cap-default: light-dark(#4a5560, #aeb7c0);
+
   --ui: "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --pad-y: 12px;
   --pad-x: 16px;
   --line-h: 21px;
   --code-size: 13.5px;
+  --lint-h: 84px;
 
   color: var(--text);
   background: var(--bg);
   font-family: var(--ui);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
-  color-scheme: dark;
 }
 
 * {
@@ -110,7 +140,7 @@ select {
   padding: 6px 11px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #1a212b;
+  background: var(--chip-bg);
   color: var(--text-dim);
   font-size: 12px;
   font-weight: 600;
@@ -165,7 +195,7 @@ select {
 }
 
 .file-row:not(.static):hover {
-  background: #19202a;
+  background: var(--hover);
   color: var(--text);
 }
 
@@ -293,14 +323,14 @@ select {
   padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #161c25;
+  background: var(--chip-bg);
   color: var(--text);
   font-family: var(--mono);
   font-size: 12px;
 }
 
 .select:hover {
-  border-color: #313a45;
+  border-color: var(--accent);
 }
 
 .btn {
@@ -308,7 +338,7 @@ select {
   border: 1px solid var(--accent);
   border-radius: 7px;
   background: var(--accent);
-  color: #1a130a;
+  color: var(--accent-ink);
   font-weight: 700;
   font-size: 12px;
   cursor: pointer;
@@ -345,7 +375,7 @@ select {
 }
 
 .pill.idle {
-  background: #181e27;
+  background: var(--hover);
   color: var(--text-dim);
 }
 
@@ -424,6 +454,7 @@ select {
 
 .gutter .ln-spacer {
   display: block;
+  height: var(--lint-h);
 }
 
 .code-viewport {
@@ -469,11 +500,11 @@ select {
 }
 
 .code-viewport textarea.with-lint {
-  padding-bottom: calc(var(--pad-y) + 84px);
+  padding-bottom: calc(var(--pad-y) + var(--lint-h));
 }
 
 .code-viewport textarea::selection {
-  background: rgb(227 178 90 / 22%);
+  background: var(--accent-soft);
   color: transparent;
 }
 
@@ -481,15 +512,11 @@ select {
   outline: none;
 }
 
-.code-layer .src-line.err-line {
-  display: inline;
-}
-
 .code-layer .err-token {
   border-radius: 2px;
   background: var(--err-bg);
   box-shadow: inset 0 -2px 0 var(--err);
-  color: #ffd9d1;
+  color: var(--errtok-ink);
 }
 
 .code-lint {
@@ -499,12 +526,12 @@ select {
   position: sticky;
   left: 0;
   width: min(640px, calc(100vw - 360px));
-  margin: 6px 0;
+  margin: 0;
   padding: 9px 12px;
-  border: 1px solid rgb(240 122 104 / 35%);
+  border: 1px solid var(--err);
   border-left: 2px solid var(--err);
   border-radius: 6px;
-  background: #1c1316;
+  background: var(--lint-bg);
   white-space: normal;
   font-family: var(--ui);
 }
@@ -533,7 +560,7 @@ select {
 
 .code-lint-body {
   overflow: auto;
-  color: #e8c4bd;
+  color: var(--lint-ink);
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.4;
@@ -546,35 +573,35 @@ select {
 }
 
 .capture-property {
-  color: #7fb2ff;
+  color: var(--cap-property);
 }
 .capture-comment {
-  color: #6b7a6b;
+  color: var(--cap-comment);
   font-style: italic;
 }
 .capture-number {
-  color: #c9a2ff;
+  color: var(--cap-number);
 }
 .capture-function {
-  color: #6fc3e8;
+  color: var(--cap-function);
 }
 .capture-keyword {
-  color: #f0976b;
+  color: var(--cap-keyword);
 }
 .capture-punctuation {
-  color: #93a0ad;
+  color: var(--cap-punct);
 }
 .capture-string {
-  color: #8cd29a;
+  color: var(--cap-string);
 }
 .capture-type {
-  color: #e3b25a;
+  color: var(--cap-type);
 }
 .capture-variable {
-  color: #d8dee5;
+  color: var(--cap-variable);
 }
 .capture-default {
-  color: #aeb7c0;
+  color: var(--cap-default);
 }
 
 /* ---------- results dock ---------- */
@@ -620,7 +647,7 @@ select {
 .dock-failure-row code {
   font-family: var(--mono);
   font-size: 12px;
-  color: #e8c4bd;
+  color: var(--lint-ink);
   overflow-wrap: anywhere;
 }
 
@@ -685,7 +712,7 @@ select {
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
-  color: #c7d0d8;
+  color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -816,7 +843,7 @@ select {
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #c7d0d8;
+  color: var(--text);
 }
 
 .assertion-list {

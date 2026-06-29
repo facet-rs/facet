@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import init, { parseBundle } from "@bearcove/snark-wasm";
 import {
   discoverGrammarRoots,
@@ -182,7 +182,6 @@ export function App() {
   const [input, setInput] = useState("alpha 42 beta");
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
-  const [editorScroll, setEditorScroll] = useState({ left: 0, top: 0 });
   const parseRequestId = useRef(0);
 
   const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
@@ -408,13 +407,7 @@ export function App() {
           </div>
         </div>
 
-        <Editor
-          input={input}
-          result={result}
-          scroll={editorScroll}
-          onChange={(value) => updateSourceInput(value)}
-          onScroll={(left, top) => setEditorScroll({ left, top })}
-        />
+        <Editor input={input} result={result} onChange={(value) => updateSourceInput(value)} />
 
         <ResultsDock result={result} onUseInput={(value) => updateSourceInput(value)} />
       </section>
@@ -478,15 +471,11 @@ const LINT_HEIGHT = 84;
 function Editor({
   input,
   result,
-  scroll,
   onChange,
-  onScroll,
 }: {
   input: string;
   result: PlaygroundResponse | null;
-  scroll: { left: number; top: number };
   onChange: (value: string) => void;
-  onScroll: (left: number, top: number) => void;
 }) {
   const diagnostic = placedDiagnostic(result);
   const span = diagnostic?.primary_span ?? null;
@@ -494,6 +483,31 @@ function Editor({
   const lines = useMemo(() => input.split("\n"), [input]);
   const highlightNodes = useMemo(() => renderSourceLayer(input, result), [input, result]);
   const hasInlineLint = diagnostic !== null && span !== null && errorLine !== null;
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const codeLayerRef = useRef<HTMLPreElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
+
+  // Keep the highlight + gutter layers locked to the textarea's scroll position.
+  // This runs synchronously inside the scroll event (and after every render) so the
+  // visible code never lags behind the textarea the way a React state round-trip would.
+  const syncScroll = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    const { scrollLeft, scrollTop } = textarea;
+    if (codeLayerRef.current) {
+      codeLayerRef.current.style.transform = `translate(${-scrollLeft}px, ${-scrollTop}px)`;
+    }
+    if (gutterRef.current) {
+      gutterRef.current.style.transform = `translateY(${-scrollTop}px)`;
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    syncScroll();
+  });
 
   const gutter: ReactNode[] = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -550,25 +564,22 @@ function Editor({
   return (
     <div className="editor">
       <div className="gutter-viewport">
-        <div className="gutter" style={{ transform: `translateY(${-scroll.top}px)` }}>
+        <div className="gutter" ref={gutterRef}>
           {gutter}
         </div>
       </div>
       <div className="code-viewport">
-        <pre
-          aria-hidden="true"
-          className="code-layer"
-          style={{ transform: `translate(${-scroll.left}px, ${-scroll.top}px)` }}
-        >
+        <pre aria-hidden="true" className="code-layer" ref={codeLayerRef}>
           {codeContent}
         </pre>
         <textarea
+          ref={textareaRef}
           className={hasInlineLint ? "with-lint" : ""}
           value={input}
           spellCheck={false}
           wrap="off"
           onChange={(event) => onChange(event.currentTarget.value)}
-          onScroll={(event) => onScroll(event.currentTarget.scrollLeft, event.currentTarget.scrollTop)}
+          onScroll={syncScroll}
         />
       </div>
     </div>

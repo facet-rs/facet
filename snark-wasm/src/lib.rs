@@ -273,6 +273,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                     .as_ref()
                     .map(|scanner| scanner as &dyn ReducedExternalScanner),
                 &request.input,
+                bundle.grammar_js_path.is_some(),
             ) {
                 Ok(report) => {
                     let accepted_tree_event_count = report.accepted_tree_events().len();
@@ -562,6 +563,7 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
                     .as_ref()
                     .map(|scanner| scanner as &dyn ReducedExternalScanner),
                 &case.input,
+                false,
             ) {
                 Ok(report) => {
                     let actual = report.tree().to_sexp();
@@ -633,6 +635,7 @@ fn run_highlight_tests(
                 .as_ref()
                 .map(|scanner| scanner as &dyn ReducedExternalScanner),
             &file.text,
+            false,
         ) {
             Ok(report) => report,
             Err(error) => {
@@ -748,12 +751,16 @@ fn parse_with_optional_scanner<'a>(
     runtime: RuntimeParser<'a>,
     scanner: Option<&'a dyn ReducedExternalScanner>,
     input: &str,
+    recover: bool,
 ) -> Result<RuntimeParseReport, ReducedParseError> {
-    match scanner {
-        Some(scanner) => runtime
-            .with_external_scanner(scanner)
-            .parse_with_report(input),
-        None => runtime.parse_with_report(input),
+    let runtime = match scanner {
+        Some(scanner) => runtime.with_external_scanner(scanner),
+        None => runtime,
+    };
+    if recover {
+        runtime.parse_recovering_with_report(input)
+    } else {
+        runtime.parse_with_report(input)
     }
 }
 
@@ -1658,6 +1665,138 @@ mod tests {
                 ("variable", "pid"),
                 ("string", "/var/run/nginx.pid"),
             ]
+        );
+    }
+
+    #[test]
+    fn recovers_nginx_shaped_block_entries_from_grammar_js_bundles() {
+        let grammar_json = r##"{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
+  "name": "nginx_recovery_smoke",
+  "rules": {
+    "conf": {
+      "type": "REPEAT",
+      "content": { "type": "SYMBOL", "name": "_directives" }
+    },
+    "comment": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "#.*\\n" }
+    },
+    "_directives": {
+      "type": "CHOICE",
+      "members": [
+        { "type": "SYMBOL", "name": "simple_directive" },
+        { "type": "SYMBOL", "name": "block_directive" }
+      ]
+    },
+    "directive": {
+      "type": "PATTERN",
+      "value": "\\w+"
+    },
+    "simple_directive": {
+      "type": "SEQ",
+      "members": [
+        { "type": "FIELD", "name": "name", "content": { "type": "SYMBOL", "name": "directive" } },
+        { "type": "REPEAT", "content": { "type": "SYMBOL", "name": "param" } },
+        { "type": "STRING", "value": ";" }
+      ]
+    },
+    "block_directive": {
+      "type": "SEQ",
+      "members": [
+        { "type": "FIELD", "name": "name", "content": { "type": "SYMBOL", "name": "directive" } },
+        { "type": "REPEAT", "content": { "type": "SYMBOL", "name": "param" } },
+        { "type": "SYMBOL", "name": "block" }
+      ]
+    },
+    "block": {
+      "type": "SEQ",
+      "members": [
+        { "type": "STRING", "value": "{" },
+        { "type": "REPEAT", "content": { "type": "SYMBOL", "name": "_directives" } },
+        { "type": "STRING", "value": "}" }
+      ]
+    },
+    "param": {
+      "type": "CHOICE",
+      "members": [
+        { "type": "SYMBOL", "name": "string" },
+        { "type": "SYMBOL", "name": "generic" }
+      ]
+    },
+    "generic": {
+      "type": "PATTERN",
+      "value": "[\\w/\\-\\.]*[A-Za-z][\\w/\\-=,?]+"
+    },
+    "string_content": {
+      "type": "PATTERN",
+      "value": "[^\\\"]"
+    },
+    "string": {
+      "type": "SEQ",
+      "members": [
+        { "type": "STRING", "value": "\"" },
+        { "type": "REPEAT", "content": { "type": "SYMBOL", "name": "string_content" } },
+        { "type": "STRING", "value": "\"" }
+      ]
+    }
+  },
+  "extras": [
+    { "type": "SYMBOL", "name": "comment" },
+    { "type": "PATTERN", "value": "[\\s\\p{Zs}\\uFEFF\\u2060\\u200B]" }
+  ],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"##;
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "grammar.js".to_owned(),
+                    text: "module.exports = grammar({ name: 'nginx_recovery_smoke', rules: {} });"
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: grammar_json.to_owned(),
+                },
+                BundleFile {
+                    path: "queries/highlights.scm".to_owned(),
+                    text: "(directive) @function\n(generic) @string\n(string) @string\n"
+                        .to_owned(),
+                },
+            ],
+            input: "map type {\n  default \"ok\";\n  \"\" \"no-store\";\n  after value;\n}\n".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        let sexp = response.parse.as_ref().expect("parse output").sexp.as_str();
+        assert!(
+            sexp.contains("(ERROR)"),
+            "expected recovered ERROR node in {sexp}"
+        );
+        assert!(
+            sexp.contains("(simple_directive (directive) (param (generic)))"),
+            "expected directive after recovered line in {sexp}"
+        );
+        let capture_texts = response
+            .highlights
+            .iter()
+            .map(|capture| capture.text.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            capture_texts.contains(&"after"),
+            "expected captures after recovered line: {capture_texts:?}"
+        );
+        assert!(
+            capture_texts.contains(&"value"),
+            "expected captures after recovered line: {capture_texts:?}"
         );
     }
 
