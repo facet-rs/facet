@@ -1,14 +1,7 @@
 // Tree-sitter / snark grammar for gingembre, the Jinja-like template language.
 //
-// Mirrors gingembre-syntax/src/{lexer,parser}.rs. This is the "workaround" encoding
-// that runs on the current snark-wasm WITHOUT the planned `until` / `nested` lexical
-// primitives:
-//   - raw text is `/[^{]+/` plus a standalone `{` node (a lone brace that does not open
-//     a delimiter), instead of one `until('{{','{%','{#')` token;
-//   - `{# #}` comments are a recursive RULE (nesting via self-reference), instead of one
-//     `nested('{#','#}')` token.
-// Both produce a noisier CST than gingembre's, but parse the same language. The two
-// primitives later collapse them into single tokens.
+// Mirrors gingembre-syntax/src/{lexer,parser}.rs. Raw template text uses Snark's
+// declarative `until` primitive; text-level `{# #}` comments use `nested`.
 //
 // Precedence (loosest -> tightest), from gingembre-syntax/src/parser.rs:
 //   ternary > or > and > not > comparison(== != < > <= >=, in, not in, is) >
@@ -60,17 +53,11 @@ module.exports = grammar({
     template: ($) => repeat($._node),
 
     _node: ($) =>
-      choice($.text, $.brace, $.comment, $.interpolation, $._statement),
+      choice($.text, $.comment, $.interpolation, $._statement),
 
-    // Raw text run (stops at any `{`). A lone `{` that does not open a delimiter is a
-    // separate node; `{{`/`{%`/`{#` win by longest-match so they are never eaten here.
-    text: ($) => token(prec(-1, /[^{]+/)),
-    brace: ($) => "{",
+    text: ($) => token(prec(-1, until("{{", "{%", "{#"))),
 
-    // Nested comment as a rule: content is non-brace/hash runs, stray `{`/`#`, or a
-    // nested comment.
-    comment: ($) =>
-      seq("{#", repeat(choice($.comment, /[^{#]+/, "{", "#")), "#}"),
+    comment: ($) => token(nested("{#", "#}")),
 
     interpolation: ($) =>
       seq(choice("{{", "{{-"), optional($._expr), choice("}}", "-}}")),
