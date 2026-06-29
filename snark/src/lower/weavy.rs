@@ -24,7 +24,9 @@ use crate::{
     parser as parser_ir,
     parser::{ReducedExternalScan, ReducedExternalScanResult, ReducedExternalScanner},
     runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
-    validated::{GrammarExpr, GrammarExprId, StaticPrecedenceValue, ValidatedGrammar},
+    validated::{
+        GrammarExpr, GrammarExprId, RuleId, StaticPrecedenceValue, SymbolRef, ValidatedGrammar,
+    },
 };
 
 /// A lowered Snark program carried by canonical Weavy ops.
@@ -2376,6 +2378,15 @@ impl<'a> ReducedWeavyStepper<'a> {
         expr: GrammarExprId,
         byte_position: usize,
     ) -> Result<Option<usize>, ReducedWeavyError> {
+        self.match_lexical_expr_inner(expr, byte_position, &mut Vec::new())
+    }
+
+    fn match_lexical_expr_inner(
+        &self,
+        expr: GrammarExprId,
+        byte_position: usize,
+        rule_stack: &mut Vec<RuleId>,
+    ) -> Result<Option<usize>, ReducedWeavyError> {
         match self.grammar.expr(expr) {
             GrammarExpr::Blank => Ok(Some(byte_position)),
             GrammarExpr::StringToken(value) => Ok(self.input[byte_position..]
@@ -2402,12 +2413,14 @@ impl<'a> ReducedWeavyStepper<'a> {
             | GrammarExpr::PrecDynamic { content, .. }
             | GrammarExpr::Alias { content, .. }
             | GrammarExpr::Reserved { content, .. } => {
-                self.match_lexical_expr(*content, byte_position)
+                self.match_lexical_expr_inner(*content, byte_position, rule_stack)
             }
             GrammarExpr::Choice(members) => {
                 let mut best = None;
                 for member in members {
-                    if let Some(end) = self.match_lexical_expr(*member, byte_position)? {
+                    if let Some(end) =
+                        self.match_lexical_expr_inner(*member, byte_position, rule_stack)?
+                    {
                         if best.is_none_or(|best| end > best) {
                             best = Some(end);
                         }
@@ -2418,7 +2431,8 @@ impl<'a> ReducedWeavyStepper<'a> {
             GrammarExpr::Seq(members) => {
                 let mut position = byte_position;
                 for member in members {
-                    let Some(end) = self.match_lexical_expr(*member, position)? else {
+                    let Some(end) = self.match_lexical_expr_inner(*member, position, rule_stack)?
+                    else {
                         return Ok(None);
                     };
                     position = end;
@@ -2427,7 +2441,9 @@ impl<'a> ReducedWeavyStepper<'a> {
             }
             GrammarExpr::Repeat(content) => {
                 let mut position = byte_position;
-                while let Some(end) = self.match_lexical_expr(*content, position)? {
+                while let Some(end) =
+                    self.match_lexical_expr_inner(*content, position, rule_stack)?
+                {
                     if end == position {
                         break;
                     }
@@ -2436,13 +2452,17 @@ impl<'a> ReducedWeavyStepper<'a> {
                 Ok(Some(position))
             }
             GrammarExpr::Repeat1(content) => {
-                let Some(mut position) = self.match_lexical_expr(*content, byte_position)? else {
+                let Some(mut position) =
+                    self.match_lexical_expr_inner(*content, byte_position, rule_stack)?
+                else {
                     return Ok(None);
                 };
                 if position == byte_position {
                     return Ok(None);
                 }
-                while let Some(end) = self.match_lexical_expr(*content, position)? {
+                while let Some(end) =
+                    self.match_lexical_expr_inner(*content, position, rule_stack)?
+                {
                     if end == position {
                         break;
                     }
@@ -2450,7 +2470,22 @@ impl<'a> ReducedWeavyStepper<'a> {
                 }
                 Ok(Some(position))
             }
-            GrammarExpr::Symbol(_) => Err(ReducedWeavyError::UnsupportedLexicalSymbol { expr }),
+            GrammarExpr::Symbol(SymbolRef::Rule(rule)) => {
+                if rule_stack.contains(rule) {
+                    return Err(ReducedWeavyError::UnsupportedLexicalSymbol { expr });
+                }
+                rule_stack.push(*rule);
+                let result = self.match_lexical_expr_inner(
+                    self.grammar.rule(*rule).expr(),
+                    byte_position,
+                    rule_stack,
+                );
+                rule_stack.pop();
+                result
+            }
+            GrammarExpr::Symbol(SymbolRef::External(_)) => {
+                Err(ReducedWeavyError::UnsupportedLexicalSymbol { expr })
+            }
         }
     }
 

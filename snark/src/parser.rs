@@ -4946,6 +4946,17 @@ impl<'a> ReducedParser<'a> {
         input: &str,
         byte_position: usize,
     ) -> Result<Option<usize>, ReducedParseError> {
+        self.match_lexical_expr_inner(expr, input, byte_position, &mut Vec::new())
+    }
+
+    #[cfg(test)]
+    fn match_lexical_expr_inner(
+        &self,
+        expr: GrammarExprId,
+        input: &str,
+        byte_position: usize,
+        rule_stack: &mut Vec<RuleId>,
+    ) -> Result<Option<usize>, ReducedParseError> {
         match self.grammar.expr(expr) {
             GrammarExpr::Blank => Ok(Some(byte_position)),
             GrammarExpr::StringToken(value) => Ok(input[byte_position..]
@@ -4969,12 +4980,14 @@ impl<'a> ReducedParser<'a> {
             | GrammarExpr::PrecDynamic { content, .. }
             | GrammarExpr::Alias { content, .. }
             | GrammarExpr::Reserved { content, .. } => {
-                self.match_lexical_expr(*content, input, byte_position)
+                self.match_lexical_expr_inner(*content, input, byte_position, rule_stack)
             }
             GrammarExpr::Choice(members) => {
                 let mut best = None;
                 for member in members {
-                    if let Some(end) = self.match_lexical_expr(*member, input, byte_position)? {
+                    if let Some(end) =
+                        self.match_lexical_expr_inner(*member, input, byte_position, rule_stack)?
+                    {
                         if best.is_none_or(|best| end > best) {
                             best = Some(end);
                         }
@@ -4985,7 +4998,9 @@ impl<'a> ReducedParser<'a> {
             GrammarExpr::Seq(members) => {
                 let mut position = byte_position;
                 for member in members {
-                    let Some(end) = self.match_lexical_expr(*member, input, position)? else {
+                    let Some(end) =
+                        self.match_lexical_expr_inner(*member, input, position, rule_stack)?
+                    else {
                         return Ok(None);
                     };
                     position = end;
@@ -4994,7 +5009,9 @@ impl<'a> ReducedParser<'a> {
             }
             GrammarExpr::Repeat(content) => {
                 let mut position = byte_position;
-                while let Some(end) = self.match_lexical_expr(*content, input, position)? {
+                while let Some(end) =
+                    self.match_lexical_expr_inner(*content, input, position, rule_stack)?
+                {
                     if end == position {
                         break;
                     }
@@ -5003,14 +5020,17 @@ impl<'a> ReducedParser<'a> {
                 Ok(Some(position))
             }
             GrammarExpr::Repeat1(content) => {
-                let Some(mut position) = self.match_lexical_expr(*content, input, byte_position)?
+                let Some(mut position) =
+                    self.match_lexical_expr_inner(*content, input, byte_position, rule_stack)?
                 else {
                     return Ok(None);
                 };
                 if position == byte_position {
                     return Ok(None);
                 }
-                while let Some(end) = self.match_lexical_expr(*content, input, position)? {
+                while let Some(end) =
+                    self.match_lexical_expr_inner(*content, input, position, rule_stack)?
+                {
                     if end == position {
                         break;
                     }
@@ -5018,7 +5038,23 @@ impl<'a> ReducedParser<'a> {
                 }
                 Ok(Some(position))
             }
-            GrammarExpr::Symbol(_) => Err(ReducedParseError::new(
+            GrammarExpr::Symbol(SymbolRef::Rule(rule)) => {
+                if rule_stack.contains(rule) {
+                    return Err(ReducedParseError::new(
+                        ReducedParseErrorKind::UnsupportedLexicalSymbol { expr },
+                    ));
+                }
+                rule_stack.push(*rule);
+                let result = self.match_lexical_expr_inner(
+                    self.grammar.rule(*rule).expr(),
+                    input,
+                    byte_position,
+                    rule_stack,
+                );
+                rule_stack.pop();
+                result
+            }
+            GrammarExpr::Symbol(SymbolRef::External(_)) => Err(ReducedParseError::new(
                 ReducedParseErrorKind::UnsupportedLexicalSymbol { expr },
             )),
         }
@@ -5364,11 +5400,9 @@ fn compile_terminal_matcher(
         ParserTerminalKind::String => {
             CompiledTerminalMatcher::Expr(CompiledLexExpr::String(terminal.spelling().to_owned()))
         }
-        ParserTerminalKind::Pattern => {
-            CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(compile_pattern(
-                terminal.spelling(),
-            )))
-        }
+        ParserTerminalKind::Pattern => CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(
+            compile_pattern(terminal.spelling()),
+        )),
         ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
             let Some(root) = terminal.lexical_root() else {
                 return CompiledTerminalMatcher::UnsupportedTerminal {
@@ -5390,6 +5424,14 @@ fn compile_terminal_matcher(
 }
 
 fn compile_lex_expr(grammar: &ValidatedGrammar, expr: GrammarExprId) -> CompiledLexExpr {
+    compile_lex_expr_inner(grammar, expr, &mut Vec::new())
+}
+
+fn compile_lex_expr_inner(
+    grammar: &ValidatedGrammar,
+    expr: GrammarExprId,
+    rule_stack: &mut Vec<RuleId>,
+) -> CompiledLexExpr {
     match grammar.expr(expr) {
         GrammarExpr::Blank => CompiledLexExpr::Blank,
         GrammarExpr::StringToken(value) => CompiledLexExpr::String(value.clone()),
@@ -5407,26 +5449,37 @@ fn compile_lex_expr(grammar: &ValidatedGrammar, expr: GrammarExprId) -> Compiled
         | GrammarExpr::Prec { content, .. }
         | GrammarExpr::PrecDynamic { content, .. }
         | GrammarExpr::Alias { content, .. }
-        | GrammarExpr::Reserved { content, .. } => compile_lex_expr(grammar, *content),
+        | GrammarExpr::Reserved { content, .. } => {
+            compile_lex_expr_inner(grammar, *content, rule_stack)
+        }
         GrammarExpr::Choice(members) => CompiledLexExpr::Choice(
             members
                 .iter()
-                .map(|member| compile_lex_expr(grammar, *member))
+                .map(|member| compile_lex_expr_inner(grammar, *member, rule_stack))
                 .collect(),
         ),
         GrammarExpr::Seq(members) => CompiledLexExpr::Seq(
             members
                 .iter()
-                .map(|member| compile_lex_expr(grammar, *member))
+                .map(|member| compile_lex_expr_inner(grammar, *member, rule_stack))
                 .collect(),
         ),
-        GrammarExpr::Repeat(content) => {
-            CompiledLexExpr::Repeat(Box::new(compile_lex_expr(grammar, *content)))
+        GrammarExpr::Repeat(content) => CompiledLexExpr::Repeat(Box::new(compile_lex_expr_inner(
+            grammar, *content, rule_stack,
+        ))),
+        GrammarExpr::Repeat1(content) => CompiledLexExpr::Repeat1(Box::new(
+            compile_lex_expr_inner(grammar, *content, rule_stack),
+        )),
+        GrammarExpr::Symbol(SymbolRef::Rule(rule)) => {
+            if rule_stack.contains(rule) {
+                return CompiledLexExpr::UnsupportedSymbol(expr);
+            }
+            rule_stack.push(*rule);
+            let compiled = compile_lex_expr_inner(grammar, grammar.rule(*rule).expr(), rule_stack);
+            rule_stack.pop();
+            compiled
         }
-        GrammarExpr::Repeat1(content) => {
-            CompiledLexExpr::Repeat1(Box::new(compile_lex_expr(grammar, *content)))
-        }
-        GrammarExpr::Symbol(_) => CompiledLexExpr::UnsupportedSymbol(expr),
+        GrammarExpr::Symbol(SymbolRef::External(_)) => CompiledLexExpr::UnsupportedSymbol(expr),
     }
 }
 
@@ -9980,7 +10033,7 @@ extras (
                           "type": "CHOICE",
                           "members": [
                             { "type": "STRING", "value": "b" },
-                            { "type": "PATTERN", "value": "\\d" }
+                            { "type": "SYMBOL", "name": "digit" }
                           ]
                         }
                       },
@@ -9988,6 +10041,7 @@ extras (
                     ]
                   }
                 },
+                "digit": { "type": "PATTERN", "value": "\\d" },
                 "run": {
                   "type": "TOKEN",
                   "content": {
@@ -10014,6 +10068,68 @@ extras (
                 );
             }
         }
+    }
+
+    fn lexical_symbol_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "SEQ",
+                    "members": [
+                      { "type": "SYMBOL", "name": "word" },
+                      { "type": "STRING", "value": ":" },
+                      { "type": "SYMBOL", "name": "digits" }
+                    ]
+                  }
+                },
+                "word": { "type": "PATTERN", "value": "[a-z]+" },
+                "digits": {
+                  "type": "REPEAT1",
+                  "content": { "type": "SYMBOL", "name": "digit" }
+                },
+                "digit": { "type": "PATTERN", "value": "\\d" }
+              }
+            }"##,
+        )
+    }
+
+    #[test]
+    fn runtime_lexer_resolves_symbol_references_inside_token() {
+        let (validated, parser, table) = lexical_symbol_fixture();
+        let report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report("alpha:123")
+            .unwrap();
+
+        assert_eq!(report.tree().to_sexp(), "(source_file)");
+        assert_eq!(report.accepted_count(), 1);
+        assert_eq!(report.failure_count(), 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn runtime_lexer_resolves_symbol_references_inside_token_through_weavy_runtime() {
+        let (validated, parser, table) = lexical_symbol_fixture();
+        let input = "alpha:123";
+        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan, &validated, &parser, &table, input,
+        )
+        .unwrap();
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_eq!(weavy_report.tree().to_sexp(), "(source_file)");
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
