@@ -272,7 +272,6 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                     .as_ref()
                     .map(|scanner| scanner as &dyn ReducedExternalScanner),
                 &request.input,
-                bundle.grammar_js_path.is_some(),
             ) {
                 Ok(report) => {
                     let accepted_tree_events = report.accepted_tree_events();
@@ -588,7 +587,6 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
                     .as_ref()
                     .map(|scanner| scanner as &dyn ReducedExternalScanner),
                 &case.input,
-                false,
             ) {
                 Ok(report) => {
                     let actual = report.tree().to_sexp();
@@ -660,7 +658,6 @@ fn run_highlight_tests(
                 .as_ref()
                 .map(|scanner| scanner as &dyn ReducedExternalScanner),
             &file.text,
-            false,
         ) {
             Ok(report) => report,
             Err(error) => {
@@ -776,17 +773,12 @@ fn parse_with_optional_scanner<'a>(
     runtime: RuntimeParser<'a>,
     scanner: Option<&'a dyn ReducedExternalScanner>,
     input: &str,
-    recover: bool,
 ) -> Result<RuntimeParseReport, ReducedParseError> {
     let runtime = match scanner {
         Some(scanner) => runtime.with_external_scanner(scanner),
         None => runtime,
     };
-    if recover {
-        runtime.parse_recovering_compact_with_report(input)
-    } else {
-        runtime.parse_compact_with_report(input)
-    }
+    runtime.parse_compact_with_report(input)
 }
 
 fn diagnostic(stage: &str, message: String, primary_span: Option<DiagnosticSpan>) -> Diagnostic {
@@ -1667,7 +1659,7 @@ mod tests {
     }
 
     #[test]
-    fn recovers_nginx_shaped_block_entries_from_grammar_js_bundles() {
+    fn rejects_nginx_shaped_block_errors_from_grammar_js_bundles() {
         let grammar_json = r##"{
   "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
   "name": "nginx_recovery_smoke",
@@ -1778,37 +1770,10 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("accepted parse contains")
+                .contains("could not lex a token")
         );
-        let sexp = response.parse.as_ref().expect("parse output").sexp.as_str();
-        assert!(
-            sexp.contains("(ERROR)"),
-            "expected recovered ERROR node in {sexp}"
-        );
-        let parse = response.parse.as_ref().expect("parse output");
-        assert!(parse.accepted_error_count > 0);
-        assert_eq!(parse.accepted_missing_count, 0);
-        assert!(
-            sexp.contains("(simple_directive (directive) (param (generic)))"),
-            "expected directive after recovered line in {sexp}"
-        );
-        let capture_texts = response
-            .highlights
-            .iter()
-            .map(|capture| capture.text.as_str())
-            .collect::<Vec<_>>();
-        assert!(
-            capture_texts.contains(&"after"),
-            "expected captures after recovered line: {capture_texts:?}"
-        );
-        assert!(
-            capture_texts.contains(&"value"),
-            "expected captures after recovered line: {capture_texts:?}"
-        );
-        assert!(
-            capture_texts.contains(&"tail"),
-            "expected captures after second recovered block line: {capture_texts:?}"
-        );
+        assert!(response.parse.is_none());
+        assert!(response.highlights.is_empty());
     }
 
     #[test]

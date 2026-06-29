@@ -5994,8 +5994,13 @@ impl<'a> RuntimeParser<'a> {
             queued_recovery_costs.insert(RuntimeBranchKey::from_branch(&initial_branch), 0);
         }
         let mut branches = VecDeque::from([initial_branch]);
-        let mut accepted =
-            Vec::<(StackVersionId, SexpNode, Vec<ReducedTraceStep>, u32, Vec<TreeEvent>)>::new();
+        let mut accepted = Vec::<(
+            StackVersionId,
+            SexpNode,
+            Vec<ReducedTraceStep>,
+            u32,
+            Vec<TreeEvent>,
+        )>::new();
         let mut failures = Vec::<ReducedParseError>::new();
         let mut next_version_index = 1usize;
         let mut next_lookahead_index = 0usize;
@@ -6308,9 +6313,20 @@ impl<'a> RuntimeParser<'a> {
                 conflict,
                 branches: branches.clone(),
             });
-            let mut outcomes = Vec::new();
-            for (action, version) in entry.actions().iter().zip(branches) {
-                let mut branch = branch.clone();
+            let action_count = entry.actions().len();
+            let mut branch_slot = Some(branch);
+            let mut outcomes = Vec::with_capacity(action_count);
+            for (index, (action, version)) in entry.actions().iter().zip(branches).enumerate() {
+                let mut branch = if index + 1 == action_count {
+                    branch_slot
+                        .take()
+                        .expect("last split arm consumes source branch")
+                } else {
+                    branch_slot
+                        .as_ref()
+                        .expect("source branch remains until last split arm")
+                        .clone()
+                };
                 branch.version = version;
                 branch.trace.push(ReducedTraceStep {
                     state,

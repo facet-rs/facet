@@ -59,11 +59,25 @@ fn main() {
             }
         }
     }
-    let report = RuntimeParser::new(&validated, &parser, &table)
+    let parse_result = RuntimeParser::new(&validated, &parser, &table)
         .expect("runtime should build")
-        .parse_recovering_compact_with_report(&input)
-        .expect("recovering parse should return a report");
+        .parse_compact_with_report(&input);
     let parsed_at = Instant::now();
+    println!("language: {}", raw.name);
+    println!("input bytes: {}", input.len());
+    let report = match parse_result {
+        Ok(report) => report,
+        Err(error) => {
+            println!("parse failed: {error}");
+            println!("emit grammar.js: {:?}", emitted_at.duration_since(start));
+            println!(
+                "prepare parser: {:?}",
+                prepared_at.duration_since(emitted_at)
+            );
+            println!("strict parse: {:?}", parsed_at.duration_since(prepared_at));
+            return;
+        }
+    };
 
     let accepted_events = report.accepted_tree_events();
     let error_count = accepted_events
@@ -84,8 +98,6 @@ fn main() {
         })
         .unwrap_or(0);
 
-    println!("language: {}", raw.name);
-    println!("input bytes: {}", input.len());
     println!("accepted branches: {}", report.accepted_count());
     println!("failed branches: {}", report.failure_count());
     println!("max live versions: {}", report.max_live_versions());
