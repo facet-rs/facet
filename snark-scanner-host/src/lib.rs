@@ -10,6 +10,7 @@ pub const CSS_SCANNER_SOURCE: &str =
     include_str!("../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/scanner.c");
 
 const SERIALIZATION_BUFFER_SIZE: usize = 1024;
+const CSS_EXTERNAL_SYMBOL_COUNT: usize = 3;
 
 unsafe extern "C" {
     fn tree_sitter_css_external_scanner_create() -> *mut c_void;
@@ -49,7 +50,13 @@ impl CssScanner {
         byte_position: usize,
         valid_symbols: &[bool],
         snapshot: &[u8],
-    ) -> CssScan {
+    ) -> Result<CssScan, CssScanError> {
+        if valid_symbols.len() < CSS_EXTERNAL_SYMBOL_COUNT {
+            return Err(CssScanError::ValidSymbolMaskTooShort {
+                len: valid_symbols.len(),
+                required: CSS_EXTERNAL_SYMBOL_COUNT,
+            });
+        }
         let snapshot_len = u32::try_from(snapshot.len())
             .expect("scanner snapshot length must fit Tree-sitter ABI");
         unsafe {
@@ -82,13 +89,13 @@ impl CssScanner {
         } else {
             byte_position
         };
-        CssScan {
+        Ok(CssScan {
             accepted,
             result_symbol,
             end_byte,
             peek_byte: host.cursor,
             serialized_state,
-        }
+        })
     }
 }
 
@@ -115,6 +122,26 @@ pub struct CssScan {
     peek_byte: usize,
     serialized_state: Vec<u8>,
 }
+
+/// Invalid scanner host request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CssScanError {
+    /// The reduced CSS scanner reads valid-symbol ordinals 0, 1, and 2.
+    ValidSymbolMaskTooShort { len: usize, required: usize },
+}
+
+impl std::fmt::Display for CssScanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ValidSymbolMaskTooShort { len, required } => write!(
+                f,
+                "valid-symbol mask has length {len}, but reduced CSS scanner requires {required}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CssScanError {}
 
 impl CssScan {
     /// Whether the scanner accepted an external token.
@@ -220,4 +247,23 @@ unsafe extern "C" fn lexer_is_at_included_range_start(_lexer: *const TSLexer) ->
 unsafe extern "C" fn lexer_eof(lexer: *const TSLexer) -> bool {
     let host = unsafe { &*(lexer.cast::<LexerHost<'_>>()) };
     host.cursor >= host.input.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_short_valid_symbol_masks_before_calling_c() {
+        let mut scanner = CssScanner::new();
+        let error = scanner.scan("", 0, &[], &[]).unwrap_err();
+
+        assert_eq!(
+            error,
+            CssScanError::ValidSymbolMaskTooShort {
+                len: 0,
+                required: CSS_EXTERNAL_SYMBOL_COUNT,
+            }
+        );
+    }
 }

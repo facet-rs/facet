@@ -1552,7 +1552,7 @@ mod tests {
         );
         assert!(
             scanner.requests_with_snapshot.get() > 0,
-            "expected a later runtime scanner request to receive the branch-local snapshot committed by an accepted external token"
+            "expected a later runtime scanner request to receive the stateless CSS snapshot marker committed by an accepted external token"
         );
         let scanner_events = runtime_report.trace_events().iter().filter_map(|event| {
             if let crate::parser::TraceEvent::ExternalScanner {
@@ -1578,7 +1578,7 @@ mod tests {
                 .all(|(before, after, result)| before.is_some()
                     && after.is_some()
                     && result.is_some()),
-            "expected runtime accepted external-scanner results to carry scanner snapshots"
+            "expected runtime accepted external-scanner results to carry stateless CSS snapshot markers"
         );
         assert!(
             scanner_events
@@ -1590,7 +1590,7 @@ mod tests {
             scanner_events
                 .iter()
                 .any(|(before, _, _)| before.is_some_and(|before| before.get() == 0)),
-            "expected runtime scanner traces to observe the committed branch-local CSS snapshot"
+            "expected runtime scanner traces to observe the committed stateless CSS snapshot marker"
         );
     }
 
@@ -1733,7 +1733,7 @@ mod tests {
         );
         assert!(
             weavy_scanner.requests_with_snapshot.get() > 0,
-            "expected a later Weavy runtime scanner request to receive the branch-local snapshot committed by an accepted external token"
+            "expected a later Weavy runtime scanner request to receive the stateless CSS snapshot marker committed by an accepted external token"
         );
         let scanner_events = weavy_report.trace_events().iter().filter_map(|event| {
             if let crate::parser::TraceEvent::ExternalScanner {
@@ -1759,7 +1759,7 @@ mod tests {
                 .all(|(before, after, result)| before.is_some()
                     && after.is_some()
                     && result.is_some()),
-            "expected Weavy runtime accepted external-scanner results to carry scanner snapshots"
+            "expected Weavy runtime accepted external-scanner results to carry stateless CSS snapshot markers"
         );
         assert!(
             scanner_events
@@ -1771,7 +1771,7 @@ mod tests {
             scanner_events
                 .iter()
                 .any(|(before, _, _)| before.is_some_and(|before| before.get() == 0)),
-            "expected Weavy runtime scanner traces to observe the committed branch-local CSS snapshot"
+            "expected Weavy runtime scanner traces to observe the committed stateless CSS snapshot marker"
         );
         assert!(weavy_report.stats().step_count > 0);
         assert!(weavy_report.stats().block_call_count > 0);
@@ -3395,12 +3395,11 @@ mod tests {
             if request_ordinal >= mask.len() || !mask[request_ordinal] {
                 return Ok(None);
             }
-            let scan = self.scanner.borrow_mut().scan(
-                request.input(),
-                request.byte_position(),
-                &mask,
-                &[],
-            );
+            let scan = self
+                .scanner
+                .borrow_mut()
+                .scan(request.input(), request.byte_position(), &mask, &[])
+                .expect("CSS valid-symbol mask width should match imported external ordinals");
             if !scan.accepted() || scan.result_symbol() != Some(request_ordinal) {
                 return Ok(None);
             }

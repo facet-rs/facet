@@ -1,6 +1,14 @@
 #ifndef SNARK_SCANNER_HOST_TREE_SITTER_PARSER_H_
 #define SNARK_SCANNER_HOST_TREE_SITTER_PARSER_H_
 
+/*
+ * Hand-written test ABI shim for compiling fixture external scanners.
+ *
+ * This is not generated parser material and is not copied from a generated
+ * grammar package. It declares only the Tree-sitter scanner host surface that
+ * the reduced CSS fixture's src/scanner.c needs.
+ */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
