@@ -4926,6 +4926,7 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
             |ch| ch.is_ascii_alphabetic() || ch == '%',
             1,
         ),
+        "[A-Za-z_][A-Za-z0-9_]*" => match_gingembre_identifier(input, byte_position),
         "[a-zA-Z0-9-_\\xA0-\\xFF]+" => match_while(
             input,
             byte_position,
@@ -4953,6 +4954,19 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
         }
         _ => None,
     }
+}
+
+fn match_gingembre_identifier(input: &str, byte_position: usize) -> Option<usize> {
+    let bytes = input[byte_position..].as_bytes();
+    let first = bytes.first().copied()?;
+    if first != b'_' && !first.is_ascii_alphabetic() {
+        return None;
+    }
+    let len = bytes
+        .iter()
+        .take_while(|byte| **byte == b'_' || byte.is_ascii_alphanumeric())
+        .count();
+    Some(byte_position + len)
 }
 
 fn match_json_line_comment_tail(input: &str, byte_position: usize) -> Option<usize> {
@@ -7043,16 +7057,76 @@ rules {
     interpolation {
         type SEQ
         members (
+            {type SYMBOL, name _open_expr}
+            {type SYMBOL, name _expr}
+            {type SYMBOL, name _close_expr}
+        )
+    }
+    _open_expr {
+        type CHOICE
+        members (
             {type STRING, value "{{"}
-            {type SYMBOL, name var_ref}
+            {type STRING, value "{{-"}
+        )
+    }
+    _close_expr {
+        type CHOICE
+        members (
             {type STRING, value "}}"}
+            {type STRING, value "-}}"}
+        )
+    }
+    _expr {
+        type CHOICE
+        members (
+            {type SYMBOL, name var_ref}
+            {type SYMBOL, name field_expr}
+            {type SYMBOL, name call_expr}
         )
     }
     var_ref {
+        type SYMBOL
+        name _ident
+    }
+    field_expr {
+        type SEQ
+        members (
+            {type SYMBOL, name _expr}
+            {type STRING, value "."}
+            {type SYMBOL, name _ident}
+        )
+    }
+    call_expr {
+        type SEQ
+        members (
+            {type SYMBOL, name _expr}
+            {type SYMBOL, name arg_list}
+        )
+    }
+    arg_list {
+        type SEQ
+        members (
+            {type STRING, value "("}
+            {type SYMBOL, name arg}
+            {type REPEAT, content {
+                type SEQ
+                members (
+                    {type STRING, value ","}
+                    {type SYMBOL, name arg}
+                )
+            }}
+            {type STRING, value ")"}
+        )
+    }
+    arg {
+        type SYMBOL
+        name _expr
+    }
+    _ident {
         type TOKEN
         content {
             type PATTERN
-            value r"(--|-?[a-zA-Z_\xA0-\xFF])[a-zA-Z0-9-_\xA0-\xFF]*"
+            value r"[A-Za-z_][A-Za-z0-9_]*"
         }
     }
 }
@@ -7087,7 +7161,6 @@ extras (
             parse.errors
         );
         let root = gingembre_node_projection(parse.syntax()).unwrap();
-        assert_eq!(root.to_sexp(), "(template (interpolation (var_ref)))");
         root
     }
 
@@ -7096,6 +7169,10 @@ extras (
             gingembre_syntax::SyntaxKind::Template => "template",
             gingembre_syntax::SyntaxKind::Interpolation => "interpolation",
             gingembre_syntax::SyntaxKind::VarRef => "var_ref",
+            gingembre_syntax::SyntaxKind::FieldExpr => "field_expr",
+            gingembre_syntax::SyntaxKind::CallExpr => "call_expr",
+            gingembre_syntax::SyntaxKind::ArgList => "arg_list",
+            gingembre_syntax::SyntaxKind::Arg => "arg",
             _ => return None,
         };
         let children = node
@@ -7113,9 +7190,7 @@ extras (
         })
     }
 
-    #[test]
-    fn parses_styx_authored_gingembre_interpolation_like_gingembre() {
-        let input = "{{ x }}";
+    fn assert_styx_authored_gingembre_runtime(input: &str, expected_sexp: &str) {
         let (validated, parser, table) = authored_gingembre_runtime_fixture();
         let report = RuntimeParser::new(&validated, &parser, &table)
             .unwrap()
@@ -7124,14 +7199,41 @@ extras (
         let expected = gingembre_named_projection(input);
 
         rediff::assert_same!(report.tree(), &expected);
+        assert_eq!(expected.to_sexp(), expected_sexp);
         assert_eq!(report.accepted_count(), 1);
         assert_eq!(report.failure_count(), 0);
     }
 
+    #[test]
+    fn parses_styx_authored_gingembre_interpolation_like_gingembre() {
+        assert_styx_authored_gingembre_runtime("{{ x }}", "(template (interpolation (var_ref)))");
+    }
+
+    #[test]
+    fn parses_styx_authored_gingembre_trim_interpolation_like_gingembre() {
+        assert_styx_authored_gingembre_runtime("{{- x -}}", "(template (interpolation (var_ref)))");
+    }
+
+    #[test]
+    fn parses_styx_authored_gingembre_field_access_like_gingembre() {
+        assert_styx_authored_gingembre_runtime(
+            "{{ user.name }}",
+            "(template (interpolation (field_expr (var_ref))))",
+        );
+    }
+
+    #[test]
+    fn parses_styx_authored_gingembre_call_arguments_like_gingembre() {
+        assert_styx_authored_gingembre_runtime(
+            "{{ greet(user.name, suffix) }}",
+            "(template (interpolation (call_expr (var_ref) (arg_list (arg (field_expr (var_ref))) (arg (var_ref))))))",
+        );
+    }
+
     #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn parses_styx_authored_gingembre_interpolation_through_weavy_runtime() {
-        let input = "{{ x }}";
+    fn parses_styx_authored_gingembre_call_arguments_through_weavy_runtime() {
+        let input = "{{ greet(user.name, suffix) }}";
         let (validated, parser, table) = authored_gingembre_runtime_fixture();
         let runtime_report = RuntimeParser::new(&validated, &parser, &table)
             .unwrap()
@@ -7145,6 +7247,10 @@ extras (
 
         rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        assert_eq!(
+            weavy_report.tree().to_sexp(),
+            "(template (interpolation (call_expr (var_ref) (arg_list (arg (field_expr (var_ref))) (arg (var_ref))))))"
+        );
         assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
         assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
         assert!(weavy_report.stats().block_call_count > 0);
