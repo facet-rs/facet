@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   discoverGrammarRoots,
+  firstSampleForGrammarRootId,
   normalizeBundleFiles,
   projectedFilesForGrammarRootId,
   type DslBundleFile,
@@ -94,4 +95,38 @@ test("normalizes package root grammar.json to src/grammar.json", () => {
       kind: "package",
     },
   ]);
+});
+
+test("selects the first projected sample for a single uploaded grammar root", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-nginx/grammar.json"),
+    file("tree-sitter-nginx/samples/z-last.conf"),
+    file("tree-sitter-nginx/samples/a-first.conf"),
+  ]);
+
+  assert.deepEqual(firstSampleForGrammarRootId(files), {
+    path: "samples/a-first.conf",
+    sourcePath: "samples/a-first.conf",
+    text: "",
+  });
+});
+
+test("selects the first projected sample for the chosen Arborium grammar root", () => {
+  const files = normalizeBundleFiles([
+    file("langs/group-maple/nginx/def/grammar/grammar.js"),
+    file("langs/group-maple/nginx/def/samples/nginx.conf"),
+    file("langs/group-maple/hcl/def/grammar/grammar.js"),
+    file("langs/group-maple/hcl/def/samples/main.hcl"),
+  ]);
+
+  assert.deepEqual(firstSampleForGrammarRootId(files, "group-maple/nginx/def"), {
+    path: "samples/nginx.conf",
+    sourcePath: "group-maple/nginx/def/samples/nginx.conf",
+    text: "",
+  });
+  assert.deepEqual(firstSampleForGrammarRootId(files, "group-maple/hcl/def"), {
+    path: "samples/main.hcl",
+    sourcePath: "group-maple/hcl/def/samples/main.hcl",
+    text: "",
+  });
 });

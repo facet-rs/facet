@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import init, { parseBundle } from "@bearcove/snark-wasm";
 import {
   discoverGrammarRoots,
   filesWithGrammarJson,
+  firstSampleForGrammarRootId,
   grammarRootForId,
   normalizeBundleFiles,
   preferredGrammarRootId,
@@ -172,6 +173,7 @@ export function App() {
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [editorScroll, setEditorScroll] = useState({ left: 0, top: 0 });
+  const parseRequestId = useRef(0);
 
   const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
   const activeGrammarRoot = useMemo(
@@ -202,13 +204,34 @@ export function App() {
     [projectedFiles],
   );
   const highlightedSource = useMemo(
-    () =>
-      result?.ok && result.parse && result.highlights.length > 0
-        ? renderHighlightedSource(input, result.highlights)
-        : null,
-    [input, result?.highlights, result?.ok, result?.parse],
+    () => renderSourceLayer(input, result),
+    [input, result],
   );
   const hasHighlightedSource = highlightedSource !== null;
+
+  useEffect(() => {
+    const requestId = parseRequestId.current + 1;
+    parseRequestId.current = requestId;
+    setBusy(true);
+
+    const timeout = window.setTimeout(() => {
+      void playgroundResponse()
+        .then((response) => {
+          if (parseRequestId.current === requestId) {
+            setResult(response);
+          }
+        })
+        .finally(() => {
+          if (parseRequestId.current === requestId) {
+            setBusy(false);
+          }
+        });
+    }, 150);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [activeGrammarRootId, files, hasBundledTests, input, projectedFiles]);
 
   async function loadFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) {
@@ -222,7 +245,7 @@ export function App() {
     );
     const next = sortedFiles(normalizeBundleFiles(loaded));
     const nextGrammarRoot = preferredGrammarRootId(next);
-    const nextSample = firstSampleForGrammarRoot(next, nextGrammarRoot);
+    const nextSample = firstSampleForGrammarRootId(next, nextGrammarRoot);
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
     setSelectedSamplePath(nextSample?.sourcePath ?? "");
@@ -236,8 +259,7 @@ export function App() {
     setResult(null);
   }
 
-  async function run() {
-    setBusy(true);
+  async function playgroundResponse(): Promise<PlaygroundResponse> {
     try {
       await wasmReady.catch((error: unknown) => {
         throw new PlaygroundRunError("wasm", errorMessage(error));
@@ -249,15 +271,13 @@ export function App() {
         throw new PlaygroundRunError("grammar.js", errorMessage(error));
       });
       const response = callParseBundle(runnableFiles, input, hasBundledTests);
-      setResult(JSON.parse(response) as PlaygroundResponse);
+      return JSON.parse(response) as PlaygroundResponse;
     } catch (error) {
       const diagnostic =
         error instanceof PlaygroundRunError
           ? { stage: error.stage, message: error.message }
           : { stage: "playground", message: errorMessage(error) };
-      setResult(responseWithDiagnostic(diagnostic.stage, diagnostic.message, files));
-    } finally {
-      setBusy(false);
+      return responseWithDiagnostic(diagnostic.stage, diagnostic.message, projectedFiles);
     }
   }
 
@@ -304,9 +324,6 @@ export function App() {
 
       <section className="pane work-pane" aria-label="Source">
         <div className="toolbar">
-          <button type="button" onClick={() => void run()} disabled={busy}>
-            {busy ? "Running" : "Run"}
-          </button>
           {grammarRoots.length > 1 ? (
             <select
               aria-label="Grammar root"
@@ -314,7 +331,7 @@ export function App() {
               value={activeGrammarRoot?.id ?? ""}
               onChange={(event) => {
                 const nextGrammarRoot = event.currentTarget.value;
-                const nextSample = firstSampleForGrammarRoot(files, nextGrammarRoot);
+                const nextSample = firstSampleForGrammarRootId(files, nextGrammarRoot);
                 setSelectedGrammarRoot(nextGrammarRoot);
                 setSelectedSamplePath(nextSample?.sourcePath ?? "");
                 setInput(nextSample?.text ?? "");
@@ -376,20 +393,11 @@ export function App() {
             />
           </div>
         </label>
+        <SourceDiagnostics input={input} result={result} />
       </section>
 
       <section className="pane result-pane" aria-label="Parse results">
-        <StatusStrip result={result} />
-        {result?.diagnostics.length ? (
-          <div className="diagnostics">
-            {result.diagnostics.map((diagnostic, index) => (
-              <div className="diagnostic" key={`${diagnostic.stage}-${index}`}>
-                <strong>{diagnostic.stage}</strong>
-                <span>{diagnostic.message}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <StatusStrip result={result} busy={busy} />
 
         <div className="result-tabs">
           <section>
@@ -508,7 +516,16 @@ export function App() {
   );
 }
 
-function StatusStrip({ result }: { result: PlaygroundResponse | null }) {
+function StatusStrip({
+  result,
+  busy,
+}: {
+  result: PlaygroundResponse | null;
+  busy: boolean;
+}) {
+  if (busy) {
+    return <div className="status-strip idle">Parsing</div>;
+  }
   if (!result) {
     return <div className="status-strip idle">Ready</div>;
   }
@@ -679,14 +696,6 @@ function rawBrowserPath(file: File) {
   return normalizePath(relative && relative.length > 0 ? relative : file.name);
 }
 
-function firstSampleForGrammarRoot(files: BundleFile[], grammarRootId: string): SampleFile | null {
-  return (
-    sortedFiles(projectedFilesForGrammarRootId(files, grammarRootId)).find(
-      (file): file is SampleFile => file.path.startsWith("samples/"),
-    ) ?? null
-  );
-}
-
 function responseWithDiagnostic(stage: string, message: string, files: BundleFile[]): PlaygroundResponse {
   return {
     ok: false,
@@ -817,6 +826,132 @@ function renderHighlightedSource(input: string, captures: HighlightOutput[]) {
     nodes.push(input.slice(cursor));
   }
   return nodes;
+}
+
+function renderSourceLayer(input: string, result: PlaygroundResponse | null) {
+  if (!result) {
+    return null;
+  }
+  if (!result.ok) {
+    return renderDiagnosticSource(input, result.diagnostics);
+  }
+  if (result.highlights.length === 0) {
+    return null;
+  }
+  return renderHighlightedSource(input, result.highlights);
+}
+
+function SourceDiagnostics({
+  input,
+  result,
+}: {
+  input: string;
+  result: PlaygroundResponse | null;
+}) {
+  if (!result?.diagnostics.length) {
+    return null;
+  }
+
+  return (
+    <div className="source-diagnostics">
+      {result.diagnostics.map((diagnostic, index) => {
+        const location = diagnosticLocation(input, diagnostic.message);
+        return (
+          <div className="source-diagnostic" key={`${diagnostic.stage}-${index}`}>
+            <strong>{diagnostic.stage}</strong>
+            {location ? (
+              <small>
+                line {location.row + 1}, column {location.column + 1}, byte {location.byte}
+              </small>
+            ) : null}
+            <code>{diagnostic.message}</code>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderDiagnosticSource(input: string, diagnostics: Diagnostic[]) {
+  const location = diagnostics
+    .map((diagnostic) => diagnosticLocation(input, diagnostic.message))
+    .find((candidate): candidate is DiagnosticLocation => candidate !== null);
+  if (!location) {
+    return null;
+  }
+
+  const byteToStringIndex = byteOffsetMap(input);
+  const markerIndex = byteToStringIndex[location.byte] ?? input.length;
+  const markedChar = codePointAtStringIndex(input, markerIndex);
+  const markerText = markedChar && markedChar !== "\n" ? markedChar : " ";
+  const markerEnd = markerText === markedChar ? markerIndex + markedChar.length : markerIndex;
+
+  return [
+    input.slice(0, markerIndex),
+    <span
+      className="source-diagnostic-marker"
+      key={`diagnostic-${location.byte}`}
+      title={`Parse diagnostic at byte ${location.byte}`}
+    >
+      {markerText}
+    </span>,
+    input.slice(markerEnd),
+  ];
+}
+
+type DiagnosticLocation = {
+  byte: number;
+  row: number;
+  column: number;
+};
+
+function diagnosticLocation(input: string, message: string): DiagnosticLocation | null {
+  const byte = diagnosticByte(message);
+  if (byte === null) {
+    return null;
+  }
+  return pointForByte(input, byte);
+}
+
+function diagnosticByte(message: string) {
+  const match = /\bbyte\s+(\d+)\b/.exec(message);
+  if (!match) {
+    return null;
+  }
+  const byte = Number.parseInt(match[1] ?? "", 10);
+  return Number.isFinite(byte) ? byte : null;
+}
+
+function pointForByte(input: string, byte: number): DiagnosticLocation {
+  const encoder = new TextEncoder();
+  const totalBytes = encoder.encode(input).length;
+  const target = Math.max(0, Math.min(byte, totalBytes));
+  let row = 0;
+  let column = 0;
+  let byteOffset = 0;
+
+  for (const char of input) {
+    const charBytes = encoder.encode(char).length;
+    if (byteOffset + charBytes > target) {
+      break;
+    }
+    if (char === "\n") {
+      row += 1;
+      column = 0;
+    } else {
+      column += charBytes;
+    }
+    byteOffset += charBytes;
+    if (byteOffset >= target) {
+      break;
+    }
+  }
+
+  return { byte: target, row, column };
+}
+
+function codePointAtStringIndex(input: string, index: number) {
+  return Array.from(input.slice(index))[0] ?? null;
 }
 
 function nonOverlappingCaptures(

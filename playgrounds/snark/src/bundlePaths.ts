@@ -54,6 +54,16 @@ export function projectedFilesForGrammarRootId(
   return filesForGrammarRoot(files, grammarRootForId(files, rootId));
 }
 
+export function firstSampleForGrammarRootId(
+  files: DslBundleFile[],
+  rootId = preferredGrammarRootId(files),
+): ProjectedDslBundleFile | null {
+  return (
+    projectedFilesForGrammarRootId(files, rootId).find((file) => file.path.startsWith("samples/")) ??
+    null
+  );
+}
+
 export function normalizePath(path: string) {
   let normalized = path.replace(/\\/g, "/");
   while (normalized.startsWith("./")) {

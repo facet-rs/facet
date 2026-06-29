@@ -308,6 +308,40 @@ textarea {
   color: transparent;
 }
 
+.source-diagnostic-marker {
+  display: inline-block;
+  min-width: 0.6em;
+  border-bottom: 2px solid #b24b2b;
+  background: #fde8df;
+  color: #7e2a19;
+}
+
+.source-diagnostics {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid #f1d3c8;
+  background: #fff7f2;
+}
+
+.source-diagnostic {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  color: #7e2a19;
+}
+
+.source-diagnostic small {
+  color: #8f5b4c;
+}
+
+.source-diagnostic code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 textarea:focus {
   outline: 2px solid #77b7ad;
   outline-offset: -2px;
@@ -346,21 +380,6 @@ textarea:focus {
 .status-strip.idle {
   color: #54615c;
   background: #f5f7f6;
-}
-
-.diagnostics {
-  display: grid;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #d8dfdc;
-}
-
-.diagnostic {
-  display: grid;
-  gap: 4px;
-  padding: 8px;
-  border-left: 3px solid #b24b2b;
-  background: #fff7f2;
 }
 
 .result-tabs {

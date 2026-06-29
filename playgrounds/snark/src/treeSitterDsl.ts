@@ -8,6 +8,7 @@ import {
 
 export {
   discoverGrammarRoots,
+  firstSampleForGrammarRootId,
   grammarRootForId,
   normalizeBundleFiles,
   normalizePath,
