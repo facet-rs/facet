@@ -455,11 +455,12 @@ mod tests {
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
-        parser::{ParserGenerationStage, ParserGrammar},
+        parser::{ParseTable, ParserGenerationStage, ParserGrammar, ReducedParser},
         query::WellKnownQuery,
         scanner::TreeSitterScannerKind,
         validated::{ExternalTokenDecl, ValidatedGrammar},
     };
+    use rediff::assert_same;
 
     use super::*;
 
@@ -864,6 +865,17 @@ mod tests {
                 "missing terminal provenance for query-visible literal {literal}"
             );
         }
+        let query_named_nodes = highlights_query.body.named_node_references();
+        for node in &query_named_nodes {
+            assert!(
+                validated.has_visible_node_kind(node)
+                    || normalized_parser_grammar
+                        .public_node_kinds()
+                        .iter()
+                        .any(|kind| kind.name() == node.as_str()),
+                "missing query-visible named node {node}"
+            );
+        }
         assert_eq!(
             grammar
                 .grammar
@@ -1050,6 +1062,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_pinned_css_universal_selector_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[0].name, "Universal selectors");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[0].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[0].expected);
+        assert_eq!(
+            actual_tree.to_sexp(),
+            "(stylesheet (rule_set (selectors (universal_selector)) (block)))"
+        );
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {
@@ -1057,6 +1104,40 @@ mod tests {
                 collect_node_kinds(child, out);
             }
         }
+    }
+
+    fn parse_reduced_or_panic(
+        validated: &ValidatedGrammar,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+        input: &str,
+    ) -> SexpNode {
+        ReducedParser::new(validated, parser_grammar, parse_table)
+            .unwrap()
+            .parse(input)
+            .unwrap_or_else(|error| {
+                let state = match error.kind() {
+                    crate::parser::ReducedParseErrorKind::NoToken { state, .. }
+                    | crate::parser::ReducedParseErrorKind::NoAction { state, .. }
+                    | crate::parser::ReducedParseErrorKind::AmbiguousAction { state, .. }
+                    | crate::parser::ReducedParseErrorKind::UnsupportedExternalScanner {
+                        state,
+                        ..
+                    }
+                    | crate::parser::ReducedParseErrorKind::UnsupportedRecovery { state }
+                    | crate::parser::ReducedParseErrorKind::MissingState { state } => Some(*state),
+                    crate::parser::ReducedParseErrorKind::MissingGoto { state, .. } => Some(*state),
+                    _ => None,
+                };
+                let state_dump = state
+                    .and_then(|state| parse_table.states().get(state.get() as usize))
+                    .map(|state| {
+                        let item_set = &parse_table.item_sets()[state.item_set().get() as usize];
+                        format!("state={state:#?}\nitem_set={item_set:#?}")
+                    })
+                    .unwrap_or_else(|| "state=<none>".to_owned());
+                panic!("{error:#?}\n{state_dump}");
+            })
     }
 
     fn css_highlight_assertions() -> Vec<HighlightAssertion> {

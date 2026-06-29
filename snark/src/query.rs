@@ -26,6 +26,14 @@ impl QuerySource {
     pub fn capture_names(&self) -> BTreeSet<String> {
         capture_names(&self.0)
     }
+
+    /// Named node kinds referenced by this query source.
+    ///
+    /// Predicate forms, captures, anonymous string nodes, field labels,
+    /// wildcard/anchor operators, and quantifiers are not reported.
+    pub fn named_node_references(&self) -> BTreeSet<String> {
+        named_node_references(&self.0)
+    }
 }
 
 /// Quoted anonymous node literals referenced by a Tree-sitter query source.
@@ -124,6 +132,55 @@ pub fn capture_names(query: &str) -> BTreeSet<String> {
         }
     }
     captures
+}
+
+/// Named node kinds referenced by a Tree-sitter query source.
+pub fn named_node_references(query: &str) -> BTreeSet<String> {
+    let mut scanner = QueryScanner::new(query);
+    let mut contexts = vec![QueryContext::Root];
+    let mut nodes = BTreeSet::new();
+    while let Some(token) = scanner.next_token() {
+        match token {
+            QueryToken::OpenParen => contexts.push(QueryContext::Form {
+                seen_head: false,
+                predicate: false,
+            }),
+            QueryToken::CloseParen => {
+                if contexts.len() > 1 {
+                    contexts.pop();
+                }
+            }
+            QueryToken::OpenBracket => contexts.push(QueryContext::List),
+            QueryToken::CloseBracket => {
+                if contexts.len() > 1 {
+                    contexts.pop();
+                }
+            }
+            QueryToken::String(_) => {
+                if let Some(QueryContext::Form { seen_head, .. }) = contexts.last_mut() {
+                    *seen_head = true;
+                }
+            }
+            QueryToken::Symbol(symbol) => {
+                if let Some(QueryContext::Form {
+                    seen_head,
+                    predicate,
+                }) = contexts.last_mut()
+                {
+                    if !*seen_head {
+                        *predicate = symbol.starts_with('#');
+                        *seen_head = true;
+                    }
+                }
+                if !contexts.iter().any(QueryContext::is_predicate)
+                    && is_named_node_reference(&symbol)
+                {
+                    nodes.insert(symbol);
+                }
+            }
+        }
+    }
+    nodes
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,8 +313,22 @@ impl<'a> QueryScanner<'a> {
     }
 }
 
-fn is_capture_name_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '?')
+pub(crate) fn is_capture_name_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.')
+}
+
+fn is_named_node_reference(symbol: &str) -> bool {
+    if symbol.is_empty()
+        || symbol.starts_with('@')
+        || symbol.starts_with('#')
+        || symbol.ends_with(':')
+        || matches!(symbol, "_" | "." | "*" | "+" | "?" | "...")
+    {
+        return false;
+    }
+    symbol
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
 }
 
 /// Well-known Tree-sitter query categories.
@@ -337,7 +408,7 @@ impl QueryBundle {
 
 #[cfg(test)]
 mod tests {
-    use super::{QuerySource, anonymous_node_literals, capture_names};
+    use super::{QuerySource, anonymous_node_literals, capture_names, named_node_references};
 
     #[test]
     fn extracts_query_anonymous_node_literals() {
@@ -399,6 +470,37 @@ mod tests {
         let source = QuerySource(r#"((property_name) @property)"#.to_owned());
 
         assert!(source.capture_names().contains("property"));
+    }
+
+    #[test]
+    fn extracts_named_node_references_without_predicates_or_fields() {
+        let query = r##"
+          (attribute_selector
+            name: (attribute_name) @attribute
+            (plain_value) @string)
+          ((custom_property_name) @custom
+            (#match? @custom "^--"))
+          ["~" ">"] @operator
+          ; (commented_node) @ignored
+        "##;
+
+        let nodes = named_node_references(query);
+
+        assert!(nodes.contains("attribute_selector"));
+        assert!(nodes.contains("attribute_name"));
+        assert!(nodes.contains("plain_value"));
+        assert!(nodes.contains("custom_property_name"));
+        assert!(!nodes.contains("name:"));
+        assert!(!nodes.contains("match?"));
+        assert!(!nodes.contains("operator"));
+        assert!(!nodes.contains("commented_node"));
+    }
+
+    #[test]
+    fn query_source_reports_named_node_references() {
+        let source = QuerySource(r#"((property_name) @property)"#.to_owned());
+
+        assert!(source.named_node_references().contains("property_name"));
     }
 
     #[test]

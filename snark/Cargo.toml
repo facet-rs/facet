@@ -33,6 +33,9 @@ facet-json = { workspace = true, optional = true }
 indexmap.workspace = true
 weavy = { workspace = true, optional = true }
 
+[dev-dependencies]
+rediff = { path = "../rediff" }
+
 [lints]
 workspace = true
 

@@ -13,6 +13,7 @@ use std::{
 };
 
 use crate::{
+    corpus::{SexpChild, SexpNode, SexpValue},
     lexical::{LexicalFacts, TerminalKind},
     runtime_input::{ByteRange, PointRange},
     validated::{
@@ -2793,6 +2794,8 @@ pub struct ParseTable {
     item_sets: Vec<ItemSet>,
     transitions: Vec<ItemTransition>,
     lexical_modes: Vec<LexMode>,
+    valid_symbol_sets: Vec<ValidSymbolSet>,
+    conflicts: Vec<TableConflict>,
     states: Vec<ParseState>,
 }
 
@@ -2815,6 +2818,16 @@ impl ParseTable {
     /// Lexical modes selected by parse states.
     pub fn lexical_modes(&self) -> &[LexMode] {
         &self.lexical_modes
+    }
+
+    /// External scanner valid-symbol sets selected by parse states.
+    pub fn valid_symbol_sets(&self) -> &[ValidSymbolSet] {
+        &self.valid_symbol_sets
+    }
+
+    /// Generated action conflicts retained for GLR dispatch.
+    pub fn conflicts(&self) -> &[TableConflict] {
+        &self.conflicts
     }
 
     /// Parse states.
@@ -2889,11 +2902,14 @@ impl<'a> LrTableBuilder<'a> {
 
     fn build(&self) -> Result<ParseTable, ParserTableBuildError> {
         let (item_sets, transitions) = self.item_sets();
-        let (states, lexical_modes) = self.parse_states(&item_sets, &transitions);
+        let (states, lexical_modes, valid_symbol_sets, conflicts) =
+            self.parse_states(&item_sets, &transitions);
         Ok(ParseTable {
             item_sets,
             transitions,
             lexical_modes,
+            valid_symbol_sets,
+            conflicts,
             states,
         })
     }
@@ -2981,35 +2997,38 @@ impl<'a> LrTableBuilder<'a> {
         &self,
         item_sets: &[ItemSet],
         transitions: &[ItemTransition],
-    ) -> (Vec<ParseState>, Vec<LexMode>) {
+    ) -> (
+        Vec<ParseState>,
+        Vec<LexMode>,
+        Vec<ValidSymbolSet>,
+        Vec<TableConflict>,
+    ) {
         let mut transitions_by_from = vec![Vec::<ItemTransition>::new(); item_sets.len()];
         for transition in transitions {
             transitions_by_from[transition.from.get() as usize].push(*transition);
         }
         let mut states = Vec::new();
         let mut lexical_modes = Vec::new();
+        let mut valid_symbol_sets = Vec::new();
+        let mut conflicts = Vec::new();
         for item_set in item_sets {
             let state = ParseStateId::from_index(states.len());
             let mut entries = BTreeMap::<LookaheadSymbol, Vec<ParseAction>>::new();
             let mut gotos = Vec::new();
             for transition in &transitions_by_from[item_set.id.get() as usize] {
                 match transition.symbol {
-                    ParserSymbol::Terminal(terminal) => push_action(
-                        &mut entries,
-                        LookaheadSymbol::Terminal(terminal),
-                        ParseAction::Shift {
-                            state: ParseStateId::from_index(transition.to.get() as usize),
-                            repetition: false,
-                        },
-                    ),
-                    ParserSymbol::External(external) => push_action(
-                        &mut entries,
-                        LookaheadSymbol::External(external),
-                        ParseAction::Shift {
-                            state: ParseStateId::from_index(transition.to.get() as usize),
-                            repetition: false,
-                        },
-                    ),
+                    ParserSymbol::Terminal(_) | ParserSymbol::External(_) => {
+                        for lookahead in self.transition_lookaheads(item_set, transition.symbol) {
+                            push_action(
+                                &mut entries,
+                                lookahead,
+                                ParseAction::Shift {
+                                    state: ParseStateId::from_index(transition.to.get() as usize),
+                                    repetition: false,
+                                },
+                            );
+                        }
+                    }
                     ParserSymbol::Nonterminal(nonterminal) => gotos.push(GotoEntry {
                         nonterminal,
                         state: ParseStateId::from_index(transition.to.get() as usize),
@@ -3029,6 +3048,9 @@ impl<'a> LrTableBuilder<'a> {
                     ),
                 }
             }
+            for lookahead in self.extra_lookaheads() {
+                push_action(&mut entries, lookahead, ParseAction::ShiftExtra);
+            }
             for item in &item_set.items {
                 let production = &self.grammar.productions[item.production.get() as usize];
                 if item.dot != production.steps.len() {
@@ -3036,7 +3058,17 @@ impl<'a> LrTableBuilder<'a> {
                 }
                 for lookahead in item.lookahead.symbols() {
                     if production.lhs == self.grammar.start && *lookahead == LookaheadSymbol::Eof {
-                        push_action(&mut entries, *lookahead, ParseAction::Accept);
+                        push_action(
+                            &mut entries,
+                            *lookahead,
+                            ParseAction::Accept {
+                                production: production.id,
+                                metadata: production.metadata,
+                                symbol: production.lhs,
+                                child_count: production.steps.len(),
+                                dynamic_precedence: production.dynamic_precedence,
+                            },
+                        );
                     } else {
                         push_action(
                             &mut entries,
@@ -3052,7 +3084,22 @@ impl<'a> LrTableBuilder<'a> {
                     }
                 }
             }
-            let lex_mode = lex_mode_from_entries(&entries, &mut lexical_modes, self.grammar.word);
+            let lex_mode = lex_mode_from_entries(
+                &entries,
+                &mut lexical_modes,
+                &mut valid_symbol_sets,
+                self.grammar.word,
+            );
+            for (lookahead, actions) in &entries {
+                if actions.len() > 1 {
+                    conflicts.push(TableConflict {
+                        id: ConflictId::from_index(conflicts.len()),
+                        state,
+                        lookahead: *lookahead,
+                        actions: actions.clone(),
+                    });
+                }
+            }
             states.push(ParseState {
                 id: state,
                 item_set: item_set.id,
@@ -3064,7 +3111,49 @@ impl<'a> LrTableBuilder<'a> {
                 lex_mode,
             });
         }
-        (states, lexical_modes)
+        (states, lexical_modes, valid_symbol_sets, conflicts)
+    }
+
+    fn transition_lookaheads(
+        &self,
+        item_set: &ItemSet,
+        symbol: ParserSymbol,
+    ) -> Vec<LookaheadSymbol> {
+        let mut lookaheads = Vec::new();
+        for item in &item_set.items {
+            let production = &self.grammar.productions[item.production.get() as usize];
+            let Some(step) = production.steps.get(item.dot) else {
+                continue;
+            };
+            if step.symbol == symbol {
+                if let Some(lookahead) = lookahead_for_step(step) {
+                    lookaheads.push(lookahead);
+                }
+            }
+        }
+        sorted_lookaheads(lookaheads)
+    }
+
+    fn extra_lookaheads(&self) -> Vec<LookaheadSymbol> {
+        let mut lookaheads = Vec::new();
+        for extra in &self.grammar.extra_roots {
+            match extra.symbol {
+                ParserSymbol::Terminal(terminal) => {
+                    lookaheads.push(LookaheadSymbol::Terminal(terminal))
+                }
+                ParserSymbol::External(external) => {
+                    lookaheads.push(LookaheadSymbol::External(external))
+                }
+                ParserSymbol::Nonterminal(nonterminal) => {
+                    extend_lookaheads(
+                        &mut lookaheads,
+                        &self.first.first[nonterminal.get() as usize],
+                    );
+                }
+                ParserSymbol::Eof | ParserSymbol::Internal(_) => {}
+            }
+        }
+        sorted_lookaheads(lookaheads)
     }
 }
 
@@ -3159,24 +3248,21 @@ fn first_of_steps_with_tables(
 ) -> Vec<LookaheadSymbol> {
     let mut out = Vec::new();
     for step in steps {
-        match step.symbol {
-            ParserSymbol::Terminal(terminal) => {
-                out.push(LookaheadSymbol::Terminal(terminal));
+        match lookahead_for_step(step) {
+            Some(
+                lookahead @ (LookaheadSymbol::Terminal(_)
+                | LookaheadSymbol::External(_)
+                | LookaheadSymbol::Eof
+                | LookaheadSymbol::ReservedWord { .. }
+                | LookaheadSymbol::ErrorRecovery(_)),
+            ) => {
+                out.push(lookahead);
                 return sorted_lookaheads(out);
             }
-            ParserSymbol::External(external) => {
-                out.push(LookaheadSymbol::External(external));
-                return sorted_lookaheads(out);
-            }
-            ParserSymbol::Eof => {
-                out.push(LookaheadSymbol::Eof);
-                return sorted_lookaheads(out);
-            }
-            ParserSymbol::Internal(internal) => {
-                out.push(LookaheadSymbol::ErrorRecovery(internal));
-                return sorted_lookaheads(out);
-            }
-            ParserSymbol::Nonterminal(nonterminal) => {
+            None => {
+                let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
+                    unreachable!("non-lookahead parser symbol should be nonterminal");
+                };
                 extend_lookaheads(&mut out, &first[nonterminal.get() as usize]);
                 if !nullable[nonterminal.get() as usize] {
                     return sorted_lookaheads(out);
@@ -3186,6 +3272,19 @@ fn first_of_steps_with_tables(
     }
     extend_lookaheads(&mut out, fallback);
     sorted_lookaheads(out)
+}
+
+fn lookahead_for_step(step: &ProductionStep) -> Option<LookaheadSymbol> {
+    match step.symbol {
+        ParserSymbol::Terminal(terminal) => Some(match step.reserved_context {
+            Some(context) => LookaheadSymbol::ReservedWord { terminal, context },
+            None => LookaheadSymbol::Terminal(terminal),
+        }),
+        ParserSymbol::External(external) => Some(LookaheadSymbol::External(external)),
+        ParserSymbol::Eof => Some(LookaheadSymbol::Eof),
+        ParserSymbol::Internal(internal) => Some(LookaheadSymbol::ErrorRecovery(internal)),
+        ParserSymbol::Nonterminal(_) => None,
+    }
 }
 
 fn push_item_set(
@@ -3239,6 +3338,7 @@ fn push_action(
 fn lex_mode_from_entries(
     entries: &BTreeMap<LookaheadSymbol, Vec<ParseAction>>,
     lexical_modes: &mut Vec<LexMode>,
+    valid_symbol_sets: &mut Vec<ValidSymbolSet>,
     word: Option<TerminalId>,
 ) -> LexModeId {
     let mut terminals = Vec::new();
@@ -3260,12 +3360,22 @@ fn lex_mode_from_entries(
     externals.sort();
     externals.dedup();
     let id = LexModeId::from_index(lexical_modes.len());
+    let valid_symbols = if externals.is_empty() {
+        None
+    } else {
+        let id = ValidSymbolSetId::from_index(valid_symbol_sets.len());
+        valid_symbol_sets.push(ValidSymbolSet {
+            id,
+            externals: externals.clone(),
+        });
+        Some(id)
+    };
     lexical_modes.push(LexMode {
         id,
         terminals,
         externals,
         reserved_context,
-        valid_symbols: None,
+        valid_symbols,
         word,
     });
     id
@@ -3306,6 +3416,788 @@ impl ParseState {
     pub const fn lex_mode(&self) -> LexModeId {
         self.lex_mode
     }
+}
+
+/// One generated parse-table action conflict retained for GLR execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableConflict {
+    id: ConflictId,
+    state: ParseStateId,
+    lookahead: LookaheadSymbol,
+    actions: Vec<ParseAction>,
+}
+
+impl TableConflict {
+    /// Conflict id.
+    pub const fn id(&self) -> ConflictId {
+        self.id
+    }
+
+    /// Parse state containing the conflict.
+    pub const fn state(&self) -> ParseStateId {
+        self.state
+    }
+
+    /// Lookahead key for the conflicted action cell.
+    pub const fn lookahead(&self) -> LookaheadSymbol {
+        self.lookahead
+    }
+
+    /// Conflicting actions retained for GLR dispatch.
+    pub fn actions(&self) -> &[ParseAction] {
+        &self.actions
+    }
+}
+
+/// Reduced named-node parser used to drive corpus S-expression oracles.
+///
+/// This is the first executable LR slice: it consumes Snark-generated parser
+/// tables, accepts only deterministic shift/reduce action cells, and emits the
+/// same reduced named-node shape used by Tree-sitter corpus fixtures. It is not
+/// the final recoverable/incremental GLR runtime.
+pub struct ReducedParser<'a> {
+    grammar: &'a ValidatedGrammar,
+    parser: &'a ParserGrammar,
+    table: &'a ParseTable,
+}
+
+impl<'a> ReducedParser<'a> {
+    /// Build a reduced parser over validated grammar facts and generated tables.
+    pub fn new(
+        grammar: &'a ValidatedGrammar,
+        parser: &'a ParserGrammar,
+        table: &'a ParseTable,
+    ) -> Result<Self, ReducedParseError> {
+        if parser.stage() != ParserGenerationStage::Productions {
+            return Err(ReducedParseError::new(ReducedParseErrorKind::WrongStage {
+                stage: parser.stage(),
+            }));
+        }
+        Ok(Self {
+            grammar,
+            parser,
+            table,
+        })
+    }
+
+    /// Parse one input into a reduced Tree-sitter-style S-expression node.
+    pub fn parse(&self, input: &str) -> Result<SexpNode, ReducedParseError> {
+        let mut stack = vec![ReducedStackEntry {
+            state: ParseStateId::from_index(0),
+            fragment: None,
+        }];
+        let mut byte_position = 0usize;
+        let mut trace = Vec::new();
+
+        loop {
+            let state = stack
+                .last()
+                .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))
+                .map_err(|error| error.with_trace(trace.clone()))?
+                .state;
+            let state_row = self.parse_state(state)?;
+            let token = self
+                .lex(state_row, input, byte_position)
+                .map_err(|error| error.with_trace(trace.clone()))?;
+            let entry = state_row
+                .entries()
+                .iter()
+                .find(|entry| entry.lookahead() == token.lookahead)
+                .ok_or_else(|| {
+                    ReducedParseError::new(ReducedParseErrorKind::NoAction {
+                        state,
+                        lookahead: token.lookahead,
+                        byte_position,
+                    })
+                })
+                .map_err(|error| error.with_trace(trace.clone()))?;
+            let [action] = entry.actions() else {
+                return Err(
+                    ReducedParseError::new(ReducedParseErrorKind::AmbiguousAction {
+                        state,
+                        lookahead: token.lookahead,
+                        action_count: entry.actions().len(),
+                    })
+                    .with_trace(trace),
+                );
+            };
+            trace.push(ReducedTraceStep {
+                state,
+                byte_position,
+                lookahead: token.lookahead,
+                action: *action,
+            });
+            match *action {
+                ParseAction::Shift { state, .. } => {
+                    byte_position = token.end;
+                    stack.push(ReducedStackEntry {
+                        state,
+                        fragment: Some(ReducedFragment::Hidden(Vec::new())),
+                    });
+                }
+                ParseAction::ShiftExtra => {
+                    byte_position = token.end;
+                }
+                ParseAction::Reduce {
+                    production,
+                    metadata,
+                    symbol,
+                    child_count,
+                    ..
+                } => {
+                    let fragment = self
+                        .reduce_fragment(production, metadata, child_count, &mut stack)
+                        .map_err(|error| error.with_trace(trace.clone()))?;
+                    let goto_state = self
+                        .goto_state(stack.last().unwrap().state, symbol)
+                        .map_err(|error| error.with_trace(trace.clone()))?;
+                    stack.push(ReducedStackEntry {
+                        state: goto_state,
+                        fragment: Some(fragment),
+                    });
+                }
+                ParseAction::Accept {
+                    production,
+                    metadata,
+                    child_count,
+                    ..
+                } => {
+                    if token.lookahead != LookaheadSymbol::Eof || byte_position != input.len() {
+                        return Err(
+                            ReducedParseError::new(ReducedParseErrorKind::TrailingInput {
+                                byte_position,
+                            })
+                            .with_trace(trace),
+                        );
+                    }
+                    let fragment = self
+                        .reduce_fragment(production, metadata, child_count, &mut stack)
+                        .map_err(|error| error.with_trace(trace.clone()))?;
+                    return match fragment {
+                        ReducedFragment::Node(node) => Ok(node),
+                        ReducedFragment::Hidden(_) => Err(ReducedParseError::new(
+                            ReducedParseErrorKind::AcceptedHiddenRoot,
+                        )
+                        .with_trace(trace)),
+                    };
+                }
+                ParseAction::Recover => {
+                    return Err(ReducedParseError::new(
+                        ReducedParseErrorKind::UnsupportedRecovery { state },
+                    )
+                    .with_trace(trace));
+                }
+            }
+        }
+    }
+
+    fn parse_state(&self, state: ParseStateId) -> Result<&ParseState, ReducedParseError> {
+        self.table
+            .states()
+            .get(state.get() as usize)
+            .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::MissingState { state }))
+    }
+
+    fn lex(
+        &self,
+        state: &ParseState,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<ReducedToken, ReducedParseError> {
+        if byte_position == input.len() {
+            return Ok(ReducedToken {
+                lookahead: LookaheadSymbol::Eof,
+                end: byte_position,
+            });
+        }
+        let mode = self
+            .table
+            .lexical_modes()
+            .get(state.lex_mode().get() as usize)
+            .ok_or_else(|| {
+                ReducedParseError::new(ReducedParseErrorKind::MissingLexMode {
+                    mode: state.lex_mode(),
+                })
+            })?;
+        let mut best = None::<(TerminalId, usize, bool)>;
+        for terminal in mode.terminals() {
+            let terminal_row = &self.parser.symbols.terminals[terminal.get() as usize];
+            let Some(end) = self.match_terminal(terminal_row, input, byte_position)? else {
+                continue;
+            };
+            if end == byte_position {
+                continue;
+            }
+            let literal = terminal_row.kind() == ParserTerminalKind::String;
+            match best {
+                Some((_, best_end, best_literal))
+                    if best_end > end || (best_end == end && best_literal && !literal) => {}
+                _ => best = Some((*terminal, end, literal)),
+            }
+        }
+        let Some((terminal, end, _)) = best else {
+            if !mode.externals().is_empty() {
+                return Err(ReducedParseError::new(
+                    ReducedParseErrorKind::UnsupportedExternalScanner {
+                        state: state.id(),
+                        external_count: mode.externals().len(),
+                    },
+                ));
+            }
+            return Err(ReducedParseError::new(ReducedParseErrorKind::NoToken {
+                state: state.id(),
+                byte_position,
+                expected: self
+                    .mode_terminal_spellings(mode)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+            }));
+        };
+        let lookahead = self
+            .lookahead_for_terminal(state, terminal)
+            .ok_or_else(|| {
+                ReducedParseError::new(ReducedParseErrorKind::NoAction {
+                    state: state.id(),
+                    lookahead: LookaheadSymbol::Terminal(terminal),
+                    byte_position,
+                })
+            })?;
+        Ok(ReducedToken { lookahead, end })
+    }
+
+    fn lookahead_for_terminal(
+        &self,
+        state: &ParseState,
+        terminal: TerminalId,
+    ) -> Option<LookaheadSymbol> {
+        state
+            .entries()
+            .iter()
+            .find_map(|entry| match entry.lookahead() {
+                LookaheadSymbol::Terminal(candidate) if candidate == terminal => {
+                    Some(entry.lookahead())
+                }
+                LookaheadSymbol::ReservedWord {
+                    terminal: candidate,
+                    ..
+                } if candidate == terminal => Some(entry.lookahead()),
+                _ => None,
+            })
+    }
+
+    fn mode_terminal_spellings(&self, mode: &LexMode) -> Vec<&str> {
+        mode.terminals()
+            .iter()
+            .map(|terminal| self.parser.symbols.terminals[terminal.get() as usize].spelling())
+            .collect()
+    }
+
+    fn match_terminal(
+        &self,
+        terminal: &TerminalSymbol,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Option<usize>, ReducedParseError> {
+        match terminal.kind() {
+            ParserTerminalKind::String => Ok(input[byte_position..]
+                .starts_with(terminal.spelling())
+                .then_some(byte_position + terminal.spelling().len())),
+            ParserTerminalKind::Pattern => {
+                Ok(match_pattern(terminal.spelling(), input, byte_position))
+            }
+            ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
+                let Some(root) = terminal.lexical_root() else {
+                    return Err(ReducedParseError::new(
+                        ReducedParseErrorKind::UnsupportedTerminal {
+                            terminal: terminal.id(),
+                            spelling: terminal.spelling().to_owned(),
+                        },
+                    ));
+                };
+                let (GrammarExpr::Token(content) | GrammarExpr::ImmediateToken(content)) =
+                    self.grammar.expr(root)
+                else {
+                    return Err(ReducedParseError::new(
+                        ReducedParseErrorKind::UnsupportedTerminal {
+                            terminal: terminal.id(),
+                            spelling: terminal.spelling().to_owned(),
+                        },
+                    ));
+                };
+                self.match_lexical_expr(*content, input, byte_position)
+            }
+        }
+    }
+
+    fn match_lexical_expr(
+        &self,
+        expr: GrammarExprId,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Option<usize>, ReducedParseError> {
+        match self.grammar.expr(expr) {
+            GrammarExpr::Blank => Ok(Some(byte_position)),
+            GrammarExpr::StringToken(value) => Ok(input[byte_position..]
+                .starts_with(value)
+                .then_some(byte_position + value.len())),
+            GrammarExpr::PatternToken { value, .. } => {
+                Ok(match_pattern(value, input, byte_position))
+            }
+            GrammarExpr::Token(content)
+            | GrammarExpr::ImmediateToken(content)
+            | GrammarExpr::Field { content, .. }
+            | GrammarExpr::Prec { content, .. }
+            | GrammarExpr::PrecDynamic { content, .. }
+            | GrammarExpr::Alias { content, .. }
+            | GrammarExpr::Reserved { content, .. } => {
+                self.match_lexical_expr(*content, input, byte_position)
+            }
+            GrammarExpr::Choice(members) => {
+                let mut best = None;
+                for member in members {
+                    if let Some(end) = self.match_lexical_expr(*member, input, byte_position)? {
+                        if best.is_none_or(|best| end > best) {
+                            best = Some(end);
+                        }
+                    }
+                }
+                Ok(best)
+            }
+            GrammarExpr::Seq(members) => {
+                let mut position = byte_position;
+                for member in members {
+                    let Some(end) = self.match_lexical_expr(*member, input, position)? else {
+                        return Ok(None);
+                    };
+                    position = end;
+                }
+                Ok(Some(position))
+            }
+            GrammarExpr::Repeat(content) => {
+                let mut position = byte_position;
+                while let Some(end) = self.match_lexical_expr(*content, input, position)? {
+                    if end == position {
+                        break;
+                    }
+                    position = end;
+                }
+                Ok(Some(position))
+            }
+            GrammarExpr::Repeat1(content) => {
+                let Some(mut position) = self.match_lexical_expr(*content, input, byte_position)?
+                else {
+                    return Ok(None);
+                };
+                if position == byte_position {
+                    return Ok(None);
+                }
+                while let Some(end) = self.match_lexical_expr(*content, input, position)? {
+                    if end == position {
+                        break;
+                    }
+                    position = end;
+                }
+                Ok(Some(position))
+            }
+            GrammarExpr::Symbol(_) => Err(ReducedParseError::new(
+                ReducedParseErrorKind::UnsupportedLexicalSymbol { expr },
+            )),
+        }
+    }
+
+    fn reduce_fragment(
+        &self,
+        production: ProductionId,
+        metadata: ProductionMetadataId,
+        child_count: usize,
+        stack: &mut Vec<ReducedStackEntry>,
+    ) -> Result<ReducedFragment, ReducedParseError> {
+        let production_row = &self.parser.productions[production.get() as usize];
+        let metadata_row = &self.parser.production_metadata[metadata.get() as usize];
+        let mut children = Vec::new();
+        let mut popped = Vec::new();
+        for _ in 0..child_count {
+            let entry = stack
+                .pop()
+                .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
+            let Some(fragment) = entry.fragment else {
+                return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
+            };
+            popped.push(fragment);
+        }
+        popped.reverse();
+        for (step, fragment) in production_row.steps().iter().zip(popped) {
+            let mut step_children = fragment.into_children();
+            if let Some(alias) = step.alias() {
+                let alias_name = self.parser.aliases[alias.get() as usize].value.clone();
+                for child in &mut step_children {
+                    if let SexpValue::Node(node) = &mut child.value {
+                        node.kind.clone_from(&alias_name);
+                    }
+                }
+            }
+            children.extend(step_children);
+        }
+
+        if let Some(public_node) = metadata_row.public_node() {
+            let kind = self.parser.public_node_kinds[public_node.get() as usize]
+                .name()
+                .to_owned();
+            Ok(ReducedFragment::Node(SexpNode { kind, children }))
+        } else {
+            Ok(ReducedFragment::Hidden(children))
+        }
+    }
+
+    fn goto_state(
+        &self,
+        state: ParseStateId,
+        nonterminal: NonterminalId,
+    ) -> Result<ParseStateId, ReducedParseError> {
+        let state_row = self.parse_state(state)?;
+        state_row
+            .gotos()
+            .iter()
+            .find(|goto| goto.nonterminal() == nonterminal)
+            .map(GotoEntry::state)
+            .ok_or_else(|| {
+                ReducedParseError::new(ReducedParseErrorKind::MissingGoto { state, nonterminal })
+            })
+    }
+}
+
+fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+    match pattern {
+        "\\s" => input[byte_position..]
+            .chars()
+            .next()
+            .filter(|ch| ch.is_whitespace())
+            .map(|ch| byte_position + ch.len_utf8()),
+        "\\s+" => match_while(input, byte_position, char::is_whitespace, 1),
+        "\\d+" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 1),
+        "[a-zA-Z%]+" => match_while(
+            input,
+            byte_position,
+            |ch| ch.is_ascii_alphabetic() || ch == '%',
+            1,
+        ),
+        "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => {
+            match_css_identifier(input, byte_position)
+        }
+        _ => None,
+    }
+}
+
+fn match_while(
+    input: &str,
+    byte_position: usize,
+    predicate: impl Fn(char) -> bool,
+    min_chars: usize,
+) -> Option<usize> {
+    let mut position = byte_position;
+    let mut count = 0usize;
+    for ch in input[byte_position..].chars() {
+        if !predicate(ch) {
+            break;
+        }
+        position += ch.len_utf8();
+        count += 1;
+    }
+    (count >= min_chars).then_some(position)
+}
+
+fn match_css_identifier(input: &str, byte_position: usize) -> Option<usize> {
+    let rest = &input[byte_position..];
+    if rest.starts_with("--") {
+        let mut position = byte_position + 2;
+        while let Some(ch) = input[position..]
+            .chars()
+            .next()
+            .filter(|ch| css_ident_continue(*ch))
+        {
+            position += ch.len_utf8();
+        }
+        return Some(position);
+    }
+    let mut chars = rest.char_indices();
+    let (first_offset, first) = chars.next()?;
+    debug_assert_eq!(first_offset, 0);
+    let mut position = byte_position;
+    if first == '-' {
+        position += first.len_utf8();
+        let next = input[position..].chars().next()?;
+        if !css_ident_start(next) {
+            return None;
+        }
+        position += next.len_utf8();
+    } else if css_ident_start(first) {
+        position += first.len_utf8();
+    } else {
+        return None;
+    }
+    while let Some(ch) = input[position..]
+        .chars()
+        .next()
+        .filter(|ch| css_ident_continue(*ch))
+    {
+        position += ch.len_utf8();
+    }
+    Some(position)
+}
+
+fn css_ident_start(ch: char) -> bool {
+    ch.is_ascii_alphabetic() || ch == '_' || !ch.is_ascii()
+}
+
+fn css_ident_continue(ch: char) -> bool {
+    css_ident_start(ch) || ch.is_ascii_digit() || ch == '-'
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReducedToken {
+    lookahead: LookaheadSymbol,
+    end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReducedStackEntry {
+    state: ParseStateId,
+    fragment: Option<ReducedFragment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReducedFragment {
+    Hidden(Vec<SexpChild>),
+    Node(SexpNode),
+}
+
+impl ReducedFragment {
+    fn into_children(self) -> Vec<SexpChild> {
+        match self {
+            Self::Hidden(children) => children,
+            Self::Node(node) => vec![SexpChild {
+                field: None,
+                value: SexpValue::Node(node),
+            }],
+        }
+    }
+}
+
+/// Error produced by the reduced parser slice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReducedParseError {
+    kind: ReducedParseErrorKind,
+    trace: Vec<ReducedTraceStep>,
+}
+
+impl ReducedParseError {
+    fn new(kind: ReducedParseErrorKind) -> Self {
+        Self {
+            kind,
+            trace: Vec::new(),
+        }
+    }
+
+    /// Error kind.
+    pub const fn kind(&self) -> &ReducedParseErrorKind {
+        &self.kind
+    }
+
+    fn with_trace(mut self, trace: Vec<ReducedTraceStep>) -> Self {
+        self.trace = trace;
+        self
+    }
+
+    /// Reduced parser trace collected before the failure.
+    pub fn trace(&self) -> &[ReducedTraceStep] {
+        &self.trace
+    }
+}
+
+/// One selected action in the reduced parser trace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReducedTraceStep {
+    /// Parse state before selecting the action.
+    pub state: ParseStateId,
+    /// Input byte offset before selecting the action.
+    pub byte_position: usize,
+    /// Lookahead selected by the lexical mode.
+    pub lookahead: LookaheadSymbol,
+    /// Action selected by the deterministic reduced parser.
+    pub action: ParseAction,
+}
+
+impl fmt::Display for ReducedParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            ReducedParseErrorKind::WrongStage { stage } => {
+                write!(f, "parser grammar is at stage {stage:?}, not Productions")
+            }
+            ReducedParseErrorKind::EmptyStack => write!(f, "reduced parser stack was empty"),
+            ReducedParseErrorKind::MissingState { state } => {
+                write!(f, "parse state {} is missing", state.get())
+            }
+            ReducedParseErrorKind::MissingLexMode { mode } => {
+                write!(f, "lexical mode {} is missing", mode.get())
+            }
+            ReducedParseErrorKind::NoToken {
+                state,
+                byte_position,
+                expected,
+            } => write!(
+                f,
+                "state {} could not lex a token at byte {}; expected one of {:?}",
+                state.get(),
+                byte_position,
+                expected
+            ),
+            ReducedParseErrorKind::NoAction {
+                state,
+                lookahead,
+                byte_position,
+            } => write!(
+                f,
+                "state {} has no action for {lookahead:?} at byte {}",
+                state.get(),
+                byte_position
+            ),
+            ReducedParseErrorKind::AmbiguousAction {
+                state,
+                lookahead,
+                action_count,
+            } => write!(
+                f,
+                "state {} has {} actions for {lookahead:?}",
+                state.get(),
+                action_count
+            ),
+            ReducedParseErrorKind::UnsupportedExternalScanner {
+                state,
+                external_count,
+            } => write!(
+                f,
+                "state {} requires {} external scanner candidates",
+                state.get(),
+                external_count
+            ),
+            ReducedParseErrorKind::UnsupportedTerminal { terminal, spelling } => write!(
+                f,
+                "terminal {} is not supported by the reduced parser: {spelling}",
+                terminal.get()
+            ),
+            ReducedParseErrorKind::UnsupportedLexicalSymbol { expr } => write!(
+                f,
+                "lexical expression {} contains a symbol reference unsupported by this slice",
+                expr.get()
+            ),
+            ReducedParseErrorKind::MissingGoto { state, nonterminal } => write!(
+                f,
+                "state {} has no goto for nonterminal {}",
+                state.get(),
+                nonterminal.get()
+            ),
+            ReducedParseErrorKind::TrailingInput { byte_position } => {
+                write!(f, "input remains after byte {byte_position}")
+            }
+            ReducedParseErrorKind::AcceptedHiddenRoot => {
+                write!(f, "accepted parse did not produce a visible root node")
+            }
+            ReducedParseErrorKind::UnsupportedRecovery { state } => {
+                write!(f, "state {} requires recovery", state.get())
+            }
+        }
+    }
+}
+
+impl Error for ReducedParseError {}
+
+/// Reduced parser error kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReducedParseErrorKind {
+    /// Parser grammar is not in the required stage.
+    WrongStage {
+        /// Current stage.
+        stage: ParserGenerationStage,
+    },
+    /// Runtime stack became empty.
+    EmptyStack,
+    /// Parse state id was missing.
+    MissingState {
+        /// Missing state.
+        state: ParseStateId,
+    },
+    /// Lexical mode id was missing.
+    MissingLexMode {
+        /// Missing lexical mode.
+        mode: LexModeId,
+    },
+    /// No token candidate matched the input.
+    NoToken {
+        /// Current state.
+        state: ParseStateId,
+        /// Current byte offset.
+        byte_position: usize,
+        /// Terminal spellings accepted by the state's lexical mode.
+        expected: Vec<String>,
+    },
+    /// No parse action existed for a lookahead.
+    NoAction {
+        /// Current state.
+        state: ParseStateId,
+        /// Lookahead.
+        lookahead: LookaheadSymbol,
+        /// Current byte offset.
+        byte_position: usize,
+    },
+    /// The action cell requires GLR/conflict support.
+    AmbiguousAction {
+        /// Current state.
+        state: ParseStateId,
+        /// Lookahead.
+        lookahead: LookaheadSymbol,
+        /// Number of actions in the cell.
+        action_count: usize,
+    },
+    /// The current state needs external scanner execution.
+    UnsupportedExternalScanner {
+        /// Current state.
+        state: ParseStateId,
+        /// External scanner candidates in the state.
+        external_count: usize,
+    },
+    /// The reduced parser cannot match this terminal.
+    UnsupportedTerminal {
+        /// Terminal id.
+        terminal: TerminalId,
+        /// Terminal spelling.
+        spelling: String,
+    },
+    /// The reduced lexical evaluator does not execute symbol references.
+    UnsupportedLexicalSymbol {
+        /// Source expression id.
+        expr: GrammarExprId,
+    },
+    /// No goto entry existed for a reduction.
+    MissingGoto {
+        /// State after popping reduced children.
+        state: ParseStateId,
+        /// Reduced nonterminal.
+        nonterminal: NonterminalId,
+    },
+    /// Accept was reached before all bytes were consumed.
+    TrailingInput {
+        /// Remaining byte offset.
+        byte_position: usize,
+    },
+    /// Accept did not produce a visible root.
+    AcceptedHiddenRoot,
+    /// Recovery is outside this reduced parser slice.
+    UnsupportedRecovery {
+        /// Current state.
+        state: ParseStateId,
+    },
 }
 
 /// Actions for one lookahead symbol.
@@ -3350,8 +4242,19 @@ impl GotoEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ParseAction {
-    /// Accept the input.
-    Accept,
+    /// Accept the input after completing the root production.
+    Accept {
+        /// Root production to finalize.
+        production: ProductionId,
+        /// Metadata row attached to the root production.
+        metadata: ProductionMetadataId,
+        /// Root nonterminal.
+        symbol: NonterminalId,
+        /// Structural child count.
+        child_count: usize,
+        /// Dynamic precedence attached to the root subtree.
+        dynamic_precedence: i32,
+    },
     /// Shift the current lookahead.
     Shift {
         /// Target parse state.
@@ -3416,8 +4319,6 @@ pub struct StackMergeKey {
     state: ParseStateId,
     byte_position: u32,
     scanner_snapshot: Option<ScannerSnapshotId>,
-    error_cost: u32,
-    active: bool,
 }
 
 impl StackMergeKey {
@@ -3434,16 +4335,6 @@ impl StackMergeKey {
     /// External scanner snapshot compatible with this stack version.
     pub const fn scanner_snapshot(&self) -> Option<ScannerSnapshotId> {
         self.scanner_snapshot
-    }
-
-    /// Accumulated error cost required for merge compatibility.
-    pub const fn error_cost(&self) -> u32 {
-        self.error_cost
-    }
-
-    /// Whether the branch is active and eligible to merge.
-    pub const fn active(&self) -> bool {
-        self.active
     }
 }
 
@@ -4150,7 +5041,17 @@ mod tests {
                 .iter()
                 .flat_map(ParseState::entries)
                 .any(|entry| entry.lookahead() == LookaheadSymbol::Eof
-                    && entry.actions().contains(&ParseAction::Accept))
+                    && entry.actions().iter().any(|action| {
+                        matches!(
+                            action,
+                            ParseAction::Accept {
+                                production: ProductionId(0),
+                                symbol: NonterminalId(0),
+                                child_count: 1,
+                                ..
+                            }
+                        )
+                    }))
         );
         assert!(
             table
@@ -4219,6 +5120,152 @@ mod tests {
                 && item.dot() == 0
                 && item.lookahead().symbols() == &[LookaheadSymbol::Terminal(semicolon)]
         }));
+    }
+
+    #[test]
+    fn table_generation_preserves_reserved_context_lookaheads() {
+        let grammar = prepared(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "RESERVED",
+                  "context_name": "default",
+                  "content": { "type": "STRING", "value": "a" }
+                }
+              },
+              "reserved": {
+                "default": [
+                  { "type": "STRING", "value": "if" }
+                ]
+              }
+            }"##,
+        );
+
+        let table = ParseTable::from_grammar(&grammar).unwrap();
+        let terminal = grammar
+            .symbols()
+            .terminals()
+            .iter()
+            .find(|terminal| terminal.spelling() == "a")
+            .unwrap()
+            .id();
+
+        assert!(
+            table
+                .states()
+                .iter()
+                .flat_map(ParseState::entries)
+                .any(|entry| entry.lookahead()
+                    == LookaheadSymbol::ReservedWord {
+                        terminal,
+                        context: ReservedContextId::from_index(0)
+                    })
+        );
+        assert!(
+            table
+                .lexical_modes()
+                .iter()
+                .any(|mode| mode.reserved_context() == Some(ReservedContextId::from_index(0)))
+        );
+    }
+
+    #[test]
+    fn table_generation_materializes_external_valid_symbol_sets() {
+        let grammar = prepared(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "SYMBOL", "name": "_external" }
+              },
+              "externals": [
+                { "type": "SYMBOL", "name": "_external" }
+              ]
+            }"##,
+        );
+
+        let table = ParseTable::from_grammar(&grammar).unwrap();
+
+        assert_eq!(table.valid_symbol_sets().len(), 1);
+        assert_eq!(
+            table.valid_symbol_sets()[0].externals(),
+            &[ExternalId::from_index(0)]
+        );
+        assert!(
+            table
+                .lexical_modes()
+                .iter()
+                .any(|mode| mode.valid_symbols() == Some(ValidSymbolSetId::from_index(0)))
+        );
+    }
+
+    #[test]
+    fn table_generation_adds_shift_extra_actions_for_extra_roots() {
+        let grammar = prepared(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "STRING", "value": "x" }
+              },
+              "extras": [
+                { "type": "STRING", "value": " " }
+              ]
+            }"##,
+        );
+
+        let table = ParseTable::from_grammar(&grammar).unwrap();
+        let extra = grammar
+            .symbols()
+            .terminals()
+            .iter()
+            .find(|terminal| terminal.spelling() == " ")
+            .unwrap()
+            .id();
+
+        assert!(
+            table
+                .states()
+                .iter()
+                .flat_map(ParseState::entries)
+                .any(
+                    |entry| entry.lookahead() == LookaheadSymbol::Terminal(extra)
+                        && entry.actions().contains(&ParseAction::ShiftExtra)
+                )
+        );
+    }
+
+    #[test]
+    fn parse_table_retains_generated_action_conflicts_for_glr() {
+        let grammar = prepared(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "CHOICE",
+                  "members": [
+                    { "type": "SYMBOL", "name": "left" },
+                    { "type": "SYMBOL", "name": "right" }
+                  ]
+                },
+                "left": { "type": "SYMBOL", "name": "token" },
+                "right": { "type": "SYMBOL", "name": "token" },
+                "token": { "type": "STRING", "value": "x" }
+              }
+            }"##,
+        );
+
+        let table = ParseTable::from_grammar(&grammar).unwrap();
+
+        assert_eq!(table.conflicts().len(), 1);
+        let conflict = &table.conflicts()[0];
+        assert_eq!(conflict.lookahead(), LookaheadSymbol::Eof);
+        assert_eq!(conflict.actions().len(), 2);
+        assert!(
+            conflict
+                .actions()
+                .iter()
+                .all(|action| matches!(action, ParseAction::Reduce { .. }))
+        );
     }
 
     #[test]

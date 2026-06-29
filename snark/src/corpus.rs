@@ -4,6 +4,7 @@ use std::{error::Error, fmt};
 
 use facet::Facet;
 
+use crate::query::is_capture_name_char;
 use crate::source::SourceFile;
 
 /// Raw Tree-sitter corpus or highlight fixture source.
@@ -582,10 +583,6 @@ fn capture_name_after(text: &str) -> Option<&str> {
         .find_map(|(index, ch)| (!is_capture_name_char(ch)).then_some(start + index))
         .unwrap_or(text.len());
     Some(&text[start..end])
-}
-
-fn is_capture_name_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.')
 }
 
 fn utf8_len(line: &str) -> usize {
