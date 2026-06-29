@@ -4693,6 +4693,11 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
         "\\s+" => match_while(input, byte_position, char::is_whitespace, 1),
         "\\d+" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 1),
         "\\d*" => match_while(input, byte_position, |ch| ch.is_ascii_digit(), 0),
+        "[1-9]" => input[byte_position..]
+            .chars()
+            .next()
+            .filter(|ch| matches!(ch, '1'..='9'))
+            .map(|ch| byte_position + ch.len_utf8()),
         "[eE]" => input[byte_position..]
             .chars()
             .next()

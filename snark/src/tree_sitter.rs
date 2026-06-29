@@ -471,6 +471,10 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/packages/tree-sitter-css-reduced"
     );
+    const JSON_FIXTURE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/packages/tree-sitter-json-reduced"
+    );
 
     const MINI_GRAMMAR: &str = r#"{
       "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
@@ -1752,6 +1756,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_pinned_json_arrays_corpus_case_without_external_scanner() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let main_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/main.txt")
+            .unwrap();
+        let cases = main_fixture.parse_cases().unwrap();
+
+        assert_eq!(cases[0].name, "Arrays");
+        let actual_tree = parse_reduced_without_external_scanner_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &cases[0].input,
+        );
+
+        assert_same!(actual_tree, cases[0].expected);
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {
@@ -1772,6 +1809,23 @@ mod tests {
             .clone()
     }
 
+    fn parse_reduced_without_external_scanner_or_panic(
+        validated: &ValidatedGrammar,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+        input: &str,
+    ) -> SexpNode {
+        unwrap_reduced_report_or_panic(
+            ReducedParser::new(validated, parser_grammar, parse_table)
+                .unwrap()
+                .parse_with_report(input),
+            parser_grammar,
+            parse_table,
+        )
+        .tree()
+        .clone()
+    }
+
     fn parse_reduced_report_or_panic(
         validated: &ValidatedGrammar,
         parser_grammar: &ParserGrammar,
@@ -1779,55 +1833,65 @@ mod tests {
         input: &str,
     ) -> ReducedParseReport {
         let scanner = CssReducedExternalScanner;
-        ReducedParser::new(validated, parser_grammar, parse_table)
-            .unwrap()
-            .with_external_scanner(&scanner)
-            .parse_with_report(input)
-            .unwrap_or_else(|error| {
-                let state = match error.kind() {
-                    crate::parser::ReducedParseErrorKind::NoToken { state, .. }
-                    | crate::parser::ReducedParseErrorKind::NoAction { state, .. }
-                    | crate::parser::ReducedParseErrorKind::AmbiguousAction { state, .. }
-                    | crate::parser::ReducedParseErrorKind::UnsupportedExternalScanner {
-                        state,
-                        ..
-                    }
-                    | crate::parser::ReducedParseErrorKind::UnsupportedRecovery { state }
-                    | crate::parser::ReducedParseErrorKind::MissingState { state } => Some(*state),
-                    crate::parser::ReducedParseErrorKind::MissingGoto { state, .. } => Some(*state),
-                    _ => None,
-                };
-                let mut states = Vec::new();
-                if let Some(state) = state {
-                    states.push(state);
+        unwrap_reduced_report_or_panic(
+            ReducedParser::new(validated, parser_grammar, parse_table)
+                .unwrap()
+                .with_external_scanner(&scanner)
+                .parse_with_report(input),
+            parser_grammar,
+            parse_table,
+        )
+    }
+
+    fn unwrap_reduced_report_or_panic(
+        result: Result<ReducedParseReport, crate::parser::ReducedParseError>,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+    ) -> ReducedParseReport {
+        result.unwrap_or_else(|error| {
+            let state = match error.kind() {
+                crate::parser::ReducedParseErrorKind::NoToken { state, .. }
+                | crate::parser::ReducedParseErrorKind::NoAction { state, .. }
+                | crate::parser::ReducedParseErrorKind::AmbiguousAction { state, .. }
+                | crate::parser::ReducedParseErrorKind::UnsupportedExternalScanner {
+                    state, ..
                 }
-                if let Some(last) = error.trace().last() {
-                    if !states.contains(&last.state) {
-                        states.push(last.state);
-                    }
+                | crate::parser::ReducedParseErrorKind::UnsupportedRecovery { state }
+                | crate::parser::ReducedParseErrorKind::MissingState { state } => Some(*state),
+                crate::parser::ReducedParseErrorKind::MissingGoto { state, .. } => Some(*state),
+                _ => None,
+            };
+            let mut states = Vec::new();
+            if let Some(state) = state {
+                states.push(state);
+            }
+            if let Some(last) = error.trace().last() {
+                if !states.contains(&last.state) {
+                    states.push(last.state);
                 }
-                for trace in error.trace().iter().rev().take(12) {
-                    if !states.contains(&trace.state) {
-                        states.push(trace.state);
-                    }
+            }
+            for trace in error.trace().iter().rev().take(12) {
+                if !states.contains(&trace.state) {
+                    states.push(trace.state);
                 }
-                let state_dump = states
-                    .into_iter()
-                    .map(|state| describe_parse_state(parser_grammar, parse_table, state))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                let trace_tail = error
-                    .trace()
-                    .iter()
-                    .rev()
-                    .take(12)
-                    .copied()
-                    .collect::<Vec<_>>();
-                panic!(
-                    "kind={:#?}\ntrace_tail={trace_tail:#?}\n{state_dump}",
-                    error.kind()
-                );
-            })
+            }
+            let state_dump = states
+                .into_iter()
+                .map(|state| describe_parse_state(parser_grammar, parse_table, state))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let trace_tail = error
+                .trace()
+                .iter()
+                .rev()
+                .take(12)
+                .copied()
+                .collect::<Vec<_>>();
+            panic!(
+                "kind={:#?}\ntrace_tail={trace_tail:#?}\n{state_dump}",
+                error.kind()
+            );
+        })
     }
 
     struct CssReducedExternalScanner;
