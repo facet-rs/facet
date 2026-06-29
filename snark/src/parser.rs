@@ -4683,7 +4683,7 @@ impl<'a> ReducedParser<'a> {
     }
 }
 
-fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
+pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
     match pattern {
         "\\s" => input[byte_position..]
             .chars()

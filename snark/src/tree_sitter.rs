@@ -1100,6 +1100,51 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_pinned_css_universal_selector_through_weavy_lowering() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[0].name, "Universal selectors");
+        let rust_report = parse_reduced_report_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[0].input,
+        );
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[0].input,
+        )
+        .unwrap();
+
+        assert_same!(&weavy_tree, rust_report.tree());
+        assert_same!(weavy_tree, selector_cases[0].expected);
+        assert!(stats.step_count > 0);
+        assert!(stats.block_call_count > 0);
+    }
+
     #[test]
     fn parses_pinned_css_type_selectors_corpus_case() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
