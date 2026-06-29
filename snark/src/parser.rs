@@ -7207,11 +7207,51 @@ rules {
     binary_expr {
         type CHOICE
         members (
+            {type PREC_LEFT, value -3, content {
+                type SEQ
+                members (
+                    {type SYMBOL, name _expr}
+                    {type STRING, value "or"}
+                    {type SYMBOL, name _expr}
+                )
+            }}
+            {type PREC_LEFT, value -2, content {
+                type SEQ
+                members (
+                    {type SYMBOL, name _expr}
+                    {type STRING, value "and"}
+                    {type SYMBOL, name _expr}
+                )
+            }}
+            {type PREC_LEFT, value -1, content {
+                type SEQ
+                members (
+                    {type SYMBOL, name _expr}
+                    {type CHOICE, members (
+                        {type STRING, value "=="}
+                        {type STRING, value "!="}
+                        {type STRING, value "<"}
+                        {type STRING, value ">"}
+                        {type STRING, value "<="}
+                        {type STRING, value ">="}
+                        {type STRING, value "in"}
+                        {type SEQ, members (
+                            {type STRING, value "not"}
+                            {type STRING, value "in"}
+                        )}
+                    )}
+                    {type SYMBOL, name _expr}
+                )
+            }}
             {type PREC_LEFT, value 1, content {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
-                    {type STRING, value "+"}
+                    {type CHOICE, members (
+                        {type STRING, value "+"}
+                        {type STRING, value "-"}
+                        {type STRING, value "~"}
+                    )}
                     {type SYMBOL, name _expr}
                 )
             }}
@@ -7219,7 +7259,20 @@ rules {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
-                    {type STRING, value "*"}
+                    {type CHOICE, members (
+                        {type STRING, value "*"}
+                        {type STRING, value "/"}
+                        {type STRING, value "//"}
+                        {type STRING, value "%"}
+                    )}
+                    {type SYMBOL, name _expr}
+                )
+            }}
+            {type PREC_RIGHT, value 3, content {
+                type SEQ
+                members (
+                    {type SYMBOL, name _expr}
+                    {type STRING, value "**"}
                     {type SYMBOL, name _expr}
                 )
             }}
@@ -7410,6 +7463,30 @@ extras (
         assert_styx_authored_gingembre_runtime(
             "{{ a + b + c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ a - b ~ c }}",
+            "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ a / b % c }}",
+            "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ a ** b ** c }}",
+            "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ a or b and c }}",
+            "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ a == b + c }}",
+            "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ a not in xs }}",
+            "(template (interpolation (binary_expr (var_ref) (var_ref))))",
         );
     }
 
