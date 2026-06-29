@@ -40,7 +40,21 @@ fn main() {
         .expect("grammar should normalize")
         .prepare_productions_for_items()
         .expect("productions should prepare");
+    let t_table = std::time::Instant::now();
     let table = ParseTable::from_grammar(&parser).expect("parse table should build");
+    let table_ms = t_table.elapsed().as_secs_f64() * 1000.0;
+
+    // Time one runtime construction (compiles the lexer) and one parse in isolation.
+    let probe_input = "alpha";
+    let t_rt = std::time::Instant::now();
+    let probe_rt = RuntimeParser::new(&validated, &parser, &table).expect("runtime");
+    let runtime_new_ms = t_rt.elapsed().as_secs_f64() * 1000.0;
+    let t_p = std::time::Instant::now();
+    let _ = probe_rt.parse_recovering_with_report(probe_input);
+    let parse_probe_ms = t_p.elapsed().as_secs_f64() * 1000.0;
+    println!(
+        "[timing] table_build={table_ms:.1}ms  RuntimeParser::new={runtime_new_ms:.1}ms  parse('alpha')={parse_probe_ms:.1}ms",
+    );
 
     println!("language: {}", raw.name);
     println!("grammar:  {}", grammar_js.display());
