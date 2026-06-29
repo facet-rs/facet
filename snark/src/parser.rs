@@ -4133,6 +4133,14 @@ impl<'a> ReducedParser<'a> {
         10_000usize.max(input_budget.saturating_add(table_budget))
     }
 
+    fn reduced_recovery_step_limit(&self, input: &str) -> usize {
+        let input_budget = input.len().saturating_mul(96);
+        let table_budget = self.table.states().len().saturating_mul(64);
+        10_000usize
+            .max(input_budget.saturating_add(table_budget))
+            .min(500_000)
+    }
+
     fn step_branch(
         &self,
         branch: ReducedBranch,
@@ -5461,7 +5469,10 @@ impl<'a> RuntimeParser<'a> {
         let mut next_version_index = 1usize;
         let mut next_lookahead_index = 0usize;
         let mut step_count = 0usize;
-        let step_limit = self.reduced.reduced_step_limit(input);
+        let step_limit = match recovery {
+            RuntimeRecoveryMode::Strict => self.reduced.reduced_step_limit(input),
+            RuntimeRecoveryMode::SkipInvalidInput => self.reduced.reduced_recovery_step_limit(input),
+        };
         let mut max_live_versions = branches.len();
 
         while let Some(branch) = branches.pop_front() {
@@ -6412,9 +6423,12 @@ fn enqueue_runtime_branch(
                 reason: BranchRetireReason::Dominated,
             });
         }
-        Some(best_cost) if branch.error_cost == best_cost => {
-            branches.push_back(branch);
-        }
+        Some(best_cost) if branch.error_cost == best_cost => trace_events.push(
+            TraceEvent::GlrRetire {
+                version: branch.version,
+                reason: BranchRetireReason::Dominated,
+            },
+        ),
         _ => {
             queued_recovery_costs.insert(key, branch.error_cost);
             branches.push_back(branch);
