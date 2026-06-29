@@ -2870,6 +2870,55 @@ mod tests {
         assert_eq!(capture_texts(&field_captures, "json.value"), ["\"good\""]);
     }
 
+    #[test]
+    fn executes_json_comment_highlights_from_visible_extras() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        let main_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/main.txt")
+            .unwrap();
+        let cases = main_fixture.parse_cases().unwrap();
+
+        assert_eq!(cases[4].name, "Comments");
+        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .parse_with_report(&cases[4].input)
+            .unwrap();
+        let captures = highlights_query.body.execute_runtime_highlights(
+            &parser_grammar,
+            &runtime_report,
+            &cases[4].input,
+        );
+
+        assert_same!(runtime_report.tree(), &cases[4].expected);
+        assert_eq!(
+            capture_texts(&captures, "comment"),
+            [
+                "// we allow comments, because several",
+                "// commonly used tools allow comments in",
+                "// files with the extension `.json`",
+                "/*\n   * Block comments are also ok\n   */",
+            ]
+        );
+    }
+
     #[cfg(feature = "weavy-lowering")]
     #[test]
     fn executes_json_key_highlights_through_weavy_runtime_events() {
@@ -2961,6 +3010,83 @@ mod tests {
         assert_eq!(
             capture_texts(&weavy_field_captures, "json.value"),
             ["\"good\""]
+        );
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn executes_json_comment_highlights_through_weavy_runtime_events() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        let main_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/main.txt")
+            .unwrap();
+        let cases = main_fixture.parse_cases().unwrap();
+
+        assert_eq!(cases[4].name, "Comments");
+        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .parse_with_report(&cases[4].input)
+            .unwrap();
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &cases[4].input,
+        )
+        .unwrap();
+        let runtime_captures = highlights_query.body.execute_runtime_highlights(
+            &parser_grammar,
+            &runtime_report,
+            &cases[4].input,
+        );
+        let weavy_captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &weavy_report.accepted_tree_events(),
+                &cases[4].input,
+            );
+
+        assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_same!(weavy_report.tree(), &cases[4].expected);
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(
+            weavy_report.accepted_tree_events(),
+            runtime_report.accepted_tree_events()
+        );
+        assert_eq!(weavy_captures, runtime_captures);
+        assert_eq!(
+            capture_texts(&weavy_captures, "comment"),
+            [
+                "// we allow comments, because several",
+                "// commonly used tools allow comments in",
+                "// files with the extension `.json`",
+                "/*\n   * Block comments are also ok\n   */",
+            ]
         );
         assert!(weavy_report.stats().step_count > 0);
         assert!(weavy_report.stats().block_call_count > 0);

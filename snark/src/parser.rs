@@ -5927,11 +5927,19 @@ impl<'a> RuntimeParser<'a> {
         let ReducedFragment::Node(node) = self.reduced.extra_fragment(lookahead)? else {
             return None;
         };
+        let public_node = self
+            .reduced
+            .parser
+            .public_node_kinds
+            .iter()
+            .find(|kind| kind.name() == node.kind)
+            .map(PublicNodeKind::id);
         let node = tree_store.push(node);
         let (bytes, points) = input_ranges(input, start_byte, end_byte);
         tree_events.push(TreeEvent::CloseNode {
             version,
             node,
+            public_node,
             bytes,
             points,
         });
@@ -6772,6 +6780,8 @@ pub enum TreeEvent {
         version: StackVersionId,
         /// Runtime tree node.
         node: TreeNodeId,
+        /// Public node kind, when this close event materializes a visible node.
+        public_node: Option<PublicNodeKindId>,
         /// Byte range.
         bytes: ByteRange,
         /// Point range.

@@ -746,6 +746,24 @@ fn runtime_highlight_nodes(
                     text: input_text(input, *bytes).to_owned(),
                 })
             }
+            TreeEvent::CloseNode {
+                node,
+                public_node: Some(public_node),
+                bytes,
+                points,
+                ..
+            } => {
+                let kind = parser.public_node_kinds()[public_node.get() as usize]
+                    .name()
+                    .to_owned();
+                Some(RuntimeHighlightNode {
+                    id: *node,
+                    kind,
+                    bytes: *bytes,
+                    points: *points,
+                    text: input_text(input, *bytes).to_owned(),
+                })
+            }
             _ => None,
         })
         .collect()

@@ -3111,11 +3111,18 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let ReducedWeavyFragment::Node(node) = reduced_probe.extra_fragment(lookahead)? else {
             return None;
         };
+        let public_node = self
+            .parser
+            .public_node_kinds()
+            .iter()
+            .find(|kind| kind.name() == node.kind)
+            .map(parser_ir::PublicNodeKind::id);
         let node = self.tree_store.push(node);
         let (bytes, points) = runtime_weavy_input_ranges(self.input, start_byte, end_byte);
         self.tree_events.push(parser_ir::TreeEvent::CloseNode {
             version,
             node,
+            public_node,
             bytes,
             points,
         });
