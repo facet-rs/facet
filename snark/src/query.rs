@@ -18,6 +18,14 @@ impl QuerySource {
     pub fn anonymous_node_literals(&self) -> BTreeSet<String> {
         anonymous_node_literals(&self.0)
     }
+
+    /// Capture names declared by this query source.
+    ///
+    /// This scanner ignores comments, strings, and predicate bodies. It is an
+    /// oracle/import fact, not a query evaluator.
+    pub fn capture_names(&self) -> BTreeSet<String> {
+        capture_names(&self.0)
+    }
 }
 
 /// Quoted anonymous node literals referenced by a Tree-sitter query source.
@@ -65,6 +73,57 @@ pub fn anonymous_node_literals(query: &str) -> BTreeSet<String> {
         }
     }
     literals
+}
+
+/// Capture names declared by a Tree-sitter query source.
+pub fn capture_names(query: &str) -> BTreeSet<String> {
+    let mut scanner = QueryScanner::new(query);
+    let mut contexts = vec![QueryContext::Root];
+    let mut captures = BTreeSet::new();
+    while let Some(token) = scanner.next_token() {
+        match token {
+            QueryToken::OpenParen => contexts.push(QueryContext::Form {
+                seen_head: false,
+                predicate: false,
+            }),
+            QueryToken::CloseParen => {
+                if contexts.len() > 1 {
+                    contexts.pop();
+                }
+            }
+            QueryToken::OpenBracket => contexts.push(QueryContext::List),
+            QueryToken::CloseBracket => {
+                if contexts.len() > 1 {
+                    contexts.pop();
+                }
+            }
+            QueryToken::String(_) => {
+                if let Some(QueryContext::Form { seen_head, .. }) = contexts.last_mut() {
+                    *seen_head = true;
+                }
+            }
+            QueryToken::Symbol(symbol) => {
+                if let Some(QueryContext::Form {
+                    seen_head,
+                    predicate,
+                }) = contexts.last_mut()
+                {
+                    if !*seen_head {
+                        *predicate = symbol.starts_with('#');
+                        *seen_head = true;
+                    }
+                }
+                if !contexts.iter().any(QueryContext::is_predicate)
+                    && let Some(capture) = symbol.strip_prefix('@')
+                    && !capture.is_empty()
+                    && capture.chars().all(is_capture_name_char)
+                {
+                    captures.insert(capture.to_owned());
+                }
+            }
+        }
+    }
+    captures
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +220,14 @@ impl<'a> QueryScanner<'a> {
         while let Some(ch) = self.peek_char() {
             self.index += ch.len_utf8();
             if escaped {
-                value.push(ch);
+                value.push(match ch {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    '\\' => '\\',
+                    '"' => '"',
+                    other => other,
+                });
                 escaped = false;
                 continue;
             }
@@ -188,6 +254,10 @@ impl<'a> QueryScanner<'a> {
     fn peek_char(&self) -> Option<char> {
         self.source.get(self.index..)?.chars().next()
     }
+}
+
+fn is_capture_name_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '?')
 }
 
 /// Well-known Tree-sitter query categories.
@@ -267,7 +337,7 @@ impl QueryBundle {
 
 #[cfg(test)]
 mod tests {
-    use super::{QuerySource, anonymous_node_literals};
+    use super::{QuerySource, anonymous_node_literals, capture_names};
 
     #[test]
     fn extracts_query_anonymous_node_literals() {
@@ -298,5 +368,47 @@ mod tests {
         let source = QuerySource(r#""@media" @keyword"#.to_owned());
 
         assert!(source.anonymous_node_literals().contains("@media"));
+    }
+
+    #[test]
+    fn extracts_query_capture_names_without_comments_strings_or_predicates() {
+        let query = r##"
+          ; @commented-out
+          ((property_name) @property)
+          ((string_value) @string.special)
+          ((custom_property_name) @custom
+            (#match? @variable "^--")
+            (#eq? @variable "@inside-string"))
+          "@literal" @operator
+        "##;
+
+        let captures = capture_names(query);
+
+        assert!(captures.contains("property"));
+        assert!(captures.contains("string.special"));
+        assert!(captures.contains("custom"));
+        assert!(captures.contains("operator"));
+        assert!(!captures.contains("commented-out"));
+        assert!(!captures.contains("variable"));
+        assert!(!captures.contains("inside-string"));
+        assert!(!captures.contains("literal"));
+    }
+
+    #[test]
+    fn query_source_reports_capture_names() {
+        let source = QuerySource(r#"((property_name) @property)"#.to_owned());
+
+        assert!(source.capture_names().contains("property"));
+    }
+
+    #[test]
+    fn query_string_escapes_decode_once() {
+        let literals = anonymous_node_literals(r#""\n" "\t" "\r" "\\" "\"" "#);
+
+        assert!(literals.contains("\n"));
+        assert!(literals.contains("\t"));
+        assert!(literals.contains("\r"));
+        assert!(literals.contains("\\"));
+        assert!(literals.contains("\""));
     }
 }

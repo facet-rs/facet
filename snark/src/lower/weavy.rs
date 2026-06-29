@@ -143,7 +143,7 @@ pub enum SnarkIntrinsic {
         /// Branch-local lookahead token.
         lookahead: LookaheadTokenId,
     },
-    /// Commit a branch-local lookahead to the input cursor.
+    /// Commit a branch-local lookahead to that branch's cursor.
     CommitLookahead {
         /// GLR stack version whose lookahead is being consumed.
         version: StackVersionId,
@@ -169,6 +169,10 @@ pub enum SnarkIntrinsic {
         metadata: ProductionMetadataId,
         /// Symbol emitted by the reduction.
         symbol: NonterminalId,
+        /// Structural child count popped by this reduction.
+        child_count: usize,
+        /// Dynamic precedence applied by this reduction.
+        dynamic_precedence: i32,
         /// Optional alias sequence applied to visible children.
         aliases: Option<AliasSequenceId>,
     },
@@ -284,14 +288,12 @@ impl IntrinsicOp for SnarkIntrinsic {
             Self::Lex { .. } => EffectContract::new()
                 .read_resource(EffectResource::Input("source"))
                 .write_resource(EffectResource::SideChannel("lookahead"))
-                .write_resource(EffectResource::SideChannel("parser_stack"))
                 .may_fail(),
             Self::CallExternalScanner { .. } => EffectContract::new()
                 .read_resource(EffectResource::Input("source"))
                 .read_resource(EffectResource::SideChannel("scanner_state"))
                 .write_resource(EffectResource::SideChannel("scanner_state"))
                 .write_resource(EffectResource::SideChannel("lookahead"))
-                .write_resource(EffectResource::SideChannel("parser_stack"))
                 .may_fail()
                 .calls_user_code(),
             Self::DispatchActions { .. } => EffectContract::new()
@@ -299,7 +301,9 @@ impl IntrinsicOp for SnarkIntrinsic {
                 .read_resource(EffectResource::SideChannel("lookahead")),
             Self::CommitLookahead { .. } => EffectContract::new()
                 .read_resource(EffectResource::SideChannel("lookahead"))
-                .advance_resource(EffectResource::Input("source")),
+                .read_resource(EffectResource::SideChannel("parser_stack"))
+                .write_resource(EffectResource::SideChannel("branch_cursor"))
+                .write_resource(EffectResource::SideChannel("parser_stack")),
             Self::Shift { .. } => EffectContract::new()
                 .read_resource(EffectResource::SideChannel("parser_stack"))
                 .read_resource(EffectResource::SideChannel("lookahead"))
@@ -321,7 +325,7 @@ impl IntrinsicOp for SnarkIntrinsic {
                 .write_resource(EffectResource::SideChannel("glr_worklist")),
             Self::Recover { .. } => EffectContract::new()
                 .read_resource(EffectResource::Input("source"))
-                .advance_resource(EffectResource::Input("source"))
+                .write_resource(EffectResource::SideChannel("branch_cursor"))
                 .write_resource(EffectResource::SideChannel("parser_stack"))
                 .write_resource(EffectResource::Sink("tree_events"))
                 .may_fail(),
@@ -394,6 +398,10 @@ mod tests {
             resource: EffectResource::SideChannel("lookahead"),
             access: ResourceAccess::Write,
         }));
+        assert!(!lex_effect.resources.contains(&ResourceEffect {
+            resource: EffectResource::SideChannel("parser_stack"),
+            access: ResourceAccess::Write,
+        }));
 
         let scanner_effect = SnarkIntrinsic::CallExternalScanner {
             version: StackVersionId(0),
@@ -409,6 +417,10 @@ mod tests {
             resource: EffectResource::Input("source"),
             access: ResourceAccess::Advance,
         }));
+        assert!(!scanner_effect.resources.contains(&ResourceEffect {
+            resource: EffectResource::SideChannel("parser_stack"),
+            access: ResourceAccess::Write,
+        }));
         assert!(scanner_effect.calls_user_code);
 
         let commit_effect = SnarkIntrinsic::CommitLookahead {
@@ -416,9 +428,17 @@ mod tests {
             lookahead: LookaheadTokenId(5),
         }
         .effect();
-        assert!(commit_effect.resources.contains(&ResourceEffect {
+        assert!(!commit_effect.resources.contains(&ResourceEffect {
             resource: EffectResource::Input("source"),
             access: ResourceAccess::Advance,
+        }));
+        assert!(commit_effect.resources.contains(&ResourceEffect {
+            resource: EffectResource::SideChannel("branch_cursor"),
+            access: ResourceAccess::Write,
+        }));
+        assert!(commit_effect.resources.contains(&ResourceEffect {
+            resource: EffectResource::SideChannel("parser_stack"),
+            access: ResourceAccess::Write,
         }));
     }
 

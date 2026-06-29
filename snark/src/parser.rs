@@ -6,7 +6,11 @@
 //! state. It is not a recursive recognizer and it never consumes generated
 //! Tree-sitter implementation files.
 
-use std::{collections::HashMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    error::Error,
+    fmt,
+};
 
 use crate::{
     lexical::{LexicalFacts, TerminalKind},
@@ -1081,6 +1085,59 @@ impl fmt::Display for ParserPrepareError {
 
 impl Error for ParserPrepareError {}
 
+/// Error produced while building LR item sets and parse tables.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParserTableBuildError {
+    kind: ParserTableBuildErrorKind,
+}
+
+impl ParserTableBuildError {
+    fn new(kind: ParserTableBuildErrorKind) -> Self {
+        Self { kind }
+    }
+
+    /// Error kind.
+    pub const fn kind(&self) -> &ParserTableBuildErrorKind {
+        &self.kind
+    }
+}
+
+impl fmt::Display for ParserTableBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            ParserTableBuildErrorKind::WrongStage { stage } => {
+                write!(f, "parser grammar is at stage {stage:?}, not Productions")
+            }
+            ParserTableBuildErrorKind::MissingItemPreparation => {
+                write!(f, "parser grammar is missing LR item-preparation facts")
+            }
+            ParserTableBuildErrorKind::NoStartProductions { start } => {
+                write!(f, "start nonterminal {} has no productions", start.get())
+            }
+        }
+    }
+}
+
+impl Error for ParserTableBuildError {}
+
+/// Parser table-build error kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParserTableBuildErrorKind {
+    /// The grammar was not in the expected stage.
+    WrongStage {
+        /// Current generation stage.
+        stage: ParserGenerationStage,
+    },
+    /// Production graph facts were not prepared.
+    MissingItemPreparation,
+    /// No productions exist for the start nonterminal.
+    NoStartProductions {
+        /// Start nonterminal.
+        start: NonterminalId,
+    },
+}
+
 /// Parser production-preparation error kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1696,7 +1753,7 @@ pub enum InternalSymbolKind {
 }
 
 /// Parser symbol in a normalized production.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum ParserSymbol {
     /// Normal lexical terminal.
@@ -1712,7 +1769,7 @@ pub enum ParserSymbol {
 }
 
 /// Lookahead key in an action table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum LookaheadSymbol {
     /// Normal lexical terminal.
@@ -2559,6 +2616,13 @@ impl LookaheadSet {
     pub fn symbols(&self) -> &[LookaheadSymbol] {
         &self.symbols
     }
+
+    fn merge(&mut self, symbols: &[LookaheadSymbol]) -> bool {
+        let old_len = self.symbols.len();
+        self.symbols.extend_from_slice(symbols);
+        self.symbols = sorted_lookaheads(std::mem::take(&mut self.symbols));
+        self.symbols.len() != old_len
+    }
 }
 
 /// One LR item set.
@@ -2726,14 +2790,485 @@ pub enum KeywordStatus {
 /// Generated LR/GLR parse table.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParseTable {
+    item_sets: Vec<ItemSet>,
+    transitions: Vec<ItemTransition>,
+    lexical_modes: Vec<LexMode>,
     states: Vec<ParseState>,
 }
 
 impl ParseTable {
+    /// Build LR item sets and parse-table action rows from prepared productions.
+    pub fn from_grammar(grammar: &ParserGrammar) -> Result<Self, ParserTableBuildError> {
+        LrTableBuilder::new(grammar)?.build()
+    }
+
+    /// LR item sets.
+    pub fn item_sets(&self) -> &[ItemSet] {
+        &self.item_sets
+    }
+
+    /// Item-set transitions.
+    pub fn transitions(&self) -> &[ItemTransition] {
+        &self.transitions
+    }
+
+    /// Lexical modes selected by parse states.
+    pub fn lexical_modes(&self) -> &[LexMode] {
+        &self.lexical_modes
+    }
+
     /// Parse states.
     pub fn states(&self) -> &[ParseState] {
         &self.states
     }
+}
+
+/// Transition in the LR item graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemTransition {
+    from: ItemSetId,
+    symbol: ParserSymbol,
+    to: ItemSetId,
+}
+
+impl ItemTransition {
+    /// Source item set.
+    pub const fn from(&self) -> ItemSetId {
+        self.from
+    }
+
+    /// Symbol advanced by this transition.
+    pub const fn symbol(&self) -> ParserSymbol {
+        self.symbol
+    }
+
+    /// Target item set.
+    pub const fn to(&self) -> ItemSetId {
+        self.to
+    }
+}
+
+struct LrTableBuilder<'a> {
+    grammar: &'a ParserGrammar,
+    productions_by_lhs: Vec<Vec<ProductionId>>,
+    first: FirstFacts,
+}
+
+impl<'a> LrTableBuilder<'a> {
+    fn new(grammar: &'a ParserGrammar) -> Result<Self, ParserTableBuildError> {
+        if grammar.stage != ParserGenerationStage::Productions {
+            return Err(ParserTableBuildError::new(
+                ParserTableBuildErrorKind::WrongStage {
+                    stage: grammar.stage,
+                },
+            ));
+        }
+        let Some(item_preparation) = grammar.item_preparation.as_ref() else {
+            return Err(ParserTableBuildError::new(
+                ParserTableBuildErrorKind::MissingItemPreparation,
+            ));
+        };
+        let productions_by_lhs = productions_by_lhs(grammar);
+        if productions_by_lhs
+            .get(grammar.start.get() as usize)
+            .is_none_or(Vec::is_empty)
+        {
+            return Err(ParserTableBuildError::new(
+                ParserTableBuildErrorKind::NoStartProductions {
+                    start: grammar.start,
+                },
+            ));
+        }
+        let first = FirstFacts::new(grammar, item_preparation.graph());
+        Ok(Self {
+            grammar,
+            productions_by_lhs,
+            first,
+        })
+    }
+
+    fn build(&self) -> Result<ParseTable, ParserTableBuildError> {
+        let (item_sets, transitions) = self.item_sets();
+        let (states, lexical_modes) = self.parse_states(&item_sets, &transitions);
+        Ok(ParseTable {
+            item_sets,
+            transitions,
+            lexical_modes,
+            states,
+        })
+    }
+
+    fn item_sets(&self) -> (Vec<ItemSet>, Vec<ItemTransition>) {
+        let mut item_sets = Vec::new();
+        let mut item_set_keys = BTreeMap::<ItemSetKey, ItemSetId>::new();
+        let mut transitions = Vec::new();
+        let mut queue = VecDeque::new();
+        let mut start_items = ItemMap::default();
+        for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
+            start_items.insert(*production, 0, &[LookaheadSymbol::Eof]);
+        }
+        let start_items = self.closure(start_items.into_items());
+        let start = push_item_set(&mut item_sets, &mut item_set_keys, start_items, &mut queue);
+        debug_assert_eq!(start.get(), 0);
+
+        while let Some(from) = queue.pop_front() {
+            let grouped = self.group_goto_items(&item_sets[from.get() as usize]);
+            for (symbol, items) in grouped {
+                let target_items = self.closure(items);
+                let to =
+                    push_item_set(&mut item_sets, &mut item_set_keys, target_items, &mut queue);
+                transitions.push(ItemTransition { from, symbol, to });
+            }
+        }
+
+        (item_sets, transitions)
+    }
+
+    fn closure(&self, items: Vec<LrItem>) -> Vec<LrItem> {
+        let mut map = ItemMap::from_items(items);
+        loop {
+            let snapshot = map.clone().into_items();
+            let mut changed = false;
+            for item in snapshot {
+                let production = &self.grammar.productions[item.production.get() as usize];
+                let Some(step) = production.steps.get(item.dot) else {
+                    continue;
+                };
+                let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
+                    continue;
+                };
+                let lookaheads = self.lookahead_after_dot(production, item.dot, &item.lookahead);
+                for production in &self.productions_by_lhs[nonterminal.get() as usize] {
+                    changed |= map.insert(*production, 0, &lookaheads);
+                }
+            }
+            if !changed {
+                return map.into_items();
+            }
+        }
+    }
+
+    fn lookahead_after_dot(
+        &self,
+        production: &Production,
+        dot: usize,
+        current: &LookaheadSet,
+    ) -> Vec<LookaheadSymbol> {
+        self.first
+            .first_of_steps(&production.steps[dot + 1..], current.symbols())
+    }
+
+    fn group_goto_items(&self, item_set: &ItemSet) -> BTreeMap<ParserSymbol, Vec<LrItem>> {
+        let mut grouped = BTreeMap::<ParserSymbol, ItemMap>::new();
+        for item in &item_set.items {
+            let production = &self.grammar.productions[item.production.get() as usize];
+            let Some(step) = production.steps.get(item.dot) else {
+                continue;
+            };
+            grouped.entry(step.symbol).or_default().insert(
+                item.production,
+                item.dot + 1,
+                item.lookahead.symbols(),
+            );
+        }
+        grouped
+            .into_iter()
+            .map(|(symbol, items)| (symbol, items.into_items()))
+            .collect()
+    }
+
+    fn parse_states(
+        &self,
+        item_sets: &[ItemSet],
+        transitions: &[ItemTransition],
+    ) -> (Vec<ParseState>, Vec<LexMode>) {
+        let mut transitions_by_from = vec![Vec::<ItemTransition>::new(); item_sets.len()];
+        for transition in transitions {
+            transitions_by_from[transition.from.get() as usize].push(*transition);
+        }
+        let mut states = Vec::new();
+        let mut lexical_modes = Vec::new();
+        for item_set in item_sets {
+            let state = ParseStateId::from_index(states.len());
+            let mut entries = BTreeMap::<LookaheadSymbol, Vec<ParseAction>>::new();
+            let mut gotos = Vec::new();
+            for transition in &transitions_by_from[item_set.id.get() as usize] {
+                match transition.symbol {
+                    ParserSymbol::Terminal(terminal) => push_action(
+                        &mut entries,
+                        LookaheadSymbol::Terminal(terminal),
+                        ParseAction::Shift {
+                            state: ParseStateId::from_index(transition.to.get() as usize),
+                            repetition: false,
+                        },
+                    ),
+                    ParserSymbol::External(external) => push_action(
+                        &mut entries,
+                        LookaheadSymbol::External(external),
+                        ParseAction::Shift {
+                            state: ParseStateId::from_index(transition.to.get() as usize),
+                            repetition: false,
+                        },
+                    ),
+                    ParserSymbol::Nonterminal(nonterminal) => gotos.push(GotoEntry {
+                        nonterminal,
+                        state: ParseStateId::from_index(transition.to.get() as usize),
+                    }),
+                    ParserSymbol::Eof => push_action(
+                        &mut entries,
+                        LookaheadSymbol::Eof,
+                        ParseAction::Shift {
+                            state: ParseStateId::from_index(transition.to.get() as usize),
+                            repetition: false,
+                        },
+                    ),
+                    ParserSymbol::Internal(internal) => push_action(
+                        &mut entries,
+                        LookaheadSymbol::ErrorRecovery(internal),
+                        ParseAction::Recover,
+                    ),
+                }
+            }
+            for item in &item_set.items {
+                let production = &self.grammar.productions[item.production.get() as usize];
+                if item.dot != production.steps.len() {
+                    continue;
+                }
+                for lookahead in item.lookahead.symbols() {
+                    if production.lhs == self.grammar.start && *lookahead == LookaheadSymbol::Eof {
+                        push_action(&mut entries, *lookahead, ParseAction::Accept);
+                    } else {
+                        push_action(
+                            &mut entries,
+                            *lookahead,
+                            ParseAction::Reduce {
+                                production: production.id,
+                                metadata: production.metadata,
+                                symbol: production.lhs,
+                                child_count: production.steps.len(),
+                                dynamic_precedence: production.dynamic_precedence,
+                            },
+                        );
+                    }
+                }
+            }
+            let lex_mode = lex_mode_from_entries(&entries, &mut lexical_modes, self.grammar.word);
+            states.push(ParseState {
+                id: state,
+                item_set: item_set.id,
+                entries: entries
+                    .into_iter()
+                    .map(|(lookahead, actions)| TableEntry { lookahead, actions })
+                    .collect(),
+                gotos,
+                lex_mode,
+            });
+        }
+        (states, lexical_modes)
+    }
+}
+
+type ItemSetKey = Vec<(ProductionId, usize, Vec<LookaheadSymbol>)>;
+
+#[derive(Debug, Clone, Default)]
+struct ItemMap {
+    items: BTreeMap<(ProductionId, usize), LookaheadSet>,
+}
+
+impl ItemMap {
+    fn from_items(items: Vec<LrItem>) -> Self {
+        let mut map = Self::default();
+        for item in items {
+            map.insert(item.production, item.dot, item.lookahead.symbols());
+        }
+        map
+    }
+
+    fn insert(
+        &mut self,
+        production: ProductionId,
+        dot: usize,
+        lookaheads: &[LookaheadSymbol],
+    ) -> bool {
+        self.items
+            .entry((production, dot))
+            .or_default()
+            .merge(lookaheads)
+    }
+
+    fn into_items(self) -> Vec<LrItem> {
+        self.items
+            .into_iter()
+            .map(|((production, dot), lookahead)| LrItem {
+                production,
+                dot,
+                lookahead,
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FirstFacts {
+    nullable: Vec<bool>,
+    first: Vec<Vec<LookaheadSymbol>>,
+}
+
+impl FirstFacts {
+    fn new(grammar: &ParserGrammar, graph: &ProductionGraphFacts) -> Self {
+        let mut nullable = vec![false; grammar.symbols.nonterminals.len()];
+        for nonterminal in graph.nullable() {
+            nullable[nonterminal.get() as usize] = true;
+        }
+        let mut first = vec![Vec::new(); grammar.symbols.nonterminals.len()];
+        loop {
+            let mut changed = false;
+            for production in &grammar.productions {
+                let lhs = production.lhs.get() as usize;
+                let symbols = first_of_steps_with_tables(&production.steps, &nullable, &first, &[]);
+                changed |= extend_lookaheads(&mut first[lhs], &symbols);
+            }
+            if !changed {
+                return Self { nullable, first };
+            }
+        }
+    }
+
+    fn first_of_steps(
+        &self,
+        steps: &[ProductionStep],
+        fallback: &[LookaheadSymbol],
+    ) -> Vec<LookaheadSymbol> {
+        first_of_steps_with_tables(steps, &self.nullable, &self.first, fallback)
+    }
+}
+
+fn productions_by_lhs(grammar: &ParserGrammar) -> Vec<Vec<ProductionId>> {
+    let mut by_lhs = vec![Vec::new(); grammar.symbols.nonterminals.len()];
+    for production in &grammar.productions {
+        by_lhs[production.lhs.get() as usize].push(production.id);
+    }
+    by_lhs
+}
+
+fn first_of_steps_with_tables(
+    steps: &[ProductionStep],
+    nullable: &[bool],
+    first: &[Vec<LookaheadSymbol>],
+    fallback: &[LookaheadSymbol],
+) -> Vec<LookaheadSymbol> {
+    let mut out = Vec::new();
+    for step in steps {
+        match step.symbol {
+            ParserSymbol::Terminal(terminal) => {
+                out.push(LookaheadSymbol::Terminal(terminal));
+                return sorted_lookaheads(out);
+            }
+            ParserSymbol::External(external) => {
+                out.push(LookaheadSymbol::External(external));
+                return sorted_lookaheads(out);
+            }
+            ParserSymbol::Eof => {
+                out.push(LookaheadSymbol::Eof);
+                return sorted_lookaheads(out);
+            }
+            ParserSymbol::Internal(internal) => {
+                out.push(LookaheadSymbol::ErrorRecovery(internal));
+                return sorted_lookaheads(out);
+            }
+            ParserSymbol::Nonterminal(nonterminal) => {
+                extend_lookaheads(&mut out, &first[nonterminal.get() as usize]);
+                if !nullable[nonterminal.get() as usize] {
+                    return sorted_lookaheads(out);
+                }
+            }
+        }
+    }
+    extend_lookaheads(&mut out, fallback);
+    sorted_lookaheads(out)
+}
+
+fn push_item_set(
+    item_sets: &mut Vec<ItemSet>,
+    item_set_keys: &mut BTreeMap<ItemSetKey, ItemSetId>,
+    items: Vec<LrItem>,
+    queue: &mut VecDeque<ItemSetId>,
+) -> ItemSetId {
+    let key = item_set_key(&items);
+    if let Some(id) = item_set_keys.get(&key).copied() {
+        return id;
+    }
+    let id = ItemSetId::from_index(item_sets.len());
+    item_set_keys.insert(key, id);
+    item_sets.push(ItemSet { id, items });
+    queue.push_back(id);
+    id
+}
+
+fn item_set_key(items: &[LrItem]) -> ItemSetKey {
+    items
+        .iter()
+        .map(|item| (item.production, item.dot, item.lookahead.symbols.clone()))
+        .collect()
+}
+
+fn sorted_lookaheads(mut symbols: Vec<LookaheadSymbol>) -> Vec<LookaheadSymbol> {
+    symbols.sort();
+    symbols.dedup();
+    symbols
+}
+
+fn extend_lookaheads(out: &mut Vec<LookaheadSymbol>, symbols: &[LookaheadSymbol]) -> bool {
+    let old_len = out.len();
+    out.extend_from_slice(symbols);
+    *out = sorted_lookaheads(std::mem::take(out));
+    out.len() != old_len
+}
+
+fn push_action(
+    entries: &mut BTreeMap<LookaheadSymbol, Vec<ParseAction>>,
+    lookahead: LookaheadSymbol,
+    action: ParseAction,
+) {
+    let actions = entries.entry(lookahead).or_default();
+    if !actions.contains(&action) {
+        actions.push(action);
+    }
+}
+
+fn lex_mode_from_entries(
+    entries: &BTreeMap<LookaheadSymbol, Vec<ParseAction>>,
+    lexical_modes: &mut Vec<LexMode>,
+    word: Option<TerminalId>,
+) -> LexModeId {
+    let mut terminals = Vec::new();
+    let mut externals = Vec::new();
+    let mut reserved_context = None;
+    for lookahead in entries.keys() {
+        match *lookahead {
+            LookaheadSymbol::Terminal(terminal) => terminals.push(terminal),
+            LookaheadSymbol::External(external) => externals.push(external),
+            LookaheadSymbol::ReservedWord { terminal, context } => {
+                terminals.push(terminal);
+                reserved_context = Some(context);
+            }
+            LookaheadSymbol::Eof | LookaheadSymbol::ErrorRecovery(_) => {}
+        }
+    }
+    terminals.sort();
+    terminals.dedup();
+    externals.sort();
+    externals.dedup();
+    let id = LexModeId::from_index(lexical_modes.len());
+    lexical_modes.push(LexMode {
+        id,
+        terminals,
+        externals,
+        reserved_context,
+        valid_symbols: None,
+        word,
+    });
+    id
 }
 
 /// One generated parse state.
@@ -2881,6 +3416,8 @@ pub struct StackMergeKey {
     state: ParseStateId,
     byte_position: u32,
     scanner_snapshot: Option<ScannerSnapshotId>,
+    error_cost: u32,
+    active: bool,
 }
 
 impl StackMergeKey {
@@ -2898,6 +3435,16 @@ impl StackMergeKey {
     pub const fn scanner_snapshot(&self) -> Option<ScannerSnapshotId> {
         self.scanner_snapshot
     }
+
+    /// Accumulated error cost required for merge compatibility.
+    pub const fn error_cost(&self) -> u32 {
+        self.error_cost
+    }
+
+    /// Whether the branch is active and eligible to merge.
+    pub const fn active(&self) -> bool {
+        self.active
+    }
 }
 
 /// Branch-local ranking and liveness facts retained after merge checks.
@@ -2906,6 +3453,7 @@ pub struct BranchRanking {
     lookahead: Option<LookaheadTokenId>,
     error_cost: u32,
     dynamic_precedence: i32,
+    progress: u32,
     active: bool,
 }
 
@@ -2923,6 +3471,11 @@ impl BranchRanking {
     /// Accumulated dynamic precedence.
     pub const fn dynamic_precedence(&self) -> i32 {
         self.dynamic_precedence
+    }
+
+    /// Runtime progress count used as a stable branch-ranking tiebreaker.
+    pub const fn progress(&self) -> u32 {
+        self.progress
     }
 
     /// Whether this branch remains active.
@@ -3210,6 +3763,10 @@ mod tests {
         let validated = ValidatedGrammar::from_raw(&raw).unwrap();
         let lexical = LexicalFacts::from_grammar(&validated);
         ParserGrammar::normalize_from_validated(&validated, &lexical).unwrap()
+    }
+
+    fn prepared(input: &str) -> ParserGrammar {
+        normalize(input).prepare_productions_for_items().unwrap()
     }
 
     #[test]
@@ -3553,6 +4110,115 @@ mod tests {
         assert!(facts.graph().nullable().is_empty());
         assert_eq!(facts.graph().reachable().len(), 2);
         assert_eq!(facts.graph().productive().len(), 2);
+    }
+
+    #[test]
+    fn builds_lr_item_sets_and_parse_table_from_prepared_productions() {
+        let grammar = prepared(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "SYMBOL", "name": "item" },
+                "item": { "type": "STRING", "value": "x" }
+              }
+            }"##,
+        );
+
+        let table = ParseTable::from_grammar(&grammar).unwrap();
+
+        assert_eq!(table.item_sets()[0].id(), ItemSetId::from_index(0));
+        assert!(table.item_sets()[0].items().iter().any(|item| {
+            item.production() == ProductionId::from_index(0)
+                && item.dot() == 0
+                && item.lookahead().symbols() == &[LookaheadSymbol::Eof]
+        }));
+        assert!(table.item_sets()[0].items().iter().any(|item| {
+            item.production() == ProductionId::from_index(1)
+                && item.dot() == 0
+                && item.lookahead().symbols() == &[LookaheadSymbol::Eof]
+        }));
+        assert!(table.transitions().iter().any(|transition| {
+            transition.from() == ItemSetId::from_index(0)
+                && matches!(
+                    transition.symbol(),
+                    ParserSymbol::Terminal(_) | ParserSymbol::Nonterminal(_)
+                )
+        }));
+        assert!(
+            table
+                .states()
+                .iter()
+                .flat_map(ParseState::entries)
+                .any(|entry| entry.lookahead() == LookaheadSymbol::Eof
+                    && entry.actions().contains(&ParseAction::Accept))
+        );
+        assert!(
+            table
+                .states()
+                .iter()
+                .flat_map(ParseState::entries)
+                .any(|entry| entry
+                    .actions()
+                    .iter()
+                    .any(|action| matches!(action, ParseAction::Reduce { .. })))
+        );
+        assert_eq!(table.lexical_modes().len(), table.states().len());
+    }
+
+    #[test]
+    fn table_generation_requires_prepared_productions() {
+        let grammar = normalize(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": { "type": "STRING", "value": "x" }
+              }
+            }"##,
+        );
+
+        let error = ParseTable::from_grammar(&grammar).unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            ParserTableBuildErrorKind::WrongStage {
+                stage: ParserGenerationStage::ProductionsPrepared
+            }
+        ));
+    }
+
+    #[test]
+    fn lr_closure_propagates_first_set_lookahead_through_suffix() {
+        let grammar = prepared(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "wrapper" },
+                    { "type": "STRING", "value": ";" }
+                  ]
+                },
+                "wrapper": { "type": "SYMBOL", "name": "item" },
+                "item": { "type": "STRING", "value": "x" }
+              }
+            }"##,
+        );
+
+        let table = ParseTable::from_grammar(&grammar).unwrap();
+        let semicolon = grammar
+            .symbols()
+            .terminals()
+            .iter()
+            .find(|terminal| terminal.spelling() == ";")
+            .unwrap()
+            .id();
+
+        assert!(table.item_sets()[0].items().iter().any(|item| {
+            item.production() == ProductionId::from_index(1)
+                && item.dot() == 0
+                && item.lookahead().symbols() == &[LookaheadSymbol::Terminal(semicolon)]
+        }));
     }
 
     #[test]

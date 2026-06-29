@@ -914,9 +914,10 @@ mod tests {
         assert_eq!(highlight_fixture.kind, CorpusKind::Highlight);
         let highlight_assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
         assert_eq!(highlight_assertions, css_highlight_assertions());
+        let highlight_captures = highlights_query.body.capture_names();
         for assertion in &highlight_assertions {
             assert!(
-                query_contains_capture(&highlights_query.body.0, &assertion.expected_capture_name),
+                highlight_captures.contains(&assertion.expected_capture_name),
                 "query missing capture `{}`",
                 assertion.expected_capture_name
             );
@@ -1106,40 +1107,6 @@ mod tests {
             expected_capture_name: expected_capture_name.to_owned(),
         })
         .collect()
-    }
-
-    fn query_contains_capture(query: &str, capture: &str) -> bool {
-        query
-            .match_indices('@')
-            .any(|(index, _)| capture_at(query, index + 1, capture))
-    }
-
-    fn capture_at(query: &str, start: usize, capture: &str) -> bool {
-        let Some(rest) = query.get(start..) else {
-            return false;
-        };
-        if !rest.starts_with(capture) {
-            return false;
-        }
-        let end = start + capture.len();
-        query
-            .get(end..)
-            .and_then(|tail| tail.chars().next())
-            .is_none_or(|next| !is_capture_name_char(next))
-    }
-
-    fn is_capture_name_char(ch: char) -> bool {
-        ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '?')
-    }
-
-    #[test]
-    fn query_capture_matching_requires_name_boundary() {
-        let query = "((string) @string.special)\n((property_name) @property)";
-
-        assert!(query_contains_capture(query, "string.special"));
-        assert!(query_contains_capture(query, "property"));
-        assert!(!query_contains_capture(query, "string"));
-        assert!(!query_contains_capture(query, "prop"));
     }
 
     #[test]
