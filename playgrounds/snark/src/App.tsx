@@ -169,17 +169,11 @@ function sortedFiles(files: BundleFile[]) {
 
 export function App() {
   const [files, setFiles] = useState<BundleFile[]>(defaultFiles);
-  const [selectedPath, setSelectedPath] = useState("src/grammar.json");
   const [selectedGrammarRoot, setSelectedGrammarRoot] = useState("");
   const [input, setInput] = useState("alpha 42 beta");
-  const [runCorpus, setRunCorpus] = useState(false);
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const selectedFile = useMemo(
-    () => files.find((file) => file.path === selectedPath) ?? files[0],
-    [files, selectedPath],
-  );
   const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
   const activeGrammarRoot = useMemo(
     () => grammarRootForId(files, selectedGrammarRoot),
@@ -194,8 +188,18 @@ export function App() {
     () => sortedFiles(projectedFiles).filter((file): file is SampleFile => file.path.startsWith("samples/")),
     [projectedFiles],
   );
+  const hasBundledTests = useMemo(
+    () =>
+      projectedFiles.some(
+        (file) =>
+          file.path.startsWith("test/corpus/") ||
+          file.path.startsWith("test/highlight/") ||
+          file.path.startsWith("test/highlights/"),
+      ),
+    [projectedFiles],
+  );
   const highlightedSource = useMemo(
-    () => renderHighlightedSource(input, result?.highlights ?? []),
+    () => (result ? renderHighlightedSource(input, result.highlights) : ""),
     [input, result?.highlights],
   );
 
@@ -211,49 +215,14 @@ export function App() {
     );
     const next = sortedFiles(normalizeBrowserFiles(loaded));
     const nextGrammarRoot = preferredGrammarRootId(next);
-    const nextRoot = grammarRootForId(next, nextGrammarRoot);
     const nextProjectedFiles = projectedFilesForGrammarRootId(next, nextGrammarRoot);
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
-    setSelectedPath(
-      nextRoot?.grammarPath && next.some((file) => file.path === nextRoot.grammarPath)
-        ? nextRoot.grammarPath
-        : next.some((file) => file.path === "src/grammar.json")
-          ? "src/grammar.json"
-          : next.some((file) => file.path === "grammar.js")
-            ? "grammar.js"
-            : next[0].path,
-    );
     const firstSample = nextProjectedFiles.find((file) => file.path.startsWith("samples/"));
     if (firstSample) {
       setInput(firstSample.text);
-      setSelectedPath(firstSample.sourcePath);
     }
     setResult(null);
-  }
-
-  function updateSelectedFile(text: string) {
-    setFiles((current) =>
-      current.map((file) => (file.path === selectedFile.path ? { ...file, text } : file)),
-    );
-  }
-
-  function exportResult() {
-    if (!result) {
-      return;
-    }
-    downloadJson("snark-playground-result.json", {
-      request: {
-        input,
-        run_corpus: runCorpus,
-        grammar_root: activeGrammarRootId,
-        files: sortedFiles(files).map((file) => ({
-          path: file.path,
-          bytes: new TextEncoder().encode(file.text).length,
-        })),
-      },
-      response: result,
-    });
   }
 
   async function run() {
@@ -268,7 +237,7 @@ export function App() {
       ).catch((error: unknown) => {
         throw new PlaygroundRunError("grammar.js", errorMessage(error));
       });
-      const response = callParseBundle(runnableFiles, input, runCorpus);
+      const response = callParseBundle(runnableFiles, input, hasBundledTests);
       setResult(JSON.parse(response) as PlaygroundResponse);
     } catch (error) {
       const diagnostic =
@@ -290,7 +259,7 @@ export function App() {
             <p>{result?.language ?? "mini_playground"}</p>
           </div>
           <label className="file-button">
-            Load
+            Upload
             <input
               type="file"
               multiple
@@ -301,15 +270,13 @@ export function App() {
         </div>
         <div className="file-list">
           {sortedFiles(files).map((file) => (
-            <button
+            <div
               key={file.path}
-              className={file.path === selectedFile.path ? "file-row active" : "file-row"}
-              type="button"
-              onClick={() => setSelectedPath(file.path)}
+              className="file-row"
             >
               <span>{file.path}</span>
               <small>{file.text.length.toLocaleString()}b</small>
-            </button>
+            </div>
           ))}
         </div>
         {!result && (
@@ -323,48 +290,30 @@ export function App() {
         )}
       </section>
 
-      <section className="pane work-pane" aria-label="Source and selected file">
+      <section className="pane work-pane" aria-label="Source">
         <div className="toolbar">
           <button type="button" onClick={() => void run()} disabled={busy}>
             {busy ? "Running" : "Run"}
           </button>
-          <button type="button" onClick={exportResult} disabled={!result}>
-            Export JSON
-          </button>
-          <select
-            aria-label="Grammar root"
-            className="grammar-select"
-            disabled={grammarRoots.length <= 1}
-            value={activeGrammarRoot?.id ?? ""}
-            onChange={(event) => {
-              const nextRoot = grammarRootForId(files, event.currentTarget.value);
-              setSelectedGrammarRoot(event.currentTarget.value);
-              if (nextRoot && files.some((file) => file.path === nextRoot.grammarPath)) {
-                setSelectedPath(nextRoot.grammarPath);
-              }
-              setResult(null);
-            }}
-          >
-            {grammarRoots.length === 0 ? (
-              <option value="">No grammar root</option>
-            ) : (
-              grammarRoots.map((root) => (
+          {grammarRoots.length > 1 ? (
+            <select
+              aria-label="Grammar root"
+              className="grammar-select"
+              value={activeGrammarRoot?.id ?? ""}
+              onChange={(event) => {
+                setSelectedGrammarRoot(event.currentTarget.value);
+                setResult(null);
+              }}
+            >
+              {grammarRoots.map((root) => (
                 <option key={root.id} value={root.id}>
                   {root.label}
                 </option>
-              ))
-            )}
-          </select>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={runCorpus}
-              onChange={(event) => setRunCorpus(event.currentTarget.checked)}
-            />
-            Tests
-          </label>
+              ))}
+            </select>
+          ) : null}
           <select
-            aria-label="Load sample"
+            aria-label="Sample"
             className="sample-select"
             disabled={sampleFiles.length === 0}
             value=""
@@ -372,7 +321,6 @@ export function App() {
               const sample = sampleFiles.find((file) => file.sourcePath === event.currentTarget.value);
               if (sample) {
                 setInput(sample.text);
-                setSelectedPath(sample.sourcePath);
               }
             }}
           >
@@ -383,34 +331,12 @@ export function App() {
               </option>
             ))}
           </select>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => {
-              setFiles(defaultFiles);
-              setSelectedPath("src/grammar.json");
-              setSelectedGrammarRoot("");
-              setInput("alpha 42 beta");
-              setResult(null);
-            }}
-          >
-            Reset
-          </button>
         </div>
 
-        <div className="editor-grid">
-          <label className="editor-block">
-            <span>Source</span>
-            <textarea value={input} onChange={(event) => setInput(event.currentTarget.value)} />
-          </label>
-          <label className="editor-block">
-            <span>{selectedFile.path}</span>
-            <textarea
-              value={selectedFile.text}
-              onChange={(event) => updateSelectedFile(event.currentTarget.value)}
-            />
-          </label>
-        </div>
+        <label className="editor-block source-editor">
+          <span>Source</span>
+          <textarea value={input} onChange={(event) => setInput(event.currentTarget.value)} />
+        </label>
       </section>
 
       <section className="pane result-pane" aria-label="Parse results">
@@ -448,27 +374,27 @@ export function App() {
               ))}
             </div>
           </section>
+          {result ? (
           <section>
             <h2>Tests</h2>
             <div className="corpus-summary">
-              <span>{result?.tests.corpus_passed ?? 0} corpus pass</span>
-              <span>{result?.tests.corpus_failed ?? 0} corpus fail</span>
-              <span>{result?.tests.highlight_assertions_passed ?? 0} highlight pass</span>
+              <span>{result.tests.corpus_passed} corpus pass</span>
+              <span>{result.tests.corpus_failed} corpus fail</span>
+              <span>{result.tests.highlight_assertions_passed} highlight pass</span>
               <span>
-                {(result?.tests.highlight_assertions_failed ?? 0) +
-                  (result?.tests.highlight_fixture_errors ?? 0)}{" "}
+                {result.tests.highlight_assertions_failed + result.tests.highlight_fixture_errors}{" "}
                 highlight fail
               </span>
             </div>
             <div className="corpus-list">
-              {result?.corpus.map((caseResult, index) => (
+              {result.corpus.map((caseResult, index) => (
                 <details key={`${caseResult.path}-${caseResult.case_name}-${index}`}>
                   <summary className={caseResult.passed ? "pass" : "fail"}>
                     {caseResult.case_name}
                   </summary>
                   <div className="test-actions">
                     <button type="button" onClick={() => setInput(caseResult.input)}>
-                      Load input
+                      Use input
                     </button>
                   </div>
                   <div className="test-detail-grid">
@@ -493,14 +419,14 @@ export function App() {
                   </div>
                 </details>
               ))}
-              {result?.highlight_tests.map((fixture) => (
+              {result.highlight_tests.map((fixture) => (
                 <details key={fixture.path}>
                   <summary className={fixture.passed ? "pass" : "fail"}>
                     {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
                   </summary>
                   <div className="test-actions">
                     <button type="button" onClick={() => setInput(fixture.input)}>
-                      Load fixture
+                      Use fixture
                     </button>
                   </div>
                   {fixture.error ? (
@@ -530,6 +456,7 @@ export function App() {
               ))}
             </div>
           </section>
+          ) : null}
         </div>
         {result?.limitations.length ? (
           <ul className="limitations">
@@ -776,19 +703,35 @@ function normalizePath(path: string) {
 }
 
 function arboriumRoot(path: string) {
-  if (path.startsWith("def/grammar/grammar.js")) {
+  if (
+    path.startsWith("def/grammar/grammar.json") ||
+    path.startsWith("def/grammar/src/grammar.json") ||
+    path.startsWith("def/grammar/grammar.js")
+  ) {
     return [""];
   }
-  const marker = "/def/grammar/grammar.js";
-  const index = path.indexOf(marker);
-  return index >= 0 ? [path.slice(0, index)] : [];
+  for (const marker of [
+    "/def/grammar/grammar.json",
+    "/def/grammar/src/grammar.json",
+    "/def/grammar/grammar.js",
+  ]) {
+    const index = path.indexOf(marker);
+    if (index >= 0) {
+      return [path.slice(0, index)];
+    }
+  }
+  return [];
 }
 
 function packageRoot(path: string) {
-  if (path === "grammar.js" || path === "src/grammar.json") {
+  if (path === "grammar.js" || path === "grammar.json" || path === "src/grammar.json") {
     return [""];
   }
-  if (path.endsWith("/def/grammar/grammar.js") || path.endsWith("/def/grammar/src/grammar.json")) {
+  if (
+    path.endsWith("/def/grammar/grammar.json") ||
+    path.endsWith("/def/grammar/src/grammar.json") ||
+    path.endsWith("/def/grammar/grammar.js")
+  ) {
     return [];
   }
   if (path.endsWith("/grammar.js")) {
@@ -796,6 +739,9 @@ function packageRoot(path: string) {
   }
   if (path.endsWith("/src/grammar.json")) {
     return [path.slice(0, -"/src/grammar.json".length)];
+  }
+  if (path.endsWith("/grammar.json")) {
+    return [path.slice(0, -"/grammar.json".length)];
   }
   return [];
 }
@@ -883,6 +829,7 @@ function normalizeArboriumDefPath(relative: string) {
 function normalizePackagePath(path: string) {
   if (
     [
+      "grammar.json",
       "grammar.js",
       "src/grammar.json",
       "src/scanner.c",
@@ -894,9 +841,10 @@ function normalizePackagePath(path: string) {
       "bindings/node/binding.cc",
     ].includes(path)
   ) {
-    return path;
+    return path === "grammar.json" ? "src/grammar.json" : path;
   }
   for (const suffix of [
+    "/grammar.json",
     "/src/grammar.json",
     "/src/scanner.c",
     "/src/scanner.cc",
@@ -907,7 +855,7 @@ function normalizePackagePath(path: string) {
     "/bindings/node/binding.cc",
   ]) {
     if (path.endsWith(suffix)) {
-      return suffix.slice(1);
+      return suffix === "/grammar.json" ? "src/grammar.json" : suffix.slice(1);
     }
   }
   for (const token of ["/queries/", "/test/corpus/", "/test/highlight/", "/test/highlights/", "/samples/"]) {
@@ -968,13 +916,13 @@ class PlaygroundRunError extends Error {
   }
 }
 
-function callParseBundle(files: BundleFile[], input: string, runCorpus: boolean) {
+function callParseBundle(files: BundleFile[], input: string, runBundledTests: boolean) {
   try {
     return parseBundle(
       JSON.stringify({
         files,
         input,
-        run_corpus: runCorpus,
+        run_corpus: runBundledTests,
       }),
     );
   } catch (error) {
@@ -984,18 +932,6 @@ function callParseBundle(files: BundleFile[], input: string, runCorpus: boolean)
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function downloadJson(filename: string, value: unknown) {
-  const blob = new Blob([JSON.stringify(value, null, 2) + "\n"], {
-    type: "application/json",
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 function isGeneratedPath(path: string) {

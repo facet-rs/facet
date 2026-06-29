@@ -37,63 +37,14 @@ export async function filesWithGrammarJson(
 }
 
 export function discoverGrammarRoots(files: DslBundleFile[]): GrammarRoot[] {
+  const normalizedPaths = files.map((file) => normalizePath(file.path));
+  const hasGrammarJson = normalizedPaths.some((path) => basename(path) === "grammar.json");
   const roots = new Map<string, GrammarRoot>();
-  for (const file of files) {
-    const path = normalizePath(file.path);
-    if (path === "src/grammar.json") {
-      upsertGrammarRoot(roots, {
-        id: "",
-        label: "bundle root",
-        grammarPath: path,
-        kind: "package",
-      });
-    } else if (path === "grammar.js") {
-      upsertGrammarRoot(roots, {
-        id: "",
-        label: "bundle root",
-        grammarPath: path,
-        kind: "package",
-      });
-    } else if (path.endsWith("/def/grammar/grammar.js")) {
-      const root = path.slice(0, -"/grammar/grammar.js".length);
-      upsertGrammarRoot(roots, {
-        id: root,
-        label: root,
-        grammarPath: path,
-        kind: "arborium",
-      });
-    } else if (path.endsWith("/def/grammar/grammar.json")) {
-      const root = path.slice(0, -"/grammar/grammar.json".length);
-      upsertGrammarRoot(roots, {
-        id: root,
-        label: root,
-        grammarPath: path,
-        kind: "arborium",
-      });
-    } else if (path.endsWith("/def/grammar/src/grammar.json")) {
-      const root = path.slice(0, -"/grammar/src/grammar.json".length);
-      upsertGrammarRoot(roots, {
-        id: root,
-        label: root,
-        grammarPath: path,
-        kind: "arborium",
-      });
-    } else if (path.endsWith("/src/grammar.json")) {
-      const root = path.slice(0, -"/src/grammar.json".length);
-      upsertGrammarRoot(roots, {
-        id: root,
-        label: root,
-        grammarPath: path,
-        kind: "package",
-      });
-    } else if (path.endsWith("/grammar.js")) {
-      const root = path.slice(0, -"/grammar.js".length);
-      upsertGrammarRoot(roots, {
-        id: root,
-        label: root,
-        grammarPath: path,
-        kind: "package",
-      });
+  for (const path of normalizedPaths) {
+    const name = basename(path);
+    if (hasGrammarJson ? name === "grammar.json" : name === "grammar.js") {
+      const root = grammarRootFromPath(path);
+      roots.set(root.id, root);
     }
   }
   return [...roots.values()].sort((left, right) => left.label.localeCompare(right.label));
@@ -113,13 +64,6 @@ export function projectedFilesForGrammarRootId(
   rootId = preferredGrammarRootId(files),
 ): ProjectedDslBundleFile[] {
   return filesForGrammarRoot(files, grammarRootForId(files, rootId));
-}
-
-function upsertGrammarRoot(roots: Map<string, GrammarRoot>, root: GrammarRoot) {
-  const current = roots.get(root.id);
-  if (!current || root.grammarPath.endsWith("src/grammar.json")) {
-    roots.set(root.id, root);
-  }
 }
 
 function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): ProjectedDslBundleFile[] {
@@ -143,6 +87,40 @@ function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): 
         };
       }),
   );
+}
+
+function grammarRootFromPath(path: string): GrammarRoot {
+  const root = rootDirectoryForGrammarPath(path);
+  return {
+    id: root,
+    label: root || "bundle root",
+    grammarPath: path,
+    kind: path.includes("/def/grammar/") || path.startsWith("def/grammar/") ? "arborium" : "package",
+  };
+}
+
+function rootDirectoryForGrammarPath(path: string) {
+  if (path === "grammar.json" || path === "grammar.js") {
+    return "";
+  }
+  if (path.startsWith("def/grammar/")) {
+    return "";
+  }
+  for (const suffix of ["/grammar/grammar.json", "/grammar/src/grammar.json", "/grammar/grammar.js"]) {
+    if (path.endsWith(`/def${suffix}`)) {
+      return path.slice(0, -suffix.length);
+    }
+  }
+  for (const suffix of [
+    "/src/grammar.json",
+    "/grammar.json",
+    "/grammar.js",
+  ]) {
+    if (path.endsWith(suffix)) {
+      return path.slice(0, -suffix.length);
+    }
+  }
+  return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 }
 
 function emitGrammarJsonInWorker(files: DslBundleFile[], grammarPath: string): Promise<string> {
@@ -381,6 +359,7 @@ function normalizeArboriumDefPath(relative: string) {
 function normalizePackagePath(path: string) {
   if (
     [
+      "grammar.json",
       "grammar.js",
       "src/grammar.json",
       "src/scanner.c",
@@ -392,9 +371,10 @@ function normalizePackagePath(path: string) {
       "bindings/node/binding.cc",
     ].includes(path)
   ) {
-    return path;
+    return path === "grammar.json" ? "src/grammar.json" : path;
   }
   for (const suffix of [
+    "/grammar.json",
     "/src/grammar.json",
     "/src/scanner.c",
     "/src/scanner.cc",
@@ -405,7 +385,7 @@ function normalizePackagePath(path: string) {
     "/bindings/node/binding.cc",
   ]) {
     if (path.endsWith(suffix)) {
-      return suffix.slice(1);
+      return suffix === "/grammar.json" ? "src/grammar.json" : suffix.slice(1);
     }
   }
   for (const token of ["/queries/", "/test/corpus/", "/test/highlight/", "/test/highlights/", "/samples/"]) {
@@ -415,6 +395,11 @@ function normalizePackagePath(path: string) {
     }
   }
   return null;
+}
+
+function basename(path: string) {
+  const index = path.lastIndexOf("/");
+  return index >= 0 ? path.slice(index + 1) : path;
 }
 
 type WorkerRequest = {

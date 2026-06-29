@@ -136,12 +136,10 @@ h3 {
   width: 100%;
   margin-bottom: 4px;
   padding: 8px;
+  border: 1px solid #d0d9d5;
+  border-radius: 8px;
+  background: #ffffff;
   text-align: left;
-}
-
-.file-row.active {
-  border-color: #2d6e64;
-  background: #e5f2ef;
 }
 
 .file-row span {
@@ -228,18 +226,6 @@ h3 {
   color: #fff;
 }
 
-.toolbar .secondary {
-  margin-left: auto;
-}
-
-.check-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 0 8px;
-}
-
 .sample-select,
 .grammar-select {
   min-width: 0;
@@ -251,25 +237,12 @@ h3 {
   color: #182024;
 }
 
-.editor-grid {
-  display: grid;
-  grid-template-rows: minmax(180px, 0.9fr) minmax(240px, 1.1fr);
+.source-editor {
   flex: 1;
   min-height: 0;
 }
 
-.editor-block {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-bottom: 1px solid #d8dfdc;
-}
-
-.editor-block:last-child {
-  border-bottom: 0;
-}
-
-.editor-block span {
+.source-editor span {
   padding: 8px 12px;
   border-bottom: 1px solid #e2e8e5;
   color: #51605b;

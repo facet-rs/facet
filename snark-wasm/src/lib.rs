@@ -914,19 +914,32 @@ fn normalize_path(path: &str) -> String {
 }
 
 fn arborium_root(path: &str) -> Option<String> {
-    if path.starts_with("def/grammar/grammar.js") {
+    if path.starts_with("def/grammar/grammar.json")
+        || path.starts_with("def/grammar/src/grammar.json")
+        || path.starts_with("def/grammar/grammar.js")
+    {
         return Some(String::new());
     }
 
-    let marker = "/def/grammar/grammar.js";
-    path.find(marker).map(|index| path[..index].to_owned())
+    for marker in [
+        "/def/grammar/grammar.json",
+        "/def/grammar/src/grammar.json",
+        "/def/grammar/grammar.js",
+    ] {
+        if let Some(index) = path.find(marker) {
+            return Some(path[..index].to_owned());
+        }
+    }
+    None
 }
 
 fn package_root(path: &str) -> Option<String> {
-    if matches!(path, "grammar.js" | "src/grammar.json") {
+    if matches!(path, "grammar.js" | "grammar.json" | "src/grammar.json") {
         return Some(String::new());
     }
-    if path.ends_with("/def/grammar/grammar.js") || path.ends_with("/def/grammar/src/grammar.json")
+    if path.ends_with("/def/grammar/grammar.json")
+        || path.ends_with("/def/grammar/grammar.js")
+        || path.ends_with("/def/grammar/src/grammar.json")
     {
         return None;
     }
@@ -934,6 +947,9 @@ fn package_root(path: &str) -> Option<String> {
         return Some(root.to_owned());
     }
     if let Some(root) = path.strip_suffix("/src/grammar.json") {
+        return Some(root.to_owned());
+    }
+    if let Some(root) = path.strip_suffix("/grammar.json") {
         return Some(root.to_owned());
     }
     None
@@ -1007,6 +1023,7 @@ fn normalize_arborium_def_path(relative: &str) -> Option<String> {
 
 fn normalize_package_path(path: &str) -> Option<String> {
     match path {
+        "grammar.json" => return Some("src/grammar.json".to_owned()),
         "grammar.js"
         | "src/grammar.json"
         | "src/scanner.c"
@@ -1022,6 +1039,7 @@ fn normalize_package_path(path: &str) -> Option<String> {
     for suffix in [
         "/grammar.js",
         "/src/grammar.json",
+        "/grammar.json",
         "/src/scanner.c",
         "/src/scanner.cc",
         "/src/parser.c",
@@ -1031,6 +1049,9 @@ fn normalize_package_path(path: &str) -> Option<String> {
         "/bindings/node/binding.cc",
     ] {
         if path.ends_with(suffix) {
+            if suffix == "/grammar.json" {
+                return Some("src/grammar.json".to_owned());
+            }
             return Some(suffix.trim_start_matches('/').to_owned());
         }
     }
@@ -1110,6 +1131,52 @@ mod tests {
             vec!["samples/sample.css", "samples/showcase.css"]
         );
         assert_eq!(summary.generated_files_ignored, vec!["src/node-types.json"]);
+    }
+
+    #[test]
+    fn normalizes_arborium_def_grammar_json_paths() {
+        let files = normalize_bundle_files(vec![
+            BundleFile {
+                path: "langs/group-acorn/css/def/grammar/grammar.json".to_owned(),
+                text: "{}".to_owned(),
+            },
+            BundleFile {
+                path: "langs/group-acorn/css/def/queries/highlights.scm".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "langs/group-acorn/css/def/sample.css".to_owned(),
+                text: String::new(),
+            },
+        ]);
+
+        let summary = summarize_bundle(&files);
+        assert_eq!(summary.grammar_path.as_deref(), Some("src/grammar.json"));
+        assert_eq!(summary.query_paths, vec!["queries/highlights.scm"]);
+        assert_eq!(summary.sample_paths, vec!["samples/sample.css"]);
+    }
+
+    #[test]
+    fn normalizes_package_root_grammar_json_paths() {
+        let files = normalize_bundle_files(vec![
+            BundleFile {
+                path: "tree-sitter-nginx/grammar.json".to_owned(),
+                text: "{}".to_owned(),
+            },
+            BundleFile {
+                path: "tree-sitter-nginx/queries/highlights.scm".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "tree-sitter-nginx/samples/nginx.conf".to_owned(),
+                text: String::new(),
+            },
+        ]);
+
+        let summary = summarize_bundle(&files);
+        assert_eq!(summary.grammar_path.as_deref(), Some("src/grammar.json"));
+        assert_eq!(summary.query_paths, vec!["queries/highlights.scm"]);
+        assert_eq!(summary.sample_paths, vec!["samples/nginx.conf"]);
     }
 
     #[test]
