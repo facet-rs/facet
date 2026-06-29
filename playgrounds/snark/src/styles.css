@@ -240,7 +240,8 @@ h3 {
   padding: 0 8px;
 }
 
-.sample-select {
+.sample-select,
+.grammar-select {
   min-width: 0;
   max-width: min(240px, 40%);
   min-height: 34px;

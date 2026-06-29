@@ -866,6 +866,7 @@ fn is_highlight_fixture_path(path: &str) -> bool {
 #[derive(Debug)]
 struct NormalizationContext {
     arborium_roots: BTreeSet<String>,
+    package_roots: BTreeSet<String>,
 }
 
 impl NormalizationContext {
@@ -875,6 +876,7 @@ impl NormalizationContext {
                 .iter()
                 .filter_map(|path| arborium_root(path))
                 .collect(),
+            package_roots: paths.iter().filter_map(|path| package_root(path)).collect(),
         }
     }
 }
@@ -887,6 +889,14 @@ fn normalize_bundle_path(path: &str, context: &NormalizationContext) -> String {
         }
     }
     if is_ambiguous_arborium_def_path(&path, context) {
+        return path;
+    }
+    if let Some(relative) = package_root_relative(&path, context) {
+        if let Some(mapped) = normalize_package_path(relative) {
+            return mapped;
+        }
+    }
+    if is_ambiguous_package_path(&path, context) {
         return path;
     }
     if let Some(mapped) = normalize_package_path(&path) {
@@ -912,6 +922,23 @@ fn arborium_root(path: &str) -> Option<String> {
     path.find(marker).map(|index| path[..index].to_owned())
 }
 
+fn package_root(path: &str) -> Option<String> {
+    if matches!(path, "grammar.js" | "src/grammar.json") {
+        return Some(String::new());
+    }
+    if path.ends_with("/def/grammar/grammar.js") || path.ends_with("/def/grammar/src/grammar.json")
+    {
+        return None;
+    }
+    if let Some(root) = path.strip_suffix("/grammar.js") {
+        return Some(root.to_owned());
+    }
+    if let Some(root) = path.strip_suffix("/src/grammar.json") {
+        return Some(root.to_owned());
+    }
+    None
+}
+
 fn arborium_def_relative<'a>(path: &'a str, context: &NormalizationContext) -> Option<&'a str> {
     if let Some(relative) = path.strip_prefix("def/") {
         return Some(relative);
@@ -928,6 +955,25 @@ fn arborium_def_relative<'a>(path: &'a str, context: &NormalizationContext) -> O
 
 fn is_ambiguous_arborium_def_path(path: &str, context: &NormalizationContext) -> bool {
     path.contains("/def/") && context.arborium_roots.len() != 1
+}
+
+fn package_root_relative<'a>(path: &'a str, context: &NormalizationContext) -> Option<&'a str> {
+    if context.package_roots.len() != 1 {
+        return None;
+    }
+    let root = context.package_roots.iter().next()?;
+    if root.is_empty() {
+        return None;
+    }
+    path.strip_prefix(&format!("{root}/"))
+}
+
+fn is_ambiguous_package_path(path: &str, context: &NormalizationContext) -> bool {
+    context.package_roots.len() > 1
+        && context
+            .package_roots
+            .iter()
+            .any(|root| !root.is_empty() && path.starts_with(&format!("{root}/")))
 }
 
 fn normalize_arborium_def_path(relative: &str) -> Option<String> {
@@ -1095,6 +1141,35 @@ mod tests {
         assert!(find_file(&files, "langs/group-acorn/json/def/grammar/grammar.js").is_some());
         assert!(find_file(&files, "langs/group-acorn/css/def/queries/highlights.scm").is_some());
         assert!(find_file(&files, "langs/group-acorn/json/def/queries/highlights.scm").is_some());
+    }
+
+    #[test]
+    fn preserves_package_paths_when_parent_upload_contains_multiple_grammar_roots() {
+        let files = normalize_bundle_files(vec![
+            BundleFile {
+                path: "packages/tree-sitter-css/src/grammar.json".to_owned(),
+                text: "{}".to_owned(),
+            },
+            BundleFile {
+                path: "packages/tree-sitter-css/queries/highlights.scm".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "packages/tree-sitter-json/src/grammar.json".to_owned(),
+                text: "{}".to_owned(),
+            },
+            BundleFile {
+                path: "packages/tree-sitter-json/queries/highlights.scm".to_owned(),
+                text: String::new(),
+            },
+        ]);
+
+        assert!(find_file(&files, "src/grammar.json").is_none());
+        assert!(find_file(&files, "queries/highlights.scm").is_none());
+        assert!(find_file(&files, "packages/tree-sitter-css/src/grammar.json").is_some());
+        assert!(find_file(&files, "packages/tree-sitter-json/src/grammar.json").is_some());
+        assert!(find_file(&files, "packages/tree-sitter-css/queries/highlights.scm").is_some());
+        assert!(find_file(&files, "packages/tree-sitter-json/queries/highlights.scm").is_some());
     }
 
     #[test]

@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import init, { parseBundle } from "@bearcove/snark-wasm";
-import { filesWithGrammarJson } from "./treeSitterDsl";
+import {
+  discoverGrammarRoots,
+  filesWithGrammarJson,
+  grammarRootForId,
+  preferredGrammarRootId,
+} from "./treeSitterDsl";
 
 type BundleFile = {
   path: string;
@@ -160,6 +165,7 @@ function sortedFiles(files: BundleFile[]) {
 export function App() {
   const [files, setFiles] = useState<BundleFile[]>(defaultFiles);
   const [selectedPath, setSelectedPath] = useState("src/grammar.json");
+  const [selectedGrammarRoot, setSelectedGrammarRoot] = useState("");
   const [input, setInput] = useState("alpha 42 beta");
   const [runCorpus, setRunCorpus] = useState(false);
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
@@ -168,6 +174,11 @@ export function App() {
   const selectedFile = useMemo(
     () => files.find((file) => file.path === selectedPath) ?? files[0],
     [files, selectedPath],
+  );
+  const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
+  const activeGrammarRoot = useMemo(
+    () => grammarRootForId(files, selectedGrammarRoot),
+    [files, selectedGrammarRoot],
   );
   const sampleFiles = useMemo(
     () => sortedFiles(files).filter((file) => file.path.startsWith("samples/")),
@@ -189,13 +200,18 @@ export function App() {
       })),
     );
     const next = sortedFiles(normalizeBrowserFiles(loaded));
+    const nextGrammarRoot = preferredGrammarRootId(next);
+    const nextRoot = grammarRootForId(next, nextGrammarRoot);
     setFiles(next);
+    setSelectedGrammarRoot(nextGrammarRoot);
     setSelectedPath(
-      next.some((file) => file.path === "src/grammar.json")
-        ? "src/grammar.json"
-        : next.some((file) => file.path === "grammar.js")
-          ? "grammar.js"
-          : next[0].path,
+      nextRoot?.grammarPath && next.some((file) => file.path === nextRoot.grammarPath)
+        ? nextRoot.grammarPath
+        : next.some((file) => file.path === "src/grammar.json")
+          ? "src/grammar.json"
+          : next.some((file) => file.path === "grammar.js")
+            ? "grammar.js"
+            : next[0].path,
     );
     const firstSample = next.find((file) => file.path.startsWith("samples/"));
     if (firstSample) {
@@ -218,6 +234,7 @@ export function App() {
       request: {
         input,
         run_corpus: runCorpus,
+        grammar_root: activeGrammarRoot?.id ?? selectedGrammarRoot,
         files: sortedFiles(files).map((file) => ({
           path: file.path,
           bytes: new TextEncoder().encode(file.text).length,
@@ -233,7 +250,10 @@ export function App() {
       await wasmReady.catch((error: unknown) => {
         throw new PlaygroundRunError("wasm", errorMessage(error));
       });
-      const runnableFiles = await filesWithGrammarJson(files).catch((error: unknown) => {
+      const runnableFiles = await filesWithGrammarJson(
+        files,
+        activeGrammarRoot?.id ?? selectedGrammarRoot,
+      ).catch((error: unknown) => {
         throw new PlaygroundRunError("grammar.js", errorMessage(error));
       });
       const response = callParseBundle(runnableFiles, input, runCorpus);
@@ -293,6 +313,30 @@ export function App() {
           <button type="button" onClick={exportResult} disabled={!result}>
             Export JSON
           </button>
+          <select
+            aria-label="Grammar root"
+            className="grammar-select"
+            disabled={grammarRoots.length <= 1}
+            value={activeGrammarRoot?.id ?? ""}
+            onChange={(event) => {
+              const nextRoot = grammarRootForId(files, event.currentTarget.value);
+              setSelectedGrammarRoot(event.currentTarget.value);
+              if (nextRoot && files.some((file) => file.path === nextRoot.grammarPath)) {
+                setSelectedPath(nextRoot.grammarPath);
+              }
+              setResult(null);
+            }}
+          >
+            {grammarRoots.length === 0 ? (
+              <option value="">No grammar root</option>
+            ) : (
+              grammarRoots.map((root) => (
+                <option key={root.id} value={root.id}>
+                  {root.label}
+                </option>
+              ))
+            )}
+          </select>
           <label className="check-row">
             <input
               type="checkbox"
@@ -327,6 +371,7 @@ export function App() {
             onClick={() => {
               setFiles(defaultFiles);
               setSelectedPath("src/grammar.json");
+              setSelectedGrammarRoot("");
               setInput("alpha 42 beta");
               setResult(null);
             }}
@@ -608,11 +653,14 @@ function stripCommonRoot(files: BundleFile[]) {
 
 type NormalizationContext = {
   arboriumRoots: Set<string>;
+  packageRoots: Set<string>;
 };
 
 function normalizationContext(paths: string[]): NormalizationContext {
+  const normalized = paths.map(normalizePath);
   return {
-    arboriumRoots: new Set(paths.map(normalizePath).flatMap(arboriumRoot)),
+    arboriumRoots: new Set(normalized.flatMap(arboriumRoot)),
+    packageRoots: new Set(normalized.flatMap(packageRoot)),
   };
 }
 
@@ -626,6 +674,16 @@ function normalizeBundlePath(path: string, context: NormalizationContext) {
     }
   }
   if (isAmbiguousArboriumDefPath(normalized, context)) {
+    return normalized;
+  }
+  const packageRelative = packageRootRelative(normalized, context);
+  if (packageRelative) {
+    const mapped = normalizePackagePath(packageRelative);
+    if (mapped) {
+      return mapped;
+    }
+  }
+  if (isAmbiguousPackagePath(normalized, context)) {
     return normalized;
   }
   return normalizePackagePath(normalized) ?? normalized;
@@ -648,6 +706,22 @@ function arboriumRoot(path: string) {
   return index >= 0 ? [path.slice(0, index)] : [];
 }
 
+function packageRoot(path: string) {
+  if (path === "grammar.js" || path === "src/grammar.json") {
+    return [""];
+  }
+  if (path.endsWith("/def/grammar/grammar.js") || path.endsWith("/def/grammar/src/grammar.json")) {
+    return [];
+  }
+  if (path.endsWith("/grammar.js")) {
+    return [path.slice(0, -"/grammar.js".length)];
+  }
+  if (path.endsWith("/src/grammar.json")) {
+    return [path.slice(0, -"/src/grammar.json".length)];
+  }
+  return [];
+}
+
 function arboriumDefRelative(path: string, context: NormalizationContext) {
   if (path.startsWith("def/")) {
     return path.slice("def/".length);
@@ -662,6 +736,29 @@ function arboriumDefRelative(path: string, context: NormalizationContext) {
 
 function isAmbiguousArboriumDefPath(path: string, context: NormalizationContext) {
   return path.includes("/def/") && context.arboriumRoots.size !== 1;
+}
+
+function packageRootRelative(path: string, context: NormalizationContext) {
+  if (context.packageRoots.size !== 1) {
+    return null;
+  }
+  const root = Array.from(context.packageRoots)[0];
+  if (!root || !path.startsWith(`${root}/`)) {
+    return null;
+  }
+  return path.slice(root.length + 1);
+}
+
+function isAmbiguousPackagePath(path: string, context: NormalizationContext) {
+  if (context.packageRoots.size <= 1) {
+    return false;
+  }
+  for (const root of context.packageRoots) {
+    if (root && path.startsWith(`${root}/`)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function normalizeArboriumDefPath(relative: string) {
