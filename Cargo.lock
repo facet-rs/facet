@@ -6188,7 +6188,15 @@ dependencies = [
  "facet-json",
  "indexmap 2.14.0",
  "rediff",
+ "snark-scanner-host",
  "weavy",
+]
+
+[[package]]
+name = "snark-scanner-host"
+version = "0.0.1"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

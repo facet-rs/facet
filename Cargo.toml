@@ -106,6 +106,7 @@ members = [
 
   # Tree-sitter-compatible grammar package model and lowering scaffold
   "snark",
+  "snark-scanner-host",
 
   # async incremental query runtime
   "picante",

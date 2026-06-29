@@ -1,0 +1,16 @@
+[package]
+name = "snark-scanner-host"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Test scanner host for Snark Tree-sitter external scanner ABI fixtures."
+publish = false
+
+[build-dependencies]
+cc.workspace = true
+
+[lints]
+workspace = true

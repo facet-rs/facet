@@ -448,7 +448,11 @@ fn rel_under(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, fs};
+    use std::{
+        cell::{Cell, RefCell},
+        collections::BTreeSet,
+        fs,
+    };
 
     use crate::{
         corpus::{HighlightAssertion, HighlightPoint, SexpChild, SexpNode, SexpValue},
@@ -1094,7 +1098,7 @@ mod tests {
             .find(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
             .unwrap();
         let assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
-        let scanner = CssReducedExternalScanner;
+        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
         let report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
             .unwrap()
             .with_external_scanner(&scanner)
@@ -1150,7 +1154,7 @@ mod tests {
             .find(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
             .unwrap();
         let assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
-        let scanner = CssReducedExternalScanner;
+        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
         let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
             .unwrap()
             .with_external_scanner(&scanner)
@@ -1216,6 +1220,7 @@ mod tests {
 
         assert_eq!(selector_cases[0].name, "Universal selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1252,6 +1257,7 @@ mod tests {
 
         assert_eq!(selector_cases[0].name, "Universal selectors");
         let rust_report = parse_reduced_report_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1296,6 +1302,7 @@ mod tests {
 
         assert_eq!(selector_cases[1].name, "Type selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1331,6 +1338,7 @@ mod tests {
 
         assert_eq!(selector_cases[2].name, "Class selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1367,6 +1375,7 @@ mod tests {
 
         assert_eq!(selector_cases[2].name, "Class selectors");
         let rust_report = parse_reduced_report_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1411,6 +1420,7 @@ mod tests {
 
         assert_eq!(selector_cases[3].name, "Id selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1446,6 +1456,7 @@ mod tests {
 
         assert_eq!(selector_cases[4].name, "Attribute selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1481,6 +1492,7 @@ mod tests {
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1511,7 +1523,8 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
-        let scanner = RecordingCssReducedExternalScanner::default();
+        let css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let scanner = RecordingCssReducedExternalScanner::new(&css_scanner);
         let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
             .unwrap()
             .with_external_scanner(&scanner)
@@ -1570,14 +1583,14 @@ mod tests {
         assert!(
             scanner_events
                 .iter()
-                .any(|(before, after, _)| before != after),
-            "expected runtime scanner snapshots to advance on accepted external tokens"
+                .all(|(before, after, _)| before == after),
+            "expected stateless CSS scanner snapshots to round-trip without changing ids"
         );
         assert!(
             scanner_events
                 .iter()
-                .any(|(before, _, _)| before.is_some_and(|before| before.get() > 0)),
-            "expected runtime scanner traces to observe a committed branch-local scanner snapshot"
+                .any(|(before, _, _)| before.is_some_and(|before| before.get() == 0)),
+            "expected runtime scanner traces to observe the committed branch-local CSS snapshot"
         );
     }
 
@@ -1604,6 +1617,7 @@ mod tests {
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
         let rust_report = parse_reduced_report_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1611,7 +1625,8 @@ mod tests {
         );
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let scanner = RecordingCssReducedExternalScanner::default();
+        let css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let scanner = RecordingCssReducedExternalScanner::new(&css_scanner);
         let weavy_report = crate::lower::weavy::parse_reduced_with_report_and_scanner(
             &plan,
             &validated,
@@ -1672,7 +1687,8 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
-        let runtime_scanner = RecordingCssReducedExternalScanner::default();
+        let runtime_css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let runtime_scanner = RecordingCssReducedExternalScanner::new(&runtime_css_scanner);
         let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
             .unwrap()
             .with_external_scanner(&runtime_scanner)
@@ -1680,7 +1696,8 @@ mod tests {
             .unwrap();
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let weavy_scanner = RecordingCssReducedExternalScanner::default();
+        let weavy_css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let weavy_scanner = RecordingCssReducedExternalScanner::new(&weavy_css_scanner);
         let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
             &plan,
             &validated,
@@ -1747,14 +1764,14 @@ mod tests {
         assert!(
             scanner_events
                 .iter()
-                .any(|(before, after, _)| before != after),
-            "expected Weavy runtime scanner snapshots to advance on accepted external tokens"
+                .all(|(before, after, _)| before == after),
+            "expected stateless CSS scanner snapshots to round-trip without changing ids"
         );
         assert!(
             scanner_events
                 .iter()
-                .any(|(before, _, _)| before.is_some_and(|before| before.get() > 0)),
-            "expected Weavy runtime scanner traces to observe a committed branch-local scanner snapshot"
+                .any(|(before, _, _)| before.is_some_and(|before| before.get() == 0)),
+            "expected Weavy runtime scanner traces to observe the committed branch-local CSS snapshot"
         );
         assert!(weavy_report.stats().step_count > 0);
         assert!(weavy_report.stats().block_call_count > 0);
@@ -1785,6 +1802,7 @@ mod tests {
             ":nth-child and :nth-last-child selectors"
         );
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1816,6 +1834,7 @@ mod tests {
 
         assert_eq!(selector_cases[7].name, "Pseudo-element selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1847,6 +1866,7 @@ mod tests {
 
         assert_eq!(selector_cases[8].name, "::slotted pseudo element");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1878,6 +1898,7 @@ mod tests {
 
         assert_eq!(selector_cases[9].name, "Child selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1909,6 +1930,7 @@ mod tests {
 
         assert_eq!(selector_cases[10].name, "Descendant selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1941,6 +1963,7 @@ mod tests {
 
         assert_eq!(selector_cases[10].name, "Descendant selectors");
         let rust_report = parse_reduced_report_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -1948,7 +1971,8 @@ mod tests {
         );
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let scanner = RecordingCssReducedExternalScanner::default();
+        let css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let scanner = RecordingCssReducedExternalScanner::new(&css_scanner);
         let weavy_report = crate::lower::weavy::parse_reduced_with_report_and_scanner(
             &plan,
             &validated,
@@ -2005,6 +2029,7 @@ mod tests {
 
         assert_eq!(selector_cases[11].name, "Nesting selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2036,6 +2061,7 @@ mod tests {
 
         assert_eq!(selector_cases[12].name, "Sibling selectors");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2067,6 +2093,7 @@ mod tests {
 
         assert_eq!(selector_cases[13].name, "The :not selector");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2098,6 +2125,7 @@ mod tests {
 
         assert_eq!(selector_cases[14].name, "Nested combinators");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2129,6 +2157,7 @@ mod tests {
 
         assert_eq!(selector_cases[15].name, "Escape sequences");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2160,6 +2189,7 @@ mod tests {
 
         assert_eq!(declaration_cases[0].name, "Function calls");
         let actual_tree = parse_reduced_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2191,6 +2221,7 @@ mod tests {
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
         let report = parse_reduced_report_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2283,12 +2314,13 @@ mod tests {
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
         let rust_report = parse_reduced_report_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
             &declaration_cases[7].input,
         );
-        let scanner = CssReducedExternalScanner;
+        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
         let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
             .unwrap()
             .with_external_scanner(&scanner)
@@ -2353,7 +2385,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let scanner = CssReducedExternalScanner;
+        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
         let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
             .unwrap()
             .with_external_scanner(&scanner)
@@ -2399,7 +2431,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let scanner = CssReducedExternalScanner;
+        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
         let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
             .unwrap()
             .with_external_scanner(&scanner)
@@ -2481,7 +2513,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let scanner = CssReducedExternalScanner;
+        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
         let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
             .unwrap()
             .with_external_scanner(&scanner)
@@ -2556,6 +2588,7 @@ mod tests {
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
         let rust_report = parse_reduced_report_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
@@ -3141,12 +3174,13 @@ mod tests {
     }
 
     fn parse_reduced_or_panic(
+        grammar: &ImportedGrammar,
         validated: &ValidatedGrammar,
         parser_grammar: &ParserGrammar,
         parse_table: &ParseTable,
         input: &str,
     ) -> SexpNode {
-        parse_reduced_report_or_panic(validated, parser_grammar, parse_table, input)
+        parse_reduced_report_or_panic(grammar, validated, parser_grammar, parse_table, input)
             .tree()
             .clone()
     }
@@ -3169,12 +3203,13 @@ mod tests {
     }
 
     fn parse_reduced_report_or_panic(
+        grammar: &ImportedGrammar,
         validated: &ValidatedGrammar,
         parser_grammar: &ParserGrammar,
         parse_table: &ParseTable,
         input: &str,
     ) -> ReducedParseReport {
-        let scanner = CssReducedExternalScanner;
+        let scanner = CssReducedExternalScanner::new(grammar, parser_grammar);
         unwrap_reduced_report_or_panic(
             ReducedParser::new(validated, parser_grammar, parse_table)
                 .unwrap()
@@ -3236,49 +3271,139 @@ mod tests {
         })
     }
 
-    struct CssReducedExternalScanner;
+    struct CssReducedExternalScanner {
+        scanner: RefCell<snark_scanner_host::CssScanner>,
+        external_ordinals: Vec<(crate::parser::ExternalId, usize)>,
+    }
+
+    impl CssReducedExternalScanner {
+        fn new(grammar: &ImportedGrammar, parser_grammar: &ParserGrammar) -> Self {
+            let scanner = grammar
+                .scanners
+                .iter()
+                .find(|scanner| scanner.kind == TreeSitterScannerKind::C)
+                .expect("reduced CSS fixture should import src/scanner.c");
+            assert_eq!(
+                scanner.source.body.0,
+                snark_scanner_host::CSS_SCANNER_SOURCE,
+                "compiled scanner fixture must match imported scanner.c"
+            );
+            let imported_externals = scanner
+                .externals
+                .iter()
+                .map(|external| {
+                    (
+                        external.ordinal().get(),
+                        external.name().map(|name| name.as_str()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                imported_externals,
+                [
+                    (0, Some("_descendant_operator")),
+                    (1, Some("_pseudo_class_selector_colon")),
+                    (2, Some("__error_recovery")),
+                ],
+                "compiled CSS scanner ordinal order must match imported externals"
+            );
+            let external_ordinals = parser_grammar
+                .symbols()
+                .externals()
+                .iter()
+                .map(|external| (external.id(), external.ordinal() as usize))
+                .collect::<Vec<_>>();
+            Self {
+                scanner: RefCell::new(snark_scanner_host::CssScanner::new()),
+                external_ordinals,
+            }
+        }
+
+        fn ordinal_for(&self, external: crate::parser::ExternalId) -> Option<usize> {
+            self.external_ordinals
+                .iter()
+                .find_map(|(candidate, ordinal)| (*candidate == external).then_some(*ordinal))
+        }
+
+        fn valid_symbol_mask(&self, request: ReducedExternalScan<'_>) -> Option<Vec<bool>> {
+            let width = self
+                .external_ordinals
+                .iter()
+                .map(|(_, ordinal)| *ordinal)
+                .max()
+                .map_or(0, |ordinal| ordinal + 1);
+            let mut mask = vec![false; width];
+            if let Some(valid_symbols) = request.valid_symbols() {
+                for external in valid_symbols.externals() {
+                    let ordinal = self.ordinal_for(*external)?;
+                    mask[ordinal] = true;
+                }
+            } else {
+                let ordinal = self.ordinal_for(request.external())?;
+                mask[ordinal] = true;
+            }
+            Some(mask)
+        }
+    }
 
     impl ReducedExternalScanner for CssReducedExternalScanner {
         fn scan(
             &self,
             request: ReducedExternalScan<'_>,
         ) -> Result<Option<ReducedExternalScanResult>, crate::parser::ReducedParseError> {
-            if let Some(valid_symbols) = request.valid_symbols()
-                && !valid_symbols.externals().contains(&request.external())
-            {
+            let Some(mask) = self.valid_symbol_mask(request) else {
+                return Ok(None);
+            };
+            let Some(request_ordinal) = self.ordinal_for(request.external()) else {
+                return Ok(None);
+            };
+            if request_ordinal >= mask.len() || !mask[request_ordinal] {
                 return Ok(None);
             }
-            let end = match request.external_symbol().name() {
-                Some("_pseudo_class_selector_colon") => {
-                    scan_css_pseudo_class_selector_colon(request.input(), request.byte_position())
-                }
-                Some("_descendant_operator") => {
-                    scan_css_descendant_operator(request.input(), request.byte_position())
-                }
-                _ => None,
-            };
-            Ok(end.map(|end| {
-                let before = request
-                    .scanner_snapshot()
-                    .unwrap_or_else(|| ScannerSnapshotId::from_index(0));
-                let after = ScannerSnapshotId::from_index(before.get() as usize + 1);
-                ReducedExternalScanResult::new(end).with_snapshots(Some(before), Some(after))
-            }))
+            let scan = self.scanner.borrow_mut().scan(
+                request.input(),
+                request.byte_position(),
+                &mask,
+                &[],
+            );
+            if !scan.accepted() || scan.result_symbol() != Some(request_ordinal) {
+                return Ok(None);
+            }
+            let empty_snapshot = ScannerSnapshotId::from_index(0);
+            Ok(Some(
+                ReducedExternalScanResult::new(scan.end_byte())
+                    .with_snapshots(Some(empty_snapshot), Some(empty_snapshot)),
+            ))
         }
     }
 
-    #[derive(Default)]
-    struct RecordingCssReducedExternalScanner {
-        calls: std::cell::Cell<usize>,
-        accepted: std::cell::Cell<usize>,
-        accepted_pseudo_class_selector_colon: std::cell::Cell<usize>,
-        accepted_descendant_operator: std::cell::Cell<usize>,
-        requests_with_snapshot: std::cell::Cell<usize>,
-        missing_valid_symbols: std::cell::Cell<usize>,
-        invalid_symbol_requests: std::cell::Cell<usize>,
+    struct RecordingCssReducedExternalScanner<'a> {
+        inner: &'a dyn ReducedExternalScanner,
+        calls: Cell<usize>,
+        accepted: Cell<usize>,
+        accepted_pseudo_class_selector_colon: Cell<usize>,
+        accepted_descendant_operator: Cell<usize>,
+        requests_with_snapshot: Cell<usize>,
+        missing_valid_symbols: Cell<usize>,
+        invalid_symbol_requests: Cell<usize>,
     }
 
-    impl ReducedExternalScanner for RecordingCssReducedExternalScanner {
+    impl<'a> RecordingCssReducedExternalScanner<'a> {
+        fn new(inner: &'a dyn ReducedExternalScanner) -> Self {
+            Self {
+                inner,
+                calls: Cell::new(0),
+                accepted: Cell::new(0),
+                accepted_pseudo_class_selector_colon: Cell::new(0),
+                accepted_descendant_operator: Cell::new(0),
+                requests_with_snapshot: Cell::new(0),
+                missing_valid_symbols: Cell::new(0),
+                invalid_symbol_requests: Cell::new(0),
+            }
+        }
+    }
+
+    impl ReducedExternalScanner for RecordingCssReducedExternalScanner<'_> {
         fn scan(
             &self,
             request: ReducedExternalScan<'_>,
@@ -3300,7 +3425,7 @@ mod tests {
                         .set(self.missing_valid_symbols.get() + 1);
                 }
             }
-            let result = CssReducedExternalScanner.scan(request)?;
+            let result = self.inner.scan(request)?;
             if result.is_some() {
                 self.accepted.set(self.accepted.get() + 1);
                 match request.external_symbol().name() {
@@ -3315,96 +3440,6 @@ mod tests {
             }
             Ok(result)
         }
-    }
-
-    fn scan_css_pseudo_class_selector_colon(input: &str, byte_position: usize) -> Option<usize> {
-        let mut position = skip_css_whitespace(input, byte_position);
-        if !input[position..].starts_with(':') {
-            return None;
-        }
-        position += ':'.len_utf8();
-        if input[position..].starts_with(':') {
-            return None;
-        }
-        let mark_end = position;
-        let mut scan = position;
-        let mut in_comment = false;
-        while scan < input.len() {
-            let ch = input[scan..].chars().next()?;
-            if ch == ';' || ch == '}' {
-                return None;
-            }
-            if ch == '{' && !in_comment {
-                return Some(mark_end);
-            }
-            if ch == '/' && !in_comment {
-                scan += ch.len_utf8();
-                if input[scan..].starts_with('*') {
-                    scan += '*'.len_utf8();
-                    in_comment = true;
-                }
-                continue;
-            }
-            if ch == '*' && in_comment {
-                scan += ch.len_utf8();
-                if input[scan..].starts_with('/') {
-                    scan += '/'.len_utf8();
-                    in_comment = false;
-                }
-                continue;
-            }
-            scan += ch.len_utf8();
-        }
-        Some(mark_end)
-    }
-
-    fn scan_css_descendant_operator(input: &str, byte_position: usize) -> Option<usize> {
-        let first = input[byte_position..].chars().next()?;
-        if !first.is_whitespace() {
-            return None;
-        }
-        let mark_end = skip_css_whitespace(input, byte_position);
-        let next = input[mark_end..].chars().next()?;
-        if css_selector_start(next) {
-            return Some(mark_end);
-        }
-        if next == ':' {
-            let mut scan = mark_end + next.len_utf8();
-            if input[scan..]
-                .chars()
-                .next()
-                .is_some_and(char::is_whitespace)
-            {
-                return None;
-            }
-            while scan < input.len() {
-                let ch = input[scan..].chars().next()?;
-                if ch == ';' || ch == '}' {
-                    return None;
-                }
-                if ch == '{' {
-                    return Some(mark_end);
-                }
-                scan += ch.len_utf8();
-            }
-        }
-        None
-    }
-
-    fn skip_css_whitespace(input: &str, byte_position: usize) -> usize {
-        let mut position = byte_position;
-        while let Some(ch) = input[position..]
-            .chars()
-            .next()
-            .filter(|ch| ch.is_whitespace())
-        {
-            position += ch.len_utf8();
-        }
-        position
-    }
-
-    fn css_selector_start(ch: char) -> bool {
-        ch == '#' || ch == '.' || ch == '[' || ch == '-' || ch == '*' || ch.is_alphanumeric()
     }
 
     fn describe_parse_state(

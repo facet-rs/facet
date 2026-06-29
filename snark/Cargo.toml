@@ -35,6 +35,7 @@ weavy = { workspace = true, optional = true }
 
 [dev-dependencies]
 rediff = { path = "../rediff" }
+snark-scanner-host = { path = "../snark-scanner-host" }
 
 [lints]
 workspace = true
