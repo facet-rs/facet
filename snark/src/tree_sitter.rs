@@ -1336,6 +1336,99 @@ mod tests {
         assert_same!(actual_tree, selector_cases[10].expected);
     }
 
+    #[test]
+    fn parses_pinned_css_nesting_selectors_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[11].name, "Nesting selectors");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[11].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[11].expected);
+    }
+
+    #[test]
+    fn parses_pinned_css_sibling_selectors_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[12].name, "Sibling selectors");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[12].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[12].expected);
+    }
+
+    #[test]
+    fn parses_pinned_css_not_selector_corpus_case() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[13].name, "The :not selector");
+        let actual_tree = parse_reduced_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[13].input,
+        );
+
+        assert_same!(actual_tree, selector_cases[13].expected);
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {

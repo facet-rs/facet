@@ -3042,11 +3042,14 @@ impl<'a> LrTableBuilder<'a> {
         for item_set in item_sets {
             let state = ParseStateId::from_index(states.len());
             let mut entries = BTreeMap::<LookaheadSymbol, Vec<ParseAction>>::new();
+            let mut shift_metadata = BTreeMap::<LookaheadSymbol, Vec<ProductionMetadataId>>::new();
             let mut gotos = Vec::new();
             for transition in &transitions_by_from[item_set.id.get() as usize] {
                 match transition.symbol {
                     ParserSymbol::Terminal(_) | ParserSymbol::External(_) => {
-                        for lookahead in self.transition_lookaheads(item_set, transition.symbol) {
+                        for (lookahead, metadata) in
+                            self.transition_lookaheads(item_set, transition.symbol)
+                        {
                             push_action(
                                 &mut entries,
                                 lookahead,
@@ -3055,6 +3058,10 @@ impl<'a> LrTableBuilder<'a> {
                                     repetition: false,
                                 },
                             );
+                            let metadatas = shift_metadata.entry(lookahead).or_default();
+                            if !metadatas.contains(&metadata) {
+                                metadatas.push(metadata);
+                            }
                         }
                     }
                     ParserSymbol::Nonterminal(nonterminal) => gotos.push(GotoEntry {
@@ -3112,7 +3119,7 @@ impl<'a> LrTableBuilder<'a> {
                     }
                 }
             }
-            resolve_associative_shift_reduce_conflicts(&mut entries, self.grammar);
+            resolve_shift_reduce_conflicts(&mut entries, &shift_metadata, self.grammar);
             let lex_mode = lex_mode_from_entries(
                 &entries,
                 &mut lexical_modes,
@@ -3147,7 +3154,7 @@ impl<'a> LrTableBuilder<'a> {
         &self,
         item_set: &ItemSet,
         symbol: ParserSymbol,
-    ) -> Vec<LookaheadSymbol> {
+    ) -> Vec<(LookaheadSymbol, ProductionMetadataId)> {
         let mut lookaheads = Vec::new();
         for item in &item_set.items {
             let production = &self.grammar.productions[item.production.get() as usize];
@@ -3156,11 +3163,13 @@ impl<'a> LrTableBuilder<'a> {
             };
             if step.symbol == symbol {
                 if let Some(lookahead) = lookahead_for_step(step) {
-                    lookaheads.push(lookahead);
+                    lookaheads.push((lookahead, production.metadata));
                 }
             }
         }
-        sorted_lookaheads(lookaheads)
+        lookaheads.sort();
+        lookaheads.dedup();
+        lookaheads
     }
 
     fn extra_lookaheads(&self) -> Vec<LookaheadSymbol> {
@@ -3364,11 +3373,12 @@ fn push_action(
     }
 }
 
-fn resolve_associative_shift_reduce_conflicts(
+fn resolve_shift_reduce_conflicts(
     entries: &mut BTreeMap<LookaheadSymbol, Vec<ParseAction>>,
+    shift_metadata: &BTreeMap<LookaheadSymbol, Vec<ProductionMetadataId>>,
     grammar: &ParserGrammar,
 ) {
-    for actions in entries.values_mut() {
+    for (lookahead, actions) in entries.iter_mut() {
         if actions.len() < 2
             || !actions
                 .iter()
@@ -3377,24 +3387,60 @@ fn resolve_associative_shift_reduce_conflicts(
             continue;
         }
 
-        let mut has_left_reduce = false;
-        let mut has_right_reduce = false;
-        for action in actions.iter() {
-            let Some(metadata) = reduce_action_metadata(grammar, action) else {
-                continue;
-            };
-            match metadata.associativity() {
-                Associativity::Left => has_left_reduce = true,
-                Associativity::Right => has_right_reduce = true,
-                Associativity::None => {}
-            }
-        }
+        let shift_precedence = shift_metadata.get(lookahead).and_then(|metadatas| {
+            strongest_metadata_precedence(grammar, metadatas.iter().copied())
+        });
+        let reduce_precedence = strongest_metadata_precedence(
+            grammar,
+            actions.iter().filter_map(|action| {
+                reduce_action_metadata(grammar, action).map(ProductionMetadata::id)
+            }),
+        );
 
-        match (has_left_reduce, has_right_reduce) {
-            (true, false) => actions.retain(|action| !matches!(action, ParseAction::Shift { .. })),
-            (false, true) => actions.retain(|action| !matches!(action, ParseAction::Reduce { .. })),
-            _ => {}
+        let precedence_order = shift_precedence
+            .zip(reduce_precedence)
+            .and_then(|(shift, reduce)| compare_static_precedence(grammar, shift, reduce));
+
+        match precedence_order {
+            Some(std::cmp::Ordering::Greater) => {
+                actions.retain(|action| !matches!(action, ParseAction::Reduce { .. }));
+            }
+            Some(std::cmp::Ordering::Less) => {
+                actions.retain(|action| !matches!(action, ParseAction::Shift { .. }));
+            }
+            Some(std::cmp::Ordering::Equal) => {
+                resolve_equal_precedence_associativity(actions, grammar, reduce_precedence);
+            }
+            None => {}
         }
+    }
+}
+
+fn resolve_equal_precedence_associativity(
+    actions: &mut Vec<ParseAction>,
+    grammar: &ParserGrammar,
+    precedence: Option<&StaticPrecedence>,
+) {
+    let mut has_left_reduce = false;
+    let mut has_right_reduce = false;
+    for action in actions.iter() {
+        let Some(metadata) = reduce_action_metadata(grammar, action) else {
+            continue;
+        };
+        if !metadata_precedence_matches(grammar, metadata, precedence) {
+            continue;
+        }
+        match metadata.associativity() {
+            Associativity::Left => has_left_reduce = true,
+            Associativity::Right => has_right_reduce = true,
+            Associativity::None => {}
+        }
+    }
+
+    match (has_left_reduce, has_right_reduce) {
+        (true, false) => actions.retain(|action| !matches!(action, ParseAction::Shift { .. })),
+        (false, true) => actions.retain(|action| !matches!(action, ParseAction::Reduce { .. })),
+        _ => {}
     }
 }
 
@@ -3407,6 +3453,83 @@ fn reduce_action_metadata<'a>(
         _ => return None,
     };
     grammar.production_metadata.get(metadata.get() as usize)
+}
+
+fn strongest_metadata_precedence(
+    grammar: &ParserGrammar,
+    metadatas: impl IntoIterator<Item = ProductionMetadataId>,
+) -> Option<&StaticPrecedence> {
+    let mut strongest = None;
+    for metadata in metadatas {
+        let Some(precedence) = grammar
+            .production_metadata
+            .get(metadata.get() as usize)
+            .and_then(ProductionMetadata::static_precedence)
+        else {
+            continue;
+        };
+        if strongest.is_none_or(|current| {
+            compare_static_precedence(grammar, precedence, current)
+                == Some(std::cmp::Ordering::Greater)
+        }) {
+            strongest = Some(precedence);
+        }
+    }
+    strongest
+}
+
+fn metadata_precedence_matches(
+    grammar: &ParserGrammar,
+    metadata: &ProductionMetadata,
+    precedence: Option<&StaticPrecedence>,
+) -> bool {
+    match (metadata.static_precedence(), precedence) {
+        (Some(left), Some(right)) => {
+            compare_static_precedence(grammar, left, right) == Some(std::cmp::Ordering::Equal)
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn compare_static_precedence(
+    grammar: &ParserGrammar,
+    left: &StaticPrecedence,
+    right: &StaticPrecedence,
+) -> Option<std::cmp::Ordering> {
+    match (left, right) {
+        (StaticPrecedence::Integer(left), StaticPrecedence::Integer(right)) => {
+            Some(left.cmp(right))
+        }
+        (StaticPrecedence::Named(left), StaticPrecedence::Named(right)) if left == right => {
+            Some(std::cmp::Ordering::Equal)
+        }
+        (StaticPrecedence::Named(left), StaticPrecedence::Named(right)) => {
+            compare_named_precedence(grammar, left, right)
+        }
+        _ => None,
+    }
+}
+
+fn compare_named_precedence(
+    grammar: &ParserGrammar,
+    left: &str,
+    right: &str,
+) -> Option<std::cmp::Ordering> {
+    for group in &grammar.precedence_groups {
+        let left_index = group.entries().iter().position(|entry| match entry {
+            PrecedenceGroupEntry::Name(name) => name == left,
+            PrecedenceGroupEntry::Nonterminal(_) => false,
+        });
+        let right_index = group.entries().iter().position(|entry| match entry {
+            PrecedenceGroupEntry::Name(name) => name == right,
+            PrecedenceGroupEntry::Nonterminal(_) => false,
+        });
+        if let (Some(left_index), Some(right_index)) = (left_index, right_index) {
+            return Some(left_index.cmp(&right_index));
+        }
+    }
+    None
 }
 
 fn lex_mode_from_entries(
