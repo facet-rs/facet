@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import init, { parseBundle } from "@bearcove/snark-wasm";
 import { SourceEditor } from "./editor";
 import { captureClass } from "./highlight";
-import { nginxDefaultFiles, nginxDefaultSamplePath } from "./bundled/nginx";
+import { defaultVendoredRootId, vendoredFiles } from "./bundled";
 import {
   discoverGrammarRoots,
   filesWithGrammarJson,
@@ -125,12 +125,9 @@ type PlaygroundResponse = {
 
 const wasmReady = init();
 
-const defaultFiles: BundleFile[] = nginxDefaultFiles;
-const defaultGrammarRoot = preferredGrammarRootId(defaultFiles);
-const defaultSample =
-  projectedFilesForGrammarRootId(defaultFiles, defaultGrammarRoot).find(
-    (file) => file.sourcePath === nginxDefaultSamplePath,
-  ) ?? firstSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
+const defaultFiles: BundleFile[] = vendoredFiles;
+const defaultGrammarRoot = defaultVendoredRootId;
+const defaultSample = firstSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
 
 export function App() {
   const [files, setFiles] = useState<BundleFile[]>(defaultFiles);
