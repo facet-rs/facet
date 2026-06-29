@@ -281,36 +281,7 @@ export function App() {
           ))}
         </div>
         {result && (
-          <dl className="bundle-facts">
-            <div>
-              <dt>grammar</dt>
-              <dd>{result.bundle.grammar_path ?? "missing"}</dd>
-            </div>
-            <div>
-              <dt>grammar.js</dt>
-              <dd>{result.bundle.grammar_js_path ?? "none"}</dd>
-            </div>
-            <div>
-              <dt>queries</dt>
-              <dd>{result.bundle.query_paths.length}</dd>
-            </div>
-            <div>
-              <dt>corpus</dt>
-              <dd>{result.bundle.corpus_paths.length}</dd>
-            </div>
-            <div>
-              <dt>samples</dt>
-              <dd>{result.bundle.sample_paths.length}</dd>
-            </div>
-            <div>
-              <dt>ignored</dt>
-              <dd>{result.bundle.generated_files_ignored.length}</dd>
-            </div>
-            <div>
-              <dt>scanner</dt>
-              <dd>{result.bundle.active_scanner ? "active" : result.bundle.scanner_paths.length}</dd>
-            </div>
-          </dl>
+          <BundleInventory result={result} />
         )}
       </section>
 
@@ -535,6 +506,76 @@ function StatusStrip({ result }: { result: PlaygroundResponse | null }) {
       <span>Failed {result.parse?.failure_count ?? 0}</span>
       <span>Live {result.parse?.max_live_versions ?? 0}</span>
       <span>Events {result.parse?.accepted_tree_event_count ?? 0}</span>
+    </div>
+  );
+}
+
+function BundleInventory({ result }: { result: PlaygroundResponse }) {
+  return (
+    <div className="bundle-inventory">
+      <dl className="bundle-facts">
+        <div>
+          <dt>grammar</dt>
+          <dd>{result.bundle.grammar_path ?? "missing"}</dd>
+        </div>
+        <div>
+          <dt>grammar.js</dt>
+          <dd>{result.bundle.grammar_js_path ?? "none"}</dd>
+        </div>
+        <div>
+          <dt>queries</dt>
+          <dd>{result.bundle.query_paths.length}</dd>
+        </div>
+        <div>
+          <dt>corpus</dt>
+          <dd>{result.bundle.corpus_paths.length}</dd>
+        </div>
+        <div>
+          <dt>samples</dt>
+          <dd>{result.bundle.sample_paths.length}</dd>
+        </div>
+        <div>
+          <dt>ignored</dt>
+          <dd>{result.bundle.generated_files_ignored.length}</dd>
+        </div>
+        <div>
+          <dt>scanner</dt>
+          <dd>{result.bundle.active_scanner ? "active" : result.bundle.scanner_paths.length}</dd>
+        </div>
+      </dl>
+      <details className="bundle-paths">
+        <summary>Bundle inventory</summary>
+        <BundlePathList title="Queries" paths={result.bundle.query_paths} />
+        <BundlePathList title="Corpus and highlights" paths={result.bundle.corpus_paths} />
+        <BundlePathList title="Samples" paths={result.bundle.sample_paths} />
+        <BundlePathList title="Scanners" paths={result.bundle.scanner_paths} />
+        <BundlePathList title="Ignored generated files" paths={result.bundle.generated_files_ignored} />
+        {result.bundle.active_scanner ? (
+          <div className="bundle-path-group">
+            <h3>Active scanner</h3>
+            <code>{result.bundle.active_scanner}</code>
+          </div>
+        ) : null}
+      </details>
+    </div>
+  );
+}
+
+function BundlePathList({ title, paths }: { title: string; paths: string[] }) {
+  return (
+    <div className="bundle-path-group">
+      <h3>{title}</h3>
+      {paths.length ? (
+        <ul>
+          {paths.map((path) => (
+            <li key={path}>
+              <code>{path}</code>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>none</p>
+      )}
     </div>
   );
 }
