@@ -312,6 +312,12 @@ export function App() {
             </button>
           ))}
         </div>
+        {!result && (
+          <LocalBundleInventory
+            files={projectedFiles}
+            grammarRootLabel={activeGrammarRoot?.label ?? "bundle root"}
+          />
+        )}
         {result && (
           <BundleInventory result={result} />
         )}
@@ -614,6 +620,66 @@ function BundleInventory({ result }: { result: PlaygroundResponse }) {
           </div>
         ) : null}
       </details>
+    </div>
+  );
+}
+
+function LocalBundleInventory({
+  files,
+  grammarRootLabel,
+}: {
+  files: { path: string; sourcePath: string }[];
+  grammarRootLabel: string;
+}) {
+  const grammarPath =
+    files.find((file) => file.path === "src/grammar.json")?.path ??
+    files.find((file) => file.path === "grammar.js")?.path ??
+    "missing";
+  const queryCount = files.filter((file) => file.path.startsWith("queries/")).length;
+  const corpusCount = files.filter(
+    (file) =>
+      file.path.startsWith("test/corpus/") ||
+      file.path.startsWith("test/highlight/") ||
+      file.path.startsWith("test/highlights/"),
+  ).length;
+  const sampleCount = files.filter((file) => file.path.startsWith("samples/")).length;
+  const scannerCount = files.filter(
+    (file) => file.path === "src/scanner.c" || file.path === "src/scanner.cc",
+  ).length;
+  const ignoredCount = files.filter((file) => isGeneratedPath(file.path)).length;
+
+  return (
+    <div className="bundle-inventory">
+      <dl className="bundle-facts">
+        <div>
+          <dt>root</dt>
+          <dd>{grammarRootLabel}</dd>
+        </div>
+        <div>
+          <dt>grammar</dt>
+          <dd>{grammarPath}</dd>
+        </div>
+        <div>
+          <dt>queries</dt>
+          <dd>{queryCount}</dd>
+        </div>
+        <div>
+          <dt>corpus</dt>
+          <dd>{corpusCount}</dd>
+        </div>
+        <div>
+          <dt>samples</dt>
+          <dd>{sampleCount}</dd>
+        </div>
+        <div>
+          <dt>ignored</dt>
+          <dd>{ignoredCount}</dd>
+        </div>
+        <div>
+          <dt>scanner</dt>
+          <dd>{scannerCount}</dd>
+        </div>
+      </dl>
     </div>
   );
 }
