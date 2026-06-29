@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @bearcove/snark-wasm run build && vite",
-    "build": "pnpm --filter @bearcove/snark-wasm run build && tsc --noEmit && vite build"
+    "build": "pnpm --filter @bearcove/snark-wasm run build && tsc --noEmit && vite build",
+    "test:paths": "node --experimental-strip-types --test tests/bundlePaths.test.ts"
   },
   "dependencies": {
     "@bearcove/snark-wasm": "workspace:*",

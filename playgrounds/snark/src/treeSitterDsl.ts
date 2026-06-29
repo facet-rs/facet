@@ -1,27 +1,34 @@
 import officialDsl from "../../../snark-dsl/vendor/tree-sitter-generate-0.26.9/dsl.js?raw";
+import {
+  grammarRootForId,
+  preferredGrammarRootId,
+  projectedFilesForGrammarRootId,
+  sortedFiles,
+  type DslBundleFile,
+} from "./bundlePaths";
 
-export type DslBundleFile = {
-  path: string;
-  text: string;
-};
-
-export type ProjectedDslBundleFile = DslBundleFile & {
-  sourcePath: string;
-};
-
-export type GrammarRoot = {
-  id: string;
-  label: string;
-  grammarPath: string;
-  kind: "package" | "arborium";
-};
+export {
+  discoverGrammarRoots,
+  grammarRootForId,
+  normalizeBundleFiles,
+  normalizePath,
+  preferredGrammarRootId,
+  projectedFilesForGrammarRootId,
+  sortedFiles,
+  type DslBundleFile,
+  type GrammarRoot,
+  type ProjectedDslBundleFile,
+} from "./bundlePaths";
 
 export async function filesWithGrammarJson(
   files: DslBundleFile[],
   grammarRootId = preferredGrammarRootId(files),
 ): Promise<DslBundleFile[]> {
   const root = grammarRootForId(files, grammarRootId);
-  const rootFiles = filesForGrammarRoot(files, root).map(({ path, text }) => ({ path, text }));
+  const rootFiles = projectedFilesForGrammarRootId(files, grammarRootId).map(({ path, text }) => ({
+    path,
+    text,
+  }));
   if (rootFiles.some((file) => file.path === "src/grammar.json")) {
     return rootFiles;
   }
@@ -34,93 +41,6 @@ export async function filesWithGrammarJson(
   }
   const grammarJson = await emitGrammarJsonInWorker(files, grammarFile.path);
   return sortedFiles([...rootFiles, { path: "src/grammar.json", text: grammarJson }]);
-}
-
-export function discoverGrammarRoots(files: DslBundleFile[]): GrammarRoot[] {
-  const normalizedPaths = files.map((file) => normalizePath(file.path));
-  const hasGrammarJson = normalizedPaths.some((path) => basename(path) === "grammar.json");
-  const roots = new Map<string, GrammarRoot>();
-  for (const path of normalizedPaths) {
-    const name = basename(path);
-    if (hasGrammarJson ? name === "grammar.json" : name === "grammar.js") {
-      const root = grammarRootFromPath(path);
-      roots.set(root.id, root);
-    }
-  }
-  return [...roots.values()].sort((left, right) => left.label.localeCompare(right.label));
-}
-
-export function preferredGrammarRootId(files: DslBundleFile[]) {
-  return discoverGrammarRoots(files)[0]?.id ?? "";
-}
-
-export function grammarRootForId(files: DslBundleFile[], rootId: string): GrammarRoot | null {
-  const roots = discoverGrammarRoots(files);
-  return roots.find((root) => root.id === rootId) ?? roots[0] ?? null;
-}
-
-export function projectedFilesForGrammarRootId(
-  files: DslBundleFile[],
-  rootId = preferredGrammarRootId(files),
-): ProjectedDslBundleFile[] {
-  return filesForGrammarRoot(files, grammarRootForId(files, rootId));
-}
-
-function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): ProjectedDslBundleFile[] {
-  if (!root || root.id === "") {
-    return sortedFiles(files.map((file) => ({ ...file, sourcePath: file.path })));
-  }
-
-  const prefix = `${root.id}/`;
-  return sortedFiles(
-    files
-      .filter((file) => file.path.startsWith(prefix))
-      .map((file) => {
-        const relative = file.path.slice(prefix.length);
-        return {
-          path:
-            root.kind === "arborium"
-              ? (normalizeArboriumDefPath(relative) ?? relative)
-              : (normalizePackagePath(relative) ?? relative),
-          text: file.text,
-          sourcePath: file.path,
-        };
-      }),
-  );
-}
-
-function grammarRootFromPath(path: string): GrammarRoot {
-  const root = rootDirectoryForGrammarPath(path);
-  return {
-    id: root,
-    label: root || "bundle root",
-    grammarPath: path,
-    kind: path.includes("/def/grammar/") || path.startsWith("def/grammar/") ? "arborium" : "package",
-  };
-}
-
-function rootDirectoryForGrammarPath(path: string) {
-  if (path === "grammar.json" || path === "grammar.js") {
-    return "";
-  }
-  if (path.startsWith("def/grammar/")) {
-    return "";
-  }
-  for (const suffix of ["/grammar/grammar.json", "/grammar/src/grammar.json", "/grammar/grammar.js"]) {
-    if (path.endsWith(`/def${suffix}`)) {
-      return path.slice(0, -suffix.length);
-    }
-  }
-  for (const suffix of [
-    "/src/grammar.json",
-    "/grammar.json",
-    "/grammar.js",
-  ]) {
-    if (path.endsWith(suffix)) {
-      return path.slice(0, -suffix.length);
-    }
-  }
-  return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 }
 
 function emitGrammarJsonInWorker(files: DslBundleFile[], grammarPath: string): Promise<string> {
@@ -303,103 +223,6 @@ function normalizePatternSourceLikeTreeSitter(source) {
   return out;
 }
 `;
-}
-
-function sortedFiles<T extends DslBundleFile>(files: T[]): T[] {
-  return [...files].sort((left, right) => left.path.localeCompare(right.path));
-}
-
-function normalizePath(path: string) {
-  let normalized = path.replace(/\\/g, "/");
-  while (normalized.startsWith("./")) {
-    normalized = normalized.slice(2);
-  }
-  return normalized;
-}
-
-function normalizeArboriumDefPath(relative: string) {
-  switch (relative) {
-    case "grammar/grammar.js":
-      return "grammar.js";
-    case "grammar/grammar.json":
-    case "grammar/src/grammar.json":
-      return "src/grammar.json";
-    case "grammar/scanner.c":
-      return "src/scanner.c";
-    case "grammar/scanner.cc":
-      return "src/scanner.cc";
-    case "grammar/src/parser.c":
-      return "src/parser.c";
-    case "grammar/src/parser.cc":
-      return "src/parser.cc";
-    case "grammar/src/parser.h":
-      return "src/parser.h";
-    case "grammar/src/node-types.json":
-      return "src/node-types.json";
-    case "grammar/bindings/node/binding.cc":
-      return "bindings/node/binding.cc";
-    default:
-      break;
-  }
-  if (
-    relative.startsWith("queries/") ||
-    relative.startsWith("test/corpus/") ||
-    relative.startsWith("test/highlight/") ||
-    relative.startsWith("test/highlights/") ||
-    relative.startsWith("samples/")
-  ) {
-    return relative;
-  }
-  if (relative.startsWith("sample.")) {
-    return `samples/${relative}`;
-  }
-  return null;
-}
-
-function normalizePackagePath(path: string) {
-  if (
-    [
-      "grammar.json",
-      "grammar.js",
-      "src/grammar.json",
-      "src/scanner.c",
-      "src/scanner.cc",
-      "src/parser.c",
-      "src/parser.cc",
-      "src/parser.h",
-      "src/node-types.json",
-      "bindings/node/binding.cc",
-    ].includes(path)
-  ) {
-    return path === "grammar.json" ? "src/grammar.json" : path;
-  }
-  for (const suffix of [
-    "/grammar.json",
-    "/src/grammar.json",
-    "/src/scanner.c",
-    "/src/scanner.cc",
-    "/src/parser.c",
-    "/src/parser.cc",
-    "/src/parser.h",
-    "/src/node-types.json",
-    "/bindings/node/binding.cc",
-  ]) {
-    if (path.endsWith(suffix)) {
-      return suffix === "/grammar.json" ? "src/grammar.json" : suffix.slice(1);
-    }
-  }
-  for (const token of ["/queries/", "/test/corpus/", "/test/highlight/", "/test/highlights/", "/samples/"]) {
-    const index = path.indexOf(token);
-    if (index >= 0) {
-      return path.slice(index + 1);
-    }
-  }
-  return null;
-}
-
-function basename(path: string) {
-  const index = path.lastIndexOf("/");
-  return index >= 0 ? path.slice(index + 1) : path;
 }
 
 type WorkerRequest = {
