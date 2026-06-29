@@ -6,7 +6,7 @@ export function emitGrammarJsonFromDsl(
   grammarPath: string,
 ): string {
   const prelude = officialDslPrelude(dslSource);
-  const modules = new Map(files.filter((file) => file.path.endsWith(".js")).map((file) => [file.path, file.text]));
+  const modules = new Map(files.filter((file) => isJavaScriptModulePath(file.path)).map((file) => [file.path, file.text]));
   const cache = new Map<string, { exports: unknown }>();
 
   const loadModule = (path: string): unknown => {
@@ -24,18 +24,16 @@ export function emitGrammarJsonFromDsl(
     cache.set(resolved, module);
     const dirname = resolved.includes("/") ? resolved.slice(0, resolved.lastIndexOf("/")) : "";
     const require = (specifier: string) => loadModule(resolveRequire(specifier, dirname, modules));
-    const commonJsSource = source.replace(/(^|\n)\s*export\s+default\s+/m, "$1module.exports = ");
-    if (/^\s*import\s/m.test(commonJsSource)) {
-      throw new Error(`${resolved} uses ESM imports; upload a CommonJS grammar.js bundle or pre-bundle dependencies first`);
-    }
+    const commonJsSource = sourceToCommonJs(source, resolved);
 
     const fn = new Function(
       "module",
       "exports",
       "require",
+      "__default",
       `${prelude}\n${commonJsSource}\n; return module.exports;`,
     );
-    module.exports = fn(module, module.exports, require);
+    module.exports = fn(module, module.exports, require, defaultExportValue);
     return module.exports;
   };
 
@@ -43,6 +41,42 @@ export function emitGrammarJsonFromDsl(
   const grammarObj = exportedGrammarObject(exported, grammarPath);
   normalizePatternSources(grammarObj);
   return `${JSON.stringify({ "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json", ...grammarObj }, null, 2)}\n`;
+}
+
+function isJavaScriptModulePath(path: string) {
+  return path.endsWith(".js") || path.endsWith(".mjs");
+}
+
+function sourceToCommonJs(source: string, path: string) {
+  let out = source;
+  out = out.replace(
+    /(^|\n)\s*import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    (_match, prefix, name, specifier) => `${prefix}const ${name} = require(${JSON.stringify(specifier)});`,
+  );
+  out = out.replace(
+    /(^|\n)\s*import\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    (_match, prefix, name, specifier) => `${prefix}const ${name} = __default(require(${JSON.stringify(specifier)}));`,
+  );
+  out = out.replace(
+    /(^|\n)\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=/g,
+    (_match, prefix, name) => `${prefix}const ${name} = exports.${name} =`,
+  );
+  out = out.replace(
+    /(^|\n)\s*export\s+function\s+([A-Za-z_$][\w$]*)\s*\(/g,
+    (_match, prefix, name) => `${prefix}exports.${name} = function ${name}(`,
+  );
+  out = out.replace(/(^|\n)\s*export\s+default\s+/m, "$1module.exports.default = ");
+  if (/^\s*(import|export)\s/m.test(out)) {
+    throw new Error(`${path} uses unsupported ESM syntax`);
+  }
+  return out;
+}
+
+function defaultExportValue(value: unknown) {
+  if (value && typeof value === "object" && "default" in value) {
+    return (value as { default: unknown }).default;
+  }
+  return value;
 }
 
 function exportedGrammarObject(exported: unknown, grammarPath: string): Record<string, unknown> {
@@ -113,7 +147,7 @@ function resolveRequire(specifier: string, dirname: string, modules: Map<string,
 }
 
 function resolveJsPath(path: string, modules: Map<string, string>) {
-  for (const candidate of [path, `${path}.js`, `${path}/index.js`, `${path}/grammar.js`]) {
+  for (const candidate of [path, `${path}.js`, `${path}.mjs`, `${path}/index.js`, `${path}/index.mjs`, `${path}/grammar.js`]) {
     if (modules.has(candidate)) {
       return candidate;
     }

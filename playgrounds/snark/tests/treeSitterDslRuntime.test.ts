@@ -72,6 +72,46 @@ module.exports = grammar({
   });
 });
 
+test("resolves ESM namespace imports and named exports in grammar modules", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import * as h from "./helpers.mjs";
+export default grammar({
+  name: "tiny_esm",
+  rules: {
+    document: $ => h.wrap($.word),
+    word: $ => h.word,
+  },
+});
+`,
+      },
+      {
+        path: "helpers.mjs",
+        text: `
+export const word = /[a-z]+/;
+export const wrap = rule => repeat1(rule);
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_esm");
+  assert.deepEqual(grammar.rules.document, {
+    type: "REPEAT1",
+    content: { type: "SYMBOL", name: "word" },
+  });
+  assert.deepEqual(grammar.rules.word, {
+    type: "PATTERN",
+    value: "[a-z]+",
+  });
+});
+
 test("resolves inherited Arborium grammar modules by tree-sitter package name", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
