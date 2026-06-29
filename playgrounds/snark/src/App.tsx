@@ -181,7 +181,7 @@ export function App() {
   const [selectedSamplePath, setSelectedSamplePath] = useState("");
   const [input, setInput] = useState("alpha 42 beta");
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
   const [editorScroll, setEditorScroll] = useState({ left: 0, top: 0 });
   const parseRequestId = useRef(0);
 
@@ -218,14 +218,15 @@ export function App() {
     [input, result],
   );
   const hasHighlightedSource = highlightedSource !== null;
+  const busy = busyTask !== null;
 
   useEffect(() => {
     const requestId = parseRequestId.current + 1;
     parseRequestId.current = requestId;
-    setBusy(true);
+    setBusyTask("parse");
 
     const timeout = window.setTimeout(() => {
-      void playgroundResponse()
+      void playgroundResponse(false)
         .then((response) => {
           if (parseRequestId.current === requestId) {
             setResult(response);
@@ -233,7 +234,7 @@ export function App() {
         })
         .finally(() => {
           if (parseRequestId.current === requestId) {
-            setBusy(false);
+            setBusyTask(null);
           }
         });
     }, 150);
@@ -241,7 +242,7 @@ export function App() {
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [activeGrammarRootId, files, hasBundledTests, input, projectedFiles]);
+  }, [activeGrammarRootId, files, input, projectedFiles]);
 
   async function loadFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) {
@@ -269,7 +270,7 @@ export function App() {
     setResult(null);
   }
 
-  async function playgroundResponse(): Promise<PlaygroundResponse> {
+  async function playgroundResponse(runBundledTests: boolean): Promise<PlaygroundResponse> {
     try {
       await wasmReady.catch((error: unknown) => {
         throw new PlaygroundRunError("wasm", errorMessage(error));
@@ -280,7 +281,7 @@ export function App() {
       ).catch((error: unknown) => {
         throw new PlaygroundRunError("grammar.js", errorMessage(error));
       });
-      const response = callParseBundle(runnableFiles, input, hasBundledTests);
+      const response = callParseBundle(runnableFiles, input, runBundledTests);
       return JSON.parse(response) as PlaygroundResponse;
     } catch (error) {
       const diagnostic =
@@ -288,6 +289,17 @@ export function App() {
           ? { stage: error.stage, message: error.message }
           : { stage: "playground", message: errorMessage(error) };
       return responseWithDiagnostic(diagnostic.stage, diagnostic.message, projectedFiles);
+    }
+  }
+
+  async function runBundleTests() {
+    const requestId = parseRequestId.current + 1;
+    parseRequestId.current = requestId;
+    setBusyTask("tests");
+    const response = await playgroundResponse(true);
+    if (parseRequestId.current === requestId) {
+      setResult(response);
+      setBusyTask(null);
     }
   }
 
@@ -377,6 +389,11 @@ export function App() {
               ))}
             </select>
           ) : null}
+          {hasBundledTests ? (
+            <button type="button" onClick={() => void runBundleTests()} disabled={busy}>
+              {busyTask === "tests" ? "Running tests" : "Run tests"}
+            </button>
+          ) : null}
         </div>
 
         <label className="editor-block source-editor">
@@ -407,7 +424,7 @@ export function App() {
       </section>
 
       <section className="pane result-pane" aria-label="Parse results">
-        <StatusStrip result={result} busy={busy} />
+        <StatusStrip result={result} busyTask={busyTask} />
 
         <div className="result-tabs">
           <section>
@@ -528,13 +545,13 @@ export function App() {
 
 function StatusStrip({
   result,
-  busy,
+  busyTask,
 }: {
   result: PlaygroundResponse | null;
-  busy: boolean;
+  busyTask: "parse" | "tests" | null;
 }) {
-  if (busy) {
-    return <div className="status-strip idle">Parsing</div>;
+  if (busyTask) {
+    return <div className="status-strip idle">{busyTask === "tests" ? "Running tests" : "Parsing"}</div>;
   }
   if (!result) {
     return <div className="status-strip idle">Ready</div>;
