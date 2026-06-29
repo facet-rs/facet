@@ -6595,6 +6595,7 @@ dependencies = [
  "facet-json",
  "margin",
  "snark",
+ "snark-dsl",
  "snark-scanner-host",
 ]
 

@@ -117,7 +117,7 @@ module.exports = grammar({
 const arboriumNginxDef = "/Users/amos/oss/arborium/langs/group-maple/nginx/def";
 
 test(
-  "reports Arborium nginx grammar.js sample parse failure through Snark WASM",
+  "reports Arborium nginx grammar.js recovery failure through Snark WASM",
   { skip: existsSync(arboriumNginxDef) ? false : `${arboriumNginxDef} is not available` },
   () => {
     const grammarJs = readFileSync(`${arboriumNginxDef}/grammar/grammar.js`, "utf8");
@@ -146,8 +146,18 @@ test(
     assert.equal(response.ok, false);
     assert.equal(response.language, "nginx");
     assert.equal(response.diagnostics[0].stage, "parse");
-    assert.match(response.diagnostics[0].message, /could not lex a token|no parser action/);
-    assert.equal(response.parse, null);
-    assert.deepEqual(response.highlights, []);
+    assert.match(response.diagnostics[0].message, /accepted parse contains/);
+    assert.deepEqual(
+      [
+        response.diagnostics[0].primary_span.start_row,
+        response.diagnostics[0].primary_span.start_column,
+      ],
+      [110, 4],
+    );
+    assert.ok(response.parse);
+    assert.ok(response.parse.accepted_error_count > 0);
+    assert.equal(response.parse.accepted_missing_count, 0);
+    assert.match(response.parse.sexp, /\(ERROR/);
+    assert.ok(response.highlights.length > 0);
   },
 );

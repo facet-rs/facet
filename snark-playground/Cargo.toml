@@ -15,5 +15,8 @@ margin.workspace = true
 snark = { path = "../snark", features = ["tree-sitter-import"] }
 snark-scanner-host = { path = "../snark-scanner-host" }
 
+[dev-dependencies]
+snark-dsl = { path = "../snark-dsl", features = ["native"] }
+
 [lints]
 workspace = true

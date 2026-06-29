@@ -265,7 +265,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
     let should_parse_input = !request.input.is_empty() || !request.run_corpus;
     if should_parse_input {
         match runtime {
-            Ok(runtime) => match parse_with_optional_scanner(
+            Ok(runtime) => match parse_source_with_optional_recovery(
                 runtime,
                 scanner_selection
                     .scanner
@@ -273,7 +273,8 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                     .map(|scanner| scanner as &dyn ReducedExternalScanner),
                 &request.input,
             ) {
-                Ok(report) => {
+                Ok(playground_report) => {
+                    let report = playground_report.report;
                     let accepted_tree_events = report.accepted_tree_events();
                     let accepted_tree_event_count = accepted_tree_events.len();
                     let accepted_error_count = count_accepted_errors(&accepted_tree_events);
@@ -295,7 +296,12 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                             format!(
                                 "accepted parse contains {accepted_error_count} ERROR node(s) and {accepted_missing_count} MISSING node(s)"
                             ),
-                            None,
+                            playground_report
+                                .strict_error
+                                .as_ref()
+                                .and_then(|error| reduced_error_byte(error))
+                                .and_then(|byte| diagnostic_span(&request.input, byte))
+                                .or_else(|| accepted_problem_span(&accepted_tree_events, &request.input)),
                         ));
                     }
                     if let Some(query_file) = find_file(&files, "queries/highlights.scm") {
@@ -580,7 +586,7 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
                         continue;
                     }
                 };
-            match parse_with_optional_scanner(
+            match parse_strict_with_optional_scanner(
                 runtime,
                 scanner_selection
                     .scanner
@@ -651,7 +657,7 @@ fn run_highlight_tests(
                     continue;
                 }
             };
-        let report = match parse_with_optional_scanner(
+        let report = match parse_strict_with_optional_scanner(
             runtime,
             scanner_selection
                 .scanner
@@ -769,7 +775,7 @@ fn highlight_assertion_range(assertion: &HighlightAssertion) -> PointRange {
     PointRange::new(start, end).expect("highlight assertion range is not reversed")
 }
 
-fn parse_with_optional_scanner<'a>(
+fn parse_strict_with_optional_scanner<'a>(
     runtime: RuntimeParser<'a>,
     scanner: Option<&'a dyn ReducedExternalScanner>,
     input: &str,
@@ -781,12 +787,50 @@ fn parse_with_optional_scanner<'a>(
     runtime.parse_compact_with_report(input)
 }
 
+fn parse_source_with_optional_recovery<'a>(
+    runtime: RuntimeParser<'a>,
+    scanner: Option<&'a dyn ReducedExternalScanner>,
+    input: &str,
+) -> Result<PlaygroundParseReport, ReducedParseError> {
+    let runtime = match scanner {
+        Some(scanner) => runtime.with_external_scanner(scanner),
+        None => runtime,
+    };
+    match runtime.parse_compact_with_report(input) {
+        Ok(report) => Ok(PlaygroundParseReport {
+            report,
+            strict_error: None,
+        }),
+        Err(strict_error) => match runtime.parse_recovering_compact_with_report(input) {
+            Ok(report) => Ok(PlaygroundParseReport {
+                report,
+                strict_error: Some(strict_error),
+            }),
+            Err(_) => Err(strict_error),
+        },
+    }
+}
+
+struct PlaygroundParseReport {
+    report: RuntimeParseReport,
+    strict_error: Option<ReducedParseError>,
+}
+
 fn diagnostic(stage: &str, message: String, primary_span: Option<DiagnosticSpan>) -> Diagnostic {
     Diagnostic {
         stage: stage.to_owned(),
         message,
         primary_span,
     }
+}
+
+fn accepted_problem_span(events: &[TreeEvent], input: &str) -> Option<DiagnosticSpan> {
+    events.iter().find_map(|event| match event {
+        TreeEvent::Error { bytes, .. } | TreeEvent::Missing { bytes, .. } => {
+            diagnostic_span(input, bytes.start().get() as usize)
+        }
+        _ => None,
+    })
 }
 
 fn reduced_error_diagnostic(stage: &str, error: &ReducedParseError, input: &str) -> Diagnostic {
@@ -1770,10 +1814,74 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("could not lex a token")
+                .contains("accepted parse contains")
         );
-        assert!(response.parse.is_none());
-        assert!(response.highlights.is_empty());
+        let parse = response.parse.as_ref().expect("recovered parse output");
+        assert!(parse.accepted_error_count > 0);
+        assert_eq!(parse.accepted_missing_count, 0);
+        assert!(parse.sexp.contains("(ERROR"));
+        assert!(!response.highlights.is_empty());
+    }
+
+    #[test]
+    fn arborium_nginx_sample_recovers_but_is_not_clean() {
+        let def = std::path::Path::new("/Users/amos/oss/arborium/langs/group-maple/nginx/def");
+        if !def.exists() {
+            return;
+        }
+
+        let grammar_js = std::fs::read_to_string(def.join("grammar/grammar.js"))
+            .expect("nginx grammar.js should be readable");
+        let grammar_json = snark_dsl::emit_with_boa(&def.join("grammar/grammar.js"))
+            .expect("nginx grammar.js should emit grammar JSON");
+        let highlights = std::fs::read_to_string(def.join("queries/highlights.scm"))
+            .expect("nginx highlights should be readable");
+        let sample = std::fs::read_to_string(def.join("samples/nginx.conf"))
+            .expect("nginx sample should be readable");
+
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "grammar.js".to_owned(),
+                    text: grammar_js,
+                },
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: grammar_json,
+                },
+                BundleFile {
+                    path: "queries/highlights.scm".to_owned(),
+                    text: highlights,
+                },
+            ],
+            input: sample,
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(!response.ok);
+        assert_eq!(response.language.as_deref(), Some("nginx"));
+        assert_eq!(response.diagnostics[0].stage, "parse");
+        assert!(
+            response.diagnostics[0]
+                .message
+                .contains("accepted parse contains")
+        );
+        assert_eq!(
+            response
+                .diagnostics
+                .first()
+                .and_then(|diagnostic| diagnostic.primary_span.as_ref())
+                .map(|span| (span.start_row, span.start_column)),
+            Some((110, 4))
+        );
+        let parse = response.parse.as_ref().expect("recovered parse is shown");
+        assert!(parse.accepted_error_count > 0);
+        assert_eq!(parse.accepted_missing_count, 0);
+        assert!(parse.sexp.contains("(ERROR"));
+        assert!(!response.highlights.is_empty());
     }
 
     #[test]
