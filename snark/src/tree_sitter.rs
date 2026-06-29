@@ -2005,6 +2005,82 @@ mod tests {
 
     #[cfg(feature = "weavy-lowering")]
     #[test]
+    fn parses_pinned_css_important_declarations_through_weavy_runtime_stack_tree() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let declaration_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/declarations.txt")
+            .unwrap();
+        let declaration_cases = declaration_fixture.parse_cases().unwrap();
+
+        assert_eq!(declaration_cases[7].name, "Important declarations");
+        let scanner = CssReducedExternalScanner;
+        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .with_external_scanner(&scanner)
+            .parse_with_report(&declaration_cases[7].input)
+            .unwrap();
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &declaration_cases[7].input,
+            Some(&scanner),
+        )
+        .unwrap();
+
+        assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
+        assert_eq!(
+            weavy_report.accepted_count(),
+            runtime_report.accepted_count()
+        );
+        assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
+        assert_eq!(
+            weavy_report.max_live_versions(),
+            runtime_report.max_live_versions()
+        );
+        assert!(
+            weavy_report
+                .trace_events()
+                .iter()
+                .any(|event| matches!(event, crate::parser::TraceEvent::GlrSplit { .. })),
+            "expected Weavy-carried runtime execution to emit a GLR split"
+        );
+        assert!(
+            weavy_report
+                .trace_events()
+                .iter()
+                .any(|event| matches!(event, crate::parser::TraceEvent::GlrRetire { .. })),
+            "expected Weavy-carried runtime execution to retire a branch"
+        );
+        assert!(
+            weavy_report
+                .tree_events()
+                .iter()
+                .any(|event| matches!(event, crate::parser::TreeEvent::Reduce { .. })),
+            "expected Weavy-carried runtime tree execution to emit reduce tree events"
+        );
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
     fn parses_pinned_css_important_declarations_through_weavy_glr_conflict() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
             .import()

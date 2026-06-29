@@ -23,6 +23,7 @@ use crate::{
     corpus::{SexpChild, SexpNode, SexpValue},
     parser as parser_ir,
     parser::{ReducedExternalScan, ReducedExternalScanner},
+    runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
     validated::{GrammarExpr, GrammarExprId, StaticPrecedenceValue, ValidatedGrammar},
 };
 
@@ -1097,6 +1098,198 @@ impl ReducedWeavyReport {
     }
 }
 
+/// Execute a runtime stack/tree parser plan through Weavy and return runtime evidence.
+pub fn parse_runtime_with_report(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+    parse_runtime_with_report_and_scanner(plan, grammar, parser, table, input, None)
+}
+
+/// Execute a runtime stack/tree parser plan through Weavy with a reduced scanner host.
+pub fn parse_runtime_with_report_and_scanner(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+    if parser.stage() != parser_ir::ParserGenerationStage::Productions {
+        return Err(ReducedWeavyError::WrongStage {
+            stage: parser.stage(),
+        });
+    }
+
+    let mut tree_store = RuntimeWeavyTreeStore::default();
+    let mut trace_events = Vec::new();
+    let mut tree_events = Vec::new();
+    trace_events.push(parser_ir::TraceEvent::ParseStart {
+        id: parser_ir::TraceEventId::from_index(0),
+        state: parser_ir::ParseStateId::from_index(0),
+    });
+    trace_events.push(parser_ir::TraceEvent::StateEnter {
+        id: parser_ir::TraceEventId::from_index(1),
+        version: parser_ir::StackVersionId::from_index(0),
+        state: parser_ir::ParseStateId::from_index(0),
+    });
+
+    let mut branches = VecDeque::from([RuntimeWeavyBranch {
+        version: parser_ir::StackVersionId::from_index(0),
+        stack: vec![RuntimeWeavyStackEntry {
+            state: parser_ir::ParseStateId::from_index(0),
+            fragment: None,
+            extra: false,
+            end_byte: 0,
+        }],
+        byte_position: 0,
+    }]);
+    let mut accepted = Vec::<SexpNode>::new();
+    let mut failures = Vec::<ReducedWeavyError>::new();
+    let mut next_version_index = 1usize;
+    let mut next_lookahead_index = 0usize;
+    let mut step_count = 0usize;
+    let step_limit = reduced_weavy_step_limit(table, input);
+    let mut max_live_versions = branches.len();
+    let mut stats = RunStats::default();
+
+    while let Some(branch) = branches.pop_front() {
+        step_count += 1;
+        if step_count > step_limit {
+            trace_events.push(parser_ir::TraceEvent::GlrRetire {
+                version: branch.version,
+                reason: parser_ir::BranchRetireReason::Limit,
+            });
+            trace_events.push(parser_ir::TraceEvent::ParseFinish {
+                id: next_runtime_weavy_trace_id(&trace_events),
+                outcome: parser_ir::ParseOutcome::Failed,
+            });
+            return Err(ReducedWeavyError::BranchStepLimit { limit: step_limit });
+        }
+
+        for outcome in step_runtime_weavy_branch(
+            plan,
+            grammar,
+            parser,
+            table,
+            input,
+            external_scanner,
+            branch,
+            &mut tree_store,
+            &mut trace_events,
+            &mut tree_events,
+            &mut next_version_index,
+            &mut next_lookahead_index,
+            &mut stats,
+        ) {
+            match outcome {
+                RuntimeWeavyStepOutcome::Branch(branch) => branches.push_back(branch),
+                RuntimeWeavyStepOutcome::Accepted { version, node } => {
+                    trace_events.push(parser_ir::TraceEvent::GlrRetire {
+                        version,
+                        reason: parser_ir::BranchRetireReason::Accepted,
+                    });
+                    accepted.push(node);
+                }
+                RuntimeWeavyStepOutcome::Failed { version, error } => {
+                    trace_events.push(parser_ir::TraceEvent::GlrRetire {
+                        version,
+                        reason: parser_ir::BranchRetireReason::NoAction,
+                    });
+                    failures.push(error);
+                }
+            }
+        }
+        max_live_versions = max_live_versions.max(branches.len());
+    }
+
+    let Some(first_node) = accepted.first().cloned() else {
+        trace_events.push(parser_ir::TraceEvent::ParseFinish {
+            id: next_runtime_weavy_trace_id(&trace_events),
+            outcome: parser_ir::ParseOutcome::Failed,
+        });
+        return Err(ReducedWeavyError::NoViableBranch {
+            failure_count: failures.len(),
+        });
+    };
+    if accepted.iter().all(|node| *node == first_node) {
+        trace_events.push(parser_ir::TraceEvent::ParseFinish {
+            id: next_runtime_weavy_trace_id(&trace_events),
+            outcome: parser_ir::ParseOutcome::Accepted,
+        });
+        return Ok(RuntimeWeavyReport {
+            tree: first_node,
+            stats,
+            trace_events,
+            tree_events,
+            accepted_count: accepted.len(),
+            failure_count: failures.len(),
+            max_live_versions,
+        });
+    }
+
+    trace_events.push(parser_ir::TraceEvent::ParseFinish {
+        id: next_runtime_weavy_trace_id(&trace_events),
+        outcome: parser_ir::ParseOutcome::Failed,
+    });
+    Err(ReducedWeavyError::AmbiguousParse {
+        accepted_count: accepted.len(),
+        accepted: accepted.iter().map(SexpNode::to_sexp).collect(),
+    })
+}
+
+/// Runtime stack/tree parse report produced through lowered Weavy blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeWeavyReport {
+    tree: SexpNode,
+    stats: RunStats,
+    trace_events: Vec<parser_ir::TraceEvent>,
+    tree_events: Vec<parser_ir::TreeEvent>,
+    accepted_count: usize,
+    failure_count: usize,
+    max_live_versions: usize,
+}
+
+impl RuntimeWeavyReport {
+    /// Corpus-normalized accepted runtime tree.
+    pub const fn tree(&self) -> &SexpNode {
+        &self.tree
+    }
+
+    /// Weavy runner execution counters accumulated over block runs.
+    pub const fn stats(&self) -> RunStats {
+        self.stats
+    }
+
+    /// Structured parser trace events emitted during runtime execution.
+    pub fn trace_events(&self) -> &[parser_ir::TraceEvent] {
+        &self.trace_events
+    }
+
+    /// Runtime tree events emitted during runtime execution.
+    pub fn tree_events(&self) -> &[parser_ir::TreeEvent] {
+        &self.tree_events
+    }
+
+    /// Number of accepted runtime branches before identical-tree coalescing.
+    pub const fn accepted_count(&self) -> usize {
+        self.accepted_count
+    }
+
+    /// Number of branch failures observed while exploring the runtime table.
+    pub const fn failure_count(&self) -> usize {
+        self.failure_count
+    }
+
+    /// Maximum number of queued live runtime stack versions observed.
+    pub const fn max_live_versions(&self) -> usize {
+        self.max_live_versions
+    }
+}
+
 fn step_reduced_weavy_branch(
     plan: &ReducedWeavyPlan,
     grammar: &ValidatedGrammar,
@@ -1337,6 +1530,285 @@ enum ReducedWeavyStepOutcome {
         branch: parser_ir::ReducedBranchId,
         error: ReducedWeavyError,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeWeavyBranch {
+    version: parser_ir::StackVersionId,
+    stack: Vec<RuntimeWeavyStackEntry>,
+    byte_position: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RuntimeWeavyStepOutcome {
+    Branch(RuntimeWeavyBranch),
+    Accepted {
+        version: parser_ir::StackVersionId,
+        node: SexpNode,
+    },
+    Failed {
+        version: parser_ir::StackVersionId,
+        error: ReducedWeavyError,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeWeavyDispatch {
+    state: parser_ir::ParseStateId,
+    token: ReducedWeavyToken,
+    actions: Vec<parser_ir::ParseAction>,
+}
+
+fn step_runtime_weavy_branch(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+    branch: RuntimeWeavyBranch,
+    tree_store: &mut RuntimeWeavyTreeStore,
+    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    tree_events: &mut Vec<parser_ir::TreeEvent>,
+    next_version_index: &mut usize,
+    next_lookahead_index: &mut usize,
+    stats: &mut RunStats,
+) -> Vec<RuntimeWeavyStepOutcome> {
+    let source_version = branch.version;
+    let state = match branch.stack.last() {
+        Some(entry) => entry.state,
+        None => {
+            return vec![RuntimeWeavyStepOutcome::Failed {
+                version: source_version,
+                error: ReducedWeavyError::EmptyStack,
+            }];
+        }
+    };
+    let lookahead = parser_ir::LookaheadTokenId::from_index(*next_lookahead_index);
+    *next_lookahead_index += 1;
+    let dispatch = match run_runtime_weavy_state_probe(
+        plan,
+        grammar,
+        parser,
+        table,
+        input,
+        external_scanner,
+        branch.clone(),
+        lookahead,
+        tree_store,
+        trace_events,
+        tree_events,
+        stats,
+    ) {
+        Ok(dispatch) => dispatch,
+        Err(error) => {
+            return vec![RuntimeWeavyStepOutcome::Failed {
+                version: source_version,
+                error,
+            }];
+        }
+    };
+
+    if dispatch.actions.len() > 1 {
+        let versions = (0..dispatch.actions.len())
+            .map(|_| {
+                let version = parser_ir::StackVersionId::from_index(*next_version_index);
+                *next_version_index += 1;
+                version
+            })
+            .collect::<Vec<_>>();
+        let conflict =
+            runtime_weavy_conflict_id(table, state, dispatch.token.lookahead, &dispatch.actions);
+        trace_events.push(parser_ir::TraceEvent::GlrSplit {
+            source: source_version,
+            conflict,
+            branches: versions.clone(),
+        });
+        return dispatch
+            .actions
+            .iter()
+            .zip(versions)
+            .map(|(action, version)| {
+                let mut branch = branch.clone();
+                branch.version = version;
+                run_runtime_weavy_action(
+                    plan,
+                    grammar,
+                    parser,
+                    table,
+                    input,
+                    external_scanner,
+                    branch,
+                    dispatch.token,
+                    lookahead,
+                    state,
+                    *action,
+                    tree_store,
+                    trace_events,
+                    tree_events,
+                    stats,
+                )
+            })
+            .collect();
+    }
+
+    let action = dispatch.actions[0];
+    vec![run_runtime_weavy_action(
+        plan,
+        grammar,
+        parser,
+        table,
+        input,
+        external_scanner,
+        branch,
+        dispatch.token,
+        lookahead,
+        state,
+        action,
+        tree_store,
+        trace_events,
+        tree_events,
+        stats,
+    )]
+}
+
+fn run_runtime_weavy_state_probe(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+    branch: RuntimeWeavyBranch,
+    lookahead: parser_ir::LookaheadTokenId,
+    tree_store: &mut RuntimeWeavyTreeStore,
+    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    tree_events: &mut Vec<parser_ir::TreeEvent>,
+    stats: &mut RunStats,
+) -> Result<RuntimeWeavyDispatch, ReducedWeavyError> {
+    let state = branch
+        .stack
+        .last()
+        .ok_or(ReducedWeavyError::EmptyStack)?
+        .state;
+    let block = plan.state_block(state)?;
+    let mut stepper = RuntimeWeavyStepper::from_branch(
+        plan,
+        grammar,
+        parser,
+        table,
+        input,
+        external_scanner,
+        branch,
+        lookahead,
+        RuntimeWeavyMode::ProbeState,
+        tree_store,
+        trace_events,
+        tree_events,
+    );
+    let run_stats = run_runtime_weavy_block(plan, block, &mut stepper)?;
+    add_run_stats(stats, run_stats);
+    stepper.dispatch.ok_or(ReducedWeavyError::NoAction {
+        state,
+        lookahead: stepper
+            .lookahead
+            .map(|token| token.lookahead)
+            .unwrap_or(parser_ir::LookaheadSymbol::Eof),
+        byte_position: stepper.byte_position,
+    })
+}
+
+fn run_runtime_weavy_action(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+    branch: RuntimeWeavyBranch,
+    token: ReducedWeavyToken,
+    lookahead: parser_ir::LookaheadTokenId,
+    state: parser_ir::ParseStateId,
+    action: parser_ir::ParseAction,
+    tree_store: &mut RuntimeWeavyTreeStore,
+    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    tree_events: &mut Vec<parser_ir::TreeEvent>,
+    stats: &mut RunStats,
+) -> RuntimeWeavyStepOutcome {
+    let block = match plan.action_block(state, token.lookahead, action) {
+        Ok(block) => block,
+        Err(error) => {
+            return RuntimeWeavyStepOutcome::Failed {
+                version: branch.version,
+                error,
+            };
+        }
+    };
+    let mut stepper = RuntimeWeavyStepper::from_branch(
+        plan,
+        grammar,
+        parser,
+        table,
+        input,
+        external_scanner,
+        branch,
+        lookahead,
+        RuntimeWeavyMode::ApplyAction,
+        tree_store,
+        trace_events,
+        tree_events,
+    );
+    stepper.lookahead = Some(token);
+    let version = stepper.version;
+    match run_runtime_weavy_block(plan, block, &mut stepper) {
+        Ok(run_stats) => add_run_stats(stats, run_stats),
+        Err(error) => {
+            return RuntimeWeavyStepOutcome::Failed { version, error };
+        }
+    }
+    if let Some(node) = stepper.tree {
+        RuntimeWeavyStepOutcome::Accepted { version, node }
+    } else {
+        RuntimeWeavyStepOutcome::Branch(RuntimeWeavyBranch {
+            version,
+            stack: stepper.stack,
+            byte_position: stepper.byte_position,
+        })
+    }
+}
+
+fn run_runtime_weavy_block(
+    plan: &ReducedWeavyPlan,
+    block: SnarkBlockId,
+    stepper: &mut RuntimeWeavyStepper<'_>,
+) -> Result<RunStats, ReducedWeavyError> {
+    let trampoline = [WeavyOp::Control(ControlOp::CallBlock {
+        block,
+        base_offset: 0,
+    })];
+    match weavy::run_program_with_stats(&trampoline, &plan.lowered.blocks, stepper) {
+        Ok(stats) => Ok(stats),
+        Err(RunError::MissingBlock(block)) => Err(ReducedWeavyError::MissingBlock { block }),
+        Err(RunError::Step(error)) => Err(error),
+    }
+}
+
+fn runtime_weavy_conflict_id(
+    table: &parser_ir::ParseTable,
+    state: parser_ir::ParseStateId,
+    lookahead: parser_ir::LookaheadSymbol,
+    actions: &[parser_ir::ParseAction],
+) -> parser_ir::ConflictId {
+    table
+        .conflicts()
+        .iter()
+        .find(|conflict| {
+            conflict.state() == state
+                && conflict.lookahead() == lookahead
+                && conflict.actions() == actions
+        })
+        .map(parser_ir::TableConflict::id)
+        .unwrap_or_else(|| parser_ir::ConflictId::from_index(0))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2086,6 +2558,552 @@ impl<'program> Step<'program, SnarkBlockId, SnarkWeavyOp> for ReducedWeavySteppe
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeWeavyMode {
+    ProbeState,
+    ApplyAction,
+}
+
+struct RuntimeWeavyStepper<'a> {
+    plan: &'a ReducedWeavyPlan,
+    grammar: &'a ValidatedGrammar,
+    parser: &'a parser_ir::ParserGrammar,
+    table: &'a parser_ir::ParseTable,
+    input: &'a str,
+    external_scanner: Option<&'a dyn ReducedExternalScanner>,
+    stack: Vec<RuntimeWeavyStackEntry>,
+    byte_position: usize,
+    committed_start: Option<usize>,
+    lookahead: Option<ReducedWeavyToken>,
+    lookahead_id: parser_ir::LookaheadTokenId,
+    tree: Option<SexpNode>,
+    mode: RuntimeWeavyMode,
+    dispatch: Option<RuntimeWeavyDispatch>,
+    version: parser_ir::StackVersionId,
+    tree_store: &'a mut RuntimeWeavyTreeStore,
+    trace_events: &'a mut Vec<parser_ir::TraceEvent>,
+    tree_events: &'a mut Vec<parser_ir::TreeEvent>,
+}
+
+impl<'a> RuntimeWeavyStepper<'a> {
+    #[allow(clippy::too_many_arguments)]
+    fn from_branch(
+        plan: &'a ReducedWeavyPlan,
+        grammar: &'a ValidatedGrammar,
+        parser: &'a parser_ir::ParserGrammar,
+        table: &'a parser_ir::ParseTable,
+        input: &'a str,
+        external_scanner: Option<&'a dyn ReducedExternalScanner>,
+        branch: RuntimeWeavyBranch,
+        lookahead_id: parser_ir::LookaheadTokenId,
+        mode: RuntimeWeavyMode,
+        tree_store: &'a mut RuntimeWeavyTreeStore,
+        trace_events: &'a mut Vec<parser_ir::TraceEvent>,
+        tree_events: &'a mut Vec<parser_ir::TreeEvent>,
+    ) -> Self {
+        Self {
+            plan,
+            grammar,
+            parser,
+            table,
+            input,
+            external_scanner,
+            stack: branch.stack,
+            byte_position: branch.byte_position,
+            committed_start: None,
+            lookahead: None,
+            lookahead_id,
+            tree: None,
+            mode,
+            dispatch: None,
+            version: branch.version,
+            tree_store,
+            trace_events,
+            tree_events,
+        }
+    }
+
+    fn step_intrinsic<'program>(
+        &mut self,
+        intrinsic: &SnarkIntrinsic,
+    ) -> Result<Control<'program, SnarkBlockId, SnarkWeavyOp, SnarkBlockId>, ReducedWeavyError>
+    {
+        match intrinsic {
+            SnarkIntrinsic::Lex { .. } => {
+                let state = self
+                    .stack
+                    .last()
+                    .ok_or(ReducedWeavyError::EmptyStack)?
+                    .state;
+                let state_row = self.parse_state(state)?;
+                let mode_id = state_row.lex_mode();
+                let token = self.lex(state_row, self.byte_position)?;
+                let valid_symbols = if let parser_ir::LookaheadSymbol::External(_) = token.lookahead
+                {
+                    self.table.lexical_modes()[mode_id.get() as usize].valid_symbols()
+                } else {
+                    None
+                };
+                self.trace_events.push(parser_ir::TraceEvent::Lex {
+                    version: self.version,
+                    mode: mode_id,
+                    lookahead: self.lookahead_id,
+                });
+                if let Some(valid_symbols) = valid_symbols {
+                    self.trace_events
+                        .push(parser_ir::TraceEvent::ExternalScanner {
+                            version: self.version,
+                            valid_symbols,
+                            before: None,
+                            after: None,
+                            result: Some(self.lookahead_id),
+                        });
+                }
+                self.lookahead = Some(token);
+                Ok(Control::Continue)
+            }
+            SnarkIntrinsic::DispatchActions { state, .. } => {
+                let state = parser_state(*state);
+                let token = self.lookahead.ok_or(ReducedWeavyError::NoToken {
+                    state,
+                    byte_position: self.byte_position,
+                    expected: Vec::new(),
+                })?;
+                let state_row = self.parse_state(state)?;
+                let entry = state_row
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.lookahead() == token.lookahead)
+                    .ok_or(ReducedWeavyError::NoAction {
+                        state,
+                        lookahead: token.lookahead,
+                        byte_position: self.byte_position,
+                    })?;
+                if self.mode == RuntimeWeavyMode::ProbeState {
+                    self.dispatch = Some(RuntimeWeavyDispatch {
+                        state,
+                        token,
+                        actions: entry.actions().to_vec(),
+                    });
+                    return Ok(Control::Return);
+                }
+                let [action] = entry.actions() else {
+                    return Err(ReducedWeavyError::UnsupportedConflict {
+                        state,
+                        lookahead: token.lookahead,
+                        action_count: entry.actions().len(),
+                    });
+                };
+                let block = self.plan.action_block(state, token.lookahead, *action)?;
+                Ok(Control::CallBlock(block))
+            }
+            SnarkIntrinsic::CommitLookahead { .. } => {
+                let token = self.lookahead.ok_or(ReducedWeavyError::NoToken {
+                    state: self
+                        .stack
+                        .last()
+                        .ok_or(ReducedWeavyError::EmptyStack)?
+                        .state,
+                    byte_position: self.byte_position,
+                    expected: Vec::new(),
+                })?;
+                self.committed_start = Some(self.byte_position);
+                self.byte_position = token.end;
+                Ok(Control::Continue)
+            }
+            SnarkIntrinsic::Shift { state, .. } => {
+                let state = parser_state(*state);
+                let token = self.lookahead.ok_or(ReducedWeavyError::NoToken {
+                    state,
+                    byte_position: self.byte_position,
+                    expected: Vec::new(),
+                })?;
+                let start = self.committed_start.take().unwrap_or(self.byte_position);
+                let (bytes, points) = runtime_weavy_input_ranges(self.input, start, token.end);
+                let event = parser_ir::TreeEvent::Token {
+                    symbol: runtime_weavy_lookahead_parser_symbol(token.lookahead),
+                    lookahead: self.lookahead_id,
+                    bytes,
+                    points,
+                    extra: false,
+                    named: false,
+                    keyword: parser_ir::KeywordStatus::Unchecked,
+                };
+                self.tree_events.push(event.clone());
+                self.trace_events.push(parser_ir::TraceEvent::Tree(event));
+                self.trace_events.push(parser_ir::TraceEvent::Shift {
+                    version: self.version,
+                    lookahead: self.lookahead_id,
+                    state,
+                });
+                self.trace_events.push(parser_ir::TraceEvent::StateEnter {
+                    id: next_runtime_weavy_trace_id(self.trace_events),
+                    version: self.version,
+                    state,
+                });
+                self.stack.push(RuntimeWeavyStackEntry {
+                    state,
+                    fragment: Some(RuntimeWeavyFragment::Hidden {
+                        children: Vec::new(),
+                        start_byte: start,
+                        end_byte: token.end,
+                    }),
+                    extra: false,
+                    end_byte: token.end,
+                });
+                if self.mode == RuntimeWeavyMode::ApplyAction {
+                    return Ok(Control::Continue);
+                }
+                Ok(Control::CallBlock(self.plan.state_block(state)?))
+            }
+            SnarkIntrinsic::ShiftExtra { state, .. } => {
+                let state = parser_state(*state);
+                let token = self.lookahead.ok_or(ReducedWeavyError::NoToken {
+                    state,
+                    byte_position: self.byte_position,
+                    expected: Vec::new(),
+                })?;
+                let start = self.committed_start.take().unwrap_or(self.byte_position);
+                if let Some(fragment) =
+                    self.runtime_extra_fragment(token.lookahead, start, token.end)
+                {
+                    self.stack.push(RuntimeWeavyStackEntry {
+                        state,
+                        fragment: Some(fragment),
+                        extra: true,
+                        end_byte: token.end,
+                    });
+                }
+                if self.mode == RuntimeWeavyMode::ApplyAction {
+                    return Ok(Control::Continue);
+                }
+                Ok(Control::CallBlock(self.plan.state_block(state)?))
+            }
+            SnarkIntrinsic::Reduce {
+                production,
+                metadata,
+                symbol,
+                child_count,
+                ..
+            } => {
+                let production = parser_production(*production);
+                let metadata = parser_metadata(*metadata);
+                let fragment = self.runtime_reduce_fragment(production, metadata, *child_count)?;
+                self.trace_events.push(parser_ir::TraceEvent::Reduce {
+                    version: self.version,
+                    production,
+                    metadata,
+                });
+                let head_state = self
+                    .stack
+                    .last()
+                    .ok_or(ReducedWeavyError::EmptyStack)?
+                    .state;
+                let symbol = parser_nonterminal(*symbol);
+                let goto = self.goto_state(head_state, symbol)?;
+                let (_start_byte, end_byte) = fragment.byte_range();
+                self.stack.push(RuntimeWeavyStackEntry {
+                    state: goto,
+                    fragment: Some(fragment),
+                    extra: false,
+                    end_byte,
+                });
+                self.trace_events.push(parser_ir::TraceEvent::StateEnter {
+                    id: next_runtime_weavy_trace_id(self.trace_events),
+                    version: self.version,
+                    state: goto,
+                });
+                if self.mode == RuntimeWeavyMode::ApplyAction {
+                    return Ok(Control::Continue);
+                }
+                Ok(Control::CallBlock(self.plan.state_block(goto)?))
+            }
+            SnarkIntrinsic::Accept {
+                production,
+                metadata,
+                child_count,
+                ..
+            } => {
+                let token = self.lookahead.ok_or(ReducedWeavyError::NoToken {
+                    state: self
+                        .stack
+                        .last()
+                        .ok_or(ReducedWeavyError::EmptyStack)?
+                        .state,
+                    byte_position: self.byte_position,
+                    expected: Vec::new(),
+                })?;
+                if token.lookahead != parser_ir::LookaheadSymbol::Eof
+                    || self.byte_position != self.input.len()
+                {
+                    return Err(ReducedWeavyError::TrailingInput {
+                        byte_position: self.byte_position,
+                    });
+                }
+                let production = parser_production(*production);
+                let metadata = parser_metadata(*metadata);
+                let fragment = self.runtime_reduce_fragment(production, metadata, *child_count)?;
+                self.trace_events.push(parser_ir::TraceEvent::Reduce {
+                    version: self.version,
+                    production,
+                    metadata,
+                });
+                let RuntimeWeavyFragment::Node { node, .. } = fragment else {
+                    return Err(ReducedWeavyError::AcceptedHiddenRoot);
+                };
+                self.tree = Some(self.finish_runtime_root(node)?);
+                Ok(Control::Return)
+            }
+            SnarkIntrinsic::Recover { state } => {
+                let state = parser_state(*state);
+                self.trace_events.push(parser_ir::TraceEvent::Recover {
+                    version: self.version,
+                    state,
+                });
+                Err(ReducedWeavyError::UnsupportedRecovery { state })
+            }
+            SnarkIntrinsic::CallExternalScanner { .. }
+            | SnarkIntrinsic::SplitGlr { .. }
+            | SnarkIntrinsic::MergeGlr { .. }
+            | SnarkIntrinsic::RetireBranch { .. }
+            | SnarkIntrinsic::EmitTrace { .. }
+            | SnarkIntrinsic::EmitNode { .. }
+            | SnarkIntrinsic::EmitTreeEvent { .. }
+            | SnarkIntrinsic::EmitCapture { .. }
+            | SnarkIntrinsic::RunQuery { .. } => Err(ReducedWeavyError::UnsupportedCanonicalOp),
+        }
+    }
+
+    fn parse_state(
+        &self,
+        state: parser_ir::ParseStateId,
+    ) -> Result<&parser_ir::ParseState, ReducedWeavyError> {
+        self.table
+            .states()
+            .get(state.get() as usize)
+            .ok_or(ReducedWeavyError::MissingState { state })
+    }
+
+    fn lex(
+        &self,
+        state: &parser_ir::ParseState,
+        byte_position: usize,
+    ) -> Result<ReducedWeavyToken, ReducedWeavyError> {
+        let probe = ReducedWeavyStepper {
+            plan: self.plan,
+            grammar: self.grammar,
+            parser: self.parser,
+            table: self.table,
+            input: self.input,
+            external_scanner: self.external_scanner,
+            stack: Vec::new(),
+            byte_position,
+            lookahead: None,
+            tree: None,
+            mode: ReducedWeavyMode::ProbeState,
+            dispatch: None,
+            branch: parser_ir::ReducedBranchId::from_index(0),
+        };
+        probe.lex(state, byte_position)
+    }
+
+    fn runtime_reduce_fragment(
+        &mut self,
+        production: parser_ir::ProductionId,
+        metadata: parser_ir::ProductionMetadataId,
+        child_count: usize,
+    ) -> Result<RuntimeWeavyFragment, ReducedWeavyError> {
+        let production_row = &self.parser.productions()[production.get() as usize];
+        let metadata_row = &self.parser.production_metadata()[metadata.get() as usize];
+        let mut children = Vec::new();
+        let mut popped = Vec::new();
+        let mut remaining_children = child_count;
+        while remaining_children > 0 {
+            let entry = self.stack.pop().ok_or(ReducedWeavyError::EmptyStack)?;
+            let Some(fragment) = entry.fragment else {
+                return Err(ReducedWeavyError::EmptyStack);
+            };
+            if !entry.extra {
+                remaining_children -= 1;
+            }
+            popped.push((entry.extra, fragment));
+        }
+        popped.reverse();
+        let start_byte = popped
+            .first()
+            .map(|(_, fragment)| fragment.byte_range().0)
+            .unwrap_or_else(|| self.stack.last().map(|entry| entry.end_byte).unwrap_or(0));
+        let end_byte = popped
+            .last()
+            .map(|(_, fragment)| fragment.byte_range().1)
+            .unwrap_or(start_byte);
+        let mut steps = production_row.steps().iter();
+        for (extra, fragment) in popped {
+            let mut step_children = fragment.into_children(self.tree_store);
+            if !extra {
+                let Some(step) = steps.next() else {
+                    return Err(ReducedWeavyError::EmptyStack);
+                };
+                if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
+                    let alias_name = self.parser.aliases()[alias.get() as usize]
+                        .value()
+                        .to_owned();
+                    if step_children.is_empty() {
+                        step_children.push(SexpChild {
+                            field: None,
+                            value: SexpValue::Node(SexpNode {
+                                kind: alias_name,
+                                children: Vec::new(),
+                            }),
+                        });
+                    } else {
+                        for child in &mut step_children {
+                            if let SexpValue::Node(node) = &mut child.value {
+                                node.kind.clone_from(&alias_name);
+                            }
+                        }
+                    }
+                }
+            }
+            children.extend(step_children);
+        }
+
+        if let Some(public_node) = metadata_row.public_node() {
+            let kind = self.parser.public_node_kinds()[public_node.get() as usize]
+                .name()
+                .to_owned();
+            let node = self.tree_store.push(SexpNode { kind, children });
+            let (bytes, points) = runtime_weavy_input_ranges(self.input, start_byte, end_byte);
+            self.tree_events.push(parser_ir::TreeEvent::Reduce {
+                production,
+                metadata,
+                node,
+                bytes,
+                points,
+            });
+            Ok(RuntimeWeavyFragment::Node {
+                node,
+                start_byte,
+                end_byte,
+            })
+        } else {
+            Ok(RuntimeWeavyFragment::Hidden {
+                children,
+                start_byte,
+                end_byte,
+            })
+        }
+    }
+
+    fn runtime_extra_fragment(
+        &mut self,
+        lookahead: parser_ir::LookaheadSymbol,
+        start_byte: usize,
+        end_byte: usize,
+    ) -> Option<RuntimeWeavyFragment> {
+        let reduced_probe = ReducedWeavyStepper {
+            plan: self.plan,
+            grammar: self.grammar,
+            parser: self.parser,
+            table: self.table,
+            input: self.input,
+            external_scanner: self.external_scanner,
+            stack: Vec::new(),
+            byte_position: start_byte,
+            lookahead: None,
+            tree: None,
+            mode: ReducedWeavyMode::ProbeState,
+            dispatch: None,
+            branch: parser_ir::ReducedBranchId::from_index(0),
+        };
+        let ReducedWeavyFragment::Node(node) = reduced_probe.extra_fragment(lookahead)? else {
+            return None;
+        };
+        let node = self.tree_store.push(node);
+        let (bytes, points) = runtime_weavy_input_ranges(self.input, start_byte, end_byte);
+        self.tree_events.push(parser_ir::TreeEvent::CloseNode {
+            node,
+            bytes,
+            points,
+        });
+        Some(RuntimeWeavyFragment::Node {
+            node,
+            start_byte,
+            end_byte,
+        })
+    }
+
+    fn finish_runtime_root(
+        &mut self,
+        node: parser_ir::TreeNodeId,
+    ) -> Result<SexpNode, ReducedWeavyError> {
+        let mut root = self.tree_store.node(node).clone();
+        let mut leading_children = Vec::new();
+        for entry in self.stack.drain(..) {
+            match (entry.extra, entry.fragment) {
+                (_, None) => {}
+                (true, Some(fragment)) => {
+                    leading_children.extend(fragment.into_children(self.tree_store));
+                }
+                (false, Some(_)) => {
+                    return Err(ReducedWeavyError::UnreducedStackEntry { state: entry.state });
+                }
+            }
+        }
+        if !leading_children.is_empty() {
+            leading_children.extend(root.children);
+            root.children = leading_children;
+        }
+        Ok(root)
+    }
+
+    fn goto_state(
+        &self,
+        state: parser_ir::ParseStateId,
+        nonterminal: parser_ir::NonterminalId,
+    ) -> Result<parser_ir::ParseStateId, ReducedWeavyError> {
+        let state_row = self.parse_state(state)?;
+        state_row
+            .gotos()
+            .iter()
+            .find(|goto| goto.nonterminal() == nonterminal)
+            .map(parser_ir::GotoEntry::state)
+            .ok_or(ReducedWeavyError::MissingGoto { state, nonterminal })
+    }
+}
+
+impl<'program> Step<'program, SnarkBlockId, SnarkWeavyOp> for RuntimeWeavyStepper<'_> {
+    type Error = ReducedWeavyError;
+    type Continuation = SnarkBlockId;
+
+    fn step(
+        &mut self,
+        op: &'program SnarkWeavyOp,
+    ) -> Result<Control<'program, SnarkBlockId, SnarkWeavyOp, Self::Continuation>, Self::Error>
+    {
+        match op {
+            WeavyOp::Control(ControlOp::CallBlock { block, .. }) => Ok(Control::CallBlock(*block)),
+            WeavyOp::Control(ControlOp::CallBlockThen { block, then, .. }) => {
+                Ok(Control::CallBlockThen(*block, *then))
+            }
+            WeavyOp::Control(ControlOp::Return) => Ok(Control::Return),
+            WeavyOp::Intrinsic(intrinsic) => self.step_intrinsic(intrinsic),
+            WeavyOp::Memory(_) | WeavyOp::Init(_) | WeavyOp::Aggregate(_) => {
+                Err(ReducedWeavyError::UnsupportedCanonicalOp)
+            }
+            _ => Err(ReducedWeavyError::UnsupportedCanonicalOp),
+        }
+    }
+
+    fn after_return(
+        &mut self,
+        continuation: Self::Continuation,
+    ) -> Result<Control<'program, SnarkBlockId, SnarkWeavyOp, Self::Continuation>, Self::Error>
+    {
+        Ok(Control::CallBlock(continuation))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReducedWeavyToken {
     lookahead: parser_ir::LookaheadSymbol,
     end: usize,
@@ -2269,6 +3287,72 @@ impl ReducedWeavyFragment {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RuntimeWeavyStackEntry {
+    state: parser_ir::ParseStateId,
+    fragment: Option<RuntimeWeavyFragment>,
+    extra: bool,
+    end_byte: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RuntimeWeavyFragment {
+    Hidden {
+        children: Vec<SexpChild>,
+        start_byte: usize,
+        end_byte: usize,
+    },
+    Node {
+        node: parser_ir::TreeNodeId,
+        start_byte: usize,
+        end_byte: usize,
+    },
+}
+
+impl RuntimeWeavyFragment {
+    const fn byte_range(&self) -> (usize, usize) {
+        match self {
+            Self::Hidden {
+                start_byte,
+                end_byte,
+                ..
+            }
+            | Self::Node {
+                start_byte,
+                end_byte,
+                ..
+            } => (*start_byte, *end_byte),
+        }
+    }
+
+    fn into_children(self, tree_store: &RuntimeWeavyTreeStore) -> Vec<SexpChild> {
+        match self {
+            Self::Hidden { children, .. } => children,
+            Self::Node { node, .. } => vec![SexpChild {
+                field: None,
+                value: SexpValue::Node(tree_store.node(node).clone()),
+            }],
+        }
+    }
+}
+
+#[derive(Default)]
+struct RuntimeWeavyTreeStore {
+    nodes: Vec<SexpNode>,
+}
+
+impl RuntimeWeavyTreeStore {
+    fn push(&mut self, node: SexpNode) -> parser_ir::TreeNodeId {
+        let id = parser_ir::TreeNodeId::from_index(self.nodes.len());
+        self.nodes.push(node);
+        id
+    }
+
+    fn node(&self, id: parser_ir::TreeNodeId) -> &SexpNode {
+        &self.nodes[id.get() as usize]
+    }
+}
+
 fn parser_state(id: ParseStateId) -> parser_ir::ParseStateId {
     parser_ir::ParseStateId::from_index(id.get() as usize)
 }
@@ -2283,6 +3367,58 @@ fn parser_production(id: ProductionId) -> parser_ir::ProductionId {
 
 fn parser_metadata(id: ProductionMetadataId) -> parser_ir::ProductionMetadataId {
     parser_ir::ProductionMetadataId::from_index(id.get() as usize)
+}
+
+fn next_runtime_weavy_trace_id(events: &[parser_ir::TraceEvent]) -> parser_ir::TraceEventId {
+    parser_ir::TraceEventId::from_index(events.len())
+}
+
+fn runtime_weavy_lookahead_parser_symbol(
+    lookahead: parser_ir::LookaheadSymbol,
+) -> parser_ir::ParserSymbol {
+    match lookahead {
+        parser_ir::LookaheadSymbol::Terminal(terminal)
+        | parser_ir::LookaheadSymbol::ReservedWord { terminal, .. } => {
+            parser_ir::ParserSymbol::Terminal(terminal)
+        }
+        parser_ir::LookaheadSymbol::External(external) => {
+            parser_ir::ParserSymbol::External(external)
+        }
+        parser_ir::LookaheadSymbol::Eof => parser_ir::ParserSymbol::Eof,
+        parser_ir::LookaheadSymbol::ErrorRecovery(internal) => {
+            parser_ir::ParserSymbol::Internal(internal)
+        }
+    }
+}
+
+fn runtime_weavy_input_ranges(input: &str, start: usize, end: usize) -> (ByteRange, PointRange) {
+    let start = start.min(input.len());
+    let end = end.min(input.len()).max(start);
+    let bytes = ByteRange::new(
+        ByteOffset::new(u32::try_from(start).expect("runtime byte offset fits u32")),
+        ByteOffset::new(u32::try_from(end).expect("runtime byte offset fits u32")),
+    )
+    .expect("runtime byte range is ordered");
+    let points = PointRange::new(
+        runtime_weavy_input_point_at(input, start),
+        runtime_weavy_input_point_at(input, end),
+    )
+    .expect("runtime point range is ordered");
+    (bytes, points)
+}
+
+fn runtime_weavy_input_point_at(input: &str, byte: usize) -> PointBytes {
+    let mut row = 0u32;
+    let mut column = 0u32;
+    for ch in input[..byte.min(input.len())].chars() {
+        if ch == '\n' {
+            row += 1;
+            column = 0;
+        } else {
+            column += u32::try_from(ch.len_utf8()).expect("UTF-8 codepoint length fits u32");
+        }
+    }
+    PointBytes::new(Row::new(row), Utf8ColumnBytes::new(column))
 }
 
 #[cfg(test)]
