@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import init, { parseBundle } from "@bearcove/snark-wasm";
+import { SourceEditor } from "./editor";
+import { captureClass } from "./highlight";
+import { nginxDefaultFiles } from "./bundled/nginx";
 import {
   discoverGrammarRoots,
   filesWithGrammarJson,
@@ -121,65 +123,15 @@ type PlaygroundResponse = {
 
 const wasmReady = init();
 
-const defaultFiles: BundleFile[] = [
-  {
-    path: "src/grammar.json",
-    text: JSON.stringify(
-      {
-        name: "mini_playground",
-        rules: {
-          document: {
-            type: "REPEAT1",
-            content: { type: "SYMBOL", name: "item" },
-          },
-          item: {
-            type: "CHOICE",
-            members: [
-              { type: "SYMBOL", name: "identifier" },
-              { type: "SYMBOL", name: "number" },
-            ],
-          },
-          identifier: {
-            type: "PATTERN",
-            value: "[A-Za-z_][A-Za-z0-9_]*",
-          },
-          number: {
-            type: "PATTERN",
-            value: "\\d+",
-          },
-        },
-        extras: [{ type: "PATTERN", value: "\\s" }],
-      },
-      null,
-      2,
-    ),
-  },
-  {
-    path: "queries/highlights.scm",
-    text: "(identifier) @variable\n(number) @number\n",
-  },
-  {
-    path: "test/corpus/main.txt",
-    text: [
-      "==================",
-      "Words and numbers",
-      "==================",
-      "",
-      "alpha 42 beta",
-      "",
-      "------------------",
-      "",
-      "(document (item (identifier)) (item (number)) (item (identifier)))",
-      "",
-    ].join("\n"),
-  },
-];
+const defaultFiles: BundleFile[] = nginxDefaultFiles;
+const defaultGrammarRoot = preferredGrammarRootId(defaultFiles);
+const defaultSample = firstSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
 
 export function App() {
   const [files, setFiles] = useState<BundleFile[]>(defaultFiles);
-  const [selectedGrammarRoot, setSelectedGrammarRoot] = useState("");
-  const [selectedSamplePath, setSelectedSamplePath] = useState("");
-  const [input, setInput] = useState("alpha 42 beta");
+  const [selectedGrammarRoot, setSelectedGrammarRoot] = useState(defaultGrammarRoot);
+  const [selectedSamplePath, setSelectedSamplePath] = useState(defaultSample?.sourcePath ?? "");
+  const [input, setInput] = useState(defaultSample?.text ?? "");
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
   const parseRequestId = useRef(0);
@@ -213,6 +165,14 @@ export function App() {
     [projectedFiles],
   );
   const busy = busyTask !== null;
+
+  const editorCaptures = useMemo(() => (result?.ok ? result.highlights : []), [result]);
+  const editorDiagnostic = useMemo(() => {
+    const found = placedDiagnostic(result);
+    return found?.primary_span
+      ? { stage: found.stage, message: found.message, span: found.primary_span }
+      : null;
+  }, [result]);
 
   useEffect(() => {
     const requestId = parseRequestId.current + 1;
@@ -407,7 +367,12 @@ export function App() {
           </div>
         </div>
 
-        <Editor input={input} result={result} onChange={(value) => updateSourceInput(value)} />
+        <SourceEditor
+          input={input}
+          captures={editorCaptures}
+          diagnostic={editorDiagnostic}
+          onChange={(value) => updateSourceInput(value)}
+        />
 
         <ResultsDock result={result} onUseInput={(value) => updateSourceInput(value)} />
       </section>
@@ -466,125 +431,6 @@ function StatusPill({
   );
 }
 
-const LINT_HEIGHT = 84;
-
-function Editor({
-  input,
-  result,
-  onChange,
-}: {
-  input: string;
-  result: PlaygroundResponse | null;
-  onChange: (value: string) => void;
-}) {
-  const diagnostic = placedDiagnostic(result);
-  const span = diagnostic?.primary_span ?? null;
-  const errorLine = span ? span.start_row : null;
-  const lines = useMemo(() => input.split("\n"), [input]);
-  const highlightNodes = useMemo(() => renderSourceLayer(input, result), [input, result]);
-  const hasInlineLint = diagnostic !== null && span !== null && errorLine !== null;
-
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const codeLayerRef = useRef<HTMLPreElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
-
-  // Keep the highlight + gutter layers locked to the textarea's scroll position.
-  // This runs synchronously inside the scroll event (and after every render) so the
-  // visible code never lags behind the textarea the way a React state round-trip would.
-  const syncScroll = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    const { scrollLeft, scrollTop } = textarea;
-    if (codeLayerRef.current) {
-      codeLayerRef.current.style.transform = `translate(${-scrollLeft}px, ${-scrollTop}px)`;
-    }
-    if (gutterRef.current) {
-      gutterRef.current.style.transform = `translateY(${-scrollTop}px)`;
-    }
-  }, []);
-
-  useLayoutEffect(() => {
-    syncScroll();
-  });
-
-  const gutter: ReactNode[] = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    gutter.push(
-      <span className={i === errorLine ? "ln err" : "ln"} key={`ln-${i}`}>
-        {i + 1}
-      </span>,
-    );
-    if (i === errorLine) {
-      gutter.push(<span className="ln-spacer" key="ln-spacer" aria-hidden="true" />);
-    }
-  }
-
-  let codeContent: ReactNode;
-  if (hasInlineLint && span && errorLine !== null && diagnostic) {
-    codeContent = lines.map((lineText, i) => {
-      if (i !== errorLine) {
-        return (
-          <span className="src-line" key={`l-${i}`}>
-            {lineText}
-            {i < lines.length - 1 ? "\n" : ""}
-          </span>
-        );
-      }
-      const c0 = Math.min(span.start_column, lineText.length);
-      const c1 = span.end_row === span.start_row ? Math.min(span.end_column, lineText.length) : lineText.length;
-      const token = lineText.slice(c0, Math.max(c0, c1)) || " ";
-      return (
-        <Fragment key={`l-${i}`}>
-          <span className="src-line err-line">
-            {lineText.slice(0, c0)}
-            <span className="err-token">{token}</span>
-            {lineText.slice(Math.max(c0, c1))}
-            {"\n"}
-          </span>
-          <span className="code-lint" style={{ height: LINT_HEIGHT }}>
-            <span className="code-lint-head">
-              <span className="code-lint-stage">{diagnostic.stage}</span>
-              <span className="code-lint-loc">
-                {span.start_row + 1}:{span.start_column + 1}
-              </span>
-            </span>
-            <span className="code-lint-body">{diagnostic.message}</span>
-          </span>
-        </Fragment>
-      );
-    });
-  } else if (highlightNodes) {
-    codeContent = highlightNodes;
-  } else {
-    codeContent = input;
-  }
-
-  return (
-    <div className="editor">
-      <div className="gutter-viewport">
-        <div className="gutter" ref={gutterRef}>
-          {gutter}
-        </div>
-      </div>
-      <div className="code-viewport">
-        <pre aria-hidden="true" className="code-layer" ref={codeLayerRef}>
-          {codeContent}
-        </pre>
-        <textarea
-          ref={textareaRef}
-          className={hasInlineLint ? "with-lint" : ""}
-          value={input}
-          spellCheck={false}
-          wrap="off"
-          onChange={(event) => onChange(event.currentTarget.value)}
-          onScroll={syncScroll}
-        />
-      </div>
-    </div>
-  );
-}
 
 function ResultsDock({
   result,
@@ -909,131 +755,6 @@ function isRuntimeBundlePath(path: string) {
   );
 }
 
-function renderHighlightedSource(input: string, captures: HighlightOutput[]) {
-  if (input.length === 0) {
-    return "";
-  }
-  const byteToStringIndex = byteOffsetMap(input);
-  const selected = nonOverlappingCaptures(captures, byteToStringIndex, input.length);
-  if (selected.length === 0) {
-    return input;
-  }
-
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-  for (const capture of selected) {
-    if (capture.startIndex > cursor) {
-      nodes.push(input.slice(cursor, capture.startIndex));
-    }
-    nodes.push(
-      <span
-        className={`source-capture ${captureClass(capture.capture.capture_name)}`}
-        key={`${capture.capture.capture_name}-${capture.capture.start_byte}-${capture.capture.end_byte}`}
-      >
-        {input.slice(capture.startIndex, capture.endIndex)}
-      </span>,
-    );
-    cursor = capture.endIndex;
-  }
-  if (cursor < input.length) {
-    nodes.push(input.slice(cursor));
-  }
-  return nodes;
-}
-
-function renderSourceLayer(input: string, result: PlaygroundResponse | null) {
-  if (!result || !result.ok) {
-    return null;
-  }
-  if (result.highlights.length === 0) {
-    return null;
-  }
-  return renderHighlightedSource(input, result.highlights);
-}
-
 function placedDiagnostic(result: PlaygroundResponse | null) {
   return result?.diagnostics.find((candidate) => candidate.primary_span) ?? null;
-}
-
-function nonOverlappingCaptures(
-  captures: HighlightOutput[],
-  byteToStringIndex: number[],
-  inputLength: number,
-) {
-  return captures
-    .map((capture) => ({
-      capture,
-      startIndex: byteToStringIndex[capture.start_byte] ?? inputLength,
-      endIndex: byteToStringIndex[capture.end_byte] ?? inputLength,
-    }))
-    .filter((capture) => capture.startIndex < capture.endIndex)
-    .sort((left, right) => {
-      if (left.startIndex !== right.startIndex) {
-        return left.startIndex - right.startIndex;
-      }
-      if (left.endIndex !== right.endIndex) {
-        return right.endIndex - left.endIndex;
-      }
-      return left.capture.capture_name.localeCompare(right.capture.capture_name);
-    })
-    .reduce<Array<{ capture: HighlightOutput; startIndex: number; endIndex: number }>>(
-      (selected, capture) => {
-        const previous = selected[selected.length - 1];
-        if (!previous || capture.startIndex >= previous.endIndex) {
-          selected.push(capture);
-        }
-        return selected;
-      },
-      [],
-    );
-}
-
-function byteOffsetMap(input: string) {
-  const encoder = new TextEncoder();
-  const totalBytes = encoder.encode(input).length;
-  const map = new Array<number>(totalBytes + 1);
-  let byteOffset = 0;
-  let stringIndex = 0;
-  map[0] = 0;
-  for (const char of input) {
-    const nextByteOffset = byteOffset + encoder.encode(char).length;
-    const nextStringIndex = stringIndex + char.length;
-    for (let byte = byteOffset; byte < nextByteOffset; byte += 1) {
-      map[byte] = stringIndex;
-    }
-    map[nextByteOffset] = nextStringIndex;
-    byteOffset = nextByteOffset;
-    stringIndex = nextStringIndex;
-  }
-  return map;
-}
-
-function captureClass(captureName: string) {
-  const first = captureName.split(".")[0] ?? captureName;
-  switch (first) {
-    case "attribute":
-    case "property":
-      return "capture-property";
-    case "comment":
-      return "capture-comment";
-    case "constant":
-    case "number":
-      return "capture-number";
-    case "function":
-    case "method":
-      return "capture-function";
-    case "keyword":
-    case "operator":
-      return "capture-keyword";
-    case "punctuation":
-      return "capture-punctuation";
-    case "string":
-      return "capture-string";
-    case "type":
-      return "capture-type";
-    case "variable":
-      return "capture-variable";
-    default:
-      return "capture-default";
-  }
 }

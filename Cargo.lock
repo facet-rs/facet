@@ -6573,6 +6573,7 @@ dependencies = [
  "indexmap 2.14.0",
  "rediff",
  "regex",
+ "snark-dsl",
  "snark-scanner-host",
  "weavy",
 ]
@@ -6587,6 +6588,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "snark-playground"
+version = "0.0.1"
+dependencies = [
+ "facet",
+ "facet-json",
+ "margin",
+ "snark",
+ "snark-scanner-host",
+]
+
+[[package]]
 name = "snark-scanner-host"
 version = "0.0.1"
 dependencies = [
@@ -6597,11 +6609,7 @@ dependencies = [
 name = "snark-wasm"
 version = "0.0.1"
 dependencies = [
- "facet",
- "facet-json",
- "margin",
- "snark",
- "snark-scanner-host",
+ "snark-playground",
  "wasm-bindgen",
 ]
 

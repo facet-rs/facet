@@ -12,6 +12,9 @@
   },
   "dependencies": {
     "@bearcove/snark-wasm": "workspace:*",
+    "@codemirror/commands": "^6.7.0",
+    "@codemirror/state": "^6.5.4",
+    "@codemirror/view": "^6.39.11",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

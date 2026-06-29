@@ -146,6 +146,7 @@ test(
     assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
     assert.equal(response.language, "nginx");
     assert.match(response.parse.sexp, /^\(conf\b/);
+    assert.equal(response.parse.sexp.includes("(ERROR"), false, response.parse.sexp);
     assert.equal(response.highlights.length, 255);
   },
 );

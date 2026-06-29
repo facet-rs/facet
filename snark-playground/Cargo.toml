@@ -1,0 +1,19 @@
+[package]
+name = "snark-playground"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native playground backend for Snark grammar bundles"
+publish = false
+
+[dependencies]
+facet.workspace = true
+facet-json.workspace = true
+margin.workspace = true
+snark = { path = "../snark", features = ["tree-sitter-import"] }
+snark-scanner-host = { path = "../snark-scanner-host" }
+
+[lints]
+workspace = true

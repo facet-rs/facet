@@ -52,7 +52,6 @@
   --pad-x: 16px;
   --line-h: 21px;
   --code-size: 13.5px;
-  --lint-h: 84px;
 
   color: var(--text);
   background: var(--bg);
@@ -413,106 +412,22 @@ select {
   }
 }
 
-/* ---------- editor ---------- */
+/* ---------- editor (CodeMirror) ---------- */
 
 .editor {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
   flex: 1;
   min-height: 0;
-  background: var(--code-bg);
-}
-
-.gutter-viewport {
-  overflow: hidden;
-  border-right: 1px solid var(--line-soft);
-  background: var(--code-bg);
-  user-select: none;
-}
-
-.gutter {
   display: flex;
-  flex-direction: column;
-  padding: var(--pad-y) 12px var(--pad-y) 16px;
-  font-family: var(--mono);
-  font-size: var(--code-size);
-  line-height: var(--line-h);
-  text-align: right;
-  color: var(--text-faint);
-  will-change: transform;
+  background: var(--code-bg);
 }
 
-.gutter .ln {
-  height: var(--line-h);
-  font-variant-numeric: tabular-nums;
-}
-
-.gutter .ln.err {
-  color: var(--err);
-  font-weight: 700;
-}
-
-.gutter .ln-spacer {
-  display: block;
-  height: var(--lint-h);
-}
-
-.code-viewport {
-  position: relative;
+.editor .cm-editor {
+  flex: 1;
   min-width: 0;
-  overflow: hidden;
+  min-height: 0;
 }
 
-.code-layer,
-.code-viewport textarea {
-  margin: 0;
-  padding: var(--pad-y) var(--pad-x);
-  font-family: var(--mono);
-  font-size: var(--code-size);
-  line-height: var(--line-h);
-  tab-size: 4;
-  white-space: pre;
-  word-break: normal;
-  overflow-wrap: normal;
-}
-
-.code-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  min-width: 100%;
-  color: var(--text);
-  pointer-events: none;
-  will-change: transform;
-}
-
-.code-viewport textarea {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  resize: none;
-  border: 0;
-  overflow: auto;
-  background: transparent;
-  color: transparent;
-  caret-color: var(--accent);
-}
-
-.code-viewport textarea.with-lint {
-  padding-bottom: calc(var(--pad-y) + var(--lint-h));
-}
-
-.code-viewport textarea::selection {
-  background: var(--accent-soft);
-  color: transparent;
-}
-
-.code-viewport textarea:focus {
-  outline: none;
-}
-
-.code-layer .err-token {
+.cm-err-token {
   border-radius: 2px;
   background: var(--err-bg);
   box-shadow: inset 0 -2px 0 var(--err);
@@ -526,7 +441,7 @@ select {
   position: sticky;
   left: 0;
   width: min(640px, calc(100vw - 360px));
-  margin: 0;
+  margin: 6px var(--pad-x);
   padding: 9px 12px;
   border: 1px solid var(--err);
   border-left: 2px solid var(--err);

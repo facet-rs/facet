@@ -5471,7 +5471,9 @@ impl<'a> RuntimeParser<'a> {
         let mut step_count = 0usize;
         let step_limit = match recovery {
             RuntimeRecoveryMode::Strict => self.reduced.reduced_step_limit(input),
-            RuntimeRecoveryMode::SkipInvalidInput => self.reduced.reduced_recovery_step_limit(input),
+            RuntimeRecoveryMode::SkipInvalidInput => {
+                self.reduced.reduced_recovery_step_limit(input)
+            }
         };
         let mut max_live_versions = branches.len();
 
@@ -5549,7 +5551,10 @@ impl<'a> RuntimeParser<'a> {
             max_live_versions = max_live_versions.max(branches.len());
         }
 
-        let Some(min_error_cost) = accepted.iter().map(|(_, _, _, error_cost)| *error_cost).min()
+        let Some(min_error_cost) = accepted
+            .iter()
+            .map(|(_, _, _, error_cost)| *error_cost)
+            .min()
         else {
             trace_events.push(TraceEvent::ParseFinish {
                 id: next_trace_id(&trace_events),
@@ -5568,7 +5573,10 @@ impl<'a> RuntimeParser<'a> {
         else {
             unreachable!("accepted branches have a minimum recovery cost");
         };
-        if best_accepted.iter().all(|(_, node, _, _)| *node == first_node) {
+        if best_accepted
+            .iter()
+            .all(|(_, node, _, _)| *node == first_node)
+        {
             trace_events.push(TraceEvent::ParseFinish {
                 id: next_trace_id(&trace_events),
                 outcome: if min_error_cost == 0 {
@@ -5646,11 +5654,8 @@ impl<'a> RuntimeParser<'a> {
                 if recovery == RuntimeRecoveryMode::SkipInvalidInput
                     && matches!(error.kind(), ReducedParseErrorKind::NoToken { .. })
                     && input[branch.byte_position..].starts_with(['{', '}'])
-                    && let Some(branch) = self.recover_runtime_to_viable_stack(
-                        branch.clone(),
-                        input,
-                        trace_events,
-                    )
+                    && let Some(branch) =
+                        self.recover_runtime_to_viable_stack(branch.clone(), input, trace_events)
                 {
                     return vec![RuntimeStepOutcome::Branch(branch)];
                 }
@@ -6033,7 +6038,12 @@ impl<'a> RuntimeParser<'a> {
             let state_row = self.reduced.parse_state(state).ok()?;
             if self
                 .reduced
-                .lex(state_row, input, branch.byte_position, branch.scanner_snapshot)
+                .lex(
+                    state_row,
+                    input,
+                    branch.byte_position,
+                    branch.scanner_snapshot,
+                )
                 .is_ok()
             {
                 branch.stack.truncate(len);
@@ -6109,9 +6119,9 @@ impl<'a> RuntimeParser<'a> {
             points,
             error_cost: u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX),
         });
-        branch.error_cost = branch.error_cost.saturating_add(
-            u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX),
-        );
+        branch.error_cost = branch
+            .error_cost
+            .saturating_add(u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX));
         branch.stack.push(RuntimeStackEntry {
             state,
             fragment: Some(RuntimeFragment::Node {
@@ -6482,11 +6492,7 @@ impl RuntimeBranchKey {
         Self {
             byte_position: branch.byte_position,
             scanner_snapshot: branch.scanner_snapshot,
-            stack: branch
-                .stack
-                .iter()
-                .map(|entry| entry.state)
-                .collect(),
+            stack: branch.stack.iter().map(|entry| entry.state).collect(),
         }
     }
 }
@@ -6510,12 +6516,12 @@ fn enqueue_runtime_branch(
                 reason: BranchRetireReason::Dominated,
             });
         }
-        Some(best_cost) if branch.error_cost == best_cost => trace_events.push(
-            TraceEvent::GlrRetire {
+        Some(best_cost) if branch.error_cost == best_cost => {
+            trace_events.push(TraceEvent::GlrRetire {
                 version: branch.version,
                 reason: BranchRetireReason::Dominated,
-            },
-        ),
+            })
+        }
         _ => {
             queued_recovery_costs.insert(key, branch.error_cost);
             branches.push_back(branch);

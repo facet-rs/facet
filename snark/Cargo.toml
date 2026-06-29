@@ -38,6 +38,7 @@ weavy = { workspace = true, optional = true }
 facet-styx = { workspace = true }
 gingembre-syntax = { path = "../gingembre-syntax" }
 rediff = { path = "../rediff" }
+snark-dsl = { path = "../snark-dsl", features = ["native"] }
 snark-scanner-host = { path = "../snark-scanner-host" }
 
 [lints]

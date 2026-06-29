@@ -151,6 +151,15 @@ importers:
       '@bearcove/snark-wasm':
         specifier: workspace:*
         version: link:../../snark-wasm
+      '@codemirror/commands':
+        specifier: ^6.7.0
+        version: 6.10.3
+      '@codemirror/state':
+        specifier: ^6.5.4
+        version: 6.6.0
+      '@codemirror/view':
+        specifier: ^6.39.11
+        version: 6.43.1
       react:
         specifier: ^19.0.0
         version: 19.2.7
