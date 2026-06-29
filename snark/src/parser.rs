@@ -5813,8 +5813,13 @@ impl<'a> RuntimeParser<'a> {
             .unwrap_or(start_byte);
         let mut steps = production_row.steps().iter();
         let mut structural_index = 0usize;
+        let mut field_events = Vec::new();
         for (extra, fragment) in popped {
             let alias_range = fragment.byte_range();
+            let mut field_child = match &fragment {
+                RuntimeFragment::Node { node, .. } => Some(*node),
+                RuntimeFragment::Hidden { .. } => None,
+            };
             let mut step_children = fragment.into_children(tree_store);
             if !extra {
                 let Some(step) = steps.next() else {
@@ -5855,6 +5860,12 @@ impl<'a> RuntimeParser<'a> {
                         bytes,
                         points,
                     });
+                    if named && field_child.is_none() {
+                        field_child = Some(alias_node);
+                    }
+                }
+                if let Some(field) = step.field() {
+                    field_events.push((structural_index, field, field_child));
                 }
                 structural_index += 1;
             }
@@ -5876,6 +5887,15 @@ impl<'a> RuntimeParser<'a> {
                 points,
             };
             tree_events.push(event);
+            for (structural_index, field, child) in field_events {
+                tree_events.push(TreeEvent::Field {
+                    version,
+                    node,
+                    child,
+                    field,
+                    structural_index,
+                });
+            }
             Ok(RuntimeFragment::Node {
                 node,
                 start_byte,
@@ -6755,6 +6775,8 @@ pub enum TreeEvent {
         version: StackVersionId,
         /// Parent runtime tree node.
         node: TreeNodeId,
+        /// Visible child runtime tree node, when the fielded step emitted one.
+        child: Option<TreeNodeId>,
         /// Field id.
         field: FieldId,
         /// Structural child index.

@@ -2739,6 +2739,127 @@ mod tests {
     }
 
     #[test]
+    fn executes_json_key_highlights_with_field_constraint() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        let main_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/main.txt")
+            .unwrap();
+        let cases = main_fixture.parse_cases().unwrap();
+
+        assert_eq!(cases[0].name, "Arrays");
+        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .parse_with_report(&cases[0].input)
+            .unwrap();
+        let captures = highlights_query.body.execute_runtime_highlights(
+            &parser_grammar,
+            &runtime_report,
+            &cases[0].input,
+        );
+
+        assert_same!(runtime_report.tree(), &cases[0].expected);
+        assert_eq!(
+            capture_texts(&captures, "string.special.key"),
+            ["\"stuff\""]
+        );
+        assert_eq!(
+            capture_texts(&captures, "string"),
+            ["\"stuff\"", "\"good\""],
+            "the broad string query should still see both key and value strings"
+        );
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn executes_json_key_highlights_through_weavy_runtime_events() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        let main_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/main.txt")
+            .unwrap();
+        let cases = main_fixture.parse_cases().unwrap();
+
+        assert_eq!(cases[0].name, "Arrays");
+        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .parse_with_report(&cases[0].input)
+            .unwrap();
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &cases[0].input,
+        )
+        .unwrap();
+        let runtime_captures = highlights_query.body.execute_runtime_highlights(
+            &parser_grammar,
+            &runtime_report,
+            &cases[0].input,
+        );
+        let weavy_captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &weavy_report.accepted_tree_events(),
+                &cases[0].input,
+            );
+
+        assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_same!(weavy_report.tree(), &cases[0].expected);
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(
+            weavy_report.accepted_tree_events(),
+            runtime_report.accepted_tree_events()
+        );
+        assert_eq!(weavy_captures, runtime_captures);
+        assert_eq!(
+            capture_texts(&weavy_captures, "string.special.key"),
+            ["\"stuff\""]
+        );
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
+    }
+
+    #[test]
     fn parses_json_leading_visible_extra_at_document_root() {
         let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
             .import()
@@ -2970,6 +3091,14 @@ mod tests {
                 .filter(|capture| capture.capture_name() == "keyword")
                 .collect::<Vec<_>>()
         );
+    }
+
+    fn capture_texts<'a>(captures: &'a [HighlightCapture], capture_name: &str) -> Vec<&'a str> {
+        captures
+            .iter()
+            .filter(|capture| capture.capture_name() == capture_name)
+            .map(|capture| capture.text())
+            .collect()
     }
 
     fn parse_reduced_or_panic(

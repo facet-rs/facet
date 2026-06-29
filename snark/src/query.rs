@@ -255,17 +255,33 @@ fn execute_runtime_highlights(
     let rules = highlight_rules(query);
     let nodes = runtime_highlight_nodes(parser, tree_events, input);
     let tokens = runtime_highlight_tokens(parser, tree_events, input);
+    let fields = runtime_highlight_fields(parser, tree_events);
     let mut captures = Vec::new();
 
     for rule in &rules {
         match &rule.target {
             HighlightTarget::Node(kind) => {
                 for node in nodes.iter().filter(|node| &node.kind == kind) {
-                    if !rule
-                        .parent_kind
-                        .as_ref()
-                        .is_none_or(|parent| node_has_direct_parent_kind(node, parent, &nodes))
+                    if !node_satisfies_edge_constraints(node, rule, &nodes, &fields) {
+                        continue;
+                    }
+                    if rule
+                        .predicates
+                        .iter()
+                        .all(|predicate| predicate.matches(&node.text))
                     {
+                        captures.push(HighlightCapture {
+                            capture_name: rule.capture_name.clone(),
+                            bytes: node.bytes,
+                            points: node.points,
+                            text: node.text.clone(),
+                        });
+                    }
+                }
+            }
+            HighlightTarget::AnyNode => {
+                for node in &nodes {
+                    if !node_satisfies_edge_constraints(node, rule, &nodes, &fields) {
                         continue;
                     }
                     if rule
@@ -316,11 +332,13 @@ struct HighlightRule {
     capture_name: String,
     target: HighlightTarget,
     parent_kind: Option<String>,
+    field_name: Option<String>,
     predicates: Vec<HighlightPredicate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HighlightTarget {
+    AnyNode,
     Node(String),
     Literal(String),
 }
@@ -381,19 +399,29 @@ impl HighlightQueryParser {
     fn parse_all(&mut self) -> Vec<HighlightRule> {
         let mut rules = Vec::new();
         while self.index < self.tokens.len() {
-            let item = self.parse_item(None);
+            let item = self.parse_item(None, None);
             rules.extend(item.rules);
         }
         rules
     }
 
-    fn parse_item(&mut self, parent_kind: Option<&str>) -> ParsedHighlightItem {
+    fn parse_item(
+        &mut self,
+        parent_kind: Option<&str>,
+        field_name: Option<&str>,
+    ) -> ParsedHighlightItem {
         let mut item = match self.next() {
-            Some(QueryToken::OpenParen) => self.parse_form(parent_kind),
-            Some(QueryToken::OpenBracket) => self.parse_list(parent_kind),
+            Some(QueryToken::OpenParen) => self.parse_form(parent_kind, field_name),
+            Some(QueryToken::OpenBracket) => self.parse_list(parent_kind, field_name),
             Some(QueryToken::String(literal)) => ParsedHighlightItem {
                 target: Some(HighlightTarget::Literal(literal.clone())),
                 capture_targets: vec![HighlightTarget::Literal(literal)],
+                rules: Vec::new(),
+                predicates: Vec::new(),
+            },
+            Some(QueryToken::Symbol(symbol)) if symbol == "_" => ParsedHighlightItem {
+                target: Some(HighlightTarget::AnyNode),
+                capture_targets: vec![HighlightTarget::AnyNode],
                 rules: Vec::new(),
                 predicates: Vec::new(),
             },
@@ -420,6 +448,7 @@ impl HighlightQueryParser {
                     capture_name: capture_name.clone(),
                     target: target.clone(),
                     parent_kind: parent_kind.map(str::to_owned),
+                    field_name: field_name.map(str::to_owned),
                     predicates: Vec::new(),
                 });
             }
@@ -428,9 +457,29 @@ impl HighlightQueryParser {
         item
     }
 
-    fn parse_form(&mut self, parent_kind: Option<&str>) -> ParsedHighlightItem {
+    fn parse_form(
+        &mut self,
+        parent_kind: Option<&str>,
+        field_name: Option<&str>,
+    ) -> ParsedHighlightItem {
         match self.peek() {
             Some(QueryToken::Symbol(symbol)) if symbol.starts_with('#') => self.parse_predicate(),
+            Some(QueryToken::Symbol(symbol)) if symbol == "_" => {
+                let _ = self.next();
+                while !self.consume_close_paren() {
+                    let child_field = self.consume_field_label();
+                    let _ = self.parse_item(parent_kind, child_field.as_deref());
+                    if self.index >= self.tokens.len() {
+                        break;
+                    }
+                }
+                ParsedHighlightItem {
+                    target: Some(HighlightTarget::AnyNode),
+                    capture_targets: vec![HighlightTarget::AnyNode],
+                    rules: Vec::new(),
+                    predicates: Vec::new(),
+                }
+            }
             Some(QueryToken::Symbol(symbol)) if is_named_node_reference(symbol) => {
                 let kind = match self.next() {
                     Some(QueryToken::Symbol(kind)) => kind,
@@ -443,7 +492,8 @@ impl HighlightQueryParser {
                     predicates: Vec::new(),
                 };
                 while !self.consume_close_paren() {
-                    let child = self.parse_item(Some(&kind));
+                    let child_field = self.consume_field_label();
+                    let child = self.parse_item(Some(&kind), child_field.as_deref());
                     item.rules.extend(child.rules);
                     item.predicates.extend(child.predicates);
                     if self.index >= self.tokens.len() {
@@ -461,7 +511,8 @@ impl HighlightQueryParser {
                     predicates: Vec::new(),
                 };
                 while !self.consume_close_paren() {
-                    let child = self.parse_item(parent_kind);
+                    let child_field = self.consume_field_label();
+                    let child = self.parse_item(parent_kind, child_field.as_deref().or(field_name));
                     item.rules.extend(child.rules);
                     item.predicates.extend(child.predicates);
                     if self.index >= self.tokens.len() {
@@ -474,7 +525,11 @@ impl HighlightQueryParser {
         }
     }
 
-    fn parse_list(&mut self, parent_kind: Option<&str>) -> ParsedHighlightItem {
+    fn parse_list(
+        &mut self,
+        parent_kind: Option<&str>,
+        field_name: Option<&str>,
+    ) -> ParsedHighlightItem {
         let mut item = ParsedHighlightItem {
             target: None,
             capture_targets: Vec::new(),
@@ -482,7 +537,7 @@ impl HighlightQueryParser {
             predicates: Vec::new(),
         };
         while !self.consume_close_bracket() {
-            let child = self.parse_item(parent_kind);
+            let child = self.parse_item(parent_kind, field_name);
             if let Some(target) = child.target.clone() {
                 item.capture_targets.push(target);
             } else {
@@ -509,10 +564,10 @@ impl HighlightQueryParser {
                 Some(QueryToken::Symbol(symbol)) => symbols.push(symbol),
                 Some(QueryToken::String(string)) => strings.push(string),
                 Some(QueryToken::OpenParen) => {
-                    let _ = self.parse_form(None);
+                    let _ = self.parse_form(None, None);
                 }
                 Some(QueryToken::OpenBracket) => {
-                    let _ = self.parse_list(None);
+                    let _ = self.parse_list(None, None);
                 }
                 Some(QueryToken::CloseParen) | Some(QueryToken::CloseBracket) | None => break,
             }
@@ -559,6 +614,23 @@ impl HighlightQueryParser {
             captures.push(capture);
         }
         captures
+    }
+
+    fn consume_field_label(&mut self) -> Option<String> {
+        let Some(QueryToken::Symbol(symbol)) = self.peek() else {
+            return None;
+        };
+        let field = symbol.strip_suffix(':')?;
+        if field.is_empty()
+            || !field
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            return None;
+        }
+        let field = field.to_owned();
+        self.index += 1;
+        Some(field)
     }
 
     fn consume_close_paren(&mut self) -> bool {
@@ -617,6 +689,14 @@ struct RuntimeHighlightToken {
     text: String,
     bytes: ByteRange,
     points: PointRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeHighlightField {
+    parent: TreeNodeId,
+    child: Option<TreeNodeId>,
+    structural_index: usize,
+    field_name: String,
 }
 
 fn runtime_highlight_nodes(
@@ -704,24 +784,82 @@ fn runtime_highlight_tokens(
         .collect()
 }
 
-fn node_has_direct_parent_kind(
+fn runtime_highlight_fields(
+    parser: &ParserGrammar,
+    tree_events: &[TreeEvent],
+) -> Vec<RuntimeHighlightField> {
+    tree_events
+        .iter()
+        .filter_map(|event| match event {
+            TreeEvent::Field {
+                node,
+                child,
+                field,
+                structural_index,
+                ..
+            } => Some(RuntimeHighlightField {
+                parent: *node,
+                child: *child,
+                structural_index: *structural_index,
+                field_name: parser.fields()[field.get() as usize].name().to_owned(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn node_satisfies_edge_constraints(
     node: &RuntimeHighlightNode,
-    parent_kind: &str,
+    rule: &HighlightRule,
     nodes: &[RuntimeHighlightNode],
+    fields: &[RuntimeHighlightField],
 ) -> bool {
+    let parent = direct_parent_node(node, nodes);
+    if let Some(parent_kind) = &rule.parent_kind
+        && !parent.is_some_and(|parent| &parent.kind == parent_kind)
+    {
+        return false;
+    }
+    if let Some(field_name) = &rule.field_name {
+        let Some(parent) = parent else {
+            return false;
+        };
+        let Some(structural_index) = structural_child_index(parent, node, nodes) else {
+            return false;
+        };
+        return fields.iter().any(|field| {
+            field.parent == parent.id
+                && &field.field_name == field_name
+                && (field.child == Some(node.id)
+                    || (field.child.is_none() && field.structural_index == structural_index))
+        });
+    }
+    true
+}
+
+fn direct_parent_node<'a>(
+    node: &RuntimeHighlightNode,
+    nodes: &'a [RuntimeHighlightNode],
+) -> Option<&'a RuntimeHighlightNode> {
     nodes
         .iter()
         .filter(|candidate| {
             candidate.id != node.id && byte_range_strictly_contains(candidate.bytes, node.bytes)
         })
-        .min_by_key(|candidate| {
-            candidate
-                .bytes
-                .end()
-                .get()
-                .saturating_sub(candidate.bytes.start().get())
-        })
-        .is_some_and(|parent| parent.kind == parent_kind)
+        .min_by_key(|candidate| byte_range_len(candidate.bytes))
+}
+
+fn structural_child_index(
+    parent: &RuntimeHighlightNode,
+    node: &RuntimeHighlightNode,
+    nodes: &[RuntimeHighlightNode],
+) -> Option<usize> {
+    let mut children = nodes
+        .iter()
+        .filter(|candidate| direct_parent_node(candidate, nodes).is_some_and(|p| p.id == parent.id))
+        .collect::<Vec<_>>();
+    children.sort_by_key(|child| (child.bytes.start(), child.bytes.end(), child.id.get()));
+    children.iter().position(|child| child.id == node.id)
 }
 
 fn token_has_direct_parent_kind(
@@ -740,6 +878,10 @@ fn token_has_direct_parent_kind(
                 .saturating_sub(candidate.bytes.start().get())
         })
         .is_some_and(|parent| parent.kind == parent_kind)
+}
+
+fn byte_range_len(bytes: ByteRange) -> u32 {
+    bytes.end().get().saturating_sub(bytes.start().get())
 }
 
 fn byte_range_contains(outer: ByteRange, inner: ByteRange) -> bool {

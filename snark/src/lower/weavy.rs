@@ -2984,8 +2984,13 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .unwrap_or(start_byte);
         let mut steps = production_row.steps().iter();
         let mut structural_index = 0usize;
+        let mut field_events = Vec::new();
         for (extra, fragment) in popped {
             let alias_range = fragment.byte_range();
+            let mut field_child = match &fragment {
+                RuntimeWeavyFragment::Node { node, .. } => Some(*node),
+                RuntimeWeavyFragment::Hidden { .. } => None,
+            };
             let mut step_children = fragment.into_children(self.tree_store);
             if !extra {
                 let Some(step) = steps.next() else {
@@ -3027,6 +3032,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         bytes,
                         points,
                     });
+                    if named && field_child.is_none() {
+                        field_child = Some(alias_node);
+                    }
+                }
+                if let Some(field) = step.field() {
+                    field_events.push((structural_index, field, field_child));
                 }
                 structural_index += 1;
             }
@@ -3047,6 +3058,15 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 bytes,
                 points,
             });
+            for (structural_index, field, child) in field_events {
+                self.tree_events.push(parser_ir::TreeEvent::Field {
+                    version: self.version,
+                    node,
+                    child,
+                    field,
+                    structural_index,
+                });
+            }
             Ok(RuntimeWeavyFragment::Node {
                 node,
                 start_byte,
