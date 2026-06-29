@@ -212,6 +212,7 @@ const snarkTheme = EditorView.theme({
 export function SourceEditor({ input, captures, diagnostic, onChange }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const applyingExternalInputRef = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -229,7 +230,7 @@ export function SourceEditor({ input, captures, diagnostic, onChange }: SourceEd
         errorGutterClass,
         snarkTheme,
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
+          if (update.docChanged && !applyingExternalInputRef.current) {
             onChangeRef.current(update.state.doc.toString());
           }
         }),
@@ -252,7 +253,12 @@ export function SourceEditor({ input, captures, diagnostic, onChange }: SourceEd
     }
     const current = view.state.doc.toString();
     if (current !== input) {
-      view.dispatch({ changes: { from: 0, to: current.length, insert: input } });
+      applyingExternalInputRef.current = true;
+      try {
+        view.dispatch({ changes: { from: 0, to: current.length, insert: input } });
+      } finally {
+        applyingExternalInputRef.current = false;
+      }
     }
   }, [input]);
 

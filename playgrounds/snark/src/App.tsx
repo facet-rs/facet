@@ -14,13 +14,12 @@ import {
   sortedFiles,
   normalizePath,
   type DslBundleFile,
+  type ProjectedDslBundleFile,
 } from "./treeSitterDsl";
 
 type BundleFile = DslBundleFile;
 
-type SampleFile = BundleFile & {
-  sourcePath: string;
-};
+type SampleFile = ProjectedDslBundleFile;
 
 type Diagnostic = {
   stage: string;
@@ -127,12 +126,12 @@ const wasmReady = init();
 
 const defaultFiles: BundleFile[] = vendoredFiles;
 const defaultGrammarRoot = defaultVendoredRootId;
-const defaultSample = firstSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
+const defaultSample = preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
 
 export function App() {
   const [files, setFiles] = useState<BundleFile[]>(defaultFiles);
   const [selectedGrammarRoot, setSelectedGrammarRoot] = useState(defaultGrammarRoot);
-  const [selectedSamplePath, setSelectedSamplePath] = useState(defaultSample?.sourcePath ?? "");
+  const [selectedSamplePath, setSelectedSamplePath] = useState(defaultSample?.path ?? "");
   const [input, setInput] = useState(defaultSample?.text ?? "");
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
@@ -149,11 +148,11 @@ export function App() {
     [files, activeGrammarRootId],
   );
   const sampleFiles = useMemo(
-    () => sortedFiles(projectedFiles).filter((file): file is SampleFile => file.path.startsWith("samples/")),
+    () => sortedSampleFiles(projectedFiles.filter((file): file is SampleFile => file.path.startsWith("samples/"))),
     [projectedFiles],
   );
   const visibleBundleFiles = useMemo(
-    () => sortedFiles(projectedFiles).filter((file) => isRuntimeBundlePath(file.path)),
+    () => sortedRuntimeBundleFiles(projectedFiles),
     [projectedFiles],
   );
   const hasBundledTests = useMemo(
@@ -168,7 +167,7 @@ export function App() {
   );
   const busy = busyTask !== null;
 
-  const editorCaptures = useMemo(() => (result?.ok ? result.highlights : []), [result]);
+  const editorCaptures = useMemo(() => result?.highlights ?? [], [result]);
   const editorDiagnostic = useMemo(() => {
     const found = placedDiagnostic(result);
     return found?.primary_span
@@ -212,10 +211,10 @@ export function App() {
     );
     const next = normalizeBundleFiles(loaded);
     const nextGrammarRoot = preferredGrammarRootId(next);
-    const nextSample = firstSampleForGrammarRootId(next, nextGrammarRoot);
+    const nextSample = preferredSampleForGrammarRootId(next, nextGrammarRoot);
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
-    setSelectedSamplePath(nextSample?.sourcePath ?? "");
+    setSelectedSamplePath(nextSample?.path ?? "");
     setInput(nextSample?.text ?? "");
     setResult(null);
   }
@@ -289,9 +288,9 @@ export function App() {
               <button
                 type="button"
                 key={file.sourcePath}
-                className={file.sourcePath === selectedSamplePath ? "file-row active" : "file-row"}
+                className={file.path === selectedSamplePath ? "file-row active" : "file-row"}
                 title={file.sourcePath === file.path ? file.path : `${file.path} from ${file.sourcePath}`}
-                onClick={() => updateSourceInput(file.text, file.sourcePath)}
+                onClick={() => updateSourceInput(file.text, file.path)}
               >
                 <span className="file-name">{file.path}</span>
                 <span className="file-size">{file.text.length.toLocaleString()}</span>
@@ -322,9 +321,9 @@ export function App() {
                 value={activeGrammarRoot?.id ?? ""}
                 onChange={(event) => {
                   const nextGrammarRoot = event.currentTarget.value;
-                  const nextSample = firstSampleForGrammarRootId(files, nextGrammarRoot);
+                  const nextSample = preferredSampleForGrammarRootId(files, nextGrammarRoot);
                   setSelectedGrammarRoot(nextGrammarRoot);
-                  setSelectedSamplePath(nextSample?.sourcePath ?? "");
+                  setSelectedSamplePath(nextSample?.path ?? "");
                   setInput(nextSample?.text ?? "");
                   setResult(null);
                 }}
@@ -342,9 +341,9 @@ export function App() {
                 className="select"
                 value={selectedSamplePath}
                 onChange={(event) => {
-                  const sample = sampleFiles.find((file) => file.sourcePath === event.currentTarget.value);
+                  const sample = sampleFiles.find((file) => file.path === event.currentTarget.value);
                   if (sample) {
-                    updateSourceInput(sample.text, sample.sourcePath);
+                    updateSourceInput(sample.text, sample.path);
                   } else {
                     setSelectedSamplePath("");
                   }
@@ -352,7 +351,7 @@ export function App() {
               >
                 <option value="">Samples · {sampleFiles.length}</option>
                 {sampleFiles.map((file) => (
-                  <option key={file.sourcePath} value={file.sourcePath}>
+                  <option key={file.sourcePath} value={file.path}>
                     {file.path}
                   </option>
                 ))}
@@ -466,7 +465,7 @@ function ResultsDock({
         </div>
       ) : null}
 
-      <details className="panel" open={!failure}>
+      <details className="panel" open={!failure || Boolean(recovered)}>
         <summary>
           <span className="panel-title">S-expression</span>
           {result?.parse ? (
@@ -748,6 +747,34 @@ function isGeneratedPath(path: string) {
     path.endsWith("/src/node-types.json") ||
     path.endsWith("/bindings/node/binding.cc")
   );
+}
+
+function preferredSampleForGrammarRootId(files: BundleFile[], rootId: string) {
+  const samples = projectedFilesForGrammarRootId(files, rootId).filter((file): file is SampleFile =>
+    file.path.startsWith("samples/"),
+  );
+  return sortedSampleFiles(samples)[0] ?? firstSampleForGrammarRootId(files, rootId);
+}
+
+function sortedSampleFiles(files: SampleFile[]) {
+  return [...files].sort((left, right) => {
+    const leftError = isErrorSamplePath(left.path);
+    const rightError = isErrorSamplePath(right.path);
+    if (leftError !== rightError) {
+      return leftError ? 1 : -1;
+    }
+    return left.path.localeCompare(right.path);
+  });
+}
+
+function sortedRuntimeBundleFiles(files: ProjectedDslBundleFile[]) {
+  const runtimeFiles = sortedFiles(files).filter((file) => isRuntimeBundlePath(file.path));
+  const samples = sortedSampleFiles(runtimeFiles.filter((file): file is SampleFile => file.path.startsWith("samples/")));
+  return [...runtimeFiles.filter((file) => !file.path.startsWith("samples/")), ...samples];
+}
+
+function isErrorSamplePath(path: string) {
+  return /(^|[-_/])(errors?|invalid|broken)([-_.\\/]|$)/i.test(path);
 }
 
 function isRuntimeBundlePath(path: string) {
