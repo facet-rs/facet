@@ -3744,6 +3744,25 @@ pub struct ReducedExternalScan<'a> {
 }
 
 impl ReducedExternalScan<'_> {
+    #[cfg(feature = "weavy-lowering")]
+    pub(crate) const fn new<'a>(
+        state: ParseStateId,
+        external: ExternalId,
+        external_symbol: &'a ExternalSymbol,
+        valid_symbols: Option<&'a ValidSymbolSet>,
+        input: &'a str,
+        byte_position: usize,
+    ) -> ReducedExternalScan<'a> {
+        ReducedExternalScan {
+            state,
+            external,
+            external_symbol,
+            valid_symbols,
+            input,
+            byte_position,
+        }
+    }
+
     /// Parse state requesting the scanner call.
     pub const fn state(&self) -> ParseStateId {
         self.state

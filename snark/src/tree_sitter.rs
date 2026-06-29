@@ -1365,6 +1365,71 @@ mod tests {
         assert_same!(actual_tree, selector_cases[5].expected);
     }
 
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_pinned_css_pseudo_class_selectors_through_weavy_external_scanner() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let selector_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+            .unwrap();
+        let selector_cases = selector_fixture.parse_cases().unwrap();
+
+        assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
+        let rust_report = parse_reduced_report_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[5].input,
+        );
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let scanner = RecordingCssReducedExternalScanner::default();
+        let weavy_report = crate::lower::weavy::parse_reduced_with_report_and_scanner(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &selector_cases[5].input,
+            Some(&scanner),
+        )
+        .unwrap();
+
+        assert_same!(weavy_report.tree(), rust_report.tree());
+        assert_same!(weavy_report.tree(), &selector_cases[5].expected);
+        assert!(
+            scanner.calls.get() > 0,
+            "expected Weavy to invoke the reduced external scanner"
+        );
+        assert!(
+            scanner.accepted.get() > 0,
+            "expected Weavy to accept at least one reduced external token"
+        );
+        assert_eq!(
+            scanner.missing_valid_symbols.get(),
+            0,
+            "expected every Weavy scanner call to carry a valid-symbol mask"
+        );
+        assert_eq!(
+            scanner.invalid_symbol_requests.get(),
+            0,
+            "expected Weavy scanner calls to respect the valid-symbol mask"
+        );
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
+    }
+
     #[test]
     fn parses_pinned_css_nth_child_selectors_corpus_case() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -2279,6 +2344,42 @@ mod tests {
                 }
                 _ => None,
             })
+        }
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[derive(Default)]
+    struct RecordingCssReducedExternalScanner {
+        calls: std::cell::Cell<usize>,
+        accepted: std::cell::Cell<usize>,
+        missing_valid_symbols: std::cell::Cell<usize>,
+        invalid_symbol_requests: std::cell::Cell<usize>,
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    impl ReducedExternalScanner for RecordingCssReducedExternalScanner {
+        fn scan(
+            &self,
+            request: ReducedExternalScan<'_>,
+        ) -> Result<Option<usize>, crate::parser::ReducedParseError> {
+            self.calls.set(self.calls.get() + 1);
+            match request.valid_symbols() {
+                Some(valid_symbols) if valid_symbols.externals().contains(&request.external()) => {}
+                Some(_) => {
+                    self.invalid_symbol_requests
+                        .set(self.invalid_symbol_requests.get() + 1);
+                    return Ok(None);
+                }
+                None => {
+                    self.missing_valid_symbols
+                        .set(self.missing_valid_symbols.get() + 1);
+                }
+            }
+            let result = CssReducedExternalScanner.scan(request)?;
+            if result.is_some() {
+                self.accepted.set(self.accepted.get() + 1);
+            }
+            Ok(result)
         }
     }
 

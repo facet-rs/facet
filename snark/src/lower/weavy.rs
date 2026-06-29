@@ -22,6 +22,7 @@ use weavy::{
 use crate::{
     corpus::{SexpChild, SexpNode, SexpValue},
     parser as parser_ir,
+    parser::{ReducedExternalScan, ReducedExternalScanner},
     validated::{GrammarExpr, GrammarExprId, StaticPrecedenceValue, ValidatedGrammar},
 };
 
@@ -529,6 +530,15 @@ pub enum ReducedWeavyError {
         /// Number of external candidates in the lexical mode.
         external_count: usize,
     },
+    /// Reduced external scanner host returned an error.
+    ExternalScannerError {
+        /// Parse state requesting external scanner support.
+        state: parser_ir::ParseStateId,
+        /// External token being scanned.
+        external: parser_ir::ExternalId,
+        /// Scanner error text.
+        message: String,
+    },
     /// Reduced Weavy execution does not support this terminal root.
     UnsupportedTerminal {
         /// Terminal id.
@@ -647,6 +657,16 @@ impl fmt::Display for ReducedWeavyError {
                 f,
                 "state {} needs {external_count} external scanner candidates",
                 state.get()
+            ),
+            Self::ExternalScannerError {
+                state,
+                external,
+                message,
+            } => write!(
+                f,
+                "external scanner failed in state {} for external {}: {message}",
+                state.get(),
+                external.get()
             ),
             Self::UnsupportedTerminal { terminal, spelling } => write!(
                 f,
@@ -883,6 +903,18 @@ pub fn parse_reduced_with_report(
     table: &parser_ir::ParseTable,
     input: &str,
 ) -> Result<ReducedWeavyReport, ReducedWeavyError> {
+    parse_reduced_with_report_and_scanner(plan, grammar, parser, table, input, None)
+}
+
+/// Execute a reduced parser plan through Weavy with a reduced external scanner host.
+pub fn parse_reduced_with_report_and_scanner(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+) -> Result<ReducedWeavyReport, ReducedWeavyError> {
     if parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(ReducedWeavyError::WrongStage {
             stage: parser.stage(),
@@ -923,6 +955,7 @@ pub fn parse_reduced_with_report(
             parser,
             table,
             input,
+            external_scanner,
             branch,
             &mut conflict_steps,
             &mut branch_parents,
@@ -1068,6 +1101,7 @@ fn step_reduced_weavy_branch(
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
     branch: ReducedWeavyBranch,
     conflict_steps: &mut Vec<parser_ir::ReducedConflictStep>,
     branch_parents: &mut Vec<parser_ir::ReducedBranchParent>,
@@ -1090,6 +1124,7 @@ fn step_reduced_weavy_branch(
         parser,
         table,
         input,
+        external_scanner,
         branch.clone(),
         stats,
     ) {
@@ -1122,6 +1157,7 @@ fn step_reduced_weavy_branch(
             parser,
             table,
             input,
+            external_scanner,
             action_branch,
             dispatch.token,
             state,
@@ -1167,6 +1203,7 @@ fn run_reduced_weavy_state_probe(
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
     branch: ReducedWeavyBranch,
     stats: &mut RunStats,
 ) -> Result<ReducedWeavyDispatch, ReducedWeavyError> {
@@ -1182,6 +1219,7 @@ fn run_reduced_weavy_state_probe(
         parser,
         table,
         input,
+        external_scanner,
         branch,
         ReducedWeavyMode::ProbeState,
     );
@@ -1203,6 +1241,7 @@ fn run_reduced_weavy_action(
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
     branch: ReducedWeavyBranch,
     token: ReducedWeavyToken,
     state: parser_ir::ParseStateId,
@@ -1224,6 +1263,7 @@ fn run_reduced_weavy_action(
         parser,
         table,
         input,
+        external_scanner,
         branch,
         ReducedWeavyMode::ApplyAction,
     );
@@ -1316,6 +1356,7 @@ struct ReducedWeavyStepper<'a> {
     parser: &'a parser_ir::ParserGrammar,
     table: &'a parser_ir::ParseTable,
     input: &'a str,
+    external_scanner: Option<&'a dyn ReducedExternalScanner>,
     stack: Vec<ReducedWeavyStackEntry>,
     byte_position: usize,
     lookahead: Option<ReducedWeavyToken>,
@@ -1332,6 +1373,7 @@ impl<'a> ReducedWeavyStepper<'a> {
         parser: &'a parser_ir::ParserGrammar,
         table: &'a parser_ir::ParseTable,
         input: &'a str,
+        external_scanner: Option<&'a dyn ReducedExternalScanner>,
         branch: ReducedWeavyBranch,
         mode: ReducedWeavyMode,
     ) -> Self {
@@ -1341,6 +1383,7 @@ impl<'a> ReducedWeavyStepper<'a> {
             parser,
             table,
             input,
+            external_scanner,
             stack: branch.stack,
             byte_position: branch.byte_position,
             lookahead: None,
@@ -1586,6 +1629,38 @@ impl<'a> ReducedWeavyStepper<'a> {
             );
         }
         if let Some(candidate) = best {
+            best_rejected = best_rejected.filter(|rejected| {
+                reduced_weavy_candidate_order(*rejected, candidate)
+                    == ReducedWeavyCandidateOrder::Greater
+            });
+        }
+        if self.external_scanner.is_some() {
+            for external in mode.externals() {
+                let Some(end) = self.match_external(state, mode, *external, byte_position)? else {
+                    continue;
+                };
+                let candidate = ReducedWeavyTokenCandidate {
+                    lookahead: parser_ir::LookaheadSymbol::External(*external),
+                    end,
+                    extra: false,
+                    external: true,
+                    immediate: false,
+                    literal: true,
+                    lexical_precedence: 0,
+                    implicit_precedence: 0,
+                };
+                if !state
+                    .entries()
+                    .iter()
+                    .any(|entry| entry.lookahead() == candidate.lookahead)
+                {
+                    push_reduced_weavy_candidate(&mut best_rejected, candidate);
+                    continue;
+                }
+                push_reduced_weavy_candidate(&mut best, candidate);
+            }
+        }
+        if let Some(candidate) = best {
             return Ok(ReducedWeavyToken {
                 lookahead: candidate.lookahead,
                 end: candidate.end,
@@ -1680,6 +1755,39 @@ impl<'a> ReducedWeavyStepper<'a> {
                 self.match_lexical_expr(*content, byte_position)
             }
         }
+    }
+
+    fn match_external(
+        &self,
+        state: &parser_ir::ParseState,
+        mode: &parser_ir::LexMode,
+        external: parser_ir::ExternalId,
+        byte_position: usize,
+    ) -> Result<Option<usize>, ReducedWeavyError> {
+        let Some(scanner) = self.external_scanner else {
+            return Err(ReducedWeavyError::UnsupportedExternalScanner {
+                state: state.id(),
+                external_count: mode.externals().len(),
+            });
+        };
+        let external_row = &self.parser.symbols().externals()[external.get() as usize];
+        let valid_symbols = mode
+            .valid_symbols()
+            .map(|valid_symbols| &self.table.valid_symbol_sets()[valid_symbols.get() as usize]);
+        scanner
+            .scan(ReducedExternalScan::new(
+                state.id(),
+                external,
+                external_row,
+                valid_symbols,
+                self.input,
+                byte_position,
+            ))
+            .map_err(|error| ReducedWeavyError::ExternalScannerError {
+                state: state.id(),
+                external,
+                message: error.to_string(),
+            })
     }
 
     fn lexical_completion_precedence(&self, terminal: &parser_ir::TerminalSymbol) -> i32 {
