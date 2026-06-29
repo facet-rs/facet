@@ -9,6 +9,7 @@
 #[cfg(any(test, feature = "weavy-lowering"))]
 use std::sync::{Mutex, OnceLock};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
@@ -3730,6 +3731,13 @@ pub struct ReducedParser<'a> {
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
     first: Option<FirstFacts>,
     regex_patterns: HashMap<String, Option<Regex>>,
+    lex_cache: RefCell<HashMap<LexCacheKey, Result<ReducedToken, ReducedParseError>>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct LexCacheKey {
+    state: ParseStateId,
+    byte_position: usize,
 }
 
 /// External scanner host used by the reduced parser oracle.
@@ -4021,6 +4029,7 @@ impl<'a> ReducedParser<'a> {
             external_scanner: None,
             first,
             regex_patterns,
+            lex_cache: RefCell::new(HashMap::new()),
         })
     }
 
@@ -4037,6 +4046,7 @@ impl<'a> ReducedParser<'a> {
 
     /// Parse one input and return branch/conflict evidence for oracle tests.
     pub fn parse_with_report(&self, input: &str) -> Result<ReducedParseReport, ReducedParseError> {
+        self.clear_lex_cache();
         let mut branches = VecDeque::from([ReducedBranch {
             id: ReducedBranchId::from_index(0),
             stack: vec![ReducedStackEntry {
@@ -4135,6 +4145,10 @@ impl<'a> ReducedParser<'a> {
             .states()
             .get(state.get() as usize)
             .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::MissingState { state }))
+    }
+
+    fn clear_lex_cache(&self) {
+        self.lex_cache.borrow_mut().clear();
     }
 
     fn reduced_step_limit(&self, input: &str) -> usize {
@@ -4450,6 +4464,29 @@ impl<'a> ReducedParser<'a> {
                     mode: state.lex_mode(),
                 })
             })?;
+        if !mode.externals().is_empty() {
+            return self.lex_uncached(state, mode, input, byte_position, scanner_snapshot);
+        }
+        let key = LexCacheKey {
+            state: state.id(),
+            byte_position,
+        };
+        if let Some(cached) = self.lex_cache.borrow().get(&key).cloned() {
+            return cached;
+        }
+        let result = self.lex_uncached(state, mode, input, byte_position, scanner_snapshot);
+        self.lex_cache.borrow_mut().insert(key, result.clone());
+        result
+    }
+
+    fn lex_uncached(
+        &self,
+        state: &ParseState,
+        mode: &LexMode,
+        input: &str,
+        byte_position: usize,
+        scanner_snapshot: Option<ScannerSnapshotId>,
+    ) -> Result<ReducedToken, ReducedParseError> {
         let mut best = None::<ReducedTokenCandidate>;
         let mut best_rejected = None::<ReducedTokenCandidate>;
         for terminal in mode.terminals() {
@@ -5492,6 +5529,7 @@ impl<'a> RuntimeParser<'a> {
         input: &str,
         recovery: RuntimeRecoveryMode,
     ) -> Result<RuntimeParseReport, ReducedParseError> {
+        self.reduced.clear_lex_cache();
         let mut tree_store = RuntimeTreeStore::default();
         let mut trace_events = Vec::new();
         let mut tree_events = Vec::new();
