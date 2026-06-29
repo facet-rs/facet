@@ -15,7 +15,7 @@ use snark::{
     parser::{
         ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
         ReducedExternalScanner, ReducedParseError, ReducedParseErrorKind, RuntimeParseReport,
-        RuntimeParser, ScannerSnapshotId,
+        RuntimeParser, ScannerSnapshotId, TreeEvent,
     },
     query::QuerySource,
     runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
@@ -86,6 +86,8 @@ struct ParseOutput {
     trace_event_count: usize,
     tree_event_count: usize,
     accepted_tree_event_count: usize,
+    accepted_error_count: usize,
+    accepted_missing_count: usize,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -273,7 +275,10 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                 bundle.grammar_js_path.is_some(),
             ) {
                 Ok(report) => {
-                    let accepted_tree_event_count = report.accepted_tree_events().len();
+                    let accepted_tree_events = report.accepted_tree_events();
+                    let accepted_tree_event_count = accepted_tree_events.len();
+                    let accepted_error_count = count_accepted_errors(&accepted_tree_events);
+                    let accepted_missing_count = count_accepted_missing(&accepted_tree_events);
                     parse = Some(ParseOutput {
                         sexp: report.tree().to_sexp(),
                         accepted_count: report.accepted_count(),
@@ -282,7 +287,18 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                         trace_event_count: report.trace_events().len(),
                         tree_event_count: report.tree_events().len(),
                         accepted_tree_event_count,
+                        accepted_error_count,
+                        accepted_missing_count,
                     });
+                    if accepted_error_count > 0 || accepted_missing_count > 0 {
+                        diagnostics.push(diagnostic(
+                            "parse",
+                            format!(
+                                "accepted parse contains {accepted_error_count} ERROR node(s) and {accepted_missing_count} MISSING node(s)"
+                            ),
+                            None,
+                        ));
+                    }
                     if let Some(query_file) = find_file(&files, "queries/highlights.scm") {
                         highlights = highlight_outputs(
                             &QuerySource(query_file.text.clone()),
@@ -324,6 +340,20 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
         tests,
         limitations: Vec::new(),
     }
+}
+
+fn count_accepted_errors(events: &[TreeEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| matches!(event, TreeEvent::Error { .. }))
+        .count()
+}
+
+fn count_accepted_missing(events: &[TreeEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| matches!(event, TreeEvent::Missing { .. }))
+        .count()
 }
 
 fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, String)> {
@@ -1603,6 +1633,9 @@ mod tests {
                 "(conf (comment) (directive (identifier) (argument (generic))) (directive (identifier) (argument (generic))))"
             )
         );
+        let parse = response.parse.as_ref().expect("parse output");
+        assert_eq!(parse.accepted_error_count, 0);
+        assert_eq!(parse.accepted_missing_count, 0);
         let mut captures = response
             .highlights
             .iter()
@@ -1740,12 +1773,21 @@ mod tests {
         let response =
             playground_response(&facet_json::to_string(&request).expect("request serializes"));
 
-        assert!(response.ok, "{:?}", response.diagnostics);
+        assert!(!response.ok);
+        assert_eq!(response.diagnostics[0].stage, "parse");
+        assert!(
+            response.diagnostics[0]
+                .message
+                .contains("accepted parse contains")
+        );
         let sexp = response.parse.as_ref().expect("parse output").sexp.as_str();
         assert!(
             sexp.contains("(ERROR)"),
             "expected recovered ERROR node in {sexp}"
         );
+        let parse = response.parse.as_ref().expect("parse output");
+        assert!(parse.accepted_error_count > 0);
+        assert_eq!(parse.accepted_missing_count, 0);
         assert!(
             sexp.contains("(simple_directive (directive) (param (generic)))"),
             "expected directive after recovered line in {sexp}"

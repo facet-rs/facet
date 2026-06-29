@@ -45,6 +45,8 @@ type ParseOutput = {
   trace_event_count: number;
   tree_event_count: number;
   accepted_tree_event_count: number;
+  accepted_error_count: number;
+  accepted_missing_count: number;
 };
 
 type HighlightOutput = {
@@ -407,10 +409,12 @@ function StatusPill({
     );
   }
   if (!result.ok) {
+    const recovered =
+      result.parse && (result.parse.accepted_error_count > 0 || result.parse.accepted_missing_count > 0);
     return (
-      <span className="pill error">
+      <span className={recovered ? "pill warn" : "pill error"}>
         <span className="dot" />
-        Parse failed
+        {recovered ? "Recovered with errors" : "Parse failed"}
       </span>
     );
   }
@@ -447,12 +451,15 @@ function ResultsDock({
   const captures = result?.highlights ?? [];
   const tests = result?.tests.requested ? result : null;
   const unplaced = result?.diagnostics.filter((diagnostic) => !diagnostic.primary_span) ?? [];
+  const recovered =
+    failure?.parse &&
+    (failure.parse.accepted_error_count > 0 || failure.parse.accepted_missing_count > 0);
 
   return (
     <div className="dock">
       {failure ? (
         <div className="dock-failure">
-          <strong>Parse failed</strong>
+          <strong>{recovered ? "Recovered with errors" : "Parse failed"}</strong>
           {unplaced.map((diagnostic, index) => (
             <div className="dock-failure-row" key={`${diagnostic.stage}-${index}`}>
               <span className="dock-failure-stage">{diagnostic.stage}</span>
@@ -468,6 +475,9 @@ function ResultsDock({
           {result?.parse ? (
             <span className="panel-meta">
               {result.parse.accepted_count} accepted · {result.parse.failure_count} failed
+              {result.parse.accepted_error_count || result.parse.accepted_missing_count
+                ? ` · ${result.parse.accepted_error_count} ERROR · ${result.parse.accepted_missing_count} MISSING`
+                : ""}
             </span>
           ) : null}
         </summary>
