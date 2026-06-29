@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} - dodeca{% endblock title %}
+
+{% block content %}
+<article>
+    <h1>{{ page.title }}</h1>
+    {{ page.content | safe }}
+    <footer>
+        <p class="git-hash">Built from commit: {{ build.git_hash() }}</p>
+    </footer>
+</article>
+{% endblock content %}

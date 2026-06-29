@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }}{% endblock %}
+
+{% block content %}
+{{ section.content | safe }}
+
+{% if section.subsections %}
+<h2>Recent Posts</h2>
+{% for sub in section.subsections %}
+{% if sub.permalink == "/posts/" %}
+<ul class="post-list">
+{% for page in sub.pages %}
+    <li>
+        <div class="post-title"><a href="{{ page.path }}">{{ page.title }}</a></div>
+        {% if page.extra.date or page.extra.author %}
+        <div class="post-meta">
+            {% if page.extra.date %}{{ page.extra.date }}{% endif %}
+            {% if page.extra.date and page.extra.author %} · {% endif %}
+            {% if page.extra.author %}{{ page.extra.author }}{% endif %}
+        </div>
+        {% endif %}
+    </li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endblock %}

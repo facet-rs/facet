@@ -1,0 +1,23 @@
+{%- import "macros.html" as macros -%}
+{%- if title? -%}
+{%- set title_html = title | basic_markdown | safe -%}
+{%- set title_attr = title | escape_for_attribute %}
+{%- endif -%}
+{%- if alt? -%}
+{%- set alt_attr = alt | escape_for_attribute %}
+{%- endif -%}
+<figure
+class="paragraph-like"
+{%- if width? %} style="width: {{ width }}px"{%- endif %}
+>{{- get_media(src).markup(alt=alt_attr?, title=title_attr?, width=width?, height=height?) -}}
+<figcaption>
+{%- if title_html? -%}
+<div class="markup-container figure-caption">{{ title_html }}</div>
+{%- endif -%}
+{%- if attr? -%}
+<cite>
+{%- if attrlink? -%}<a href="{{ attrlink }}">{{ attr }}</a>{%- else -%}{{ attr }}{%- endif -%}
+</cite>
+{%- endif -%}
+</figcaption>
+</figure>

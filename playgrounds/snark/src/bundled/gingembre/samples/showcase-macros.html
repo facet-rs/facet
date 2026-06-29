@@ -1,0 +1,10 @@
+{% macro youtube_embed(id, alt="YouTube video thumbnail") %}
+<div class="youtube-thumbnail-link paragraph-like">
+  <a href="https://www.youtube.com/watch?v={{ id }}" target="_blank" rel="noopener" class="noclip" data-youtube-id="{{ id }}">
+    <div class="thumbnail-container">
+      <img src="https://img.youtube.com/vi/{{ id }}/maxresdefault.jpg" alt="{{ alt | escape_for_attribute }}" loading="lazy" />
+      <div class="play-button"><span class="play-triangle"></span></div>
+    </div>
+  </a>
+</div>
+{% endmacro %}

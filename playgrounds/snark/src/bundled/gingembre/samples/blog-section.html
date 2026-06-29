@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} - {{ config.title }}{% endblock %}
+
+{% block content %}
+<h1>{{ section.title }}</h1>
+{{ section.content | safe }}
+
+{% if section.pages %}
+<ul class="post-list">
+{% for page in section.pages %}
+    <li>
+        <div class="post-title"><a href="{{ page.path }}">{{ page.title }}</a></div>
+        {% if page.extra.date or page.extra.author %}
+        <div class="post-meta">
+            {% if page.extra.date %}{{ page.extra.date }}{% endif %}
+            {% if page.extra.date and page.extra.author %} · {% endif %}
+            {% if page.extra.author %}{{ page.extra.author }}{% endif %}
+        </div>
+        {% endif %}
+    </li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}
