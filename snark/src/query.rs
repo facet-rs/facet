@@ -284,6 +284,13 @@ fn execute_runtime_highlights(
             }
             HighlightTarget::Literal(literal) => {
                 for token in tokens.iter().filter(|token| &token.text == literal) {
+                    if !rule
+                        .parent_kind
+                        .as_ref()
+                        .is_none_or(|parent| token_has_direct_parent_kind(token, parent, &nodes))
+                    {
+                        continue;
+                    }
                     if rule
                         .predicates
                         .iter()
@@ -715,6 +722,28 @@ fn node_has_direct_parent_kind(
                 .saturating_sub(candidate.bytes.start().get())
         })
         .is_some_and(|parent| parent.kind == parent_kind)
+}
+
+fn token_has_direct_parent_kind(
+    token: &RuntimeHighlightToken,
+    parent_kind: &str,
+    nodes: &[RuntimeHighlightNode],
+) -> bool {
+    nodes
+        .iter()
+        .filter(|candidate| byte_range_contains(candidate.bytes, token.bytes))
+        .min_by_key(|candidate| {
+            candidate
+                .bytes
+                .end()
+                .get()
+                .saturating_sub(candidate.bytes.start().get())
+        })
+        .is_some_and(|parent| parent.kind == parent_kind)
+}
+
+fn byte_range_contains(outer: ByteRange, inner: ByteRange) -> bool {
+    outer.start() <= inner.start() && inner.end() <= outer.end()
 }
 
 fn byte_range_strictly_contains(outer: ByteRange, inner: ByteRange) -> bool {

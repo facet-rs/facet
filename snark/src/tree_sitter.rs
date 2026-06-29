@@ -2328,6 +2328,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn executes_css_important_declaration_highlight_on_accepted_glr_lineage() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        let declaration_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/declarations.txt")
+            .unwrap();
+        let declaration_cases = declaration_fixture.parse_cases().unwrap();
+
+        assert_eq!(declaration_cases[7].name, "Important declarations");
+        let scanner = CssReducedExternalScanner;
+        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .with_external_scanner(&scanner)
+            .parse_with_report(&declaration_cases[7].input)
+            .unwrap();
+        let captures = highlights_query.body.execute_runtime_highlights(
+            &parser_grammar,
+            &runtime_report,
+            &declaration_cases[7].input,
+        );
+
+        assert_same!(runtime_report.tree(), &declaration_cases[7].expected);
+        assert!(
+            runtime_report.max_live_versions() > 1,
+            "expected highlight oracle input to exercise a runtime GLR fork"
+        );
+        assert!(
+            runtime_report.failure_count() > 0,
+            "expected accepted-lineage query input to retire a failed GLR branch"
+        );
+        assert_important_keyword_capture(&captures);
+    }
+
     #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_css_important_declarations_through_weavy_runtime_stack_tree() {
@@ -2401,6 +2450,84 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, crate::parser::TreeEvent::Reduce { .. })),
             "expected Weavy-carried runtime tree execution to emit reduce tree events"
+        );
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn executes_css_important_declaration_highlight_through_weavy_glr_lineage() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        let declaration_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/declarations.txt")
+            .unwrap();
+        let declaration_cases = declaration_fixture.parse_cases().unwrap();
+
+        assert_eq!(declaration_cases[7].name, "Important declarations");
+        let scanner = CssReducedExternalScanner;
+        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .with_external_scanner(&scanner)
+            .parse_with_report(&declaration_cases[7].input)
+            .unwrap();
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &declaration_cases[7].input,
+            Some(&scanner),
+        )
+        .unwrap();
+        let runtime_captures = highlights_query.body.execute_runtime_highlights(
+            &parser_grammar,
+            &runtime_report,
+            &declaration_cases[7].input,
+        );
+        let weavy_captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &weavy_report.accepted_tree_events(),
+                &declaration_cases[7].input,
+            );
+
+        assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(
+            weavy_report.accepted_tree_events(),
+            runtime_report.accepted_tree_events()
+        );
+        assert_eq!(weavy_captures, runtime_captures);
+        assert_important_keyword_capture(&weavy_captures);
+        assert!(
+            weavy_report.max_live_versions() > 1,
+            "expected Weavy highlight oracle input to exercise a runtime GLR fork"
+        );
+        assert!(
+            weavy_report.failure_count() > 0,
+            "expected Weavy accepted-lineage query input to retire a failed GLR branch"
         );
         assert!(weavy_report.stats().step_count > 0);
         assert!(weavy_report.stats().block_call_count > 0);
@@ -2827,6 +2954,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn assert_important_keyword_capture(captures: &[HighlightCapture]) {
+        let important = captures
+            .iter()
+            .filter(|capture| capture.capture_name() == "keyword" && capture.text() == "!important")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            important.len(),
+            1,
+            "expected exactly one keyword capture for !important, got keyword captures {:?}",
+            captures
+                .iter()
+                .filter(|capture| capture.capture_name() == "keyword")
+                .collect::<Vec<_>>()
+        );
     }
 
     fn parse_reduced_or_panic(
