@@ -2235,6 +2235,125 @@ mod tests {
     }
 
     #[test]
+    fn parses_pinned_css_statements_through_runtime_stack_tree() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let statement_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/statements.txt")
+            .unwrap();
+        let statement_cases = statement_fixture.parse_cases().unwrap();
+
+        for (case_index, case_name) in [
+            (0usize, "Import statements"),
+            (5, "Charset statements"),
+            (3, "Media statements"),
+        ] {
+            let case = &statement_cases[case_index];
+            assert_eq!(case.name, case_name);
+            let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+            let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+                .unwrap()
+                .with_external_scanner(&scanner)
+                .parse_with_report(&case.input)
+                .unwrap();
+
+            assert_same!(runtime_report.tree(), &case.expected);
+            assert_eq!(
+                runtime_report.accepted_count(),
+                1,
+                "expected one accepted runtime branch for `{case_name}`"
+            );
+            assert!(
+                runtime_report
+                    .tree_events()
+                    .iter()
+                    .any(|event| matches!(event, crate::parser::TreeEvent::Reduce { .. })),
+                "expected runtime tree reductions for `{case_name}`"
+            );
+        }
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_pinned_css_statements_through_weavy_runtime_stack_tree() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let statement_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/corpus/statements.txt")
+            .unwrap();
+        let statement_cases = statement_fixture.parse_cases().unwrap();
+
+        for (case_index, case_name) in [
+            (0usize, "Import statements"),
+            (5, "Charset statements"),
+            (3, "Media statements"),
+        ] {
+            let case = &statement_cases[case_index];
+            assert_eq!(case.name, case_name);
+            let runtime_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+            let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+                .unwrap()
+                .with_external_scanner(&runtime_scanner)
+                .parse_with_report(&case.input)
+                .unwrap();
+            let weavy_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+            let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
+                &plan,
+                &validated,
+                &parser_grammar,
+                &parse_table,
+                &case.input,
+                Some(&weavy_scanner),
+            )
+            .unwrap();
+
+            assert_same!(weavy_report.tree(), runtime_report.tree());
+            assert_same!(weavy_report.tree(), &case.expected);
+            assert_eq!(
+                weavy_report.accepted_count(),
+                runtime_report.accepted_count()
+            );
+            assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
+            assert_eq!(
+                weavy_report.max_live_versions(),
+                runtime_report.max_live_versions()
+            );
+            assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+            assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+            assert_eq!(
+                weavy_report.accepted_tree_events(),
+                runtime_report.accepted_tree_events()
+            );
+            assert!(weavy_report.stats().step_count > 0);
+            assert!(weavy_report.stats().block_call_count > 0);
+        }
+    }
+
+    #[test]
     fn parses_pinned_css_important_declarations_via_glr_conflict() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
             .import()
