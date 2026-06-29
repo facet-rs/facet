@@ -76,8 +76,9 @@ exactly this with `__error_recovery`.
 `grammar.json` shapes without making runtime claims.
 
 `snark/src/tree_sitter.rs` owns package import and provenance. It may import
-`src/scanner.c`, `src/scanner.cc`, queries, node types, and corpus fixtures. It
-must keep generated parser files out of the import boundary.
+`src/scanner.c`, `src/scanner.cc`, queries, and corpus fixtures. It must keep
+generated parser and metadata files out of the import boundary, including
+`src/parser.c` and `src/node-types.json`.
 
 `snark/src/scanner.rs` owns imported scanner source and the raw external-token
 table. This table preserves package order for diagnostics and provenance. It is
