@@ -451,7 +451,7 @@ mod tests {
     use std::{collections::BTreeSet, fs};
 
     use crate::{
-        corpus::{HighlightAssertion, HighlightPoint, SexpNode, SexpValue},
+        corpus::{HighlightAssertion, HighlightPoint, SexpChild, SexpNode, SexpValue},
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
@@ -1855,6 +1855,48 @@ mod tests {
         assert_same!(actual_tree, cases[4].expected);
     }
 
+    #[test]
+    fn parses_json_leading_visible_extra_at_document_root() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+
+        let actual_tree = parse_reduced_without_external_scanner_or_panic(
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            "// leading\n{\"a\": 1}",
+        );
+        let expected = sexp_node(
+            "document",
+            vec![
+                sexp_node("comment", Vec::new()),
+                sexp_node(
+                    "object",
+                    vec![sexp_node(
+                        "pair",
+                        vec![
+                            sexp_node("string", vec![sexp_node("string_content", Vec::new())]),
+                            sexp_node("number", Vec::new()),
+                        ],
+                    )],
+                ),
+            ],
+        );
+
+        assert_same!(actual_tree, expected);
+    }
+
     #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_json_comments_through_weavy_lowering() {
@@ -1903,12 +1945,69 @@ mod tests {
         assert!(stats.block_call_count > 0);
     }
 
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_json_leading_visible_extra_through_weavy_lowering() {
+        let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        assert_eq!(grammar.language_name(), "json");
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        assert_eq!(validated.external_count(), 0);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let input = "// leading\n{\"a\": 1}";
+        let rust_report = unwrap_reduced_report_or_panic(
+            ReducedParser::new(&validated, &parser_grammar, &parse_table)
+                .unwrap()
+                .parse_with_report(input),
+            &parser_grammar,
+            &parse_table,
+        );
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            input,
+        )
+        .unwrap();
+
+        assert_same!(&weavy_tree, rust_report.tree());
+        assert_eq!(
+            weavy_tree.to_sexp(),
+            "(document (comment) (object (pair (string (string_content)) (number))))"
+        );
+        assert!(stats.step_count > 0);
+        assert!(stats.block_call_count > 0);
+    }
+
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
         out.insert(node.kind.clone());
         for child in &node.children {
             if let SexpValue::Node(child) = &child.value {
                 collect_node_kinds(child, out);
             }
+        }
+    }
+
+    fn sexp_node(kind: &str, children: Vec<SexpNode>) -> SexpNode {
+        SexpNode {
+            kind: kind.to_owned(),
+            children: children
+                .into_iter()
+                .map(|node| SexpChild {
+                    field: None,
+                    value: SexpValue::Node(node),
+                })
+                .collect(),
         }
     }
 

@@ -576,6 +576,11 @@ pub enum ReducedWeavyError {
     },
     /// Accept reduced to a hidden root.
     AcceptedHiddenRoot,
+    /// Accept left a non-extra stack entry outside the accepted root.
+    UnreducedStackEntry {
+        /// State carried by the leftover stack entry.
+        state: parser_ir::ParseStateId,
+    },
     /// Weavy program finished without accepting a tree.
     MissingAcceptedTree,
     /// A non-Snark canonical Weavy op appeared in the reduced parser plan.
@@ -668,6 +673,11 @@ impl fmt::Display for ReducedWeavyError {
                 )
             }
             Self::AcceptedHiddenRoot => write!(f, "accept reduced to a hidden root"),
+            Self::UnreducedStackEntry { state } => write!(
+                f,
+                "accept left an unreduced stack entry in state {}",
+                state.get()
+            ),
             Self::MissingAcceptedTree => write!(f, "Weavy program finished without accepting"),
             Self::UnsupportedCanonicalOp => {
                 write!(f, "non-intrinsic canonical Weavy op is unsupported here")
@@ -1015,6 +1025,7 @@ impl<'a> ReducedWeavyStepper<'a> {
                 let ReducedWeavyFragment::Node(node) = fragment else {
                     return Err(ReducedWeavyError::AcceptedHiddenRoot);
                 };
+                let node = self.finish_accepted_root(node)?;
                 self.tree = Some(node);
                 Ok(Control::Return)
             }
@@ -1417,6 +1428,24 @@ impl<'a> ReducedWeavyStepper<'a> {
             }));
         }
         None
+    }
+
+    fn finish_accepted_root(&mut self, mut node: SexpNode) -> Result<SexpNode, ReducedWeavyError> {
+        let mut leading_children = Vec::new();
+        for entry in self.stack.drain(..) {
+            match (entry.extra, entry.fragment) {
+                (_, None) => {}
+                (true, Some(fragment)) => leading_children.extend(fragment.into_children()),
+                (false, Some(_)) => {
+                    return Err(ReducedWeavyError::UnreducedStackEntry { state: entry.state });
+                }
+            }
+        }
+        if !leading_children.is_empty() {
+            leading_children.extend(node.children);
+            node.children = leading_children;
+        }
+        Ok(node)
     }
 
     fn goto_state(

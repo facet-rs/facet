@@ -4274,11 +4274,22 @@ impl<'a> ReducedParser<'a> {
                     }
                 };
                 match fragment {
-                    ReducedFragment::Node(node) => ReducedStepOutcome::Accepted {
-                        branch: branch.id,
-                        node,
-                        trace: branch.trace,
-                    },
+                    ReducedFragment::Node(node) => {
+                        let node = match self.finish_accepted_root(node, &mut branch.stack) {
+                            Ok(node) => node,
+                            Err(error) => {
+                                return ReducedStepOutcome::Failed {
+                                    branch: branch.id,
+                                    error: error.with_trace(branch.trace),
+                                };
+                            }
+                        };
+                        ReducedStepOutcome::Accepted {
+                            branch: branch.id,
+                            node,
+                            trace: branch.trace,
+                        }
+                    }
                     ReducedFragment::Hidden(_) => ReducedStepOutcome::Failed {
                         branch: branch.id,
                         error: ReducedParseError::new(ReducedParseErrorKind::AcceptedHiddenRoot)
@@ -4736,6 +4747,30 @@ impl<'a> ReducedParser<'a> {
             }));
         }
         None
+    }
+
+    fn finish_accepted_root(
+        &self,
+        mut node: SexpNode,
+        stack: &mut Vec<ReducedStackEntry>,
+    ) -> Result<SexpNode, ReducedParseError> {
+        let mut leading_children = Vec::new();
+        for entry in stack.drain(..) {
+            match (entry.extra, entry.fragment) {
+                (_, None) => {}
+                (true, Some(fragment)) => leading_children.extend(fragment.into_children()),
+                (false, Some(_)) => {
+                    return Err(ReducedParseError::new(
+                        ReducedParseErrorKind::UnreducedStackEntry { state: entry.state },
+                    ));
+                }
+            }
+        }
+        if !leading_children.is_empty() {
+            leading_children.extend(node.children);
+            node.children = leading_children;
+        }
+        Ok(node)
     }
 
     fn goto_state(
@@ -5223,6 +5258,11 @@ impl fmt::Display for ReducedParseError {
             ReducedParseErrorKind::AcceptedHiddenRoot => {
                 write!(f, "accepted parse did not produce a visible root node")
             }
+            ReducedParseErrorKind::UnreducedStackEntry { state } => write!(
+                f,
+                "accepted parse left an unreduced stack entry in state {}",
+                state.get()
+            ),
             ReducedParseErrorKind::UnsupportedRecovery { state } => {
                 write!(f, "state {} requires recovery", state.get())
             }
@@ -5329,6 +5369,11 @@ pub enum ReducedParseErrorKind {
     },
     /// Accept did not produce a visible root.
     AcceptedHiddenRoot,
+    /// Accept left a non-extra stack entry outside the accepted root.
+    UnreducedStackEntry {
+        /// State carried by the leftover stack entry.
+        state: ParseStateId,
+    },
     /// Recovery is outside this reduced parser slice.
     UnsupportedRecovery {
         /// Current state.
