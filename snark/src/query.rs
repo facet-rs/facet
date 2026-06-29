@@ -49,7 +49,22 @@ impl QuerySource {
         report: &RuntimeParseReport,
         input: &str,
     ) -> Vec<HighlightCapture> {
-        execute_runtime_highlights(&self.0, parser, report, input)
+        let tree_events = report.accepted_tree_events();
+        self.execute_runtime_highlights_from_tree_events(parser, &tree_events, input)
+    }
+
+    /// Execute the supported highlight-query subset against runtime tree events.
+    ///
+    /// This is shared by the direct Snark runtime and Weavy-carried runtime
+    /// reports so query execution is checked against the same structured tree
+    /// event surface.
+    pub fn execute_runtime_highlights_from_tree_events(
+        &self,
+        parser: &ParserGrammar,
+        tree_events: &[TreeEvent],
+        input: &str,
+    ) -> Vec<HighlightCapture> {
+        execute_runtime_highlights(&self.0, parser, tree_events, input)
     }
 }
 
@@ -234,12 +249,12 @@ pub fn named_node_references(query: &str) -> BTreeSet<String> {
 fn execute_runtime_highlights(
     query: &str,
     parser: &ParserGrammar,
-    report: &RuntimeParseReport,
+    tree_events: &[TreeEvent],
     input: &str,
 ) -> Vec<HighlightCapture> {
     let rules = highlight_rules(query);
-    let nodes = runtime_highlight_nodes(parser, report, input);
-    let tokens = runtime_highlight_tokens(parser, report, input);
+    let nodes = runtime_highlight_nodes(parser, tree_events, input);
+    let tokens = runtime_highlight_tokens(parser, tree_events, input);
     let mut captures = Vec::new();
 
     for rule in &rules {
@@ -249,7 +264,7 @@ fn execute_runtime_highlights(
                     if !rule
                         .parent_kind
                         .as_ref()
-                        .is_none_or(|parent| node_has_ancestor_kind(node, parent, &nodes))
+                        .is_none_or(|parent| node_has_direct_parent_kind(node, parent, &nodes))
                     {
                         continue;
                     }
@@ -599,11 +614,10 @@ struct RuntimeHighlightToken {
 
 fn runtime_highlight_nodes(
     parser: &ParserGrammar,
-    report: &RuntimeParseReport,
+    tree_events: &[TreeEvent],
     input: &str,
 ) -> Vec<RuntimeHighlightNode> {
-    report
-        .tree_events()
+    tree_events
         .iter()
         .filter_map(|event| match event {
             TreeEvent::Reduce {
@@ -650,11 +664,10 @@ fn runtime_highlight_nodes(
 
 fn runtime_highlight_tokens(
     parser: &ParserGrammar,
-    report: &RuntimeParseReport,
+    tree_events: &[TreeEvent],
     input: &str,
 ) -> Vec<RuntimeHighlightToken> {
-    report
-        .tree_events()
+    tree_events
         .iter()
         .filter_map(|event| match event {
             TreeEvent::Token {
@@ -684,20 +697,30 @@ fn runtime_highlight_tokens(
         .collect()
 }
 
-fn node_has_ancestor_kind(
+fn node_has_direct_parent_kind(
     node: &RuntimeHighlightNode,
-    ancestor_kind: &str,
+    parent_kind: &str,
     nodes: &[RuntimeHighlightNode],
 ) -> bool {
-    nodes.iter().any(|ancestor| {
-        ancestor.id != node.id
-            && ancestor.kind == ancestor_kind
-            && byte_range_contains(ancestor.bytes, node.bytes)
-    })
+    nodes
+        .iter()
+        .filter(|candidate| {
+            candidate.id != node.id && byte_range_strictly_contains(candidate.bytes, node.bytes)
+        })
+        .min_by_key(|candidate| {
+            candidate
+                .bytes
+                .end()
+                .get()
+                .saturating_sub(candidate.bytes.start().get())
+        })
+        .is_some_and(|parent| parent.kind == parent_kind)
 }
 
-fn byte_range_contains(outer: ByteRange, inner: ByteRange) -> bool {
-    outer.start() <= inner.start() && inner.end() <= outer.end()
+fn byte_range_strictly_contains(outer: ByteRange, inner: ByteRange) -> bool {
+    outer.start() <= inner.start()
+        && inner.end() <= outer.end()
+        && (outer.start() < inner.start() || inner.end() < outer.end())
 }
 
 fn input_text(input: &str, bytes: ByteRange) -> &str {

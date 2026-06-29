@@ -460,7 +460,7 @@ mod tests {
             ReducedExternalScan, ReducedExternalScanResult, ReducedExternalScanner,
             ReducedParseReport, ReducedParser, RuntimeParser, ScannerSnapshotId,
         },
-        query::WellKnownQuery,
+        query::{HighlightCapture, WellKnownQuery},
         runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
         scanner::TreeSitterScannerKind,
         validated::{ExternalTokenDecl, ValidatedGrammar},
@@ -1106,38 +1106,92 @@ mod tests {
             &highlight_fixture.source.body.0,
         );
 
-        assert_eq!(assertions.len(), 37);
-        for assertion in &assertions {
-            let matched = captures.iter().any(|capture| {
-                capture.capture_name() == assertion.expected_capture_name
-                    && capture_contains_highlight_assertion(capture.points(), assertion)
-            });
-            if !matched {
-                panic!(
-                    "missing highlight capture `{}` at {}:{}, produced captures at that point: {:?}, same-name captures: {:?}",
-                    assertion.expected_capture_name,
-                    assertion.position.row,
-                    assertion.position.column,
-                    captures
-                        .iter()
-                        .filter(|capture| {
-                            capture_contains_highlight_assertion(capture.points(), assertion)
-                        })
-                        .map(|capture| (capture.capture_name(), capture.text()))
-                        .collect::<Vec<_>>(),
-                    captures
-                        .iter()
-                        .filter(|capture| capture.capture_name() == assertion.expected_capture_name)
-                        .collect::<Vec<_>>()
-                );
-            }
-        }
+        assert_css_highlight_assertions_covered(&assertions, &captures);
         assert!(
             captures.iter().any(|capture| {
                 capture.capture_name() == "variable" && capture.text().starts_with("--")
             }),
             "expected #match? to capture custom-property values"
         );
+        assert!(
+            captures
+                .iter()
+                .filter(|capture| capture.capture_name() == "variable")
+                .all(|capture| capture.text().starts_with("--")),
+            "expected #match? to reject non-custom-property variable captures: {:?}",
+            captures
+                .iter()
+                .filter(|capture| capture.capture_name() == "variable")
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn executes_pinned_css_highlight_assertions_through_weavy_runtime_query() {
+        let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
+            .import()
+            .unwrap();
+        let grammar = package.first_grammar();
+        let validated = ValidatedGrammar::from_raw(&grammar.grammar.body.grammar).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser_grammar = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
+        let highlights_query = grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .unwrap();
+        let highlight_fixture = grammar
+            .corpus
+            .iter()
+            .find(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
+            .unwrap();
+        let assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
+        let scanner = CssReducedExternalScanner;
+        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
+            .unwrap()
+            .with_external_scanner(&scanner)
+            .parse_with_report(&highlight_fixture.source.body.0)
+            .unwrap();
+        let plan =
+            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
+            &plan,
+            &validated,
+            &parser_grammar,
+            &parse_table,
+            &highlight_fixture.source.body.0,
+            Some(&scanner),
+        )
+        .unwrap();
+        let captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &weavy_report.accepted_tree_events(),
+                &highlight_fixture.source.body.0,
+            );
+
+        assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_css_highlight_assertions_covered(&assertions, &captures);
+        assert!(
+            captures
+                .iter()
+                .filter(|capture| capture.capture_name() == "variable")
+                .all(|capture| capture.text().starts_with("--")),
+            "expected #match? to reject non-custom-property variable captures: {:?}",
+            captures
+                .iter()
+                .filter(|capture| capture.capture_name() == "variable")
+                .collect::<Vec<_>>()
+        );
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -2713,15 +2767,66 @@ mod tests {
         }
     }
 
-    fn capture_contains_highlight_assertion(
-        points: PointRange,
-        assertion: &HighlightAssertion,
-    ) -> bool {
-        let point = PointBytes::new(
+    fn highlight_assertion_range(assertion: &HighlightAssertion) -> PointRange {
+        let start = PointBytes::new(
             Row::new(u32::try_from(assertion.position.row).unwrap()),
             Utf8ColumnBytes::new(u32::try_from(assertion.position.column).unwrap()),
         );
-        points.start() <= point && point < points.end()
+        let end = PointBytes::new(
+            Row::new(u32::try_from(assertion.position.row).unwrap()),
+            Utf8ColumnBytes::new(
+                u32::try_from(assertion.position.column + assertion.length).unwrap(),
+            ),
+        );
+        PointRange::new(start, end).unwrap()
+    }
+
+    fn capture_matches_highlight_assertion(
+        points: PointRange,
+        assertion: &HighlightAssertion,
+    ) -> bool {
+        let assertion = highlight_assertion_range(assertion);
+        points.start() <= assertion.start() && assertion.end() <= points.end()
+    }
+
+    fn assert_css_highlight_assertions_covered(
+        assertions: &[HighlightAssertion],
+        captures: &[HighlightCapture],
+    ) {
+        assert_eq!(assertions.len(), 37);
+        for assertion in assertions {
+            let matched = captures.iter().any(|capture| {
+                capture.capture_name() == assertion.expected_capture_name
+                    && capture_matches_highlight_assertion(capture.points(), assertion)
+            });
+            if assertion.negative {
+                assert!(
+                    !matched,
+                    "unexpected negative highlight capture `{}` at {:?}",
+                    assertion.expected_capture_name,
+                    highlight_assertion_range(assertion)
+                );
+                continue;
+            }
+            if !matched {
+                panic!(
+                    "missing highlight capture `{}` at {:?}, produced captures at that range: {:?}, same-name captures: {:?}",
+                    assertion.expected_capture_name,
+                    highlight_assertion_range(assertion),
+                    captures
+                        .iter()
+                        .filter(|capture| {
+                            capture_matches_highlight_assertion(capture.points(), assertion)
+                        })
+                        .map(|capture| (capture.capture_name(), capture.text()))
+                        .collect::<Vec<_>>(),
+                    captures
+                        .iter()
+                        .filter(|capture| capture.capture_name() == assertion.expected_capture_name)
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
     }
 
     fn parse_reduced_or_panic(

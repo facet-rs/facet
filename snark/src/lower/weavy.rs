@@ -1149,7 +1149,7 @@ pub fn parse_runtime_with_report_and_scanner(
         byte_position: 0,
         scanner_snapshot: None,
     }]);
-    let mut accepted = Vec::<SexpNode>::new();
+    let mut accepted = Vec::<(parser_ir::StackVersionId, SexpNode)>::new();
     let mut failures = Vec::<ReducedWeavyError>::new();
     let mut next_version_index = 1usize;
     let mut next_lookahead_index = 0usize;
@@ -1194,7 +1194,7 @@ pub fn parse_runtime_with_report_and_scanner(
                         version,
                         reason: parser_ir::BranchRetireReason::Accepted,
                     });
-                    accepted.push(node);
+                    accepted.push((version, node));
                 }
                 RuntimeWeavyStepOutcome::Failed { version, error } => {
                     trace_events.push(parser_ir::TraceEvent::GlrRetire {
@@ -1208,7 +1208,7 @@ pub fn parse_runtime_with_report_and_scanner(
         max_live_versions = max_live_versions.max(branches.len());
     }
 
-    let Some(first_node) = accepted.first().cloned() else {
+    let Some((first_version, first_node)) = accepted.first().cloned() else {
         trace_events.push(parser_ir::TraceEvent::ParseFinish {
             id: next_runtime_weavy_trace_id(&trace_events),
             outcome: parser_ir::ParseOutcome::Failed,
@@ -1217,7 +1217,7 @@ pub fn parse_runtime_with_report_and_scanner(
             failure_count: failures.len(),
         });
     };
-    if accepted.iter().all(|node| *node == first_node) {
+    if accepted.iter().all(|(_, node)| *node == first_node) {
         trace_events.push(parser_ir::TraceEvent::ParseFinish {
             id: next_runtime_weavy_trace_id(&trace_events),
             outcome: parser_ir::ParseOutcome::Accepted,
@@ -1227,6 +1227,7 @@ pub fn parse_runtime_with_report_and_scanner(
             stats,
             trace_events,
             tree_events,
+            accepted_version: first_version,
             accepted_count: accepted.len(),
             failure_count: failures.len(),
             max_live_versions,
@@ -1239,7 +1240,7 @@ pub fn parse_runtime_with_report_and_scanner(
     });
     Err(ReducedWeavyError::AmbiguousParse {
         accepted_count: accepted.len(),
-        accepted: accepted.iter().map(SexpNode::to_sexp).collect(),
+        accepted: accepted.iter().map(|(_, node)| node.to_sexp()).collect(),
     })
 }
 
@@ -1250,6 +1251,7 @@ pub struct RuntimeWeavyReport {
     stats: RunStats,
     trace_events: Vec<parser_ir::TraceEvent>,
     tree_events: Vec<parser_ir::TreeEvent>,
+    accepted_version: parser_ir::StackVersionId,
     accepted_count: usize,
     failure_count: usize,
     max_live_versions: usize,
@@ -1274,6 +1276,20 @@ impl RuntimeWeavyReport {
     /// Runtime tree events emitted during runtime execution.
     pub fn tree_events(&self) -> &[parser_ir::TreeEvent] {
         &self.tree_events
+    }
+
+    /// Stack version whose accepted tree was returned as the corpus projection.
+    pub const fn accepted_version(&self) -> parser_ir::StackVersionId {
+        self.accepted_version
+    }
+
+    /// Tree events emitted by the accepted branch lineage.
+    pub fn accepted_tree_events(&self) -> Vec<parser_ir::TreeEvent> {
+        parser_ir::tree_events_for_version_lineage(
+            self.accepted_version,
+            &self.trace_events,
+            &self.tree_events,
+        )
     }
 
     /// Number of accepted runtime branches before identical-tree coalescing.

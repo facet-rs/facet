@@ -5307,7 +5307,7 @@ impl<'a> RuntimeParser<'a> {
             scanner_snapshot: None,
             trace: Vec::new(),
         }]);
-        let mut accepted = Vec::<(SexpNode, Vec<ReducedTraceStep>)>::new();
+        let mut accepted = Vec::<(StackVersionId, SexpNode, Vec<ReducedTraceStep>)>::new();
         let mut failures = Vec::<ReducedParseError>::new();
         let mut next_version_index = 1usize;
         let mut next_lookahead_index = 0usize;
@@ -5354,7 +5354,7 @@ impl<'a> RuntimeParser<'a> {
                             version,
                             reason: BranchRetireReason::Accepted,
                         });
-                        accepted.push((node, trace));
+                        accepted.push((version, node, trace));
                     }
                     RuntimeStepOutcome::Failed { version, error } => {
                         trace_events.push(TraceEvent::GlrRetire {
@@ -5368,7 +5368,7 @@ impl<'a> RuntimeParser<'a> {
             max_live_versions = max_live_versions.max(branches.len());
         }
 
-        let Some((first_node, first_trace)) = accepted.first().cloned() else {
+        let Some((first_version, first_node, first_trace)) = accepted.first().cloned() else {
             trace_events.push(TraceEvent::ParseFinish {
                 id: next_trace_id(&trace_events),
                 outcome: ParseOutcome::Failed,
@@ -5377,7 +5377,7 @@ impl<'a> RuntimeParser<'a> {
                 ReducedParseError::new(ReducedParseErrorKind::NoViableBranch { failure_count: 0 })
             }));
         };
-        if accepted.iter().all(|(node, _)| *node == first_node) {
+        if accepted.iter().all(|(_, node, _)| *node == first_node) {
             trace_events.push(TraceEvent::ParseFinish {
                 id: next_trace_id(&trace_events),
                 outcome: ParseOutcome::Accepted,
@@ -5386,6 +5386,7 @@ impl<'a> RuntimeParser<'a> {
                 tree: first_node,
                 trace_events,
                 tree_events,
+                accepted_version: first_version,
                 accepted_count: accepted.len(),
                 failure_count: failures.len(),
                 max_live_versions,
@@ -5399,7 +5400,7 @@ impl<'a> RuntimeParser<'a> {
         Err(
             ReducedParseError::new(ReducedParseErrorKind::AmbiguousParse {
                 accepted_count: accepted.len(),
-                accepted: accepted.iter().map(|(node, _)| node.to_sexp()).collect(),
+                accepted: accepted.iter().map(|(_, node, _)| node.to_sexp()).collect(),
             })
             .with_trace(first_trace),
         )
@@ -5971,6 +5972,7 @@ pub struct RuntimeParseReport {
     tree: SexpNode,
     trace_events: Vec<TraceEvent>,
     tree_events: Vec<TreeEvent>,
+    accepted_version: StackVersionId,
     accepted_count: usize,
     failure_count: usize,
     max_live_versions: usize,
@@ -5990,6 +5992,20 @@ impl RuntimeParseReport {
     /// Runtime tree events emitted during runtime execution.
     pub fn tree_events(&self) -> &[TreeEvent] {
         &self.tree_events
+    }
+
+    /// Stack version whose accepted tree was returned as the corpus projection.
+    pub const fn accepted_version(&self) -> StackVersionId {
+        self.accepted_version
+    }
+
+    /// Tree events emitted by the accepted branch lineage.
+    pub fn accepted_tree_events(&self) -> Vec<TreeEvent> {
+        tree_events_for_version_lineage(
+            self.accepted_version,
+            &self.trace_events,
+            &self.tree_events,
+        )
     }
 
     /// Number of accepted runtime branches before identical-tree coalescing.
@@ -6107,6 +6123,41 @@ impl RuntimeTreeStore {
 
 fn next_trace_id(events: &[TraceEvent]) -> TraceEventId {
     TraceEventId::from_index(events.len())
+}
+
+pub(crate) fn tree_events_for_version_lineage(
+    accepted_version: StackVersionId,
+    trace_events: &[TraceEvent],
+    tree_events: &[TreeEvent],
+) -> Vec<TreeEvent> {
+    let lineage = stack_version_lineage(accepted_version, trace_events);
+    tree_events
+        .iter()
+        .filter(|event| lineage.contains(&event.version()))
+        .cloned()
+        .collect()
+}
+
+fn stack_version_lineage(
+    accepted_version: StackVersionId,
+    trace_events: &[TraceEvent],
+) -> BTreeSet<StackVersionId> {
+    let mut lineage = BTreeSet::new();
+    let mut stack = vec![accepted_version];
+    while let Some(version) = stack.pop() {
+        if !lineage.insert(version) {
+            continue;
+        }
+        if let Some(source) = trace_events.iter().rev().find_map(|event| match event {
+            TraceEvent::GlrSplit {
+                source, branches, ..
+            } if branches.contains(&version) => Some(*source),
+            _ => None,
+        }) {
+            stack.push(source);
+        }
+    }
+    lineage
 }
 
 fn lookahead_parser_symbol(lookahead: LookaheadSymbol) -> ParserSymbol {
@@ -6726,6 +6777,23 @@ pub enum TreeEvent {
         /// Point range.
         points: PointRange,
     },
+}
+
+impl TreeEvent {
+    /// Stack version that emitted this tree event.
+    pub const fn version(&self) -> StackVersionId {
+        match self {
+            Self::OpenNode { version, .. }
+            | Self::Token { version, .. }
+            | Self::Reduce { version, .. }
+            | Self::Missing { version, .. }
+            | Self::Error { version, .. }
+            | Self::CloseNode { version, .. }
+            | Self::ReuseNode { version, .. }
+            | Self::Field { version, .. }
+            | Self::Alias { version, .. } => *version,
+        }
+    }
 }
 
 /// Structured parser trace event.
