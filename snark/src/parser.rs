@@ -5031,10 +5031,9 @@ fn match_gingembre_quoted_string(input: &str, byte_position: usize, quote: u8) -
     while cursor < bytes.len() {
         match bytes[cursor] {
             b'\\' => {
-                if cursor + 1 >= bytes.len() {
-                    return None;
-                }
-                cursor += 2;
+                cursor += 1;
+                let escaped = input[cursor..].chars().next()?;
+                cursor += escaped.len_utf8();
             }
             byte if byte == quote => return Some(cursor + 1),
             _ => {
@@ -7658,6 +7657,18 @@ extras (
     fn keeps_common_ascii_identifier_pattern_grammar_neutral() {
         assert_eq!(match_pattern(ASCII_IDENTIFIER_PATTERN, "if", 0), Some(2));
         assert_eq!(match_pattern(GINGEMBRE_IDENTIFIER_PATTERN, "if", 0), None);
+    }
+
+    #[test]
+    fn matches_gingembre_strings_with_escaped_non_ascii_scalars() {
+        assert_eq!(
+            match_pattern("\"([^\"\\\\]|\\\\.)*\"", r#""\é""#, 0),
+            Some(r#""\é""#.len())
+        );
+        assert_eq!(
+            match_pattern("'([^'\\\\]|\\\\.)*'", "'\\é'", 0),
+            Some("'\\é'".len())
+        );
     }
 
     #[test]
