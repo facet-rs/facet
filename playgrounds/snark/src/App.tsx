@@ -185,6 +185,10 @@ export function App() {
     () => sortedFiles(projectedFiles).filter((file): file is SampleFile => file.path.startsWith("samples/")),
     [projectedFiles],
   );
+  const visibleBundleFiles = useMemo(
+    () => sortedFiles(projectedFiles).filter((file) => isRuntimeBundlePath(file.path)),
+    [projectedFiles],
+  );
   const hasBundledTests = useMemo(
     () =>
       projectedFiles.some(
@@ -262,10 +266,11 @@ export function App() {
           </label>
         </div>
         <div className="file-list">
-          {sortedFiles(files).map((file) => (
+          {visibleBundleFiles.map((file) => (
             <div
               key={file.path}
               className="file-row"
+              title={file.sourcePath === file.path ? file.path : `${file.path} from ${file.sourcePath}`}
             >
               <span>{file.path}</span>
               <small>{file.text.length.toLocaleString()}b</small>
@@ -718,6 +723,21 @@ function isGeneratedPath(path: string) {
     path.endsWith("/src/parser.h") ||
     path.endsWith("/src/node-types.json") ||
     path.endsWith("/bindings/node/binding.cc")
+  );
+}
+
+function isRuntimeBundlePath(path: string) {
+  return (
+    path === "grammar.js" ||
+    path === "src/grammar.json" ||
+    path === "src/scanner.c" ||
+    path === "src/scanner.cc" ||
+    (path.endsWith(".js") && !isGeneratedPath(path)) ||
+    path.startsWith("queries/") ||
+    path.startsWith("test/corpus/") ||
+    path.startsWith("test/highlight/") ||
+    path.startsWith("test/highlights/") ||
+    path.startsWith("samples/")
   );
 }
 
