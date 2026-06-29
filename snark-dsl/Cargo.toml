@@ -1,0 +1,20 @@
+[package]
+name = "snark-dsl"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+boa = ["dep:boa_engine"]
+native = ["boa", "boa_engine/float16", "boa_engine/xsum", "dep:tempfile"]
+
+[dependencies]
+boa_engine = { version = "0.21.1", default-features = false, optional = true }
+tempfile = { version = "3.23.0", optional = true }
+thiserror = "2.0.17"
+
+[[bin]]
+name = "snark-dsl"
+path = "src/main.rs"
+required-features = ["native"]

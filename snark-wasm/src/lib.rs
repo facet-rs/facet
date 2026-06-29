@@ -128,7 +128,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
     let Some(grammar_file) = find_file(&files, "src/grammar.json") else {
         let message = match &bundle.grammar_js_path {
             Some(path) => format!(
-                "bundle contains {path}, but Snark's browser runtime consumes src/grammar.json; convert grammar.js with the snark-wasm Node converter and reload the emitted bundle"
+                "bundle contains {path}, but this WASM entrypoint consumes src/grammar.json; the playground shell should evaluate grammar.js into an in-memory src/grammar.json before calling parseBundle"
             ),
             None => "bundle does not contain src/grammar.json".to_owned(),
         };
@@ -577,7 +577,7 @@ fn limitations(files: &[BundleFile], active_scanner: Option<&str>) -> Vec<String
     ];
     if find_file(files, "grammar.js").is_some() {
         limitations.push(
-            "Tree-sitter grammar.js is source DSL. Convert it to src/grammar.json outside the browser with the snark-wasm Node converter before parsing.".to_owned(),
+            "Tree-sitter grammar.js is source DSL. The playground shell evaluates it before this WASM parser receives src/grammar.json.".to_owned(),
         );
     }
     if files
@@ -807,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_grammar_js_bundle_as_needing_conversion() {
+    fn reports_grammar_js_bundle_as_needing_in_memory_grammar_json() {
         let request = PlaygroundRequest {
             files: vec![BundleFile {
                 path: "langs/group-acorn/json/def/grammar/grammar.js".to_owned(),
@@ -828,7 +828,7 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("convert grammar.js")
+                .contains("playground shell should evaluate grammar.js")
         );
     }
 

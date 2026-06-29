@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import init, { parseBundle } from "@bearcove/snark-wasm";
+import { filesWithGrammarJson } from "./treeSitterDsl";
 
 type BundleFile = {
   path: string;
@@ -145,15 +146,22 @@ export function App() {
     if (!fileList || fileList.length === 0) {
       return;
     }
-    const next = await Promise.all(
+    const loaded = await Promise.all(
       Array.from(fileList).map(async (file) => ({
-        path: normalizeBrowserPath(file),
+        path: rawBrowserPath(file),
         text: await file.text(),
       })),
     );
-    setFiles(sortedFiles(next));
-    setSelectedPath(next.some((file) => file.path === "src/grammar.json") ? "src/grammar.json" : next[0].path);
-    const firstSample = sortedFiles(next).find((file) => file.path.startsWith("samples/"));
+    const next = sortedFiles(normalizeBrowserFiles(loaded));
+    setFiles(next);
+    setSelectedPath(
+      next.some((file) => file.path === "src/grammar.json")
+        ? "src/grammar.json"
+        : next.some((file) => file.path === "grammar.js")
+          ? "grammar.js"
+          : next[0].path,
+    );
+    const firstSample = next.find((file) => file.path.startsWith("samples/"));
     if (firstSample) {
       setInput(firstSample.text);
     }
@@ -170,14 +178,17 @@ export function App() {
     setBusy(true);
     try {
       await wasmReady;
+      const runnableFiles = await filesWithGrammarJson(files);
       const response = parseBundle(
         JSON.stringify({
-          files,
+          files: runnableFiles,
           input,
           run_corpus: runCorpus,
         }),
       );
       setResult(JSON.parse(response) as PlaygroundResponse);
+    } catch (error) {
+      setResult(responseWithDiagnostic("grammar.js", error instanceof Error ? error.message : String(error), files));
     } finally {
       setBusy(false);
     }
@@ -389,9 +400,29 @@ function StatusStrip({ result }: { result: PlaygroundResponse | null }) {
   );
 }
 
-function normalizeBrowserPath(file: File) {
+function rawBrowserPath(file: File) {
   const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-  return normalizeBundlePath(relative && relative.length > 0 ? relative : file.name);
+  return normalizePath(relative && relative.length > 0 ? relative : file.name);
+}
+
+function normalizeBrowserFiles(files: BundleFile[]) {
+  const stripped = stripCommonRoot(files);
+  return stripped.map((file) => ({ ...file, path: normalizeBundlePath(file.path) }));
+}
+
+function stripCommonRoot(files: BundleFile[]) {
+  if (files.length === 0) {
+    return files;
+  }
+  const firstSegments = files[0].path.split("/");
+  if (firstSegments.length < 2) {
+    return files;
+  }
+  const root = firstSegments[0];
+  if (!files.every((file) => file.path === root || file.path.startsWith(`${root}/`))) {
+    return files;
+  }
+  return files.map((file) => ({ ...file, path: file.path.slice(root.length + 1) }));
 }
 
 function normalizeBundlePath(path: string) {
@@ -481,7 +512,6 @@ function normalizePackagePath(path: string) {
     return path;
   }
   for (const suffix of [
-    "/grammar.js",
     "/src/grammar.json",
     "/src/scanner.c",
     "/src/scanner.cc",
@@ -502,4 +532,52 @@ function normalizePackagePath(path: string) {
     }
   }
   return null;
+}
+
+function responseWithDiagnostic(stage: string, message: string, files: BundleFile[]): PlaygroundResponse {
+  return {
+    ok: false,
+    language: null,
+    diagnostics: [{ stage, message }],
+    bundle: {
+      grammar_path: files.some((file) => file.path === "src/grammar.json") ? "src/grammar.json" : null,
+      grammar_js_path: files.some((file) => file.path === "grammar.js") ? "grammar.js" : null,
+      query_paths: files.filter((file) => file.path.startsWith("queries/")).map((file) => file.path),
+      corpus_paths: files
+        .filter(
+          (file) =>
+            file.path.startsWith("test/corpus/") ||
+            file.path.startsWith("test/highlight/") ||
+            file.path.startsWith("test/highlights/"),
+        )
+        .map((file) => file.path),
+      sample_paths: files.filter((file) => file.path.startsWith("samples/")).map((file) => file.path),
+      generated_files_ignored: files.filter((file) => isGeneratedPath(file.path)).map((file) => file.path),
+      scanner_paths: files
+        .filter((file) => file.path === "src/scanner.c" || file.path === "src/scanner.cc")
+        .map((file) => file.path),
+      active_scanner: null,
+    },
+    parse: null,
+    highlights: [],
+    corpus: [],
+    limitations: ["Tree-sitter grammar.js is evaluated in a browser Worker before Snark receives src/grammar.json."],
+  };
+}
+
+function isGeneratedPath(path: string) {
+  return (
+    [
+      "src/parser.c",
+      "src/parser.cc",
+      "src/parser.h",
+      "src/node-types.json",
+      "bindings/node/binding.cc",
+    ].includes(path) ||
+    path.endsWith("/src/parser.c") ||
+    path.endsWith("/src/parser.cc") ||
+    path.endsWith("/src/parser.h") ||
+    path.endsWith("/src/node-types.json") ||
+    path.endsWith("/bindings/node/binding.cc")
+  );
 }
