@@ -7152,6 +7152,7 @@ rules {
             {type SYMBOL, name call_expr}
             {type SYMBOL, name filter_expr}
             {type SYMBOL, name test_expr}
+            {type SYMBOL, name unary_expr}
             {type SYMBOL, name binary_expr}
         )
     }
@@ -7179,7 +7180,7 @@ rules {
     }
     field_expr {
         type PREC_LEFT
-        value 5
+        value 50
         content {
             type SEQ
             members (
@@ -7191,7 +7192,7 @@ rules {
     }
     call_expr {
         type PREC_LEFT
-        value 5
+        value 50
         content {
             type SEQ
             members (
@@ -7202,7 +7203,7 @@ rules {
     }
     filter_expr {
         type PREC_LEFT
-        value 4
+        value 40
         content {
             type SEQ
             members (
@@ -7218,7 +7219,7 @@ rules {
     }
     test_expr {
         type PREC_LEFT
-        value -1
+        value -10
         content {
             type SEQ
             members (
@@ -7238,6 +7239,25 @@ rules {
                 )}
             )
         }
+    }
+    unary_expr {
+        type CHOICE
+        members (
+            {type PREC_RIGHT, value -15, content {
+                type SEQ
+                members (
+                    {type PATTERN, value r"not\b"}
+                    {type SYMBOL, name _expr}
+                )
+            }}
+            {type PREC_RIGHT, value 25, content {
+                type SEQ
+                members (
+                    {type STRING, value "-"}
+                    {type SYMBOL, name _expr}
+                )
+            }}
+        )
     }
     arg_list {
         type SEQ
@@ -7285,7 +7305,7 @@ rules {
     binary_expr {
         type CHOICE
         members (
-            {type PREC_LEFT, value -3, content {
+            {type PREC_LEFT, value -30, content {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
@@ -7293,7 +7313,7 @@ rules {
                     {type SYMBOL, name _expr}
                 )
             }}
-            {type PREC_LEFT, value -2, content {
+            {type PREC_LEFT, value -20, content {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
@@ -7301,7 +7321,7 @@ rules {
                     {type SYMBOL, name _expr}
                 )
             }}
-            {type PREC_LEFT, value -1, content {
+            {type PREC_LEFT, value -10, content {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
@@ -7321,7 +7341,7 @@ rules {
                     {type SYMBOL, name _expr}
                 )
             }}
-            {type PREC_LEFT, value 1, content {
+            {type PREC_LEFT, value 10, content {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
@@ -7333,7 +7353,7 @@ rules {
                     {type SYMBOL, name _expr}
                 )
             }}
-            {type PREC_LEFT, value 2, content {
+            {type PREC_LEFT, value 20, content {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
@@ -7346,7 +7366,7 @@ rules {
                     {type SYMBOL, name _expr}
                 )
             }}
-            {type PREC_RIGHT, value 3, content {
+            {type PREC_RIGHT, value 30, content {
                 type SEQ
                 members (
                     {type SYMBOL, name _expr}
@@ -7415,6 +7435,7 @@ extras (
             gingembre_syntax::SyntaxKind::CallExpr => "call_expr",
             gingembre_syntax::SyntaxKind::FilterExpr => "filter_expr",
             gingembre_syntax::SyntaxKind::TestExpr => "test_expr",
+            gingembre_syntax::SyntaxKind::UnaryExpr => "unary_expr",
             gingembre_syntax::SyntaxKind::BinaryExpr => "binary_expr",
             gingembre_syntax::SyntaxKind::ArgList => "arg_list",
             gingembre_syntax::SyntaxKind::Arg => "arg",
@@ -7607,6 +7628,26 @@ extras (
         );
     }
 
+    #[test]
+    fn parses_styx_authored_gingembre_unary_precedence_like_gingembre() {
+        assert_styx_authored_gingembre_runtime(
+            "{{ not a and b }}",
+            "(template (interpolation (binary_expr (unary_expr (var_ref)) (var_ref))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ not a == b }}",
+            "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ a * -b }}",
+            "(template (interpolation (binary_expr (var_ref) (unary_expr (var_ref)))))",
+        );
+        assert_styx_authored_gingembre_runtime(
+            "{{ -a ** b }}",
+            "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))",
+        );
+    }
+
     #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_call_arguments_through_weavy_runtime() {
@@ -7653,6 +7694,32 @@ extras (
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (test_expr (filter_expr (var_ref) (arg_list (arg (var_ref)))))))"
+        );
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert!(weavy_report.stats().block_call_count > 0);
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn parses_styx_authored_gingembre_unary_precedence_through_weavy_runtime() {
+        let input = "{{ not a == b }}";
+        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan, &validated, &parser, &table, input,
+        )
+        .unwrap();
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
+        assert_eq!(
+            weavy_report.tree().to_sexp(),
+            "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))"
         );
         assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
         assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
