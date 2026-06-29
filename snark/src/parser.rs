@@ -6259,6 +6259,142 @@ pub struct RuntimeParser<'a> {
     recovery_step_limit: Option<usize>,
 }
 
+/// Byte edit shape used by Tree-sitter-style incremental reparsing.
+///
+/// `start_byte..old_end_byte` names the replaced range in the previous input.
+/// `start_byte..new_end_byte` names the replacement range in the new input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeInputEdit {
+    start_byte: usize,
+    old_end_byte: usize,
+    new_end_byte: usize,
+}
+
+impl RuntimeInputEdit {
+    /// Build a byte edit descriptor.
+    pub const fn new(start_byte: usize, old_end_byte: usize, new_end_byte: usize) -> Self {
+        Self {
+            start_byte,
+            old_end_byte,
+            new_end_byte,
+        }
+    }
+
+    /// Start byte shared by the old and new input ranges.
+    pub const fn start_byte(self) -> usize {
+        self.start_byte
+    }
+
+    /// End byte in the old input.
+    pub const fn old_end_byte(self) -> usize {
+        self.old_end_byte
+    }
+
+    /// End byte in the new input.
+    pub const fn new_end_byte(self) -> usize {
+        self.new_end_byte
+    }
+
+    /// Validate that this edit describes the old and new inputs.
+    pub fn validate_against(
+        &self,
+        old_input: &str,
+        new_input: &str,
+    ) -> Result<(), ReducedParseError> {
+        let valid_order =
+            self.start_byte <= self.old_end_byte && self.start_byte <= self.new_end_byte;
+        let valid_bounds =
+            self.old_end_byte <= old_input.len() && self.new_end_byte <= new_input.len();
+        let valid_boundaries = old_input.is_char_boundary(self.start_byte)
+            && old_input.is_char_boundary(self.old_end_byte)
+            && new_input.is_char_boundary(self.start_byte)
+            && new_input.is_char_boundary(self.new_end_byte);
+        let valid_context = valid_order
+            && valid_bounds
+            && valid_boundaries
+            && old_input[..self.start_byte] == new_input[..self.start_byte]
+            && old_input[self.old_end_byte..] == new_input[self.new_end_byte..];
+        if valid_context {
+            Ok(())
+        } else {
+            Err(ReducedParseError::new(
+                ReducedParseErrorKind::InvalidInputEdit {
+                    start_byte: self.start_byte,
+                    old_end_byte: self.old_end_byte,
+                    new_end_byte: self.new_end_byte,
+                    old_input_len: old_input.len(),
+                    new_input_len: new_input.len(),
+                },
+            ))
+        }
+    }
+}
+
+/// Persistent runtime parse session for the incremental parser seam.
+///
+/// This session already preserves the previous input and accepted report. The
+/// current reparse path deliberately falls back to a full parse; subtree reuse
+/// will plug in here while keeping full parse as the differential oracle.
+pub struct RuntimeParseSession<'a> {
+    parser: RuntimeParser<'a>,
+    last_input: Option<String>,
+    last_report: Option<RuntimeParseReport>,
+}
+
+impl<'a> RuntimeParseSession<'a> {
+    /// Start a persistent runtime parse session.
+    pub const fn new(parser: RuntimeParser<'a>) -> Self {
+        Self {
+            parser,
+            last_input: None,
+            last_report: None,
+        }
+    }
+
+    /// Last input accepted by this session.
+    pub fn last_input(&self) -> Option<&str> {
+        self.last_input.as_deref()
+    }
+
+    /// Last report accepted by this session.
+    pub const fn last_report(&self) -> Option<&RuntimeParseReport> {
+        self.last_report.as_ref()
+    }
+
+    /// Parse a full input and make it the new session baseline.
+    pub fn parse_compact(
+        &mut self,
+        input: impl Into<String>,
+    ) -> Result<&RuntimeParseReport, ReducedParseError> {
+        let input = input.into();
+        let report = self.parser.parse_compact_with_report(&input)?;
+        self.last_input = Some(input);
+        self.last_report = Some(report);
+        Ok(self
+            .last_report
+            .as_ref()
+            .expect("session report was just installed"))
+    }
+
+    /// Reparse after an edit and make the new input the session baseline.
+    ///
+    /// This is the stable API seam for incremental reuse. It validates that the
+    /// edit describes the old and new inputs, then currently delegates to a full
+    /// parse. Future subtree reuse must preserve this method's full-parse
+    /// equivalence.
+    pub fn reparse_compact(
+        &mut self,
+        edit: RuntimeInputEdit,
+        new_input: impl Into<String>,
+    ) -> Result<&RuntimeParseReport, ReducedParseError> {
+        let new_input = new_input.into();
+        if let Some(old_input) = self.last_input.as_deref() {
+            edit.validate_against(old_input, &new_input)?;
+        }
+        self.parse_compact(new_input)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeRecoveryMode {
     Strict,
@@ -8008,6 +8144,16 @@ impl fmt::Display for ReducedParseError {
             ReducedParseErrorKind::BranchStepLimit { limit } => {
                 write!(f, "reduced parser exceeded branch step limit {limit}")
             }
+            ReducedParseErrorKind::InvalidInputEdit {
+                start_byte,
+                old_end_byte,
+                new_end_byte,
+                old_input_len,
+                new_input_len,
+            } => write!(
+                f,
+                "invalid input edit start={start_byte} old_end={old_end_byte} new_end={new_end_byte} for old input length {old_input_len} and new input length {new_input_len}"
+            ),
             ReducedParseErrorKind::AmbiguousParse {
                 accepted_count,
                 accepted,
@@ -8121,6 +8267,19 @@ pub enum ReducedParseErrorKind {
     BranchStepLimit {
         /// Step limit that was exceeded.
         limit: usize,
+    },
+    /// Incremental edit coordinates did not describe the old and new inputs.
+    InvalidInputEdit {
+        /// Shared edit start byte.
+        start_byte: usize,
+        /// Replaced range end in the old input.
+        old_end_byte: usize,
+        /// Replacement range end in the new input.
+        new_end_byte: usize,
+        /// Old input byte length.
+        old_input_len: usize,
+        /// New input byte length.
+        new_input_len: usize,
     },
     /// More than one distinct reduced tree was accepted.
     AmbiguousParse {
@@ -10354,6 +10513,48 @@ extras (
         rediff::assert_same!(reused.tree(), fresh.tree());
         assert_eq!(reused.trace_events(), fresh.trace_events());
         assert_eq!(reused.tree_events(), fresh.tree_events());
+    }
+
+    #[test]
+    fn runtime_parse_session_reparse_matches_full_parse_oracle() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let mut session = RuntimeParseSession::new(runtime);
+        let first = session.parse_compact("ABCXYZ").unwrap().clone();
+        assert_eq!(
+            first.tree().to_sexp(),
+            "(source_file (insensitive) (wrapped))"
+        );
+        assert_eq!(session.last_input(), Some("ABCXYZ"));
+
+        let edit = RuntimeInputEdit::new(0, 3, 3);
+        let reparsed = session.reparse_compact(edit, "abcXYZ").unwrap().clone();
+        let scratch = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report("abcXYZ")
+            .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert_eq!(reparsed.trace_events(), scratch.trace_events());
+        assert_eq!(reparsed.tree_events(), scratch.tree_events());
+        assert_eq!(session.last_input(), Some("abcXYZ"));
+    }
+
+    #[test]
+    fn runtime_parse_session_rejects_mismatched_edit_context() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let mut session = RuntimeParseSession::new(runtime);
+        session.parse_compact("ABCXYZ").unwrap();
+
+        let error = session
+            .reparse_compact(RuntimeInputEdit::new(0, 3, 3), "abcXYZZ")
+            .unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            ReducedParseErrorKind::InvalidInputEdit { .. }
+        ));
+        assert_eq!(session.last_input(), Some("ABCXYZ"));
     }
 
     #[cfg(feature = "weavy-lowering")]

@@ -21,7 +21,13 @@ impl SnarkPlaygroundSession {
 
     /// Parse one input with the prepared bundle and return a JSON response.
     #[wasm_bindgen(js_name = parse)]
-    pub fn parse(&self, request_json: &str) -> String {
+    pub fn parse(&mut self, request_json: &str) -> String {
+        self.inner.parse_json(request_json)
+    }
+
+    /// Reparse one edited input with the prepared bundle and return a JSON response.
+    #[wasm_bindgen(js_name = reparse)]
+    pub fn reparse(&mut self, request_json: &str) -> String {
         self.inner.parse_json(request_json)
     }
 }

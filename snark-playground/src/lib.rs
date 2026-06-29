@@ -14,8 +14,8 @@ use snark::{
     lexical::LexicalFacts,
     parser::{
         ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
-        ReducedExternalScanner, ReducedParseError, ReducedParseErrorKind, RuntimeParseReport,
-        RuntimeParser, RuntimeParserPlan, ScannerSnapshotId, TreeEvent,
+        ReducedExternalScanner, ReducedParseError, ReducedParseErrorKind, RuntimeInputEdit,
+        RuntimeParseReport, RuntimeParser, RuntimeParserPlan, ScannerSnapshotId, TreeEvent,
     },
     query::QuerySource,
     runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
@@ -37,6 +37,20 @@ struct PlaygroundSessionRequest {
 struct PlaygroundParseRequest {
     input: String,
     run_corpus: bool,
+    edit: Option<PlaygroundInputEdit>,
+}
+
+#[derive(Debug, Clone, Copy, Facet)]
+struct PlaygroundInputEdit {
+    start_byte: usize,
+    old_end_byte: usize,
+    new_end_byte: usize,
+}
+
+impl From<PlaygroundInputEdit> for RuntimeInputEdit {
+    fn from(edit: PlaygroundInputEdit) -> Self {
+        RuntimeInputEdit::new(edit.start_byte, edit.old_end_byte, edit.new_end_byte)
+    }
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -231,6 +245,7 @@ pub struct PlaygroundSession {
     files: Vec<BundleFile>,
     bundle: BundleSummary,
     prepared: PreparedGrammar,
+    last_input: Option<String>,
 }
 
 impl PlaygroundSession {
@@ -248,7 +263,7 @@ impl PlaygroundSession {
     }
 
     /// Parse one input with this prepared session and return a JSON response.
-    pub fn parse_json(&self, request_json: &str) -> String {
+    pub fn parse_json(&mut self, request_json: &str) -> String {
         let request = match facet_json::from_str::<PlaygroundParseRequest>(request_json) {
             Ok(request) => request,
             Err(error) => {
@@ -258,6 +273,12 @@ impl PlaygroundSession {
                 ));
             }
         };
+        if let (Some(edit), Some(old_input)) = (request.edit, self.last_input.as_deref())
+            && let Err(error) =
+                RuntimeInputEdit::from(edit).validate_against(old_input, &request.input)
+        {
+            return response_json(self.diagnostic_response("edit", error.to_string()));
+        }
         response_json(self.response(&request.input, request.run_corpus))
     }
 
@@ -313,11 +334,31 @@ impl PlaygroundSession {
             files,
             bundle,
             prepared,
+            last_input: None,
         })
     }
 
-    fn response(&self, input: &str, run_corpus: bool) -> PlaygroundResponse {
-        playground_response_for_session(self, input, run_corpus)
+    fn response(&mut self, input: &str, run_corpus: bool) -> PlaygroundResponse {
+        let response = playground_response_for_session(self, input, run_corpus);
+        if response.parse.is_some() {
+            self.last_input = Some(input.to_owned());
+        }
+        response
+    }
+
+    fn diagnostic_response(&self, stage: &str, message: String) -> PlaygroundResponse {
+        PlaygroundResponse {
+            ok: false,
+            language: Some(self.prepared.raw.name.clone()),
+            diagnostics: vec![diagnostic(stage, message, None)],
+            bundle: self.bundle.clone(),
+            parse: None,
+            highlights: Vec::new(),
+            corpus: Vec::new(),
+            highlight_tests: Vec::new(),
+            tests: TestSummary::not_requested(),
+            limitations: Vec::new(),
+        }
     }
 }
 
@@ -333,7 +374,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
     };
     let input = request.input;
     let run_corpus = request.run_corpus;
-    let session = match PlaygroundSession::prepare_files(request.files) {
+    let mut session = match PlaygroundSession::prepare_files(request.files) {
         Ok(session) => session,
         Err(response) => return response,
     };

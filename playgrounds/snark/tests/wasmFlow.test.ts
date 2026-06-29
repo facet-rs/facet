@@ -140,10 +140,15 @@ module.exports = grammar({
     ),
   );
   const second = JSON.parse(
-    session.parse(
+    session.reparse(
       JSON.stringify({
-        input: "beta gamma",
+        input: "alpha beta",
         run_corpus: false,
+        edit: {
+          start_byte: "alpha".length,
+          old_end_byte: "alpha".length,
+          new_end_byte: "alpha beta".length,
+        },
       }),
     ),
   );
