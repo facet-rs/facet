@@ -211,7 +211,7 @@ export function App() {
         text: await file.text(),
       })),
     );
-    const next = sortedFiles(normalizeBundleFiles(loaded));
+    const next = normalizeBundleFiles(loaded);
     const nextGrammarRoot = preferredGrammarRootId(next);
     const nextSample = firstSampleForGrammarRootId(next, nextGrammarRoot);
     setFiles(next);

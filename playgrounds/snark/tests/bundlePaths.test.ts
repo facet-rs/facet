@@ -46,7 +46,7 @@ test("keeps Arborium sibling grammar roots selectable", () => {
   const roots = discoverGrammarRoots(files);
   assert.deepEqual(
     roots.map((root) => root.id),
-    ["group-acorn/css/def", "group-acorn/json/def"],
+    ["group-acorn/json/def", "group-acorn/css/def"],
   );
   assert.deepEqual(
     projectedFilesForGrammarRootId(files, "group-acorn/json/def").map((entry) => entry.path),
@@ -72,7 +72,7 @@ test("prefers grammar.json under any path over grammar.js roots", () => {
   ]);
   assert.deepEqual(
     projectedFilesForGrammarRootId(files, roots[0]?.id).map((entry) => entry.path),
-    ["queries/highlights.scm", "src/grammar.json"],
+    ["src/grammar.json", "queries/highlights.scm"],
   );
 });
 
@@ -97,7 +97,7 @@ test("normalizes package root grammar.json to src/grammar.json", () => {
   ]);
 });
 
-test("selects the first projected sample for a single uploaded grammar root", () => {
+test("selects the first uploaded sample for a single uploaded grammar root", () => {
   const files = normalizeBundleFiles([
     file("tree-sitter-nginx/grammar.json"),
     file("tree-sitter-nginx/samples/z-last.conf"),
@@ -105,8 +105,8 @@ test("selects the first projected sample for a single uploaded grammar root", ()
   ]);
 
   assert.deepEqual(firstSampleForGrammarRootId(files), {
-    path: "samples/a-first.conf",
-    sourcePath: "samples/a-first.conf",
+    path: "samples/z-last.conf",
+    sourcePath: "samples/z-last.conf",
     text: "",
   });
 });

@@ -35,7 +35,7 @@ export function discoverGrammarRoots(files: DslBundleFile[]): GrammarRoot[] {
       roots.set(root.id, root);
     }
   }
-  return [...roots.values()].sort((left, right) => left.label.localeCompare(right.label));
+  return [...roots.values()];
 }
 
 export function preferredGrammarRootId(files: DslBundleFile[]) {
@@ -74,25 +74,23 @@ export function normalizePath(path: string) {
 
 function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): ProjectedDslBundleFile[] {
   if (!root || root.id === "") {
-    return sortedFiles(files.map((file) => ({ ...file, sourcePath: file.path })));
+    return files.map((file) => ({ ...file, sourcePath: file.path }));
   }
 
   const prefix = `${root.id}/`;
-  return sortedFiles(
-    files
-      .filter((file) => file.path.startsWith(prefix))
-      .map((file) => {
-        const relative = file.path.slice(prefix.length);
-        return {
-          path:
-            root.kind === "arborium"
-              ? (normalizeArboriumDefPath(relative) ?? relative)
-              : (normalizePackagePath(relative) ?? relative),
-          text: file.text,
-          sourcePath: file.path,
-        };
-      }),
-  );
+  return files
+    .filter((file) => file.path.startsWith(prefix))
+    .map((file) => {
+      const relative = file.path.slice(prefix.length);
+      return {
+        path:
+          root.kind === "arborium"
+            ? (normalizeArboriumDefPath(relative) ?? relative)
+            : (normalizePackagePath(relative) ?? relative),
+        text: file.text,
+        sourcePath: file.path,
+      };
+    });
 }
 
 function grammarRootFromPath(path: string): GrammarRoot {
