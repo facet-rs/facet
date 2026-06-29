@@ -587,7 +587,8 @@ function rawBrowserPath(file: File) {
 
 function normalizeBrowserFiles(files: BundleFile[]) {
   const stripped = stripCommonRoot(files);
-  return stripped.map((file) => ({ ...file, path: normalizeBundlePath(file.path) }));
+  const context = normalizationContext(stripped.map((file) => file.path));
+  return stripped.map((file) => ({ ...file, path: normalizeBundlePath(file.path, context) }));
 }
 
 function stripCommonRoot(files: BundleFile[]) {
@@ -605,14 +606,27 @@ function stripCommonRoot(files: BundleFile[]) {
   return files.map((file) => ({ ...file, path: file.path.slice(root.length + 1) }));
 }
 
-function normalizeBundlePath(path: string) {
+type NormalizationContext = {
+  arboriumRoots: Set<string>;
+};
+
+function normalizationContext(paths: string[]): NormalizationContext {
+  return {
+    arboriumRoots: new Set(paths.map(normalizePath).flatMap(arboriumRoot)),
+  };
+}
+
+function normalizeBundlePath(path: string, context: NormalizationContext) {
   const normalized = normalizePath(path);
-  const arborium = arboriumDefRelative(normalized);
+  const arborium = arboriumDefRelative(normalized, context);
   if (arborium) {
     const mapped = normalizeArboriumDefPath(arborium);
     if (mapped) {
       return mapped;
     }
+  }
+  if (isAmbiguousArboriumDefPath(normalized, context)) {
+    return normalized;
   }
   return normalizePackagePath(normalized) ?? normalized;
 }
@@ -625,13 +639,29 @@ function normalizePath(path: string) {
   return normalized;
 }
 
-function arboriumDefRelative(path: string) {
+function arboriumRoot(path: string) {
+  if (path.startsWith("def/grammar/grammar.js")) {
+    return [""];
+  }
+  const marker = "/def/grammar/grammar.js";
+  const index = path.indexOf(marker);
+  return index >= 0 ? [path.slice(0, index)] : [];
+}
+
+function arboriumDefRelative(path: string, context: NormalizationContext) {
   if (path.startsWith("def/")) {
     return path.slice("def/".length);
   }
   const marker = "/def/";
   const index = path.indexOf(marker);
-  return index >= 0 ? path.slice(index + marker.length) : null;
+  if (index < 0 || context.arboriumRoots.size !== 1) {
+    return null;
+  }
+  return path.slice(index + marker.length);
+}
+
+function isAmbiguousArboriumDefPath(path: string, context: NormalizationContext) {
+  return path.includes("/def/") && context.arboriumRoots.size !== 1;
 }
 
 function normalizeArboriumDefPath(relative: string) {

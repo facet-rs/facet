@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! WebAssembly bindings for Snark playgrounds.
 
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::BTreeSet};
 
 use facet::Facet;
 use snark::{
@@ -839,10 +839,17 @@ fn limitations(files: &[BundleFile], active_scanner: Option<&str>) -> Vec<String
 }
 
 fn normalize_bundle_files(files: Vec<BundleFile>) -> Vec<BundleFile> {
+    let normalized_paths = files
+        .iter()
+        .map(|file| normalize_path(&file.path))
+        .collect::<Vec<_>>();
+    let context = NormalizationContext::from_paths(&normalized_paths);
+
     files
         .into_iter()
-        .map(|file| BundleFile {
-            path: normalize_bundle_path(&file.path),
+        .zip(normalized_paths)
+        .map(|(file, normalized_path)| BundleFile {
+            path: normalize_bundle_path(&normalized_path, &context),
             text: file.text,
         })
         .collect()
@@ -856,12 +863,31 @@ fn is_highlight_fixture_path(path: &str) -> bool {
     path.starts_with("test/highlight/") || path.starts_with("test/highlights/")
 }
 
-fn normalize_bundle_path(path: &str) -> String {
+#[derive(Debug)]
+struct NormalizationContext {
+    arborium_roots: BTreeSet<String>,
+}
+
+impl NormalizationContext {
+    fn from_paths(paths: &[String]) -> Self {
+        Self {
+            arborium_roots: paths
+                .iter()
+                .filter_map(|path| arborium_root(path))
+                .collect(),
+        }
+    }
+}
+
+fn normalize_bundle_path(path: &str, context: &NormalizationContext) -> String {
     let path = normalize_path(path);
-    if let Some(relative) = arborium_def_relative(&path) {
+    if let Some(relative) = arborium_def_relative(&path, context) {
         if let Some(mapped) = normalize_arborium_def_path(relative) {
             return mapped;
         }
+    }
+    if is_ambiguous_arborium_def_path(&path, context) {
+        return path;
     }
     if let Some(mapped) = normalize_package_path(&path) {
         return mapped;
@@ -877,9 +903,31 @@ fn normalize_path(path: &str) -> String {
     path
 }
 
-fn arborium_def_relative(path: &str) -> Option<&str> {
-    path.strip_prefix("def/")
-        .or_else(|| path.split_once("/def/").map(|(_, relative)| relative))
+fn arborium_root(path: &str) -> Option<String> {
+    if path.starts_with("def/grammar/grammar.js") {
+        return Some(String::new());
+    }
+
+    let marker = "/def/grammar/grammar.js";
+    path.find(marker).map(|index| path[..index].to_owned())
+}
+
+fn arborium_def_relative<'a>(path: &'a str, context: &NormalizationContext) -> Option<&'a str> {
+    if let Some(relative) = path.strip_prefix("def/") {
+        return Some(relative);
+    }
+
+    let marker = "/def/";
+    let index = path.find(marker)?;
+    if context.arborium_roots.len() != 1 {
+        return None;
+    }
+
+    Some(&path[index + marker.len()..])
+}
+
+fn is_ambiguous_arborium_def_path(path: &str, context: &NormalizationContext) -> bool {
+    path.contains("/def/") && context.arborium_roots.len() != 1
 }
 
 fn normalize_arborium_def_path(relative: &str) -> Option<String> {
@@ -1016,6 +1064,37 @@ mod tests {
             vec!["samples/sample.css", "samples/showcase.css"]
         );
         assert_eq!(summary.generated_files_ignored, vec!["src/node-types.json"]);
+    }
+
+    #[test]
+    fn preserves_arborium_paths_when_parent_upload_contains_multiple_grammar_roots() {
+        let files = normalize_bundle_files(vec![
+            BundleFile {
+                path: "langs/group-acorn/css/def/grammar/grammar.js".to_owned(),
+                text: "module.exports = grammar({ name: 'css', rules: { stylesheet: _ => '' } });"
+                    .to_owned(),
+            },
+            BundleFile {
+                path: "langs/group-acorn/css/def/queries/highlights.scm".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
+                path: "langs/group-acorn/json/def/grammar/grammar.js".to_owned(),
+                text: "module.exports = grammar({ name: 'json', rules: { document: _ => '' } });"
+                    .to_owned(),
+            },
+            BundleFile {
+                path: "langs/group-acorn/json/def/queries/highlights.scm".to_owned(),
+                text: String::new(),
+            },
+        ]);
+
+        assert!(find_file(&files, "grammar.js").is_none());
+        assert!(find_file(&files, "queries/highlights.scm").is_none());
+        assert!(find_file(&files, "langs/group-acorn/css/def/grammar/grammar.js").is_some());
+        assert!(find_file(&files, "langs/group-acorn/json/def/grammar/grammar.js").is_some());
+        assert!(find_file(&files, "langs/group-acorn/css/def/queries/highlights.scm").is_some());
+        assert!(find_file(&files, "langs/group-acorn/json/def/queries/highlights.scm").is_some());
     }
 
     #[test]
