@@ -42,6 +42,7 @@ struct PlaygroundResponse {
     highlights: Vec<HighlightOutput>,
     corpus: Vec<CorpusOutput>,
     highlight_tests: Vec<HighlightTestOutput>,
+    tests: TestSummary,
     limitations: Vec<String>,
 }
 
@@ -95,6 +96,53 @@ struct CorpusOutput {
     expected: String,
     actual: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct TestSummary {
+    requested: bool,
+    corpus_passed: usize,
+    corpus_failed: usize,
+    highlight_assertions_passed: usize,
+    highlight_assertions_failed: usize,
+    highlight_fixture_errors: usize,
+}
+
+impl TestSummary {
+    fn not_requested() -> Self {
+        Self {
+            requested: false,
+            corpus_passed: 0,
+            corpus_failed: 0,
+            highlight_assertions_passed: 0,
+            highlight_assertions_failed: 0,
+            highlight_fixture_errors: 0,
+        }
+    }
+
+    fn from_results(
+        requested: bool,
+        corpus: &[CorpusOutput],
+        highlight_tests: &[HighlightTestOutput],
+    ) -> Self {
+        Self {
+            requested,
+            corpus_passed: corpus.iter().filter(|case| case.passed).count(),
+            corpus_failed: corpus.iter().filter(|case| !case.passed).count(),
+            highlight_assertions_passed: highlight_tests
+                .iter()
+                .map(|fixture| fixture.passed_count)
+                .sum(),
+            highlight_assertions_failed: highlight_tests
+                .iter()
+                .map(|fixture| fixture.failed_count)
+                .sum(),
+            highlight_fixture_errors: highlight_tests
+                .iter()
+                .filter(|fixture| fixture.error.is_some())
+                .count(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -170,6 +218,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
             highlights: Vec::new(),
             corpus: Vec::new(),
             highlight_tests: Vec::new(),
+            tests: TestSummary::not_requested(),
             limitations: limitations(&files, None),
         };
     };
@@ -186,6 +235,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
                 highlights: Vec::new(),
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
+                tests: TestSummary::not_requested(),
                 limitations: limitations(&files, None),
             };
         }
@@ -247,6 +297,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
     } else {
         Vec::new()
     };
+    let tests = TestSummary::from_results(request.run_corpus, &corpus, &highlight_tests);
 
     PlaygroundResponse {
         ok: diagnostics.is_empty(),
@@ -257,6 +308,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
         highlights,
         corpus,
         highlight_tests,
+        tests,
         limitations: limitations(&files, scanner_selection.active_scanner.as_deref()),
     }
 }
@@ -710,6 +762,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
         highlights: Vec::new(),
         corpus: Vec::new(),
         highlight_tests: Vec::new(),
+        tests: TestSummary::not_requested(),
         limitations: vec![
             "Only src/grammar.json, handwritten scanner sources, queries, and corpus/highlight fixtures are accepted as bundle inputs.".to_owned(),
         ],
@@ -1117,5 +1170,11 @@ mod tests {
         assert_eq!(response.highlight_tests[0].assertion_count, 37);
         assert_eq!(response.highlight_tests[0].failed_count, 0);
         assert_eq!(response.highlight_tests[0].passed_count, 37);
+        assert!(response.tests.requested);
+        assert_eq!(response.tests.corpus_passed, 0);
+        assert_eq!(response.tests.corpus_failed, 0);
+        assert_eq!(response.tests.highlight_assertions_passed, 37);
+        assert_eq!(response.tests.highlight_assertions_failed, 0);
+        assert_eq!(response.tests.highlight_fixture_errors, 0);
     }
 }

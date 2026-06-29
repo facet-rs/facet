@@ -44,6 +44,15 @@ type CorpusOutput = {
   error: string | null;
 };
 
+type TestSummary = {
+  requested: boolean;
+  corpus_passed: number;
+  corpus_failed: number;
+  highlight_assertions_passed: number;
+  highlight_assertions_failed: number;
+  highlight_fixture_errors: number;
+};
+
 type HighlightTestOutput = {
   path: string;
   passed: boolean;
@@ -84,6 +93,7 @@ type PlaygroundResponse = {
   highlights: HighlightOutput[];
   corpus: CorpusOutput[];
   highlight_tests: HighlightTestOutput[];
+  tests: TestSummary;
   limitations: string[];
 };
 
@@ -163,12 +173,6 @@ export function App() {
     () => sortedFiles(files).filter((file) => file.path.startsWith("samples/")),
     [files],
   );
-  const passedCorpus = result?.corpus.filter((caseResult) => caseResult.passed).length ?? 0;
-  const failedCorpus = result ? result.corpus.length - passedCorpus : 0;
-  const passedHighlightAssertions =
-    result?.highlight_tests.reduce((sum, fixture) => sum + fixture.passed_count, 0) ?? 0;
-  const failedHighlightAssertions =
-    result?.highlight_tests.reduce((sum, fixture) => sum + fixture.failed_count, 0) ?? 0;
   const highlightedSource = useMemo(
     () => renderHighlightedSource(input, result?.highlights ?? []),
     [input, result?.highlights],
@@ -413,10 +417,14 @@ export function App() {
           <section>
             <h2>Tests</h2>
             <div className="corpus-summary">
-              <span>{passedCorpus} corpus pass</span>
-              <span>{failedCorpus} corpus fail</span>
-              <span>{passedHighlightAssertions} highlight pass</span>
-              <span>{failedHighlightAssertions} highlight fail</span>
+              <span>{result?.tests.corpus_passed ?? 0} corpus pass</span>
+              <span>{result?.tests.corpus_failed ?? 0} corpus fail</span>
+              <span>{result?.tests.highlight_assertions_passed ?? 0} highlight pass</span>
+              <span>
+                {(result?.tests.highlight_assertions_failed ?? 0) +
+                  (result?.tests.highlight_fixture_errors ?? 0)}{" "}
+                highlight fail
+              </span>
             </div>
             <div className="corpus-list">
               {result?.corpus.map((caseResult, index) => (
@@ -508,11 +516,9 @@ function StatusStrip({ result }: { result: PlaygroundResponse | null }) {
   if (!result.ok) {
     return <div className="status-strip error">Parse failed</div>;
   }
-  const corpusFailures = result.corpus.filter((caseResult) => !caseResult.passed).length;
-  const highlightFailures = result.highlight_tests.reduce(
-    (sum, fixture) => sum + (fixture.error ? 1 : fixture.failed_count),
-    0,
-  );
+  const corpusFailures = result.tests.corpus_failed;
+  const highlightFailures =
+    result.tests.highlight_assertions_failed + result.tests.highlight_fixture_errors;
   const testFailures = corpusFailures + highlightFailures;
   if (testFailures > 0) {
     return (
@@ -695,6 +701,14 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
     highlights: [],
     corpus: [],
     highlight_tests: [],
+    tests: {
+      requested: false,
+      corpus_passed: 0,
+      corpus_failed: 0,
+      highlight_assertions_passed: 0,
+      highlight_assertions_failed: 0,
+      highlight_fixture_errors: 0,
+    },
     limitations: ["Tree-sitter grammar.js is evaluated in a browser Worker before Snark receives src/grammar.json."],
   };
 }
