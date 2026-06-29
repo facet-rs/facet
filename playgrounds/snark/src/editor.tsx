@@ -9,6 +9,7 @@ import {
   keymap,
   lineNumbers,
   WidgetType,
+  type ViewUpdate,
 } from "@codemirror/view";
 import { type EditorState, RangeSet, StateEffect, StateField } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -29,11 +30,17 @@ export interface EditorDiagnostic {
   span: EditorSpan;
 }
 
+export interface SourceEdit {
+  start_byte: number;
+  old_end_byte: number;
+  new_end_byte: number;
+}
+
 export interface SourceEditorProps {
   input: string;
   captures: CaptureRange[];
   diagnostic: EditorDiagnostic | null;
-  onChange: (value: string) => void;
+  onChange: (value: string, edit: SourceEdit | null) => void;
 }
 
 type DecorationState = {
@@ -170,6 +177,30 @@ function buildDecorations(
   return { decorations, errorLine };
 }
 
+function sourceEditForUpdate(update: ViewUpdate): SourceEdit | null {
+  let edit: SourceEdit | null = null;
+  let changeCount = 0;
+  const oldInput = update.startState.doc.toString();
+  const newInput = update.state.doc.toString();
+  update.changes.iterChanges((fromA, toA, _fromB, toB) => {
+    changeCount += 1;
+    if (changeCount > 1) {
+      edit = null;
+      return;
+    }
+    edit = {
+      start_byte: utf8ByteLength(oldInput.slice(0, fromA)),
+      old_end_byte: utf8ByteLength(oldInput.slice(0, toA)),
+      new_end_byte: utf8ByteLength(newInput.slice(0, toB)),
+    };
+  });
+  return changeCount === 1 ? edit : null;
+}
+
+function utf8ByteLength(input: string) {
+  return new TextEncoder().encode(input).length;
+}
+
 const snarkTheme = EditorView.theme({
   "&": {
     height: "100%",
@@ -231,7 +262,7 @@ export function SourceEditor({ input, captures, diagnostic, onChange }: SourceEd
         snarkTheme,
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !applyingExternalInputRef.current) {
-            onChangeRef.current(update.state.doc.toString());
+            onChangeRef.current(update.state.doc.toString(), sourceEditForUpdate(update));
           }
         }),
       ],

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import init, { SnarkPlaygroundSession } from "@bearcove/snark-wasm";
-import { SourceEditor } from "./editor";
+import { SourceEditor, type SourceEdit } from "./editor";
 import { captureClass } from "./highlight";
 import { defaultVendoredRootId, vendoredFiles } from "./bundled";
 import {
@@ -129,6 +129,17 @@ const defaultFiles: BundleFile[] = vendoredFiles;
 const defaultGrammarRoot = defaultVendoredRootId;
 const defaultSample = preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
 
+type PreparedSessionEntry = {
+  key: string;
+  session: SnarkPlaygroundSession;
+  baselineInput: string | null;
+};
+
+type PendingSourceEdit = {
+  oldInput: string;
+  edit: SourceEdit;
+};
+
 export function App() {
   const [files, setFiles] = useState<BundleFile[]>(defaultFiles);
   const [selectedGrammarRoot, setSelectedGrammarRoot] = useState(defaultGrammarRoot);
@@ -137,7 +148,8 @@ export function App() {
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
   const parseRequestId = useRef(0);
-  const preparedSessionRef = useRef<{ key: string; session: SnarkPlaygroundSession } | null>(null);
+  const preparedSessionRef = useRef<PreparedSessionEntry | null>(null);
+  const pendingSourceEditRef = useRef<PendingSourceEdit | null>(null);
 
   const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
   const activeGrammarRoot = useMemo(
@@ -215,6 +227,7 @@ export function App() {
     const nextGrammarRoot = preferredGrammarRootId(next);
     const nextSample = preferredSampleForGrammarRootId(next, nextGrammarRoot);
     preparedSessionRef.current = null;
+    pendingSourceEditRef.current = null;
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
     setSelectedSamplePath(nextSample?.path ?? "");
@@ -222,7 +235,8 @@ export function App() {
     setResult(null);
   }
 
-  function updateSourceInput(nextInput: string, samplePath = "") {
+  function updateSourceInput(nextInput: string, samplePath = "", edit: SourceEdit | null = null) {
+    pendingSourceEditRef.current = edit ? { oldInput: input, edit } : null;
     setInput(nextInput);
     setSelectedSamplePath(samplePath);
     setResult(null);
@@ -234,8 +248,8 @@ export function App() {
         throw new PlaygroundRunError("wasm", errorMessage(error));
       });
       const key = sessionCacheKey(activeGrammarRootId, projectedFiles);
-      let session = preparedSessionRef.current?.key === key ? preparedSessionRef.current.session : null;
-      if (!session) {
+      let entry = preparedSessionRef.current?.key === key ? preparedSessionRef.current : null;
+      if (!entry) {
         const runnableFiles = await filesWithGrammarJson(
           files,
           activeGrammarRootId,
@@ -243,24 +257,39 @@ export function App() {
           throw new PlaygroundRunError("grammar.js", errorMessage(error));
         });
         try {
-          session = new SnarkPlaygroundSession(JSON.stringify({ files: runnableFiles }));
+          entry = {
+            key,
+            session: new SnarkPlaygroundSession(JSON.stringify({ files: runnableFiles })),
+            baselineInput: null,
+          };
         } catch (error) {
           throw new PlaygroundRunError("snark", errorMessage(error));
         }
-        preparedSessionRef.current = { key, session };
+        preparedSessionRef.current = entry;
       }
+      const pendingEdit = pendingSourceEditRef.current;
+      const useReparse =
+        !runBundledTests &&
+        pendingEdit !== null &&
+        entry.baselineInput === pendingEdit.oldInput &&
+        pendingEdit.oldInput !== input;
       let response: string;
       try {
-        response = session.parse(
-          JSON.stringify({
-            input,
-            run_corpus: runBundledTests,
-          }),
-        );
+        const request = JSON.stringify({
+          input,
+          run_corpus: runBundledTests,
+          edit: useReparse ? pendingEdit.edit : null,
+        });
+        response = useReparse ? entry.session.reparse(request) : entry.session.parse(request);
       } catch (error) {
         throw new PlaygroundRunError("snark", errorMessage(error));
       }
-      return JSON.parse(response) as PlaygroundResponse;
+      const parsed = JSON.parse(response) as PlaygroundResponse;
+      if (parsed.parse) {
+        entry.baselineInput = input;
+        pendingSourceEditRef.current = null;
+      }
+      return parsed;
     } catch (error) {
       const diagnostic =
         error instanceof PlaygroundRunError
@@ -345,6 +374,8 @@ export function App() {
                 onChange={(event) => {
                   const nextGrammarRoot = event.currentTarget.value;
                   const nextSample = preferredSampleForGrammarRootId(files, nextGrammarRoot);
+                  preparedSessionRef.current = null;
+                  pendingSourceEditRef.current = null;
                   setSelectedGrammarRoot(nextGrammarRoot);
                   setSelectedSamplePath(nextSample?.path ?? "");
                   setInput(nextSample?.text ?? "");
@@ -395,7 +426,7 @@ export function App() {
           input={input}
           captures={editorCaptures}
           diagnostic={editorDiagnostic}
-          onChange={(value) => updateSourceInput(value)}
+          onChange={(value, edit) => updateSourceInput(value, "", edit)}
         />
 
         <ResultsDock result={result} onUseInput={(value) => updateSourceInput(value)} />
