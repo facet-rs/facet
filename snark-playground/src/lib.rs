@@ -2017,6 +2017,276 @@ mod tests {
     }
 
     #[test]
+    fn vendored_playground_samples_parse_from_rust() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../playgrounds/snark/src/bundled");
+        let mut grammar_ids = std::fs::read_dir(&root)
+            .expect("vendored playground grammar directory should be readable")
+            .map(|entry| entry.expect("vendored grammar entry should be readable"))
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .expect("vendored grammar file type should be readable")
+                    .is_dir()
+            })
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        grammar_ids.sort();
+
+        let mut results = Vec::new();
+        for id in grammar_ids {
+            let dir = root.join(&id);
+            let grammar_path = dir.join("grammar.js");
+            let grammar_json = snark_dsl::emit_with_boa(&grammar_path)
+                .expect("grammar.js should emit grammar JSON");
+            let mut files = read_bundle_files(&dir);
+            files.push(BundleFile {
+                path: "src/grammar.json".to_owned(),
+                text: grammar_json,
+            });
+            files.sort_by(|left, right| left.path.cmp(&right.path));
+            let sample = preferred_sample_file(&files)
+                .unwrap_or_else(|| panic!("{id} should have a preferred sample"));
+            let request = PlaygroundRequest {
+                files,
+                input: sample.text.clone(),
+                run_corpus: false,
+            };
+            let response =
+                playground_response(&facet_json::to_string(&request).expect("request serializes"));
+            results.push(VendoredSampleResult {
+                id,
+                sample: sample.path,
+                ok: response.ok,
+                language: response.language,
+                error_count: response
+                    .parse
+                    .as_ref()
+                    .map(|parse| parse.accepted_error_count),
+                missing_count: response
+                    .parse
+                    .as_ref()
+                    .map(|parse| parse.accepted_missing_count),
+                captures: response.highlights.len(),
+                first_diagnostic_stage: response
+                    .diagnostics
+                    .first()
+                    .map(|diagnostic| diagnostic.stage.clone()),
+            });
+        }
+
+        let summary = results
+            .iter()
+            .map(|result| {
+                (
+                    result.id.as_str(),
+                    result.sample.as_str(),
+                    result.ok,
+                    result.language.as_deref(),
+                    result.error_count,
+                    result.missing_count,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            summary,
+            vec![
+                (
+                    "capnp",
+                    "samples/addressbook.capnp",
+                    true,
+                    Some("capnp"),
+                    Some(0),
+                    Some(0)
+                ),
+                (
+                    "cedar",
+                    "samples/example.cedar",
+                    true,
+                    Some("cedar"),
+                    Some(0),
+                    Some(0)
+                ),
+                (
+                    "cedarschema",
+                    "samples/example.cedarschema",
+                    true,
+                    Some("cedarschema"),
+                    Some(0),
+                    Some(0),
+                ),
+                (
+                    "diff",
+                    "samples/t-apply-1.patch",
+                    true,
+                    Some("diff"),
+                    Some(0),
+                    Some(0)
+                ),
+                (
+                    "dot",
+                    "samples/crazy.gv",
+                    true,
+                    Some("dot"),
+                    Some(0),
+                    Some(0)
+                ),
+                (
+                    "gingembre",
+                    "samples/blog-index.html",
+                    true,
+                    Some("gingembre"),
+                    Some(0),
+                    Some(0),
+                ),
+                (
+                    "gitattributes",
+                    "samples/example.gitattributes",
+                    true,
+                    Some("gitattributes"),
+                    Some(0),
+                    Some(0),
+                ),
+                (
+                    "graphql",
+                    "samples/starwars_schema.graphql",
+                    true,
+                    Some("graphql"),
+                    Some(0),
+                    Some(0),
+                ),
+                (
+                    "json",
+                    "samples/package.json",
+                    true,
+                    Some("json"),
+                    Some(0),
+                    Some(0)
+                ),
+                (
+                    "nginx",
+                    "samples/nginx.conf",
+                    false,
+                    Some("nginx"),
+                    Some(28),
+                    Some(0)
+                ),
+                (
+                    "proto",
+                    "samples/addressbook.proto",
+                    true,
+                    Some("proto"),
+                    Some(0),
+                    Some(0)
+                ),
+                (
+                    "thrift",
+                    "samples/tutorial.thrift",
+                    true,
+                    Some("thrift"),
+                    Some(0),
+                    Some(0)
+                ),
+                (
+                    "yuri",
+                    "samples/example.yuri",
+                    true,
+                    Some("yuri"),
+                    Some(0),
+                    Some(0)
+                ),
+            ],
+        );
+        assert_eq!(
+            results
+                .iter()
+                .find(|result| result.id == "nginx")
+                .and_then(|result| result.first_diagnostic_stage.as_deref()),
+            Some("parse")
+        );
+        assert!(
+            results
+                .iter()
+                .filter(|result| result.id != "nginx")
+                .all(|result| result.captures > 0),
+            "{results:#?}"
+        );
+    }
+
+    #[derive(Debug)]
+    struct VendoredSampleResult {
+        id: String,
+        sample: String,
+        ok: bool,
+        language: Option<String>,
+        error_count: Option<usize>,
+        missing_count: Option<usize>,
+        captures: usize,
+        first_diagnostic_stage: Option<String>,
+    }
+
+    fn read_bundle_files(root: &std::path::Path) -> Vec<BundleFile> {
+        let mut files = Vec::new();
+        read_bundle_files_inner(root, root, &mut files);
+        files
+    }
+
+    fn read_bundle_files_inner(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        files: &mut Vec<BundleFile>,
+    ) {
+        let mut entries = std::fs::read_dir(dir)
+            .expect("vendored bundle directory should be readable")
+            .map(|entry| entry.expect("vendored bundle entry should be readable"))
+            .collect::<Vec<_>>();
+        entries.sort_by_key(std::fs::DirEntry::path);
+        for entry in entries {
+            let path = entry.path();
+            if entry
+                .file_type()
+                .expect("vendored bundle file type should be readable")
+                .is_dir()
+            {
+                read_bundle_files_inner(root, &path, files);
+                continue;
+            }
+            let relative = path
+                .strip_prefix(root)
+                .expect("vendored file should be under bundle root")
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.push(BundleFile {
+                path: relative,
+                text: std::fs::read_to_string(&path).unwrap_or_else(|error| {
+                    panic!("{} should be readable: {error}", path.display())
+                }),
+            });
+        }
+    }
+
+    fn preferred_sample_file(files: &[BundleFile]) -> Option<BundleFile> {
+        let mut samples = files
+            .iter()
+            .filter(|file| file.path.starts_with("samples/"))
+            .cloned()
+            .collect::<Vec<_>>();
+        samples.sort_by(|left, right| {
+            let left_error = is_error_sample(&left.path);
+            let right_error = is_error_sample(&right.path);
+            left_error
+                .cmp(&right_error)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        samples.into_iter().next()
+    }
+
+    fn is_error_sample(path: &str) -> bool {
+        let lower = path.to_ascii_lowercase();
+        lower.contains("error") || lower.contains("invalid") || lower.contains("fail")
+    }
+
+    #[test]
     fn parse_errors_include_margin_resolved_primary_span() {
         let input = "ok\n#";
         let span = diagnostic_span(input, 3).expect("diagnostic byte resolves through margin");
