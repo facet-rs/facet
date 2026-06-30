@@ -2798,7 +2798,7 @@ mod tests {
                     text: r#"((document
   (tag) @_name
   (code) @injection.content)
-  (#any-of? @_name "hbs" "glimmer")
+  (#match? @_name ".*(hbs|glimmer).*")
   (#set! injection.language "html"))
 ((document
   (tag) @_name

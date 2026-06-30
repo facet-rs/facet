@@ -337,7 +337,7 @@ module.exports = grammar({
     {
       path: "host/queries/injections.scm",
       text:
-        '((document (tag) @_name (code) @injection.content)\n  (#any-of? @_name "hbs" "glimmer")\n  (#set! injection.language "html"))\n' +
+        '((document (tag) @_name (code) @injection.content)\n  (#match? @_name ".*(hbs|glimmer).*")\n  (#set! injection.language "html"))\n' +
         '((document (tag) @_name (code) @injection.content)\n  (#eq? @_name "sql")\n  (#set! injection.language "sql"))\n',
     },
     { path: "html/grammar.js", text: htmlGrammar },

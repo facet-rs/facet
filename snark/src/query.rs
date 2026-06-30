@@ -40,8 +40,8 @@ impl QuerySource {
     /// Execute the supported highlight-query subset against a runtime parse.
     ///
     /// This is the first oracle-driven evaluator slice: named node captures,
-    /// anonymous literal captures, direct parent/child captures, and `#match?`
-    /// predicates over captured text. Unsupported query constructs are ignored
+    /// anonymous literal captures, direct parent/child captures, and captured-text
+    /// `#match?`/`#eq?`/`#any-of?` predicates. Unsupported query constructs are ignored
     /// rather than approximated.
     pub fn execute_runtime_highlights(
         &self,
@@ -71,7 +71,8 @@ impl QuerySource {
     ///
     /// This is the first layering-runtime input slice: `@injection.content`,
     /// `@injection.language`, `#set! injection.language`, `#set! injection.combined`,
-    /// and `#set! injection.include-children`. Unsupported predicates are ignored
+    /// `#set! injection.include-children`, and captured-text
+    /// `#match?`/`#eq?`/`#any-of?` predicates. Unsupported predicates are ignored
     /// rather than approximated.
     pub fn execute_runtime_injections(
         &self,
@@ -412,11 +413,6 @@ fn execute_runtime_injections(
     let mut regions = Vec::new();
 
     for pattern in &patterns {
-        if !pattern.predicates.iter().all(|predicate| {
-            predicate.matches_any_capture(&nodes, &tokens, &fields, &pattern.captures)
-        }) {
-            continue;
-        }
         let language_captures = pattern
             .captures
             .iter()
@@ -429,6 +425,17 @@ fn execute_runtime_injections(
             .filter(|capture| capture.capture_name == "injection.content")
         {
             for capture in capture_binding_matches(content, &nodes, &tokens, &fields) {
+                if !pattern.predicates.iter().all(|predicate| {
+                    predicate.matches_nearest_capture(
+                        &capture,
+                        &nodes,
+                        &tokens,
+                        &fields,
+                        &pattern.captures,
+                    )
+                }) {
+                    continue;
+                }
                 let Some(language) = pattern
                     .language
                     .clone()
@@ -554,7 +561,7 @@ fn capture_binding_matches(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct HighlightRule {
     capture_name: String,
     target: HighlightTarget,
@@ -571,7 +578,7 @@ struct QueryCaptureBinding {
     field_name: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default)]
 struct InjectionPattern {
     captures: Vec<QueryCaptureBinding>,
     predicates: Vec<HighlightPredicateBinding>,
@@ -580,7 +587,7 @@ struct InjectionPattern {
     include_children: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default)]
 struct ParsedInjectionItem {
     target: Option<HighlightTarget>,
     capture_targets: Vec<HighlightTarget>,
@@ -598,42 +605,37 @@ enum HighlightTarget {
     Literal(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 enum HighlightPredicate {
-    MatchPrefix(String),
-    MatchContains(String),
+    Regex(regex::Regex),
     Exact(String),
     AnyOf(Vec<String>),
 }
 
 impl HighlightPredicate {
-    fn from_match_pattern(pattern: String) -> Self {
-        if let Some(prefix) = pattern.strip_prefix('^') {
-            Self::MatchPrefix(prefix.to_owned())
-        } else {
-            Self::MatchContains(pattern)
-        }
+    fn from_match_pattern(pattern: String) -> Option<Self> {
+        regex::Regex::new(&pattern).ok().map(Self::Regex)
     }
 
     fn matches(&self, text: &str) -> bool {
         match self {
-            Self::MatchPrefix(prefix) => text.starts_with(prefix),
-            Self::MatchContains(needle) => text.contains(needle),
+            Self::Regex(regex) => regex.is_match(text),
             Self::Exact(expected) => text == expected,
             Self::AnyOf(expected) => expected.iter().any(|candidate| text == candidate),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct HighlightPredicateBinding {
     capture_name: String,
     predicate: HighlightPredicate,
 }
 
 impl HighlightPredicateBinding {
-    fn matches_any_capture(
+    fn matches_nearest_capture(
         &self,
+        content: &HighlightCapture,
         nodes: &[RuntimeHighlightNode],
         tokens: &[RuntimeHighlightToken],
         fields: &[RuntimeHighlightField],
@@ -642,11 +644,9 @@ impl HighlightPredicateBinding {
         bindings
             .iter()
             .filter(|binding| binding.capture_name == self.capture_name)
-            .any(|binding| {
-                capture_binding_matches(binding, nodes, tokens, fields)
-                    .iter()
-                    .any(|capture| self.predicate.matches(&capture.text))
-            })
+            .flat_map(|binding| capture_binding_matches(binding, nodes, tokens, fields))
+            .min_by_key(|capture| injection_language_score(content.bytes, capture.bytes, nodes))
+            .is_some_and(|capture| self.predicate.matches(&capture.text))
     }
 }
 
@@ -668,7 +668,7 @@ fn predicate_bindings_from_tokens(
         "#match?" => strings
             .into_iter()
             .next()
-            .map(HighlightPredicate::from_match_pattern),
+            .and_then(HighlightPredicate::from_match_pattern),
         "#eq?" => strings.into_iter().next().map(HighlightPredicate::Exact),
         "#any-of?" => {
             if strings.is_empty() {
@@ -689,7 +689,7 @@ fn predicate_bindings_from_tokens(
         .collect()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct ParsedHighlightItem {
     target: Option<HighlightTarget>,
     capture_targets: Vec<HighlightTarget>,
@@ -1976,11 +1976,16 @@ mod tests {
               "name": "injection_predicate",
               "rules": {
                 "document": {
+                  "type": "REPEAT",
+                  "content": { "type": "SYMBOL", "name": "block" }
+                },
+                "block": {
                   "type": "SEQ",
                   "members": [
                     { "type": "SYMBOL", "name": "tag" },
                     { "type": "STRING", "value": ":" },
-                    { "type": "SYMBOL", "name": "code" }
+                    { "type": "SYMBOL", "name": "code" },
+                    { "type": "STRING", "value": ";" }
                   ]
                 },
                 "tag": {
@@ -2008,18 +2013,23 @@ mod tests {
             .prepare_productions_for_items()
             .unwrap();
         let table = ParseTable::from_grammar(&parser).unwrap();
-        let input = "hbs:PRINT";
+        let input = "pwsh:PRINT;hbs:RUN;";
         let report = RuntimeParser::new(&validated, &parser, &table)
             .unwrap()
             .parse_compact_with_report(input)
             .unwrap();
         let query = QuerySource(
-            r#"((document
+            r#"((block
+                  (tag) @_name
+                  (code) @injection.content)
+                (#match? @_name ".*(powershell|pwsh|cmd).*")
+                (#set! injection.language "powershell"))
+               ((block
                   (tag) @_name
                   (code) @injection.content)
                 (#any-of? @_name "hbs" "glimmer")
                 (#set! injection.language "html"))
-               ((document
+               ((block
                   (tag) @_name
                   (code) @injection.content)
                 (#eq? @_name "sql")
@@ -2034,7 +2044,7 @@ mod tests {
                 .iter()
                 .map(|region| (region.language(), region.text()))
                 .collect::<Vec<_>>(),
-            vec![("html", "PRINT")]
+            vec![("powershell", "PRINT"), ("html", "RUN")]
         );
     }
 }
