@@ -440,7 +440,7 @@ select {
   gap: 4px;
   position: sticky;
   left: 0;
-  width: min(640px, calc(100vw - 360px));
+  width: min(640px, calc(100vw - 4rem));
   margin: 6px var(--pad-x);
   padding: 9px 12px;
   border: 1px solid var(--err);
