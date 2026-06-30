@@ -6538,43 +6538,6 @@ fn push_full_runtime_trace(
 }
 
 impl<'a> RuntimeParser<'a> {
-    /// Build a runtime parser over validated grammar facts and generated tables.
-    pub fn new(
-        grammar: &'a ValidatedGrammar,
-        parser: &'a ParserGrammar,
-        table: &'a ParseTable,
-    ) -> Result<Self, ReducedParseError> {
-        Ok(Self {
-            reduced: ReducedParser::new(grammar, parser, table)?,
-            recovery_step_limit: None,
-        })
-    }
-
-    /// Build a runtime parser that borrows a reusable runtime plan.
-    pub fn new_with_plan(
-        grammar: &'a ValidatedGrammar,
-        parser: &'a ParserGrammar,
-        table: &'a ParseTable,
-        runtime_plan: &'a RuntimeParserPlan,
-    ) -> Result<Self, ReducedParseError> {
-        Ok(Self {
-            reduced: ReducedParser::new_with_plan(grammar, parser, table, runtime_plan)?,
-            recovery_step_limit: None,
-        })
-    }
-
-    /// Attach a reduced external scanner host for this first runtime slice.
-    pub fn with_external_scanner(mut self, scanner: &'a dyn ReducedExternalScanner) -> Self {
-        self.reduced = self.reduced.with_external_scanner(scanner);
-        self
-    }
-
-    /// Bound recovery branch execution for latency-sensitive callers.
-    pub fn with_recovery_step_limit(mut self, limit: usize) -> Self {
-        self.recovery_step_limit = Some(limit);
-        self
-    }
-
     /// Parse one input and return runtime stack/tree evidence.
     pub fn parse_with_report(&self, input: &str) -> Result<RuntimeParseReport, ReducedParseError> {
         self.parse_with_report_mode(input, RuntimeRecoveryMode::Strict, RuntimeTraceDetail::Full)
