@@ -101,6 +101,42 @@ test("normalizes package root grammar.json to src/grammar.json", () => {
   ]);
 });
 
+test("projects package examples as selectable samples", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-demo/grammar.js"),
+    file("tree-sitter-demo/examples/basic.demo"),
+    file("tree-sitter-demo/example.demo"),
+  ]);
+
+  assert.deepEqual(
+    files.map((entry) => entry.path).sort(),
+    ["grammar.js", "samples/basic.demo", "samples/example.demo"],
+  );
+  assert.deepEqual(preferredSampleForGrammarRootId(files), {
+    path: "samples/basic.demo",
+    sourcePath: "samples/basic.demo",
+    text: "",
+  });
+});
+
+test("projects Arborium examples as selectable samples", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-demo/def/grammar/grammar.js"),
+    file("tree-sitter-demo/def/examples/basic.demo"),
+    file("tree-sitter-demo/def/example.demo"),
+  ]);
+
+  assert.deepEqual(
+    files.map((entry) => entry.path).sort(),
+    ["grammar.js", "samples/basic.demo", "samples/example.demo"],
+  );
+  assert.deepEqual(preferredSampleForGrammarRootId(files), {
+    path: "samples/basic.demo",
+    sourcePath: "samples/basic.demo",
+    text: "",
+  });
+});
+
 test("projects package manifest into manifest-declared grammar roots", () => {
   const manifest = JSON.stringify({
     grammars: [

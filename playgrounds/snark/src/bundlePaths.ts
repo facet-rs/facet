@@ -522,7 +522,13 @@ function normalizeArboriumDefPath(relative: string) {
   ) {
     return relative;
   }
+  if (relative.startsWith("examples/")) {
+    return `samples/${relative.slice("examples/".length)}`;
+  }
   if (relative.startsWith("sample.")) {
+    return `samples/${relative}`;
+  }
+  if (relative.startsWith("example.")) {
     return `samples/${relative}`;
   }
   return null;
@@ -562,11 +568,22 @@ function normalizePackagePath(path: string) {
       return suffix === "/grammar.json" ? "src/grammar.json" : suffix.slice(1);
     }
   }
+  if (path.startsWith("examples/")) {
+    return `samples/${path.slice("examples/".length)}`;
+  }
   for (const token of ["/queries/", "/test/corpus/", "/test/highlight/", "/test/highlights/", "/samples/"]) {
     const index = path.indexOf(token);
     if (index >= 0) {
       return path.slice(index + 1);
     }
+  }
+  const exampleIndex = path.indexOf("/examples/");
+  if (exampleIndex >= 0) {
+    return `samples/${path.slice(exampleIndex + "/examples/".length)}`;
+  }
+  const name = basename(path);
+  if (name.startsWith("sample.") || name.startsWith("example.")) {
+    return `samples/${name}`;
   }
   return null;
 }
