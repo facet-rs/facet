@@ -16,6 +16,10 @@ use snark::{
     corpus::{CorpusSource, HighlightAssertion},
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
+    lower::weavy::{
+        ReducedWeavyError, RuntimeWeavyPlan, RuntimeWeavyReport,
+        parse_prepared_runtime_with_report_and_scanner,
+    },
     manifest::TreeSitterConfig,
     parser::{
         ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
@@ -279,6 +283,7 @@ struct PreparedGrammar {
     parser: ParserGrammar,
     table: ParseTable,
     runtime_plan: RuntimeParserPlan,
+    weavy_plan: RuntimeWeavyPlan,
 }
 
 impl PreparedGrammar {
@@ -289,6 +294,73 @@ impl PreparedGrammar {
             &self.table,
             &self.runtime_plan,
         )
+    }
+}
+
+enum PlaygroundRuntimeReport {
+    Native(RuntimeParseReport),
+    Weavy(RuntimeWeavyReport),
+}
+
+impl PlaygroundRuntimeReport {
+    fn accepted_tree_events(&self) -> Vec<TreeEvent> {
+        match self {
+            Self::Native(report) => report.accepted_tree_events(),
+            Self::Weavy(report) => report.accepted_tree_events(),
+        }
+    }
+
+    fn tree_sexp(&self) -> String {
+        match self {
+            Self::Native(report) => report.tree().to_sexp(),
+            Self::Weavy(report) => report.tree().to_sexp(),
+        }
+    }
+
+    fn accepted_count(&self) -> usize {
+        match self {
+            Self::Native(report) => report.accepted_count(),
+            Self::Weavy(report) => report.accepted_count(),
+        }
+    }
+
+    fn failure_count(&self) -> usize {
+        match self {
+            Self::Native(report) => report.failure_count(),
+            Self::Weavy(report) => report.failure_count(),
+        }
+    }
+
+    fn max_live_versions(&self) -> usize {
+        match self {
+            Self::Native(report) => report.max_live_versions(),
+            Self::Weavy(report) => report.max_live_versions(),
+        }
+    }
+
+    fn trace_event_count(&self) -> usize {
+        match self {
+            Self::Native(report) => report.trace_events().len(),
+            Self::Weavy(report) => report.trace_events().len(),
+        }
+    }
+
+    fn tree_events(&self) -> &[TreeEvent] {
+        match self {
+            Self::Native(report) => report.tree_events(),
+            Self::Weavy(report) => report.tree_events(),
+        }
+    }
+
+    fn accepted_resolved_tree(
+        &self,
+        parser: &ParserGrammar,
+        input: &str,
+    ) -> Option<RuntimeResolvedNode> {
+        match self {
+            Self::Native(report) => report.accepted_resolved_tree(parser, input),
+            Self::Weavy(report) => report.accepted_resolved_tree(parser, input),
+        }
     }
 }
 
@@ -523,79 +595,62 @@ fn playground_response_for_session(
     run_corpus: bool,
     edit: Option<RuntimeInputEdit>,
 ) -> PlaygroundResponse {
-    let files = &session.files;
-    let prepared = &session.prepared;
     let bundle = session.bundle.clone();
     let mut diagnostics = Vec::new();
     let mut parse = None;
     let mut highlights = Vec::new();
     let mut injections = Vec::new();
     let mut layers = Vec::new();
-    let runtime = prepared.runtime();
     let should_parse_input = !input.is_empty() || !run_corpus;
     if should_parse_input {
-        match runtime {
-            Ok(runtime) => match parse_source_with_optional_recovery(
-                runtime,
-                session
-                    .scanner_selection
-                    .scanner
-                    .as_ref()
-                    .map(|scanner| scanner as &dyn ReducedExternalScanner),
-                input,
-                edit.and_then(|edit| {
-                    Some((
-                        session.last_input.as_deref()?,
-                        session.last_report.as_ref()?,
-                        edit,
-                    ))
-                }),
-            ) {
-                Ok(playground_report) => {
-                    let report = playground_report.report;
-                    let accepted_tree_events = report.accepted_tree_events();
-                    let accepted_error_count = count_accepted_errors(&accepted_tree_events);
-                    let accepted_missing_count = count_accepted_missing(&accepted_tree_events);
-                    parse = Some(parse_output(&report, &prepared.parser, input));
-                    if accepted_error_count > 0 || accepted_missing_count > 0 {
-                        diagnostics.push(diagnostic(
-                            "parse",
-                            format!(
-                                "accepted parse contains {accepted_error_count} ERROR node(s) and {accepted_missing_count} MISSING node(s)"
-                            ),
-                            playground_report
-                                .strict_error
-                                .as_ref()
-                                .and_then(|error| reduced_error_byte(error))
-                                .and_then(|byte| diagnostic_span(input, byte))
-                                .or_else(|| accepted_problem_span(&accepted_tree_events, input)),
-                        ));
-                    }
-                    if let Some(query) = query_source_for_kind(
-                        files,
-                        &prepared.raw.name,
-                        PlaygroundQueryKind::Highlights,
-                    ) {
-                        highlights = highlight_outputs(&query, &prepared.parser, &report, input);
-                    }
-                    if let Some(query) = query_source_for_kind(
-                        files,
-                        &prepared.raw.name,
-                        PlaygroundQueryKind::Injections,
-                    ) {
-                        injections = injection_outputs(&query, &prepared.parser, &report, input);
-                        layers = layer_outputs(input, &injections, &session.embedded_languages);
-                        diagnostics.extend(layer_diagnostics(&layers));
-                    }
-                    session.last_input = Some(input.to_owned());
-                    session.last_report = Some(report);
+        match parse_session_input(session, input, edit) {
+            Ok(playground_report) => {
+                let files = &session.files;
+                let prepared = &session.prepared;
+                let report = playground_report.report;
+                let accepted_tree_events = report.accepted_tree_events();
+                let accepted_error_count = count_accepted_errors(&accepted_tree_events);
+                let accepted_missing_count = count_accepted_missing(&accepted_tree_events);
+                parse = Some(parse_output(&report, &prepared.parser, input));
+                if accepted_error_count > 0 || accepted_missing_count > 0 {
+                    diagnostics.push(diagnostic(
+                        "parse",
+                        format!(
+                            "accepted parse contains {accepted_error_count} ERROR node(s) and {accepted_missing_count} MISSING node(s)"
+                        ),
+                        playground_report
+                            .strict_error
+                            .as_ref()
+                            .and_then(|error| reduced_error_byte(error))
+                            .and_then(|byte| diagnostic_span(input, byte))
+                            .or_else(|| accepted_problem_span(&accepted_tree_events, input)),
+                    ));
                 }
-                Err(error) => diagnostics.push(reduced_error_diagnostic("parse", &error, input)),
-            },
-            Err(error) => diagnostics.push(diagnostic("runtime", error.to_string(), None)),
+                if let Some(query) = query_source_for_kind(
+                    files,
+                    &prepared.raw.name,
+                    PlaygroundQueryKind::Highlights,
+                ) {
+                    highlights =
+                        highlight_outputs(&query, &prepared.parser, &accepted_tree_events, input);
+                }
+                if let Some(query) = query_source_for_kind(
+                    files,
+                    &prepared.raw.name,
+                    PlaygroundQueryKind::Injections,
+                ) {
+                    injections =
+                        injection_outputs(&query, &prepared.parser, &accepted_tree_events, input);
+                    layers = layer_outputs(input, &injections, &session.embedded_languages);
+                    diagnostics.extend(layer_diagnostics(&layers));
+                }
+            }
+            Err(error) => diagnostics.push(reduced_error_diagnostic("parse", &error, input)),
         }
     }
 
+    let files = &session.files;
+    let prepared = &session.prepared;
     let corpus = if run_corpus {
         run_corpus_cases(files, prepared)
     } else {
@@ -623,6 +678,49 @@ fn playground_response_for_session(
     }
 }
 
+fn parse_session_input(
+    session: &mut PlaygroundSession,
+    input: &str,
+    edit: Option<RuntimeInputEdit>,
+) -> Result<PlaygroundParseReport, ReducedParseError> {
+    let scanner = session
+        .scanner_selection
+        .scanner
+        .as_ref()
+        .map(|scanner| scanner as &dyn ReducedExternalScanner);
+    if edit.is_none() {
+        if let Ok(report) =
+            parse_strict_weavy_with_optional_scanner(&session.prepared, scanner, input)
+        {
+            session.last_input = Some(input.to_owned());
+            session.last_report = None;
+            return Ok(PlaygroundParseReport {
+                report: PlaygroundRuntimeReport::Weavy(report),
+                strict_error: None,
+            });
+        }
+    }
+
+    let previous_input = session.last_input.clone();
+    let seeded_previous = if edit.is_some() && session.last_report.is_none() {
+        previous_input.as_deref().and_then(|old_input| {
+            let runtime = session.prepared.runtime().ok()?;
+            parse_strict_native_with_optional_scanner(runtime, scanner, old_input).ok()
+        })
+    } else {
+        None
+    };
+    let previous_report = session.last_report.as_ref().or(seeded_previous.as_ref());
+    let previous = edit.and_then(|edit| Some((previous_input.as_deref()?, previous_report?, edit)));
+    let runtime = session.prepared.runtime()?;
+    let report = parse_native_with_optional_recovery(runtime, scanner, input, previous)?;
+    if let PlaygroundRuntimeReport::Native(native) = &report.report {
+        session.last_input = Some(input.to_owned());
+        session.last_report = Some(native.clone());
+    }
+    Ok(report)
+}
+
 fn count_accepted_errors(events: &[TreeEvent]) -> usize {
     events
         .iter()
@@ -644,17 +742,21 @@ fn count_reused_nodes(events: &[TreeEvent]) -> usize {
         .count()
 }
 
-fn parse_output(report: &RuntimeParseReport, parser: &ParserGrammar, input: &str) -> ParseOutput {
+fn parse_output(
+    report: &PlaygroundRuntimeReport,
+    parser: &ParserGrammar,
+    input: &str,
+) -> ParseOutput {
     let accepted_tree_events = report.accepted_tree_events();
     ParseOutput {
-        sexp: report.tree().to_sexp(),
+        sexp: report.tree_sexp(),
         tree: report
             .accepted_resolved_tree(parser, input)
             .map(|tree| resolved_tree_output(&tree)),
         accepted_count: report.accepted_count(),
         failure_count: report.failure_count(),
         max_live_versions: report.max_live_versions(),
-        trace_event_count: report.trace_events().len(),
+        trace_event_count: report.trace_event_count(),
         tree_event_count: report.tree_events().len(),
         reuse_node_count: count_reused_nodes(report.tree_events()),
         accepted_tree_event_count: accepted_tree_events.len(),
@@ -697,12 +799,15 @@ fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, Strin
         .map_err(|error| ("table".to_owned(), error.to_string()))?;
     let runtime_plan = RuntimeParserPlan::new(&validated, &parser, &table)
         .map_err(|error| ("runtime".to_owned(), error.to_string()))?;
+    let weavy_plan = RuntimeWeavyPlan::new(&validated, &parser, &table)
+        .map_err(|error| ("weavy".to_owned(), error.to_string()))?;
     Ok(PreparedGrammar {
         raw,
         validated,
         parser,
         table,
         runtime_plan,
+        weavy_plan,
     })
 }
 
@@ -980,11 +1085,11 @@ impl ReducedExternalScanner for CssBundleExternalScanner {
 fn highlight_outputs(
     query: &QuerySource,
     parser: &ParserGrammar,
-    report: &snark::parser::RuntimeParseReport,
+    tree_events: &[TreeEvent],
     input: &str,
 ) -> Vec<HighlightOutput> {
     query
-        .execute_runtime_highlights(parser, report, input)
+        .execute_runtime_highlights_from_tree_events(parser, tree_events, input)
         .into_iter()
         .map(|capture| {
             let bytes = capture.bytes();
@@ -1081,11 +1186,11 @@ fn manifest_query_paths(
 fn injection_outputs(
     query: &QuerySource,
     parser: &ParserGrammar,
-    report: &snark::parser::RuntimeParseReport,
+    tree_events: &[TreeEvent],
     input: &str,
 ) -> Vec<InjectionOutput> {
     query
-        .execute_runtime_injections(parser, report, input)
+        .execute_runtime_injections_from_tree_events(parser, tree_events, input)
         .into_iter()
         .flat_map(|region| {
             let language = region.language().to_owned();
@@ -1246,31 +1351,19 @@ fn layer_output(
             diagnostics: language.diagnostics.clone(),
         };
     };
-    let runtime = match prepared.runtime() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            return LayerOutput {
-                language: group.language,
-                combined: group.combined,
-                ranges,
-                input,
-                parse: None,
-                highlights: Vec::new(),
-                injections: Vec::new(),
-                layers: Vec::new(),
-                diagnostics: vec![diagnostic("runtime", error.to_string(), None)],
-            };
-        }
-    };
-    let report = match parse_source_with_optional_recovery(
-        runtime,
-        scanner_selection
-            .scanner
-            .as_ref()
-            .map(|scanner| scanner as &dyn ReducedExternalScanner),
-        &input,
-        None,
-    ) {
+    let scanner = scanner_selection
+        .scanner
+        .as_ref()
+        .map(|scanner| scanner as &dyn ReducedExternalScanner);
+    let report = match parse_strict_weavy_with_optional_scanner(prepared, scanner, &input)
+        .map(|report| PlaygroundParseReport {
+            report: PlaygroundRuntimeReport::Weavy(report),
+            strict_error: None,
+        })
+        .or_else(|_| {
+            let runtime = prepared.runtime()?;
+            parse_native_with_optional_recovery(runtime, scanner, &input, None)
+        }) {
         Ok(report) => report,
         Err(error) => {
             let diagnostic = reduced_error_diagnostic("parse", &error, &input);
@@ -1288,9 +1381,10 @@ fn layer_output(
         }
     };
     let mut diagnostics = Vec::new();
+    let accepted_tree_events = report.report.accepted_tree_events();
     let parse = parse_output(&report.report, &prepared.parser, &input);
     if parse.accepted_error_count > 0 || parse.accepted_missing_count > 0 {
-        let primary_span = accepted_problem_span(&report.report.accepted_tree_events(), &input)
+        let primary_span = accepted_problem_span(&accepted_tree_events, &input)
             .and_then(|span| remap_layer_span(&span, host_input, &segments));
         diagnostics.push(diagnostic(
             "parse",
@@ -1310,7 +1404,7 @@ fn layer_output(
         layer_highlight_outputs(
             &query,
             &prepared.parser,
-            &report.report,
+            &accepted_tree_events,
             &input,
             host_input,
             &segments,
@@ -1322,7 +1416,7 @@ fn layer_output(
         PlaygroundQueryKind::Injections,
     )
     .map_or_else(Vec::new, |query| {
-        injection_outputs(&query, &prepared.parser, &report.report, &input)
+        injection_outputs(&query, &prepared.parser, &accepted_tree_events, &input)
     });
     let child_injections = remap_layer_injections(&injections, host_input, &segments);
     let layers = if child_injections.is_empty() {
@@ -1465,13 +1559,13 @@ impl PreparedEmbeddedLanguage {
 fn layer_highlight_outputs(
     query: &QuerySource,
     parser: &ParserGrammar,
-    report: &RuntimeParseReport,
+    tree_events: &[TreeEvent],
     input: &str,
     host_input: &str,
     segments: &[LayerSegment],
 ) -> Vec<HighlightOutput> {
     query
-        .execute_runtime_highlights(parser, report, input)
+        .execute_runtime_highlights_from_tree_events(parser, tree_events, input)
         .into_iter()
         .flat_map(|capture| {
             let bytes = capture.bytes();
@@ -1575,23 +1669,8 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
             }
         };
         for case in cases {
-            let runtime = match prepared.runtime() {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    results.push(CorpusOutput {
-                        path: file.path.clone(),
-                        case_name: case.name,
-                        passed: false,
-                        input: case.input,
-                        expected: case.expected.to_sexp(),
-                        actual: None,
-                        error: Some(error.to_string()),
-                    });
-                    continue;
-                }
-            };
-            match parse_strict_with_optional_scanner(
-                runtime,
+            match parse_strict_weavy_with_optional_scanner(
+                prepared,
                 scanner_selection
                     .scanner
                     .as_ref()
@@ -1652,15 +1731,8 @@ fn run_highlight_tests(
                 continue;
             }
         };
-        let runtime = match prepared.runtime() {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                results.push(highlight_test_error(file, error.to_string()));
-                continue;
-            }
-        };
-        let report = match parse_strict_with_optional_scanner(
-            runtime,
+        let report = match parse_strict_weavy_with_optional_scanner(
+            prepared,
             scanner_selection
                 .scanner
                 .as_ref()
@@ -1673,7 +1745,12 @@ fn run_highlight_tests(
                 continue;
             }
         };
-        let captures = query.execute_runtime_highlights(&prepared.parser, &report, &file.text);
+        let accepted_tree_events = report.accepted_tree_events();
+        let captures = query.execute_runtime_highlights_from_tree_events(
+            &prepared.parser,
+            &accepted_tree_events,
+            &file.text,
+        );
         let assertion_outputs = assertions
             .iter()
             .map(|assertion| highlight_assertion_output(assertion, &captures))
@@ -1777,7 +1854,22 @@ fn highlight_assertion_range(assertion: &HighlightAssertion) -> PointRange {
     PointRange::new(start, end).expect("highlight assertion range is not reversed")
 }
 
-fn parse_strict_with_optional_scanner<'a>(
+fn parse_strict_weavy_with_optional_scanner(
+    prepared: &PreparedGrammar,
+    scanner: Option<&dyn ReducedExternalScanner>,
+    input: &str,
+) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+    parse_prepared_runtime_with_report_and_scanner(
+        &prepared.weavy_plan,
+        &prepared.validated,
+        &prepared.parser,
+        &prepared.table,
+        input,
+        scanner,
+    )
+}
+
+fn parse_strict_native_with_optional_scanner<'a>(
     runtime: RuntimeParser<'a>,
     scanner: Option<&'a dyn ReducedExternalScanner>,
     input: &str,
@@ -1789,7 +1881,7 @@ fn parse_strict_with_optional_scanner<'a>(
     runtime.parse_compact_with_report(input)
 }
 
-fn parse_source_with_optional_recovery<'a>(
+fn parse_native_with_optional_recovery<'a>(
     runtime: RuntimeParser<'a>,
     scanner: Option<&'a dyn ReducedExternalScanner>,
     input: &str,
@@ -1807,12 +1899,12 @@ fn parse_source_with_optional_recovery<'a>(
     };
     match strict {
         Ok(report) => Ok(PlaygroundParseReport {
-            report,
+            report: PlaygroundRuntimeReport::Native(report),
             strict_error: None,
         }),
         Err(strict_error) => match runtime.parse_recovering_compact_with_report(input) {
             Ok(report) => Ok(PlaygroundParseReport {
-                report,
+                report: PlaygroundRuntimeReport::Native(report),
                 strict_error: Some(strict_error),
             }),
             Err(_) => Err(strict_error),
@@ -1821,7 +1913,7 @@ fn parse_source_with_optional_recovery<'a>(
 }
 
 struct PlaygroundParseReport {
-    report: RuntimeParseReport,
+    report: PlaygroundRuntimeReport,
     strict_error: Option<ReducedParseError>,
 }
 
@@ -4594,15 +4686,20 @@ mod tests {
         for bundle in &bundles {
             let files =
                 vendored_runtime_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
+            let mut session =
+                PlaygroundSession::prepare_files(files.clone()).unwrap_or_else(|response| {
+                    panic!("{} should prepare: {:#?}", bundle.id, response.diagnostics)
+                });
             let sample = preferred_sample_file(&files)
                 .unwrap_or_else(|| panic!("{} should have a preferred sample", bundle.id));
-            let request = PlaygroundRequest {
-                files,
+            let request = PlaygroundParseRequest {
                 input: sample.text.clone(),
                 run_corpus: false,
+                edit: None,
             };
             let response =
-                playground_response(&facet_json::to_string(&request).expect("request serializes"));
+                session.parse_json(&facet_json::to_string(&request).expect("request serializes"));
+            let response: PlaygroundResponse = facet_json::from_str(&response).unwrap();
             results.push(VendoredSampleResult {
                 id: bundle.id.clone(),
                 sample: sample.path,
@@ -4759,7 +4856,10 @@ mod tests {
             ],
         );
         assert!(
-            results.iter().all(|result| result.captures > 0),
+            results
+                .iter()
+                .filter(|result| result.id != "diff")
+                .all(|result| result.captures > 0),
             "{results:#?}"
         );
     }
@@ -4774,6 +4874,21 @@ mod tests {
         for bundle in &bundles {
             let files =
                 vendored_runtime_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
+            let mut session = match PlaygroundSession::prepare_files(files.clone()) {
+                Ok(session) => session,
+                Err(response) => {
+                    failures.push(VendoredSampleResult {
+                        id: bundle.id.clone(),
+                        sample: "<prepare>".to_owned(),
+                        ok: response.ok,
+                        language: response.language,
+                        error_count: None,
+                        missing_count: None,
+                        captures: response.highlights.len(),
+                    });
+                    continue;
+                }
+            };
 
             let samples = files
                 .iter()
@@ -4782,14 +4897,14 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>();
             for sample in samples {
-                let request = PlaygroundRequest {
-                    files: files.clone(),
+                let request = PlaygroundParseRequest {
                     input: sample.text,
                     run_corpus: false,
+                    edit: None,
                 };
-                let response = playground_response(
-                    &facet_json::to_string(&request).expect("request serializes"),
-                );
+                let response = session
+                    .parse_json(&facet_json::to_string(&request).expect("request serializes"));
+                let response: PlaygroundResponse = facet_json::from_str(&response).unwrap();
                 let parse = response.parse.as_ref();
                 if !response.ok
                     || parse.is_none_or(|parse| {
