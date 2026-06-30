@@ -1,4 +1,8 @@
-(tag_name) @tag
+[
+  (tag_name)
+  (void_tag_name)
+  (doctype_name)
+] @tag
 
 (attribute_name) @property
 

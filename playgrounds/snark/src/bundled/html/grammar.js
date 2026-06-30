@@ -13,9 +13,20 @@ module.exports = grammar({
   rules: {
     document: ($) => repeat($._node),
 
-    _node: ($) => choice($.element, $.comment, $.text),
+    _node: ($) => choice($.doctype, $.element, $.comment, $.text),
 
-    element: ($) => choice($.normal_element, $.self_closing_element),
+    element: ($) => choice($.normal_element, $.self_closing_element, $.void_element),
+
+    doctype: ($) =>
+      seq(
+        "<!",
+        $.doctype_name,
+        optional(seq($._ws, $.doctype_value)),
+        ">",
+      ),
+
+    doctype_name: ($) => choice("DOCTYPE", "doctype"),
+    doctype_value: ($) => token(until(">")),
 
     normal_element: ($) =>
       seq(
@@ -48,6 +59,15 @@ module.exports = grammar({
         repeat($.attribute),
         optional($._ws),
         "/>",
+      ),
+
+    void_element: ($) =>
+      seq(
+        "<",
+        field("name", $.void_tag_name),
+        repeat($.attribute),
+        optional($._ws),
+        ">",
       ),
 
     implicit_end_tag: ($) =>
@@ -110,6 +130,21 @@ module.exports = grammar({
     attribute_value: ($) => /[^\s"'=<>`]+/,
 
     tag_name: ($) => /[A-Za-z][A-Za-z0-9:-]*/,
+    void_tag_name: ($) =>
+      choice(
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "input",
+        "link",
+        "meta",
+        "source",
+        "track",
+        "wbr",
+      ),
     attribute_name: ($) => /[A-Za-z_:][A-Za-z0-9_:.-]*/,
 
     comment: ($) => token(seq("<!--", until("-->"), "-->")),

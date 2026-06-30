@@ -64,7 +64,7 @@ async function runnableFilesForBundle(files: DslBundleFile[], rootId = preferred
 }
 
 function filesAndRootForVendoredId(id: string): { files: DslBundleFile[]; rootId: string } {
-  if (id === "fences") {
+  if (id === "fences" || id === "gingembre") {
     return { files: allBundledFiles(), rootId: id };
   }
   const files = bundledFiles(id);
@@ -404,6 +404,59 @@ module.exports = grammar({
       capture.start_byte,
     ]),
     [["constant", "alpha", 2]],
+  );
+});
+
+test("injects scanner-free html from gingembre text chunks", async () => {
+  const files = allBundledFiles();
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "gingembre", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const source = "<section><p>Hello {{ name }}<p>Again</p></section>";
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: source,
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.language, "gingembre");
+  assert.equal(response.layers.length, 1);
+  const htmlLayer = response.layers[0];
+  assert.equal(htmlLayer.language, "html");
+  assert.equal(htmlLayer.combined, true);
+  assert.equal(htmlLayer.input, "<section><p>Hello <p>Again</p></section>");
+  assert.equal(htmlLayer.parse.accepted_error_count, 0);
+  assert.equal(htmlLayer.parse.accepted_missing_count, 0);
+  assert.match(htmlLayer.parse.sexp, /\(implicit_end_tag\)/);
+  assert.deepEqual(
+    htmlLayer.ranges.map((range: { start_byte: number; end_byte: number }) => [
+      range.start_byte,
+      range.end_byte,
+    ]),
+    [
+      [0, 18],
+      [28, 50],
+    ],
+  );
+  assert.deepEqual(
+    htmlLayer.highlights.map((capture: { capture_name: string; text: string }) => [
+      capture.capture_name,
+      capture.text,
+    ]),
+    [
+      ["tag", "section"],
+      ["tag", "p"],
+      ["tag", "p"],
+      ["tag", "p"],
+      ["tag", "section"],
+      ["text", "Hello "],
+      ["text", "Again"],
+    ],
   );
 });
 
