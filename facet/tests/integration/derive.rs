@@ -1011,6 +1011,40 @@ fn transparent_generic_tuple_struct() {
     assert_eq!(format!("{inner}"), "Vec<i32>");
 }
 
+#[test]
+fn opaque_proxy_enum_with_lifetime_compiles() {
+    #[derive(Debug, Clone, PartialEq, Eq, Facet)]
+    #[facet(opaque, proxy = String)]
+    #[repr(C)]
+    enum Argument<'a> {
+        Owned(String),
+        Borrowed(&'a str),
+    }
+
+    impl<'a> TryFrom<String> for Argument<'a> {
+        type Error = std::convert::Infallible;
+
+        fn try_from(value: String) -> Result<Self, Self::Error> {
+            Ok(Self::Owned(value))
+        }
+    }
+
+    impl From<&Argument<'_>> for String {
+        fn from(value: &Argument<'_>) -> Self {
+            match value {
+                Argument::Owned(value) => value.clone(),
+                Argument::Borrowed(value) => value.to_string(),
+            }
+        }
+    }
+
+    let shape = <Argument<'static>>::SHAPE;
+    assert!(
+        shape.proxy.is_some(),
+        "opaque proxy enum should expose proxy metadata"
+    );
+}
+
 // Test for issue #1714 - module_path and source location in Shape
 #[test]
 fn shape_module_path_and_source_location() {
