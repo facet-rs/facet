@@ -3300,9 +3300,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "gingembre-snark"
+name = "gingembre-snark-spike"
 version = "0.0.0"
 dependencies = [
+ "futures",
+ "gingembre",
  "snark",
  "snark-dsl",
 ]
