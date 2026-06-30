@@ -418,21 +418,21 @@ fn execute_runtime_injections(
             .filter(|capture| capture.capture_name == "injection.language")
             .flat_map(|capture| capture_binding_matches(capture, &nodes, &tokens, &fields))
             .collect::<Vec<_>>();
-        let Some(language) = pattern.language.clone().or_else(|| {
-            language_captures
-                .first()
-                .map(|capture| capture.text.clone())
-        }) else {
-            continue;
-        };
         for content in pattern
             .captures
             .iter()
             .filter(|capture| capture.capture_name == "injection.content")
         {
             for capture in capture_binding_matches(content, &nodes, &tokens, &fields) {
+                let Some(language) = pattern
+                    .language
+                    .clone()
+                    .or_else(|| dynamic_injection_language(&capture, &language_captures, &nodes))
+                else {
+                    continue;
+                };
                 regions.push(InjectionRegion {
-                    language: language.clone(),
+                    language,
                     combined: pattern.combined,
                     include_children: pattern.include_children,
                     bytes: capture.bytes,
@@ -444,6 +444,54 @@ fn execute_runtime_injections(
     }
 
     regions
+}
+
+fn dynamic_injection_language(
+    content: &HighlightCapture,
+    languages: &[HighlightCapture],
+    nodes: &[RuntimeHighlightNode],
+) -> Option<String> {
+    languages
+        .iter()
+        .min_by_key(|language| injection_language_score(content.bytes, language.bytes, nodes))
+        .map(|language| language.text.clone())
+}
+
+fn injection_language_score(
+    content: ByteRange,
+    language: ByteRange,
+    nodes: &[RuntimeHighlightNode],
+) -> (u8, u32, u32) {
+    let same_parent = direct_parent_range(content, nodes)
+        .is_some_and(|parent| byte_range_contains(parent.bytes, language));
+    let preceding = language.end() <= content.start();
+    let category =
+        if byte_range_contains(language, content) || byte_range_contains(content, language) {
+            0
+        } else if same_parent && preceding {
+            1
+        } else if same_parent {
+            2
+        } else if preceding {
+            3
+        } else {
+            4
+        };
+    (
+        category,
+        byte_range_gap(content, language),
+        language.start().get(),
+    )
+}
+
+fn byte_range_gap(left: ByteRange, right: ByteRange) -> u32 {
+    if right.end() <= left.start() {
+        left.start().get().saturating_sub(right.end().get())
+    } else if left.end() <= right.start() {
+        right.start().get().saturating_sub(left.end().get())
+    } else {
+        0
+    }
 }
 
 fn capture_binding_matches(
@@ -1336,11 +1384,16 @@ fn direct_parent_node<'a>(
     node: &RuntimeHighlightNode,
     nodes: &'a [RuntimeHighlightNode],
 ) -> Option<&'a RuntimeHighlightNode> {
+    direct_parent_range(node.bytes, nodes).filter(|parent| parent.id != node.id)
+}
+
+fn direct_parent_range(
+    bytes: ByteRange,
+    nodes: &[RuntimeHighlightNode],
+) -> Option<&RuntimeHighlightNode> {
     nodes
         .iter()
-        .filter(|candidate| {
-            candidate.id != node.id && byte_range_strictly_contains(candidate.bytes, node.bytes)
-        })
+        .filter(|candidate| byte_range_strictly_contains(candidate.bytes, bytes))
         .min_by_key(|candidate| byte_range_len(candidate.bytes))
 }
 
@@ -1791,5 +1844,72 @@ mod tests {
         assert_eq!(regions[0].text(), "print");
         assert_eq!(regions[0].bytes().start().get(), 0);
         assert_eq!(regions[0].bytes().end().get(), 5);
+    }
+
+    #[test]
+    fn pairs_dynamic_injection_languages_with_sibling_content() {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(
+            r#"{
+              "name": "injection_dynamic",
+              "rules": {
+                "document": {
+                  "type": "REPEAT",
+                  "content": { "type": "SYMBOL", "name": "block" }
+                },
+                "block": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "lang" },
+                    { "type": "STRING", "value": ":" },
+                    { "type": "SYMBOL", "name": "code" },
+                    { "type": "STRING", "value": ";" }
+                  ]
+                },
+                "lang": {
+                  "type": "TOKEN",
+                  "content": { "type": "PATTERN", "value": "[a-z]+" }
+                },
+                "code": {
+                  "type": "TOKEN",
+                  "content": { "type": "PATTERN", "value": "[A-Z]+" }
+                }
+              },
+              "extras": [],
+              "conflicts": [],
+              "precedences": [],
+              "externals": [],
+              "inline": [],
+              "supertypes": []
+            }"#,
+        )
+        .unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = ParseTable::from_grammar(&parser).unwrap();
+        let input = "lua:PRINT;js:RUN;";
+        let report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report(input)
+            .unwrap();
+        let query = QuerySource(
+            r#"((block
+                  (lang) @injection.language
+                  (code) @injection.content))"#
+                .to_owned(),
+        );
+
+        let regions = query.execute_runtime_injections(&parser, &report, input);
+
+        assert_eq!(
+            regions
+                .iter()
+                .map(|region| (region.language(), region.text()))
+                .collect::<Vec<_>>(),
+            vec![("lua", "PRINT"), ("js", "RUN")]
+        );
     }
 }
