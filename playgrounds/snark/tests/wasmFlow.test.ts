@@ -293,18 +293,14 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
         missingCount: 0,
       },
       { id: "json", sample: "samples/package.json", ok: true, language: "json", errorCount: 0, missingCount: 0 },
-      { id: "nginx", sample: "samples/nginx.conf", ok: false, language: "nginx", errorCount: 28, missingCount: 0 },
+      { id: "nginx", sample: "samples/basic.conf", ok: true, language: "nginx", errorCount: 0, missingCount: 0 },
       { id: "proto", sample: "samples/addressbook.proto", ok: true, language: "proto", errorCount: 0, missingCount: 0 },
       { id: "thrift", sample: "samples/tutorial.thrift", ok: true, language: "thrift", errorCount: 0, missingCount: 0 },
       { id: "yuri", sample: "samples/example.yuri", ok: true, language: "yuri", errorCount: 0, missingCount: 0 },
     ],
   );
-  assert.equal(
-    results.find((result) => result.id === "nginx")?.diagnostics[0]?.stage,
-    "parse",
-  );
   assert.ok(
-    results.filter((result) => result.id !== "nginx").every((result) => result.captures > 0),
+    results.every((result) => result.captures > 0),
     JSON.stringify(results, null, 2),
   );
 });

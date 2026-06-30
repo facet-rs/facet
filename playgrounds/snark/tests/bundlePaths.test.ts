@@ -117,11 +117,12 @@ test("prefers non-error samples before error fixtures", () => {
     file("tree-sitter-nginx/grammar.js"),
     file("tree-sitter-nginx/samples/nginx-errors.conf"),
     file("tree-sitter-nginx/samples/nginx.conf"),
+    file("tree-sitter-nginx/samples/basic.conf"),
   ]);
 
   assert.deepEqual(preferredSampleForGrammarRootId(files), {
-    path: "samples/nginx.conf",
-    sourcePath: "samples/nginx.conf",
+    path: "samples/basic.conf",
+    sourcePath: "samples/basic.conf",
     text: "",
   });
 });

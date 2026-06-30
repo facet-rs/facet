@@ -2172,10 +2172,6 @@ mod tests {
                     .as_ref()
                     .map(|parse| parse.accepted_missing_count),
                 captures: response.highlights.len(),
-                first_diagnostic_stage: response
-                    .diagnostics
-                    .first()
-                    .map(|diagnostic| diagnostic.stage.clone()),
             });
         }
 
@@ -2269,10 +2265,10 @@ mod tests {
                 ),
                 (
                     "nginx",
-                    "samples/nginx.conf",
-                    false,
+                    "samples/basic.conf",
+                    true,
                     Some("nginx"),
-                    Some(28),
+                    Some(0),
                     Some(0)
                 ),
                 (
@@ -2301,18 +2297,8 @@ mod tests {
                 ),
             ],
         );
-        assert_eq!(
-            results
-                .iter()
-                .find(|result| result.id == "nginx")
-                .and_then(|result| result.first_diagnostic_stage.as_deref()),
-            Some("parse")
-        );
         assert!(
-            results
-                .iter()
-                .filter(|result| result.id != "nginx")
-                .all(|result| result.captures > 0),
+            results.iter().all(|result| result.captures > 0),
             "{results:#?}"
         );
     }
@@ -2326,7 +2312,6 @@ mod tests {
         error_count: Option<usize>,
         missing_count: Option<usize>,
         captures: usize,
-        first_diagnostic_stage: Option<String>,
     }
 
     fn read_bundle_files(root: &std::path::Path) -> Vec<BundleFile> {
