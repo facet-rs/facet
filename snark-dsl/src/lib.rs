@@ -1,5 +1,11 @@
 #[cfg(feature = "native")]
-use std::{ffi::OsStr, fs, path::PathBuf, process::Command};
+use std::{
+    collections::BTreeMap,
+    ffi::OsStr,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 #[cfg(feature = "boa")]
 use boa_engine::{Context, JsValue, Source};
@@ -77,19 +83,22 @@ pub fn emit_source_with_boa(grammar_source: &str, source_name: &str) -> Result<S
         "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;",
         "commonjs-shim.js",
     )?;
-    eval(&mut context, SNARK_DSL_EXTENSIONS, "snark-dsl-extensions.js")?;
+    eval(
+        &mut context,
+        SNARK_DSL_EXTENSIONS,
+        "snark-dsl-extensions.js",
+    )?;
     eval(&mut context, grammar_source, source_name)?;
     eval_to_string(&mut context, EMIT_SCRIPT, "emit.js", "emit")
 }
 
 #[cfg(feature = "native")]
-pub fn emit_with_boa(grammar_path: &std::path::Path) -> Result<String> {
-    let grammar_source = read_to_string(grammar_path)?;
-    emit_source_with_boa(&grammar_source, &grammar_path.display().to_string())
+pub fn emit_with_boa(grammar_path: &Path) -> Result<String> {
+    emit_grammar_file_with_boa(grammar_path)
 }
 
 #[cfg(feature = "native")]
-pub fn emit_with_tree_sitter(grammar_path: &std::path::Path) -> Result<String> {
+pub fn emit_with_tree_sitter(grammar_path: &Path) -> Result<String> {
     let temp = tempfile::tempdir()?;
     let output = Command::new("tree-sitter")
         .args(["generate", "--no-parser", "--output"])
@@ -109,7 +118,7 @@ pub fn emit_with_tree_sitter(grammar_path: &std::path::Path) -> Result<String> {
 }
 
 #[cfg(feature = "native")]
-pub fn check_against_tree_sitter(grammar_path: &std::path::Path) -> Result<()> {
+pub fn check_against_tree_sitter(grammar_path: &Path) -> Result<()> {
     let boa_json = emit_with_boa(grammar_path)?;
     let tree_sitter_json = emit_with_tree_sitter(grammar_path)?;
 
@@ -128,11 +137,88 @@ pub fn official_tree_sitter_dsl_prelude() -> Result<&'static str> {
 }
 
 #[cfg(feature = "native")]
-fn read_to_string(path: &std::path::Path) -> Result<String> {
+fn read_to_string(path: &Path) -> Result<String> {
     fs::read_to_string(path).map_err(|source| Error::Read {
         path: path.to_path_buf(),
         source,
     })
+}
+
+#[cfg(feature = "native")]
+fn emit_grammar_file_with_boa(grammar_path: &Path) -> Result<String> {
+    let root = grammar_path.parent().unwrap_or_else(|| Path::new("."));
+    let entry = grammar_path
+        .strip_prefix(root)
+        .unwrap_or(grammar_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let mut modules = BTreeMap::new();
+    collect_js_modules(root, root, &mut modules)?;
+
+    let mut loader = String::new();
+    loader.push_str("const __snark_module_sources = new Map([\n");
+    for (path, source) in modules {
+        loader.push_str("  [");
+        loader.push_str(&js_string_literal(&path));
+        loader.push_str(", ");
+        loader.push_str(&js_string_literal(&source));
+        loader.push_str("],\n");
+    }
+    loader.push_str("]);\n");
+    loader.push_str(COMMONJS_LOADER);
+    loader.push_str("globalThis.module = { exports: __snark_load_module(");
+    loader.push_str(&js_string_literal(&entry));
+    loader.push_str(") };\n");
+    loader.push_str("globalThis.exports = globalThis.module.exports;\n");
+
+    emit_source_with_boa(&loader, &grammar_path.display().to_string())
+}
+
+#[cfg(feature = "native")]
+fn collect_js_modules(
+    root: &Path,
+    dir: &Path,
+    modules: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            collect_js_modules(root, &path, modules)?;
+        } else if path.extension().is_some_and(|extension| extension == "js") {
+            let key = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            modules.insert(key, read_to_string(&path)?);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "native")]
+fn js_string_literal(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            ch if ch.is_control() => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{:04X}", ch as u32);
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
 }
 
 #[cfg(feature = "native")]
@@ -205,6 +291,53 @@ globalThis.until = function until(...markers) {
 globalThis.nested = function nested(open, close) {
   return { type: "NESTED", open, close };
 };
+"#;
+
+#[cfg(all(feature = "native", feature = "boa"))]
+const COMMONJS_LOADER: &str = r#"
+const __snark_module_cache = new Map();
+
+function __snark_normalize_path(path) {
+  const out = [];
+  for (const part of path.replaceAll("\\", "/").split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return out.join("/");
+}
+
+function __snark_dirname(path) {
+  const normalized = __snark_normalize_path(path);
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(0, index) : "";
+}
+
+function __snark_resolve_module(parent, specifier) {
+  if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
+    throw new Error(`cannot require non-relative grammar module ${specifier}`);
+  }
+  const base = __snark_dirname(parent);
+  const path = __snark_normalize_path((base ? base + "/" : "") + specifier);
+  const candidates = [path, path + ".js", path + "/index.js", path + "/grammar.js"];
+  for (const candidate of candidates) {
+    if (__snark_module_sources.has(candidate)) return candidate;
+  }
+  throw new Error(`could not resolve grammar module ${specifier} from ${parent}`);
+}
+
+function __snark_load_module(path) {
+  const resolved = __snark_normalize_path(path);
+  if (__snark_module_cache.has(resolved)) return __snark_module_cache.get(resolved).exports;
+  const source = __snark_module_sources.get(resolved);
+  if (source === undefined) throw new Error(`missing grammar module ${resolved}`);
+  const module = { exports: {} };
+  __snark_module_cache.set(resolved, module);
+  const require = specifier => __snark_load_module(__snark_resolve_module(resolved, specifier));
+  const execute = new Function("module", "exports", "require", source + "\n; return module.exports;");
+  module.exports = execute(module, module.exports, require);
+  return module.exports;
+}
 "#;
 
 #[cfg(feature = "boa")]
@@ -300,6 +433,45 @@ mod tests {
         assert!(json.contains("\"markers\""));
         assert!(json.contains("\"type\": \"NESTED\""));
         assert!(json.contains("\"open\": \"{#\""));
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn emits_commonjs_helper_grammar_with_boa() {
+        let temp = tempfile::tempdir().unwrap();
+        let grammar = temp.path().join("grammar.js");
+        let helper_dir = temp.path().join("grammar");
+        fs::create_dir(&helper_dir).unwrap();
+        fs::write(
+            &grammar,
+            r#"
+const helper = require("./grammar/helper");
+module.exports = grammar({
+  name: "mini_commonjs",
+  rules: {
+    source_file: $ => helper.wrap($.item),
+    item: $ => helper.item,
+  },
+});
+"#,
+        )
+        .unwrap();
+        fs::write(
+            helper_dir.join("helper.js"),
+            r#"
+module.exports = {
+  item: /[a-z]+/,
+  wrap: rule => repeat1(rule),
+};
+"#,
+        )
+        .unwrap();
+
+        let json = emit_with_boa(&grammar).unwrap();
+
+        assert!(json.contains("\"name\": \"mini_commonjs\""));
+        assert!(json.contains("\"source_file\""));
+        assert!(json.contains("\"REPEAT1\""));
     }
 
     #[cfg(feature = "native")]
