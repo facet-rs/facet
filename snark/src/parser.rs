@@ -6268,17 +6268,6 @@ impl RuntimeInputEdit {
     }
 }
 
-/// Persistent runtime parse session for the incremental parser seam.
-///
-/// This session preserves the previous input and accepted report, then builds a
-/// conservative index of reusable named-node subtrees for reparses. Full parses
-/// remain the differential oracle for reuse tests.
-pub struct RuntimeParseSession<'a> {
-    parser: RuntimeParser<'a>,
-    last_input: Option<String>,
-    last_report: Option<RuntimeParseReport>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct RuntimeReuseKey {
     byte_position: usize,
@@ -6498,113 +6487,6 @@ fn shift_tree_event_bytes(event: TreeEvent, edit: RuntimeInputEdit, delta: isize
             points,
         },
         TreeEvent::OpenNode { .. } | TreeEvent::Field { .. } => event,
-    }
-}
-
-impl<'a> RuntimeParseSession<'a> {
-    /// Start a persistent runtime parse session.
-    pub const fn new(parser: RuntimeParser<'a>) -> Self {
-        Self {
-            parser,
-            last_input: None,
-            last_report: None,
-        }
-    }
-
-    /// Last input accepted by this session.
-    pub fn last_input(&self) -> Option<&str> {
-        self.last_input.as_deref()
-    }
-
-    /// Last report accepted by this session.
-    pub const fn last_report(&self) -> Option<&RuntimeParseReport> {
-        self.last_report.as_ref()
-    }
-
-    /// Parse a full input and make it the new session baseline.
-    pub fn parse_compact(
-        &mut self,
-        input: impl Into<String>,
-    ) -> Result<&RuntimeParseReport, ReducedParseError> {
-        let input = input.into();
-        let report = self.parser.parse_compact_with_report(&input)?;
-        self.last_input = Some(input);
-        self.last_report = Some(report);
-        Ok(self
-            .last_report
-            .as_ref()
-            .expect("session report was just installed"))
-    }
-
-    /// Reparse after an edit and make the new input the session baseline.
-    ///
-    /// This is the stable API seam for incremental reuse. It validates that the
-    /// edit describes the old and new inputs, builds a conservative reusable-node
-    /// index from the previous accepted report, and reparses with full-parse tree
-    /// equivalence as the oracle.
-    pub fn reparse_compact(
-        &mut self,
-        edit: RuntimeInputEdit,
-        new_input: impl Into<String>,
-    ) -> Result<&RuntimeParseReport, ReducedParseError> {
-        let new_input = new_input.into();
-        let report = if let (Some(old_input), Some(last_report)) =
-            (self.last_input.as_deref(), self.last_report.as_ref())
-        {
-            self.parser
-                .reparse_compact_with_report(old_input, last_report, edit, &new_input)?
-        } else {
-            self.parser.parse_compact_with_report(&new_input)?
-        };
-        self.last_input = Some(new_input);
-        self.last_report = Some(report);
-        Ok(self
-            .last_report
-            .as_ref()
-            .expect("session report was just installed"))
-    }
-
-    /// Parse a full input with recovery and make it the new session baseline.
-    pub fn parse_recovering_compact(
-        &mut self,
-        input: impl Into<String>,
-    ) -> Result<&RuntimeParseReport, ReducedParseError> {
-        let input = input.into();
-        let report = self.parser.parse_recovering_compact_with_report(&input)?;
-        self.last_input = Some(input);
-        self.last_report = Some(report);
-        Ok(self
-            .last_report
-            .as_ref()
-            .expect("session report was just installed"))
-    }
-
-    /// Reparse after an edit with recovery and make the new input the session baseline.
-    pub fn reparse_recovering_compact(
-        &mut self,
-        edit: RuntimeInputEdit,
-        new_input: impl Into<String>,
-    ) -> Result<&RuntimeParseReport, ReducedParseError> {
-        let new_input = new_input.into();
-        let report = if let (Some(old_input), Some(last_report)) =
-            (self.last_input.as_deref(), self.last_report.as_ref())
-        {
-            self.parser.reparse_recovering_compact_with_report(
-                old_input,
-                last_report,
-                edit,
-                &new_input,
-            )?
-        } else {
-            self.parser
-                .parse_recovering_compact_with_report(&new_input)?
-        };
-        self.last_input = Some(new_input);
-        self.last_report = Some(report);
-        Ok(self
-            .last_report
-            .as_ref()
-            .expect("session report was just installed"))
     }
 }
 
