@@ -460,6 +460,93 @@ test("injects scanner-free html from gingembre text chunks", async () => {
   );
 });
 
+test("injects css from html style layers through Snark WASM", () => {
+  const htmlGrammarJs = readFileSync(new URL("../src/bundled/html/grammar.js", import.meta.url), "utf8");
+  const htmlGrammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [{ path: "html/grammar.js", text: htmlGrammarJs }],
+    "html/grammar.js",
+  );
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: [
+          { path: "grammar.js", text: htmlGrammarJs },
+          { path: "src/grammar.json", text: htmlGrammarJson },
+          {
+            path: "queries/highlights.scm",
+            text: readFileSync(
+              new URL("../src/bundled/html/queries/highlights.scm", import.meta.url),
+              "utf8",
+            ),
+          },
+          {
+            path: "queries/injections.scm",
+            text: readFileSync(
+              new URL("../src/bundled/html/queries/injections.scm", import.meta.url),
+              "utf8",
+            ),
+          },
+          {
+            path: "languages/css/src/grammar.json",
+            text: readFileSync(
+              new URL(
+                "../../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/grammar.json",
+                import.meta.url,
+              ),
+              "utf8",
+            ),
+          },
+          {
+            path: "languages/css/src/scanner.c",
+            text: readFileSync(
+              new URL("../../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/scanner.c", import.meta.url),
+              "utf8",
+            ),
+          },
+          {
+            path: "languages/css/queries/highlights.scm",
+            text: readFileSync(
+              new URL(
+                "../../../snark/tests/fixtures/packages/tree-sitter-css-reduced/queries/highlights.scm",
+                import.meta.url,
+              ),
+              "utf8",
+            ),
+          },
+        ],
+        input: "<style>a:hover { color: red; }</style>",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.language, "html");
+  assert.equal(response.layers.length, 1);
+  const cssLayer = response.layers[0];
+  assert.equal(cssLayer.language, "css");
+  assert.equal(cssLayer.input, "a:hover { color: red; }");
+  assert.equal(cssLayer.parse.accepted_error_count, 0);
+  assert.equal(cssLayer.parse.accepted_missing_count, 0);
+  assert.equal(
+    cssLayer.parse.sexp,
+    "(stylesheet (rule_set (selectors (pseudo_class_selector (tag_name) (class_name (identifier)))) (block (declaration (property_name) (plain_value)))))",
+  );
+  assert.ok(
+    cssLayer.highlights.some(
+      (capture: { capture_name: string; text: string }) =>
+        capture.capture_name === "property" && capture.text === "color",
+    ),
+  );
+  assert.ok(
+    cssLayer.highlights.some(
+      (capture: { capture_name: string; text: string }) =>
+        capture.capture_name === "punctuation.delimiter" && capture.text === ":",
+    ),
+  );
+});
+
 test("excludes injection content children by default", async () => {
   const hostGrammar = `
 module.exports = grammar({
