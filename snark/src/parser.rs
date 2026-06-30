@@ -6417,7 +6417,6 @@ struct RuntimeReuseKey {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeReusableNode {
-    node: TreeNodeId,
     tree: SexpNode,
     symbol: NonterminalId,
     entry_state: ParseStateId,
@@ -7247,7 +7246,6 @@ impl<'a> RuntimeParser<'a> {
         branch.byte_position = reusable.end_byte;
         branch.scanner_snapshot = reusable.exit_scanner_snapshot;
         branch.reusable_nodes.push(RuntimeReusableNode {
-            node,
             tree: reusable.tree.clone(),
             symbol: reusable.symbol,
             entry_state,
@@ -7460,7 +7458,6 @@ impl<'a> RuntimeParser<'a> {
                     && start_byte < end_byte
                 {
                     branch.reusable_nodes.push(RuntimeReusableNode {
-                        node: *node,
                         tree: tree_store.node(*node).clone(),
                         symbol,
                         entry_state: head_state,
@@ -11324,6 +11321,43 @@ extras (
         )
     }
 
+    fn until_reuse_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "text" },
+                    { "type": "SYMBOL", "name": "interpolation" },
+                    { "type": "SYMBOL", "name": "text" }
+                  ]
+                },
+                "text": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "UNTIL",
+                    "markers": ["{{"]
+                  }
+                },
+                "interpolation": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "STRING", "value": "{{" },
+                    { "type": "SYMBOL", "name": "word" },
+                    { "type": "STRING", "value": "}}" }
+                  ]
+                },
+                "word": {
+                  "type": "PATTERN",
+                  "value": "[a-z]+"
+                }
+              }
+            }"##,
+        )
+    }
+
     #[test]
     fn lexical_primitives_parse_until_and_nested_tokens() {
         let (validated, parser, table) = lexical_primitives_fixture();
@@ -11354,6 +11388,38 @@ extras (
         assert_eq!(report.tree().to_sexp(), "(source_file (text) (comment))");
         assert_eq!(report.accepted_count(), 1);
         assert_eq!(report.failure_count(), 0);
+    }
+
+    #[test]
+    fn runtime_parse_session_reuses_until_text_around_interpolation_edit() {
+        let (validated, parser, table) = until_reuse_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let mut session = RuntimeParseSession::new(runtime);
+        let first = session
+            .parse_compact("hello {{name}} tail")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            first.tree().to_sexp(),
+            "(source_file (text) (interpolation (word)) (text))"
+        );
+
+        let edit = RuntimeInputEdit::new(8, 12, 13);
+        let reparsed = session
+            .reparse_compact(edit, "hello {{title}} tail")
+            .unwrap()
+            .clone();
+        let scratch = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report("hello {{title}} tail")
+            .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert_eq!(
+            reparsed.tree().to_sexp(),
+            "(source_file (text) (interpolation (word)) (text))"
+        );
+        assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 6), (15, 20)]);
     }
 
     #[cfg(feature = "weavy-lowering")]
