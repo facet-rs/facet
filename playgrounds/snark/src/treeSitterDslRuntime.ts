@@ -9,6 +9,8 @@ export function emitGrammarJsonFromDsl(
   const fileSources = new Map(files.map((file) => [file.path, file.text]));
   const modules = new Map(files.filter((file) => isDslModulePath(file.path)).map((file) => [file.path, file.text]));
   const cache = new Map<string, { exports: unknown }>();
+  type SnarkRequire = ((specifier: string) => unknown) & { resolve(specifier: string): string };
+
   const executeModule = new Function(
     `${prelude}
 ${snarkDslExtensions()}
@@ -20,7 +22,7 @@ return function executeSnarkDslModule(source, module, exports, require, __defaul
     source: string,
     module: { exports: unknown },
     exports: unknown,
-    require: (specifier: string) => unknown,
+    require: SnarkRequire,
     __default: (value: unknown) => unknown,
     process: { env: Record<string, string> },
     __filename: string,
@@ -46,8 +48,14 @@ return function executeSnarkDslModule(source, module, exports, require, __defaul
     }
 
     const dirname = resolved.includes("/") ? resolved.slice(0, resolved.lastIndexOf("/")) : "";
-    const require = (specifier: string) =>
-      builtinModule(specifier, fileSources) ?? loadModule(resolveRequire(specifier, dirname, modules));
+    const require = Object.assign(
+      (specifier: string) => builtinModule(specifier, fileSources) ?? loadModule(resolveRequire(specifier, dirname, modules)),
+      {
+        resolve(specifier: string) {
+          return resolveRequirePath(specifier, dirname, modules, fileSources);
+        },
+      },
+    );
     const commonJsSource = sourceToCommonJs(source, resolved);
 
     module.exports = executeModule(
@@ -388,6 +396,37 @@ function resolveRequire(specifier: string, dirname: string, modules: Map<string,
   }
 
   throw new Error(`cannot resolve grammar dependency ${specifier}`);
+}
+
+function resolveRequirePath(
+  specifier: string,
+  dirname: string,
+  modules: Map<string, string>,
+  fileSources: Map<string, string>,
+) {
+  if (isBuiltinModule(specifier)) {
+    return specifier.startsWith("node:") ? specifier.slice("node:".length) : specifier;
+  }
+
+  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    const path = normalizeRelativePath(dirname, specifier);
+    const relocated =
+      (dirname === "grammar" || dirname.endsWith("/grammar")) && specifier.startsWith("../")
+        ? normalizeRelativePath(dirname, specifier.slice(3))
+        : null;
+    for (const candidate of relocated ? [path, relocated] : [path]) {
+      if (fileSources.has(candidate)) {
+        return candidate;
+      }
+    }
+    return resolveJsPath(path, modules, relocated ? [relocated] : []);
+  }
+
+  return resolveRequire(specifier, dirname, modules);
+}
+
+function isBuiltinModule(specifier: string) {
+  return specifier === "fs" || specifier === "node:fs" || specifier === "path" || specifier === "node:path";
 }
 
 function resolveJsPath(path: string, modules: Map<string, string>, fallbacks: string[] = []) {

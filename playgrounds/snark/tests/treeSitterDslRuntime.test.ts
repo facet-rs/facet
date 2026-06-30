@@ -820,6 +820,54 @@ exports.fileStem = () => path.basename(__filename).replace(".js", "");
   });
 });
 
+test("provides CommonJS require.resolve to grammar helpers", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+const helper = require("./helpers/helper");
+module.exports = grammar({
+  name: "tiny_require_resolve",
+  rules: {
+    document: $ => seq(helper.wordFromResolvedData(), helper.resolvedModuleStem()),
+  },
+});
+`,
+      },
+      {
+        path: "helpers/helper.js",
+        text: `
+const fs = require("fs");
+const path = require("path");
+exports.wordFromResolvedData = () => fs.readFileSync(require.resolve("./data/keyword.txt"));
+exports.resolvedModuleStem = () => path.basename(require.resolve("./nested/names.js")).replace(".js", "");
+`,
+      },
+      {
+        path: "helpers/nested/names.js",
+        text: `exports.name = "unused";`,
+      },
+      {
+        path: "helpers/data/keyword.txt",
+        text: "alpha",
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_require_resolve");
+  assert.deepEqual(grammar.rules.document, {
+    type: "SEQ",
+    members: [
+      { type: "STRING", value: "alpha" },
+      { type: "STRING", value: "names" },
+    ],
+  });
+});
+
 test("resolves inherited Arborium grammar modules by tree-sitter package name", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
