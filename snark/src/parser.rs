@@ -12295,10 +12295,6 @@ extras (
             .collect()
     }
 
-    fn reused_byte_ranges(report: &RuntimeParseReport) -> Vec<(usize, usize)> {
-        reused_byte_ranges_from_events(report.tree_events())
-    }
-
     #[cfg(feature = "weavy-lowering")]
     fn weavy_reused_byte_ranges(
         report: &crate::lower::weavy::RuntimeWeavyReport,
@@ -12361,61 +12357,6 @@ extras (
         );
     }
 
-    #[test]
-    fn runtime_parse_session_reparse_matches_full_parse_oracle() {
-        let (validated, parser, table) = flagged_regex_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_compact("ABCXYZ").unwrap().clone();
-        assert_eq!(
-            first.tree().to_sexp(),
-            "(source_file (insensitive) (wrapped))"
-        );
-        assert_eq!(session.last_input(), Some("ABCXYZ"));
-
-        let edit = RuntimeInputEdit::new(0, 3, 3);
-        let reparsed = session.reparse_compact(edit, "abcXYZ").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("abcXYZ")
-            .unwrap();
-
-        rediff::assert_same!(reparsed.tree(), scratch.tree());
-        assert!(
-            reparsed
-                .tree_events()
-                .iter()
-                .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
-            "incremental reparse should reuse at least one accepted subtree"
-        );
-        assert_eq!(reused_byte_ranges(&reparsed), vec![(3, 6)]);
-        assert_eq!(session.last_input(), Some("abcXYZ"));
-    }
-
-    #[test]
-    fn runtime_parse_session_does_not_reuse_node_that_peeked_into_edit() {
-        let (validated, parser, table) = flagged_regex_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        session.parse_compact("ABCXYZ").unwrap();
-
-        let edit = RuntimeInputEdit::new(3, 6, 6);
-        let reparsed = session.reparse_compact(edit, "ABCxyz").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("ABCxyz")
-            .unwrap();
-
-        rediff::assert_same!(reparsed.tree(), scratch.tree());
-        assert!(
-            !reparsed
-                .tree_events()
-                .iter()
-                .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
-            "node that inspected the edit boundary must not be reused"
-        );
-    }
-
     #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_reparse_matches_full_parse_oracle() {
@@ -12475,99 +12416,107 @@ extras (
         );
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_parse_session_reuses_suffix_across_edited_extra() {
+    fn weavy_runtime_parse_session_reuses_suffix_across_edited_extra() {
         let (validated, parser, table) = extra_comment_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_compact("a#old\nb").unwrap().clone();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        let first = session.parse("a#old\nb").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
             "(source_file (left) (comment) (right))"
         );
 
         let edit = RuntimeInputEdit::new(2, 5, 5);
-        let reparsed = session.reparse_compact(edit, "a#new\nb").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("a#new\nb")
-            .unwrap();
+        let reparsed = session.reparse(edit, "a#new\nb").unwrap().clone();
+        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            "a#new\nb",
+        )
+        .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert_eq!(
             reparsed.tree().to_sexp(),
             "(source_file (left) (comment) (right))"
         );
-        assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 1), (6, 7)]);
+        assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(0, 1), (6, 7)]);
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_parse_session_reuses_node_with_attached_extra() {
+    fn weavy_runtime_parse_session_reuses_node_with_attached_extra() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_compact("a#old\nb1").unwrap().clone();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        let first = session.parse("a#old\nb1").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
             "(source_file (wrapper (left) (comment) (right)) (suffix))"
         );
 
         let edit = RuntimeInputEdit::new(7, 8, 8);
-        let reparsed = session.reparse_compact(edit, "a#old\nb2").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("a#old\nb2")
-            .unwrap();
+        let reparsed = session.reparse(edit, "a#old\nb2").unwrap().clone();
+        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            "a#old\nb2",
+        )
+        .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert_eq!(
             reparsed.tree().to_sexp(),
             "(source_file (wrapper (left) (comment) (right)) (suffix))"
         );
-        assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 7)]);
+        assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(0, 7)]);
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_parse_session_does_not_reuse_error_containing_node() {
+    fn weavy_runtime_parse_session_does_not_reuse_error_containing_node() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .with_recovery_step_limit(128);
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_recovering_compact("a@\nb1").unwrap().clone();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        let first = session.parse_recovering("a@\nb1").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
             "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
         );
 
         let edit = RuntimeInputEdit::new(4, 5, 5);
-        let reparsed = session
-            .reparse_recovering_compact(edit, "a@\nb2")
-            .unwrap()
-            .clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .with_recovery_step_limit(128)
-            .parse_recovering_compact_with_report("a@\nb2")
-            .unwrap();
+        let reparsed = session.reparse_recovering(edit, "a@\nb2").unwrap().clone();
+        let scratch = crate::lower::weavy::parse_prepared_runtime_recovering_with_report_and_scanner(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            "a@\nb2",
+            None,
+        )
+        .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert!(
-            !reused_byte_ranges(&reparsed).contains(&(0, 4)),
+            !weavy_reused_byte_ranges(&reparsed).contains(&(0, 4)),
             "wrapper node contains ERROR and must not be reused"
         );
     }
 
     #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn weavy_runtime_recovery_matches_native_skip_invalid_input() {
+    fn weavy_runtime_recovery_matches_skip_invalid_input_shape() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
         let input = "a@\nb1";
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .with_recovery_step_limit(128)
-            .parse_recovering_with_report(input)
-            .unwrap();
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
         let weavy_report =
             crate::lower::weavy::parse_prepared_runtime_recovering_with_report_and_scanner(
@@ -12575,56 +12524,62 @@ extras (
             )
             .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
         );
-        assert_eq!(
-            weavy_report.accepted_count(),
-            runtime_report.accepted_count()
-        );
-        assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert_eq!(
-            weavy_report.accepted_tree_events(),
-            runtime_report.accepted_tree_events()
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
+        assert!(
+            weavy_report
+                .accepted_tree_events()
+                .iter()
+                .any(|event| matches!(event, TreeEvent::Error { .. })),
+            "recovering Weavy parse should emit an ERROR tree event"
         );
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_parse_session_does_not_reuse_root_across_boundary_insertion() {
+    fn weavy_runtime_parse_session_does_not_reuse_root_across_boundary_insertion() {
         let (validated, parser, table) = repeated_word_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session.parse_compact("alpha").unwrap().clone();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        let first = session.parse("alpha").unwrap().clone();
         assert_eq!(first.tree().to_sexp(), "(source_file (word))");
 
         let edit = RuntimeInputEdit::new(5, 5, 10);
-        let reparsed = session.reparse_compact(edit, "alpha beta").unwrap().clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("alpha beta")
-            .unwrap();
+        let reparsed = session.reparse(edit, "alpha beta").unwrap().clone();
+        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            "alpha beta",
+        )
+        .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert_eq!(reparsed.tree().to_sexp(), "(source_file (word) (word))");
-        assert!(reused_byte_ranges(&reparsed).is_empty());
+        assert!(weavy_reused_byte_ranges(&reparsed).is_empty());
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_parse_session_rejects_mismatched_edit_context() {
+    fn weavy_runtime_parse_session_rejects_mismatched_edit_context() {
         let (validated, parser, table) = flagged_regex_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        session.parse_compact("ABCXYZ").unwrap();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        session.parse("ABCXYZ").unwrap();
 
         let error = session
-            .reparse_compact(RuntimeInputEdit::new(0, 3, 3), "abcXYZZ")
+            .reparse(RuntimeInputEdit::new(0, 3, 3), "abcXYZZ")
             .unwrap_err();
         assert!(matches!(
-            error.kind(),
-            ReducedParseErrorKind::InvalidInputEdit { .. }
+            error,
+            crate::lower::weavy::ReducedWeavyError::InvalidInputEdit { .. }
         ));
         assert_eq!(session.last_input(), Some("ABCXYZ"));
     }
@@ -12860,59 +12815,68 @@ extras (
             "observed: {observed:#?}");
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_parse_session_reuses_until_text_around_interpolation_edit() {
+    fn weavy_runtime_parse_session_reuses_until_text_around_interpolation_edit() {
         let (validated, parser, table) = until_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        let first = session
-            .parse_compact("hello {{name}} tail")
-            .unwrap()
-            .clone();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        let first = session.parse("hello {{name}} tail").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
             "(source_file (text) (interpolation (word)) (text))"
         );
 
         let edit = RuntimeInputEdit::new(8, 12, 13);
-        let reparsed = session
-            .reparse_compact(edit, "hello {{title}} tail")
-            .unwrap()
-            .clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("hello {{title}} tail")
-            .unwrap();
+        let reparsed = session.reparse(edit, "hello {{title}} tail").unwrap().clone();
+        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            "hello {{title}} tail",
+        )
+        .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert_eq!(
             reparsed.tree().to_sexp(),
             "(source_file (text) (interpolation (word)) (text))"
         );
-        assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 6), (15, 20)]);
+        assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(0, 6), (15, 20)]);
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_parse_session_reuse_metadata_survives_reparse_chains() {
+    fn weavy_runtime_parse_session_reuse_metadata_survives_reparse_chains() {
         let (validated, parser, table) = until_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        session.parse_compact("hello {{name}} tail").unwrap();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        session.parse("hello {{name}} tail").unwrap();
 
         let first_reparse = session
-            .reparse_compact(RuntimeInputEdit::new(8, 12, 13), "hello {{title}} tail")
+            .reparse(RuntimeInputEdit::new(8, 12, 13), "hello {{title}} tail")
             .unwrap()
             .clone();
-        assert_eq!(reused_byte_ranges(&first_reparse), vec![(0, 6), (15, 20)]);
+        assert_eq!(
+            weavy_reused_byte_ranges(&first_reparse),
+            vec![(0, 6), (15, 20)]
+        );
 
         let second_reparse = session
-            .reparse_compact(RuntimeInputEdit::new(16, 20, 19), "hello {{title}} end")
+            .reparse(RuntimeInputEdit::new(16, 20, 19), "hello {{title}} end")
             .unwrap()
             .clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("hello {{title}} end")
-            .unwrap();
+        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            "hello {{title}} end",
+        )
+        .unwrap();
 
         rediff::assert_same!(second_reparse.tree(), scratch.tree());
         assert_eq!(
@@ -12920,29 +12884,34 @@ extras (
             "(source_file (text) (interpolation (word)) (text))"
         );
         assert!(
-            !reused_byte_ranges(&second_reparse).is_empty(),
+            !weavy_reused_byte_ranges(&second_reparse).is_empty(),
             "second reparse should consume reusable metadata produced by the first reparse"
         );
 
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let mut session = RuntimeParseSession::new(runtime);
-        session.parse_compact("a#old\nb1").unwrap();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        session.parse("a#old\nb1").unwrap();
 
         let first_reparse = session
-            .reparse_compact(RuntimeInputEdit::new(7, 8, 8), "a#old\nb2")
+            .reparse(RuntimeInputEdit::new(7, 8, 8), "a#old\nb2")
             .unwrap()
             .clone();
-        assert_eq!(reused_byte_ranges(&first_reparse), vec![(0, 7)]);
+        assert_eq!(weavy_reused_byte_ranges(&first_reparse), vec![(0, 7)]);
 
         let second_reparse = session
-            .reparse_compact(RuntimeInputEdit::new(2, 5, 5), "a#new\nb2")
+            .reparse(RuntimeInputEdit::new(2, 5, 5), "a#new\nb2")
             .unwrap()
             .clone();
-        let scratch = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("a#new\nb2")
-            .unwrap();
+        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            "a#new\nb2",
+        )
+        .unwrap();
 
         rediff::assert_same!(second_reparse.tree(), scratch.tree());
         assert_eq!(
