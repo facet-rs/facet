@@ -1,6 +1,6 @@
 # Snark Playground
 
-The playground executes Snark's WASM `RuntimeParser` path over a Tree-sitter
+The playground executes Snark's WASM Weavy runtime over a Tree-sitter
 grammar bundle. It accepts either frozen `src/grammar.json` or authored
 `grammar.js`. When `grammar.js` is present without `src/grammar.json`, the
 browser shell evaluates it in a Worker with the vendored official Tree-sitter
