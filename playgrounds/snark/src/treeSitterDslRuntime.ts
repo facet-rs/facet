@@ -223,8 +223,8 @@ function resolveRequire(specifier: string, dirname: string, modules: Map<string,
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     const path = normalizeRelativePath(dirname, specifier);
     const relocated =
-      dirname === "grammar" && specifier.startsWith("../")
-        ? normalizeRelativePath("grammar", specifier.slice(3))
+      (dirname === "grammar" || dirname.endsWith("/grammar")) && specifier.startsWith("../")
+        ? normalizeRelativePath(dirname, specifier.slice(3))
         : null;
     return resolveJsPath(path, modules, relocated ? [relocated] : []);
   }

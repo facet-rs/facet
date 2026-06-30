@@ -146,16 +146,7 @@ fn read_to_string(path: &Path) -> Result<String> {
 
 #[cfg(feature = "native")]
 fn emit_grammar_file_with_boa(grammar_path: &Path) -> Result<String> {
-    let root = grammar_path
-        .parent()
-        .and_then(|parent| {
-            if parent.file_name().is_some_and(|name| name == "grammar") {
-                parent.parent()
-            } else {
-                Some(parent)
-            }
-        })
-        .unwrap_or_else(|| Path::new("."));
+    let root = grammar_module_root(grammar_path);
     let entry = grammar_path
         .strip_prefix(root)
         .unwrap_or(grammar_path)
@@ -181,6 +172,27 @@ fn emit_grammar_file_with_boa(grammar_path: &Path) -> Result<String> {
     loader.push_str("globalThis.exports = globalThis.module.exports;\n");
 
     emit_source_with_boa(&loader, &grammar_path.display().to_string())
+}
+
+#[cfg(feature = "native")]
+fn grammar_module_root(grammar_path: &Path) -> &Path {
+    if let Some(root) = grammar_path
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == "langs"))
+        .and_then(Path::parent)
+    {
+        return root;
+    }
+    grammar_path
+        .parent()
+        .and_then(|parent| {
+            if parent.file_name().is_some_and(|name| name == "grammar") {
+                parent.parent()
+            } else {
+                Some(parent)
+            }
+        })
+        .unwrap_or_else(|| Path::new("."))
 }
 
 #[cfg(feature = "native")]
@@ -327,13 +339,15 @@ function __snark_dirname(path) {
 
 function __snark_resolve_module(parent, specifier) {
   if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
+    const dependency = __snark_resolve_grammar_dependency(specifier);
+    if (dependency !== null) return dependency;
     throw new Error(`cannot require non-relative grammar module ${specifier}`);
   }
   const base = __snark_dirname(parent);
   const path = __snark_normalize_path((base ? base + "/" : "") + specifier);
   const paths = [path];
-  if (base === "grammar" && specifier.startsWith("../")) {
-    paths.push(__snark_normalize_path("grammar/" + specifier.slice(3)));
+  if ((base === "grammar" || base.endsWith("/grammar")) && specifier.startsWith("../")) {
+    paths.push(__snark_normalize_path(base + "/" + specifier.slice(3)));
   }
   const candidates = paths.flatMap(path => [
     path,
@@ -350,6 +364,29 @@ function __snark_resolve_module(parent, specifier) {
     if (__snark_module_sources.has(candidate)) return candidate;
   }
   throw new Error(`could not resolve grammar module ${specifier} from ${parent}`);
+}
+
+function __snark_resolve_grammar_dependency(specifier) {
+  const match = /^tree-sitter-([^/]+)\/grammar(?:\.js)?$/.exec(specifier);
+  if (!match) return null;
+  const grammarId = match[1];
+  for (const candidate of [
+    `node_modules/tree-sitter-${grammarId}/grammar.js`,
+    `tree-sitter-${grammarId}/grammar.js`,
+    `langs/${grammarId}/def/grammar/grammar.js`,
+  ]) {
+    if (__snark_module_sources.has(candidate)) return candidate;
+  }
+  for (const key of __snark_module_sources.keys()) {
+    if (
+      key.endsWith(`/node_modules/tree-sitter-${grammarId}/grammar.js`) ||
+      key.endsWith(`/tree-sitter-${grammarId}/grammar.js`) ||
+      key.endsWith(`/${grammarId}/def/grammar/grammar.js`)
+    ) {
+      return key;
+    }
+  }
+  return null;
 }
 
 function __snark_load_module(path) {
@@ -688,6 +725,98 @@ module.exports = {
         assert!(json.contains("\"name\": \"mini_rehomed\""));
         assert!(json.contains("\"source_file\""));
         assert!(json.contains("\"REPEAT1\""));
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn resolves_bundled_tree_sitter_package_grammar_with_boa() {
+        let temp = tempfile::tempdir().unwrap();
+        let bundle_root = temp.path().join("def");
+        let grammar_dir = bundle_root.join("grammar");
+        let dependency_dir = bundle_root.join("node_modules/tree-sitter-base");
+        fs::create_dir_all(&grammar_dir).unwrap();
+        fs::create_dir_all(&dependency_dir).unwrap();
+        let grammar = grammar_dir.join("grammar.js");
+        fs::write(
+            &grammar,
+            r#"
+const base = require("tree-sitter-base/grammar");
+
+module.exports = grammar(base, {
+  name: "mini_inherited",
+  rules: {
+    source_file: $ => seq($.base_item, $.item),
+    item: $ => /b+/,
+  },
+});
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dependency_dir.join("grammar.js"),
+            r#"
+module.exports = grammar({
+  name: "base",
+  rules: {
+    source_file: $ => $.base_item,
+    base_item: $ => /a+/,
+  },
+});
+"#,
+        )
+        .unwrap();
+
+        let json = emit_with_boa(&grammar).unwrap();
+
+        assert!(json.contains("\"name\": \"mini_inherited\""));
+        assert!(json.contains("\"base_item\""));
+        assert!(json.contains("\"item\""));
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn resolves_arborium_sibling_tree_sitter_package_grammar_with_boa() {
+        let temp = tempfile::tempdir().unwrap();
+        let arborium = temp.path().join("arborium");
+        let base_dir = arborium.join("langs/group-birch/c/def/grammar");
+        let derived_dir = arborium.join("langs/group-birch/cpp/def/grammar");
+        fs::create_dir_all(&base_dir).unwrap();
+        fs::create_dir_all(&derived_dir).unwrap();
+        fs::write(
+            base_dir.join("grammar.js"),
+            r#"
+module.exports = grammar({
+  name: "c",
+  rules: {
+    source_file: $ => $.base_item,
+    base_item: $ => /a+/,
+  },
+});
+"#,
+        )
+        .unwrap();
+        let grammar = derived_dir.join("grammar.js");
+        fs::write(
+            &grammar,
+            r#"
+const base = require("tree-sitter-c/grammar");
+
+module.exports = grammar(base, {
+  name: "cpp",
+  rules: {
+    source_file: $ => seq($.base_item, $.item),
+    item: $ => /b+/,
+  },
+});
+"#,
+        )
+        .unwrap();
+
+        let json = emit_with_boa(&grammar).unwrap();
+
+        assert!(json.contains("\"name\": \"cpp\""));
+        assert!(json.contains("\"base_item\""));
+        assert!(json.contains("\"item\""));
     }
 
     #[cfg(feature = "native")]

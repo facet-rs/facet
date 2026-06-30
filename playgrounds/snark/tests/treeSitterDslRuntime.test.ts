@@ -190,6 +190,42 @@ exports.wrap = rule => process.env.SNARK_DSL_TEST ? rule : data.repeat ? repeat1
   });
 });
 
+test("resolves rehomed common helpers from a full Arborium root", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "langs/group-willow/markdown/def/grammar/grammar.js",
+        text: `
+const common = require("../common/common");
+module.exports = grammar({
+  name: "tiny_full_root",
+  rules: {
+    document: $ => common.wrap($.word),
+    word: $ => common.word,
+  },
+});
+`,
+      },
+      {
+        path: "langs/group-willow/markdown/def/grammar/common/common.js",
+        text: `
+exports.word = /[a-z]+/;
+exports.wrap = rule => repeat1(rule);
+`,
+      },
+    ],
+    "langs/group-willow/markdown/def/grammar/grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_full_root");
+  assert.deepEqual(grammar.rules.document, {
+    type: "REPEAT1",
+    content: { type: "SYMBOL", name: "word" },
+  });
+});
+
 test("resolves ESM named imports and import aliases in grammar modules", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
