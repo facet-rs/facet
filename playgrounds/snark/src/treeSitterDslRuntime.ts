@@ -221,7 +221,12 @@ globalThis.nested = function nested(open, close) {
 
 function resolveRequire(specifier: string, dirname: string, modules: Map<string, string>) {
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
-    return resolveJsPath(normalizeRelativePath(dirname, specifier), modules);
+    const path = normalizeRelativePath(dirname, specifier);
+    const relocated =
+      dirname === "grammar" && specifier.startsWith("../")
+        ? normalizeRelativePath("grammar", specifier.slice(3))
+        : null;
+    return resolveJsPath(path, modules, relocated ? [relocated] : []);
   }
 
   const grammarMatch = /^tree-sitter-([^/]+)\/grammar(?:\.js)?$/.exec(specifier);
@@ -250,19 +255,22 @@ function resolveRequire(specifier: string, dirname: string, modules: Map<string,
   throw new Error(`cannot resolve grammar dependency ${specifier}`);
 }
 
-function resolveJsPath(path: string, modules: Map<string, string>) {
-  for (const candidate of [
-    path,
-    `${path}.js`,
-    `${path}.mjs`,
-    `${path}.json`,
-    `${path}/index.js`,
-    `${path}/index.mjs`,
-    `${path}/index.json`,
-    `${path}/grammar.js`,
-  ]) {
-    if (modules.has(candidate)) {
-      return candidate;
+function resolveJsPath(path: string, modules: Map<string, string>, fallbacks: string[] = []) {
+  for (const candidatePath of [path, ...fallbacks]) {
+    for (const candidate of [
+      candidatePath,
+      `${candidatePath}.js`,
+      `${candidatePath}.mjs`,
+      `${candidatePath}.json`,
+      `${candidatePath}/index.js`,
+      `${candidatePath}/index.mjs`,
+      `${candidatePath}/index.json`,
+      `${candidatePath}/grammar.js`,
+      `${candidatePath}/grammar.mjs`,
+    ]) {
+      if (modules.has(candidate)) {
+        return candidate;
+      }
     }
   }
   throw new Error(`could not resolve JavaScript module ${path}`);

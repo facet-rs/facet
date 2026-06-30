@@ -149,6 +149,47 @@ export const wrap = rule => repeat1(rule);
   });
 });
 
+test("resolves Arborium-style rehomed common helpers and JSON modules", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar/grammar.js",
+        text: `
+const common = require("../common/common");
+module.exports = grammar({
+  name: "tiny_rehomed",
+  rules: {
+    document: $ => common.wrap($.word),
+    word: $ => common.word,
+  },
+});
+`,
+      },
+      {
+        path: "grammar/common/common.js",
+        text: `
+const data = require("./data.json");
+exports.word = /[a-z]+/;
+exports.wrap = rule => process.env.SNARK_DSL_TEST ? rule : data.repeat ? repeat1(rule) : rule;
+`,
+      },
+      {
+        path: "grammar/common/data.json",
+        text: '{ "repeat": true }',
+      },
+    ],
+    "grammar/grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_rehomed");
+  assert.deepEqual(grammar.rules.document, {
+    type: "REPEAT1",
+    content: { type: "SYMBOL", name: "word" },
+  });
+});
+
 test("resolves ESM named imports and import aliases in grammar modules", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,

@@ -80,7 +80,7 @@ pub fn emit_source_with_boa(grammar_source: &str, source_name: &str) -> Result<S
     )?;
     eval(
         &mut context,
-        "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;",
+        "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;\nglobalThis.console ??= { log() {}, warn() {}, error() {} };\nglobalThis.process ??= { env: {} };",
         "commonjs-shim.js",
     )?;
     eval(
@@ -146,7 +146,16 @@ fn read_to_string(path: &Path) -> Result<String> {
 
 #[cfg(feature = "native")]
 fn emit_grammar_file_with_boa(grammar_path: &Path) -> Result<String> {
-    let root = grammar_path.parent().unwrap_or_else(|| Path::new("."));
+    let root = grammar_path
+        .parent()
+        .and_then(|parent| {
+            if parent.file_name().is_some_and(|name| name == "grammar") {
+                parent.parent()
+            } else {
+                Some(parent)
+            }
+        })
+        .unwrap_or_else(|| Path::new("."));
     let entry = grammar_path
         .strip_prefix(root)
         .unwrap_or(grammar_path)
@@ -186,7 +195,10 @@ fn collect_js_modules(
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
             collect_js_modules(root, &path, modules)?;
-        } else if path.extension().is_some_and(|extension| extension == "js") {
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "js" || extension == "mjs" || extension == "json")
+        {
             let key = path
                 .strip_prefix(root)
                 .unwrap_or(&path)
@@ -319,7 +331,21 @@ function __snark_resolve_module(parent, specifier) {
   }
   const base = __snark_dirname(parent);
   const path = __snark_normalize_path((base ? base + "/" : "") + specifier);
-  const candidates = [path, path + ".js", path + "/index.js", path + "/grammar.js"];
+  const paths = [path];
+  if (base === "grammar" && specifier.startsWith("../")) {
+    paths.push(__snark_normalize_path("grammar/" + specifier.slice(3)));
+  }
+  const candidates = paths.flatMap(path => [
+    path,
+    path + ".js",
+    path + ".mjs",
+    path + ".json",
+    path + "/index.js",
+    path + "/index.mjs",
+    path + "/index.json",
+    path + "/grammar.js",
+    path + "/grammar.mjs",
+  ]);
   for (const candidate of candidates) {
     if (__snark_module_sources.has(candidate)) return candidate;
   }
@@ -333,6 +359,10 @@ function __snark_load_module(path) {
   if (source === undefined) throw new Error(`missing grammar module ${resolved}`);
   const module = { exports: {} };
   __snark_module_cache.set(resolved, module);
+  if (resolved.endsWith(".json")) {
+    module.exports = JSON.parse(source);
+    return module.exports;
+  }
   const require = specifier => __snark_load_module(__snark_resolve_module(resolved, specifier));
   const commonjs = __snark_source_to_commonjs(source, resolved);
   const execute = new Function("module", "exports", "require", "__default", commonjs + "\n; return module.exports;");
@@ -568,6 +598,94 @@ export const wrap = rule => repeat1(rule);
         let json = emit_with_boa(&grammar).unwrap();
 
         assert!(json.contains("\"name\": \"mini_esm\""));
+        assert!(json.contains("\"source_file\""));
+        assert!(json.contains("\"REPEAT1\""));
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn emits_arborium_style_sibling_mjs_helper_with_boa() {
+        let temp = tempfile::tempdir().unwrap();
+        let bundle_root = temp.path().join("def");
+        let grammar_dir = bundle_root.join("grammar");
+        let common_dir = bundle_root.join("common");
+        fs::create_dir_all(&grammar_dir).unwrap();
+        fs::create_dir_all(&common_dir).unwrap();
+        let grammar = grammar_dir.join("grammar.js");
+        fs::write(
+            &grammar,
+            r#"
+import * as c from "../common/common.mjs";
+
+export default grammar({
+  name: "mini_arborium",
+  rules: {
+    source_file: $ => c.wrap($.item),
+    item: $ => c.item,
+  },
+});
+"#,
+        )
+        .unwrap();
+        fs::write(
+            common_dir.join("common.mjs"),
+            r#"
+export const item = /[a-z]+/;
+export function wrap(rule) {
+  return repeat1(rule);
+}
+"#,
+        )
+        .unwrap();
+
+        let json = emit_with_boa(&grammar).unwrap();
+
+        assert!(json.contains("\"name\": \"mini_arborium\""));
+        assert!(json.contains("\"source_file\""));
+        assert!(json.contains("\"REPEAT1\""));
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn emits_rehomed_arborium_common_helper_with_boa() {
+        let temp = tempfile::tempdir().unwrap();
+        let bundle_root = temp.path().join("def");
+        let grammar_dir = bundle_root.join("grammar");
+        let common_dir = grammar_dir.join("common");
+        fs::create_dir_all(&common_dir).unwrap();
+        let grammar = grammar_dir.join("grammar.js");
+        fs::write(
+            &grammar,
+            r#"
+const common = require("../common/common");
+
+module.exports = grammar({
+  name: "mini_rehomed",
+  rules: {
+    source_file: $ => common.wrap($.item),
+    item: $ => common.item,
+  },
+});
+"#,
+        )
+        .unwrap();
+        fs::write(
+            common_dir.join("common.js"),
+            r#"
+const data = require("./data.json");
+
+module.exports = {
+  item: /[a-z]+/,
+  wrap: rule => process.env.SNARK_DSL_TEST ? rule : data.repeat ? repeat1(rule) : rule,
+};
+"#,
+        )
+        .unwrap();
+        fs::write(common_dir.join("data.json"), r#"{ "repeat": true }"#).unwrap();
+
+        let json = emit_with_boa(&grammar).unwrap();
+
+        assert!(json.contains("\"name\": \"mini_rehomed\""));
         assert!(json.contains("\"source_file\""));
         assert!(json.contains("\"REPEAT1\""));
     }
