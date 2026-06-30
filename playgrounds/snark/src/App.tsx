@@ -846,6 +846,15 @@ function BundleInventory({
   const scannerPaths = result?.bundle.scanner_paths ?? [];
   const ignoredPaths =
     result?.bundle.generated_files_ignored ?? files.filter((file) => isGeneratedPath(file.path)).map((file) => file.path);
+  const grammarPath =
+    result?.bundle.grammar_path ?? (files.some((file) => file.path === "src/grammar.json") ? "src/grammar.json" : null);
+  const grammarJsPath =
+    result?.bundle.grammar_js_path ?? (files.some((file) => file.path === "grammar.js") ? "grammar.js" : null);
+  const grammarSources = [
+    grammarPath ? `grammar: ${grammarPath}` : null,
+    grammarJsPath ? (grammarPath ? `source DSL: ${grammarJsPath}` : `grammar: ${grammarJsPath}`) : null,
+  ].filter((path): path is string => path !== null);
+  const activeScanner = result?.bundle.active_scanner ? [result.bundle.active_scanner] : [];
 
   return (
     <details className="inventory">
@@ -856,9 +865,11 @@ function BundleInventory({
         </span>
       </summary>
       <div className="inventory-body">
+        <InventoryGroup title="Grammar" paths={grammarSources} />
         <InventoryGroup title="Queries" paths={queryPaths} />
         <InventoryGroup title="Corpus & highlights" paths={corpusPaths} />
         <InventoryGroup title="Source inputs" paths={sourcePaths} />
+        <InventoryGroup title="Active scanner" paths={activeScanner} />
         <InventoryGroup title="Scanners" paths={scannerPaths} />
         <InventoryGroup title="Ignored (generated)" paths={ignoredPaths} />
       </div>
