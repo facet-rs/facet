@@ -383,7 +383,10 @@ test("projects manifest-declared grammar.js siblings beside an active grammar.js
     { path: "tree-sitter-package/grammars/host/src/grammar.json", text: '{"name":"host"}' },
     { path: "tree-sitter-package/grammars/host/queries/injections.scm", text: "host injections" },
     { path: "tree-sitter-package/grammars/child/grammar.js", text: 'grammar({ name: "child" })' },
-    { path: "tree-sitter-package/grammars/child/queries/highlights.scm", text: "child highlights" },
+    {
+      path: "tree-sitter-package/grammars/child/queries/child-highlights.scm",
+      text: "child highlights",
+    },
   ]);
 
   const roots = discoverGrammarRoots(files);
@@ -404,7 +407,7 @@ test("projects manifest-declared grammar.js siblings beside an active grammar.js
     projected.map((entry) => entry.path),
     [
       "languages/child/grammar.js",
-      "languages/child/queries/highlights.scm",
+      "languages/child/queries/child-highlights.scm",
       "languages/child/src/grammar.json",
       "languages/child/tree-sitter.json",
       "queries/injections.scm",

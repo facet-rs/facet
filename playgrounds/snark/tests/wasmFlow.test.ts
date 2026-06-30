@@ -420,7 +420,7 @@ test("projects manifest-declared mixed roots into embedded language layers", asy
         name: "child",
         scope: "source.child",
         path: "grammars/child",
-        highlights: "queries/highlights.scm",
+        highlights: "queries/child-highlights.scm",
       },
     ],
     metadata: {
@@ -466,7 +466,7 @@ module.exports = grammar({
 `,
     },
     {
-      path: "tree-sitter-package/grammars/child/queries/highlights.scm",
+      path: "tree-sitter-package/grammars/child/queries/child-highlights.scm",
       text: "(word) @constant\n",
     },
   ]);
@@ -478,7 +478,7 @@ module.exports = grammar({
     projected.map((file) => file.path),
     [
       "languages/child/grammar.js",
-      "languages/child/queries/highlights.scm",
+      "languages/child/queries/child-highlights.scm",
       "languages/child/src/grammar.json",
       "languages/child/tree-sitter.json",
       "queries/injections.scm",
