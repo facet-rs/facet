@@ -1122,6 +1122,69 @@ module.exports = grammar({
   );
 });
 
+test("reparses vendored gingembre html layers through a prepared Snark WASM session", async () => {
+  const files = allBundledFiles();
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "gingembre", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const session = new SnarkPlaygroundSession(
+    JSON.stringify({
+      files: projected,
+    }),
+  );
+
+  const firstSource = "<section><p>Hello {{ name }}<p>Again</p></section>";
+  const startByte = firstSource.indexOf("name");
+  assert.notEqual(startByte, -1);
+  const secondSource = firstSource.replace("name", "title");
+
+  const first = JSON.parse(
+    session.parse(
+      JSON.stringify({
+        input: firstSource,
+        run_corpus: false,
+      }),
+    ),
+  );
+  const second = JSON.parse(
+    session.reparse(
+      JSON.stringify({
+        input: secondSource,
+        run_corpus: false,
+        edit: {
+          start_byte: startByte,
+          old_end_byte: startByte + "name".length,
+          new_end_byte: startByte + "title".length,
+        },
+      }),
+    ),
+  );
+
+  assert.equal(first.ok, true, JSON.stringify(first.diagnostics, null, 2));
+  assert.equal(first.layers.length, 1);
+  assert.equal(first.layers[0].language, "html");
+  assert.equal(first.layers[0].input, "<section><p>Hello <p>Again</p></section>");
+  assert.equal(first.layers[0].parse.accepted_error_count, 0);
+  assert.equal(first.layers[0].parse.accepted_missing_count, 0);
+
+  assert.equal(second.ok, true, JSON.stringify(second.diagnostics, null, 2));
+  assert.equal(second.layers.length, 1);
+  assert.equal(second.layers[0].language, "html");
+  assert.equal(second.layers[0].input, "<section><p>Hello <p>Again</p></section>");
+  assert.equal(second.layers[0].parse.accepted_error_count, 0);
+  assert.equal(second.layers[0].parse.accepted_missing_count, 0);
+  assert.deepEqual(
+    second.layers[0].ranges.map((range: { start_byte: number; end_byte: number }) => [
+      range.start_byte,
+      range.end_byte,
+    ]),
+    [
+      [0, 18],
+      [29, 51],
+    ],
+  );
+});
+
 test("runs bundled corpus and highlight tests through generated grammar.json", () => {
   const grammarJs = `
 module.exports = grammar({
