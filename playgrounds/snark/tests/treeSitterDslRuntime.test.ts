@@ -272,6 +272,41 @@ export default grammar({
   });
 });
 
+test("resolves symbol aliases emitted by grammar helper modules", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import { rename } from "./helpers.mjs";
+export default grammar({
+  name: "tiny_helper_alias",
+  rules: {
+    document: $ => rename($.word, $.renamed_word),
+    word: $ => /[a-z]+/,
+  },
+});
+`,
+      },
+      {
+        path: "helpers.mjs",
+        text: "export const rename = (rule, name) => alias(rule, name);",
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_helper_alias");
+  assert.deepEqual(grammar.rules.document, {
+    type: "ALIAS",
+    content: { type: "SYMBOL", name: "word" },
+    named: true,
+    value: "renamed_word",
+  });
+});
+
 test("resolves JSON helper modules required by grammar.js helpers", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,

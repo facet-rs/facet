@@ -9,6 +9,21 @@ export function emitGrammarJsonFromDsl(
   const fileSources = new Map(files.map((file) => [file.path, file.text]));
   const modules = new Map(files.filter((file) => isDslModulePath(file.path)).map((file) => [file.path, file.text]));
   const cache = new Map<string, { exports: unknown }>();
+  const executeModule = new Function(
+    `${prelude}
+${snarkDslExtensions()}
+return function executeSnarkDslModule(source, module, exports, require, __default, process) {
+  eval(source);
+  return module.exports;
+};`,
+  )() as (
+    source: string,
+    module: { exports: unknown },
+    exports: unknown,
+    require: (specifier: string) => unknown,
+    __default: (value: unknown) => unknown,
+    process: { env: Record<string, string> },
+  ) => unknown;
 
   const loadModule = (path: string): unknown => {
     const resolved = resolveJsPath(path, modules);
@@ -33,15 +48,7 @@ export function emitGrammarJsonFromDsl(
       builtinModule(specifier, fileSources) ?? loadModule(resolveRequire(specifier, dirname, modules));
     const commonJsSource = sourceToCommonJs(source, resolved);
 
-    const fn = new Function(
-      "module",
-      "exports",
-      "require",
-      "__default",
-      "process",
-      `${prelude}\n${snarkDslExtensions()}\n${commonJsSource}\n; return module.exports;`,
-    );
-    module.exports = fn(module, module.exports, require, defaultExportValue, { env: {} });
+    module.exports = executeModule(commonJsSource, module, module.exports, require, defaultExportValue, { env: {} });
     return module.exports;
   };
 
