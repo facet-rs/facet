@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use facet::Facet;
 
-use crate::parser::{ParserGrammar, ParserSymbol, RuntimeParseReport, TreeEvent, TreeNodeId};
+use crate::parser::{ParserGrammar, ParserSymbol, TreeEvent, TreeNodeId};
 use crate::runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes};
 use crate::source::SourceFile;
 
@@ -37,22 +37,6 @@ impl QuerySource {
         named_node_references(&self.0)
     }
 
-    /// Execute the supported highlight-query subset against a runtime parse.
-    ///
-    /// This is the first oracle-driven evaluator slice: named node captures,
-    /// anonymous literal captures, direct parent/child captures, and captured-text
-    /// `#match?`/`#eq?`/`#any-of?` predicates. Unsupported query constructs are ignored
-    /// rather than approximated.
-    pub fn execute_runtime_highlights(
-        &self,
-        parser: &ParserGrammar,
-        report: &RuntimeParseReport,
-        input: &str,
-    ) -> Vec<HighlightCapture> {
-        let tree_events = report.accepted_tree_events();
-        self.execute_runtime_highlights_from_tree_events(parser, &tree_events, input)
-    }
-
     /// Execute the supported highlight-query subset against runtime tree events.
     ///
     /// This is shared by the direct Snark runtime and Weavy-carried runtime
@@ -65,23 +49,6 @@ impl QuerySource {
         input: &str,
     ) -> Vec<HighlightCapture> {
         execute_runtime_highlights(&self.0, parser, tree_events, input)
-    }
-
-    /// Extract supported language-injection regions from accepted runtime tree events.
-    ///
-    /// This is the first layering-runtime input slice: `@injection.content`,
-    /// `@injection.language`, `#set! injection.language`, `#set! injection.combined`,
-    /// `#set! injection.include-children`, and captured-text
-    /// `#match?`/`#eq?`/`#any-of?` predicates. Unsupported predicates are ignored
-    /// rather than approximated.
-    pub fn execute_runtime_injections(
-        &self,
-        parser: &ParserGrammar,
-        report: &RuntimeParseReport,
-        input: &str,
-    ) -> Vec<InjectionRegion> {
-        let tree_events = report.accepted_tree_events();
-        self.execute_runtime_injections_from_tree_events(parser, &tree_events, input)
     }
 
     /// Extract supported language-injection regions from runtime tree events.
@@ -1850,10 +1817,12 @@ impl QueryBundle {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "weavy-lowering")]
     use crate::{
         grammar::RawGrammarJson,
         lexical::LexicalFacts,
-        parser::{ParseTable, ParserGrammar, RuntimeParser},
+        lower::weavy::{RuntimeWeavyPlan, parse_prepared_runtime_with_report},
+        parser::{ParseTable, ParserGrammar, TreeEvent},
         validated::ValidatedGrammar,
     };
 
@@ -1861,6 +1830,25 @@ mod tests {
         QuerySource, anonymous_node_literals, capture_names, injection_patterns,
         named_node_references,
     };
+
+    #[cfg(feature = "weavy-lowering")]
+    fn parse_injection_fixture_events(
+        raw_json: &str,
+        input: &str,
+    ) -> (ParserGrammar, Vec<TreeEvent>) {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(raw_json).unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = ParseTable::from_grammar(&parser).unwrap();
+        let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let report =
+            parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, input).unwrap();
+        (parser, report.accepted_tree_events())
+    }
 
     #[test]
     fn extracts_query_anonymous_node_literals() {
@@ -1986,9 +1974,10 @@ mod tests {
         assert_eq!(pattern.captures[0].capture_name, "injection.content");
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn extracts_runtime_injection_regions() {
-        let raw = RawGrammarJson::from_tree_sitter_json_str(
+        let (parser, tree_events) = parse_injection_fixture_events(
             r#"{
               "name": "injection_smoke",
               "rules": {
@@ -2005,19 +1994,8 @@ mod tests {
               "inline": [],
               "supertypes": []
             }"#,
-        )
-        .unwrap();
-        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
-        let lexical = LexicalFacts::from_grammar(&validated);
-        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
-            .unwrap()
-            .prepare_productions_for_items()
-            .unwrap();
-        let table = ParseTable::from_grammar(&parser).unwrap();
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report("print")
-            .unwrap();
+            "print",
+        );
         let query = QuerySource(
             r#"((lua_code) @injection.content
                 (#set! injection.language "lua")
@@ -2025,7 +2003,8 @@ mod tests {
                 .to_owned(),
         );
 
-        let regions = query.execute_runtime_injections(&parser, &report, "print");
+        let regions =
+            query.execute_runtime_injections_from_tree_events(&parser, &tree_events, "print");
 
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].language(), "lua");
@@ -2036,9 +2015,11 @@ mod tests {
         assert_eq!(regions[0].bytes().end().get(), 5);
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn pairs_dynamic_injection_languages_with_sibling_content() {
-        let raw = RawGrammarJson::from_tree_sitter_json_str(
+        let input = "lua:PRINT;js:RUN;";
+        let (parser, tree_events) = parse_injection_fixture_events(
             r#"{
               "name": "injection_dynamic",
               "rules": {
@@ -2071,20 +2052,8 @@ mod tests {
               "inline": [],
               "supertypes": []
             }"#,
-        )
-        .unwrap();
-        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
-        let lexical = LexicalFacts::from_grammar(&validated);
-        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
-            .unwrap()
-            .prepare_productions_for_items()
-            .unwrap();
-        let table = ParseTable::from_grammar(&parser).unwrap();
-        let input = "lua:PRINT;js:RUN;";
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report(input)
-            .unwrap();
+            input,
+        );
         let query = QuerySource(
             r#"((block
                   (lang) @injection.language
@@ -2092,7 +2061,8 @@ mod tests {
                 .to_owned(),
         );
 
-        let regions = query.execute_runtime_injections(&parser, &report, input);
+        let regions =
+            query.execute_runtime_injections_from_tree_events(&parser, &tree_events, input);
 
         assert_eq!(
             regions
@@ -2103,9 +2073,11 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn filters_injection_patterns_with_capture_predicates() {
-        let raw = RawGrammarJson::from_tree_sitter_json_str(
+        let input = "pwsh:PRINT;hbs:RUN;";
+        let (parser, tree_events) = parse_injection_fixture_events(
             r#"{
               "name": "injection_predicate",
               "rules": {
@@ -2138,20 +2110,8 @@ mod tests {
               "inline": [],
               "supertypes": []
             }"#,
-        )
-        .unwrap();
-        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
-        let lexical = LexicalFacts::from_grammar(&validated);
-        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
-            .unwrap()
-            .prepare_productions_for_items()
-            .unwrap();
-        let table = ParseTable::from_grammar(&parser).unwrap();
-        let input = "pwsh:PRINT;hbs:RUN;";
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report(input)
-            .unwrap();
+            input,
+        );
         let query = QuerySource(
             r#"((block
                   (tag) @_name
@@ -2171,7 +2131,8 @@ mod tests {
                 .to_owned(),
         );
 
-        let regions = query.execute_runtime_injections(&parser, &report, input);
+        let regions =
+            query.execute_runtime_injections_from_tree_events(&parser, &tree_events, input);
 
         assert_eq!(
             regions

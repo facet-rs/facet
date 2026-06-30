@@ -1090,11 +1090,13 @@ mod tests {
             .with_external_scanner(&scanner)
             .parse_with_report(&highlight_fixture.source.body.0)
             .unwrap();
-        let captures = highlights_query.body.execute_runtime_highlights(
-            &parser_grammar,
-            &report,
-            &highlight_fixture.source.body.0,
-        );
+        let captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &report.accepted_tree_events(),
+                &highlight_fixture.source.body.0,
+            );
 
         assert_css_highlight_assertions_covered(&assertions, &captures);
         assert!(
@@ -2541,11 +2543,13 @@ mod tests {
             .with_external_scanner(&scanner)
             .parse_with_report(&declaration_cases[7].input)
             .unwrap();
-        let captures = highlights_query.body.execute_runtime_highlights(
-            &parser_grammar,
-            &runtime_report,
-            &declaration_cases[7].input,
-        );
+        let captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &runtime_report.accepted_tree_events(),
+                &declaration_cases[7].input,
+            );
 
         assert_same!(runtime_report.tree(), &declaration_cases[7].expected);
         assert!(
@@ -2680,11 +2684,13 @@ mod tests {
             Some(&scanner),
         )
         .unwrap();
-        let runtime_captures = highlights_query.body.execute_runtime_highlights(
-            &parser_grammar,
-            &runtime_report,
-            &declaration_cases[7].input,
-        );
+        let runtime_captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &runtime_report.accepted_tree_events(),
+                &declaration_cases[7].input,
+            );
         let weavy_captures = highlights_query
             .body
             .execute_runtime_highlights_from_tree_events(
@@ -2952,11 +2958,13 @@ mod tests {
             .unwrap()
             .parse_with_report(&cases[0].input)
             .unwrap();
-        let captures = highlights_query.body.execute_runtime_highlights(
-            &parser_grammar,
-            &runtime_report,
-            &cases[0].input,
-        );
+        let captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &runtime_report.accepted_tree_events(),
+                &cases[0].input,
+            );
         let field_regression_query = QuerySource(
             r#"
 (pair
@@ -2965,9 +2973,9 @@ mod tests {
 "#
             .to_owned(),
         );
-        let field_captures = field_regression_query.execute_runtime_highlights(
+        let field_captures = field_regression_query.execute_runtime_highlights_from_tree_events(
             &parser_grammar,
-            &runtime_report,
+            &runtime_report.accepted_tree_events(),
             &cases[0].input,
         );
 
@@ -3016,11 +3024,13 @@ mod tests {
             .unwrap()
             .parse_with_report(&cases[4].input)
             .unwrap();
-        let captures = highlights_query.body.execute_runtime_highlights(
-            &parser_grammar,
-            &runtime_report,
-            &cases[4].input,
-        );
+        let captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &runtime_report.accepted_tree_events(),
+                &cases[4].input,
+            );
 
         assert_same!(runtime_report.tree(), &cases[4].expected);
         assert_eq!(
@@ -3076,11 +3086,13 @@ mod tests {
             &cases[0].input,
         )
         .unwrap();
-        let runtime_captures = highlights_query.body.execute_runtime_highlights(
-            &parser_grammar,
-            &runtime_report,
-            &cases[0].input,
-        );
+        let runtime_captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &runtime_report.accepted_tree_events(),
+                &cases[0].input,
+            );
         let field_regression_query = QuerySource(
             r#"
 (pair
@@ -3089,11 +3101,12 @@ mod tests {
 "#
             .to_owned(),
         );
-        let runtime_field_captures = field_regression_query.execute_runtime_highlights(
-            &parser_grammar,
-            &runtime_report,
-            &cases[0].input,
-        );
+        let runtime_field_captures = field_regression_query
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &runtime_report.accepted_tree_events(),
+                &cases[0].input,
+            );
         let weavy_captures = highlights_query
             .body
             .execute_runtime_highlights_from_tree_events(
@@ -3172,11 +3185,13 @@ mod tests {
             &cases[4].input,
         )
         .unwrap();
-        let runtime_captures = highlights_query.body.execute_runtime_highlights(
-            &parser_grammar,
-            &runtime_report,
-            &cases[4].input,
-        );
+        let runtime_captures = highlights_query
+            .body
+            .execute_runtime_highlights_from_tree_events(
+                &parser_grammar,
+                &runtime_report.accepted_tree_events(),
+                &cases[4].input,
+            );
         let weavy_captures = highlights_query
             .body
             .execute_runtime_highlights_from_tree_events(
