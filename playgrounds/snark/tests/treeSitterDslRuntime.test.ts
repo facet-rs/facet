@@ -232,6 +232,46 @@ export const wrap = rule => repeat1(rule);
   });
 });
 
+test("resolves adjacent semicolonless ESM default imports", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import first from "./first.mjs"
+import second from "./second.mjs"
+export default grammar({
+  name: "tiny_semicolonless_esm",
+  rules: {
+    document: $ => seq(first.word, second.word),
+  },
+});
+`,
+      },
+      {
+        path: "first.mjs",
+        text: "export default { word: \"a\" };",
+      },
+      {
+        path: "second.mjs",
+        text: "export default { word: \"b\" };",
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_semicolonless_esm");
+  assert.deepEqual(grammar.rules.document, {
+    type: "SEQ",
+    members: [
+      { type: "STRING", value: "a" },
+      { type: "STRING", value: "b" },
+    ],
+  });
+});
+
 test("resolves JSON helper modules required by grammar.js helpers", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,

@@ -58,16 +58,16 @@ function isDslModulePath(path: string) {
 function sourceToCommonJs(source: string, path: string) {
   let out = source;
   out = out.replace(
-    /(^|\n)\s*import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    /(^|\n)[ \t]*import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
     (_match, prefix, name, specifier) => `${prefix}const ${name} = require(${JSON.stringify(specifier)});`,
   );
   out = out.replace(
-    /(^|\n)\s*import\s+\{([\s\S]*?)\}\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    /(^|\n)[ \t]*import\s+\{([\s\S]*?)\}\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
     (_match, prefix, names, specifier) =>
       `${prefix}const { ${namedImportBindings(names)} } = require(${JSON.stringify(specifier)});`,
   );
   out = out.replace(
-    /(^|\n)\s*import\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    /(^|\n)[ \t]*import\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
     (_match, prefix, name, specifier) => `${prefix}const ${name} = __default(require(${JSON.stringify(specifier)}));`,
   );
   out = out.replace(
