@@ -1149,6 +1149,7 @@ pub fn parse_runtime_with_report_and_scanner(
         }],
         byte_position: 0,
         scanner_snapshot: None,
+        auto_close_stack: Vec::new(),
     }]);
     let mut accepted = Vec::<(parser_ir::StackVersionId, SexpNode)>::new();
     let mut failures = Vec::<ReducedWeavyError>::new();
@@ -1560,6 +1561,7 @@ struct RuntimeWeavyBranch {
     stack: Vec<RuntimeWeavyStackEntry>,
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
+    auto_close_stack: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1808,6 +1810,7 @@ fn run_runtime_weavy_action(
             stack: stepper.stack,
             byte_position: stepper.byte_position,
             scanner_snapshot: stepper.scanner_snapshot,
+            auto_close_stack: stepper.auto_close_stack,
         })
     }
 }
@@ -2657,6 +2660,7 @@ struct RuntimeWeavyStepper<'a> {
     stack: Vec<RuntimeWeavyStackEntry>,
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
+    auto_close_stack: Vec<String>,
     committed_start: Option<usize>,
     lookahead: Option<ReducedWeavyToken>,
     lookahead_id: parser_ir::LookaheadTokenId,
@@ -2697,6 +2701,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             stack: branch.stack,
             byte_position: branch.byte_position,
             scanner_snapshot: branch.scanner_snapshot,
+            auto_close_stack: branch.auto_close_stack,
             committed_start: None,
             lookahead: None,
             lookahead_id,
@@ -2797,6 +2802,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     expected: Vec::new(),
                 })?;
                 self.committed_start = Some(self.byte_position);
+                self.update_auto_close_stack(token);
                 self.byte_position = token.end;
                 if let Some(scanner) = token.scanner {
                     self.scanner_snapshot = scanner.after();
@@ -2994,6 +3000,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
         state: &parser_ir::ParseState,
         byte_position: usize,
     ) -> Result<ReducedWeavyToken, ReducedWeavyError> {
+        if let Some(token) = self.runtime_auto_close_token(state, byte_position)? {
+            return Ok(token);
+        }
         if byte_position == self.input.len() {
             return Ok(ReducedWeavyToken {
                 lookahead: parser_ir::LookaheadSymbol::Eof,
@@ -3112,6 +3121,126 @@ impl<'a> RuntimeWeavyStepper<'a> {
             byte_position,
             expected: self.mode_token_spellings(mode),
         })
+    }
+
+    fn runtime_auto_close_token(
+        &self,
+        state: &parser_ir::ParseState,
+        byte_position: usize,
+    ) -> Result<Option<ReducedWeavyToken>, ReducedWeavyError> {
+        let Some(open_tag) = self.auto_close_stack.last() else {
+            return Ok(None);
+        };
+        let mode = self
+            .table
+            .lexical_modes()
+            .get(state.lex_mode().get() as usize)
+            .ok_or(ReducedWeavyError::MissingLexMode {
+                mode: state.lex_mode(),
+            })?;
+        let compiled_mode = self
+            .compiled_lex_modes
+            .get(mode.id().get() as usize)
+            .ok_or(ReducedWeavyError::MissingLexMode { mode: mode.id() })?;
+        for terminal in mode.terminals() {
+            let Some(lookahead) = self.lookahead_for_terminal(state, *terminal) else {
+                continue;
+            };
+            let Some(terminal_row) = compiled_mode
+                .terminals
+                .iter()
+                .find(|row| row.terminal == *terminal)
+            else {
+                continue;
+            };
+            let parser_ir::CompiledTerminalMatcher::Expr(parser_ir::CompiledLexExpr::AutoClose(
+                spec,
+            )) = &terminal_row.matcher
+            else {
+                continue;
+            };
+            if spec.tag != *open_tag {
+                continue;
+            }
+            if !spec
+                .closed_by
+                .iter()
+                .any(|marker| self.input[byte_position..].starts_with(marker.as_str()))
+            {
+                continue;
+            }
+            return Ok(Some(ReducedWeavyToken {
+                lookahead,
+                end: byte_position,
+                scanner: None,
+            }));
+        }
+        Ok(None)
+    }
+
+    fn update_auto_close_stack(&mut self, token: ReducedWeavyToken) {
+        let parser_ir::LookaheadSymbol::Terminal(terminal) = token.lookahead else {
+            return;
+        };
+        if let Some(spec) = self.auto_close_spec_for_terminal(terminal) {
+            let tag = spec.tag.clone();
+            if self.auto_close_stack.last() == Some(&tag) {
+                self.auto_close_stack.pop();
+            }
+            return;
+        }
+        let start = self.byte_position;
+        let Some(text) = self.input.get(start..token.end) else {
+            return;
+        };
+        let stack_edit = self.auto_close_specs().find_map(|spec| {
+            if text == spec.close {
+                Some((false, spec.tag.clone()))
+            } else if text == spec.open {
+                Some((true, spec.tag.clone()))
+            } else {
+                None
+            }
+        });
+        if let Some((push, tag)) = stack_edit {
+            if push {
+                self.auto_close_stack.push(tag);
+            } else if self.auto_close_stack.last() == Some(&tag) {
+                self.auto_close_stack.pop();
+            }
+        }
+    }
+
+    fn auto_close_spec_for_terminal(
+        &self,
+        terminal: parser_ir::TerminalId,
+    ) -> Option<&parser_ir::AutoCloseSpec> {
+        self.compiled_lex_modes
+            .iter()
+            .flat_map(|mode| mode.terminals.iter())
+            .find_map(|row| {
+                if row.terminal != terminal {
+                    return None;
+                }
+                match &row.matcher {
+                    parser_ir::CompiledTerminalMatcher::Expr(
+                        parser_ir::CompiledLexExpr::AutoClose(spec),
+                    ) => Some(spec),
+                    _ => None,
+                }
+            })
+    }
+
+    fn auto_close_specs(&self) -> impl Iterator<Item = &parser_ir::AutoCloseSpec> {
+        self.compiled_lex_modes
+            .iter()
+            .flat_map(|mode| mode.terminals.iter())
+            .filter_map(|row| match &row.matcher {
+                parser_ir::CompiledTerminalMatcher::Expr(
+                    parser_ir::CompiledLexExpr::AutoClose(spec),
+                ) => Some(spec),
+                _ => None,
+            })
     }
 
     fn lookahead_for_terminal(
