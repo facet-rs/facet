@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import init, { SnarkPlaygroundSession, parseBundle } from "@bearcove/snark-wasm";
+import { runParse } from "./parseClient";
 import { SourceEditor, type SourceEdit } from "./editor";
 import { captureClass } from "./highlight";
 import { defaultVendoredRootId, vendoredFiles } from "./bundled";
@@ -124,17 +124,9 @@ type PlaygroundResponse = {
   limitations: string[];
 };
 
-const wasmReady = init();
-
 const defaultFiles: BundleFile[] = vendoredFiles;
 const defaultGrammarRoot = defaultVendoredRootId;
 const defaultSample = preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
-
-type PreparedSessionEntry = {
-  key: string;
-  session: SnarkPlaygroundSession;
-  baselineInput: string | null;
-};
 
 type PendingSourceEdit = {
   oldInput: string;
@@ -149,7 +141,10 @@ export function App() {
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
   const parseRequestId = useRef(0);
-  const preparedSessionRef = useRef<PreparedSessionEntry | null>(null);
+  // The prepared session lives in the parse worker; here we only track which grammar it's
+  // prepared for and the last input it parsed (for incremental-reparse gating).
+  const preparedKeyRef = useRef<string | null>(null);
+  const baselineInputRef = useRef<string | null>(null);
   const pendingSourceEditRef = useRef<PendingSourceEdit | null>(null);
 
   const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
@@ -227,7 +222,8 @@ export function App() {
     const next = normalizeBundleFiles(loaded);
     const nextGrammarRoot = preferredGrammarRootId(next);
     const nextSample = preferredSampleForGrammarRootId(next, nextGrammarRoot);
-    preparedSessionRef.current = null;
+    preparedKeyRef.current = null;
+    baselineInputRef.current = null;
     pendingSourceEditRef.current = null;
     setFiles(next);
     setSelectedGrammarRoot(nextGrammarRoot);
@@ -251,64 +247,48 @@ export function App() {
 
   async function playgroundResponse(runBundledTests: boolean): Promise<PlaygroundResponse> {
     try {
-      await wasmReady.catch((error: unknown) => {
-        throw new PlaygroundRunError("wasm", errorMessage(error));
-      });
       const key = sessionCacheKey(activeGrammarRootId, projectedFiles);
-      let entry = preparedSessionRef.current?.key === key ? preparedSessionRef.current : null;
-      if (!entry) {
-        const runnableFiles = await filesWithGrammarJson(
-          files,
-          activeGrammarRootId,
-        ).catch((error: unknown) => {
-          throw new PlaygroundRunError("grammar.js", errorMessage(error));
-        });
-        try {
-          entry = {
-            key,
-            session: new SnarkPlaygroundSession(JSON.stringify({ files: runnableFiles })),
-            baselineInput: null,
-          };
-        } catch (error) {
-          try {
-            return JSON.parse(
-              parseBundle(
-                JSON.stringify({
-                  files: runnableFiles,
-                  input,
-                  run_corpus: runBundledTests,
-                }),
-              ),
-            ) as PlaygroundResponse;
-          } catch (fallbackError) {
-            throw new PlaygroundRunError(
-              "snark",
-              `${errorMessage(error)}; fallback parse failed: ${errorMessage(fallbackError)}`,
-            );
-          }
-        }
-        preparedSessionRef.current = entry;
+      const needPrepare = preparedKeyRef.current !== key;
+
+      // Only emit grammar.js -> grammar.json (in the DSL worker) when the bundle changed.
+      let runnableFiles: BundleFile[] | null = null;
+      if (needPrepare) {
+        runnableFiles = await filesWithGrammarJson(files, activeGrammarRootId).catch(
+          (error: unknown) => {
+            throw new PlaygroundRunError("grammar.js", errorMessage(error));
+          },
+        );
       }
+
       const pendingEdit = pendingSourceEditRef.current;
       const useReparse =
         !runBundledTests &&
+        !needPrepare &&
         pendingEdit !== null &&
-        entry.baselineInput === pendingEdit.oldInput &&
+        baselineInputRef.current === pendingEdit.oldInput &&
         pendingEdit.oldInput !== input;
-      let response: string;
+
+      let result: { response: string; prepared: boolean };
       try {
-        const request = JSON.stringify({
+        result = await runParse({
+          key,
+          files: runnableFiles,
           input,
-          run_corpus: runBundledTests,
+          runCorpus: runBundledTests,
           edit: useReparse ? pendingEdit.edit : null,
+          useReparse,
         });
-        response = useReparse ? entry.session.reparse(request) : entry.session.parse(request);
       } catch (error) {
+        // A worker/prepare failure: force a fresh prepare on the next run.
+        preparedKeyRef.current = null;
+        baselineInputRef.current = null;
         throw new PlaygroundRunError("snark", errorMessage(error));
       }
-      const parsed = JSON.parse(response) as PlaygroundResponse;
+
+      preparedKeyRef.current = result.prepared ? key : null;
+      const parsed = JSON.parse(result.response) as PlaygroundResponse;
       if (parsed.parse) {
-        entry.baselineInput = input;
+        baselineInputRef.current = input;
         pendingSourceEditRef.current = null;
       }
       return parsed;
@@ -396,7 +376,8 @@ export function App() {
                 onChange={(event) => {
                   const nextGrammarRoot = event.currentTarget.value;
                   const nextSample = preferredSampleForGrammarRootId(files, nextGrammarRoot);
-                  preparedSessionRef.current = null;
+                  preparedKeyRef.current = null;
+                  baselineInputRef.current = null;
                   pendingSourceEditRef.current = null;
                   setSelectedGrammarRoot(nextGrammarRoot);
                   setSelectedSamplePath(nextSample?.path ?? "");
