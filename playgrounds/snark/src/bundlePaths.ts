@@ -29,21 +29,24 @@ export function discoverGrammarRoots(files: DslBundleFile[]): GrammarRoot[] {
   const normalizedFiles = files.map((file) => ({ ...file, path: normalizePath(file.path) }));
   const normalizedPaths = normalizedFiles.map((file) => file.path);
   const normalizedByPath = new Map(normalizedFiles.map((file) => [file.path, file]));
-  const hasGrammarJson = normalizedPaths.some((path) => basename(path) === "grammar.json");
   const roots = new Map<string, GrammarRoot>();
   for (const file of normalizedFiles) {
     if (basename(file.path) !== "tree-sitter.json") {
       continue;
     }
-    for (const root of grammarRootsFromManifest(file.path, file.text, normalizedByPath, hasGrammarJson)) {
+    for (const root of grammarRootsFromManifest(file.path, file.text, normalizedByPath)) {
       roots.set(root.id, root);
     }
   }
   for (const path of normalizedPaths) {
     const name = basename(path);
-    if (hasGrammarJson ? name === "grammar.json" : name === "grammar.js") {
+    if (name === "grammar.json" || name === "grammar.js") {
       const root = grammarRootFromPath(path);
       const manifestPath = roots.get(root.id)?.manifestPath;
+      const existing = roots.get(root.id);
+      if (existing && basename(existing.grammarPath) === "grammar.json" && name === "grammar.js") {
+        continue;
+      }
       roots.set(root.id, manifestPath ? { ...root, manifestPath } : root);
     }
   }
@@ -51,7 +54,8 @@ export function discoverGrammarRoots(files: DslBundleFile[]): GrammarRoot[] {
 }
 
 export function preferredGrammarRootId(files: DslBundleFile[]) {
-  return discoverGrammarRoots(files)[0]?.id ?? "";
+  const roots = discoverGrammarRoots(files);
+  return roots.find((root) => basename(root.grammarPath) === "grammar.json")?.id ?? roots[0]?.id ?? "";
 }
 
 export function grammarRootForId(files: DslBundleFile[], rootId: string): GrammarRoot | null {
@@ -316,7 +320,6 @@ function grammarRootsFromManifest(
   manifestPath: string,
   text: string,
   filesByPath: Map<string, DslBundleFile>,
-  hasGrammarJson: boolean,
 ): GrammarRoot[] {
   let parsed: unknown;
   try {
@@ -336,7 +339,7 @@ function grammarRootsFromManifest(
     }
     const entry = grammar as { name?: unknown; path?: unknown };
     const grammarBase = normalizePath(joinPath(baseDir, typeof entry.path === "string" ? entry.path : ""));
-    const grammarPath = manifestGrammarPath(grammarBase, filesByPath, hasGrammarJson);
+    const grammarPath = manifestGrammarPath(grammarBase, filesByPath);
     if (!grammarPath) {
       continue;
     }
@@ -356,7 +359,6 @@ function grammarRootsFromManifest(
 function manifestGrammarPath(
   grammarBase: string,
   filesByPath: Map<string, DslBundleFile>,
-  hasGrammarJson: boolean,
 ): string | null {
   for (const candidate of [joinPath(grammarBase, "src/grammar.json"), joinPath(grammarBase, "grammar.json")]) {
     if (filesByPath.has(candidate)) {
@@ -364,7 +366,7 @@ function manifestGrammarPath(
     }
   }
   const grammarJs = joinPath(grammarBase, "grammar.js");
-  if (!hasGrammarJson && filesByPath.has(grammarJs)) {
+  if (filesByPath.has(grammarJs)) {
     return grammarJs;
   }
   return null;

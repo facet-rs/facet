@@ -5,6 +5,7 @@ import {
   discoverGrammarRoots,
   firstSampleForGrammarRootId,
   normalizeBundleFiles,
+  preferredGrammarRootId,
   preferredSampleForGrammarRootId,
   projectedFilesForGrammarRootId,
   sourceExamplesForGrammarRootId,
@@ -58,7 +59,7 @@ test("keeps Arborium sibling grammar roots selectable", () => {
   );
 });
 
-test("prefers grammar.json under any path over grammar.js roots", () => {
+test("prefers grammar.json under any path while keeping grammar.js sibling roots", () => {
   const files = normalizeBundleFiles([
     file("packages/tree-sitter-css/grammar.js"),
     file("vendor/random/layout/tree-sitter-json/grammar.json"),
@@ -66,16 +67,16 @@ test("prefers grammar.json under any path over grammar.js roots", () => {
   ]);
 
   const roots = discoverGrammarRoots(files);
-  assert.deepEqual(roots, [
-    {
-      id: "vendor/random/layout/tree-sitter-json",
-      label: "vendor/random/layout/tree-sitter-json",
-      grammarPath: "vendor/random/layout/tree-sitter-json/grammar.json",
-      kind: "package",
-    },
-  ]);
   assert.deepEqual(
-    projectedFilesForGrammarRootId(files, roots[0]?.id).map((entry) => entry.path),
+    roots.map((root) => [root.id, root.grammarPath]),
+    [
+      ["packages/tree-sitter-css", "packages/tree-sitter-css/grammar.js"],
+      ["vendor/random/layout/tree-sitter-json", "vendor/random/layout/tree-sitter-json/grammar.json"],
+    ],
+  );
+  assert.equal(preferredGrammarRootId(files), "vendor/random/layout/tree-sitter-json");
+  assert.deepEqual(
+    projectedFilesForGrammarRootId(files, preferredGrammarRootId(files)).map((entry) => entry.path),
     ["src/grammar.json", "queries/highlights.scm"],
   );
 });
@@ -336,6 +337,31 @@ test("projects sibling grammar roots as embedded language bundles", async () => 
     projected.map((entry) => entry.path),
     [
       "grammar.js",
+      "languages/child/grammar.js",
+      "languages/child/queries/highlights.scm",
+      "languages/child/src/grammar.json",
+      "queries/injections.scm",
+      "src/grammar.json",
+    ],
+  );
+});
+
+test("projects grammar.js siblings beside an active grammar.json root", async () => {
+  const files = normalizeBundleFiles([
+    { path: "host/grammar.json", text: '{"name":"host"}' },
+    { path: "host/queries/injections.scm", text: "host injections" },
+    { path: "child/grammar.js", text: 'grammar({ name: "child" })' },
+    { path: "child/queries/highlights.scm", text: "child highlights" },
+  ]);
+
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (_files, grammarPath) => {
+    assert.equal(grammarPath, "child/grammar.js");
+    return '{"name":"child"}';
+  });
+
+  assert.deepEqual(
+    projected.map((entry) => entry.path),
+    [
       "languages/child/grammar.js",
       "languages/child/queries/highlights.scm",
       "languages/child/src/grammar.json",
