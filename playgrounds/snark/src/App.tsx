@@ -169,6 +169,10 @@ type PendingSourceEdit = {
   edit: SourceEdit;
 };
 
+type BundledTestSnapshot = Pick<PlaygroundResponse, "corpus" | "highlight_tests" | "tests"> & {
+  key: string;
+};
+
 export function App() {
   const [files, setFiles] = useState<BundleFile[]>(defaultFiles);
   const [selectedGrammarRoot, setSelectedGrammarRoot] = useState(defaultGrammarRoot);
@@ -178,6 +182,7 @@ export function App() {
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
   const parseRequestId = useRef(0);
   const autoTestedKeyRef = useRef<string | null>(null);
+  const bundledTestSnapshotRef = useRef<BundledTestSnapshot | null>(null);
   // The prepared session lives in the parse worker; here we only track which grammar it's
   // prepared for and the last input it parsed (for incremental-reparse gating).
   const preparedKeyRef = useRef<string | null>(null);
@@ -265,6 +270,7 @@ export function App() {
     const nextGrammarRoot = preferredGrammarRootId(next);
     const nextSample = preferredSampleForGrammarRootId(next, nextGrammarRoot);
     autoTestedKeyRef.current = null;
+    bundledTestSnapshotRef.current = null;
     preparedKeyRef.current = null;
     baselineInputRef.current = null;
     pendingSourceEditRef.current = null;
@@ -330,6 +336,18 @@ export function App() {
 
       preparedKeyRef.current = result.prepared ? key : null;
       const parsed = JSON.parse(result.response) as PlaygroundResponse;
+      if (runBundledTests) {
+        bundledTestSnapshotRef.current = {
+          key,
+          corpus: parsed.corpus,
+          highlight_tests: parsed.highlight_tests,
+          tests: parsed.tests,
+        };
+      } else if (!parsed.tests.requested && bundledTestSnapshotRef.current?.key === key) {
+        parsed.corpus = bundledTestSnapshotRef.current.corpus;
+        parsed.highlight_tests = bundledTestSnapshotRef.current.highlight_tests;
+        parsed.tests = bundledTestSnapshotRef.current.tests;
+      }
       if (parsed.parse) {
         baselineInputRef.current = input;
         pendingSourceEditRef.current = null;
@@ -422,6 +440,7 @@ export function App() {
                   const nextGrammarRoot = event.currentTarget.value;
                   const nextSample = preferredSampleForGrammarRootId(files, nextGrammarRoot);
                   autoTestedKeyRef.current = null;
+                  bundledTestSnapshotRef.current = null;
                   preparedKeyRef.current = null;
                   baselineInputRef.current = null;
                   pendingSourceEditRef.current = null;
