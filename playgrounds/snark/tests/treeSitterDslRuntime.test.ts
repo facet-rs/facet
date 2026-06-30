@@ -355,6 +355,91 @@ export const wrap = rule => repeat1(rule);
   });
 });
 
+test("resolves ESM local export lists in grammar modules", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import { oneOrMore, word } from "./helpers.mjs";
+export default grammar({
+  name: "tiny_local_export_list",
+  rules: {
+    document: $ => oneOrMore($.word),
+    word: $ => word,
+  },
+});
+`,
+      },
+      {
+        path: "helpers.mjs",
+        text: `
+const word = /[a-z]+/;
+const wrap = rule => repeat1(rule);
+export { word, wrap as oneOrMore };
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_local_export_list");
+  assert.deepEqual(grammar.rules.document, {
+    type: "REPEAT1",
+    content: { type: "SYMBOL", name: "word" },
+  });
+  assert.deepEqual(grammar.rules.word, {
+    type: "PATTERN",
+    value: "[a-z]+",
+  });
+});
+
+test("resolves ESM re-export lists in grammar modules", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import { oneOrMore, word } from "./helpers.mjs";
+export default grammar({
+  name: "tiny_reexport_list",
+  rules: {
+    document: $ => oneOrMore($.word),
+    word: $ => word,
+  },
+});
+`,
+      },
+      {
+        path: "helpers.mjs",
+        text: 'export { word, wrap as oneOrMore } from "./tokens.mjs";',
+      },
+      {
+        path: "tokens.mjs",
+        text: `
+export const word = /[a-z]+/;
+export const wrap = rule => repeat1(rule);
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_reexport_list");
+  assert.deepEqual(grammar.rules.document, {
+    type: "REPEAT1",
+    content: { type: "SYMBOL", name: "word" },
+  });
+  assert.deepEqual(grammar.rules.word, {
+    type: "PATTERN",
+    value: "[a-z]+",
+  });
+});
+
 test("resolves adjacent semicolonless ESM default imports", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,

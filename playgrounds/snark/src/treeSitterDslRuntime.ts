@@ -64,6 +64,7 @@ function isDslModulePath(path: string) {
 
 function sourceToCommonJs(source: string, path: string) {
   let out = source;
+  let reexportIndex = 0;
   out = out.replace(
     /(^|\n)[ \t]*import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
     (_match, prefix, name, specifier) => `${prefix}const ${name} = require(${JSON.stringify(specifier)});`,
@@ -85,6 +86,20 @@ function sourceToCommonJs(source: string, path: string) {
     /(^|\n)\s*export\s+function\s+([A-Za-z_$][\w$]*)\s*\(/g,
     (_match, prefix, name) => `${prefix}exports.${name} = function ${name}(`,
   );
+  out = out.replace(
+    /(^|\n)[ \t]*export\s+\{([\s\S]*?)\}\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
+    (_match, prefix, names, specifier) => {
+      const moduleName = `__snark_reexport_${reexportIndex++}`;
+      return `${prefix}const ${moduleName} = require(${JSON.stringify(specifier)});${exportBindingsFromModule(
+        names,
+        moduleName,
+      )}`;
+    },
+  );
+  out = out.replace(
+    /(^|\n)[ \t]*export\s+\{([\s\S]*?)\}[ \t]*;?/g,
+    (_match, prefix, names) => `${prefix}${exportLocalBindings(names)}`,
+  );
   out = out.replace(/(^|\n)\s*export\s+default\s+/m, "$1module.exports.default = ");
   if (/^\s*(import|export)\s/m.test(out)) {
     throw new Error(`${path} uses unsupported ESM syntax`);
@@ -102,6 +117,32 @@ function namedImportBindings(names: string) {
       return alias ? `${alias[1]}: ${alias[2]}` : name;
     })
     .join(", ");
+}
+
+function exportLocalBindings(names: string) {
+  return exportSpecifiers(names)
+    .map(({ imported, exported }) => `exports.${exported} = ${imported};`)
+    .join("");
+}
+
+function exportBindingsFromModule(names: string, moduleName: string) {
+  return exportSpecifiers(names)
+    .map(({ imported, exported }) => {
+      const value = imported === "default" ? `__default(${moduleName})` : `${moduleName}.${imported}`;
+      return `exports.${exported} = ${value};`;
+    })
+    .join("");
+}
+
+function exportSpecifiers(names: string) {
+  return names
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .map((name) => {
+      const alias = /^([A-Za-z_$][\w$]*|default)\s+as\s+([A-Za-z_$][\w$]*)$/.exec(name);
+      return alias ? { imported: alias[1], exported: alias[2] } : { imported: name, exported: name };
+    });
 }
 
 function defaultExportValue(value: unknown) {
