@@ -240,7 +240,13 @@ export function App() {
     pendingSourceEditRef.current = edit ? { oldInput: input, edit } : null;
     setInput(nextInput);
     setSelectedSamplePath(samplePath);
-    setResult(null);
+    // On an incremental edit, keep the last result so the editor remaps its existing
+    // highlight decorations through the change (CodeMirror does this for us) instead of
+    // flashing unstyled until the next parse lands. Only drop highlights on a full
+    // replace — sample/grammar switch or "Use input" — where the old spans are meaningless.
+    if (!edit) {
+      setResult(null);
+    }
   }
 
   async function playgroundResponse(runBundledTests: boolean): Promise<PlaygroundResponse> {
