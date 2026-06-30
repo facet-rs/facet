@@ -221,6 +221,60 @@ module.exports = grammar({
   );
 });
 
+test("reports injected layer parse diagnostics at root source coordinates", async () => {
+  const hostGrammar = `
+module.exports = grammar({
+  name: "host",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => seq($.prefix, $.word),
+    prefix: $ => /x+/,
+    word: $ => /[a-z]+/,
+  },
+});
+`;
+  const childGrammar = `
+module.exports = grammar({
+  name: "digits",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => $.number,
+    number: $ => /[0-9]+/,
+  },
+});
+`;
+  const files = normalizeBundleFiles([
+    { path: "host/grammar.js", text: hostGrammar },
+    {
+      path: "host/queries/injections.scm",
+      text: '((word) @injection.content\n  (#set! injection.language "digits"))\n',
+    },
+    { path: "digits/grammar.js", text: childGrammar },
+  ]);
+
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: "xxalpha",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.layers.length, 1);
+  assert.equal(response.layers[0].language, "digits");
+  assert.equal(response.layers[0].diagnostics.length, 1);
+  assert.equal(response.diagnostics[0].stage, "layer/parse");
+  assert.match(response.diagnostics[0].message, /digits:/);
+  assert.equal(response.diagnostics[0].primary_span.start_byte, 2);
+  assert.equal(response.diagnostics[0].primary_span.start_column, 2);
+});
+
 test("reports unsupported external scanners from Snark WASM", () => {
   const grammarJs = `
 module.exports = grammar({

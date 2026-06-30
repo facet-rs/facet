@@ -570,6 +570,7 @@ fn playground_response_for_session(
                             input,
                         );
                         layers = layer_outputs(input, &injections, &session.embedded_languages);
+                        diagnostics.extend(layer_diagnostics(&layers));
                     }
                     session.last_input = Some(input.to_owned());
                     session.last_report = Some(report);
@@ -1109,7 +1110,7 @@ fn layer_output(
                 highlights: Vec::new(),
                 injections: Vec::new(),
                 layers: Vec::new(),
-                diagnostics: vec![diagnostic],
+                diagnostics: vec![remap_layer_diagnostic(diagnostic, host_input, &segments)],
             };
         }
     };
@@ -1169,6 +1170,56 @@ fn layer_output(
         layers,
         diagnostics,
     }
+}
+
+fn layer_diagnostics(layers: &[LayerOutput]) -> Vec<Diagnostic> {
+    layers
+        .iter()
+        .flat_map(|layer| {
+            let own = layer.diagnostics.iter().map(|diagnostic| Diagnostic {
+                stage: format!("layer/{}", diagnostic.stage),
+                message: format!("{}: {}", layer.language, diagnostic.message),
+                primary_span: diagnostic.primary_span.clone(),
+            });
+            own.chain(layer_diagnostics(&layer.layers))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn remap_layer_diagnostic(
+    diagnostic: Diagnostic,
+    root_input: &str,
+    segments: &[LayerSegment],
+) -> Diagnostic {
+    let primary_span = diagnostic
+        .primary_span
+        .as_ref()
+        .and_then(|span| remap_layer_span(span, root_input, segments));
+    Diagnostic {
+        primary_span,
+        ..diagnostic
+    }
+}
+
+fn remap_layer_span(
+    span: &DiagnosticSpan,
+    root_input: &str,
+    segments: &[LayerSegment],
+) -> Option<DiagnosticSpan> {
+    let segment = segment_for_virtual_range(segments, span.start_byte, span.end_byte)?;
+    let start_byte = segment.host_start + span.start_byte.saturating_sub(segment.virtual_start);
+    let end_byte = segment.host_start + span.end_byte.saturating_sub(segment.virtual_start);
+    let (start_row, start_column) = point_for_byte(root_input, start_byte)?;
+    let (end_row, end_column) = point_for_byte(root_input, end_byte)?;
+    Some(DiagnosticSpan {
+        start_byte,
+        end_byte,
+        start_row,
+        start_column,
+        end_row,
+        end_column,
+    })
 }
 
 fn remap_layer_injections(
@@ -2316,6 +2367,26 @@ mod tests {
   (#set! injection.include-children))"#
                         .to_owned(),
                 },
+                BundleFile {
+                    path: "languages/lua/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "lua",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Za-z_]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
             ],
             input: "print".to_owned(),
             run_corpus: false,
@@ -2547,6 +2618,90 @@ mod tests {
         assert_eq!(inner_layer.highlights[0].text, "PRINT");
         assert_eq!(inner_layer.highlights[0].start_byte, 2);
         assert_eq!(inner_layer.highlights[0].end_byte, 7);
+    }
+
+    #[test]
+    fn playground_response_promotes_injected_layer_diagnostics() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "prefix" },
+        { "type": "SYMBOL", "name": "code" }
+      ]
+    },
+    "prefix": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[a-z]+" }
+    },
+    "code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((code) @injection.content
+  (#set! injection.language "digits"))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/digits/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "digits",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "number" },
+    "number": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[0-9]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+            ],
+            input: "xxPRINT".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(!response.ok);
+        assert_eq!(response.layers.len(), 1);
+        assert_eq!(response.layers[0].language, "digits");
+        assert_eq!(response.layers[0].diagnostics.len(), 1);
+        let diagnostic = &response.diagnostics[0];
+        assert_eq!(diagnostic.stage, "layer/parse");
+        assert!(diagnostic.message.contains("digits:"), "{diagnostic:?}");
+        let span = diagnostic
+            .primary_span
+            .as_ref()
+            .expect("diagnostic has span");
+        assert_eq!(span.start_byte, 2);
+        assert_eq!(span.start_row, 0);
+        assert_eq!(span.start_column, 2);
     }
 
     fn external_scanner_smoke_grammar_json() -> String {
