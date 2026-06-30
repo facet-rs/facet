@@ -7043,6 +7043,7 @@ impl<'a> RuntimeParser<'a> {
         let mut tree_store = RuntimeTreeStore::default();
         let mut trace_events = Vec::new();
         let mut tree_events = Vec::new();
+        let mut tree_journal = RuntimeTreeJournal::default();
         push_full_runtime_trace(
             &mut trace_events,
             trace_detail,
@@ -7076,7 +7077,7 @@ impl<'a> RuntimeParser<'a> {
             auto_close_stack: Vec::new(),
             error_cost: 0,
             trace: Vec::new(),
-            tree_events: Vec::new(),
+            tree_journal: RuntimeTreeJournalHead::default(),
             reusable_nodes: Vec::new(),
         };
         let mut queued_recovery_costs = HashMap::new();
@@ -7151,6 +7152,7 @@ impl<'a> RuntimeParser<'a> {
                 &mut tree_store,
                 &mut trace_events,
                 &mut tree_events,
+                &mut tree_journal,
                 &mut next_version_index,
                 &mut next_lookahead_index,
                 recovery,
@@ -7295,6 +7297,7 @@ impl<'a> RuntimeParser<'a> {
         tree_store: &mut RuntimeTreeStore,
         trace_events: &mut Vec<TraceEvent>,
         tree_events: &mut Vec<TreeEvent>,
+        tree_journal: &mut RuntimeTreeJournal,
         next_version_index: &mut usize,
         next_lookahead_index: &mut usize,
         recovery: RuntimeRecoveryMode,
@@ -7330,6 +7333,7 @@ impl<'a> RuntimeParser<'a> {
                 tree_store,
                 trace_events,
                 tree_events,
+                tree_journal,
                 trace_detail,
             )
         {
@@ -7369,6 +7373,7 @@ impl<'a> RuntimeParser<'a> {
                         tree_store,
                         trace_events,
                         tree_events,
+                        tree_journal,
                         trace_detail,
                     )
                 {
@@ -7479,6 +7484,7 @@ impl<'a> RuntimeParser<'a> {
                     tree_store,
                     trace_events,
                     tree_events,
+                    tree_journal,
                     trace_detail,
                 ));
             }
@@ -7503,6 +7509,7 @@ impl<'a> RuntimeParser<'a> {
             tree_store,
             trace_events,
             tree_events,
+            tree_journal,
             trace_detail,
         )]
     }
@@ -7516,6 +7523,7 @@ impl<'a> RuntimeParser<'a> {
         tree_store: &mut RuntimeTreeStore,
         trace_events: &mut Vec<TraceEvent>,
         tree_events: &mut Vec<TreeEvent>,
+        tree_journal: &mut RuntimeTreeJournal,
         trace_detail: RuntimeTraceDetail,
     ) -> Option<RuntimeBranch> {
         let entry_state = branch.stack.last().map(|entry| entry.state)?;
@@ -7540,13 +7548,12 @@ impl<'a> RuntimeParser<'a> {
             line_index,
             tree_store,
         );
+        tree_journal.push(&mut branch.tree_journal, tree_event.clone());
+        tree_journal.extend(&mut branch.tree_journal, replayed_events.clone());
         if trace_detail == RuntimeTraceDetail::Full {
             tree_events.push(tree_event.clone());
             tree_events.extend(replayed_events.clone());
             trace_events.push(TraceEvent::Tree(tree_event));
-        } else {
-            branch.tree_events.push(tree_event);
-            branch.tree_events.extend(replayed_events.clone());
         }
         push_full_runtime_trace(
             trace_events,
@@ -7770,6 +7777,7 @@ impl<'a> RuntimeParser<'a> {
         tree_store: &mut RuntimeTreeStore,
         trace_events: &mut Vec<TraceEvent>,
         tree_events: &mut Vec<TreeEvent>,
+        tree_journal: &mut RuntimeTreeJournal,
         trace_detail: RuntimeTraceDetail,
     ) -> RuntimeStepOutcome {
         match action {
@@ -7790,11 +7798,10 @@ impl<'a> RuntimeParser<'a> {
                     named: false,
                     keyword: KeywordStatus::Unchecked,
                 };
+                tree_journal.push(&mut branch.tree_journal, tree_event.clone());
                 if trace_detail == RuntimeTraceDetail::Full {
                     tree_events.push(tree_event.clone());
                     trace_events.push(TraceEvent::Tree(tree_event));
-                } else {
-                    branch.tree_events.push(tree_event);
                 }
                 push_full_runtime_trace(
                     trace_events,
@@ -7834,33 +7841,23 @@ impl<'a> RuntimeParser<'a> {
                 let start_scanner_snapshot = branch.scanner_snapshot;
                 branch.byte_position = token.end;
                 branch.commit_scanner_snapshot(token);
-                let fragment = if trace_detail == RuntimeTraceDetail::Full {
-                    self.runtime_extra_fragment(
-                        branch.version,
-                        token.lookahead,
-                        tree_store,
-                        tree_events,
-                        input,
-                        line_index,
-                        start,
-                        token.end,
-                        token.inspected_end,
-                        start_scanner_snapshot,
-                    )
-                } else {
-                    self.runtime_extra_fragment(
-                        branch.version,
-                        token.lookahead,
-                        tree_store,
-                        &mut branch.tree_events,
-                        input,
-                        line_index,
-                        start,
-                        token.end,
-                        token.inspected_end,
-                        start_scanner_snapshot,
-                    )
-                };
+                let mut emitted_tree_events = Vec::new();
+                let fragment = self.runtime_extra_fragment(
+                    branch.version,
+                    token.lookahead,
+                    tree_store,
+                    &mut emitted_tree_events,
+                    input,
+                    line_index,
+                    start,
+                    token.end,
+                    token.inspected_end,
+                    start_scanner_snapshot,
+                );
+                if trace_detail == RuntimeTraceDetail::Full {
+                    tree_events.extend(emitted_tree_events.iter().cloned());
+                }
+                tree_journal.extend(&mut branch.tree_journal, emitted_tree_events);
                 if let Some(fragment) = fragment {
                     let Some(state) = branch.stack.last().map(|entry| entry.state) else {
                         return RuntimeStepOutcome::Failed {
@@ -7885,33 +7882,19 @@ impl<'a> RuntimeParser<'a> {
                 child_count,
                 ..
             } => {
-                let reduction = match if trace_detail == RuntimeTraceDetail::Full {
-                    self.runtime_reduce_fragment(
-                        branch.version,
-                        production,
-                        metadata,
-                        child_count,
-                        &mut branch.stack,
-                        tree_store,
-                        tree_events,
-                        input,
-                        line_index,
-                        false,
-                    )
-                } else {
-                    self.runtime_reduce_fragment(
-                        branch.version,
-                        production,
-                        metadata,
-                        child_count,
-                        &mut branch.stack,
-                        tree_store,
-                        &mut branch.tree_events,
-                        input,
-                        line_index,
-                        false,
-                    )
-                } {
+                let mut emitted_tree_events = Vec::new();
+                let reduction = match self.runtime_reduce_fragment(
+                    branch.version,
+                    production,
+                    metadata,
+                    child_count,
+                    &mut branch.stack,
+                    tree_store,
+                    &mut emitted_tree_events,
+                    input,
+                    line_index,
+                    false,
+                ) {
                     Ok(reduction) => reduction,
                     Err(error) => {
                         return RuntimeStepOutcome::Failed {
@@ -7920,6 +7903,10 @@ impl<'a> RuntimeParser<'a> {
                         };
                     }
                 };
+                if trace_detail == RuntimeTraceDetail::Full {
+                    tree_events.extend(emitted_tree_events.iter().cloned());
+                }
+                tree_journal.extend(&mut branch.tree_journal, emitted_tree_events);
                 push_full_runtime_trace(
                     trace_events,
                     trace_detail,
@@ -7975,12 +7962,8 @@ impl<'a> RuntimeParser<'a> {
                         end_byte: *end_byte,
                         lookahead_end_byte: *lookahead_end_byte,
                         contains_error: false,
-                        tree_events: subtree_tree_events(
-                            if trace_detail == RuntimeTraceDetail::Full {
-                                tree_events
-                            } else {
-                                &branch.tree_events
-                            },
+                        tree_events: tree_journal.subtree_tree_events(
+                            branch.tree_journal,
                             *start_byte,
                             *end_byte,
                             *node,
@@ -8028,33 +8011,19 @@ impl<'a> RuntimeParser<'a> {
                         .with_trace(branch.trace),
                     };
                 }
-                let reduction = match if trace_detail == RuntimeTraceDetail::Full {
-                    self.runtime_reduce_fragment(
-                        branch.version,
-                        production,
-                        metadata,
-                        child_count,
-                        &mut branch.stack,
-                        tree_store,
-                        tree_events,
-                        input,
-                        line_index,
-                        true,
-                    )
-                } else {
-                    self.runtime_reduce_fragment(
-                        branch.version,
-                        production,
-                        metadata,
-                        child_count,
-                        &mut branch.stack,
-                        tree_store,
-                        &mut branch.tree_events,
-                        input,
-                        line_index,
-                        true,
-                    )
-                } {
+                let mut emitted_tree_events = Vec::new();
+                let reduction = match self.runtime_reduce_fragment(
+                    branch.version,
+                    production,
+                    metadata,
+                    child_count,
+                    &mut branch.stack,
+                    tree_store,
+                    &mut emitted_tree_events,
+                    input,
+                    line_index,
+                    true,
+                ) {
                     Ok(reduction) => reduction,
                     Err(error) => {
                         return RuntimeStepOutcome::Failed {
@@ -8063,6 +8032,10 @@ impl<'a> RuntimeParser<'a> {
                         };
                     }
                 };
+                if trace_detail == RuntimeTraceDetail::Full {
+                    tree_events.extend(emitted_tree_events.iter().cloned());
+                }
+                tree_journal.extend(&mut branch.tree_journal, emitted_tree_events);
                 push_full_runtime_trace(
                     trace_events,
                     trace_detail,
@@ -8095,7 +8068,7 @@ impl<'a> RuntimeParser<'a> {
                             node: root,
                             trace: branch.trace,
                             error_cost: branch.error_cost,
-                            tree_events: branch.tree_events,
+                            tree_events: tree_journal.collect(branch.tree_journal),
                             reusable_nodes: branch.reusable_nodes,
                         }
                     }
@@ -8218,6 +8191,7 @@ impl<'a> RuntimeParser<'a> {
         tree_store: &mut RuntimeTreeStore,
         trace_events: &mut Vec<TraceEvent>,
         tree_events: &mut Vec<TreeEvent>,
+        tree_journal: &mut RuntimeTreeJournal,
         trace_detail: RuntimeTraceDetail,
     ) -> Option<RuntimeBranch> {
         let state = branch.stack.last().map(|entry| entry.state)?;
@@ -8243,10 +8217,9 @@ impl<'a> RuntimeParser<'a> {
             points,
             error_cost: u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX),
         };
+        tree_journal.push(&mut branch.tree_journal, tree_event.clone());
         if trace_detail == RuntimeTraceDetail::Full {
             tree_events.push(tree_event);
-        } else {
-            branch.tree_events.push(tree_event);
         }
         branch.error_cost = branch
             .error_cost
@@ -8599,6 +8572,20 @@ impl RuntimeParseReport {
         )
     }
 
+    /// Accepted runtime tree with anonymous terminals and source ranges preserved.
+    pub fn accepted_resolved_tree(
+        &self,
+        parser: &ParserGrammar,
+        input: &str,
+    ) -> Option<RuntimeResolvedNode> {
+        resolved_tree_from_events(
+            parser,
+            &self.tree_store,
+            input,
+            &self.accepted_tree_events(),
+        )
+    }
+
     /// Number of accepted runtime branches before identical-tree coalescing.
     pub const fn accepted_count(&self) -> usize {
         self.accepted_count
@@ -8615,6 +8602,79 @@ impl RuntimeParseReport {
     }
 }
 
+/// Lossless-enough runtime tree projection for CST/AST consumers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeResolvedNode {
+    kind: String,
+    symbol: Option<ParserSymbol>,
+    field: Option<String>,
+    node: Option<TreeNodeId>,
+    bytes: ByteRange,
+    points: PointRange,
+    named: bool,
+    visible: bool,
+    extra: bool,
+    text: Option<String>,
+    children: Vec<Self>,
+}
+
+impl RuntimeResolvedNode {
+    /// Node or terminal kind.
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// Parser symbol for terminal leaves, if this node came from a shifted token.
+    pub const fn symbol(&self) -> Option<ParserSymbol> {
+        self.symbol
+    }
+
+    /// Field name attached by the grammar, when known.
+    pub fn field(&self) -> Option<&str> {
+        self.field.as_deref()
+    }
+
+    /// Runtime tree node id, when this item materialized a tree node.
+    pub const fn node(&self) -> Option<TreeNodeId> {
+        self.node
+    }
+
+    /// Source byte range.
+    pub const fn bytes(&self) -> ByteRange {
+        self.bytes
+    }
+
+    /// Source point range.
+    pub const fn points(&self) -> PointRange {
+        self.points
+    }
+
+    /// Whether this item is named in public traversal.
+    pub const fn named(&self) -> bool {
+        self.named
+    }
+
+    /// Whether this item is visible in public traversal.
+    pub const fn visible(&self) -> bool {
+        self.visible
+    }
+
+    /// Whether this item came from an extra token/node.
+    pub const fn extra(&self) -> bool {
+        self.extra
+    }
+
+    /// Source text for terminal leaves.
+    pub fn text(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+
+    /// Child items, including anonymous terminals.
+    pub fn children(&self) -> &[Self] {
+        &self.children
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeBranch {
     version: StackVersionId,
@@ -8624,7 +8684,7 @@ struct RuntimeBranch {
     auto_close_stack: Vec<String>,
     error_cost: u32,
     trace: Vec<ReducedTraceStep>,
-    tree_events: Vec<TreeEvent>,
+    tree_journal: RuntimeTreeJournalHead,
     reusable_nodes: Vec<RuntimeReusableNode>,
 }
 
@@ -8633,6 +8693,73 @@ impl RuntimeBranch {
         if let Some(scanner) = token.scanner {
             self.scanner_snapshot = scanner.after();
         }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RuntimeTreeJournalHead(Option<usize>);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeTreeJournalEntry {
+    parent: RuntimeTreeJournalHead,
+    event: TreeEvent,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct RuntimeTreeJournal {
+    entries: Vec<RuntimeTreeJournalEntry>,
+}
+
+impl RuntimeTreeJournal {
+    fn push(&mut self, head: &mut RuntimeTreeJournalHead, event: TreeEvent) {
+        let parent = *head;
+        let index = self.entries.len();
+        self.entries.push(RuntimeTreeJournalEntry { parent, event });
+        *head = RuntimeTreeJournalHead(Some(index));
+    }
+
+    fn extend<I>(&mut self, head: &mut RuntimeTreeJournalHead, events: I)
+    where
+        I: IntoIterator<Item = TreeEvent>,
+    {
+        for event in events {
+            self.push(head, event);
+        }
+    }
+
+    fn collect(&self, head: RuntimeTreeJournalHead) -> Vec<TreeEvent> {
+        let mut events = Vec::new();
+        let mut cursor = head.0;
+        while let Some(index) = cursor {
+            let entry = &self.entries[index];
+            events.push(entry.event.clone());
+            cursor = entry.parent.0;
+        }
+        events.reverse();
+        events
+    }
+
+    fn subtree_tree_events(
+        &self,
+        head: RuntimeTreeJournalHead,
+        start_byte: usize,
+        end_byte: usize,
+        root_node: TreeNodeId,
+    ) -> Vec<TreeEvent> {
+        let tree_events = self.event_refs(head);
+        subtree_tree_events_from_iter(tree_events, start_byte, end_byte, root_node)
+    }
+
+    fn event_refs(&self, head: RuntimeTreeJournalHead) -> Vec<&TreeEvent> {
+        let mut events = Vec::new();
+        let mut cursor = head.0;
+        while let Some(index) = cursor {
+            let entry = &self.entries[index];
+            events.push(&entry.event);
+            cursor = entry.parent.0;
+        }
+        events.reverse();
+        events
     }
 }
 
@@ -8828,6 +8955,302 @@ impl RuntimeTreeStore {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeResolvedItem {
+    kind: String,
+    symbol: Option<ParserSymbol>,
+    field: Option<String>,
+    node: Option<TreeNodeId>,
+    bytes: ByteRange,
+    points: PointRange,
+    named: bool,
+    visible: bool,
+    extra: bool,
+    text: Option<String>,
+    order: usize,
+    children: Vec<usize>,
+}
+
+fn resolved_tree_from_events(
+    parser: &ParserGrammar,
+    tree_store: &RuntimeTreeStore,
+    input: &str,
+    tree_events: &[TreeEvent],
+) -> Option<RuntimeResolvedNode> {
+    let field_by_child = tree_events
+        .iter()
+        .filter_map(|event| match event {
+            TreeEvent::Field {
+                child: Some(child),
+                field,
+                ..
+            } => parser
+                .fields
+                .get(field.get() as usize)
+                .map(|decl| (*child, decl.name().to_owned())),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+    let mut items = Vec::<RuntimeResolvedItem>::new();
+    for (order, event) in tree_events.iter().enumerate() {
+        match event {
+            TreeEvent::Token {
+                symbol,
+                bytes,
+                points,
+                extra,
+                named,
+                ..
+            } => {
+                let text = source_slice(input, *bytes).map(str::to_owned);
+                items.push(RuntimeResolvedItem {
+                    kind: parser_symbol_kind(parser, *symbol, text.as_deref()),
+                    symbol: Some(*symbol),
+                    field: None,
+                    node: None,
+                    bytes: *bytes,
+                    points: *points,
+                    named: *named,
+                    visible: true,
+                    extra: *extra,
+                    text,
+                    order,
+                    children: Vec::new(),
+                });
+            }
+            TreeEvent::Reduce {
+                node,
+                bytes,
+                points,
+                ..
+            }
+            | TreeEvent::CloseNode {
+                node,
+                bytes,
+                points,
+                ..
+            }
+            | TreeEvent::Error {
+                node,
+                bytes,
+                points,
+                ..
+            } => {
+                let is_extra = matches!(event, TreeEvent::CloseNode { .. });
+                items.push(RuntimeResolvedItem {
+                    kind: tree_store.node(*node).kind.clone(),
+                    symbol: None,
+                    field: field_by_child.get(node).cloned(),
+                    node: Some(*node),
+                    bytes: *bytes,
+                    points: *points,
+                    named: true,
+                    visible: true,
+                    extra: is_extra,
+                    text: None,
+                    order,
+                    children: Vec::new(),
+                });
+            }
+            TreeEvent::Missing {
+                symbol,
+                bytes,
+                points,
+                ..
+            } => {
+                items.push(RuntimeResolvedItem {
+                    kind: parser_symbol_kind(parser, *symbol, None),
+                    symbol: Some(*symbol),
+                    field: None,
+                    node: None,
+                    bytes: *bytes,
+                    points: *points,
+                    named: false,
+                    visible: true,
+                    extra: false,
+                    text: None,
+                    order,
+                    children: Vec::new(),
+                });
+            }
+            TreeEvent::Alias {
+                node,
+                alias,
+                named,
+                bytes,
+                points,
+                ..
+            } => {
+                let kind = parser.aliases[alias.get() as usize].value().to_owned();
+                items.push(RuntimeResolvedItem {
+                    kind,
+                    symbol: None,
+                    field: field_by_child.get(node).cloned(),
+                    node: Some(*node),
+                    bytes: *bytes,
+                    points: *points,
+                    named: *named,
+                    visible: true,
+                    extra: false,
+                    text: None,
+                    order,
+                    children: Vec::new(),
+                });
+            }
+            TreeEvent::OpenNode { .. } | TreeEvent::Field { .. } | TreeEvent::ReuseNode { .. } => {}
+        }
+    }
+    if items.is_empty() {
+        return None;
+    }
+
+    let mut parents = vec![None; items.len()];
+    for child in 0..items.len() {
+        let mut best = None::<(usize, usize, usize)>;
+        for parent in 0..items.len() {
+            if parent == child
+                || items[parent].node.is_none()
+                || !resolved_item_contains(&items[parent], &items[child])
+            {
+                continue;
+            }
+            let key = (
+                resolved_item_len(&items[parent]),
+                items[parent].order,
+                parent,
+            );
+            if best.is_none_or(|best| key < best) {
+                best = Some(key);
+            }
+        }
+        parents[child] = best.map(|(_, _, parent)| parent);
+    }
+    for (child, parent) in parents.iter().enumerate() {
+        if let Some(parent) = *parent {
+            items[parent].children.push(child);
+        }
+    }
+
+    let mut roots = parents
+        .iter()
+        .enumerate()
+        .filter_map(|(index, parent)| parent.is_none().then_some(index))
+        .collect::<Vec<_>>();
+    if roots.is_empty() {
+        return None;
+    }
+    sort_resolved_children(&mut roots, &items);
+    if roots.len() == 1 {
+        return Some(build_resolved_node(roots[0], &items));
+    }
+
+    let first = roots[0];
+    let last = roots[roots.len() - 1];
+    let bytes = ByteRange::new(items[first].bytes.start(), items[last].bytes.end()).ok()?;
+    let points = PointRange::new(items[first].points.start(), items[last].points.end()).ok()?;
+    Some(RuntimeResolvedNode {
+        kind: "ROOT".to_owned(),
+        symbol: None,
+        field: None,
+        node: None,
+        bytes,
+        points,
+        named: true,
+        visible: true,
+        extra: false,
+        text: None,
+        children: roots
+            .into_iter()
+            .map(|root| build_resolved_node(root, &items))
+            .collect(),
+    })
+}
+
+fn resolved_item_contains(parent: &RuntimeResolvedItem, child: &RuntimeResolvedItem) -> bool {
+    parent.order > child.order
+        && parent.bytes.start() <= child.bytes.start()
+        && child.bytes.end() <= parent.bytes.end()
+}
+
+fn resolved_item_len(item: &RuntimeResolvedItem) -> usize {
+    item.bytes.end().get() as usize - item.bytes.start().get() as usize
+}
+
+fn build_resolved_node(index: usize, items: &[RuntimeResolvedItem]) -> RuntimeResolvedNode {
+    let item = &items[index];
+    let mut children = item.children.clone();
+    sort_resolved_children(&mut children, items);
+    RuntimeResolvedNode {
+        kind: item.kind.clone(),
+        symbol: item.symbol,
+        field: item.field.clone(),
+        node: item.node,
+        bytes: item.bytes,
+        points: item.points,
+        named: item.named,
+        visible: item.visible,
+        extra: item.extra,
+        text: item.text.clone(),
+        children: children
+            .into_iter()
+            .map(|child| build_resolved_node(child, items))
+            .collect(),
+    }
+}
+
+fn sort_resolved_children(children: &mut [usize], items: &[RuntimeResolvedItem]) {
+    children.sort_by_key(|child| {
+        let item = &items[*child];
+        (item.bytes.start().get(), item.bytes.end().get(), item.order)
+    });
+}
+
+fn source_slice(input: &str, bytes: ByteRange) -> Option<&str> {
+    let start = bytes.start().get() as usize;
+    let end = bytes.end().get() as usize;
+    input.get(start..end)
+}
+
+fn parser_symbol_kind(
+    parser: &ParserGrammar,
+    symbol: ParserSymbol,
+    token_text: Option<&str>,
+) -> String {
+    match symbol {
+        ParserSymbol::Terminal(terminal) => {
+            let terminal = &parser.symbols.terminals[terminal.get() as usize];
+            match terminal.kind() {
+                ParserTerminalKind::String | ParserTerminalKind::AutoClose => {
+                    terminal.spelling().to_owned()
+                }
+                ParserTerminalKind::Pattern
+                | ParserTerminalKind::Token
+                | ParserTerminalKind::ImmediateToken => terminal
+                    .public_names()
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| terminal.spelling().to_owned()),
+            }
+        }
+        ParserSymbol::Nonterminal(nonterminal) => parser.symbols.nonterminals
+            [nonterminal.get() as usize]
+            .name()
+            .to_owned(),
+        ParserSymbol::External(external) => parser.symbols.externals[external.get() as usize]
+            .name()
+            .map(str::to_owned)
+            .unwrap_or_else(|| token_text.unwrap_or("<external>").to_owned()),
+        ParserSymbol::Eof => "EOF".to_owned(),
+        ParserSymbol::Internal(internal) => {
+            match parser.symbols.internal[internal.get() as usize].kind() {
+                InternalSymbolKind::Error => "ERROR".to_owned(),
+                InternalSymbolKind::Missing => "MISSING".to_owned(),
+                InternalSymbolKind::Recovery => "RECOVERY".to_owned(),
+            }
+        }
+    }
+}
+
 pub(crate) fn auto_close_trigger_len(
     spec: &AutoCloseSpec,
     open_tag: &str,
@@ -8984,14 +9407,18 @@ fn mark_reusable_nodes_with_errors(
     nodes
 }
 
-fn subtree_tree_events(
-    tree_events: &[TreeEvent],
+fn subtree_tree_events_from_iter<'a, I>(
+    tree_events: I,
     start_byte: usize,
     end_byte: usize,
     root_node: TreeNodeId,
-) -> Vec<TreeEvent> {
+) -> Vec<TreeEvent>
+where
+    I: IntoIterator<Item = &'a TreeEvent>,
+{
+    let tree_events = tree_events.into_iter().collect::<Vec<_>>();
     let mut nodes = BTreeSet::from([root_node]);
-    for event in tree_events {
+    for event in &tree_events {
         if let Some((start, end)) = tree_event_byte_range(event)
             && start_byte <= start
             && end <= end_byte
@@ -9010,7 +9437,7 @@ fn subtree_tree_events(
             _ => tree_event_byte_range(event)
                 .is_some_and(|(start, end)| start_byte <= start && end <= end_byte),
         })
-        .cloned()
+        .map(|event| (*event).clone())
         .collect()
 }
 
@@ -10600,6 +11027,24 @@ extras (
         assert_eq!(report.failure_count(), 0);
     }
 
+    fn collect_resolved_terminal_texts<'a>(
+        node: &'a RuntimeResolvedNode,
+        texts: &mut Vec<&'a str>,
+    ) {
+        if let Some(text) = node.text() {
+            texts.push(text);
+        }
+        for child in node.children() {
+            collect_resolved_terminal_texts(child, texts);
+        }
+    }
+
+    fn resolved_terminal_texts(node: &RuntimeResolvedNode) -> Vec<&str> {
+        let mut texts = Vec::new();
+        collect_resolved_terminal_texts(node, &mut texts);
+        texts
+    }
+
     fn assert_styx_authored_gingembre_rejects_like_gingembre(input: &str) {
         let gingembre = gingembre_syntax::parse(input);
         assert!(
@@ -10699,6 +11144,38 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_trim_interpolation_like_gingembre() {
         assert_styx_authored_gingembre_runtime("{{- x -}}", "(template (interpolation (var_ref)))");
+    }
+
+    #[test]
+    fn accepted_resolved_tree_preserves_anonymous_gingembre_delimiters() {
+        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let input = "{{- x -}}";
+        let report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let tree = report.accepted_resolved_tree(&parser, input).unwrap();
+        let texts = resolved_terminal_texts(&tree);
+
+        assert_eq!(tree.kind(), "template");
+        assert!(texts.contains(&"{{-"), "resolved terminals: {texts:?}");
+        assert!(texts.contains(&"-}}"), "resolved terminals: {texts:?}");
+    }
+
+    #[test]
+    fn accepted_resolved_tree_preserves_anonymous_gingembre_operators() {
+        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let input = "{{ 1 + 2 * 3 }}";
+        let report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let tree = report.accepted_resolved_tree(&parser, input).unwrap();
+        let texts = resolved_terminal_texts(&tree);
+
+        assert_eq!(tree.kind(), "template");
+        assert!(texts.contains(&"+"), "resolved terminals: {texts:?}");
+        assert!(texts.contains(&"*"), "resolved terminals: {texts:?}");
     }
 
     #[test]
