@@ -127,6 +127,16 @@ module.exports = grammar({
   assert.equal(response.layers[0].combined, true);
   assert.equal(response.layers[0].input, "alphabeta");
   assert.equal(response.layers[0].parse.sexp, "(document (word))");
+  assert.deepEqual(
+    response.layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
+      capture.capture_name,
+      capture.text,
+    ]),
+    [
+      ["variable", "alpha"],
+      ["variable", "beta"],
+    ],
+  );
 });
 
 test("projects sibling grammar roots into embedded language layers", async () => {

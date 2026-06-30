@@ -1418,25 +1418,36 @@ fn layer_highlight_outputs(
     query
         .execute_runtime_highlights(parser, report, input)
         .into_iter()
-        .filter_map(|capture| {
+        .flat_map(|capture| {
             let bytes = capture.bytes();
             let start = bytes.start().get();
             let end = bytes.end().get();
-            let segment = segment_for_virtual_range(segments, start, end)?;
-            let host_start = segment.host_start + start.saturating_sub(segment.virtual_start);
-            let host_end = segment.host_start + end.saturating_sub(segment.virtual_start);
-            let (start_row, start_column) = point_for_byte(host_input, host_start)?;
-            let (end_row, end_column) = point_for_byte(host_input, host_end)?;
-            Some(HighlightOutput {
-                capture_name: capture.capture_name().to_owned(),
-                text: host_text(host_input, host_start, host_end).to_owned(),
-                start_byte: host_start,
-                end_byte: host_end,
-                start_row,
-                start_column,
-                end_row,
-                end_column,
-            })
+            segments
+                .iter()
+                .filter_map(move |segment| {
+                    let clipped_start = start.max(segment.virtual_start);
+                    let clipped_end = end.min(segment.virtual_end);
+                    if clipped_start >= clipped_end {
+                        return None;
+                    }
+                    let host_start =
+                        segment.host_start + clipped_start.saturating_sub(segment.virtual_start);
+                    let host_end =
+                        segment.host_start + clipped_end.saturating_sub(segment.virtual_start);
+                    let (start_row, start_column) = point_for_byte(host_input, host_start)?;
+                    let (end_row, end_column) = point_for_byte(host_input, host_end)?;
+                    Some(HighlightOutput {
+                        capture_name: capture.capture_name().to_owned(),
+                        text: host_text(host_input, host_start, host_end).to_owned(),
+                        start_byte: host_start,
+                        end_byte: host_end,
+                        start_row,
+                        start_column,
+                        end_row,
+                        end_column,
+                    })
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -2649,6 +2660,91 @@ mod tests {
         assert_eq!(layer.highlights[0].text, "PRINT");
         assert_eq!(layer.highlights[0].start_byte, 2);
         assert_eq!(layer.highlights[0].end_byte, 7);
+    }
+
+    #[test]
+    fn playground_response_splits_combined_layer_highlights_across_host_ranges() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": { "type": "REPEAT1", "content": { "type": "SYMBOL", "name": "word" } },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [
+    { "type": "PATTERN", "value": "\\s+" }
+  ],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((word) @injection.content
+  (#set! injection.language "text")
+  (#set! injection.combined))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "text",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/queries/highlights.scm".to_owned(),
+                    text: "(word) @variable\n".to_owned(),
+                },
+            ],
+            input: "AA CCC".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.layers.len(), 1);
+        let layer = &response.layers[0];
+        assert!(layer.combined);
+        assert_eq!(layer.input, "AACCC");
+        assert_eq!(
+            layer
+                .highlights
+                .iter()
+                .map(|highlight| (
+                    highlight.capture_name.as_str(),
+                    highlight.text.as_str(),
+                    highlight.start_byte,
+                    highlight.end_byte
+                ))
+                .collect::<Vec<_>>(),
+            vec![("variable", "AA", 0, 2), ("variable", "CCC", 3, 6)]
+        );
     }
 
     #[test]
