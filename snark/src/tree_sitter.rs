@@ -2243,8 +2243,12 @@ mod tests {
         for (case_index, case_name) in [
             (0usize, "Import statements"),
             (1, "Namespace statements"),
+            (2, "Keyframes statements"),
             (5, "Charset statements"),
             (3, "Media statements"),
+            (4, "Supports statements"),
+            (6, "Scope statements"),
+            (7, "Other at-statements"),
         ] {
             let case = &statement_cases[case_index];
             assert_eq!(case.name, case_name);
@@ -2297,8 +2301,12 @@ mod tests {
         for (case_index, case_name) in [
             (0usize, "Import statements"),
             (1, "Namespace statements"),
+            (2, "Keyframes statements"),
             (5, "Charset statements"),
             (3, "Media statements"),
+            (4, "Supports statements"),
+            (6, "Scope statements"),
+            (7, "Other at-statements"),
         ] {
             let case = &statement_cases[case_index];
             assert_eq!(case.name, case_name);
