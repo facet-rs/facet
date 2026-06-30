@@ -66,6 +66,32 @@ impl QuerySource {
     ) -> Vec<HighlightCapture> {
         execute_runtime_highlights(&self.0, parser, tree_events, input)
     }
+
+    /// Extract supported language-injection regions from accepted runtime tree events.
+    ///
+    /// This is the first layering-runtime input slice: `@injection.content`,
+    /// `@injection.language`, `#set! injection.language`, `#set! injection.combined`,
+    /// and `#set! injection.include-children`. Unsupported predicates are ignored
+    /// rather than approximated.
+    pub fn execute_runtime_injections(
+        &self,
+        parser: &ParserGrammar,
+        report: &RuntimeParseReport,
+        input: &str,
+    ) -> Vec<InjectionRegion> {
+        let tree_events = report.accepted_tree_events();
+        self.execute_runtime_injections_from_tree_events(parser, &tree_events, input)
+    }
+
+    /// Extract supported language-injection regions from runtime tree events.
+    pub fn execute_runtime_injections_from_tree_events(
+        &self,
+        parser: &ParserGrammar,
+        tree_events: &[TreeEvent],
+        input: &str,
+    ) -> Vec<InjectionRegion> {
+        execute_runtime_injections(&self.0, parser, tree_events, input)
+    }
 }
 
 /// One query capture produced by the supported runtime highlight evaluator.
@@ -94,6 +120,49 @@ impl HighlightCapture {
     }
 
     /// Captured source text.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+/// One injection content region selected by the supported injection-query evaluator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InjectionRegion {
+    language: String,
+    combined: bool,
+    include_children: bool,
+    bytes: ByteRange,
+    points: PointRange,
+    text: String,
+}
+
+impl InjectionRegion {
+    /// Injected language name.
+    pub fn language(&self) -> &str {
+        &self.language
+    }
+
+    /// Whether sibling regions of this language should be parsed as one virtual input.
+    pub const fn combined(&self) -> bool {
+        self.combined
+    }
+
+    /// Whether child nodes should remain visible inside the injected range.
+    pub const fn include_children(&self) -> bool {
+        self.include_children
+    }
+
+    /// Captured byte range in the host input.
+    pub const fn bytes(&self) -> ByteRange {
+        self.bytes
+    }
+
+    /// Captured point range in the host input.
+    pub const fn points(&self) -> PointRange {
+        self.points
+    }
+
+    /// Captured host source text.
     pub fn text(&self) -> &str {
         &self.text
     }
@@ -330,6 +399,108 @@ fn execute_runtime_highlights(
     captures
 }
 
+fn execute_runtime_injections(
+    query: &str,
+    parser: &ParserGrammar,
+    tree_events: &[TreeEvent],
+    input: &str,
+) -> Vec<InjectionRegion> {
+    let patterns = injection_patterns(query);
+    let nodes = runtime_highlight_nodes(parser, tree_events, input);
+    let tokens = runtime_highlight_tokens(parser, tree_events, input);
+    let fields = runtime_highlight_fields(parser, tree_events);
+    let mut regions = Vec::new();
+
+    for pattern in &patterns {
+        let language_captures = pattern
+            .captures
+            .iter()
+            .filter(|capture| capture.capture_name == "injection.language")
+            .flat_map(|capture| capture_binding_matches(capture, &nodes, &tokens, &fields))
+            .collect::<Vec<_>>();
+        let Some(language) = pattern.language.clone().or_else(|| {
+            language_captures
+                .first()
+                .map(|capture| capture.text.clone())
+        }) else {
+            continue;
+        };
+        for content in pattern
+            .captures
+            .iter()
+            .filter(|capture| capture.capture_name == "injection.content")
+        {
+            for capture in capture_binding_matches(content, &nodes, &tokens, &fields) {
+                regions.push(InjectionRegion {
+                    language: language.clone(),
+                    combined: pattern.combined,
+                    include_children: pattern.include_children,
+                    bytes: capture.bytes,
+                    points: capture.points,
+                    text: capture.text,
+                });
+            }
+        }
+    }
+
+    regions
+}
+
+fn capture_binding_matches(
+    binding: &QueryCaptureBinding,
+    nodes: &[RuntimeHighlightNode],
+    tokens: &[RuntimeHighlightToken],
+    fields: &[RuntimeHighlightField],
+) -> Vec<HighlightCapture> {
+    let rule = HighlightRule {
+        capture_name: binding.capture_name.clone(),
+        target: binding.target.clone(),
+        parent_kind: binding.parent_kind.clone(),
+        field_name: binding.field_name.clone(),
+        predicates: Vec::new(),
+    };
+    match &binding.target {
+        HighlightTarget::Node(kind) => nodes
+            .iter()
+            .filter(|node| &node.kind == kind)
+            .filter(|node| node_satisfies_edge_constraints(node, &rule, nodes, fields))
+            .map(|node| HighlightCapture {
+                capture_name: binding.capture_name.clone(),
+                bytes: node.bytes,
+                points: node.points,
+                text: node.text.clone(),
+            })
+            .collect(),
+        HighlightTarget::AnyNode => nodes
+            .iter()
+            .filter(|node| node_satisfies_edge_constraints(node, &rule, nodes, fields))
+            .map(|node| HighlightCapture {
+                capture_name: binding.capture_name.clone(),
+                bytes: node.bytes,
+                points: node.points,
+                text: node.text.clone(),
+            })
+            .collect(),
+        HighlightTarget::Literal(literal) => tokens
+            .iter()
+            .filter(|token| &token.text == literal)
+            .filter(|_| binding.field_name.is_none())
+            .filter(|token| {
+                binding
+                    .parent_kind
+                    .as_ref()
+                    .is_none_or(|parent| token_has_direct_parent_kind(token, parent, nodes))
+            })
+            .map(|token| HighlightCapture {
+                capture_name: binding.capture_name.clone(),
+                bytes: token.bytes,
+                points: token.points,
+                text: token.text.clone(),
+            })
+            .collect(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HighlightRule {
     capture_name: String,
@@ -337,6 +508,32 @@ struct HighlightRule {
     parent_kind: Option<String>,
     field_name: Option<String>,
     predicates: Vec<HighlightPredicate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QueryCaptureBinding {
+    capture_name: String,
+    target: HighlightTarget,
+    parent_kind: Option<String>,
+    field_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct InjectionPattern {
+    captures: Vec<QueryCaptureBinding>,
+    language: Option<String>,
+    combined: bool,
+    include_children: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ParsedInjectionItem {
+    target: Option<HighlightTarget>,
+    capture_targets: Vec<HighlightTarget>,
+    captures: Vec<QueryCaptureBinding>,
+    language: Option<String>,
+    combined: bool,
+    include_children: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -390,6 +587,16 @@ fn highlight_rules(query: &str) -> Vec<HighlightRule> {
         tokens.push(token);
     }
     let mut parser = HighlightQueryParser { tokens, index: 0 };
+    parser.parse_all()
+}
+
+fn injection_patterns(query: &str) -> Vec<InjectionPattern> {
+    let mut scanner = QueryScanner::new(query);
+    let mut tokens = Vec::new();
+    while let Some(token) = scanner.next_token() {
+        tokens.push(token);
+    }
+    let mut parser = InjectionQueryParser { tokens, index: 0 };
     parser.parse_all()
 }
 
@@ -664,6 +871,280 @@ impl HighlightQueryParser {
             self.index += 1;
         }
         token
+    }
+}
+
+struct InjectionQueryParser {
+    tokens: Vec<QueryToken>,
+    index: usize,
+}
+
+impl InjectionQueryParser {
+    fn parse_all(&mut self) -> Vec<InjectionPattern> {
+        let mut patterns = Vec::new();
+        while self.index < self.tokens.len() {
+            let item = self.parse_item(None, None);
+            if item
+                .captures
+                .iter()
+                .any(|capture| capture.capture_name == "injection.content")
+            {
+                patterns.push(InjectionPattern {
+                    captures: item.captures,
+                    language: item.language,
+                    combined: item.combined,
+                    include_children: item.include_children,
+                });
+            }
+        }
+        patterns
+    }
+
+    fn parse_item(
+        &mut self,
+        parent_kind: Option<&str>,
+        field_name: Option<&str>,
+    ) -> ParsedInjectionItem {
+        let mut item = match self.next() {
+            Some(QueryToken::OpenParen) => self.parse_form(parent_kind, field_name),
+            Some(QueryToken::OpenBracket) => self.parse_list(parent_kind, field_name),
+            Some(QueryToken::String(literal)) => ParsedInjectionItem {
+                target: Some(HighlightTarget::Literal(literal.clone())),
+                capture_targets: vec![HighlightTarget::Literal(literal)],
+                ..ParsedInjectionItem::default()
+            },
+            Some(QueryToken::Symbol(symbol)) if symbol == "_" => ParsedInjectionItem {
+                target: Some(HighlightTarget::AnyNode),
+                capture_targets: vec![HighlightTarget::AnyNode],
+                ..ParsedInjectionItem::default()
+            },
+            Some(QueryToken::Symbol(_))
+            | Some(QueryToken::CloseParen)
+            | Some(QueryToken::CloseBracket)
+            | None => ParsedInjectionItem::default(),
+        };
+
+        let captures = self.consume_captures();
+        let capture_targets = if let Some(target) = &item.target {
+            vec![target.clone()]
+        } else {
+            item.capture_targets.clone()
+        };
+        for target in capture_targets {
+            for capture_name in &captures {
+                item.captures.push(QueryCaptureBinding {
+                    capture_name: capture_name.clone(),
+                    target: target.clone(),
+                    parent_kind: parent_kind.map(str::to_owned),
+                    field_name: field_name.map(str::to_owned),
+                });
+            }
+        }
+        item
+    }
+
+    fn parse_form(
+        &mut self,
+        parent_kind: Option<&str>,
+        field_name: Option<&str>,
+    ) -> ParsedInjectionItem {
+        match self.peek() {
+            Some(QueryToken::Symbol(symbol)) if symbol.starts_with('#') => self.parse_predicate(),
+            Some(QueryToken::Symbol(symbol)) if symbol == "_" => {
+                let _ = self.next();
+                let mut item = ParsedInjectionItem {
+                    target: Some(HighlightTarget::AnyNode),
+                    capture_targets: vec![HighlightTarget::AnyNode],
+                    ..ParsedInjectionItem::default()
+                };
+                while !self.consume_close_paren() {
+                    let child_field = self.consume_field_label();
+                    let child = self.parse_item(parent_kind, child_field.as_deref());
+                    item.merge(child);
+                    if self.index >= self.tokens.len() {
+                        break;
+                    }
+                }
+                item
+            }
+            Some(QueryToken::Symbol(symbol)) if is_named_node_reference(symbol) => {
+                let kind = match self.next() {
+                    Some(QueryToken::Symbol(kind)) => kind,
+                    _ => unreachable!("peeked a symbol before consuming a symbol"),
+                };
+                let mut item = ParsedInjectionItem {
+                    target: Some(HighlightTarget::Node(kind.clone())),
+                    capture_targets: vec![HighlightTarget::Node(kind.clone())],
+                    ..ParsedInjectionItem::default()
+                };
+                while !self.consume_close_paren() {
+                    let child_field = self.consume_field_label();
+                    let child = self.parse_item(Some(&kind), child_field.as_deref());
+                    item.merge(child);
+                    if self.index >= self.tokens.len() {
+                        break;
+                    }
+                }
+                item
+            }
+            _ => {
+                let mut item = ParsedInjectionItem::default();
+                while !self.consume_close_paren() {
+                    let child_field = self.consume_field_label();
+                    let child = self.parse_item(parent_kind, child_field.as_deref().or(field_name));
+                    item.merge(child);
+                    if self.index >= self.tokens.len() {
+                        break;
+                    }
+                }
+                item
+            }
+        }
+    }
+
+    fn parse_list(
+        &mut self,
+        parent_kind: Option<&str>,
+        field_name: Option<&str>,
+    ) -> ParsedInjectionItem {
+        let mut item = ParsedInjectionItem::default();
+        while !self.consume_close_bracket() {
+            let child = self.parse_item(parent_kind, field_name);
+            if let Some(target) = child.target.clone() {
+                item.capture_targets.push(target);
+            } else {
+                item.capture_targets.extend(child.capture_targets.clone());
+            }
+            item.merge(child);
+            if self.index >= self.tokens.len() {
+                break;
+            }
+        }
+        item
+    }
+
+    fn parse_predicate(&mut self) -> ParsedInjectionItem {
+        let op = match self.next() {
+            Some(QueryToken::Symbol(op)) => op,
+            _ => unreachable!("peeked a predicate before consuming one"),
+        };
+        let mut symbols = Vec::new();
+        let mut strings = Vec::new();
+        while !self.consume_close_paren() {
+            match self.next() {
+                Some(QueryToken::Symbol(symbol)) => symbols.push(symbol),
+                Some(QueryToken::String(string)) => strings.push(string),
+                Some(QueryToken::OpenParen) => {
+                    let child = self.parse_form(None, None);
+                    let mut item = ParsedInjectionItem::default();
+                    item.merge(child);
+                    return item;
+                }
+                Some(QueryToken::OpenBracket) => {
+                    let child = self.parse_list(None, None);
+                    let mut item = ParsedInjectionItem::default();
+                    item.merge(child);
+                    return item;
+                }
+                Some(QueryToken::CloseParen) | Some(QueryToken::CloseBracket) | None => break,
+            }
+            if self.index >= self.tokens.len() {
+                break;
+            }
+        }
+        if op != "#set!" {
+            return ParsedInjectionItem::default();
+        }
+        let mut item = ParsedInjectionItem::default();
+        if symbols.iter().any(|symbol| symbol == "injection.combined") {
+            item.combined = true;
+        }
+        if symbols
+            .iter()
+            .any(|symbol| symbol == "injection.include-children")
+        {
+            item.include_children = true;
+        }
+        if symbols.iter().any(|symbol| symbol == "injection.language")
+            && let Some(language) = strings.into_iter().next()
+        {
+            item.language = Some(language);
+        }
+        item
+    }
+
+    fn consume_captures(&mut self) -> Vec<String> {
+        let mut captures = Vec::new();
+        while let Some(QueryToken::Symbol(symbol)) = self.peek() {
+            let Some(capture) = symbol.strip_prefix('@') else {
+                break;
+            };
+            if capture.is_empty() || !capture.chars().all(is_capture_name_char) {
+                break;
+            }
+            let capture = capture.to_owned();
+            self.index += 1;
+            captures.push(capture);
+        }
+        captures
+    }
+
+    fn consume_field_label(&mut self) -> Option<String> {
+        let Some(QueryToken::Symbol(symbol)) = self.peek() else {
+            return None;
+        };
+        let field = symbol.strip_suffix(':')?;
+        if field.is_empty()
+            || !field
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            return None;
+        }
+        let field = field.to_owned();
+        self.index += 1;
+        Some(field)
+    }
+
+    fn consume_close_paren(&mut self) -> bool {
+        if matches!(self.peek(), Some(QueryToken::CloseParen)) {
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_close_bracket(&mut self) -> bool {
+        if matches!(self.peek(), Some(QueryToken::CloseBracket)) {
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn peek(&self) -> Option<&QueryToken> {
+        self.tokens.get(self.index)
+    }
+
+    fn next(&mut self) -> Option<QueryToken> {
+        let token = self.tokens.get(self.index).cloned();
+        if token.is_some() {
+            self.index += 1;
+        }
+        token
+    }
+}
+
+impl ParsedInjectionItem {
+    fn merge(&mut self, child: Self) {
+        self.captures.extend(child.captures);
+        if self.language.is_none() {
+            self.language = child.language;
+        }
+        self.combined |= child.combined;
+        self.include_children |= child.include_children;
     }
 }
 
@@ -1126,7 +1607,17 @@ impl QueryBundle {
 
 #[cfg(test)]
 mod tests {
-    use super::{QuerySource, anonymous_node_literals, capture_names, named_node_references};
+    use crate::{
+        grammar::RawGrammarJson,
+        lexical::LexicalFacts,
+        parser::{ParseTable, ParserGrammar, RuntimeParser},
+        validated::ValidatedGrammar,
+    };
+
+    use super::{
+        QuerySource, anonymous_node_literals, capture_names, injection_patterns,
+        named_node_references,
+    };
 
     #[test]
     fn extracts_query_anonymous_node_literals() {
@@ -1230,5 +1721,75 @@ mod tests {
         assert!(literals.contains("\r"));
         assert!(literals.contains("\\"));
         assert!(literals.contains("\""));
+    }
+
+    #[test]
+    fn parses_injection_set_properties() {
+        let patterns = injection_patterns(
+            r#"
+              ((lua_code) @injection.content
+                (#set! injection.language "lua")
+                (#set! injection.combined)
+                (#set! injection.include-children))
+            "#,
+        );
+
+        assert_eq!(patterns.len(), 1);
+        let pattern = &patterns[0];
+        assert_eq!(pattern.language.as_deref(), Some("lua"));
+        assert!(pattern.combined);
+        assert!(pattern.include_children);
+        assert_eq!(pattern.captures.len(), 1);
+        assert_eq!(pattern.captures[0].capture_name, "injection.content");
+    }
+
+    #[test]
+    fn extracts_runtime_injection_regions() {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(
+            r#"{
+              "name": "injection_smoke",
+              "rules": {
+                "document": { "type": "SYMBOL", "name": "lua_code" },
+                "lua_code": {
+                  "type": "TOKEN",
+                  "content": { "type": "PATTERN", "value": "[A-Za-z_]+" }
+                }
+              },
+              "extras": [],
+              "conflicts": [],
+              "precedences": [],
+              "externals": [],
+              "inline": [],
+              "supertypes": []
+            }"#,
+        )
+        .unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = ParseTable::from_grammar(&parser).unwrap();
+        let report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report("print")
+            .unwrap();
+        let query = QuerySource(
+            r#"((lua_code) @injection.content
+                (#set! injection.language "lua")
+                (#set! injection.combined))"#
+                .to_owned(),
+        );
+
+        let regions = query.execute_runtime_injections(&parser, &report, "print");
+
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].language(), "lua");
+        assert!(regions[0].combined());
+        assert!(!regions[0].include_children());
+        assert_eq!(regions[0].text(), "print");
+        assert_eq!(regions[0].bytes().start().get(), 0);
+        assert_eq!(regions[0].bytes().end().get(), 5);
     }
 }
