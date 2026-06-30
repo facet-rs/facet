@@ -1013,6 +1013,45 @@ module.exports = grammar(CSS, {
   });
 });
 
+test("resolves normalized Arborium cross-group grammar modules by tree-sitter package name", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "group-birch/c/def/grammar/grammar.js",
+        text: `
+module.exports = grammar({
+  name: "c",
+  rules: {
+    translation_unit: $ => "c",
+  },
+});
+`,
+      },
+      {
+        path: "group-moss/glsl/def/grammar/grammar.js",
+        text: `
+const C = require("tree-sitter-c/grammar");
+module.exports = grammar(C, {
+  name: "glsl",
+  rules: {
+    translation_unit: $ => "glsl",
+  },
+});
+`,
+      },
+    ],
+    "group-moss/glsl/def/grammar/grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "glsl");
+  assert.deepEqual(grammar.rules.translation_unit, {
+    type: "STRING",
+    value: "glsl",
+  });
+});
+
 const arboriumXmlGrammarRoot = "/Users/amos/oss/arborium/langs/group-acorn/xml/def/grammar";
 const arboriumIdrisGrammarRoot = "/Users/amos/oss/arborium/langs/group-fern/idris/def/grammar";
 
