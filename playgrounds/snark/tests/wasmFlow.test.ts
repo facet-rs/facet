@@ -1726,7 +1726,7 @@ test(
         response.diagnostics[0].primary_span.start_row,
         response.diagnostics[0].primary_span.start_column,
       ],
-      [110, 4],
+      [107, 81],
     );
     assert.ok(response.parse);
     assert.ok(response.parse.accepted_error_count > 0);

@@ -6,7 +6,7 @@
 //! Weavy programs.
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     error::Error,
     fmt,
 };
@@ -1166,6 +1166,28 @@ pub fn parse_prepared_runtime_with_report_and_scanner(
         table,
         input,
         external_scanner,
+        RuntimeWeavyRecoveryMode::Strict,
+    )
+}
+
+/// Execute a prepared runtime stack/tree parser plan through Weavy with skip-invalid recovery.
+pub fn parse_prepared_runtime_recovering_with_report_and_scanner(
+    plan: &RuntimeWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+    parse_runtime_with_compiled_lex_modes(
+        &plan.reduced,
+        &plan.compiled_lex_modes,
+        grammar,
+        parser,
+        table,
+        input,
+        external_scanner,
+        RuntimeWeavyRecoveryMode::SkipInvalidInput,
     )
 }
 
@@ -1187,6 +1209,29 @@ pub fn parse_runtime_with_report_and_scanner(
         table,
         input,
         external_scanner,
+        RuntimeWeavyRecoveryMode::Strict,
+    )
+}
+
+/// Execute a runtime stack/tree parser plan through Weavy with skip-invalid recovery.
+pub fn parse_runtime_recovering_with_report_and_scanner(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+    let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
+    parse_runtime_with_compiled_lex_modes(
+        plan,
+        &compiled_lex_modes,
+        grammar,
+        parser,
+        table,
+        input,
+        external_scanner,
+        RuntimeWeavyRecoveryMode::SkipInvalidInput,
     )
 }
 
@@ -1198,6 +1243,7 @@ fn parse_runtime_with_compiled_lex_modes(
     table: &parser_ir::ParseTable,
     input: &str,
     external_scanner: Option<&dyn ReducedExternalScanner>,
+    recovery: RuntimeWeavyRecoveryMode,
 ) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
     if parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(ReducedWeavyError::WrongStage {
@@ -1229,17 +1275,41 @@ fn parse_runtime_with_compiled_lex_modes(
         byte_position: 0,
         scanner_snapshot: None,
         auto_close_stack: Vec::new(),
+        error_cost: 0,
     }]);
-    let mut accepted = Vec::<(parser_ir::StackVersionId, SexpNode)>::new();
+    let mut queued_recovery_costs = HashMap::new();
+    if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
+        let branch = branches.front().expect("initial branch exists");
+        queued_recovery_costs.insert(RuntimeWeavyBranchKey::from_branch(branch), 0);
+    }
+    let mut accepted = Vec::<(parser_ir::StackVersionId, SexpNode, u32)>::new();
     let mut failures = Vec::<ReducedWeavyError>::new();
     let mut next_version_index = 1usize;
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
-    let step_limit = reduced_weavy_step_limit(table, input);
+    let step_limit = match recovery {
+        RuntimeWeavyRecoveryMode::Strict => reduced_weavy_step_limit(table, input),
+        RuntimeWeavyRecoveryMode::SkipInvalidInput => {
+            reduced_weavy_recovery_step_limit(table, input)
+        }
+    };
     let mut max_live_versions = branches.len();
     let mut stats = RunStats::default();
 
     while let Some(branch) = branches.pop_front() {
+        if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
+            let key = RuntimeWeavyBranchKey::from_branch(&branch);
+            if queued_recovery_costs
+                .get(&key)
+                .is_some_and(|best_cost| branch.error_cost > *best_cost)
+            {
+                trace_events.push(parser_ir::TraceEvent::GlrRetire {
+                    version: branch.version,
+                    reason: parser_ir::BranchRetireReason::Dominated,
+                });
+                continue;
+            }
+        }
         step_count += 1;
         if step_count > step_limit {
             trace_events.push(parser_ir::TraceEvent::GlrRetire {
@@ -1268,15 +1338,26 @@ fn parse_runtime_with_compiled_lex_modes(
             &mut next_version_index,
             &mut next_lookahead_index,
             &mut stats,
+            recovery,
         ) {
             match outcome {
-                RuntimeWeavyStepOutcome::Branch(branch) => branches.push_back(branch),
-                RuntimeWeavyStepOutcome::Accepted { version, node } => {
+                RuntimeWeavyStepOutcome::Branch(branch) => enqueue_runtime_weavy_branch(
+                    branch,
+                    recovery,
+                    &mut queued_recovery_costs,
+                    &mut trace_events,
+                    &mut branches,
+                ),
+                RuntimeWeavyStepOutcome::Accepted {
+                    version,
+                    node,
+                    error_cost,
+                } => {
                     trace_events.push(parser_ir::TraceEvent::GlrRetire {
                         version,
                         reason: parser_ir::BranchRetireReason::Accepted,
                     });
-                    accepted.push((version, node));
+                    accepted.push((version, node, error_cost));
                 }
                 RuntimeWeavyStepOutcome::Failed { version, error } => {
                     trace_events.push(parser_ir::TraceEvent::GlrRetire {
@@ -1290,7 +1371,7 @@ fn parse_runtime_with_compiled_lex_modes(
         max_live_versions = max_live_versions.max(branches.len());
     }
 
-    let Some((first_version, first_node)) = accepted.first().cloned() else {
+    let Some(min_error_cost) = accepted.iter().map(|(_, _, error_cost)| *error_cost).min() else {
         trace_events.push(parser_ir::TraceEvent::ParseFinish {
             id: next_runtime_weavy_trace_id(&trace_events),
             outcome: parser_ir::ParseOutcome::Failed,
@@ -1299,10 +1380,23 @@ fn parse_runtime_with_compiled_lex_modes(
             failure_count: failures.len(),
         });
     };
-    if accepted.iter().all(|(_, node)| *node == first_node) {
+    let best_accepted = accepted
+        .iter()
+        .filter(|(_, _, error_cost)| *error_cost == min_error_cost)
+        .collect::<Vec<_>>();
+    let Some((first_version, first_node, _)) =
+        best_accepted.first().map(|accepted| (**accepted).clone())
+    else {
+        unreachable!("accepted Weavy branches have a minimum recovery cost");
+    };
+    if best_accepted.iter().all(|(_, node, _)| *node == first_node) {
         trace_events.push(parser_ir::TraceEvent::ParseFinish {
             id: next_runtime_weavy_trace_id(&trace_events),
-            outcome: parser_ir::ParseOutcome::Accepted,
+            outcome: if min_error_cost == 0 {
+                parser_ir::ParseOutcome::Accepted
+            } else {
+                parser_ir::ParseOutcome::Recovered
+            },
         });
         return Ok(RuntimeWeavyReport {
             tree: first_node,
@@ -1311,7 +1405,7 @@ fn parse_runtime_with_compiled_lex_modes(
             tree_events,
             tree_store,
             accepted_version: first_version,
-            accepted_count: accepted.len(),
+            accepted_count: best_accepted.len(),
             failure_count: failures.len(),
             max_live_versions,
         });
@@ -1322,8 +1416,11 @@ fn parse_runtime_with_compiled_lex_modes(
         outcome: parser_ir::ParseOutcome::Failed,
     });
     Err(ReducedWeavyError::AmbiguousParse {
-        accepted_count: accepted.len(),
-        accepted: accepted.iter().map(|(_, node)| node.to_sexp()).collect(),
+        accepted_count: best_accepted.len(),
+        accepted: best_accepted
+            .iter()
+            .map(|(_, node, _)| node.to_sexp())
+            .collect(),
     })
 }
 
@@ -1627,6 +1724,45 @@ fn reduced_weavy_step_limit(table: &parser_ir::ParseTable, input: &str) -> usize
     10_000usize.max(input_budget.saturating_add(table_budget))
 }
 
+fn reduced_weavy_recovery_step_limit(table: &parser_ir::ParseTable, input: &str) -> usize {
+    let input_budget = input.len().saturating_mul(96);
+    let table_budget = table.states().len().saturating_mul(64);
+    10_000usize
+        .max(input_budget.saturating_add(table_budget))
+        .min(500_000)
+}
+
+fn runtime_weavy_recovery_end(input: &str, start_byte: usize) -> Option<usize> {
+    if start_byte >= input.len() {
+        return None;
+    }
+    if input[start_byte..].starts_with(['{', '}']) {
+        return None;
+    }
+    let mut end = start_byte;
+    for ch in input[start_byte..].chars() {
+        let previous_end = end;
+        end += ch.len_utf8();
+        if ch == '}' {
+            return Some(if previous_end == start_byte {
+                end
+            } else {
+                previous_end
+            });
+        }
+        if matches!(ch, ';' | '\n') {
+            return Some(end);
+        }
+    }
+    (end > start_byte).then_some(end)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeWeavyRecoveryMode {
+    Strict,
+    SkipInvalidInput,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReducedWeavyBranch {
     id: parser_ir::ReducedBranchId,
@@ -1655,6 +1791,24 @@ struct RuntimeWeavyBranch {
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
     auto_close_stack: Vec<String>,
+    error_cost: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RuntimeWeavyBranchKey {
+    byte_position: usize,
+    scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
+    stack: Vec<parser_ir::ParseStateId>,
+}
+
+impl RuntimeWeavyBranchKey {
+    fn from_branch(branch: &RuntimeWeavyBranch) -> Self {
+        Self {
+            byte_position: branch.byte_position,
+            scanner_snapshot: branch.scanner_snapshot,
+            stack: branch.stack.iter().map(|entry| entry.state).collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1663,6 +1817,7 @@ enum RuntimeWeavyStepOutcome {
     Accepted {
         version: parser_ir::StackVersionId,
         node: SexpNode,
+        error_cost: u32,
     },
     Failed {
         version: parser_ir::StackVersionId,
@@ -1693,6 +1848,7 @@ fn step_runtime_weavy_branch(
     next_version_index: &mut usize,
     next_lookahead_index: &mut usize,
     stats: &mut RunStats,
+    recovery: RuntimeWeavyRecoveryMode,
 ) -> Vec<RuntimeWeavyStepOutcome> {
     let source_version = branch.version;
     let state = match branch.stack.last() {
@@ -1721,6 +1877,45 @@ fn step_runtime_weavy_branch(
     ) {
         Ok(dispatch) => dispatch,
         Err(error) => {
+            if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
+                if matches!(error, ReducedWeavyError::NoToken { .. })
+                    && input[branch.byte_position..].starts_with(['{', '}'])
+                    && let Some(branch) = recover_runtime_weavy_to_viable_stack(
+                        plan,
+                        grammar,
+                        parser,
+                        table,
+                        compiled_lex_modes,
+                        input,
+                        external_scanner,
+                        branch.clone(),
+                        trace_events,
+                    )
+                {
+                    return vec![RuntimeWeavyStepOutcome::Branch(branch)];
+                }
+                if matches!(error, ReducedWeavyError::NoToken { .. })
+                    && let Some(branch) = recover_runtime_weavy_no_token(
+                        branch.clone(),
+                        input,
+                        tree_store,
+                        trace_events,
+                        tree_events,
+                    )
+                {
+                    return vec![RuntimeWeavyStepOutcome::Branch(branch)];
+                }
+                if let ReducedWeavyError::NoAction { lookahead, .. } = error
+                    && let Some(branch) = recover_runtime_weavy_to_action_state(
+                        table,
+                        branch.clone(),
+                        lookahead,
+                        trace_events,
+                    )
+                {
+                    return vec![RuntimeWeavyStepOutcome::Branch(branch)];
+                }
+            }
             return vec![RuntimeWeavyStepOutcome::Failed {
                 version: source_version,
                 error,
@@ -1896,7 +2091,11 @@ fn run_runtime_weavy_action(
         }
     }
     if let Some(node) = stepper.tree {
-        RuntimeWeavyStepOutcome::Accepted { version, node }
+        RuntimeWeavyStepOutcome::Accepted {
+            version,
+            node,
+            error_cost: stepper.error_cost,
+        }
     } else {
         RuntimeWeavyStepOutcome::Branch(RuntimeWeavyBranch {
             version,
@@ -1904,6 +2103,7 @@ fn run_runtime_weavy_action(
             byte_position: stepper.byte_position,
             scanner_snapshot: stepper.scanner_snapshot,
             auto_close_stack: stepper.auto_close_stack,
+            error_cost: stepper.error_cost,
         })
     }
 }
@@ -1940,6 +2140,184 @@ fn runtime_weavy_conflict_id(
         })
         .map(parser_ir::TableConflict::id)
         .unwrap_or_else(|| parser_ir::ConflictId::from_index(0))
+}
+
+fn enqueue_runtime_weavy_branch(
+    branch: RuntimeWeavyBranch,
+    recovery: RuntimeWeavyRecoveryMode,
+    queued_recovery_costs: &mut HashMap<RuntimeWeavyBranchKey, u32>,
+    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    branches: &mut VecDeque<RuntimeWeavyBranch>,
+) {
+    if recovery == RuntimeWeavyRecoveryMode::Strict {
+        branches.push_back(branch);
+        return;
+    }
+    let key = RuntimeWeavyBranchKey::from_branch(&branch);
+    match queued_recovery_costs.get(&key).copied() {
+        Some(best_cost) if branch.error_cost >= best_cost => {
+            trace_events.push(parser_ir::TraceEvent::GlrRetire {
+                version: branch.version,
+                reason: parser_ir::BranchRetireReason::Dominated,
+            });
+        }
+        _ => {
+            queued_recovery_costs.insert(key, branch.error_cost);
+            branches.push_back(branch);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recover_runtime_weavy_to_viable_stack(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    compiled_lex_modes: &[parser_ir::CompiledLexMode],
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+    mut branch: RuntimeWeavyBranch,
+    trace_events: &mut Vec<parser_ir::TraceEvent>,
+) -> Option<RuntimeWeavyBranch> {
+    if external_scanner.is_some() || branch.stack.len() <= 1 {
+        return None;
+    }
+    let original_len = branch.stack.len();
+    for len in (1..original_len).rev() {
+        let state = branch.stack[len - 1].state;
+        if runtime_weavy_lex_succeeds(
+            plan,
+            grammar,
+            parser,
+            table,
+            compiled_lex_modes,
+            input,
+            &branch,
+            state,
+        ) {
+            branch.stack.truncate(len);
+            branch.error_cost = branch
+                .error_cost
+                .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
+            trace_events.push(parser_ir::TraceEvent::Recover {
+                version: branch.version,
+                state,
+            });
+            return Some(branch);
+        }
+    }
+    None
+}
+
+fn recover_runtime_weavy_to_action_state(
+    table: &parser_ir::ParseTable,
+    mut branch: RuntimeWeavyBranch,
+    lookahead: parser_ir::LookaheadSymbol,
+    trace_events: &mut Vec<parser_ir::TraceEvent>,
+) -> Option<RuntimeWeavyBranch> {
+    let original_len = branch.stack.len();
+    if original_len <= 1 {
+        return None;
+    }
+    for len in (1..original_len).rev() {
+        let state = branch.stack[len - 1].state;
+        let state_row = table.states().get(state.get() as usize)?;
+        if state_row
+            .entries()
+            .iter()
+            .any(|entry| entry.lookahead() == lookahead)
+        {
+            branch.stack.truncate(len);
+            branch.error_cost = branch
+                .error_cost
+                .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
+            trace_events.push(parser_ir::TraceEvent::Recover {
+                version: branch.version,
+                state,
+            });
+            return Some(branch);
+        }
+    }
+    None
+}
+
+fn recover_runtime_weavy_no_token(
+    mut branch: RuntimeWeavyBranch,
+    input: &str,
+    tree_store: &mut RuntimeWeavyTreeStore,
+    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    tree_events: &mut Vec<parser_ir::TreeEvent>,
+) -> Option<RuntimeWeavyBranch> {
+    let state = branch.stack.last().map(|entry| entry.state)?;
+    let start_byte = branch.byte_position;
+    let end_byte = runtime_weavy_recovery_end(input, start_byte)?;
+    let node = tree_store.push(SexpNode {
+        kind: "ERROR".to_owned(),
+        children: Vec::new(),
+    });
+    let (bytes, points) = runtime_weavy_input_ranges(input, start_byte, end_byte);
+    trace_events.push(parser_ir::TraceEvent::Recover {
+        version: branch.version,
+        state,
+    });
+    tree_events.push(parser_ir::TreeEvent::Error {
+        version: branch.version,
+        node,
+        bytes,
+        points,
+        error_cost: u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX),
+    });
+    branch.error_cost = branch
+        .error_cost
+        .saturating_add(u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX));
+    branch.stack.push(RuntimeWeavyStackEntry {
+        state,
+        fragment: Some(RuntimeWeavyFragment::Node {
+            node,
+            start_byte,
+            end_byte,
+        }),
+        extra: true,
+        end_byte,
+    });
+    branch.byte_position = end_byte;
+    Some(branch)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn runtime_weavy_lex_succeeds(
+    plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    compiled_lex_modes: &[parser_ir::CompiledLexMode],
+    input: &str,
+    branch: &RuntimeWeavyBranch,
+    state: parser_ir::ParseStateId,
+) -> bool {
+    let mut tree_store = RuntimeWeavyTreeStore::default();
+    let mut trace_events = Vec::new();
+    let mut tree_events = Vec::new();
+    let stepper = RuntimeWeavyStepper::from_branch(
+        plan,
+        grammar,
+        parser,
+        table,
+        compiled_lex_modes,
+        input,
+        None,
+        branch.clone(),
+        parser_ir::LookaheadTokenId::from_index(0),
+        RuntimeWeavyMode::ProbeState,
+        &mut tree_store,
+        &mut trace_events,
+        &mut tree_events,
+    );
+    let Ok(state_row) = stepper.parse_state(state) else {
+        return false;
+    };
+    stepper.lex(state_row, branch.byte_position).is_ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2754,6 +3132,7 @@ struct RuntimeWeavyStepper<'a> {
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
     auto_close_stack: Vec<String>,
+    error_cost: u32,
     committed_start: Option<usize>,
     lookahead: Option<ReducedWeavyToken>,
     lookahead_id: parser_ir::LookaheadTokenId,
@@ -2795,6 +3174,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             byte_position: branch.byte_position,
             scanner_snapshot: branch.scanner_snapshot,
             auto_close_stack: branch.auto_close_stack,
+            error_cost: branch.error_cost,
             committed_start: None,
             lookahead: None,
             lookahead_id,

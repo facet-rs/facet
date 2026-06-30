@@ -12772,6 +12772,40 @@ extras (
         );
     }
 
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn weavy_runtime_recovery_matches_native_skip_invalid_input() {
+        let (validated, parser, table) = wrapped_extra_reuse_fixture();
+        let input = "a@\nb1";
+        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .with_recovery_step_limit(128)
+            .parse_recovering_with_report(input)
+            .unwrap();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_runtime_recovering_with_report_and_scanner(
+                &plan, &validated, &parser, &table, input, None,
+            )
+            .unwrap();
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_eq!(
+            weavy_report.tree().to_sexp(),
+            "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
+        );
+        assert_eq!(
+            weavy_report.accepted_count(),
+            runtime_report.accepted_count()
+        );
+        assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(
+            weavy_report.accepted_tree_events(),
+            runtime_report.accepted_tree_events()
+        );
+    }
+
     #[test]
     fn runtime_parse_session_does_not_reuse_root_across_boundary_insertion() {
         let (validated, parser, table) = repeated_word_fixture();
