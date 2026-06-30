@@ -498,7 +498,7 @@ export function App() {
           onChange={(value, edit) => updateSourceInput(value, "", edit)}
         />
 
-        <ResultsDock result={result} onUseInput={(value) => updateSourceInput(value)} />
+        <ResultsDock result={result} onUseInput={(value, sourcePath = "") => updateSourceInput(value, sourcePath)} />
       </section>
     </main>
   );
@@ -563,7 +563,7 @@ function ResultsDock({
   onUseInput,
 }: {
   result: PlaygroundResponse | null;
-  onUseInput: (value: string) => void;
+  onUseInput: (value: string, sourcePath?: string) => void;
 }) {
   const failure = result && !result.ok ? result : null;
   const sexp = result?.parse?.sexp ?? "";
@@ -668,7 +668,7 @@ function ResultsDock({
                       className="ghost"
                       onClick={(event) => {
                         event.preventDefault();
-                        onUseInput(caseResult.input);
+                        onUseInput(caseResult.input, `${caseResult.path}#${caseResult.case_name}`);
                       }}
                     >
                       Use input
@@ -701,7 +701,7 @@ function ResultsDock({
                       className="ghost"
                       onClick={(event) => {
                         event.preventDefault();
-                        onUseInput(fixture.input);
+                        onUseInput(fixture.input, fixture.path);
                       }}
                     >
                       Use fixture
