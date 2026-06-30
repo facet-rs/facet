@@ -1204,6 +1204,7 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
         errorCount: 0,
         missingCount: 0,
       },
+      { id: "html", sample: "samples/implicit-close.html", ok: true, language: "html", errorCount: 0, missingCount: 0 },
       { id: "json", sample: "samples/package.json", ok: true, language: "json", errorCount: 0, missingCount: 0 },
       { id: "nginx", sample: "samples/basic.conf", ok: true, language: "nginx", errorCount: 0, missingCount: 0 },
       { id: "proto", sample: "samples/addressbook.proto", ok: true, language: "proto", errorCount: 0, missingCount: 0 },
