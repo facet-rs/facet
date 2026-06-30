@@ -244,9 +244,25 @@ module.exports = grammar({
 });
 `;
   const files = normalizeBundleFiles([
+    {
+      path: "host/tree-sitter.json",
+      text: JSON.stringify({
+        grammars: [
+          {
+            name: "host",
+            scope: "source.host",
+            injections: "queries/embed.scm",
+          },
+        ],
+        metadata: {
+          version: "0.0.0",
+          links: { repository: "https://example.com/host" },
+        },
+      }),
+    },
     { path: "host/grammar.js", text: hostGrammar },
     {
-      path: "host/queries/injections.scm",
+      path: "host/queries/embed.scm",
       text: '((word) @injection.content\n  (#set! injection.language "text/x-child"))\n',
     },
     {
@@ -257,6 +273,7 @@ module.exports = grammar({
             name: "child",
             scope: "source.child",
             "injection-regex": "^text/x-child$",
+            highlights: "queries/child-highlights.scm",
           },
         ],
         metadata: {
@@ -266,6 +283,7 @@ module.exports = grammar({
       }),
     },
     { path: "child/grammar.js", text: childGrammar },
+    { path: "child/queries/child-highlights.scm", text: "(word) @constant\n" },
   ]);
 
   const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
@@ -285,6 +303,13 @@ module.exports = grammar({
   assert.equal(response.layers.length, 1);
   assert.equal(response.layers[0].language, "text/x-child");
   assert.equal(response.layers[0].parse.sexp, "(document (word))");
+  assert.deepEqual(
+    response.layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
+      capture.capture_name,
+      capture.text,
+    ]),
+    [["constant", "alpha"]],
+  );
 });
 
 test("reports injected layer parse diagnostics at root source coordinates", async () => {

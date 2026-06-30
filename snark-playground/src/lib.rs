@@ -557,21 +557,19 @@ fn playground_response_for_session(
                                 .or_else(|| accepted_problem_span(&accepted_tree_events, input)),
                         ));
                     }
-                    if let Some(query_file) = find_file(files, "queries/highlights.scm") {
-                        highlights = highlight_outputs(
-                            &QuerySource(query_file.text.clone()),
-                            &prepared.parser,
-                            &report,
-                            input,
-                        );
+                    if let Some(query) = query_source_for_kind(
+                        files,
+                        &prepared.raw.name,
+                        PlaygroundQueryKind::Highlights,
+                    ) {
+                        highlights = highlight_outputs(&query, &prepared.parser, &report, input);
                     }
-                    if let Some(query_file) = find_file(files, "queries/injections.scm") {
-                        injections = injection_outputs(
-                            &QuerySource(query_file.text.clone()),
-                            &prepared.parser,
-                            &report,
-                            input,
-                        );
+                    if let Some(query) = query_source_for_kind(
+                        files,
+                        &prepared.raw.name,
+                        PlaygroundQueryKind::Injections,
+                    ) {
+                        injections = injection_outputs(&query, &prepared.parser, &report, input);
                         layers = layer_outputs(input, &injections, &session.embedded_languages);
                         diagnostics.extend(layer_diagnostics(&layers));
                     }
@@ -969,6 +967,81 @@ fn highlight_outputs(
         .collect()
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PlaygroundQueryKind {
+    Highlights,
+    Injections,
+}
+
+impl PlaygroundQueryKind {
+    const fn default_path(self) -> &'static str {
+        match self {
+            Self::Highlights => "queries/highlights.scm",
+            Self::Injections => "queries/injections.scm",
+        }
+    }
+}
+
+fn query_source_for_kind(
+    files: &[BundleFile],
+    grammar_name: &str,
+    kind: PlaygroundQueryKind,
+) -> Option<QuerySource> {
+    let configured = manifest_query_paths(files, grammar_name, kind);
+    let paths = if configured.is_empty() {
+        vec![kind.default_path().to_owned()]
+    } else {
+        configured
+    };
+    let mut source = String::new();
+    for path in paths {
+        let Some(file) = find_file(files, &path) else {
+            continue;
+        };
+        if !source.is_empty() && !source.ends_with('\n') {
+            source.push('\n');
+        }
+        source.push_str(&file.text);
+    }
+    (!source.is_empty()).then_some(QuerySource(source))
+}
+
+fn manifest_query_paths(
+    files: &[BundleFile],
+    grammar_name: &str,
+    kind: PlaygroundQueryKind,
+) -> Vec<String> {
+    let Some(manifest) = find_file(files, "tree-sitter.json") else {
+        return Vec::new();
+    };
+    let Ok(config) = facet_json::from_str::<TreeSitterConfig>(&manifest.text) else {
+        return Vec::new();
+    };
+    let Some(grammar_config) = config
+        .grammars
+        .iter()
+        .find(|grammar| grammar.name == grammar_name)
+        .or_else(|| {
+            if config.grammars.len() == 1 {
+                config.grammars.first()
+            } else {
+                None
+            }
+        })
+    else {
+        return Vec::new();
+    };
+    let query_paths = match kind {
+        PlaygroundQueryKind::Highlights => grammar_config.highlights.as_ref(),
+        PlaygroundQueryKind::Injections => grammar_config.injections.as_ref(),
+    };
+    query_paths
+        .into_iter()
+        .flat_map(|paths| paths.iter())
+        .map(str::to_owned)
+        .collect()
+}
+
 fn injection_outputs(
     query: &QuerySource,
     parser: &ParserGrammar,
@@ -1181,26 +1254,29 @@ fn layer_output(
             None,
         ));
     }
-    let highlights =
-        find_file(&language.files, "queries/highlights.scm").map_or_else(Vec::new, |query_file| {
-            layer_highlight_outputs(
-                &QuerySource(query_file.text.clone()),
-                &prepared.parser,
-                &report.report,
-                &input,
-                host_input,
-                &segments,
-            )
-        });
-    let injections =
-        find_file(&language.files, "queries/injections.scm").map_or_else(Vec::new, |query_file| {
-            injection_outputs(
-                &QuerySource(query_file.text.clone()),
-                &prepared.parser,
-                &report.report,
-                &input,
-            )
-        });
+    let highlights = query_source_for_kind(
+        &language.files,
+        &prepared.raw.name,
+        PlaygroundQueryKind::Highlights,
+    )
+    .map_or_else(Vec::new, |query| {
+        layer_highlight_outputs(
+            &query,
+            &prepared.parser,
+            &report.report,
+            &input,
+            host_input,
+            &segments,
+        )
+    });
+    let injections = query_source_for_kind(
+        &language.files,
+        &prepared.raw.name,
+        PlaygroundQueryKind::Injections,
+    )
+    .map_or_else(Vec::new, |query| {
+        injection_outputs(&query, &prepared.parser, &report.report, &input)
+    });
     let child_injections = remap_layer_injections(&injections, host_input, &segments);
     let layers = if child_injections.is_empty() {
         Vec::new()
@@ -1490,8 +1566,7 @@ fn run_highlight_tests(
 ) -> Vec<HighlightTestOutput> {
     let mut results = Vec::new();
     let scanner_selection = scanner_selection(files, &prepared.parser);
-    let query =
-        find_file(files, "queries/highlights.scm").map(|file| QuerySource(file.text.clone()));
+    let query = query_source_for_kind(files, &prepared.raw.name, PlaygroundQueryKind::Highlights);
 
     for file in files
         .iter()
@@ -1500,7 +1575,7 @@ fn run_highlight_tests(
         let Some(query) = query.as_ref() else {
             results.push(highlight_test_error(
                 file,
-                "bundle contains highlight fixtures but no queries/highlights.scm".to_owned(),
+                "bundle contains highlight fixtures but no highlight query source".to_owned(),
             ));
             continue;
         };
@@ -2660,6 +2735,122 @@ mod tests {
             layer.parse.as_ref().map(|parse| parse.sexp.as_str()),
             Some("(document (word))")
         );
+    }
+
+    #[test]
+    fn playground_response_uses_manifest_configured_query_paths() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "tree-sitter.json".to_owned(),
+                    text: r#"{
+  "grammars": [
+    {
+      "name": "host",
+      "scope": "source.host",
+      "highlights": "queries/root-highlights.scm",
+      "injections": "queries/embed.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.0.0",
+    "links": { "repository": "https://example.com/host" }
+  }
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "code" },
+    "code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/root-highlights.scm".to_owned(),
+                    text: "(code) @variable\n".to_owned(),
+                },
+                BundleFile {
+                    path: "queries/embed.scm".to_owned(),
+                    text: r#"((code) @injection.content
+  (#set! injection.language "demo"))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/demo/tree-sitter.json".to_owned(),
+                    text: r#"{
+  "grammars": [
+    {
+      "name": "demo",
+      "scope": "source.demo",
+      "highlights": ["queries/base.scm", "queries/extra.scm"]
+    }
+  ],
+  "metadata": {
+    "version": "0.0.0",
+    "links": { "repository": "https://example.com/demo" }
+  }
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/demo/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "demo",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/demo/queries/base.scm".to_owned(),
+                    text: "; base query intentionally empty\n".to_owned(),
+                },
+                BundleFile {
+                    path: "languages/demo/queries/extra.scm".to_owned(),
+                    text: "(word) @constant\n".to_owned(),
+                },
+            ],
+            input: "PRINT".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.highlights.len(), 1);
+        assert_eq!(response.highlights[0].capture_name, "variable");
+        assert_eq!(response.injections.len(), 1);
+        assert_eq!(response.layers.len(), 1);
+        let layer = &response.layers[0];
+        assert_eq!(layer.highlights.len(), 1);
+        assert_eq!(layer.highlights[0].capture_name, "constant");
+        assert_eq!(layer.highlights[0].text, "PRINT");
     }
 
     #[test]
