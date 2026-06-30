@@ -6,6 +6,7 @@ export function emitGrammarJsonFromDsl(
   grammarPath: string,
 ): string {
   const prelude = officialDslPrelude(dslSource);
+  const fileSources = new Map(files.map((file) => [file.path, file.text]));
   const modules = new Map(files.filter((file) => isDslModulePath(file.path)).map((file) => [file.path, file.text]));
   const cache = new Map<string, { exports: unknown }>();
 
@@ -28,7 +29,8 @@ export function emitGrammarJsonFromDsl(
     }
 
     const dirname = resolved.includes("/") ? resolved.slice(0, resolved.lastIndexOf("/")) : "";
-    const require = (specifier: string) => loadModule(resolveRequire(specifier, dirname, modules));
+    const require = (specifier: string) =>
+      builtinModule(specifier, fileSources) ?? loadModule(resolveRequire(specifier, dirname, modules));
     const commonJsSource = sourceToCommonJs(source, resolved);
 
     const fn = new Function(
@@ -100,6 +102,66 @@ function defaultExportValue(value: unknown) {
     return (value as { default: unknown }).default;
   }
   return value;
+}
+
+function builtinModule(specifier: string, fileSources: Map<string, string>) {
+  switch (specifier) {
+    case "fs":
+    case "node:fs":
+      return {
+        readFileSync(path: string) {
+          const resolved = resolveUploadedFilePath(normalizePathForNodeBuiltin(path), fileSources);
+          return fileSources.get(resolved) ?? "";
+        },
+        writeFileSync() {},
+        appendFileSync() {},
+      };
+    case "path":
+    case "node:path":
+      return {
+        basename(path: string) {
+          return basenamePath(path);
+        },
+        dirname(path: string) {
+          return dirnamePath(path);
+        },
+        join(...parts: string[]) {
+          return normalizePathForNodeBuiltin(parts.join("/"));
+        },
+        resolve(...parts: string[]) {
+          return normalizePathForNodeBuiltin(parts.join("/"));
+        },
+      };
+    default:
+      return null;
+  }
+}
+
+function normalizePathForNodeBuiltin(path: string) {
+  const out = [];
+  for (const part of path.replace(/\\/g, "/").split("/")) {
+    if (!part || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      out.pop();
+    } else {
+      out.push(part);
+    }
+  }
+  return out.join("/");
+}
+
+function basenamePath(path: string) {
+  const normalized = normalizePathForNodeBuiltin(path);
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(index + 1) : normalized;
+}
+
+function dirnamePath(path: string) {
+  const normalized = normalizePathForNodeBuiltin(path);
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(0, index) : ".";
 }
 
 function exportedGrammarObject(exported: unknown, grammarPath: string): Record<string, unknown> {
@@ -197,6 +259,13 @@ function resolveJsPath(path: string, modules: Map<string, string>) {
     }
   }
   throw new Error(`could not resolve JavaScript module ${path}`);
+}
+
+function resolveUploadedFilePath(path: string, fileSources: Map<string, string>) {
+  if (fileSources.has(path)) {
+    return path;
+  }
+  throw new Error(`could not resolve uploaded file ${path}`);
 }
 
 function normalizeRelativePath(dirname: string, specifier: string) {

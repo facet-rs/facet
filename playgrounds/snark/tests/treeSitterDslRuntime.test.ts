@@ -262,6 +262,52 @@ exports.enabled = !process.env.DISABLE_TINY_FEATURE;
   });
 });
 
+test("provides scoped fs and path builtins for grammar.js generation helpers", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+const helper = require("./helper");
+module.exports = grammar({
+  name: "tiny_builtin_helper",
+  rules: {
+    document: $ => helper.rules($)[0],
+  },
+});
+`,
+      },
+      {
+        path: "helper.js",
+        text: `
+const fs = require("fs");
+const path = require("path");
+exports.rules = $ => {
+  const out = path.join("src", "generated.h");
+  fs.writeFileSync(out, "generated output");
+  fs.appendFileSync(out, "\\nmore generated output");
+  const keyword = fs.readFileSync(path.join("data", "keyword.txt"));
+  return [keyword];
+};
+`,
+      },
+      {
+        path: "data/keyword.txt",
+        text: "ok",
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_builtin_helper");
+  assert.deepEqual(grammar.rules.document, {
+    type: "STRING",
+    value: "ok",
+  });
+});
+
 test("resolves inherited Arborium grammar modules by tree-sitter package name", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
