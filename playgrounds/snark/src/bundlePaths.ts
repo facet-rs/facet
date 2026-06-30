@@ -444,6 +444,12 @@ function normalizeBundlePath(path: string, context: NormalizationContext) {
       return mapped;
     }
   }
+  if (context.arboriumRoots.has("")) {
+    const mapped = normalizeArboriumDefPath(normalized);
+    if (mapped) {
+      return mapped;
+    }
+  }
   if (isAmbiguousArboriumDefPath(normalized, context)) {
     return normalized;
   }
@@ -462,6 +468,9 @@ function normalizeBundlePath(path: string, context: NormalizationContext) {
 
 function arboriumRoot(path: string) {
   if (
+    path.startsWith("grammar/grammar.json") ||
+    path.startsWith("grammar/src/grammar.json") ||
+    path.startsWith("grammar/grammar.js") ||
     path.startsWith("def/grammar/grammar.json") ||
     path.startsWith("def/grammar/src/grammar.json") ||
     path.startsWith("def/grammar/grammar.js")
@@ -580,6 +589,12 @@ function normalizeArboriumDefPath(relative: string) {
   }
   if (relative.startsWith("examples/")) {
     return `samples/${relative.slice("examples/".length)}`;
+  }
+  if (relative.startsWith("grammar/")) {
+    return relative.slice("grammar/".length);
+  }
+  if (relative.startsWith("common/")) {
+    return relative;
   }
   if (relative.startsWith("sample.")) {
     return `samples/${relative}`;

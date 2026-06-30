@@ -139,6 +139,25 @@ test("projects Arborium examples as selectable samples", () => {
   });
 });
 
+test("projects Arborium grammar helper modules beside grammar.js", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-asciidoc/def/grammar/grammar.js"),
+    file("tree-sitter-asciidoc/def/grammar/common/lists.js"),
+    file("tree-sitter-asciidoc/def/grammar/common/table.js"),
+    file("tree-sitter-asciidoc/def/common/common.js"),
+    file("tree-sitter-asciidoc/def/queries/highlights.scm"),
+  ]);
+
+  assert.deepEqual(
+    files.map((entry) => entry.path).sort(),
+    ["common/common.js", "common/lists.js", "common/table.js", "grammar.js", "queries/highlights.scm"],
+  );
+  assert.deepEqual(
+    projectedFilesForGrammarRootId(files).map((entry) => entry.path).sort(),
+    ["common/common.js", "common/lists.js", "common/table.js", "grammar.js", "queries/highlights.scm"],
+  );
+});
+
 test("projects package manifest into manifest-declared grammar roots", () => {
   const manifest = JSON.stringify({
     grammars: [
