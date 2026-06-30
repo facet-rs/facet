@@ -51,6 +51,19 @@ const SAMPLES: &[(&str, &str)] = &[
     ("for list", "{% for x in [1, 2, 3] %}{{ x }};{% endfor %}"),
     ("for else empty", "{% for x in [] %}a{% else %}empty{% endfor %}"),
     ("set", "{% set n = 2 * 3 %}{{ n }}"),
+    // Precedence + associativity stress — does snark's grammar prec ladder agree
+    // with gingembre's across operator classes?
+    ("arith chain", "{{ 1 + 2 * 3 - 4 }}"),
+    ("sub left-assoc", "{{ 10 - 2 - 3 }}"),
+    ("div left-assoc", "{{ 100 / 10 / 2 }}"),
+    ("mul+add mix", "{{ 2 * 3 + 4 * 5 }}"),
+    ("add vs eq", "{{ 1 + 1 == 2 }}"),
+    ("mul vs cmp", "{{ 2 * 3 > 5 }}"),
+    ("cmp and cmp", "{{ 1 < 2 and 3 < 4 }}"),
+    ("and vs or", "{{ true and false or true }}"),
+    ("add vs cmp", "{{ 1 + 2 < 2 + 2 }}"),
+    ("concat chain", "{{ \"a\" ~ \"b\" ~ \"c\" }}"),
+    ("pow assoc", "{{ 2 ** 3 ** 2 }}"),
 ];
 
 fn main() {
