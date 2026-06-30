@@ -216,6 +216,16 @@ globalThis.until = function until(...markers) {
 globalThis.nested = function nested(open, close) {
   return { type: "NESTED", open, close };
 };
+
+globalThis.auto_close = function auto_close(options) {
+  return {
+    type: "AUTO_CLOSE",
+    tag: options.tag,
+    open: options.open,
+    close: options.close,
+    closed_by: options.closed_by,
+  };
+};
 `;
 }
 

@@ -109,6 +109,35 @@ module.exports = grammar({
   });
 });
 
+test("emits Snark auto_close primitive nodes from grammar.js", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+module.exports = grammar({
+  name: "tiny_auto_close",
+  rules: {
+    document: $ => seq("<p>", auto_close({ tag: "p", open: "<p>", close: "</p>", closed_by: ["<p>"] })),
+  },
+});
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.deepEqual(grammar.rules.document.members[1], {
+    type: "AUTO_CLOSE",
+    tag: "p",
+    open: "<p>",
+    close: "</p>",
+    closed_by: ["<p>"],
+  });
+});
+
 test("resolves ESM namespace imports and named exports in grammar modules", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,

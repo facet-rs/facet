@@ -4,12 +4,10 @@ import test from "node:test";
 
 import { SnarkPlaygroundSession, initSync, parseBundle } from "../../../snark-wasm/pkg/snark_wasm.js";
 import {
-  discoverGrammarRoots,
   normalizeBundleFiles,
   preferredGrammarRootId,
   preferredSampleForGrammarRootId,
   projectedFilesForGrammarRootId,
-  sortedFiles,
   filesWithGrammarJsonUsingEmitter,
   type DslBundleFile,
 } from "../src/bundlePaths.ts";
@@ -34,6 +32,16 @@ function bundledFiles(id: string): DslBundleFile[] {
   );
 }
 
+function allBundledFiles(): DslBundleFile[] {
+  const root = new URL("../src/bundled/", import.meta.url);
+  return normalizeBundleFiles(
+    walkBundledFiles(root).map((path) => ({
+      path,
+      text: readFileSync(new URL(path, root), "utf8"),
+    })),
+  );
+}
+
 function walkBundledFiles(root: URL, prefix = ""): string[] {
   const dir = new URL(prefix, root);
   const paths: string[] = [];
@@ -49,16 +57,18 @@ function walkBundledFiles(root: URL, prefix = ""): string[] {
   return paths;
 }
 
-function runnableFilesForBundle(files: DslBundleFile[]) {
-  const rootId = preferredGrammarRootId(files);
-  const root = discoverGrammarRoots(files).find((candidate) => candidate.id === rootId);
-  assert.ok(root, "bundle should have a grammar root");
-  const grammarJson = emitGrammarJsonFromDsl(officialDsl, files, root.grammarPath);
-  const projected = projectedFilesForGrammarRootId(files, rootId).map(({ path, text }) => ({
-    path,
-    text,
-  }));
-  return sortedFiles([...projected, { path: "src/grammar.json", text: grammarJson }]);
+async function runnableFilesForBundle(files: DslBundleFile[], rootId = preferredGrammarRootId(files)) {
+  return filesWithGrammarJsonUsingEmitter(files, rootId, async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+}
+
+function filesAndRootForVendoredId(id: string): { files: DslBundleFile[]; rootId: string } {
+  if (id === "fences") {
+    return { files: allBundledFiles(), rootId: id };
+  }
+  const files = bundledFiles(id);
+  return { files, rootId: preferredGrammarRootId(files) };
 }
 
 test("runs a grammar.js bundle through generated grammar.json, Snark WASM, and highlights", () => {
@@ -1005,26 +1015,28 @@ module.exports = grammar({
   assert.equal(response.highlight_tests[0].passed, true);
 });
 
-test("runs every vendored grammar sample through generated grammar.json and Snark WASM", () => {
+test("runs every vendored grammar sample through generated grammar.json and Snark WASM", async () => {
   const root = new URL("../src/bundled/", import.meta.url);
   const grammarIds = readdirSync(root)
     .filter((name) => statSync(new URL(name, root)).isDirectory())
     .sort();
 
-  const results = grammarIds.map((id) => {
-    const files = bundledFiles(id);
-    const sample = preferredSampleForGrammarRootId(files);
+  const results = [];
+  for (const id of grammarIds) {
+    const { files, rootId } = filesAndRootForVendoredId(id);
+    const sample = preferredSampleForGrammarRootId(files, rootId);
     assert.ok(sample, `${id} should have a preferred sample`);
+    const runnableFiles = await runnableFilesForBundle(files, rootId);
     const response = JSON.parse(
       parseBundle(
         JSON.stringify({
-          files: runnableFilesForBundle(files),
+          files: runnableFiles,
           input: sample.text,
           run_corpus: false,
         }),
       ),
     );
-    return {
+    const result = {
       id,
       sample: sample.path,
       ok: response.ok,
@@ -1034,7 +1046,8 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
       captures: response.highlights.length,
       diagnostics: response.diagnostics,
     };
-  });
+    results.push(result);
+  }
 
   assert.deepEqual(
     results.map((result) => ({
@@ -1058,6 +1071,7 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
       },
       { id: "diff", sample: "samples/t-apply-1.patch", ok: true, language: "diff", errorCount: 0, missingCount: 0 },
       { id: "dot", sample: "samples/crazy.gv", ok: true, language: "dot", errorCount: 0, missingCount: 0 },
+      { id: "fences", sample: "samples/demo.md", ok: true, language: "fences", errorCount: 0, missingCount: 0 },
       {
         id: "gingembre",
         sample: "samples/blog-index.html",
@@ -1095,21 +1109,22 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
   );
 });
 
-test("runs every non-error vendored sample through generated grammar.json and Snark WASM", () => {
+test("runs every non-error vendored sample through generated grammar.json and Snark WASM", async () => {
   const root = new URL("../src/bundled/", import.meta.url);
   const grammarIds = readdirSync(root)
     .filter((name) => statSync(new URL(name, root)).isDirectory())
     .sort();
 
-  const failures = grammarIds.flatMap((id) => {
-    const files = bundledFiles(id);
-    const runnableFiles = runnableFilesForBundle(files);
-    const samples = projectedFilesForGrammarRootId(files, preferredGrammarRootId(files))
+  const failures = [];
+  for (const id of grammarIds) {
+    const { files, rootId } = filesAndRootForVendoredId(id);
+    const runnableFiles = await runnableFilesForBundle(files, rootId);
+    const samples = projectedFilesForGrammarRootId(files, rootId)
       .filter((file) => file.path.startsWith("samples/"))
       .filter((file) => !isErrorSamplePath(file.path))
       .sort((left, right) => left.path.localeCompare(right.path));
 
-    return samples.flatMap((sample) => {
+    for (const sample of samples) {
       const response = JSON.parse(
         parseBundle(
           JSON.stringify({
@@ -1122,21 +1137,19 @@ test("runs every non-error vendored sample through generated grammar.json and Sn
       const errorCount = response.parse?.accepted_error_count ?? null;
       const missingCount = response.parse?.accepted_missing_count ?? null;
       if (response.ok && errorCount === 0 && missingCount === 0) {
-        return [];
+        continue;
       }
-      return [
-        {
-          id,
-          sample: sample.path,
-          ok: response.ok,
-          language: response.language,
-          errorCount,
-          missingCount,
-          diagnostics: response.diagnostics,
-        },
-      ];
-    });
-  });
+      failures.push({
+        id,
+        sample: sample.path,
+        ok: response.ok,
+        language: response.language,
+        errorCount,
+        missingCount,
+        diagnostics: response.diagnostics,
+      });
+    }
+  }
 
   assert.deepEqual(failures, []);
 });
