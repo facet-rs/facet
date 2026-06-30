@@ -84,6 +84,10 @@ module.exports = grammar({
           { path: "grammar.js", text: grammarJs },
           { path: "src/grammar.json", text: grammarJson },
           { path: "queries/highlights.scm", text: "(word) @variable\n" },
+          {
+            path: "queries/injections.scm",
+            text: '((word) @injection.content\n  (#set! injection.language "text")\n  (#set! injection.combined))\n',
+          },
         ],
         input: "alpha beta",
         run_corpus: false,
@@ -102,6 +106,17 @@ module.exports = grammar({
     [
       ["variable", "alpha"],
       ["variable", "beta"],
+    ],
+  );
+  assert.deepEqual(
+    response.injections.map((injection: { language: string; text: string; combined: boolean }) => [
+      injection.language,
+      injection.text,
+      injection.combined,
+    ]),
+    [
+      ["text", "alpha", true],
+      ["text", "beta", true],
     ],
   );
 });

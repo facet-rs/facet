@@ -67,6 +67,7 @@ struct PlaygroundResponse {
     bundle: BundleSummary,
     parse: Option<ParseOutput>,
     highlights: Vec<HighlightOutput>,
+    injections: Vec<InjectionOutput>,
     corpus: Vec<CorpusOutput>,
     highlight_tests: Vec<HighlightTestOutput>,
     tests: TestSummary,
@@ -119,6 +120,20 @@ struct ParseOutput {
 #[derive(Debug, Clone, Facet)]
 struct HighlightOutput {
     capture_name: String,
+    text: String,
+    start_byte: u32,
+    end_byte: u32,
+    start_row: u32,
+    start_column: u32,
+    end_row: u32,
+    end_column: u32,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct InjectionOutput {
+    language: String,
+    combined: bool,
+    include_children: bool,
     text: String,
     start_byte: u32,
     end_byte: u32,
@@ -312,6 +327,7 @@ impl PlaygroundSession {
                 bundle,
                 parse: None,
                 highlights: Vec::new(),
+                injections: Vec::new(),
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
@@ -329,6 +345,7 @@ impl PlaygroundSession {
                     bundle,
                     parse: None,
                     highlights: Vec::new(),
+                    injections: Vec::new(),
                     corpus: Vec::new(),
                     highlight_tests: Vec::new(),
                     tests: TestSummary::not_requested(),
@@ -353,6 +370,7 @@ impl PlaygroundSession {
                 bundle,
                 parse: None,
                 highlights: Vec::new(),
+                injections: Vec::new(),
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
@@ -386,6 +404,7 @@ impl PlaygroundSession {
             bundle: self.bundle.clone(),
             parse: None,
             highlights: Vec::new(),
+            injections: Vec::new(),
             corpus: Vec::new(),
             highlight_tests: Vec::new(),
             tests: TestSummary::not_requested(),
@@ -450,6 +469,7 @@ fn playground_response_for_session(
     let mut diagnostics = Vec::new();
     let mut parse = None;
     let mut highlights = Vec::new();
+    let mut injections = Vec::new();
     let runtime = prepared.runtime();
     let should_parse_input = !input.is_empty() || !run_corpus;
     if should_parse_input {
@@ -510,6 +530,14 @@ fn playground_response_for_session(
                             input,
                         );
                     }
+                    if let Some(query_file) = find_file(files, "queries/injections.scm") {
+                        injections = injection_outputs(
+                            &QuerySource(query_file.text.clone()),
+                            &prepared.parser,
+                            &report,
+                            input,
+                        );
+                    }
                     session.last_input = Some(input.to_owned());
                     session.last_report = Some(report);
                 }
@@ -538,6 +566,7 @@ fn playground_response_for_session(
         bundle,
         parse,
         highlights,
+        injections,
         corpus,
         highlight_tests,
         tests,
@@ -743,6 +772,34 @@ fn highlight_outputs(
             HighlightOutput {
                 capture_name: capture.capture_name().to_owned(),
                 text: capture.text().to_owned(),
+                start_byte: bytes.start().get(),
+                end_byte: bytes.end().get(),
+                start_row: points.start().row().get(),
+                start_column: points.start().column().get(),
+                end_row: points.end().row().get(),
+                end_column: points.end().column().get(),
+            }
+        })
+        .collect()
+}
+
+fn injection_outputs(
+    query: &QuerySource,
+    parser: &ParserGrammar,
+    report: &snark::parser::RuntimeParseReport,
+    input: &str,
+) -> Vec<InjectionOutput> {
+    query
+        .execute_runtime_injections(parser, report, input)
+        .into_iter()
+        .map(|region| {
+            let bytes = region.bytes();
+            let points = region.points();
+            InjectionOutput {
+                language: region.language().to_owned(),
+                combined: region.combined(),
+                include_children: region.include_children(),
+                text: region.text().to_owned(),
                 start_byte: bytes.start().get(),
                 end_byte: bytes.end().get(),
                 start_row: points.start().row().get(),
@@ -1144,6 +1201,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
         },
         parse: None,
         highlights: Vec::new(),
+        injections: Vec::new(),
         corpus: Vec::new(),
         highlight_tests: Vec::new(),
         tests: TestSummary::not_requested(),
@@ -1744,6 +1802,61 @@ mod tests {
                 .message
                 .contains("playground shell should evaluate grammar.js")
         );
+    }
+
+    #[test]
+    fn playground_response_reports_injection_regions() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "injection_smoke",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "lua_code" },
+    "lua_code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Za-z_]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((lua_code) @injection.content
+  (#set! injection.language "lua")
+  (#set! injection.combined)
+  (#set! injection.include-children))"#
+                        .to_owned(),
+                },
+            ],
+            input: "print".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.injections.len(), 1);
+        let injection = &response.injections[0];
+        assert_eq!(injection.language, "lua");
+        assert!(injection.combined);
+        assert!(injection.include_children);
+        assert_eq!(injection.text, "print");
+        assert_eq!(injection.start_byte, 0);
+        assert_eq!(injection.end_byte, 5);
+        assert_eq!(injection.start_row, 0);
+        assert_eq!(injection.start_column, 0);
+        assert_eq!(injection.end_row, 0);
+        assert_eq!(injection.end_column, 5);
     }
 
     fn external_scanner_smoke_grammar_json() -> String {

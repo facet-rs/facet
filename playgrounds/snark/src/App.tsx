@@ -61,6 +61,19 @@ type HighlightOutput = {
   end_column: number;
 };
 
+type InjectionOutput = {
+  language: string;
+  combined: boolean;
+  include_children: boolean;
+  text: string;
+  start_byte: number;
+  end_byte: number;
+  start_row: number;
+  start_column: number;
+  end_row: number;
+  end_column: number;
+};
+
 type CorpusOutput = {
   path: string;
   case_name: string;
@@ -118,6 +131,7 @@ type PlaygroundResponse = {
   };
   parse: ParseOutput | null;
   highlights: HighlightOutput[];
+  injections: InjectionOutput[];
   corpus: CorpusOutput[];
   highlight_tests: HighlightTestOutput[];
   tests: TestSummary;
