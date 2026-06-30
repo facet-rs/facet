@@ -82,10 +82,31 @@ The time fire is out (cheap fork). The current pool is pre-allocated and amortiz
 cheap answers ready (free list, compact-at-accept). Reach for the rope only when a heap
 profile asks for it — `stax` and a heap profile, same method that found the time blowup.
 
-## Open question to verify
+## Answer (verified): the session compacts — the pool is never retained
 
-Does the Weavy **session** retain the full append-only pool across reparses, or does it
-compact to the accepted lineage (+ reusable-node index) between edits? That single fact
-decides whether the append-only pool is harmless transient scaffolding or a slow leak
-across a long editing session. If it's the full pool, the fix is compact-at-accept; if
-it already compacts, there is nothing to do.
+The append-only pool is **per-parse transient**. `RuntimeWeavyTreeJournal` is a *local*
+in the parse driver (`parse_prepared_runtime_*`), used to accumulate events cheaply
+during GLR forking. At accept, the accepted branch's lineage is materialized into a
+`Vec<TreeEvent>` (the cactus walk, `collect`), and the pool is dropped when the parse
+function returns. It never enters the report.
+
+`RuntimeWeavySession` retains only `last_report: Option<RuntimeWeavyReport>`, and the
+report holds:
+
+- `tree_events: Vec<TreeEvent>` — the materialized **accepted lineage** (no dead branches), and
+- `reusable_nodes: Vec<RuntimeWeavyReusableNode>` — each carrying its own compact, copied
+  subtree `tree_events: Vec` (byte-shifted by the edit delta on reuse).
+
+So nothing speculative survives a parse. **Materialization-at-accept *is* the compaction**;
+the "if it's the full pool, fix is compact-at-accept" branch above does not apply, because
+it already compacts. The only memory held across an edit is the accepted tree, bounded by
+input size — not the speculative garbage. There is no slow session leak.
+
+### Known minor redundancy (not a leak)
+
+Reusable nodes store *copied* `tree_events` per node, so the accepted events are
+materialized in ~2 places (`report.tree_events` + per-node `reusable_nodes[*].tree_events`),
+and reuse clones+shifts them. This matches the native approach and is bounded per edit.
+The flagged future optimization is to store a journal slice/range (or regenerate from
+`RuntimeTreeStore`) instead of copying per-node event vectors — worth doing only if a
+heap profile of a long editing session asks for it.
