@@ -566,6 +566,74 @@ test("injects scanner-free html from gingembre text chunks", async () => {
   );
 });
 
+test("injects css inside scanner-free html inside gingembre text chunks", async () => {
+  const files = [
+    ...allBundledFiles(),
+    {
+      path: "languages/css/src/grammar.json",
+      text: readFileSync(
+        new URL("../../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/grammar.json", import.meta.url),
+        "utf8",
+      ),
+    },
+    {
+      path: "languages/css/src/scanner.c",
+      text: readFileSync(
+        new URL("../../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/scanner.c", import.meta.url),
+        "utf8",
+      ),
+    },
+    {
+      path: "languages/css/queries/highlights.scm",
+      text: readFileSync(
+        new URL("../../../snark/tests/fixtures/packages/tree-sitter-css-reduced/queries/highlights.scm", import.meta.url),
+        "utf8",
+      ),
+    },
+  ];
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "gingembre", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const source = '<style>a:hover { color: red; }</style><p>Hello {{ name }}</p>';
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: source,
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.language, "gingembre");
+  assert.equal(response.layers.length, 1);
+  const htmlLayer = response.layers[0];
+  assert.equal(htmlLayer.language, "html");
+  assert.equal(htmlLayer.combined, true);
+  assert.equal(htmlLayer.input, "<style>a:hover { color: red; }</style><p>Hello </p>");
+  assert.equal(htmlLayer.parse.accepted_error_count, 0);
+  assert.equal(htmlLayer.parse.accepted_missing_count, 0);
+  assert.equal(htmlLayer.layers.length, 1);
+  const cssLayer = htmlLayer.layers[0];
+  assert.equal(cssLayer.language, "css");
+  assert.equal(cssLayer.input, "a:hover { color: red; }");
+  assert.equal(cssLayer.parse.accepted_error_count, 0);
+  assert.equal(cssLayer.parse.accepted_missing_count, 0);
+  assert.ok(
+    cssLayer.highlights.some(
+      (capture: { capture_name: string; text: string }) =>
+        capture.capture_name === "property" && capture.text === "color",
+    ),
+  );
+  assert.ok(
+    cssLayer.highlights.some(
+      (capture: { capture_name: string; text: string }) =>
+        capture.capture_name === "punctuation.delimiter" && capture.text === ":",
+    ),
+  );
+});
+
 test("injects css from html style layers through Snark WASM", () => {
   const htmlGrammarJs = readFileSync(new URL("../src/bundled/html/grammar.js", import.meta.url), "utf8");
   const htmlGrammarJson = emitGrammarJsonFromDsl(
