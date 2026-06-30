@@ -289,6 +289,102 @@ module.exports = grammar({
   );
 });
 
+test("splits nested injections across combined layer ranges", async () => {
+  const hostGrammar = `
+module.exports = grammar({
+  name: "host",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[A-Z]+/,
+  },
+});
+`;
+  const textGrammar = `
+module.exports = grammar({
+  name: "text",
+  extras: $ => [],
+  rules: {
+    document: $ => $.word,
+    word: $ => /[A-Z]+/,
+  },
+});
+`;
+  const innerGrammar = `
+module.exports = grammar({
+  name: "inner",
+  extras: $ => [],
+  rules: {
+    document: $ => $.word,
+    word: $ => /[A-Z]+/,
+  },
+});
+`;
+  const files = normalizeBundleFiles([
+    { path: "host/grammar.js", text: hostGrammar },
+    {
+      path: "host/queries/injections.scm",
+      text: '((word) @injection.content\n  (#set! injection.language "text")\n  (#set! injection.combined))\n',
+    },
+    { path: "text/grammar.js", text: textGrammar },
+    {
+      path: "text/queries/injections.scm",
+      text: '((document) @injection.content\n  (#set! injection.language "inner")\n  (#set! injection.combined))\n',
+    },
+    { path: "inner/grammar.js", text: innerGrammar },
+    { path: "inner/queries/highlights.scm", text: "(word) @constant\n" },
+  ]);
+
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: "AA CCC",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.layers.length, 1);
+  const textLayer = response.layers[0];
+  assert.equal(textLayer.language, "text");
+  assert.equal(textLayer.combined, true);
+  assert.equal(textLayer.input, "AACCC");
+  assert.deepEqual(
+    textLayer.injections.map((injection: { language: string; text: string; start_byte: number; end_byte: number }) => [
+      injection.language,
+      injection.text,
+      injection.start_byte,
+      injection.end_byte,
+    ]),
+    [
+      ["inner", "AA", 0, 2],
+      ["inner", "CCC", 3, 6],
+    ],
+  );
+  assert.equal(textLayer.layers.length, 1);
+  const innerLayer = textLayer.layers[0];
+  assert.equal(innerLayer.language, "inner");
+  assert.equal(innerLayer.combined, true);
+  assert.equal(innerLayer.input, "AACCC");
+  assert.deepEqual(
+    innerLayer.highlights.map((capture: { capture_name: string; text: string; start_byte: number; end_byte: number }) => [
+      capture.capture_name,
+      capture.text,
+      capture.start_byte,
+      capture.end_byte,
+    ]),
+    [
+      ["constant", "AA", 0, 2],
+      ["constant", "CCC", 3, 6],
+    ],
+  );
+});
+
 test("resolves dynamic injection language captures through Snark WASM", async () => {
   const hostGrammar = `
 module.exports = grammar({

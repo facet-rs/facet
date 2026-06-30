@@ -1360,27 +1360,35 @@ fn remap_layer_injections(
 ) -> Vec<InjectionOutput> {
     injections
         .iter()
-        .filter_map(|injection| {
-            let segment =
-                segment_for_virtual_range(segments, injection.start_byte, injection.end_byte)?;
-            let start_byte =
-                segment.host_start + injection.start_byte.saturating_sub(segment.virtual_start);
-            let end_byte =
-                segment.host_start + injection.end_byte.saturating_sub(segment.virtual_start);
-            let (start_row, start_column) = point_for_byte(root_input, start_byte)?;
-            let (end_row, end_column) = point_for_byte(root_input, end_byte)?;
-            Some(InjectionOutput {
-                language: injection.language.clone(),
-                combined: injection.combined,
-                include_children: injection.include_children,
-                text: injection.text.clone(),
-                start_byte,
-                end_byte,
-                start_row,
-                start_column,
-                end_row,
-                end_column,
-            })
+        .flat_map(|injection| {
+            segments
+                .iter()
+                .filter_map(move |segment| {
+                    let clipped_start = injection.start_byte.max(segment.virtual_start);
+                    let clipped_end = injection.end_byte.min(segment.virtual_end);
+                    if clipped_start >= clipped_end {
+                        return None;
+                    }
+                    let start_byte =
+                        segment.host_start + clipped_start.saturating_sub(segment.virtual_start);
+                    let end_byte =
+                        segment.host_start + clipped_end.saturating_sub(segment.virtual_start);
+                    let (start_row, start_column) = point_for_byte(root_input, start_byte)?;
+                    let (end_row, end_column) = point_for_byte(root_input, end_byte)?;
+                    Some(InjectionOutput {
+                        language: injection.language.clone(),
+                        combined: injection.combined,
+                        include_children: injection.include_children,
+                        text: host_text(root_input, start_byte, end_byte).to_owned(),
+                        start_byte,
+                        end_byte,
+                        start_row,
+                        start_column,
+                        end_row,
+                        end_column,
+                    })
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -3094,6 +3102,142 @@ mod tests {
                 ))
                 .collect::<Vec<_>>(),
             vec![("variable", "AA", 0, 2), ("variable", "CCC", 3, 6)]
+        );
+    }
+
+    #[test]
+    fn playground_response_splits_nested_injections_across_combined_layer_ranges() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": { "type": "REPEAT1", "content": { "type": "SYMBOL", "name": "word" } },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [
+    { "type": "PATTERN", "value": "\\s+" }
+  ],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((word) @injection.content
+  (#set! injection.language "text")
+  (#set! injection.combined))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "text",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/queries/injections.scm".to_owned(),
+                    text: r#"((document) @injection.content
+  (#set! injection.language "inner")
+  (#set! injection.combined))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/inner/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "inner",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/inner/queries/highlights.scm".to_owned(),
+                    text: "(word) @constant\n".to_owned(),
+                },
+            ],
+            input: "AA CCC".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.layers.len(), 1);
+        let text_layer = &response.layers[0];
+        assert_eq!(text_layer.language, "text");
+        assert!(text_layer.combined);
+        assert_eq!(text_layer.input, "AACCC");
+        assert_eq!(text_layer.injections.len(), 2);
+        assert_eq!(
+            text_layer
+                .injections
+                .iter()
+                .map(|injection| {
+                    (
+                        injection.language.as_str(),
+                        injection.text.as_str(),
+                        injection.start_byte,
+                        injection.end_byte,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("inner", "AA", 0, 2), ("inner", "CCC", 3, 6),]
+        );
+        assert_eq!(text_layer.layers.len(), 1);
+        let inner_layer = &text_layer.layers[0];
+        assert_eq!(inner_layer.language, "inner");
+        assert!(inner_layer.combined);
+        assert_eq!(inner_layer.input, "AACCC");
+        assert_eq!(
+            inner_layer
+                .highlights
+                .iter()
+                .map(|highlight| {
+                    (
+                        highlight.capture_name.as_str(),
+                        highlight.text.as_str(),
+                        highlight.start_byte,
+                        highlight.end_byte,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("constant", "AA", 0, 2), ("constant", "CCC", 3, 6),]
         );
     }
 
