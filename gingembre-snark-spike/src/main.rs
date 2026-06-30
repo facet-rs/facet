@@ -16,7 +16,7 @@
 use std::{env, path::PathBuf};
 
 use futures::executor::block_on;
-use gingembre::Context;
+use gingembre::{Context, VArray, VObject, VString, Value};
 use gingembre::ast::{
     BinaryExpr, BinaryOp, BlockNode, BoolLit, CallExpr, CommentNode, ElifBranch, Expr, ExtendsNode,
     FieldExpr, FilterExpr, FloatLit, ForNode, Ident, IfNode, IncludeNode, IntLit, ListLit, Literal,
@@ -68,6 +68,14 @@ const SAMPLES: &[(&str, &str)] = &[
     ("filter args join", "{{ [1, 2, 3] | join(\"-\") }}"),
     ("filter args default", "{{ \"x\" | default(\"y\") }}"),
     ("filter chain args", "{{ [3, 1, 2] | sort | join(\",\") }}"),
+    // Data-driven: read `name`, `user`, `items` from a shared facet Context.
+    ("var", "{{ name }}"),
+    ("field", "{{ user.name }}"),
+    ("field in if", "{% if user.active %}on{% else %}off{% endif %}"),
+    ("for data", "{% for i in items %}{{ i }};{% endfor %}"),
+    ("field concat", "{{ user.name ~ \"!\" }}"),
+    ("var filter", "{{ name | upper }}"),
+    ("field filter", "{{ user.name | length }}"),
 ];
 
 fn main() {
@@ -89,6 +97,7 @@ fn main() {
     let table = ParseTable::from_grammar(&parser).expect("build parse table");
     let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("weavy plan");
 
+    let ctx = build_context();
     let mut pass = 0usize;
     let mut fail = 0usize;
     for (label, src) in SAMPLES {
@@ -107,8 +116,8 @@ fn main() {
             continue;
         };
 
-        let snark_out = render(lower_template(&resolved), src);
-        let native_out = render(gingembre::parse_template_recovered(src), src);
+        let snark_out = render(lower_template(&resolved), src, &ctx);
+        let native_out = render(gingembre::parse_template_recovered(src), src, &ctx);
 
         if snark_out == native_out {
             println!("✓ {label}: {snark_out:?}");
@@ -122,9 +131,23 @@ fn main() {
     println!("\n{pass} pass / {fail} fail");
 }
 
-fn render(ast: Template, src: &str) -> Result<String, String> {
+fn render(ast: Template, src: &str, ctx: &Context) -> Result<String, String> {
     let template = gingembre::Template::from_ast(ast, "spike", src);
-    block_on(template.render(&Context::new())).map_err(|e| format!("{e:?}"))
+    block_on(template.render(ctx)).map_err(|e| format!("{e:?}"))
+}
+
+/// Shared facet-backed context for the data-driven templates. Context-free
+/// templates ignore it; data-driven ones read `name`, `user`, `items`.
+fn build_context() -> Context {
+    let mut user = VObject::new();
+    user.insert(VString::from("name"), Value::from("Ada"));
+    user.insert(VString::from("active"), Value::from(true));
+    let items = VArray::from_iter([Value::from(1i64), Value::from(2i64), Value::from(3i64)]);
+    let mut ctx = Context::new();
+    ctx.set("name", "Ada");
+    ctx.set("user", Value::from(user));
+    ctx.set("items", Value::from(items));
+    ctx
 }
 
 // ---------------------------------------------------------------------------
