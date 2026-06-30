@@ -675,6 +675,96 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- injected layers ---------- */
+
+.layer-list {
+  display: grid;
+  gap: 7px;
+}
+
+.layer-list .layer-list {
+  margin-left: 14px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.layer-node {
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--code-bg);
+}
+
+.layer-node > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.layer-node > summary::-webkit-details-marker {
+  display: none;
+}
+
+.layer-node > summary::before {
+  content: "●";
+  font-size: 9px;
+}
+
+.layer-node > summary.pass::before {
+  color: var(--ok);
+}
+
+.layer-node > summary.fail::before {
+  color: var(--err);
+}
+
+.layer-lang {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.layer-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.layer-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 11px 11px;
+}
+
+.layer-ranges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.layer-ranges .capture-loc {
+  padding: 2px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+}
+
+.layer-diagnostics {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--err);
+  border-radius: 6px;
+  background: var(--err-bg);
+}
+
+.layer-sexp {
+  max-height: 180px;
+  overflow: auto;
+}
+
 /* ---------- tests ---------- */
 
 .corpus-list {

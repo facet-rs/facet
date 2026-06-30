@@ -539,6 +539,7 @@ function ResultsDock({
   const failure = result && !result.ok ? result : null;
   const sexp = result?.parse?.sexp ?? "";
   const captures = composedHighlights(result);
+  const layers = result?.layers ?? [];
   const tests = result?.tests.requested ? result : null;
   const unplaced = result?.diagnostics.filter((diagnostic) => !diagnostic.primary_span) ?? [];
   const recovered =
@@ -602,6 +603,18 @@ function ResultsDock({
           )}
         </div>
       </details>
+
+      {layers.length ? (
+        <details className="panel" open>
+          <summary>
+            <span className="panel-title">Layers</span>
+            <span className="panel-meta">{countLayers(layers)}</span>
+          </summary>
+          <div className="panel-body">
+            <LayerList layers={layers} />
+          </div>
+        </details>
+      ) : null}
 
       {tests ? (
         <details className="panel" open>
@@ -693,6 +706,74 @@ function ResultsDock({
       ) : null}
     </div>
   );
+}
+
+function LayerList({ layers }: { layers: LayerOutput[] }) {
+  return (
+    <div className="layer-list">
+      {layers.map((layer, index) => (
+        <LayerNode layer={layer} key={`${layer.language}-${layer.ranges[0]?.start_byte ?? 0}-${index}`} />
+      ))}
+    </div>
+  );
+}
+
+function LayerNode({ layer }: { layer: LayerOutput }) {
+  const failed = layer.diagnostics.length > 0 || !layer.parse;
+  return (
+    <details className="layer-node" open={failed || layer.layers.length > 0}>
+      <summary className={failed ? "fail" : "pass"}>
+        <span className="layer-lang">{layer.language}</span>
+        <span className="layer-meta">
+          {layer.combined ? "combined" : "region"} · {layer.ranges.length} range
+          {layer.ranges.length === 1 ? "" : "s"}
+          {layer.parse
+            ? ` · ${layer.parse.accepted_count} accepted · ${layer.parse.failure_count} failed`
+            : " · no parse"}
+        </span>
+      </summary>
+      <div className="layer-body">
+        <div className="layer-ranges">
+          {layer.ranges.map((range, index) => (
+            <span className="capture-loc" key={`${range.start_byte}-${index}`}>
+              {range.start_row}:{range.start_column}-{range.end_row}:{range.end_column}
+            </span>
+          ))}
+        </div>
+        {layer.diagnostics.length ? (
+          <div className="layer-diagnostics">
+            {layer.diagnostics.map((diagnostic, index) => (
+              <div className="dock-failure-row" key={`${diagnostic.stage}-${index}`}>
+                <span className="dock-failure-stage">{diagnostic.stage}</span>
+                <code>{diagnostic.message}</code>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {layer.highlights.length ? (
+          <div className="capture-list">
+            {layer.highlights.map((capture, index) => (
+              <div className="capture-row" key={`${capture.capture_name}-${capture.start_byte}-${index}`}>
+                <span className={`capture-chip ${captureClass(capture.capture_name)}`}>
+                  @{capture.capture_name}
+                </span>
+                <code>{capture.text}</code>
+                <span className="capture-loc">
+                  {capture.start_row}:{capture.start_column}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {layer.parse?.sexp ? <pre className="sexp layer-sexp">{layer.parse.sexp}</pre> : null}
+        {layer.layers.length ? <LayerList layers={layer.layers} /> : null}
+      </div>
+    </details>
+  );
+}
+
+function countLayers(layers: LayerOutput[]): number {
+  return layers.reduce((count, layer) => count + 1 + countLayers(layer.layers), 0);
 }
 
 function composedHighlights(result: PlaygroundResponse | null): HighlightOutput[] {
