@@ -289,6 +289,84 @@ module.exports = grammar({
   );
 });
 
+test("excludes injection content children by default", async () => {
+  const hostGrammar = `
+module.exports = grammar({
+  name: "host",
+  extras: $ => [],
+  rules: {
+    document: $ => $.template,
+    template: $ => seq("AA", $.code, "BB"),
+    code: $ => "JS",
+  },
+});
+`;
+  const textGrammar = `
+module.exports = grammar({
+  name: "text",
+  extras: $ => [],
+  rules: {
+    document: $ => $.word,
+    word: $ => /[A-Z]+/,
+  },
+});
+`;
+  const files = normalizeBundleFiles([
+    { path: "host/grammar.js", text: hostGrammar },
+    {
+      path: "host/queries/injections.scm",
+      text: '((template) @injection.content\n  (#set! injection.language "text")\n  (#set! injection.combined))\n',
+    },
+    { path: "text/grammar.js", text: textGrammar },
+    { path: "text/queries/highlights.scm", text: "(word) @constant\n" },
+  ]);
+
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: "AAJSBB",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.deepEqual(
+    response.injections.map((injection: { language: string; text: string; start_byte: number; end_byte: number }) => [
+      injection.language,
+      injection.text,
+      injection.start_byte,
+      injection.end_byte,
+    ]),
+    [
+      ["text", "AA", 0, 2],
+      ["text", "BB", 4, 6],
+    ],
+  );
+  assert.equal(response.layers.length, 1);
+  assert.equal(response.layers[0].language, "text");
+  assert.equal(response.layers[0].combined, true);
+  assert.equal(response.layers[0].input, "AABB");
+  assert.deepEqual(
+    response.layers[0].highlights.map(
+      (capture: { capture_name: string; text: string; start_byte: number; end_byte: number }) => [
+        capture.capture_name,
+        capture.text,
+        capture.start_byte,
+        capture.end_byte,
+      ],
+    ),
+    [
+      ["constant", "AA", 0, 2],
+      ["constant", "BB", 4, 6],
+    ],
+  );
+});
+
 test("splits nested injections across combined layer ranges", async () => {
   const hostGrammar = `
 module.exports = grammar({

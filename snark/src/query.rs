@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use facet::Facet;
 
 use crate::parser::{ParserGrammar, ParserSymbol, RuntimeParseReport, TreeEvent, TreeNodeId};
-use crate::runtime_input::{ByteRange, PointRange};
+use crate::runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes};
 use crate::source::SourceFile;
 
 /// Raw Tree-sitter query source.
@@ -99,6 +99,7 @@ impl QuerySource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HighlightCapture {
     capture_name: String,
+    node: Option<TreeNodeId>,
     bytes: ByteRange,
     points: PointRange,
     text: String,
@@ -132,6 +133,15 @@ pub struct InjectionRegion {
     language: String,
     combined: bool,
     include_children: bool,
+    chunks: Vec<InjectionChunk>,
+    bytes: ByteRange,
+    points: PointRange,
+    text: String,
+}
+
+/// One contiguous source chunk in an injection region.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InjectionChunk {
     bytes: ByteRange,
     points: PointRange,
     text: String,
@@ -164,6 +174,28 @@ impl InjectionRegion {
     }
 
     /// Captured host source text.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Contiguous source chunks that form this injected input.
+    pub fn chunks(&self) -> &[InjectionChunk] {
+        &self.chunks
+    }
+}
+
+impl InjectionChunk {
+    /// Captured byte range for this contiguous injection chunk.
+    pub const fn bytes(&self) -> ByteRange {
+        self.bytes
+    }
+
+    /// Captured point range for this contiguous injection chunk.
+    pub const fn points(&self) -> PointRange {
+        self.points
+    }
+
+    /// Captured host source text for this chunk.
     pub fn text(&self) -> &str {
         &self.text
     }
@@ -342,6 +374,7 @@ fn execute_runtime_highlights(
                     {
                         captures.push(HighlightCapture {
                             capture_name: rule.capture_name.clone(),
+                            node: Some(node.id),
                             bytes: node.bytes,
                             points: node.points,
                             text: node.text.clone(),
@@ -361,6 +394,7 @@ fn execute_runtime_highlights(
                     {
                         captures.push(HighlightCapture {
                             capture_name: rule.capture_name.clone(),
+                            node: Some(node.id),
                             bytes: node.bytes,
                             points: node.points,
                             text: node.text.clone(),
@@ -387,6 +421,7 @@ fn execute_runtime_highlights(
                     {
                         captures.push(HighlightCapture {
                             capture_name: rule.capture_name.clone(),
+                            node: None,
                             bytes: token.bytes,
                             points: token.points,
                             text: token.text.clone(),
@@ -443,19 +478,97 @@ fn execute_runtime_injections(
                 else {
                     continue;
                 };
+                let chunks = injection_chunks(&capture, pattern.include_children, &nodes, input);
+                if chunks.is_empty() {
+                    continue;
+                }
+                let bytes = ByteRange::new(
+                    chunks.first().expect("non-empty chunks").bytes.start(),
+                    chunks.last().expect("non-empty chunks").bytes.end(),
+                )
+                .expect("ordered injection chunks have a valid byte range");
+                let points = PointRange::new(
+                    chunks.first().expect("non-empty chunks").points.start(),
+                    chunks.last().expect("non-empty chunks").points.end(),
+                )
+                .expect("ordered injection chunks have a valid point range");
+                let text = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
                 regions.push(InjectionRegion {
                     language,
                     combined: pattern.combined,
                     include_children: pattern.include_children,
-                    bytes: capture.bytes,
-                    points: capture.points,
-                    text: capture.text,
+                    chunks,
+                    bytes,
+                    points,
+                    text,
                 });
             }
         }
     }
 
     regions
+}
+
+fn injection_chunks(
+    capture: &HighlightCapture,
+    include_children: bool,
+    nodes: &[RuntimeHighlightNode],
+    input: &str,
+) -> Vec<InjectionChunk> {
+    if include_children {
+        return injection_chunk(input, capture.bytes).into_iter().collect();
+    }
+    let Some(capture_node) = capture.node else {
+        return injection_chunk(input, capture.bytes).into_iter().collect();
+    };
+    let mut child_ranges = nodes
+        .iter()
+        .filter(|node| node.id != capture_node)
+        .filter(|node| {
+            direct_parent_range(node.bytes, nodes).is_some_and(|parent| parent.id == capture_node)
+        })
+        .map(|node| node.bytes)
+        .collect::<Vec<_>>();
+    child_ranges.sort_by_key(|range| (range.start().get(), range.end().get()));
+
+    let mut chunks = Vec::new();
+    let mut cursor = capture.bytes.start().get();
+    for child in child_ranges {
+        let child_start = child.start().get();
+        let child_end = child.end().get();
+        if cursor < child_start
+            && let Some(chunk) = injection_chunk_from_offsets(input, cursor, child_start)
+        {
+            chunks.push(chunk);
+        }
+        cursor = cursor.max(child_end);
+    }
+    let capture_end = capture.bytes.end().get();
+    if cursor < capture_end
+        && let Some(chunk) = injection_chunk_from_offsets(input, cursor, capture_end)
+    {
+        chunks.push(chunk);
+    }
+    chunks
+}
+
+fn injection_chunk(input: &str, bytes: ByteRange) -> Option<InjectionChunk> {
+    injection_chunk_from_offsets(input, bytes.start().get(), bytes.end().get())
+}
+
+fn injection_chunk_from_offsets(input: &str, start: u32, end: u32) -> Option<InjectionChunk> {
+    if start >= end {
+        return None;
+    }
+    let start_point = point_for_byte(input, start)?;
+    let end_point = point_for_byte(input, end)?;
+    let bytes = ByteRange::new(ByteOffset::new(start), ByteOffset::new(end)).ok()?;
+    let points = PointRange::new(start_point, end_point).ok()?;
+    Some(InjectionChunk {
+        bytes,
+        points,
+        text: input_text(input, bytes).to_owned(),
+    })
 }
 
 fn dynamic_injection_language(
@@ -526,6 +639,7 @@ fn capture_binding_matches(
             .filter(|node| node_satisfies_edge_constraints(node, &rule, nodes, fields))
             .map(|node| HighlightCapture {
                 capture_name: binding.capture_name.clone(),
+                node: Some(node.id),
                 bytes: node.bytes,
                 points: node.points,
                 text: node.text.clone(),
@@ -536,6 +650,7 @@ fn capture_binding_matches(
             .filter(|node| node_satisfies_edge_constraints(node, &rule, nodes, fields))
             .map(|node| HighlightCapture {
                 capture_name: binding.capture_name.clone(),
+                node: Some(node.id),
                 bytes: node.bytes,
                 points: node.points,
                 text: node.text.clone(),
@@ -553,6 +668,7 @@ fn capture_binding_matches(
             })
             .map(|token| HighlightCapture {
                 capture_name: binding.capture_name.clone(),
+                node: None,
                 bytes: token.bytes,
                 points: token.points,
                 text: token.text.clone(),
@@ -1489,6 +1605,24 @@ fn input_text(input: &str, bytes: ByteRange) -> &str {
     let start = bytes.start().get() as usize;
     let end = bytes.end().get() as usize;
     input.get(start..end).unwrap_or("")
+}
+
+fn point_for_byte(input: &str, byte: u32) -> Option<PointBytes> {
+    let byte = byte as usize;
+    if byte > input.len() || !input.is_char_boundary(byte) {
+        return None;
+    }
+    let mut row = 0u32;
+    let mut column = 0u32;
+    for ch in input[..byte].chars() {
+        if ch == '\n' {
+            row += 1;
+            column = 0;
+        } else {
+            column += ch.len_utf8() as u32;
+        }
+    }
+    Some(PointBytes::new(Row::new(row), Utf8ColumnBytes::new(column)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1051,21 +1051,30 @@ fn injection_outputs(
     query
         .execute_runtime_injections(parser, report, input)
         .into_iter()
-        .map(|region| {
-            let bytes = region.bytes();
-            let points = region.points();
-            InjectionOutput {
-                language: region.language().to_owned(),
-                combined: region.combined(),
-                include_children: region.include_children(),
-                text: region.text().to_owned(),
-                start_byte: bytes.start().get(),
-                end_byte: bytes.end().get(),
-                start_row: points.start().row().get(),
-                start_column: points.start().column().get(),
-                end_row: points.end().row().get(),
-                end_column: points.end().column().get(),
-            }
+        .flat_map(|region| {
+            let language = region.language().to_owned();
+            let combined = region.combined();
+            let include_children = region.include_children();
+            region
+                .chunks()
+                .iter()
+                .map(move |chunk| {
+                    let bytes = chunk.bytes();
+                    let points = chunk.points();
+                    InjectionOutput {
+                        language: language.clone(),
+                        combined,
+                        include_children,
+                        text: chunk.text().to_owned(),
+                        start_byte: bytes.start().get(),
+                        end_byte: bytes.end().get(),
+                        start_row: points.start().row().get(),
+                        start_column: points.start().column().get(),
+                        end_row: points.end().row().get(),
+                        end_column: points.end().column().get(),
+                    }
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -2709,6 +2718,115 @@ mod tests {
         assert_eq!(injection.start_column, 0);
         assert_eq!(injection.end_row, 0);
         assert_eq!(injection.end_column, 5);
+    }
+
+    #[test]
+    fn playground_response_excludes_injection_content_children_by_default() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "template" },
+    "template": {
+      "type": "SEQ",
+      "members": [
+        { "type": "STRING", "value": "AA" },
+        { "type": "SYMBOL", "name": "code" },
+        { "type": "STRING", "value": "BB" }
+      ]
+    },
+    "code": {
+      "type": "STRING",
+      "value": "JS"
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((template) @injection.content
+  (#set! injection.language "text")
+  (#set! injection.combined))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "text",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/queries/highlights.scm".to_owned(),
+                    text: "(word) @constant\n".to_owned(),
+                },
+            ],
+            input: "AAJSBB".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(
+            response
+                .injections
+                .iter()
+                .map(|injection| {
+                    (
+                        injection.language.as_str(),
+                        injection.text.as_str(),
+                        injection.start_byte,
+                        injection.end_byte,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("text", "AA", 0, 2), ("text", "BB", 4, 6)]
+        );
+        assert_eq!(response.layers.len(), 1);
+        let layer = &response.layers[0];
+        assert_eq!(layer.language, "text");
+        assert!(layer.combined);
+        assert_eq!(layer.input, "AABB");
+        assert_eq!(
+            layer
+                .highlights
+                .iter()
+                .map(|highlight| {
+                    (
+                        highlight.capture_name.as_str(),
+                        highlight.text.as_str(),
+                        highlight.start_byte,
+                        highlight.end_byte,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("constant", "AA", 0, 2), ("constant", "BB", 4, 6)]
+        );
     }
 
     #[test]
