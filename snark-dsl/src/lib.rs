@@ -334,17 +334,68 @@ function __snark_load_module(path) {
   const module = { exports: {} };
   __snark_module_cache.set(resolved, module);
   const require = specifier => __snark_load_module(__snark_resolve_module(resolved, specifier));
-  const execute = new Function("module", "exports", "require", source + "\n; return module.exports;");
-  module.exports = execute(module, module.exports, require);
+  const commonjs = __snark_source_to_commonjs(source, resolved);
+  const execute = new Function("module", "exports", "require", "__default", commonjs + "\n; return module.exports;");
+  module.exports = execute(module, module.exports, require, __snark_default_export);
   return module.exports;
+}
+
+function __snark_default_export(value) {
+  return value && typeof value === "object" && "default" in value ? value.default : value;
+}
+
+function __snark_source_to_commonjs(source, path) {
+  let out = source;
+  out = out.replace(
+    /(^|\n)[ \t]*import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
+    (_match, prefix, name, specifier) => `${prefix}const ${name} = require(${JSON.stringify(specifier)});`,
+  );
+  out = out.replace(
+    /(^|\n)[ \t]*import\s+\{([\s\S]*?)\}\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
+    (_match, prefix, names, specifier) => `${prefix}const { ${__snark_named_import_bindings(names)} } = require(${JSON.stringify(specifier)});`,
+  );
+  out = out.replace(
+    /(^|\n)[ \t]*import\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
+    (_match, prefix, name, specifier) => `${prefix}const ${name} = __default(require(${JSON.stringify(specifier)}));`,
+  );
+  out = out.replace(
+    /(^|\n)\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=/g,
+    (_match, prefix, name) => `${prefix}const ${name} = exports.${name} =`,
+  );
+  out = out.replace(
+    /(^|\n)\s*export\s+function\s+([A-Za-z_$][\w$]*)\s*\(/g,
+    (_match, prefix, name) => `${prefix}exports.${name} = function ${name}(`,
+  );
+  out = out.replace(/(^|\n)\s*export\s+default\s+/m, "$1module.exports.default = ");
+  if (/^\s*(import|export)\s/m.test(out)) {
+    throw new Error(`${path} uses unsupported ESM syntax`);
+  }
+  return out;
+}
+
+function __snark_named_import_bindings(names) {
+  return names
+    .split(",")
+    .map(name => name.trim())
+    .filter(Boolean)
+    .map(name => {
+      const alias = /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/.exec(name);
+      return alias ? `${alias[1]}: ${alias[2]}` : name;
+    })
+    .join(", ");
 }
 "#;
 
 #[cfg(feature = "boa")]
 const EMIT_SCRIPT: &str = r#"
+const defaultExport = module.exports && module.exports.default;
 const grammarObj = module.exports && module.exports.grammar
   ? module.exports.grammar
-  : module.exports;
+  : defaultExport && defaultExport.grammar
+    ? defaultExport.grammar
+    : defaultExport && defaultExport.name
+      ? defaultExport
+      : module.exports;
 normalizeBoaPatternSources(grammarObj);
 JSON.stringify({
   "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
@@ -470,6 +521,53 @@ module.exports = {
         let json = emit_with_boa(&grammar).unwrap();
 
         assert!(json.contains("\"name\": \"mini_commonjs\""));
+        assert!(json.contains("\"source_file\""));
+        assert!(json.contains("\"REPEAT1\""));
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn emits_esm_helper_grammar_with_boa() {
+        let temp = tempfile::tempdir().unwrap();
+        let grammar = temp.path().join("grammar.js");
+        let helper_dir = temp.path().join("grammar");
+        fs::create_dir(&helper_dir).unwrap();
+        fs::write(
+            &grammar,
+            r#"
+import words from "./grammar/words.js"
+import { wrap as one_or_more } from "./grammar/helpers.js";
+
+export default grammar({
+  name: "mini_esm",
+  rules: {
+    source_file: $ => one_or_more($.item),
+    item: $ => words.item,
+  },
+});
+"#,
+        )
+        .unwrap();
+        fs::write(
+            helper_dir.join("words.js"),
+            r#"
+export default {
+  item: /[a-z]+/,
+};
+"#,
+        )
+        .unwrap();
+        fs::write(
+            helper_dir.join("helpers.js"),
+            r#"
+export const wrap = rule => repeat1(rule);
+"#,
+        )
+        .unwrap();
+
+        let json = emit_with_boa(&grammar).unwrap();
+
+        assert!(json.contains("\"name\": \"mini_esm\""));
         assert!(json.contains("\"source_file\""));
         assert!(json.contains("\"REPEAT1\""));
     }
