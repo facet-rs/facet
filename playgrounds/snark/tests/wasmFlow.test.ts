@@ -88,6 +88,8 @@ module.exports = grammar({
             path: "queries/injections.scm",
             text: '((word) @injection.content\n  (#set! injection.language "text")\n  (#set! injection.combined))\n',
           },
+          { path: "languages/text/src/grammar.json", text: grammarJson },
+          { path: "languages/text/queries/highlights.scm", text: "(word) @variable\n" },
         ],
         input: "alpha beta",
         run_corpus: false,
@@ -119,6 +121,11 @@ module.exports = grammar({
       ["text", "beta", true],
     ],
   );
+  assert.equal(response.layers.length, 1);
+  assert.equal(response.layers[0].language, "text");
+  assert.equal(response.layers[0].combined, true);
+  assert.equal(response.layers[0].input, "alphabeta");
+  assert.equal(response.layers[0].parse.sexp, "(document (word))");
 });
 
 test("reports unsupported external scanners from Snark WASM", () => {

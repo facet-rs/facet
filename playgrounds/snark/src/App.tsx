@@ -74,6 +74,26 @@ type InjectionOutput = {
   end_column: number;
 };
 
+type LayerOutput = {
+  language: string;
+  combined: boolean;
+  ranges: LayerSourceRange[];
+  input: string;
+  parse: ParseOutput | null;
+  highlights: HighlightOutput[];
+  diagnostics: Diagnostic[];
+};
+
+type LayerSourceRange = {
+  text: string;
+  start_byte: number;
+  end_byte: number;
+  start_row: number;
+  start_column: number;
+  end_row: number;
+  end_column: number;
+};
+
 type CorpusOutput = {
   path: string;
   case_name: string;
@@ -132,6 +152,7 @@ type PlaygroundResponse = {
   parse: ParseOutput | null;
   highlights: HighlightOutput[];
   injections: InjectionOutput[];
+  layers: LayerOutput[];
   corpus: CorpusOutput[];
   highlight_tests: HighlightTestOutput[];
   tests: TestSummary;
@@ -763,6 +784,8 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
     },
     parse: null,
     highlights: [],
+    injections: [],
+    layers: [],
     corpus: [],
     highlight_tests: [],
     tests: {

@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 //! Native playground backend for Snark grammar bundles.
 
-use std::{cell::RefCell, collections::BTreeSet};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use facet::Facet;
 use margin::{
@@ -68,6 +71,7 @@ struct PlaygroundResponse {
     parse: Option<ParseOutput>,
     highlights: Vec<HighlightOutput>,
     injections: Vec<InjectionOutput>,
+    layers: Vec<LayerOutput>,
     corpus: Vec<CorpusOutput>,
     highlight_tests: Vec<HighlightTestOutput>,
     tests: TestSummary,
@@ -134,6 +138,28 @@ struct InjectionOutput {
     language: String,
     combined: bool,
     include_children: bool,
+    text: String,
+    start_byte: u32,
+    end_byte: u32,
+    start_row: u32,
+    start_column: u32,
+    end_row: u32,
+    end_column: u32,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct LayerOutput {
+    language: String,
+    combined: bool,
+    ranges: Vec<LayerSourceRange>,
+    input: String,
+    parse: Option<ParseOutput>,
+    highlights: Vec<HighlightOutput>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct LayerSourceRange {
     text: String,
     start_byte: u32,
     end_byte: u32,
@@ -255,6 +281,13 @@ impl ScannerSelection {
     }
 }
 
+struct PreparedEmbeddedLanguage {
+    files: Vec<BundleFile>,
+    prepared: Option<PreparedGrammar>,
+    scanner_selection: Option<ScannerSelection>,
+    diagnostics: Vec<Diagnostic>,
+}
+
 const PLAYGROUND_RECOVERY_STEP_LIMIT: usize = 1_000_000;
 
 /// Parse one playground request with Snark and return a JSON response.
@@ -268,6 +301,7 @@ pub struct PlaygroundSession {
     bundle: BundleSummary,
     prepared: PreparedGrammar,
     scanner_selection: ScannerSelection,
+    embedded_languages: BTreeMap<String, PreparedEmbeddedLanguage>,
     last_input: Option<String>,
     last_report: Option<RuntimeParseReport>,
 }
@@ -328,6 +362,7 @@ impl PlaygroundSession {
                 parse: None,
                 highlights: Vec::new(),
                 injections: Vec::new(),
+                layers: Vec::new(),
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
@@ -346,6 +381,7 @@ impl PlaygroundSession {
                     parse: None,
                     highlights: Vec::new(),
                     injections: Vec::new(),
+                    layers: Vec::new(),
                     corpus: Vec::new(),
                     highlight_tests: Vec::new(),
                     tests: TestSummary::not_requested(),
@@ -371,17 +407,20 @@ impl PlaygroundSession {
                 parse: None,
                 highlights: Vec::new(),
                 injections: Vec::new(),
+                layers: Vec::new(),
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
                 limitations: Vec::new(),
             });
         }
+        let embedded_languages = prepare_embedded_languages(&files);
         Ok(Self {
             files,
             bundle,
             prepared,
             scanner_selection,
+            embedded_languages,
             last_input: None,
             last_report: None,
         })
@@ -405,6 +444,7 @@ impl PlaygroundSession {
             parse: None,
             highlights: Vec::new(),
             injections: Vec::new(),
+            layers: Vec::new(),
             corpus: Vec::new(),
             highlight_tests: Vec::new(),
             tests: TestSummary::not_requested(),
@@ -470,6 +510,7 @@ fn playground_response_for_session(
     let mut parse = None;
     let mut highlights = Vec::new();
     let mut injections = Vec::new();
+    let mut layers = Vec::new();
     let runtime = prepared.runtime();
     let should_parse_input = !input.is_empty() || !run_corpus;
     if should_parse_input {
@@ -493,21 +534,9 @@ fn playground_response_for_session(
                 Ok(playground_report) => {
                     let report = playground_report.report;
                     let accepted_tree_events = report.accepted_tree_events();
-                    let accepted_tree_event_count = accepted_tree_events.len();
                     let accepted_error_count = count_accepted_errors(&accepted_tree_events);
                     let accepted_missing_count = count_accepted_missing(&accepted_tree_events);
-                    parse = Some(ParseOutput {
-                        sexp: report.tree().to_sexp(),
-                        accepted_count: report.accepted_count(),
-                        failure_count: report.failure_count(),
-                        max_live_versions: report.max_live_versions(),
-                        trace_event_count: report.trace_events().len(),
-                        tree_event_count: report.tree_events().len(),
-                        reuse_node_count: count_reused_nodes(report.tree_events()),
-                        accepted_tree_event_count,
-                        accepted_error_count,
-                        accepted_missing_count,
-                    });
+                    parse = Some(parse_output(&report));
                     if accepted_error_count > 0 || accepted_missing_count > 0 {
                         diagnostics.push(diagnostic(
                             "parse",
@@ -537,6 +566,7 @@ fn playground_response_for_session(
                             &report,
                             input,
                         );
+                        layers = layer_outputs(input, &injections, &session.embedded_languages);
                     }
                     session.last_input = Some(input.to_owned());
                     session.last_report = Some(report);
@@ -567,6 +597,7 @@ fn playground_response_for_session(
         parse,
         highlights,
         injections,
+        layers,
         corpus,
         highlight_tests,
         tests,
@@ -595,6 +626,22 @@ fn count_reused_nodes(events: &[TreeEvent]) -> usize {
         .count()
 }
 
+fn parse_output(report: &RuntimeParseReport) -> ParseOutput {
+    let accepted_tree_events = report.accepted_tree_events();
+    ParseOutput {
+        sexp: report.tree().to_sexp(),
+        accepted_count: report.accepted_count(),
+        failure_count: report.failure_count(),
+        max_live_versions: report.max_live_versions(),
+        trace_event_count: report.trace_events().len(),
+        tree_event_count: report.tree_events().len(),
+        reuse_node_count: count_reused_nodes(report.tree_events()),
+        accepted_tree_event_count: accepted_tree_events.len(),
+        accepted_error_count: count_accepted_errors(&accepted_tree_events),
+        accepted_missing_count: count_accepted_missing(&accepted_tree_events),
+    }
+}
+
 fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, String)> {
     let raw = facet_json::from_str::<RawGrammarJson>(grammar_json)
         .map_err(|error| ("grammar".to_owned(), error.to_string()))?;
@@ -616,6 +663,86 @@ fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, Strin
         table,
         runtime_plan,
     })
+}
+
+fn prepare_embedded_languages(files: &[BundleFile]) -> BTreeMap<String, PreparedEmbeddedLanguage> {
+    let mut grouped = BTreeMap::<String, Vec<BundleFile>>::new();
+    for file in files {
+        let Some((language, relative)) = embedded_language_relative(&file.path) else {
+            continue;
+        };
+        grouped.entry(language).or_default().push(BundleFile {
+            path: relative,
+            text: file.text.clone(),
+        });
+    }
+
+    grouped
+        .into_iter()
+        .map(|(language, files)| {
+            let files = normalize_bundle_files(files);
+            (language, prepare_embedded_language(files))
+        })
+        .collect()
+}
+
+fn prepare_embedded_language(files: Vec<BundleFile>) -> PreparedEmbeddedLanguage {
+    let mut bundle = summarize_bundle(&files);
+    let Some(grammar_file) = find_file(&files, "src/grammar.json") else {
+        return PreparedEmbeddedLanguage {
+            files,
+            prepared: None,
+            scanner_selection: None,
+            diagnostics: vec![diagnostic(
+                "bundle",
+                "embedded language bundle does not contain src/grammar.json".to_owned(),
+                None,
+            )],
+        };
+    };
+    let prepared = match prepare_grammar(&grammar_file.text) {
+        Ok(prepared) => prepared,
+        Err((stage, message)) => {
+            return PreparedEmbeddedLanguage {
+                files,
+                prepared: None,
+                scanner_selection: None,
+                diagnostics: vec![diagnostic(&stage, message, None)],
+            };
+        }
+    };
+    let scanner_selection = scanner_selection(&files, &prepared.parser);
+    bundle
+        .active_scanner
+        .clone_from(&scanner_selection.active_scanner);
+    if !scanner_selection.supports_required_externals(&prepared.parser) {
+        return PreparedEmbeddedLanguage {
+            files,
+            prepared: None,
+            scanner_selection: None,
+            diagnostics: vec![diagnostic(
+                "scanner",
+                unsupported_external_scanner_message(&bundle, &prepared.parser),
+                None,
+            )],
+        };
+    }
+
+    PreparedEmbeddedLanguage {
+        files,
+        prepared: Some(prepared),
+        scanner_selection: Some(scanner_selection),
+        diagnostics: Vec::new(),
+    }
+}
+
+fn embedded_language_relative(path: &str) -> Option<(String, String)> {
+    let rest = path.strip_prefix("languages/")?;
+    let (language, relative) = rest.split_once('/')?;
+    if language.is_empty() || relative.is_empty() {
+        return None;
+    }
+    Some((language.to_owned(), relative.to_owned()))
 }
 
 fn scanner_selection(files: &[BundleFile], parser: &ParserGrammar) -> ScannerSelection {
@@ -809,6 +936,281 @@ fn injection_outputs(
             }
         })
         .collect()
+}
+
+#[derive(Debug)]
+struct LayerGroup<'a> {
+    language: String,
+    combined: bool,
+    regions: Vec<&'a InjectionOutput>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LayerSegment {
+    virtual_start: u32,
+    virtual_end: u32,
+    host_start: u32,
+}
+
+fn layer_outputs(
+    host_input: &str,
+    injections: &[InjectionOutput],
+    embedded_languages: &BTreeMap<String, PreparedEmbeddedLanguage>,
+) -> Vec<LayerOutput> {
+    let mut groups = Vec::<LayerGroup<'_>>::new();
+    let mut combined_groups = BTreeMap::<String, usize>::new();
+    for injection in injections {
+        if injection.combined {
+            let index = *combined_groups
+                .entry(injection.language.clone())
+                .or_insert_with(|| {
+                    let index = groups.len();
+                    groups.push(LayerGroup {
+                        language: injection.language.clone(),
+                        combined: true,
+                        regions: Vec::new(),
+                    });
+                    index
+                });
+            groups[index].regions.push(injection);
+        } else {
+            groups.push(LayerGroup {
+                language: injection.language.clone(),
+                combined: false,
+                regions: vec![injection],
+            });
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|group| layer_output(host_input, group, embedded_languages))
+        .collect()
+}
+
+fn layer_output(
+    host_input: &str,
+    group: LayerGroup<'_>,
+    embedded_languages: &BTreeMap<String, PreparedEmbeddedLanguage>,
+) -> LayerOutput {
+    let ranges = group
+        .regions
+        .iter()
+        .map(|region| LayerSourceRange {
+            text: region.text.clone(),
+            start_byte: region.start_byte,
+            end_byte: region.end_byte,
+            start_row: region.start_row,
+            start_column: region.start_column,
+            end_row: region.end_row,
+            end_column: region.end_column,
+        })
+        .collect::<Vec<_>>();
+    let mut input = String::new();
+    let mut segments = Vec::new();
+    for region in &group.regions {
+        let virtual_start = input.len();
+        input.push_str(&region.text);
+        let virtual_end = input.len();
+        segments.push(LayerSegment {
+            virtual_start: virtual_start as u32,
+            virtual_end: virtual_end as u32,
+            host_start: region.start_byte,
+        });
+    }
+
+    let Some(language) = embedded_language(embedded_languages, &group.language) else {
+        let message = format!(
+            "no embedded language bundle for {}; expected languages/{}/src/grammar.json",
+            group.language, group.language
+        );
+        return LayerOutput {
+            language: group.language,
+            combined: group.combined,
+            ranges,
+            input,
+            parse: None,
+            highlights: Vec::new(),
+            diagnostics: vec![diagnostic(
+                "injection",
+                message,
+                group
+                    .regions
+                    .first()
+                    .map(|region| injection_diagnostic_span(region)),
+            )],
+        };
+    };
+    let (Some(prepared), Some(scanner_selection)) = (
+        language.prepared.as_ref(),
+        language.scanner_selection.as_ref(),
+    ) else {
+        return LayerOutput {
+            language: group.language,
+            combined: group.combined,
+            ranges,
+            input,
+            parse: None,
+            highlights: Vec::new(),
+            diagnostics: language.diagnostics.clone(),
+        };
+    };
+    let runtime = match prepared.runtime() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return LayerOutput {
+                language: group.language,
+                combined: group.combined,
+                ranges,
+                input,
+                parse: None,
+                highlights: Vec::new(),
+                diagnostics: vec![diagnostic("runtime", error.to_string(), None)],
+            };
+        }
+    };
+    let report = match parse_source_with_optional_recovery(
+        runtime,
+        scanner_selection
+            .scanner
+            .as_ref()
+            .map(|scanner| scanner as &dyn ReducedExternalScanner),
+        &input,
+        None,
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            let diagnostic = reduced_error_diagnostic("parse", &error, &input);
+            return LayerOutput {
+                language: group.language,
+                combined: group.combined,
+                ranges,
+                input,
+                parse: None,
+                highlights: Vec::new(),
+                diagnostics: vec![diagnostic],
+            };
+        }
+    };
+    let mut diagnostics = Vec::new();
+    let parse = parse_output(&report.report);
+    if parse.accepted_error_count > 0 || parse.accepted_missing_count > 0 {
+        diagnostics.push(diagnostic(
+            "parse",
+            format!(
+                "accepted injected parse contains {} ERROR node(s) and {} MISSING node(s)",
+                parse.accepted_error_count, parse.accepted_missing_count
+            ),
+            None,
+        ));
+    }
+    let highlights =
+        find_file(&language.files, "queries/highlights.scm").map_or_else(Vec::new, |query_file| {
+            layer_highlight_outputs(
+                &QuerySource(query_file.text.clone()),
+                &prepared.parser,
+                &report.report,
+                &input,
+                host_input,
+                &segments,
+            )
+        });
+    LayerOutput {
+        language: group.language,
+        combined: group.combined,
+        ranges,
+        input,
+        parse: Some(parse),
+        highlights,
+        diagnostics,
+    }
+}
+
+fn embedded_language<'a>(
+    embedded_languages: &'a BTreeMap<String, PreparedEmbeddedLanguage>,
+    language: &str,
+) -> Option<&'a PreparedEmbeddedLanguage> {
+    embedded_languages
+        .get(language)
+        .or_else(|| embedded_languages.get(&language.to_ascii_lowercase()))
+}
+
+fn layer_highlight_outputs(
+    query: &QuerySource,
+    parser: &ParserGrammar,
+    report: &RuntimeParseReport,
+    input: &str,
+    host_input: &str,
+    segments: &[LayerSegment],
+) -> Vec<HighlightOutput> {
+    query
+        .execute_runtime_highlights(parser, report, input)
+        .into_iter()
+        .filter_map(|capture| {
+            let bytes = capture.bytes();
+            let start = bytes.start().get();
+            let end = bytes.end().get();
+            let segment = segment_for_virtual_range(segments, start, end)?;
+            let host_start = segment.host_start + start.saturating_sub(segment.virtual_start);
+            let host_end = segment.host_start + end.saturating_sub(segment.virtual_start);
+            let (start_row, start_column) = point_for_byte(host_input, host_start)?;
+            let (end_row, end_column) = point_for_byte(host_input, host_end)?;
+            Some(HighlightOutput {
+                capture_name: capture.capture_name().to_owned(),
+                text: host_text(host_input, host_start, host_end).to_owned(),
+                start_byte: host_start,
+                end_byte: host_end,
+                start_row,
+                start_column,
+                end_row,
+                end_column,
+            })
+        })
+        .collect()
+}
+
+fn segment_for_virtual_range(
+    segments: &[LayerSegment],
+    start: u32,
+    end: u32,
+) -> Option<LayerSegment> {
+    segments
+        .iter()
+        .copied()
+        .find(|segment| segment.virtual_start <= start && end <= segment.virtual_end)
+}
+
+fn host_text(input: &str, start: u32, end: u32) -> &str {
+    input.get(start as usize..end as usize).unwrap_or("")
+}
+
+fn point_for_byte(input: &str, byte: u32) -> Option<(u32, u32)> {
+    let byte = byte as usize;
+    if byte > input.len() || !input.is_char_boundary(byte) {
+        return None;
+    }
+    let mut row = 0u32;
+    let mut column = 0u32;
+    for ch in input[..byte].chars() {
+        if ch == '\n' {
+            row += 1;
+            column = 0;
+        } else {
+            column += ch.len_utf8() as u32;
+        }
+    }
+    Some((row, column))
+}
+
+fn injection_diagnostic_span(region: &InjectionOutput) -> DiagnosticSpan {
+    DiagnosticSpan {
+        start_byte: region.start_byte,
+        end_byte: region.end_byte,
+        start_row: region.start_row,
+        start_column: region.start_column,
+        end_row: region.end_row,
+        end_column: region.end_column,
+    }
 }
 
 fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<CorpusOutput> {
@@ -1202,6 +1604,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
         parse: None,
         highlights: Vec::new(),
         injections: Vec::new(),
+        layers: Vec::new(),
         corpus: Vec::new(),
         highlight_tests: Vec::new(),
         tests: TestSummary::not_requested(),
@@ -1857,6 +2260,86 @@ mod tests {
         assert_eq!(injection.start_column, 0);
         assert_eq!(injection.end_row, 0);
         assert_eq!(injection.end_column, 5);
+    }
+
+    #[test]
+    fn playground_response_parses_injected_language_layers() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "code" },
+    "code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((code) @injection.content
+  (#set! injection.language "text"))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "text",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/queries/highlights.scm".to_owned(),
+                    text: "(word) @variable\n".to_owned(),
+                },
+            ],
+            input: "PRINT".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.layers.len(), 1);
+        let layer = &response.layers[0];
+        assert_eq!(layer.language, "text");
+        assert!(!layer.combined);
+        assert!(layer.diagnostics.is_empty(), "{:?}", layer.diagnostics);
+        assert_eq!(layer.input, "PRINT");
+        assert_eq!(
+            layer.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(document (word))")
+        );
+        assert_eq!(layer.highlights.len(), 1);
+        assert_eq!(layer.highlights[0].capture_name, "variable");
+        assert_eq!(layer.highlights[0].text, "PRINT");
+        assert_eq!(layer.highlights[0].start_byte, 0);
+        assert_eq!(layer.highlights[0].end_byte, 5);
     }
 
     fn external_scanner_smoke_grammar_json() -> String {
