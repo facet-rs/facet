@@ -680,6 +680,103 @@ module.exports = grammar({
   );
 });
 
+test("refreshes injected layers when reparsing a prepared Snark WASM session", async () => {
+  const hostGrammar = `
+module.exports = grammar({
+  name: "host_session",
+  extras: $ => [],
+  rules: {
+    document: $ => seq($.prefix, $.code),
+    prefix: $ => /x+/,
+    code: $ => /[a-z]+/,
+  },
+});
+`;
+  const textGrammar = `
+module.exports = grammar({
+  name: "text",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[a-z]+/,
+  },
+});
+`;
+  const files = normalizeBundleFiles([
+    { path: "host/grammar.js", text: hostGrammar },
+    {
+      path: "host/queries/injections.scm",
+      text: '((code) @injection.content\n  (#set! injection.language "text"))\n',
+    },
+    { path: "text/grammar.js", text: textGrammar },
+    { path: "text/queries/highlights.scm", text: "(word) @constant\n" },
+  ]);
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const session = new SnarkPlaygroundSession(
+    JSON.stringify({
+      files: projected,
+    }),
+  );
+
+  const first = JSON.parse(
+    session.parse(
+      JSON.stringify({
+        input: "xxalpha",
+        run_corpus: false,
+      }),
+    ),
+  );
+  const second = JSON.parse(
+    session.reparse(
+      JSON.stringify({
+        input: "xxbeta",
+        run_corpus: false,
+        edit: {
+          start_byte: 2,
+          old_end_byte: 7,
+          new_end_byte: 6,
+        },
+      }),
+    ),
+  );
+
+  assert.equal(first.ok, true, JSON.stringify(first.diagnostics, null, 2));
+  assert.equal(first.parse.sexp, "(document (prefix) (code))");
+  assert.equal(first.layers.length, 1);
+  assert.equal(first.layers[0].language, "text");
+  assert.equal(first.layers[0].input, "alpha");
+  assert.deepEqual(
+    first.layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
+      capture.capture_name,
+      capture.text,
+    ]),
+    [["constant", "alpha"]],
+  );
+
+  assert.equal(second.ok, true, JSON.stringify(second.diagnostics, null, 2));
+  assert.equal(second.parse.sexp, "(document (prefix) (code))");
+  assert.equal(second.injections.length, 1);
+  assert.equal(second.injections[0].text, "beta");
+  assert.equal(second.injections[0].start_byte, 2);
+  assert.equal(second.injections[0].end_byte, 6);
+  assert.equal(second.layers.length, 1);
+  assert.equal(second.layers[0].language, "text");
+  assert.equal(second.layers[0].input, "beta");
+  assert.deepEqual(
+    second.layers[0].highlights.map(
+      (capture: { capture_name: string; text: string; start_byte: number; end_byte: number }) => [
+        capture.capture_name,
+        capture.text,
+        capture.start_byte,
+        capture.end_byte,
+      ],
+    ),
+    [["constant", "beta", 2, 6]],
+  );
+});
+
 test("runs bundled corpus and highlight tests through generated grammar.json", () => {
   const grammarJs = `
 module.exports = grammar({

@@ -2472,6 +2472,137 @@ mod tests {
     }
 
     #[test]
+    fn playground_session_reparse_refreshes_injected_layers() {
+        let files = vec![
+            BundleFile {
+                path: "src/grammar.json".to_owned(),
+                text: r##"{
+  "name": "host_session",
+  "rules": {
+    "document": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "prefix" },
+        { "type": "SYMBOL", "name": "code" }
+      ]
+    },
+    "prefix": { "type": "PATTERN", "value": "x+" },
+    "code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[a-z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"##
+                .to_owned(),
+            },
+            BundleFile {
+                path: "queries/injections.scm".to_owned(),
+                text: r#"((code) @injection.content
+  (#set! injection.language "text"))
+"#
+                .to_owned(),
+            },
+            BundleFile {
+                path: "languages/text/src/grammar.json".to_owned(),
+                text: r##"{
+  "name": "text",
+  "rules": {
+    "document": {
+      "type": "REPEAT1",
+      "content": { "type": "SYMBOL", "name": "word" }
+    },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[a-z]+" }
+    }
+  },
+  "extras": [{ "type": "PATTERN", "value": "\\s+" }],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"##
+                .to_owned(),
+            },
+            BundleFile {
+                path: "languages/text/queries/highlights.scm".to_owned(),
+                text: "(word) @constant\n".to_owned(),
+            },
+        ];
+        let mut session = PlaygroundSession::prepare_files(files).unwrap();
+        let initial = PlaygroundParseRequest {
+            input: "xxalpha".to_owned(),
+            run_corpus: false,
+            edit: None,
+        };
+        let initial = session.parse_json(&facet_json::to_string(&initial).unwrap());
+        let initial: PlaygroundResponse = facet_json::from_str(&initial).unwrap();
+        assert!(initial.ok, "{:?}", initial.diagnostics);
+        assert_eq!(
+            initial.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(document (prefix) (code))")
+        );
+        assert_eq!(initial.layers.len(), 1);
+        assert_eq!(initial.layers[0].language, "text");
+        assert_eq!(initial.layers[0].input, "alpha");
+        assert_eq!(
+            initial.layers[0]
+                .highlights
+                .iter()
+                .map(|capture| (capture.capture_name.as_str(), capture.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("constant", "alpha")]
+        );
+
+        let reparsed = PlaygroundParseRequest {
+            input: "xxbeta".to_owned(),
+            run_corpus: false,
+            edit: Some(PlaygroundInputEdit {
+                start_byte: 2,
+                old_end_byte: 7,
+                new_end_byte: 6,
+            }),
+        };
+        let reparsed = session.parse_json(&facet_json::to_string(&reparsed).unwrap());
+        let reparsed: PlaygroundResponse = facet_json::from_str(&reparsed).unwrap();
+
+        assert!(reparsed.ok, "{:?}", reparsed.diagnostics);
+        assert_eq!(
+            reparsed.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(document (prefix) (code))")
+        );
+        assert_eq!(reparsed.injections.len(), 1);
+        assert_eq!(reparsed.injections[0].text, "beta");
+        assert_eq!(reparsed.injections[0].start_byte, 2);
+        assert_eq!(reparsed.injections[0].end_byte, 6);
+        assert_eq!(reparsed.layers.len(), 1);
+        assert_eq!(reparsed.layers[0].language, "text");
+        assert_eq!(reparsed.layers[0].input, "beta");
+        assert_eq!(
+            reparsed.layers[0]
+                .highlights
+                .iter()
+                .map(|capture| {
+                    (
+                        capture.capture_name.as_str(),
+                        capture.text.as_str(),
+                        capture.start_byte,
+                        capture.end_byte,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("constant", "beta", 2, 6)]
+        );
+    }
+
+    #[test]
     fn reports_grammar_js_bundle_as_needing_in_memory_grammar_json() {
         let request = PlaygroundRequest {
             files: vec![BundleFile {
