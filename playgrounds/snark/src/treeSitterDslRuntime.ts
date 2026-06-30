@@ -92,6 +92,13 @@ function sourceToCommonJs(source: string, path: string) {
     },
   );
   out = out.replace(
+    /(^|\n)[ \t]*import\s+([A-Za-z_$][\w$]*)\s*,\s*\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
+    (_match, prefix, defaultName, namespaceName, specifier) => {
+      const moduleName = `__snark_module_${moduleIndex++}`;
+      return `${prefix}const ${moduleName} = require(${JSON.stringify(specifier)});const ${defaultName} = __default(${moduleName});const ${namespaceName} = ${moduleName};`;
+    },
+  );
+  out = out.replace(
     /(^|\n)[ \t]*import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
     (_match, prefix, name, specifier) => `${prefix}const ${name} = require(${JSON.stringify(specifier)});`,
   );
@@ -103,6 +110,10 @@ function sourceToCommonJs(source: string, path: string) {
   out = out.replace(
     /(^|\n)[ \t]*import\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
     (_match, prefix, name, specifier) => `${prefix}const ${name} = __default(require(${JSON.stringify(specifier)}));`,
+  );
+  out = out.replace(
+    /(^|\n)[ \t]*import\s+['"]([^'"]+)['"][ \t]*;?/g,
+    (_match, prefix, specifier) => `${prefix}require(${JSON.stringify(specifier)});`,
   );
   out = out.replace(
     /(^|\n)\s*export\s+(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g,

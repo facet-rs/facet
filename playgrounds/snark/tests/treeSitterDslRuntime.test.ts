@@ -524,6 +524,58 @@ export default { wrap: rule => repeat1(rule) };
   });
 });
 
+test("resolves ESM default plus namespace imports and side-effect imports", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import helper, * as helpers from "./helpers.mjs";
+import "./setup.mjs";
+import { registry } from "./registry.mjs";
+export default grammar({
+  name: "tiny_default_namespace_side_effect_import",
+  rules: {
+    document: $ => seq(helper.word, helpers.extra, registry.word),
+  },
+});
+`,
+      },
+      {
+        path: "helpers.mjs",
+        text: `
+export const extra = "b";
+export default { word: "a" };
+`,
+      },
+      {
+        path: "registry.mjs",
+        text: "export const registry = {};",
+      },
+      {
+        path: "setup.mjs",
+        text: `
+import { registry } from "./registry.mjs";
+registry.word = "c";
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_default_namespace_side_effect_import");
+  assert.deepEqual(grammar.rules.document, {
+    type: "SEQ",
+    members: [
+      { type: "STRING", value: "a" },
+      { type: "STRING", value: "b" },
+      { type: "STRING", value: "c" },
+    ],
+  });
+});
+
 test("resolves adjacent semicolonless ESM default imports", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
