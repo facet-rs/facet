@@ -1254,13 +1254,15 @@ fn layer_output(
     let mut diagnostics = Vec::new();
     let parse = parse_output(&report.report);
     if parse.accepted_error_count > 0 || parse.accepted_missing_count > 0 {
+        let primary_span = accepted_problem_span(&report.report.accepted_tree_events(), &input)
+            .and_then(|span| remap_layer_span(&span, host_input, &segments));
         diagnostics.push(diagnostic(
             "parse",
             format!(
                 "accepted injected parse contains {} ERROR node(s) and {} MISSING node(s)",
                 parse.accepted_error_count, parse.accepted_missing_count
             ),
-            None,
+            primary_span,
         ));
     }
     let highlights = query_source_for_kind(
@@ -3763,6 +3765,116 @@ mod tests {
         assert_eq!(span.start_byte, 2);
         assert_eq!(span.start_row, 0);
         assert_eq!(span.start_column, 2);
+    }
+
+    #[test]
+    fn playground_response_promotes_recovered_injected_layer_diagnostic_spans() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "prefix" },
+        { "type": "SYMBOL", "name": "code" }
+      ]
+    },
+    "prefix": {
+      "type": "STRING",
+      "value": "xx"
+    },
+    "code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[a-z@0-9\\n]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((code) @injection.content
+  (#set! injection.language "mini"))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/mini/src/grammar.json".to_owned(),
+                    text: r##"{
+  "name": "mini",
+  "rules": {
+    "source_file": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "wrapper" },
+        { "type": "SYMBOL", "name": "suffix" }
+      ]
+    },
+    "wrapper": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "left" },
+        { "type": "SYMBOL", "name": "right" }
+      ]
+    },
+    "left": { "type": "STRING", "value": "a" },
+    "right": { "type": "STRING", "value": "b" },
+    "suffix": { "type": "PATTERN", "value": "[0-9]+" }
+  },
+  "extras": [
+    { "type": "PATTERN", "value": "\\s+" }
+  ],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"##
+                    .to_owned(),
+                },
+            ],
+            input: "xxa@\nb1".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(!response.ok);
+        assert_eq!(response.layers.len(), 1);
+        let layer = &response.layers[0];
+        assert_eq!(layer.language, "mini");
+        assert_eq!(layer.input, "a@\nb1");
+        assert_eq!(layer.diagnostics.len(), 1);
+        assert!(layer.parse.is_some(), "{response:#?}");
+        let parse = layer.parse.as_ref().expect("checked above");
+        assert_eq!(
+            parse.sexp,
+            "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
+        );
+        assert_eq!(parse.accepted_error_count, 1);
+        let diagnostic = &response.diagnostics[0];
+        assert_eq!(diagnostic.stage, "layer/parse");
+        assert!(
+            diagnostic.message.contains("mini: accepted injected parse"),
+            "{diagnostic:?}"
+        );
+        let span = diagnostic
+            .primary_span
+            .as_ref()
+            .expect("recovered layer diagnostic has root span");
+        assert_eq!(span.start_byte, 3);
+        assert_eq!(span.start_row, 0);
+        assert_eq!(span.start_column, 3);
     }
 
     fn external_scanner_smoke_grammar_json() -> String {
