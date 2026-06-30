@@ -21,6 +21,7 @@ module.exports = grammar({
     ////////////////////////////////////////
     
     _directives: $ => choice(
+      $.map_directive,
       $.simple_directive,
       $.block_directive,
       $.lua_block_directive,
@@ -39,6 +40,28 @@ module.exports = grammar({
       repeat($.param),
       $.block
     ),
+
+    map_directive: $ => seq(
+      field('name', 'map'),
+      repeat($.param),
+      $.map_block
+    ),
+
+    map_block: $ => seq(
+      '{',
+      repeat($.map_entry),
+      '}'
+    ),
+
+    map_entry: $ => seq(
+      $.map_key,
+      repeat($.param),
+      $._map_entry_end
+    ),
+
+    map_key: $ => token(prec(10, /[^\s;{}]+/)),
+
+    _map_entry_end: $ => token(/;[ \t]*(#[^\n]*)?/),
 
     ////////////////////////////////////////
     // Directive Type Choice Ends
@@ -81,6 +104,7 @@ module.exports = grammar({
       $.variable,
       $.regex,
       $.modifier,
+      $._escaped_char,
       $.string,
       $.generic
     ),
@@ -175,6 +199,7 @@ module.exports = grammar({
     _carrot: $ => token('^'),
     _star: $ => token('*'),
     escaped_dot: $ => token(seq('\\', /\./)),
+    _escaped_char: $ => token(seq('\\', /./)),
     _eol: $ => token('$'),
     _plus: $ => token('+'),
     

@@ -2303,6 +2303,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn all_non_error_vendored_playground_samples_parse_from_rust() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../playgrounds/snark/src/bundled");
+        let mut grammar_ids = std::fs::read_dir(&root)
+            .expect("vendored playground grammar directory should be readable")
+            .map(|entry| entry.expect("vendored grammar entry should be readable"))
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .expect("vendored grammar file type should be readable")
+                    .is_dir()
+            })
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        grammar_ids.sort();
+
+        let mut failures = Vec::new();
+        for id in grammar_ids {
+            let dir = root.join(&id);
+            let grammar_path = dir.join("grammar.js");
+            let grammar_json = snark_dsl::emit_with_boa(&grammar_path)
+                .expect("grammar.js should emit grammar JSON");
+            let mut files = read_bundle_files(&dir);
+            files.push(BundleFile {
+                path: "src/grammar.json".to_owned(),
+                text: grammar_json,
+            });
+            files.sort_by(|left, right| left.path.cmp(&right.path));
+
+            let samples = files
+                .iter()
+                .filter(|file| file.path.starts_with("samples/"))
+                .filter(|file| !is_error_sample(&file.path))
+                .cloned()
+                .collect::<Vec<_>>();
+            for sample in samples {
+                let request = PlaygroundRequest {
+                    files: files.clone(),
+                    input: sample.text,
+                    run_corpus: false,
+                };
+                let response = playground_response(
+                    &facet_json::to_string(&request).expect("request serializes"),
+                );
+                let parse = response.parse.as_ref();
+                if !response.ok
+                    || parse.is_none_or(|parse| {
+                        parse.accepted_error_count > 0 || parse.accepted_missing_count > 0
+                    })
+                {
+                    failures.push(VendoredSampleResult {
+                        id: id.clone(),
+                        sample: sample.path,
+                        ok: response.ok,
+                        language: response.language,
+                        error_count: parse.map(|parse| parse.accepted_error_count),
+                        missing_count: parse.map(|parse| parse.accepted_missing_count),
+                        captures: response.highlights.len(),
+                    });
+                }
+            }
+        }
+
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
     #[derive(Debug)]
     struct VendoredSampleResult {
         id: String,

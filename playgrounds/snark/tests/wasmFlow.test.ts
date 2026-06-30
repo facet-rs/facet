@@ -305,6 +305,52 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
   );
 });
 
+test("runs every non-error vendored sample through generated grammar.json and Snark WASM", () => {
+  const root = new URL("../src/bundled/", import.meta.url);
+  const grammarIds = readdirSync(root)
+    .filter((name) => statSync(new URL(name, root)).isDirectory())
+    .sort();
+
+  const failures = grammarIds.flatMap((id) => {
+    const files = bundledFiles(id);
+    const runnableFiles = runnableFilesForBundle(files);
+    const samples = projectedFilesForGrammarRootId(files, preferredGrammarRootId(files))
+      .filter((file) => file.path.startsWith("samples/"))
+      .filter((file) => !isErrorSamplePath(file.path))
+      .sort((left, right) => left.path.localeCompare(right.path));
+
+    return samples.flatMap((sample) => {
+      const response = JSON.parse(
+        parseBundle(
+          JSON.stringify({
+            files: runnableFiles,
+            input: sample.text,
+            run_corpus: false,
+          }),
+        ),
+      );
+      const errorCount = response.parse?.accepted_error_count ?? null;
+      const missingCount = response.parse?.accepted_missing_count ?? null;
+      if (response.ok && errorCount === 0 && missingCount === 0) {
+        return [];
+      }
+      return [
+        {
+          id,
+          sample: sample.path,
+          ok: response.ok,
+          language: response.language,
+          errorCount,
+          missingCount,
+          diagnostics: response.diagnostics,
+        },
+      ];
+    });
+  });
+
+  assert.deepEqual(failures, []);
+});
+
 const arboriumNginxDef = "/Users/amos/oss/arborium/langs/group-maple/nginx/def";
 
 test(
@@ -352,3 +398,7 @@ test(
     assert.ok(response.highlights.length > 0);
   },
 );
+
+function isErrorSamplePath(path: string): boolean {
+  return /(^|[-_/])(errors?|invalid|broken|fail)([-_.\\/]|$)/i.test(path);
+}
