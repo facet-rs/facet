@@ -246,6 +246,7 @@ pub struct PlaygroundSession {
     files: Vec<BundleFile>,
     bundle: BundleSummary,
     prepared: PreparedGrammar,
+    scanner_selection: ScannerSelection,
     last_input: Option<String>,
     last_report: Option<RuntimeParseReport>,
 }
@@ -331,11 +332,14 @@ impl PlaygroundSession {
         };
 
         let scanner_selection = scanner_selection(&files, &prepared.parser);
-        bundle.active_scanner = scanner_selection.active_scanner;
+        bundle
+            .active_scanner
+            .clone_from(&scanner_selection.active_scanner);
         Ok(Self {
             files,
             bundle,
             prepared,
+            scanner_selection,
             last_input: None,
             last_report: None,
         })
@@ -397,14 +401,14 @@ fn playground_response_for_session(
     let mut diagnostics = Vec::new();
     let mut parse = None;
     let mut highlights = Vec::new();
-    let scanner_selection = scanner_selection(files, &prepared.parser);
     let runtime = prepared.runtime();
     let should_parse_input = !input.is_empty() || !run_corpus;
     if should_parse_input {
         match runtime {
             Ok(runtime) => match parse_source_with_optional_recovery(
                 runtime,
-                scanner_selection
+                session
+                    .scanner_selection
                     .scanner
                     .as_ref()
                     .map(|scanner| scanner as &dyn ReducedExternalScanner),
