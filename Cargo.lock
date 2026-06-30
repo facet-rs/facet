@@ -3300,6 +3300,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gingembre-snark"
+version = "0.0.0"
+dependencies = [
+ "snark",
+ "snark-dsl",
+]
+
+[[package]]
 name = "gingembre-syntax"
 version = "0.0.1"
 dependencies = [

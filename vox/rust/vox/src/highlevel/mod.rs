@@ -429,7 +429,7 @@ impl ConnectBuilder {
 
 impl IntoFuture for ConnectBuilder {
     type Output = Result<ConnectionHandle, ConnectionError>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + 'static>>;
+    type IntoFuture = BoxHighLevelFuture<Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.establish())
@@ -485,7 +485,7 @@ impl<Client> ConnectLaneBuilder<Client> {
 
 impl<Client> ConnectLaneBuilder<Client>
 where
-    Client: FromVoxLane,
+    Client: FromVoxLane + MaybeSend,
 {
     pub async fn establish(self) -> Result<Client, ConnectionError> {
         self.inner.establish().await?.open_lane::<Client>().await
@@ -494,10 +494,10 @@ where
 
 impl<Client> IntoFuture for ConnectLaneBuilder<Client>
 where
-    Client: FromVoxLane + 'static,
+    Client: FromVoxLane + 'static + MaybeSend,
 {
     type Output = Result<Client, ConnectionError>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + 'static>>;
+    type IntoFuture = BoxHighLevelFuture<Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.establish())
