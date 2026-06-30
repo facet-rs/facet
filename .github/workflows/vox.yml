@@ -35,7 +35,7 @@ jobs:
       - name: Select Rust 1.92
         shell: bash
         run: |
-          rustup toolchain install 1.92 --profile minimal --component clippy
+          rustup toolchain install 1.92 --profile minimal --component clippy --component rustfmt
           echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
@@ -64,7 +64,7 @@ jobs:
       - name: Select Rust 1.92
         shell: bash
         run: |
-          rustup toolchain install 1.92 --profile minimal
+          rustup toolchain install 1.92 --profile minimal --component rustfmt
           echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
@@ -97,7 +97,7 @@ jobs:
       - name: Select Rust 1.92
         shell: bash
         run: |
-          rustup toolchain install 1.92 --profile minimal
+          rustup toolchain install 1.92 --profile minimal --component rustfmt
           echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
@@ -117,7 +117,7 @@ jobs:
       - name: Select Rust 1.92
         shell: bash
         run: |
-          rustup toolchain install 1.92 --profile minimal
+          rustup toolchain install 1.92 --profile minimal --component rustfmt
           echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
@@ -157,7 +157,7 @@ jobs:
       - name: Select Rust 1.92
         shell: bash
         run: |
-          rustup toolchain install 1.92 --profile minimal
+          rustup toolchain install 1.92 --profile minimal --component rustfmt
           echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
@@ -236,7 +236,7 @@ jobs:
       - name: Select Rust 1.92
         shell: bash
         run: |
-          rustup toolchain install 1.92 --profile minimal
+          rustup toolchain install 1.92 --profile minimal --component rustfmt
           echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
@@ -322,7 +322,7 @@ jobs:
       - name: Select Rust 1.92
         shell: bash
         run: |
-          rustup toolchain install 1.92 --profile minimal
+          rustup toolchain install 1.92 --profile minimal --component rustfmt
           rustup target add wasm32-unknown-unknown --toolchain 1.92
           echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
@@ -361,7 +361,7 @@ jobs:
       - name: Select Rust 1.92
         shell: bash
         run: |
-          rustup toolchain install 1.92 --profile minimal
+          rustup toolchain install 1.92 --profile minimal --component rustfmt
           rustup target add wasm32-unknown-unknown --toolchain 1.92
           echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
 
