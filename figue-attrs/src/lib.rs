@@ -43,6 +43,18 @@ facet::define_attr_grammar! {
         ///
         /// Usage: `#[facet(args::short = 'v')]` or just `#[facet(args::short)]`
         Short(Option<char>),
+        /// Adds an additional accepted CLI alias.
+        ///
+        /// For named fields, this adds an extra long-form flag spelling such as
+        /// `--scopes` alongside the canonical `--scope`.
+        ///
+        /// For subcommand variants, this adds an extra subcommand spelling such as
+        /// `profiles` alongside the canonical `profile`.
+        ///
+        /// Multiple aliases can be specified by repeating the attribute.
+        ///
+        /// Usage: `#[facet(args::alias = "scopes")]`
+        Alias(&'static str),
         /// Marks a field as a subcommand.
         ///
         /// The field type must be an enum where each variant represents a subcommand.
