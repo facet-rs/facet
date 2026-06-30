@@ -158,7 +158,6 @@ type PlaygroundResponse = {
   corpus: CorpusOutput[];
   highlight_tests: HighlightTestOutput[];
   tests: TestSummary;
-  limitations: string[];
 };
 
 const defaultFiles: BundleFile[] = vendoredFiles;
@@ -896,7 +895,6 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
       highlight_assertions_failed: 0,
       highlight_fixture_errors: 0,
     },
-    limitations: [],
   };
 }
 

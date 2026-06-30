@@ -77,7 +77,6 @@ struct PlaygroundResponse {
     corpus: Vec<CorpusOutput>,
     highlight_tests: Vec<HighlightTestOutput>,
     tests: TestSummary,
-    limitations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -372,7 +371,6 @@ impl PlaygroundSession {
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
-                limitations: Vec::new(),
             });
         };
 
@@ -391,7 +389,6 @@ impl PlaygroundSession {
                     corpus: Vec::new(),
                     highlight_tests: Vec::new(),
                     tests: TestSummary::not_requested(),
-                    limitations: Vec::new(),
                 });
             }
         };
@@ -417,7 +414,6 @@ impl PlaygroundSession {
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
-                limitations: Vec::new(),
             });
         }
         let embedded_languages = prepare_embedded_languages(&files);
@@ -454,7 +450,6 @@ impl PlaygroundSession {
             corpus: Vec::new(),
             highlight_tests: Vec::new(),
             tests: TestSummary::not_requested(),
-            limitations: Vec::new(),
         }
     }
 }
@@ -606,7 +601,6 @@ fn playground_response_for_session(
         corpus,
         highlight_tests,
         tests,
-        limitations: Vec::new(),
     }
 }
 
@@ -1909,7 +1903,6 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
         corpus: Vec::new(),
         highlight_tests: Vec::new(),
         tests: TestSummary::not_requested(),
-        limitations: Vec::new(),
     }
 }
 
