@@ -195,11 +195,10 @@ pub fn anonymous_node_literals(query: &str) -> BTreeSet<String> {
                     seen_head,
                     predicate,
                 }) = contexts.last_mut()
+                    && !*seen_head
                 {
-                    if !*seen_head {
-                        *predicate = symbol.starts_with('#');
-                        *seen_head = true;
-                    }
+                    *predicate = symbol.starts_with('#');
+                    *seen_head = true;
                 }
             }
             QueryToken::String(literal) => {
@@ -247,11 +246,10 @@ pub fn capture_names(query: &str) -> BTreeSet<String> {
                     seen_head,
                     predicate,
                 }) = contexts.last_mut()
+                    && !*seen_head
                 {
-                    if !*seen_head {
-                        *predicate = symbol.starts_with('#');
-                        *seen_head = true;
-                    }
+                    *predicate = symbol.starts_with('#');
+                    *seen_head = true;
                 }
                 if !contexts.iter().any(QueryContext::is_predicate)
                     && let Some(capture) = symbol.strip_prefix('@')
@@ -298,11 +296,10 @@ pub fn named_node_references(query: &str) -> BTreeSet<String> {
                     seen_head,
                     predicate,
                 }) = contexts.last_mut()
+                    && !*seen_head
                 {
-                    if !*seen_head {
-                        *predicate = symbol.starts_with('#');
-                        *seen_head = true;
-                    }
+                    *predicate = symbol.starts_with('#');
+                    *seen_head = true;
                 }
                 if !contexts.iter().any(QueryContext::is_predicate)
                     && is_named_node_reference(&symbol)
@@ -1511,8 +1508,10 @@ fn node_satisfies_edge_constraints(
         });
     }
     let parent = direct_parent_node(node, nodes);
-    if let Some(parent_kind) = &rule.parent_kind
-        && !parent.is_some_and(|parent| &parent.kind == parent_kind)
+    if rule
+        .parent_kind
+        .as_ref()
+        .is_some_and(|parent_kind| parent.is_none_or(|parent| &parent.kind != parent_kind))
     {
         return false;
     }

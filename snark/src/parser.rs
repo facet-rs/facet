@@ -749,10 +749,10 @@ impl ParserGrammar {
             .filter(|production| production.lhs == nonterminal)
         {
             for step in &production.steps {
-                if let ParserSymbol::Nonterminal(child) = step.symbol {
-                    if inline.get(child.get() as usize).copied().unwrap_or(false) {
-                        self.visit_inline_rule(child, inline, visit)?;
-                    }
+                if let ParserSymbol::Nonterminal(child) = step.symbol
+                    && inline.get(child.get() as usize).copied().unwrap_or(false)
+                {
+                    self.visit_inline_rule(child, inline, visit)?;
                 }
             }
         }
@@ -781,7 +781,8 @@ fn ids_from_flags(flags: &[bool]) -> Vec<NonterminalId> {
     flags
         .iter()
         .enumerate()
-        .filter_map(|(index, flag)| flag.then(|| NonterminalId::from_index(index)))
+        .filter(|(_, flag)| **flag)
+        .map(|(index, _)| NonterminalId::from_index(index))
         .collect()
 }
 
@@ -2597,21 +2598,16 @@ pub enum StaticPrecedence {
 }
 
 /// Production associativity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Associativity {
     /// No associativity override.
+    #[default]
     None,
     /// Left associative.
     Left,
     /// Right associative.
     Right,
-}
-
-impl Default for Associativity {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Reserved-word context.
@@ -3211,10 +3207,10 @@ impl<'a> LrTableBuilder<'a> {
             let Some(step) = production.steps.get(item.dot) else {
                 continue;
             };
-            if step.symbol == symbol {
-                if let Some(lookahead) = lookahead_for_step(step) {
-                    lookaheads.push((lookahead, step.static_precedence.clone()));
-                }
+            if step.symbol == symbol
+                && let Some(lookahead) = lookahead_for_step(step)
+            {
+                lookaheads.push((lookahead, step.static_precedence.clone()));
             }
         }
         lookaheads.sort();
@@ -5717,8 +5713,9 @@ fn match_cached_regex_leaf(
 
 #[cfg(any(test, feature = "weavy-lowering"))]
 fn cached_regex(pattern: &str, flags: Option<&str>) -> Option<Regex> {
-    static CACHE: OnceLock<Mutex<HashMap<(String, Option<String>), Option<Regex>>>> =
-        OnceLock::new();
+    type RegexCache = HashMap<(String, Option<String>), Option<Regex>>;
+
+    static CACHE: OnceLock<Mutex<RegexCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let key = (pattern.to_owned(), normalized_regex_flags(flags));
 
@@ -5819,8 +5816,9 @@ fn match_ascii_keyword(input: &str, byte_position: usize, keyword: &str) -> Opti
         return None;
     }
     let end = byte_position + keyword.len();
-    if input[end..]
+    if input
         .as_bytes()
+        .get(end..)?
         .first()
         .is_some_and(|byte| *byte == b'_' || byte.is_ascii_alphanumeric())
     {
@@ -5839,7 +5837,7 @@ fn match_gingembre_identifier(input: &str, byte_position: usize) -> Option<usize
 }
 
 fn match_ascii_identifier(input: &str, byte_position: usize) -> Option<usize> {
-    let bytes = input[byte_position..].as_bytes();
+    let bytes = input.as_bytes().get(byte_position..)?;
     let first = bytes.first().copied()?;
     if first != b'_' && !first.is_ascii_alphabetic() {
         return None;
@@ -10761,8 +10759,7 @@ extras (
             "gingembre parser reported errors for {input:?}: {:?}",
             parse.errors
         );
-        let root = gingembre_node_projection(parse.syntax()).unwrap();
-        root
+        gingembre_node_projection(parse.syntax()).unwrap()
     }
 
     fn gingembre_node_projection(node: &gingembre_syntax::ResolvedNode) -> Option<SexpNode> {
@@ -10790,7 +10787,7 @@ extras (
         let children = node
             .children()
             .filter_map(|child| {
-                gingembre_node_projection(&child).map(|node| SexpChild {
+                gingembre_node_projection(child).map(|node| SexpChild {
                     field: None,
                     value: SexpValue::Node(node),
                 })
@@ -11456,9 +11453,8 @@ extras (
                 .len(),
             1
         );
-        assert_eq!(
-            grammar.alias_sequences()[alias_sequence.get() as usize].entries()[0].named(),
-            true
+        assert!(
+            grammar.alias_sequences()[alias_sequence.get() as usize].entries()[0].named()
         );
         assert!(matches!(
             grammar.provenances()[item_metadata.provenance().unwrap().get() as usize].source(),
@@ -11705,12 +11701,12 @@ extras (
         assert!(table.item_sets()[0].items().iter().any(|item| {
             item.production() == ProductionId::from_index(0)
                 && item.dot() == 0
-                && item.lookahead().symbols() == &[LookaheadSymbol::Eof]
+                && item.lookahead().symbols() == [LookaheadSymbol::Eof]
         }));
         assert!(table.item_sets()[0].items().iter().any(|item| {
             item.production() == ProductionId::from_index(1)
                 && item.dot() == 0
-                && item.lookahead().symbols() == &[LookaheadSymbol::Eof]
+                && item.lookahead().symbols() == [LookaheadSymbol::Eof]
         }));
         assert!(table.transitions().iter().any(|transition| {
             transition.from() == ItemSetId::from_index(0)
@@ -11802,7 +11798,7 @@ extras (
         assert!(table.item_sets()[0].items().iter().any(|item| {
             item.production() == ProductionId::from_index(1)
                 && item.dot() == 0
-                && item.lookahead().symbols() == &[LookaheadSymbol::Terminal(semicolon)]
+                && item.lookahead().symbols() == [LookaheadSymbol::Terminal(semicolon)]
         }));
     }
 

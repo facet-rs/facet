@@ -3595,10 +3595,9 @@ impl<'a> ReducedWeavyStepper<'a> {
                 for member in members {
                     if let Some(end) =
                         self.match_lexical_expr_inner(*member, byte_position, rule_stack)?
+                        && best.is_none_or(|best| end > best)
                     {
-                        if best.is_none_or(|best| end > best) {
-                            best = Some(end);
-                        }
+                        best = Some(end);
                     }
                 }
                 Ok(best)
