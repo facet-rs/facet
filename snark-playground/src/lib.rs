@@ -3721,6 +3721,78 @@ mod tests {
     }
 
     #[test]
+    fn playground_response_honors_highlight_text_predicates() {
+        let grammar_json = r##"{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
+  "name": "highlight_predicates",
+  "rules": {
+    "document": {
+      "type": "REPEAT1",
+      "content": { "type": "SYMBOL", "name": "word" }
+    },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Za-z_]+" }
+    }
+  },
+  "extras": [{ "type": "PATTERN", "value": "\\s+" }],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"##;
+        let highlights = r#"
+((word) @constant
+  (#match? @constant "^[A-Z_][A-Z_]*$"))
+
+((word) @function.builtin
+  (#eq? @function.builtin "require"))
+
+((word) @type.builtin
+  (#any-of? @type.builtin "int" "float"))
+"#;
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: grammar_json.to_owned(),
+                },
+                BundleFile {
+                    path: "queries/highlights.scm".to_owned(),
+                    text: highlights.to_owned(),
+                },
+            ],
+            input: "FOO require int float lower Mixed".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.language.as_deref(), Some("highlight_predicates"));
+        assert_eq!(
+            response.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(document (word) (word) (word) (word) (word) (word))")
+        );
+        let captures = response
+            .highlights
+            .iter()
+            .map(|capture| (capture.capture_name.as_str(), capture.text.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            captures,
+            vec![
+                ("constant", "FOO"),
+                ("function.builtin", "require"),
+                ("type.builtin", "int"),
+                ("type.builtin", "float"),
+            ]
+        );
+    }
+
+    #[test]
     fn rejects_nginx_shaped_block_errors_from_grammar_js_bundles() {
         let grammar_json = r##"{
   "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",

@@ -139,6 +139,64 @@ module.exports = grammar({
   );
 });
 
+test("runs highlight query text predicates through Snark WASM", () => {
+  const grammarJs = `
+module.exports = grammar({
+  name: "highlight_predicates",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[A-Za-z_]+/,
+  },
+});
+`;
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [{ path: "grammar.js", text: grammarJs }],
+    "grammar.js",
+  );
+  const highlights = `
+((word) @constant
+  (#match? @constant "^[A-Z_][A-Z_]*$"))
+
+((word) @function.builtin
+  (#eq? @function.builtin "require"))
+
+((word) @type.builtin
+  (#any-of? @type.builtin "int" "float"))
+`;
+
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: [
+          { path: "grammar.js", text: grammarJs },
+          { path: "src/grammar.json", text: grammarJson },
+          { path: "queries/highlights.scm", text: highlights },
+        ],
+        input: "FOO require int float lower Mixed",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true);
+  assert.equal(response.language, "highlight_predicates");
+  assert.equal(response.parse.sexp, "(document (word) (word) (word) (word) (word) (word))");
+  assert.deepEqual(
+    response.highlights.map((capture: { capture_name: string; text: string }) => [
+      capture.capture_name,
+      capture.text,
+    ]),
+    [
+      ["constant", "FOO"],
+      ["function.builtin", "require"],
+      ["type.builtin", "int"],
+      ["type.builtin", "float"],
+    ],
+  );
+});
+
 test("projects sibling grammar roots into embedded language layers", async () => {
   const hostGrammar = `
 module.exports = grammar({
