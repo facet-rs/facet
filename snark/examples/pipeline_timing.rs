@@ -60,12 +60,21 @@ fn main() {
         "plan",
         RuntimeParser::new(&validated, &parser, &table).expect("runtime plan + compiled lexer")
     );
-    let (t_parse, _report) = phase!(
-        "parse",
-        runtime
-            .parse_recovering_with_report(&input)
-            .expect("parse the sample")
-    );
+    // Measure each entry point the way the playground actually calls them.
+    // Playground: parse_compact_with_report (strict) first, fall back to
+    // parse_recovering_compact_with_report only on Err.
+    let t0 = Instant::now();
+    let strict = runtime.parse_compact_with_report(&input);
+    let t_strict = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_ok = strict.is_ok();
+
+    let t0 = Instant::now();
+    let _ = runtime.parse_recovering_compact_with_report(&input);
+    let t_rec_compact = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let t0 = Instant::now();
+    let _ = runtime.parse_recovering_with_report(&input);
+    let t_rec_full = t0.elapsed().as_secs_f64() * 1000.0;
 
     let prepare_total = t_emit + t_decode + t_validate + t_lexical + t_normalize + t_prepare
         + t_table + t_plan;
@@ -90,6 +99,17 @@ fn main() {
         println!("  {label:<32} {ms:>9.1} ms  {pct:>5.1}%");
     }
     println!("  {:<32} {:>9.1} ms", "prepare TOTAL", prepare_total);
-    println!("\n---- steady state ----");
-    println!("  {:<32} {:>9.3} ms", "parse (per input)", t_parse);
+    println!("\n---- steady state (parse, same input, 3 entry points) ----");
+    println!(
+        "  {:<40} {:>11.3} ms   (strict ok? {})",
+        "parse_compact_with_report [playground 1st]", t_strict, strict_ok
+    );
+    println!(
+        "  {:<40} {:>11.3} ms",
+        "parse_recovering_compact_with_report [fb]", t_rec_compact
+    );
+    println!(
+        "  {:<40} {:>11.3} ms",
+        "parse_recovering_with_report [my bench]", t_rec_full
+    );
 }
