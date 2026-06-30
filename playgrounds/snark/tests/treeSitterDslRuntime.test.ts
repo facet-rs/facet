@@ -440,6 +440,90 @@ export const wrap = rule => repeat1(rule);
   });
 });
 
+test("resolves ESM star re-exports in grammar modules", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import { wrap, word } from "./helpers.mjs";
+export default grammar({
+  name: "tiny_star_reexport",
+  rules: {
+    document: $ => wrap($.word),
+    word: $ => word,
+  },
+});
+`,
+      },
+      {
+        path: "helpers.mjs",
+        text: 'export * from "./tokens.mjs";',
+      },
+      {
+        path: "tokens.mjs",
+        text: `
+export let word = /[a-z]+/;
+export const wrap = rule => repeat1(rule);
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_star_reexport");
+  assert.deepEqual(grammar.rules.document, {
+    type: "REPEAT1",
+    content: { type: "SYMBOL", name: "word" },
+  });
+  assert.deepEqual(grammar.rules.word, {
+    type: "PATTERN",
+    value: "[a-z]+",
+  });
+});
+
+test("resolves ESM default plus named imports in grammar modules", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import helper, { word } from "./helpers.mjs";
+export default grammar({
+  name: "tiny_default_plus_named_import",
+  rules: {
+    document: $ => helper.wrap($.word),
+    word: $ => word,
+  },
+});
+`,
+      },
+      {
+        path: "helpers.mjs",
+        text: `
+export const word = /[a-z]+/;
+export default { wrap: rule => repeat1(rule) };
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_default_plus_named_import");
+  assert.deepEqual(grammar.rules.document, {
+    type: "REPEAT1",
+    content: { type: "SYMBOL", name: "word" },
+  });
+  assert.deepEqual(grammar.rules.word, {
+    type: "PATTERN",
+    value: "[a-z]+",
+  });
+});
+
 test("resolves adjacent semicolonless ESM default imports", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,

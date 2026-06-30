@@ -64,7 +64,14 @@ function isDslModulePath(path: string) {
 
 function sourceToCommonJs(source: string, path: string) {
   let out = source;
-  let reexportIndex = 0;
+  let moduleIndex = 0;
+  out = out.replace(
+    /(^|\n)[ \t]*import\s+([A-Za-z_$][\w$]*)\s*,\s*\{([\s\S]*?)\}\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
+    (_match, prefix, defaultName, names, specifier) => {
+      const moduleName = `__snark_module_${moduleIndex++}`;
+      return `${prefix}const ${moduleName} = require(${JSON.stringify(specifier)});const ${defaultName} = __default(${moduleName});const { ${namedImportBindings(names)} } = ${moduleName};`;
+    },
+  );
   out = out.replace(
     /(^|\n)[ \t]*import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
     (_match, prefix, name, specifier) => `${prefix}const ${name} = require(${JSON.stringify(specifier)});`,
@@ -79,8 +86,8 @@ function sourceToCommonJs(source: string, path: string) {
     (_match, prefix, name, specifier) => `${prefix}const ${name} = __default(require(${JSON.stringify(specifier)}));`,
   );
   out = out.replace(
-    /(^|\n)\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=/g,
-    (_match, prefix, name) => `${prefix}const ${name} = exports.${name} =`,
+    /(^|\n)\s*export\s+(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g,
+    (_match, prefix, kind, name) => `${prefix}${kind} ${name} = exports.${name} =`,
   );
   out = out.replace(
     /(^|\n)\s*export\s+function\s+([A-Za-z_$][\w$]*)\s*\(/g,
@@ -89,11 +96,18 @@ function sourceToCommonJs(source: string, path: string) {
   out = out.replace(
     /(^|\n)[ \t]*export\s+\{([\s\S]*?)\}\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
     (_match, prefix, names, specifier) => {
-      const moduleName = `__snark_reexport_${reexportIndex++}`;
+      const moduleName = `__snark_module_${moduleIndex++}`;
       return `${prefix}const ${moduleName} = require(${JSON.stringify(specifier)});${exportBindingsFromModule(
         names,
         moduleName,
       )}`;
+    },
+  );
+  out = out.replace(
+    /(^|\n)[ \t]*export\s+\*\s+from\s+['"]([^'"]+)['"][ \t]*;?/g,
+    (_match, prefix, specifier) => {
+      const moduleName = `__snark_module_${moduleIndex++}`;
+      return `${prefix}const ${moduleName} = require(${JSON.stringify(specifier)});for (const key of Object.keys(${moduleName})) { if (key !== "default") exports[key] = ${moduleName}[key]; }`;
     },
   );
   out = out.replace(
