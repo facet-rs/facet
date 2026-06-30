@@ -189,6 +189,49 @@ export const wrap = rule => repeat1(rule);
   });
 });
 
+test("resolves multiline ESM named import blocks in grammar modules", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import {
+  wrap,
+  word,
+} from "./helpers.mjs";
+export default grammar({
+  name: "tiny_multiline_named_esm",
+  rules: {
+    document: $ => wrap($.word),
+    word: $ => word,
+  },
+});
+`,
+      },
+      {
+        path: "helpers.mjs",
+        text: `
+export const word = /[a-z]+/;
+export const wrap = rule => repeat1(rule);
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_multiline_named_esm");
+  assert.deepEqual(grammar.rules.document, {
+    type: "REPEAT1",
+    content: { type: "SYMBOL", name: "word" },
+  });
+  assert.deepEqual(grammar.rules.word, {
+    type: "PATTERN",
+    value: "[a-z]+",
+  });
+});
+
 test("resolves JSON helper modules required by grammar.js helpers", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,

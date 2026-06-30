@@ -62,7 +62,7 @@ function sourceToCommonJs(source: string, path: string) {
     (_match, prefix, name, specifier) => `${prefix}const ${name} = require(${JSON.stringify(specifier)});`,
   );
   out = out.replace(
-    /(^|\n)\s*import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    /(^|\n)\s*import\s+\{([\s\S]*?)\}\s+from\s+['"]([^'"]+)['"]\s*;?/g,
     (_match, prefix, names, specifier) =>
       `${prefix}const { ${namedImportBindings(names)} } = require(${JSON.stringify(specifier)});`,
   );
