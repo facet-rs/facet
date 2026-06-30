@@ -18,8 +18,9 @@ use std::{env, path::PathBuf};
 use futures::executor::block_on;
 use gingembre::Context;
 use gingembre::ast::{
-    BinaryExpr, BinaryOp, BoolLit, Expr, FloatLit, Ident, IntLit, Literal, Node, PrintNode,
-    StringLit, Template, TextNode, span,
+    BinaryExpr, BinaryOp, BlockNode, BoolLit, CommentNode, ElifBranch, Expr, ExtendsNode, FieldExpr,
+    FilterExpr, FloatLit, ForNode, Ident, IfNode, IncludeNode, IntLit, ListLit, Literal, Node,
+    PrintNode, SetNode, SetValue, StringLit, Target, Template, TextNode, span,
 };
 use snark::{
     grammar::RawGrammarJson,
@@ -34,12 +35,22 @@ use snark::{
 const SAMPLES: &[(&str, &str)] = &[
     ("text", "hello world"),
     ("int add", "{{ 1 + 2 }}"),
-    ("text+interp", "a {{ 2 * 3 }} b"),
     ("precedence", "{{ 1 + 2 * 3 }}"),
-    ("sub", "{{ 10 - 4 }}"),
-    ("nested", "{{ (1 + 2) * 3 }}"),
+    ("nested paren", "{{ (1 + 2) * 3 }}"),
     ("float", "{{ 3.5 }}"),
     ("bool", "{{ true }}"),
+    ("string", "{{ \"hello\" }}"),
+    ("concat", "{{ \"a\" ~ \"b\" }}"),
+    ("comparison", "{{ 5 >= 5 }}"),
+    ("logical", "{{ true or false }}"),
+    ("filter", "{{ \"hi\" | upper }}"),
+    ("comment", "{# c #}A{# d #}B"),
+    ("if true", "{% if true %}yes{% endif %}"),
+    ("if else", "{% if false %}a{% else %}b{% endif %}"),
+    ("if elif", "{% if 1 > 2 %}a{% elif 2 > 1 %}b{% else %}c{% endif %}"),
+    ("for list", "{% for x in [1, 2, 3] %}{{ x }};{% endfor %}"),
+    ("for else empty", "{% for x in [] %}a{% else %}empty{% endfor %}"),
+    ("set", "{% set n = 2 * 3 %}{{ n }}"),
 ];
 
 fn main() {
@@ -117,20 +128,106 @@ fn lower_node(node: &RuntimeResolvedNode) -> Option<Node> {
             text: full_text(node),
             span: span(0, 0),
         })),
-        "interpolation" => {
-            let expr = node.children().iter().find_map(lower_expr)?;
-            Some(Node::Print(PrintNode {
-                expr,
-                span: span(0, 0),
-            }))
-        }
+        "interpolation" => Some(Node::Print(PrintNode {
+            expr: node.children().iter().find_map(lower_expr)?,
+            span: span(0, 0),
+        })),
+        "comment" => Some(Node::Comment(CommentNode {
+            text: String::new(),
+            span: span(0, 0),
+        })),
+        "if_statement" => lower_if(node),
+        "for_statement" => lower_for(node),
+        "set_statement" => Some(Node::Set(SetNode {
+            name: named_child(node, "identifier").and_then(ident)?,
+            value: SetValue::Expr(node.children().iter().find_map(lower_expr)?),
+            span: span(0, 0),
+        })),
+        "block_statement" => Some(Node::Block(BlockNode {
+            name: named_child(node, "identifier").and_then(ident)?,
+            body: find_body(node),
+            span: span(0, 0),
+        })),
+        "extends_statement" => Some(Node::Extends(ExtendsNode {
+            path: named_child(node, "literal").and_then(string_value)?,
+            span: span(0, 0),
+        })),
+        "include_statement" => Some(Node::Include(IncludeNode {
+            path: named_child(node, "literal").and_then(string_value)?,
+            context: None,
+            span: span(0, 0),
+        })),
         _ => None,
     }
+}
+
+fn lower_if(node: &RuntimeResolvedNode) -> Option<Node> {
+    let condition = node.children().iter().find_map(lower_expr)?;
+    let mut elif_branches = Vec::new();
+    let mut else_body = None;
+    for child in node.children() {
+        match child.kind() {
+            "elif_clause" => elif_branches.push(ElifBranch {
+                condition: child.children().iter().find_map(lower_expr)?,
+                body: find_body(child),
+                span: span(0, 0),
+            }),
+            "else_clause" => else_body = Some(find_body(child)),
+            _ => {}
+        }
+    }
+    Some(Node::If(IfNode {
+        condition,
+        then_body: find_body(node),
+        elif_branches,
+        else_body,
+        span: span(0, 0),
+    }))
+}
+
+fn lower_for(node: &RuntimeResolvedNode) -> Option<Node> {
+    let idents: Vec<&RuntimeResolvedNode> = node
+        .children()
+        .iter()
+        .filter(|c| c.kind() == "identifier")
+        .collect();
+    let target = match idents.as_slice() {
+        [one] => Target::Single {
+            name: leaf_text(one)?,
+            span: span(0, 0),
+        },
+        many => Target::Tuple {
+            names: many.iter().filter_map(|i| Some((leaf_text(i)?, span(0, 0)))).collect(),
+            span: span(0, 0),
+        },
+    };
+    // The iterable is the first lowerable expression that isn't a bare loop ident.
+    let iter = node
+        .children()
+        .iter()
+        .filter(|c| c.kind() != "identifier")
+        .find_map(lower_expr)?;
+    let else_body = node
+        .children()
+        .iter()
+        .find(|c| c.kind() == "else_clause")
+        .map(find_body);
+    Some(Node::For(ForNode {
+        target,
+        iter,
+        body: find_body(node),
+        else_body,
+        span: span(0, 0),
+    }))
 }
 
 fn lower_expr(node: &RuntimeResolvedNode) -> Option<Expr> {
     match node.kind() {
         "literal" => lower_literal(node).map(Expr::Literal),
+        "list" => Some(Expr::Literal(Literal::List(ListLit {
+            elements: node.children().iter().filter_map(lower_expr).collect(),
+            span: span(0, 0),
+        }))),
         "binary" => lower_binary(node),
         // A parenthesized expression is just its inner expression.
         "paren" => node.children().iter().find_map(lower_expr),
@@ -138,8 +235,48 @@ fn lower_expr(node: &RuntimeResolvedNode) -> Option<Expr> {
             name: leaf_text(node)?,
             span: span(0, 0),
         })),
+        "field" => Some(Expr::Field(FieldExpr {
+            base: Box::new(node.children().iter().find_map(lower_expr)?),
+            field: named_child(node, "identifier").and_then(ident)?,
+            span: span(0, 0),
+        })),
+        "filter" => Some(Expr::Filter(FilterExpr {
+            expr: Box::new(node.children().iter().find_map(lower_expr)?),
+            filter: named_child(node, "identifier").and_then(ident)?,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            span: span(0, 0),
+        })),
         _ => None,
     }
+}
+
+fn named_child<'a>(node: &'a RuntimeResolvedNode, kind: &str) -> Option<&'a RuntimeResolvedNode> {
+    node.children().iter().find(|c| c.kind() == kind)
+}
+
+fn ident(node: &RuntimeResolvedNode) -> Option<Ident> {
+    Some(Ident {
+        name: leaf_text(node)?,
+        span: span(0, 0),
+    })
+}
+
+fn string_value(node: &RuntimeResolvedNode) -> Option<StringLit> {
+    Some(StringLit {
+        value: full_text(node)
+            .trim_matches(|c| c == '"' || c == '\'')
+            .to_string(),
+        span: span(0, 0),
+    })
+}
+
+fn find_body(node: &RuntimeResolvedNode) -> Vec<Node> {
+    node.children()
+        .iter()
+        .find(|c| c.kind() == "body")
+        .map(|b| b.children().iter().filter_map(lower_node).collect())
+        .unwrap_or_default()
 }
 
 fn lower_literal(node: &RuntimeResolvedNode) -> Option<Literal> {
