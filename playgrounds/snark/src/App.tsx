@@ -11,6 +11,7 @@ import {
   preferredGrammarRootId,
   preferredSampleForGrammarRootId,
   projectedFilesForGrammarRootId,
+  sourceExamplesForGrammarRootId,
   sortedSampleFiles,
   sortedFiles,
   normalizePath,
@@ -200,8 +201,8 @@ export function App() {
     [files, activeGrammarRootId],
   );
   const sampleFiles = useMemo(
-    () => sortedSampleFiles(projectedFiles.filter((file): file is SampleFile => file.path.startsWith("samples/"))),
-    [projectedFiles],
+    () => sourceExamplesForGrammarRootId(files, activeGrammarRootId),
+    [files, activeGrammarRootId],
   );
   const visibleBundleFiles = useMemo(
     () => sortedRuntimeBundleFiles(projectedFiles),

@@ -14,6 +14,7 @@ export {
   preferredSampleForGrammarRootId,
   preferredGrammarRootId,
   projectedFilesForGrammarRootId,
+  sourceExamplesForGrammarRootId,
   sortedSampleFiles,
   sortedFiles,
   type DslBundleFile,

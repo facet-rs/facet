@@ -141,14 +141,23 @@ export function firstSampleForGrammarRootId(
   );
 }
 
+export function sourceExamplesForGrammarRootId(
+  files: DslBundleFile[],
+  rootId = preferredGrammarRootId(files),
+): ProjectedDslBundleFile[] {
+  const projected = projectedFilesForGrammarRootId(files, rootId);
+  const samples = projected.filter((file) => file.path.startsWith("samples/"));
+  const corpusCases = projected
+    .filter((file) => file.path.startsWith("test/corpus/") && file.path.endsWith(".txt"))
+    .flatMap(corpusCaseExamples);
+  return sortedSampleFiles([...samples, ...corpusCases]);
+}
+
 export function preferredSampleForGrammarRootId(
   files: DslBundleFile[],
   rootId = preferredGrammarRootId(files),
 ): ProjectedDslBundleFile | null {
-  const samples = projectedFilesForGrammarRootId(files, rootId).filter((file) =>
-    file.path.startsWith("samples/"),
-  );
-  return sortedSampleFiles(samples)[0] ?? firstSampleForGrammarRootId(files, rootId);
+  return sourceExamplesForGrammarRootId(files, rootId)[0] ?? firstSampleForGrammarRootId(files, rootId);
 }
 
 export function sortedSampleFiles<T extends DslBundleFile>(files: T[]): T[] {
@@ -172,6 +181,46 @@ export function normalizePath(path: string) {
 
 function isErrorSamplePath(path: string) {
   return /(^|[-_/])(errors?|invalid|broken)([-_.\\/]|$)/i.test(path);
+}
+
+function corpusCaseExamples(file: ProjectedDslBundleFile): ProjectedDslBundleFile[] {
+  const lines = file.text.replace(/\r\n/g, "\n").split("\n");
+  const cases: ProjectedDslBundleFile[] = [];
+  for (let index = 0; index + 2 < lines.length; index += 1) {
+    if (!isCorpusDivider(lines[index]) || !isCorpusDivider(lines[index + 2])) {
+      continue;
+    }
+    const caseName = lines[index + 1]?.trim();
+    if (!caseName) {
+      continue;
+    }
+    let inputStart = index + 3;
+    if (lines[inputStart] === "") {
+      inputStart += 1;
+    }
+    let inputEnd = inputStart;
+    while (inputEnd < lines.length && lines[inputEnd] !== "---") {
+      inputEnd += 1;
+    }
+    if (inputEnd >= lines.length) {
+      continue;
+    }
+    let trimmedInputEnd = inputEnd;
+    if (trimmedInputEnd > inputStart && lines[trimmedInputEnd - 1] === "") {
+      trimmedInputEnd -= 1;
+    }
+    cases.push({
+      path: `${file.path}#${caseName}`,
+      sourcePath: file.sourcePath,
+      text: lines.slice(inputStart, trimmedInputEnd).join("\n"),
+    });
+    index = inputEnd;
+  }
+  return cases;
+}
+
+function isCorpusDivider(line: string) {
+  return /^=+$/.test(line);
 }
 
 function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): ProjectedDslBundleFile[] {

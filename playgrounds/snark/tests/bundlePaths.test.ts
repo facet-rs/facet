@@ -7,6 +7,7 @@ import {
   normalizeBundleFiles,
   preferredSampleForGrammarRootId,
   projectedFilesForGrammarRootId,
+  sourceExamplesForGrammarRootId,
   filesWithGrammarJsonUsingEmitter,
   type DslBundleFile,
 } from "../src/bundlePaths.ts";
@@ -228,6 +229,43 @@ test("prefers non-error samples before error fixtures", () => {
     sourcePath: "samples/basic.conf",
     text: "",
   });
+});
+
+test("uses first corpus case as preferred source when samples are absent", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-demo/grammar.js"),
+    {
+      path: "tree-sitter-demo/test/corpus/main.txt",
+      text: "====================\nFirst case\n====================\n\nalpha beta\n\n---\n\n(document)\n\n====================\nSecond case\n====================\n\ngamma\n\n---\n\n(document)\n",
+    },
+  ]);
+
+  assert.deepEqual(sourceExamplesForGrammarRootId(files).map((entry) => [entry.path, entry.text]), [
+    ["test/corpus/main.txt#First case", "alpha beta"],
+    ["test/corpus/main.txt#Second case", "gamma"],
+  ]);
+  assert.deepEqual(preferredSampleForGrammarRootId(files), {
+    path: "test/corpus/main.txt#First case",
+    sourcePath: "test/corpus/main.txt",
+    text: "alpha beta",
+  });
+});
+
+test("keeps explicit samples ahead of corpus case source examples", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-demo/grammar.js"),
+    file("tree-sitter-demo/samples/basic.demo"),
+    {
+      path: "tree-sitter-demo/test/corpus/main.txt",
+      text: "====================\nCorpus case\n====================\n\nfrom corpus\n\n---\n\n(document)\n",
+    },
+  ]);
+
+  assert.deepEqual(sourceExamplesForGrammarRootId(files).map((entry) => entry.path), [
+    "samples/basic.demo",
+    "test/corpus/main.txt#Corpus case",
+  ]);
+  assert.deepEqual(preferredSampleForGrammarRootId(files)?.path, "samples/basic.demo");
 });
 
 test("selects the first projected sample for the chosen Arborium grammar root", () => {
