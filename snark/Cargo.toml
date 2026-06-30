@@ -41,6 +41,10 @@ rediff = { path = "../rediff" }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }
 snark-scanner-host = { path = "../snark-scanner-host" }
 
+[[example]]
+name = "weavy_bench"
+required-features = ["weavy-lowering"]
+
 [lints]
 workspace = true
 
