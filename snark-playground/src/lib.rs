@@ -2663,6 +2663,102 @@ mod tests {
     }
 
     #[test]
+    fn playground_response_resolves_dynamic_injection_language_capture() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "block" },
+    "block": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "lang" },
+        { "type": "STRING", "value": ":" },
+        { "type": "SYMBOL", "name": "code" }
+      ]
+    },
+    "lang": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[a-z]+" }
+    },
+    "code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((block
+  (lang) @injection.language
+  (code) @injection.content))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/demo/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "demo",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/demo/queries/highlights.scm".to_owned(),
+                    text: "(word) @constant\n".to_owned(),
+                },
+            ],
+            input: "demo:PRINT".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.injections.len(), 1);
+        assert_eq!(response.injections[0].language, "demo");
+        assert_eq!(response.injections[0].text, "PRINT");
+        assert_eq!(response.injections[0].start_byte, 5);
+        assert_eq!(response.layers.len(), 1);
+        let layer = &response.layers[0];
+        assert_eq!(layer.language, "demo");
+        assert!(layer.diagnostics.is_empty(), "{:?}", layer.diagnostics);
+        assert_eq!(layer.input, "PRINT");
+        assert_eq!(
+            layer.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(document (word))")
+        );
+        assert_eq!(layer.highlights.len(), 1);
+        assert_eq!(layer.highlights[0].capture_name, "constant");
+        assert_eq!(layer.highlights[0].text, "PRINT");
+        assert_eq!(layer.highlights[0].start_byte, 5);
+        assert_eq!(layer.highlights[0].end_byte, 10);
+    }
+
+    #[test]
     fn playground_response_splits_combined_layer_highlights_across_host_ranges() {
         let request = PlaygroundRequest {
             files: vec![

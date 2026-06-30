@@ -231,6 +231,75 @@ module.exports = grammar({
   );
 });
 
+test("resolves dynamic injection language captures through Snark WASM", async () => {
+  const hostGrammar = `
+module.exports = grammar({
+  name: "host",
+  extras: $ => [],
+  rules: {
+    document: $ => $.block,
+    block: $ => seq($.lang, ":", $.code),
+    lang: $ => /[a-z]+/,
+    code: $ => /[A-Z]+/,
+  },
+});
+`;
+  const childGrammar = `
+module.exports = grammar({
+  name: "demo",
+  extras: $ => [],
+  rules: {
+    document: $ => $.word,
+    word: $ => /[A-Z]+/,
+  },
+});
+`;
+  const files = normalizeBundleFiles([
+    { path: "host/grammar.js", text: hostGrammar },
+    {
+      path: "host/queries/injections.scm",
+      text: "((block\n  (lang) @injection.language\n  (code) @injection.content))\n",
+    },
+    { path: "demo/grammar.js", text: childGrammar },
+    { path: "demo/queries/highlights.scm", text: "(word) @constant\n" },
+  ]);
+
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: "demo:PRINT",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.deepEqual(
+    response.injections.map((injection: { language: string; text: string; start_byte: number }) => [
+      injection.language,
+      injection.text,
+      injection.start_byte,
+    ]),
+    [["demo", "PRINT", 5]],
+  );
+  assert.equal(response.layers.length, 1);
+  assert.equal(response.layers[0].language, "demo");
+  assert.equal(response.layers[0].input, "PRINT");
+  assert.equal(response.layers[0].parse.sexp, "(document (word))");
+  assert.deepEqual(
+    response.layers[0].highlights.map((capture: { capture_name: string; text: string; start_byte: number }) => [
+      capture.capture_name,
+      capture.text,
+      capture.start_byte,
+    ]),
+    [["constant", "PRINT", 5]],
+  );
+});
+
 test("resolves injected layers through tree-sitter injection-regex in WASM", async () => {
   const hostGrammar = `
 module.exports = grammar({
