@@ -45,6 +45,14 @@ snark-scanner-host = { path = "../snark-scanner-host" }
 name = "weavy_bench"
 required-features = ["weavy-lowering"]
 
+[[example]]
+name = "gingembre_corpus"
+required-features = ["json-import", "weavy-lowering"]
+
+[[example]]
+name = "arborium_check"
+required-features = ["json-import", "weavy-lowering"]
+
 [lints]
 workspace = true
 

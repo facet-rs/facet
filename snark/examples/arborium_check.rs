@@ -2,7 +2,7 @@
 //! grammar.json, build the parse table, and (if a sample exists) parse it. Reports which
 //! grammars are usable in snark today, so we know what to vendor into the playground.
 //!
-//! Usage: cargo run -p snark --features json-import --example arborium_check -- [LANGS_DIR]
+//! Usage: cargo run -p snark --features json-import,weavy-lowering --example arborium_check -- [LANGS_DIR]
 //! Default LANGS_DIR = ~/oss/arborium/langs
 
 use std::{
@@ -13,7 +13,8 @@ use std::{
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    parser::{ParseTable, ParserGrammar, RuntimeParser, TreeEvent},
+    lower::weavy::{parse_prepared_runtime_recovering_with_report_and_scanner, RuntimeWeavyPlan},
+    parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
 };
 
@@ -112,13 +113,15 @@ fn check_one(def: &Path, grammar_js: &Path) -> Result<CheckOk, CheckErr> {
         .prepare_productions_for_items()
         .map_err(|e| CheckErr::Build(e.to_string()))?;
     let table = ParseTable::from_grammar(&parser).map_err(|e| CheckErr::Build(e.to_string()))?;
+    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table)
+        .map_err(|e| CheckErr::Build(e.to_string()))?;
 
     let sample_errors = first_sample(def).and_then(|sample| {
         let input = std::fs::read_to_string(&sample).ok()?;
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .ok()?
-            .parse_recovering_with_report(&input)
-            .ok()?;
+        let report = parse_prepared_runtime_recovering_with_report_and_scanner(
+            &plan, &validated, &parser, &table, &input, None,
+        )
+        .ok()?;
         Some(
             report
                 .accepted_tree_events()
