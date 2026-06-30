@@ -5,8 +5,8 @@ use std::{error::Error, fmt};
 use indexmap::IndexMap;
 
 use crate::grammar::{
-    LanguageName, PrecedenceEntryJson, PrecedenceValue as RawPrecedenceValue, RawGrammarJson,
-    RawRuleJson, RuleName,
+    LanguageName, PrecedenceEntryJson, PrecedenceValue as RawPrecedenceValue, RawAutoCloseRuleJson,
+    RawGrammarJson, RawRuleJson, RuleName,
 };
 
 type OrderedMap<V> = IndexMap<String, V, std::hash::RandomState>;
@@ -489,6 +489,7 @@ impl ValidationBuilder {
                 start_prefix,
                 end_prefix,
                 closed_by_tags,
+                rules,
             } => GrammarExpr::AutoClose {
                 tag: tag.clone(),
                 open: open.clone(),
@@ -500,6 +501,7 @@ impl ValidationBuilder {
                 start_prefix: start_prefix.clone(),
                 end_prefix: end_prefix.clone(),
                 closed_by_tags: closed_by_tags.clone(),
+                rules: rules.iter().map(AutoCloseRule::from).collect(),
             },
             RawRuleJson::Symbol { name } => GrammarExpr::Symbol(self.resolve_symbol(name)?),
             RawRuleJson::Choice { members } => {
@@ -894,6 +896,34 @@ impl AliasDecl {
     }
 }
 
+/// One declarative implicit-close content-model row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoCloseRule {
+    tag: String,
+    closed_by_tags: Vec<String>,
+}
+
+impl AutoCloseRule {
+    /// Open tag this row applies to.
+    pub fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    /// Start tag names that implicitly close `tag`.
+    pub fn closed_by_tags(&self) -> &[String] {
+        &self.closed_by_tags
+    }
+}
+
+impl From<&RawAutoCloseRuleJson> for AutoCloseRule {
+    fn from(rule: &RawAutoCloseRuleJson) -> Self {
+        Self {
+            tag: rule.tag.clone(),
+            closed_by_tags: rule.closed_by_tags.clone(),
+        }
+    }
+}
+
 /// Validated grammar expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -943,6 +973,8 @@ pub enum GrammarExpr {
         end_prefix: Option<String>,
         /// Tag names that trigger this implicit close after `start_prefix`.
         closed_by_tags: Vec<String>,
+        /// Content-model relation rows for one table-driven implicit-close token.
+        rules: Vec<AutoCloseRule>,
     },
     /// Resolved symbol reference.
     Symbol(SymbolRef),

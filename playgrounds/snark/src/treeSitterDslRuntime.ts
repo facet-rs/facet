@@ -230,6 +230,7 @@ globalThis.auto_close = function auto_close(options) {
     start_prefix: options.start_prefix,
     end_prefix: options.end_prefix,
     closed_by_tags: options.closed_by_tags,
+    rules: options.rules,
   };
 };
 `;

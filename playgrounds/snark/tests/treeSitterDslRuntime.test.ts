@@ -120,13 +120,16 @@ module.exports = grammar({
   name: "tiny_auto_close",
   rules: {
     document: $ => seq("<p>", auto_close({
-      tag: "p",
+      tag: "implicit_end_tag",
       open_node: "start_tag",
       close_node: "end_tag",
       tag_name_node: "tag_name",
       start_prefix: "<",
       end_prefix: "</",
-      closed_by_tags: ["p", "div"],
+      rules: [
+        { tag: "p", closed_by_tags: ["p", "div"] },
+        { tag: "li", closed_by_tags: ["li"] },
+      ],
     })),
   },
 });
@@ -139,13 +142,16 @@ module.exports = grammar({
   const grammar = JSON.parse(grammarJson);
   assert.deepEqual(grammar.rules.document.members[1], {
     type: "AUTO_CLOSE",
-    tag: "p",
+    tag: "implicit_end_tag",
     open_node: "start_tag",
     close_node: "end_tag",
     tag_name_node: "tag_name",
     start_prefix: "<",
     end_prefix: "</",
-    closed_by_tags: ["p", "div"],
+    rules: [
+      { tag: "p", closed_by_tags: ["p", "div"] },
+      { tag: "li", closed_by_tags: ["li"] },
+    ],
   });
 });
 

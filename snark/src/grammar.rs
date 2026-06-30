@@ -75,6 +75,16 @@ impl RuleName {
     }
 }
 
+/// One row in a declarative implicit-close content model.
+#[derive(Debug, Clone, Default, Facet, PartialEq, Eq)]
+pub struct RawAutoCloseRuleJson {
+    /// Open tag this row applies to.
+    pub tag: String,
+    /// Start tag names that implicitly close `tag`.
+    #[facet(default)]
+    pub closed_by_tags: Vec<String>,
+}
+
 /// Ordered rule table preserving Tree-sitter source order.
 #[derive(Debug, Clone, Default, Facet, PartialEq, Eq)]
 #[facet(transparent)]
@@ -309,6 +319,9 @@ pub enum RawRuleJson {
         /// Tag names that trigger this implicit close after `start_prefix`.
         #[facet(default)]
         closed_by_tags: Vec<String>,
+        /// Content-model relation rows for one table-driven implicit-close token.
+        #[facet(default)]
+        rules: Vec<RawAutoCloseRuleJson>,
     },
     /// Reference to another rule or token.
     Symbol {

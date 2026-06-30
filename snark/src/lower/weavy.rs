@@ -3160,10 +3160,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
             else {
                 continue;
             };
-            if spec.tag != *open_tag {
-                continue;
-            }
-            if parser_ir::auto_close_trigger_len(spec, self.input, byte_position).is_none() {
+            if parser_ir::auto_close_trigger_len(spec, open_tag, self.input, byte_position)
+                .is_none()
+            {
                 continue;
             }
             return Ok(Some(ReducedWeavyToken {
@@ -3180,8 +3179,11 @@ impl<'a> RuntimeWeavyStepper<'a> {
             return;
         };
         if let Some(spec) = self.auto_close_spec_for_terminal(terminal) {
-            let tag = spec.tag.clone();
-            if self.auto_close_stack.last() == Some(&tag) {
+            if self
+                .auto_close_stack
+                .last()
+                .is_some_and(|tag| parser_ir::auto_close_has_rule_for_tag(spec, tag))
+            {
                 self.auto_close_stack.pop();
             }
             return;

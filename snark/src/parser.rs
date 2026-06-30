@@ -22,9 +22,9 @@ use crate::{
     lexical::{LexicalFacts, TerminalKind},
     runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
     validated::{
-        AliasId, FieldId, GrammarExpr, GrammarExprId, PrecedenceAssoc,
-        PrecedenceEntry as ValidatedPrecedenceEntry, ReservedSetId, RuleId, StaticPrecedenceValue,
-        SymbolRef, ValidatedGrammar, VisibleNodeKind,
+        AliasId, AutoCloseRule as ValidatedAutoCloseRule, FieldId, GrammarExpr, GrammarExprId,
+        PrecedenceAssoc, PrecedenceEntry as ValidatedPrecedenceEntry, ReservedSetId, RuleId,
+        StaticPrecedenceValue, SymbolRef, ValidatedGrammar, VisibleNodeKind,
     },
 };
 
@@ -3894,6 +3894,13 @@ pub(crate) struct AutoCloseSpec {
     pub(crate) start_prefix: Option<String>,
     pub(crate) end_prefix: Option<String>,
     pub(crate) closed_by_tags: Vec<String>,
+    pub(crate) rules: Vec<AutoCloseRuleSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AutoCloseRuleSpec {
+    pub(crate) tag: String,
+    pub(crate) closed_by_tags: Vec<String>,
 }
 
 /// External scanner host used by the reduced parser oracle.
@@ -5583,6 +5590,7 @@ fn compile_terminal_matcher(
                 start_prefix,
                 end_prefix,
                 closed_by_tags,
+                rules,
             } => CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(AutoCloseSpec {
                 tag: tag.clone(),
                 open: open.clone(),
@@ -5594,6 +5602,7 @@ fn compile_terminal_matcher(
                 start_prefix: start_prefix.clone(),
                 end_prefix: end_prefix.clone(),
                 closed_by_tags: closed_by_tags.clone(),
+                rules: compile_auto_close_rules(rules),
             })),
             _ => CompiledTerminalMatcher::UnsupportedTerminal {
                 terminal: terminal.id(),
@@ -5622,6 +5631,20 @@ fn compile_terminal_matcher(
 
 fn compile_lex_expr(grammar: &ValidatedGrammar, expr: GrammarExprId) -> CompiledLexExpr {
     compile_lex_expr_inner(grammar, expr, &mut Vec::new())
+}
+
+fn compile_auto_close_rules(rules: &[ValidatedAutoCloseRule]) -> Vec<AutoCloseRuleSpec> {
+    rules
+        .iter()
+        .map(|rule| AutoCloseRuleSpec {
+            tag: normalize_auto_close_tag(rule.tag()),
+            closed_by_tags: rule
+                .closed_by_tags()
+                .iter()
+                .map(|tag| normalize_auto_close_tag(tag))
+                .collect(),
+        })
+        .collect()
 }
 
 fn compile_lex_expr_inner(
@@ -5653,6 +5676,7 @@ fn compile_lex_expr_inner(
             start_prefix,
             end_prefix,
             closed_by_tags,
+            rules,
         } => CompiledLexExpr::AutoClose(AutoCloseSpec {
             tag: tag.clone(),
             open: open.clone(),
@@ -5664,6 +5688,7 @@ fn compile_lex_expr_inner(
             start_prefix: start_prefix.clone(),
             end_prefix: end_prefix.clone(),
             closed_by_tags: closed_by_tags.clone(),
+            rules: compile_auto_close_rules(rules),
         }),
         GrammarExpr::Token(content)
         | GrammarExpr::ImmediateToken(content)
@@ -7603,10 +7628,10 @@ impl<'a> RuntimeParser<'a> {
             else {
                 continue;
             };
-            if spec.tag != *open_tag {
+            if auto_close_closed_by_tags(spec, open_tag).is_none() {
                 continue;
             }
-            let marker_len = auto_close_trigger_len(spec, input, branch.byte_position)?;
+            let marker_len = auto_close_trigger_len(spec, open_tag, input, branch.byte_position)?;
             return Some(ReducedToken {
                 lookahead,
                 end: branch.byte_position,
@@ -7627,7 +7652,11 @@ impl<'a> RuntimeParser<'a> {
             return;
         };
         if let Some(spec) = self.auto_close_spec_for_terminal(terminal) {
-            if branch.auto_close_stack.last() == Some(&spec.tag) {
+            if branch
+                .auto_close_stack
+                .last()
+                .is_some_and(|tag| auto_close_has_rule_for_tag(spec, tag))
+            {
                 branch.auto_close_stack.pop();
             }
             return;
@@ -8801,6 +8830,7 @@ impl RuntimeTreeStore {
 
 pub(crate) fn auto_close_trigger_len(
     spec: &AutoCloseSpec,
+    open_tag: &str,
     input: &str,
     byte_position: usize,
 ) -> Option<usize> {
@@ -8815,12 +8845,24 @@ pub(crate) fn auto_close_trigger_len(
         .as_deref()
         .and_then(|prefix| scan_auto_close_tag(input, byte_position, prefix))
         .and_then(|(tag, end_byte)| {
-            spec.closed_by_tags
+            auto_close_closed_by_tags(spec, open_tag)?
                 .iter()
                 .any(|closed_by| normalize_auto_close_tag(closed_by) == tag)
                 .then_some(end_byte - byte_position)
         });
     literal_trigger.max(tag_trigger)
+}
+
+fn auto_close_closed_by_tags<'a>(spec: &'a AutoCloseSpec, open_tag: &str) -> Option<&'a [String]> {
+    let open_tag = normalize_auto_close_tag(open_tag);
+    if let Some(rule) = spec.rules.iter().find(|rule| rule.tag == open_tag) {
+        return Some(&rule.closed_by_tags);
+    }
+    (normalize_auto_close_tag(&spec.tag) == open_tag).then_some(&spec.closed_by_tags)
+}
+
+pub(crate) fn auto_close_has_rule_for_tag(spec: &AutoCloseSpec, open_tag: &str) -> bool {
+    auto_close_closed_by_tags(spec, open_tag).is_some()
 }
 
 pub(crate) fn scan_auto_close_tag_in_range(
@@ -11798,13 +11840,16 @@ extras (
                 },
                 "_implicit_p_end": {
                   "type": "AUTO_CLOSE",
-                  "tag": "p",
+                  "tag": "implicit_end_tag",
                   "open_node": "start_tag",
                   "close_node": "end_tag",
                   "tag_name_node": "tag_name",
                   "start_prefix": "<",
                   "end_prefix": "</",
-                  "closed_by_tags": ["p", "div"]
+                  "rules": [
+                    { "tag": "p", "closed_by_tags": ["p", "div"] },
+                    { "tag": "li", "closed_by_tags": ["li"] }
+                  ]
                 },
                 "tag_name": { "type": "PATTERN", "value": "[a-z]+" },
                 "text": { "type": "PATTERN", "value": "[a-z]+" }

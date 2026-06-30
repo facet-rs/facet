@@ -212,13 +212,16 @@ module.exports = grammar({
     start_tag: $ => seq("<", $.tag_name, ">"),
     end_tag: $ => seq("</", $.tag_name, ">"),
     _implicit_p_end: $ => auto_close({
-      tag: "p",
+      tag: "implicit_end_tag",
       open_node: "start_tag",
       close_node: "end_tag",
       tag_name_node: "tag_name",
       start_prefix: "<",
       end_prefix: "</",
-      closed_by_tags: ["p", "div"],
+      rules: [
+        { tag: "p", closed_by_tags: ["p", "div"] },
+        { tag: "li", closed_by_tags: ["li"] },
+      ],
     }),
     tag_name: $ => /[a-z]+/,
     text: $ => /[a-z]+/,
