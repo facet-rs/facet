@@ -426,7 +426,7 @@ export function App() {
           )}
         </div>
 
-        <BundleInventory result={result} files={projectedFiles} />
+        <BundleInventory result={result} files={projectedFiles} sourceInputs={sourceInputs} />
       </aside>
 
       <section className="workspace" aria-label="Source and results">
@@ -825,9 +825,11 @@ function layerHighlights(layers: LayerOutput[], depth: number): HighlightOutput[
 function BundleInventory({
   result,
   files,
+  sourceInputs,
 }: {
   result: PlaygroundResponse | null;
   files: { path: string; sourcePath: string }[];
+  sourceInputs: { path: string }[];
 }) {
   const queryPaths = result?.bundle.query_paths ?? files.filter((file) => file.path.startsWith("queries/")).map((file) => file.path);
   const corpusPaths =
@@ -840,7 +842,7 @@ function BundleInventory({
           file.path.startsWith("test/highlights/"),
       )
       .map((file) => file.path);
-  const samplePaths = result?.bundle.sample_paths ?? files.filter((file) => file.path.startsWith("samples/")).map((file) => file.path);
+  const sourcePaths = sourceInputs.map((file) => file.path);
   const scannerPaths = result?.bundle.scanner_paths ?? [];
   const ignoredPaths =
     result?.bundle.generated_files_ignored ?? files.filter((file) => isGeneratedPath(file.path)).map((file) => file.path);
@@ -850,13 +852,13 @@ function BundleInventory({
       <summary>
         Bundle inventory
         <span className="inventory-counts">
-          {queryPaths.length}q · {corpusPaths.length}c · {samplePaths.length}s
+          {queryPaths.length} queries · {corpusPaths.length} tests · {sourcePaths.length} source
         </span>
       </summary>
       <div className="inventory-body">
         <InventoryGroup title="Queries" paths={queryPaths} />
         <InventoryGroup title="Corpus & highlights" paths={corpusPaths} />
-        <InventoryGroup title="Samples" paths={samplePaths} />
+        <InventoryGroup title="Source inputs" paths={sourcePaths} />
         <InventoryGroup title="Scanners" paths={scannerPaths} />
         <InventoryGroup title="Ignored (generated)" paths={ignoredPaths} />
       </div>
