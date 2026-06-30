@@ -110,6 +110,7 @@ struct ParseOutput {
     max_live_versions: usize,
     trace_event_count: usize,
     tree_event_count: usize,
+    reuse_node_count: usize,
     accepted_tree_event_count: usize,
     accepted_error_count: usize,
     accepted_missing_count: usize,
@@ -246,6 +247,7 @@ pub struct PlaygroundSession {
     bundle: BundleSummary,
     prepared: PreparedGrammar,
     last_input: Option<String>,
+    last_report: Option<RuntimeParseReport>,
 }
 
 impl PlaygroundSession {
@@ -273,13 +275,13 @@ impl PlaygroundSession {
                 ));
             }
         };
-        if let (Some(edit), Some(old_input)) = (request.edit, self.last_input.as_deref())
-            && let Err(error) =
-                RuntimeInputEdit::from(edit).validate_against(old_input, &request.input)
+        let edit = request.edit.map(RuntimeInputEdit::from);
+        if let (Some(edit), Some(old_input)) = (edit, self.last_input.as_deref())
+            && let Err(error) = edit.validate_against(old_input, &request.input)
         {
             return response_json(self.diagnostic_response("edit", error.to_string()));
         }
-        response_json(self.response(&request.input, request.run_corpus))
+        response_json(self.response(&request.input, request.run_corpus, edit))
     }
 
     fn prepare_files(files: Vec<BundleFile>) -> Result<Self, PlaygroundResponse> {
@@ -335,15 +337,17 @@ impl PlaygroundSession {
             bundle,
             prepared,
             last_input: None,
+            last_report: None,
         })
     }
 
-    fn response(&mut self, input: &str, run_corpus: bool) -> PlaygroundResponse {
-        let response = playground_response_for_session(self, input, run_corpus);
-        if response.parse.is_some() {
-            self.last_input = Some(input.to_owned());
-        }
-        response
+    fn response(
+        &mut self,
+        input: &str,
+        run_corpus: bool,
+        edit: Option<RuntimeInputEdit>,
+    ) -> PlaygroundResponse {
+        playground_response_for_session(self, input, run_corpus, edit)
     }
 
     fn diagnostic_response(&self, stage: &str, message: String) -> PlaygroundResponse {
@@ -378,13 +382,14 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
         Ok(session) => session,
         Err(response) => return response,
     };
-    session.response(&input, run_corpus)
+    session.response(&input, run_corpus, None)
 }
 
 fn playground_response_for_session(
-    session: &PlaygroundSession,
+    session: &mut PlaygroundSession,
     input: &str,
     run_corpus: bool,
+    edit: Option<RuntimeInputEdit>,
 ) -> PlaygroundResponse {
     let files = &session.files;
     let prepared = &session.prepared;
@@ -404,6 +409,13 @@ fn playground_response_for_session(
                     .as_ref()
                     .map(|scanner| scanner as &dyn ReducedExternalScanner),
                 input,
+                edit.and_then(|edit| {
+                    Some((
+                        session.last_input.as_deref()?,
+                        session.last_report.as_ref()?,
+                        edit,
+                    ))
+                }),
             ) {
                 Ok(playground_report) => {
                     let report = playground_report.report;
@@ -418,6 +430,7 @@ fn playground_response_for_session(
                         max_live_versions: report.max_live_versions(),
                         trace_event_count: report.trace_events().len(),
                         tree_event_count: report.tree_events().len(),
+                        reuse_node_count: count_reused_nodes(report.tree_events()),
                         accepted_tree_event_count,
                         accepted_error_count,
                         accepted_missing_count,
@@ -444,6 +457,8 @@ fn playground_response_for_session(
                             input,
                         );
                     }
+                    session.last_input = Some(input.to_owned());
+                    session.last_report = Some(report);
                 }
                 Err(error) => diagnostics.push(reduced_error_diagnostic("parse", &error, input)),
             },
@@ -488,6 +503,13 @@ fn count_accepted_missing(events: &[TreeEvent]) -> usize {
     events
         .iter()
         .filter(|event| matches!(event, TreeEvent::Missing { .. }))
+        .count()
+}
+
+fn count_reused_nodes(events: &[TreeEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| matches!(event, TreeEvent::ReuseNode { .. }))
         .count()
 }
 
@@ -922,13 +944,19 @@ fn parse_source_with_optional_recovery<'a>(
     runtime: RuntimeParser<'a>,
     scanner: Option<&'a dyn ReducedExternalScanner>,
     input: &str,
+    previous: Option<(&str, &RuntimeParseReport, RuntimeInputEdit)>,
 ) -> Result<PlaygroundParseReport, ReducedParseError> {
     let runtime = match scanner {
         Some(scanner) => runtime.with_external_scanner(scanner),
         None => runtime,
     }
     .with_recovery_step_limit(PLAYGROUND_RECOVERY_STEP_LIMIT);
-    match runtime.parse_compact_with_report(input) {
+    let strict = if let Some((old_input, previous_report, edit)) = previous {
+        runtime.reparse_compact_with_report(old_input, previous_report, edit, input)
+    } else {
+        runtime.parse_compact_with_report(input)
+    };
+    match strict {
         Ok(report) => Ok(PlaygroundParseReport {
             report,
             strict_error: None,
@@ -1543,6 +1571,78 @@ mod tests {
         assert_eq!(summary.corpus_paths, vec!["test/corpus/main.txt"]);
         assert_eq!(summary.sample_paths, vec!["samples/sample.json"]);
         assert_eq!(summary.generated_files_ignored, vec!["src/parser.c"]);
+    }
+
+    #[test]
+    fn playground_session_reparse_uses_runtime_reuse() {
+        let files = vec![BundleFile {
+            path: "src/grammar.json".to_owned(),
+            text: r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "insensitive" },
+                    { "type": "SYMBOL", "name": "wrapped" }
+                  ]
+                },
+                "insensitive": {
+                  "type": "PATTERN",
+                  "value": "abc",
+                  "flags": "i"
+                },
+                "wrapped": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "PATTERN",
+                    "value": "xyz",
+                    "flags": "i"
+                  }
+                }
+              }
+            }"##
+            .to_owned(),
+        }];
+        let mut session = PlaygroundSession::prepare_files(files).unwrap();
+        let initial = PlaygroundParseRequest {
+            input: "ABCXYZ".to_owned(),
+            run_corpus: false,
+            edit: None,
+        };
+        let initial = session.parse_json(&facet_json::to_string(&initial).unwrap());
+        let initial: PlaygroundResponse = facet_json::from_str(&initial).unwrap();
+        assert!(initial.ok, "{:?}", initial.diagnostics);
+        assert_eq!(
+            initial.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(source_file (insensitive) (wrapped))")
+        );
+        assert_eq!(
+            initial.parse.as_ref().map(|parse| parse.reuse_node_count),
+            Some(0)
+        );
+
+        let reparsed = PlaygroundParseRequest {
+            input: "abcXYZ".to_owned(),
+            run_corpus: false,
+            edit: Some(PlaygroundInputEdit {
+                start_byte: 0,
+                old_end_byte: 3,
+                new_end_byte: 3,
+            }),
+        };
+        let reparsed = session.parse_json(&facet_json::to_string(&reparsed).unwrap());
+        let reparsed: PlaygroundResponse = facet_json::from_str(&reparsed).unwrap();
+
+        assert!(reparsed.ok, "{:?}", reparsed.diagnostics);
+        assert_eq!(
+            reparsed.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(source_file (insensitive) (wrapped))")
+        );
+        assert_eq!(
+            reparsed.parse.as_ref().map(|parse| parse.reuse_node_count),
+            Some(1)
+        );
     }
 
     #[test]

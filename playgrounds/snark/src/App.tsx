@@ -44,6 +44,7 @@ type ParseOutput = {
   max_live_versions: number;
   trace_event_count: number;
   tree_event_count: number;
+  reuse_node_count: number;
   accepted_tree_event_count: number;
   accepted_error_count: number;
   accepted_missing_count: number;
@@ -525,6 +526,7 @@ function ResultsDock({
           {result?.parse ? (
             <span className="panel-meta">
               {result.parse.accepted_count} accepted · {result.parse.failure_count} failed
+              {result.parse.reuse_node_count ? ` · ${result.parse.reuse_node_count} reused` : ""}
               {result.parse.accepted_error_count || result.parse.accepted_missing_count
                 ? ` · ${result.parse.accepted_error_count} ERROR · ${result.parse.accepted_missing_count} MISSING`
                 : ""}

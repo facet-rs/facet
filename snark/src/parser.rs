@@ -6454,7 +6454,11 @@ impl RuntimeReuseIndex {
             if !reusable_before_edit && !reusable_after_edit {
                 continue;
             }
-            let lookahead_end_byte = shift_byte(node.lookahead_end_byte, edit.old_end_byte, delta);
+            let lookahead_end_byte = if node.start_byte >= edit.old_end_byte {
+                shift_byte(node.lookahead_end_byte, edit.old_end_byte, delta)
+            } else {
+                node.lookahead_end_byte
+            };
             let shifted = RuntimeReusableNode {
                 start_byte,
                 end_byte,
@@ -6540,16 +6544,11 @@ impl<'a> RuntimeParseSession<'a> {
         new_input: impl Into<String>,
     ) -> Result<&RuntimeParseReport, ReducedParseError> {
         let new_input = new_input.into();
-        if let Some(old_input) = self.last_input.as_deref() {
-            edit.validate_against(old_input, &new_input)?;
-        }
-        let reuse_index = self
-            .last_report
-            .as_ref()
-            .map(|report| RuntimeReuseIndex::from_report(report, edit));
-        let report = if let Some(reuse_index) = reuse_index.as_ref() {
+        let report = if let (Some(old_input), Some(last_report)) =
+            (self.last_input.as_deref(), self.last_report.as_ref())
+        {
             self.parser
-                .parse_compact_with_reuse_index(&new_input, reuse_index)?
+                .reparse_compact_with_report(old_input, last_report, edit, &new_input)?
         } else {
             self.parser.parse_compact_with_report(&new_input)?
         };
@@ -6565,9 +6564,17 @@ impl<'a> RuntimeParseSession<'a> {
 impl RuntimeInputEdit {
     fn reuse_position(&self, start_byte: usize, end_byte: usize) -> Option<(usize, usize)> {
         if self.old_end_byte == self.start_byte {
-            if start_byte < self.start_byte && self.start_byte < end_byte {
+            if start_byte < self.start_byte && self.start_byte <= end_byte {
                 return None;
             }
+            if start_byte >= self.start_byte {
+                let delta = self.new_end_byte as isize - self.old_end_byte as isize;
+                return Some((
+                    shift_byte(start_byte, self.old_end_byte, delta),
+                    shift_byte(end_byte, self.old_end_byte, delta),
+                ));
+            }
+            return Some((start_byte, end_byte));
         } else if start_byte < self.old_end_byte && self.start_byte < end_byte {
             return None;
         }
@@ -6678,6 +6685,20 @@ impl<'a> RuntimeParser<'a> {
             RuntimeRecoveryMode::SkipInvalidInput,
             RuntimeTraceDetail::Lineage,
         )
+    }
+
+    /// Reparse one edited input using an accepted report from the previous input
+    /// as the reusable-subtree source.
+    pub fn reparse_compact_with_report(
+        &self,
+        old_input: &str,
+        previous_report: &RuntimeParseReport,
+        edit: RuntimeInputEdit,
+        new_input: &str,
+    ) -> Result<RuntimeParseReport, ReducedParseError> {
+        edit.validate_against(old_input, new_input)?;
+        let reuse_index = RuntimeReuseIndex::from_report(previous_report, edit);
+        self.parse_compact_with_reuse_index(new_input, &reuse_index)
     }
 
     fn parse_with_report_mode(
@@ -10921,6 +10942,27 @@ extras (
         )
     }
 
+    fn repeated_word_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "REPEAT1",
+                  "content": { "type": "SYMBOL", "name": "word" }
+                },
+                "word": {
+                  "type": "PATTERN",
+                  "value": "[a-z]+"
+                }
+              },
+              "extras": [
+                { "type": "PATTERN", "value": "\\s+" }
+              ]
+            }"##,
+        )
+    }
+
     fn reused_byte_ranges(report: &RuntimeParseReport) -> Vec<(usize, usize)> {
         report
             .tree_events()
@@ -11066,6 +11108,26 @@ extras (
             "(source_file (left) (comment) (right))"
         );
         assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 1), (6, 7)]);
+    }
+
+    #[test]
+    fn runtime_parse_session_does_not_reuse_root_across_boundary_insertion() {
+        let (validated, parser, table) = repeated_word_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let mut session = RuntimeParseSession::new(runtime);
+        let first = session.parse_compact("alpha").unwrap().clone();
+        assert_eq!(first.tree().to_sexp(), "(source_file (word))");
+
+        let edit = RuntimeInputEdit::new(5, 5, 10);
+        let reparsed = session.reparse_compact(edit, "alpha beta").unwrap().clone();
+        let scratch = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report("alpha beta")
+            .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert_eq!(reparsed.tree().to_sexp(), "(source_file (word) (word))");
+        assert!(reused_byte_ranges(&reparsed).is_empty());
     }
 
     #[test]
