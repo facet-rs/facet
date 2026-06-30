@@ -300,6 +300,85 @@ module.exports = grammar({
   );
 });
 
+test("filters injected layers with query capture predicates through Snark WASM", async () => {
+  const hostGrammar = `
+module.exports = grammar({
+  name: "host",
+  extras: $ => [],
+  rules: {
+    document: $ => seq($.tag, ":", $.code),
+    tag: $ => /[a-z]+/,
+    code: $ => /[A-Z]+/,
+  },
+});
+`;
+  const htmlGrammar = `
+module.exports = grammar({
+  name: "html",
+  extras: $ => [],
+  rules: {
+    document: $ => $.word,
+    word: $ => /[A-Z]+/,
+  },
+});
+`;
+  const sqlGrammar = `
+module.exports = grammar({
+  name: "sql",
+  extras: $ => [],
+  rules: {
+    document: $ => $.word,
+    word: $ => /[A-Z]+/,
+  },
+});
+`;
+  const files = normalizeBundleFiles([
+    { path: "host/grammar.js", text: hostGrammar },
+    {
+      path: "host/queries/injections.scm",
+      text:
+        '((document (tag) @_name (code) @injection.content)\n  (#any-of? @_name "hbs" "glimmer")\n  (#set! injection.language "html"))\n' +
+        '((document (tag) @_name (code) @injection.content)\n  (#eq? @_name "sql")\n  (#set! injection.language "sql"))\n',
+    },
+    { path: "html/grammar.js", text: htmlGrammar },
+    { path: "html/queries/highlights.scm", text: "(word) @tag\n" },
+    { path: "sql/grammar.js", text: sqlGrammar },
+  ]);
+
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: "hbs:PRINT",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.deepEqual(
+    response.injections.map((injection: { language: string; text: string }) => [
+      injection.language,
+      injection.text,
+    ]),
+    [["html", "PRINT"]],
+  );
+  assert.equal(response.layers.length, 1);
+  assert.equal(response.layers[0].language, "html");
+  assert.equal(response.layers[0].parse.sexp, "(document (word))");
+  assert.deepEqual(
+    response.layers[0].highlights.map((capture: { capture_name: string; text: string; start_byte: number }) => [
+      capture.capture_name,
+      capture.text,
+      capture.start_byte,
+    ]),
+    [["tag", "PRINT", 4]],
+  );
+});
+
 test("resolves injected layers through tree-sitter injection-regex in WASM", async () => {
   const hostGrammar = `
 module.exports = grammar({

@@ -2759,6 +2759,129 @@ mod tests {
     }
 
     #[test]
+    fn playground_response_filters_injection_layers_with_capture_predicates() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "tag" },
+        { "type": "STRING", "value": ":" },
+        { "type": "SYMBOL", "name": "code" }
+      ]
+    },
+    "tag": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[a-z]+" }
+    },
+    "code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((document
+  (tag) @_name
+  (code) @injection.content)
+  (#any-of? @_name "hbs" "glimmer")
+  (#set! injection.language "html"))
+((document
+  (tag) @_name
+  (code) @injection.content)
+  (#eq? @_name "sql")
+  (#set! injection.language "sql"))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/html/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "html",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/html/queries/highlights.scm".to_owned(),
+                    text: "(word) @tag\n".to_owned(),
+                },
+                BundleFile {
+                    path: "languages/sql/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "sql",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+            ],
+            input: "hbs:PRINT".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(
+            response
+                .injections
+                .iter()
+                .map(|injection| (injection.language.as_str(), injection.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("html", "PRINT")]
+        );
+        assert_eq!(response.layers.len(), 1);
+        let layer = &response.layers[0];
+        assert_eq!(layer.language, "html");
+        assert_eq!(
+            layer.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(document (word))")
+        );
+        assert_eq!(layer.highlights.len(), 1);
+        assert_eq!(layer.highlights[0].capture_name, "tag");
+        assert_eq!(layer.highlights[0].text, "PRINT");
+        assert_eq!(layer.highlights[0].start_byte, 4);
+    }
+
+    #[test]
     fn playground_response_splits_combined_layer_highlights_across_host_ranges() {
         let request = PlaygroundRequest {
             files: vec![

@@ -412,6 +412,11 @@ fn execute_runtime_injections(
     let mut regions = Vec::new();
 
     for pattern in &patterns {
+        if !pattern.predicates.iter().all(|predicate| {
+            predicate.matches_any_capture(&nodes, &tokens, &fields, &pattern.captures)
+        }) {
+            continue;
+        }
         let language_captures = pattern
             .captures
             .iter()
@@ -569,6 +574,7 @@ struct QueryCaptureBinding {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct InjectionPattern {
     captures: Vec<QueryCaptureBinding>,
+    predicates: Vec<HighlightPredicateBinding>,
     language: Option<String>,
     combined: bool,
     include_children: bool,
@@ -579,6 +585,7 @@ struct ParsedInjectionItem {
     target: Option<HighlightTarget>,
     capture_targets: Vec<HighlightTarget>,
     captures: Vec<QueryCaptureBinding>,
+    predicates: Vec<HighlightPredicateBinding>,
     language: Option<String>,
     combined: bool,
     include_children: bool,
@@ -595,6 +602,8 @@ enum HighlightTarget {
 enum HighlightPredicate {
     MatchPrefix(String),
     MatchContains(String),
+    Exact(String),
+    AnyOf(Vec<String>),
 }
 
 impl HighlightPredicate {
@@ -610,6 +619,8 @@ impl HighlightPredicate {
         match self {
             Self::MatchPrefix(prefix) => text.starts_with(prefix),
             Self::MatchContains(needle) => text.contains(needle),
+            Self::Exact(expected) => text == expected,
+            Self::AnyOf(expected) => expected.iter().any(|candidate| text == candidate),
         }
     }
 }
@@ -618,6 +629,64 @@ impl HighlightPredicate {
 struct HighlightPredicateBinding {
     capture_name: String,
     predicate: HighlightPredicate,
+}
+
+impl HighlightPredicateBinding {
+    fn matches_any_capture(
+        &self,
+        nodes: &[RuntimeHighlightNode],
+        tokens: &[RuntimeHighlightToken],
+        fields: &[RuntimeHighlightField],
+        bindings: &[QueryCaptureBinding],
+    ) -> bool {
+        bindings
+            .iter()
+            .filter(|binding| binding.capture_name == self.capture_name)
+            .any(|binding| {
+                capture_binding_matches(binding, nodes, tokens, fields)
+                    .iter()
+                    .any(|capture| self.predicate.matches(&capture.text))
+            })
+    }
+}
+
+fn predicate_bindings_from_tokens(
+    op: &str,
+    symbols: &[String],
+    strings: Vec<String>,
+) -> Vec<HighlightPredicateBinding> {
+    let Some(capture_name) = symbols
+        .iter()
+        .find_map(|symbol| symbol.strip_prefix('@'))
+        .filter(|capture| !capture.is_empty() && capture.chars().all(is_capture_name_char))
+        .map(str::to_owned)
+    else {
+        return Vec::new();
+    };
+
+    let predicate = match op {
+        "#match?" => strings
+            .into_iter()
+            .next()
+            .map(HighlightPredicate::from_match_pattern),
+        "#eq?" => strings.into_iter().next().map(HighlightPredicate::Exact),
+        "#any-of?" => {
+            if strings.is_empty() {
+                None
+            } else {
+                Some(HighlightPredicate::AnyOf(strings))
+            }
+        }
+        _ => None,
+    };
+
+    predicate
+        .map(|predicate| HighlightPredicateBinding {
+            capture_name,
+            predicate,
+        })
+        .into_iter()
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -833,23 +902,7 @@ impl HighlightQueryParser {
                 break;
             }
         }
-        let predicates = if op == "#match?" {
-            symbols
-                .iter()
-                .find_map(|symbol| symbol.strip_prefix('@'))
-                .zip(strings.into_iter().next())
-                .filter(|(capture, _)| {
-                    !capture.is_empty() && capture.chars().all(is_capture_name_char)
-                })
-                .map(|(capture_name, pattern)| HighlightPredicateBinding {
-                    capture_name: capture_name.to_owned(),
-                    predicate: HighlightPredicate::from_match_pattern(pattern),
-                })
-                .into_iter()
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let predicates = predicate_bindings_from_tokens(&op, &symbols, strings);
         ParsedHighlightItem {
             target: None,
             capture_targets: Vec::new(),
@@ -939,6 +992,7 @@ impl InjectionQueryParser {
             {
                 patterns.push(InjectionPattern {
                     captures: item.captures,
+                    predicates: item.predicates,
                     language: item.language,
                     combined: item.combined,
                     include_children: item.include_children,
@@ -1100,10 +1154,11 @@ impl InjectionQueryParser {
                 break;
             }
         }
-        if op != "#set!" {
-            return ParsedInjectionItem::default();
-        }
         let mut item = ParsedInjectionItem::default();
+        if op != "#set!" {
+            item.predicates = predicate_bindings_from_tokens(&op, &symbols, strings);
+            return item;
+        }
         if symbols.iter().any(|symbol| symbol == "injection.combined") {
             item.combined = true;
         }
@@ -1188,6 +1243,7 @@ impl InjectionQueryParser {
 impl ParsedInjectionItem {
     fn merge(&mut self, child: Self) {
         self.captures.extend(child.captures);
+        self.predicates.extend(child.predicates);
         if self.language.is_none() {
             self.language = child.language;
         }
@@ -1910,6 +1966,75 @@ mod tests {
                 .map(|region| (region.language(), region.text()))
                 .collect::<Vec<_>>(),
             vec![("lua", "PRINT"), ("js", "RUN")]
+        );
+    }
+
+    #[test]
+    fn filters_injection_patterns_with_capture_predicates() {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(
+            r#"{
+              "name": "injection_predicate",
+              "rules": {
+                "document": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "tag" },
+                    { "type": "STRING", "value": ":" },
+                    { "type": "SYMBOL", "name": "code" }
+                  ]
+                },
+                "tag": {
+                  "type": "TOKEN",
+                  "content": { "type": "PATTERN", "value": "[a-z]+" }
+                },
+                "code": {
+                  "type": "TOKEN",
+                  "content": { "type": "PATTERN", "value": "[A-Z]+" }
+                }
+              },
+              "extras": [],
+              "conflicts": [],
+              "precedences": [],
+              "externals": [],
+              "inline": [],
+              "supertypes": []
+            }"#,
+        )
+        .unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = ParseTable::from_grammar(&parser).unwrap();
+        let input = "hbs:PRINT";
+        let report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report(input)
+            .unwrap();
+        let query = QuerySource(
+            r#"((document
+                  (tag) @_name
+                  (code) @injection.content)
+                (#any-of? @_name "hbs" "glimmer")
+                (#set! injection.language "html"))
+               ((document
+                  (tag) @_name
+                  (code) @injection.content)
+                (#eq? @_name "sql")
+                (#set! injection.language "sql"))"#
+                .to_owned(),
+        );
+
+        let regions = query.execute_runtime_injections(&parser, &report, input);
+
+        assert_eq!(
+            regions
+                .iter()
+                .map(|region| (region.language(), region.text()))
+                .collect::<Vec<_>>(),
+            vec![("html", "PRINT")]
         );
     }
 }
