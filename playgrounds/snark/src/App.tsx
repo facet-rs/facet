@@ -200,7 +200,7 @@ export function App() {
     () => projectedFilesForGrammarRootId(files, activeGrammarRootId),
     [files, activeGrammarRootId],
   );
-  const sampleFiles = useMemo(
+  const sourceInputs = useMemo(
     () => sourceExamplesForGrammarRootId(files, activeGrammarRootId),
     [files, activeGrammarRootId],
   );
@@ -458,13 +458,13 @@ export function App() {
                 ))}
               </select>
             ) : null}
-            {sampleFiles.length > 0 ? (
+            {sourceInputs.length > 0 ? (
               <select
-                aria-label="Sample"
+                aria-label="Source input"
                 className="select"
                 value={selectedSamplePath}
                 onChange={(event) => {
-                  const sample = sampleFiles.find((file) => file.path === event.currentTarget.value);
+                  const sample = sourceInputs.find((file) => file.path === event.currentTarget.value);
                   if (sample) {
                     updateSourceInput(sample.text, sample.path);
                   } else {
@@ -472,8 +472,8 @@ export function App() {
                   }
                 }}
               >
-                <option value="">Samples · {sampleFiles.length}</option>
-                {sampleFiles.map((file) => (
+                <option value="">Source · {sourceInputs.length}</option>
+                {sourceInputs.map((file) => (
                   <option key={file.sourcePath} value={file.path}>
                     {file.path}
                   </option>
