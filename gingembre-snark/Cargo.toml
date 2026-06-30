@@ -1,0 +1,10 @@
+[package]
+name = "gingembre-snark"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Prototype: parse gingembre with snark and lower its tree to gingembre's AST, validated against the native cst_lower render oracle."
+
+[dependencies]
+snark = { path = "../snark", features = ["json-import"] }
+snark-dsl = { path = "../snark-dsl", features = ["native"] }
