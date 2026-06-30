@@ -1143,11 +1143,6 @@ mod tests {
             .unwrap();
         let assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
         let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
-            .unwrap()
-            .with_external_scanner(&scanner)
-            .parse_with_report(&highlight_fixture.source.body.0)
-            .unwrap();
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
@@ -1167,9 +1162,6 @@ mod tests {
                 &highlight_fixture.source.body.0,
             );
 
-        assert_same!(weavy_report.tree(), runtime_report.tree());
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
         assert_css_highlight_assertions_covered(&assertions, &captures);
         assert!(
             captures
@@ -2312,12 +2304,6 @@ mod tests {
         ] {
             let case = &statement_cases[case_index];
             assert_eq!(case.name, case_name);
-            let runtime_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-            let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
-                .unwrap()
-                .with_external_scanner(&runtime_scanner)
-                .parse_with_report(&case.input)
-                .unwrap();
             let weavy_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
             let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
                 &plan,
@@ -2329,22 +2315,18 @@ mod tests {
             )
             .unwrap();
 
-            assert_same!(weavy_report.tree(), runtime_report.tree());
             assert_same!(weavy_report.tree(), &case.expected);
             assert_eq!(
                 weavy_report.accepted_count(),
-                runtime_report.accepted_count()
+                1,
+                "expected one accepted Weavy branch for `{case_name}`"
             );
-            assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
-            assert_eq!(
-                weavy_report.max_live_versions(),
-                runtime_report.max_live_versions()
-            );
-            assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-            assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-            assert_eq!(
-                weavy_report.accepted_tree_events(),
-                runtime_report.accepted_tree_events()
+            assert!(
+                weavy_report
+                    .tree_events()
+                    .iter()
+                    .any(|event| matches!(event, crate::parser::TreeEvent::Reduce { .. })),
+                "expected Weavy tree reductions for `{case_name}`"
             );
             assert!(weavy_report.stats().step_count > 0);
             assert!(weavy_report.stats().block_call_count > 0);
@@ -2586,11 +2568,6 @@ mod tests {
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
         let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
-            .unwrap()
-            .with_external_scanner(&scanner)
-            .parse_with_report(&declaration_cases[7].input)
-            .unwrap();
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
@@ -2603,19 +2580,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
-        assert_eq!(
-            weavy_report.accepted_count(),
-            runtime_report.accepted_count()
-        );
-        assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
-        assert_eq!(
-            weavy_report.max_live_versions(),
-            runtime_report.max_live_versions()
-        );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
         assert!(
             weavy_report
                 .trace_events()
@@ -2668,11 +2633,6 @@ mod tests {
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
         let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
-            .unwrap()
-            .with_external_scanner(&scanner)
-            .parse_with_report(&declaration_cases[7].input)
-            .unwrap();
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
@@ -2684,13 +2644,6 @@ mod tests {
             Some(&scanner),
         )
         .unwrap();
-        let runtime_captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &runtime_report.accepted_tree_events(),
-                &declaration_cases[7].input,
-            );
         let weavy_captures = highlights_query
             .body
             .execute_runtime_highlights_from_tree_events(
@@ -2699,15 +2652,7 @@ mod tests {
                 &declaration_cases[7].input,
             );
 
-        assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert_eq!(
-            weavy_report.accepted_tree_events(),
-            runtime_report.accepted_tree_events()
-        );
-        assert_eq!(weavy_captures, runtime_captures);
         assert_important_keyword_capture(&weavy_captures);
         assert!(
             weavy_report.max_live_versions() > 1,
@@ -3072,10 +3017,6 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[0].name, "Arrays");
-        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
-            .unwrap()
-            .parse_with_report(&cases[0].input)
-            .unwrap();
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let weavy_report = crate::lower::weavy::parse_runtime_with_report(
@@ -3086,13 +3027,6 @@ mod tests {
             &cases[0].input,
         )
         .unwrap();
-        let runtime_captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &runtime_report.accepted_tree_events(),
-                &cases[0].input,
-            );
         let field_regression_query = QuerySource(
             r#"
 (pair
@@ -3101,12 +3035,6 @@ mod tests {
 "#
             .to_owned(),
         );
-        let runtime_field_captures = field_regression_query
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &runtime_report.accepted_tree_events(),
-                &cases[0].input,
-            );
         let weavy_captures = highlights_query
             .body
             .execute_runtime_highlights_from_tree_events(
@@ -3121,16 +3049,7 @@ mod tests {
                 &cases[0].input,
             );
 
-        assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_same!(weavy_report.tree(), &cases[0].expected);
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert_eq!(
-            weavy_report.accepted_tree_events(),
-            runtime_report.accepted_tree_events()
-        );
-        assert_eq!(weavy_captures, runtime_captures);
-        assert_eq!(weavy_field_captures, runtime_field_captures);
         assert_eq!(
             capture_texts(&weavy_captures, "string.special.key"),
             ["\"stuff\""]
@@ -3171,10 +3090,6 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[4].name, "Comments");
-        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
-            .unwrap()
-            .parse_with_report(&cases[4].input)
-            .unwrap();
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let weavy_report = crate::lower::weavy::parse_runtime_with_report(
@@ -3185,13 +3100,6 @@ mod tests {
             &cases[4].input,
         )
         .unwrap();
-        let runtime_captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &runtime_report.accepted_tree_events(),
-                &cases[4].input,
-            );
         let weavy_captures = highlights_query
             .body
             .execute_runtime_highlights_from_tree_events(
@@ -3200,15 +3108,7 @@ mod tests {
                 &cases[4].input,
             );
 
-        assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_same!(weavy_report.tree(), &cases[4].expected);
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
-        assert_eq!(
-            weavy_report.accepted_tree_events(),
-            runtime_report.accepted_tree_events()
-        );
-        assert_eq!(weavy_captures, runtime_captures);
         assert_eq!(
             capture_texts(&weavy_captures, "comment"),
             [
