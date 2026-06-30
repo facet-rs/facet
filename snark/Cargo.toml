@@ -24,7 +24,7 @@ include = [
 default = []
 ci = ["tree-sitter-import"]
 json-import = ["dep:facet-json", "facet/indexmap"]
-tree-sitter-import = ["json-import"]
+tree-sitter-import = ["json-import", "weavy-lowering"]
 weavy-lowering = ["dep:weavy"]
 
 [dependencies]

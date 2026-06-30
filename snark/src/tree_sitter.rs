@@ -13,8 +13,8 @@ use crate::{
     query::{QueryBundle, QueryFile, QuerySource, WellKnownQuery},
     scanner::{ExternalTokenTable, ScannerSource, TreeSitterScanner, TreeSitterScannerKind},
     source::{
-        PackageRelativePath, PackageRoot, SourceFile, SourceIdAllocator,
-        read_optional_source_string, read_source_string,
+        read_optional_source_string, read_source_string, PackageRelativePath, PackageRoot,
+        SourceFile, SourceIdAllocator,
     },
 };
 
@@ -451,6 +451,9 @@ mod tests {
         diagnostic::DiagnosticCode,
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
+        lower::weavy::{
+            parse_prepared_runtime_with_report_and_scanner, RuntimeWeavyPlan, RuntimeWeavyReport,
+        },
         parser::{
             LookaheadSymbol, ParseStateId, ParseTable, ParserGenerationStage, ParserGrammar,
             ReducedExternalScan, ReducedExternalScanResult, ReducedExternalScanner,
@@ -655,12 +658,10 @@ mod tests {
             root.kind == LexicalRootKind::ImmediateToken
                 && root.leading_extras == LeadingExtrasPolicy::Forbidden
         }));
-        assert!(
-            lexical
-                .terminals()
-                .iter()
-                .any(|terminal| terminal.spelling == "\\d+")
-        );
+        assert!(lexical
+            .terminals()
+            .iter()
+            .any(|terminal| terminal.spelling == "\\d+"));
         assert_eq!(
             lexical
                 .external_tokens()
@@ -712,39 +713,29 @@ mod tests {
         assert!(parser_grammar.supertypes().is_empty());
         assert!(parser_grammar.precedence_groups().is_empty());
         assert!(parser_grammar.glr_plan().conflicts().is_empty());
-        assert!(
-            parser_grammar
-                .public_node_kinds()
-                .iter()
-                .any(|kind| kind.name() == "stylesheet")
-        );
-        assert!(
-            parser_grammar
-                .public_node_kinds()
-                .iter()
-                .any(|kind| kind.name() == "function_name")
-        );
-        assert!(
-            parser_grammar
-                .symbols()
-                .terminals()
-                .iter()
-                .any(|terminal| terminal.spelling() == "\\d+")
-        );
-        assert!(
-            parser_grammar
-                .symbols()
-                .nonterminals()
-                .iter()
-                .any(|symbol| symbol.name() == "stylesheet" && symbol.visible())
-        );
-        assert!(
-            parser_grammar
-                .symbols()
-                .nonterminals()
-                .iter()
-                .any(|symbol| symbol.name() == "_block_item" && symbol.inline())
-        );
+        assert!(parser_grammar
+            .public_node_kinds()
+            .iter()
+            .any(|kind| kind.name() == "stylesheet"));
+        assert!(parser_grammar
+            .public_node_kinds()
+            .iter()
+            .any(|kind| kind.name() == "function_name"));
+        assert!(parser_grammar
+            .symbols()
+            .terminals()
+            .iter()
+            .any(|terminal| terminal.spelling() == "\\d+"));
+        assert!(parser_grammar
+            .symbols()
+            .nonterminals()
+            .iter()
+            .any(|symbol| symbol.name() == "stylesheet" && symbol.visible()));
+        assert!(parser_grammar
+            .symbols()
+            .nonterminals()
+            .iter()
+            .any(|symbol| symbol.name() == "_block_item" && symbol.inline()));
         let normalized_parser_grammar =
             ParserGrammar::normalize_from_validated(&validated, &lexical).unwrap();
         assert_eq!(
@@ -753,25 +744,21 @@ mod tests {
         );
         assert!(!normalized_parser_grammar.productions().is_empty());
         assert_eq!(normalized_parser_grammar.symbols().externals().len(), 3);
-        assert!(
-            normalized_parser_grammar
-                .symbols()
-                .terminals()
-                .iter()
-                .any(|terminal| terminal.kind() == crate::parser::ParserTerminalKind::Token)
-        );
-        assert!(
-            normalized_parser_grammar.symbols().terminals().iter().any(
-                |terminal| terminal.kind() == crate::parser::ParserTerminalKind::ImmediateToken
-            )
-        );
-        assert!(
-            normalized_parser_grammar
-                .symbols()
-                .nonterminals()
-                .iter()
-                .any(|symbol| symbol.origin() == crate::parser::NonterminalOrigin::RepeatAuxiliary)
-        );
+        assert!(normalized_parser_grammar
+            .symbols()
+            .terminals()
+            .iter()
+            .any(|terminal| terminal.kind() == crate::parser::ParserTerminalKind::Token));
+        assert!(normalized_parser_grammar
+            .symbols()
+            .terminals()
+            .iter()
+            .any(|terminal| terminal.kind() == crate::parser::ParserTerminalKind::ImmediateToken));
+        assert!(normalized_parser_grammar
+            .symbols()
+            .nonterminals()
+            .iter()
+            .any(|symbol| symbol.origin() == crate::parser::NonterminalOrigin::RepeatAuxiliary));
         assert!(!normalized_parser_grammar.alias_sequences().is_empty());
         assert!(!normalized_parser_grammar.provenances().is_empty());
         assert!(normalized_parser_grammar.fields().is_empty());
@@ -794,20 +781,16 @@ mod tests {
                 .len(),
             2
         );
-        assert!(
-            prepared_parser_grammar
-                .item_preparation()
-                .unwrap()
-                .graph()
-                .reachable()
-                .contains(&prepared_parser_grammar.start())
-        );
-        assert!(
-            normalized_parser_grammar
-                .public_node_kinds()
-                .iter()
-                .any(|kind| kind.name() == "~")
-        );
+        assert!(prepared_parser_grammar
+            .item_preparation()
+            .unwrap()
+            .graph()
+            .reachable()
+            .contains(&prepared_parser_grammar.start()));
+        assert!(normalized_parser_grammar
+            .public_node_kinds()
+            .iter()
+            .any(|kind| kind.name() == "~"));
         let highlights_query = grammar
             .queries
             .well_known(WellKnownQuery::Highlights)
@@ -908,19 +891,15 @@ mod tests {
         assert_eq!(grammar.scanners.len(), 1);
         assert_eq!(grammar.scanners[0].kind, TreeSitterScannerKind::C);
         assert_eq!(grammar.scanners[0].externals.len(), 3);
-        assert!(
-            grammar
-                .queries
-                .well_known(WellKnownQuery::Highlights)
-                .is_some()
-        );
-        assert!(
-            grammar.corpus.iter().any(|fixture| fixture
-                .source
-                .path
-                .as_str()
-                .starts_with("test/highlight/"))
-        );
+        assert!(grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .is_some());
+        assert!(grammar.corpus.iter().any(|fixture| fixture
+            .source
+            .path
+            .as_str()
+            .starts_with("test/highlight/")));
         let highlight_fixture = grammar
             .corpus
             .iter()
@@ -1199,7 +1178,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[0].name, "Universal selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1273,7 +1252,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[1].name, "Type selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1309,7 +1288,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[2].name, "Class selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1383,7 +1362,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[3].name, "Id selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1419,7 +1398,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[4].name, "Attribute selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1455,7 +1434,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1742,7 +1721,7 @@ mod tests {
             selector_cases[6].name,
             ":nth-child and :nth-last-child selectors"
         );
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1774,7 +1753,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[7].name, "Pseudo-element selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1806,7 +1785,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[8].name, "::slotted pseudo element");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1838,7 +1817,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[9].name, "Child selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1870,7 +1849,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[10].name, "Descendant selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1961,7 +1940,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[11].name, "Nesting selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1993,7 +1972,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[12].name, "Sibling selectors");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -2025,7 +2004,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[13].name, "The :not selector");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -2057,7 +2036,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[14].name, "Nested combinators");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -2089,7 +2068,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[15].name, "Escape sequences");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -2121,7 +2100,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[0].name, "Function calls");
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -2156,7 +2135,7 @@ mod tests {
             declaration_cases[1].name,
             "Calls where each argument has multiple values"
         );
-        let actual_tree = parse_reduced_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -2741,7 +2720,7 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[0].name, "Arrays");
-        let actual_tree = parse_reduced_without_external_scanner_or_panic(
+        let actual_tree = parse_weavy_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2774,7 +2753,7 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[1].name, "String content");
-        let actual_tree = parse_reduced_without_external_scanner_or_panic(
+        let actual_tree = parse_weavy_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2807,7 +2786,7 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[4].name, "Comments");
-        let actual_tree = parse_reduced_without_external_scanner_or_panic(
+        let actual_tree = parse_weavy_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
@@ -3083,7 +3062,7 @@ mod tests {
             .unwrap();
         let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
 
-        let actual_tree = parse_reduced_without_external_scanner_or_panic(
+        let actual_tree = parse_weavy_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
@@ -3293,33 +3272,60 @@ mod tests {
             .collect()
     }
 
-    fn parse_reduced_or_panic(
+    fn parse_weavy_or_panic(
         grammar: &ImportedGrammar,
         validated: &ValidatedGrammar,
         parser_grammar: &ParserGrammar,
         parse_table: &ParseTable,
         input: &str,
     ) -> SexpNode {
-        parse_reduced_report_or_panic(grammar, validated, parser_grammar, parse_table, input)
+        parse_weavy_report_or_panic(grammar, validated, parser_grammar, parse_table, input)
             .tree()
             .clone()
     }
 
-    fn parse_reduced_without_external_scanner_or_panic(
+    fn parse_weavy_without_external_scanner_or_panic(
         validated: &ValidatedGrammar,
         parser_grammar: &ParserGrammar,
         parse_table: &ParseTable,
         input: &str,
     ) -> SexpNode {
-        unwrap_reduced_report_or_panic(
-            ReducedParser::new(validated, parser_grammar, parse_table)
-                .unwrap()
-                .parse_with_report(input),
+        unwrap_weavy_report_or_panic(
+            parse_prepared_runtime_with_report_and_scanner(
+                &RuntimeWeavyPlan::new(validated, parser_grammar, parse_table).unwrap(),
+                validated,
+                parser_grammar,
+                parse_table,
+                input,
+                None,
+            ),
             parser_grammar,
             parse_table,
         )
         .tree()
         .clone()
+    }
+
+    fn parse_weavy_report_or_panic(
+        grammar: &ImportedGrammar,
+        validated: &ValidatedGrammar,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+        input: &str,
+    ) -> RuntimeWeavyReport {
+        let scanner = CssReducedExternalScanner::new(grammar, parser_grammar);
+        unwrap_weavy_report_or_panic(
+            parse_prepared_runtime_with_report_and_scanner(
+                &RuntimeWeavyPlan::new(validated, parser_grammar, parse_table).unwrap(),
+                validated,
+                parser_grammar,
+                parse_table,
+                input,
+                Some(&scanner),
+            ),
+            parser_grammar,
+            parse_table,
+        )
     }
 
     fn parse_reduced_report_or_panic(
@@ -3338,6 +3344,42 @@ mod tests {
             parser_grammar,
             parse_table,
         )
+    }
+
+    fn unwrap_weavy_report_or_panic(
+        result: Result<RuntimeWeavyReport, crate::lower::weavy::ReducedWeavyError>,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+    ) -> RuntimeWeavyReport {
+        result.unwrap_or_else(|error| {
+            let state = match error {
+                crate::lower::weavy::ReducedWeavyError::NoToken { state, .. }
+                | crate::lower::weavy::ReducedWeavyError::NoAction { state, .. }
+                | crate::lower::weavy::ReducedWeavyError::UnsupportedExternalScanner {
+                    state,
+                    ..
+                }
+                | crate::lower::weavy::ReducedWeavyError::UnsupportedRecovery { state }
+                | crate::lower::weavy::ReducedWeavyError::MissingState { state }
+                | crate::lower::weavy::ReducedWeavyError::ExternalScannerError { state, .. }
+                | crate::lower::weavy::ReducedWeavyError::UnreducedStackEntry { state }
+                | crate::lower::weavy::ReducedWeavyError::UnsupportedConflict { state, .. } => {
+                    Some(state)
+                }
+                crate::lower::weavy::ReducedWeavyError::MissingGoto { state, .. } => Some(state),
+                _ => None,
+            };
+            let mut states = Vec::new();
+            if let Some(state) = state {
+                states.push(state);
+            }
+            let state_dump = states
+                .into_iter()
+                .map(|state| describe_parse_state(parser_grammar, parse_table, state))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            panic!("Weavy parse failed: {error}; relevant states:\n{state_dump}");
+        })
     }
 
     fn unwrap_reduced_report_or_panic(
@@ -3783,30 +3825,22 @@ mod tests {
         );
         assert_eq!(second_external.ordinal().get(), 1);
         assert!(second_external.name().is_none());
-        assert!(
-            grammar
-                .queries
-                .well_known(WellKnownQuery::Highlights)
-                .is_some()
-        );
-        assert!(
-            grammar
-                .queries
-                .iter()
-                .any(|file| file.path.as_str() == "queries/brackets.scm")
-        );
-        assert!(
-            grammar
-                .corpus
-                .iter()
-                .any(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
-        );
-        assert!(
-            grammar
-                .corpus
-                .iter()
-                .any(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
-        );
+        assert!(grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .is_some());
+        assert!(grammar
+            .queries
+            .iter()
+            .any(|file| file.path.as_str() == "queries/brackets.scm"));
+        assert!(grammar
+            .corpus
+            .iter()
+            .any(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css"));
+        assert!(grammar
+            .corpus
+            .iter()
+            .any(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt"));
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -3877,13 +3911,11 @@ mod tests {
                 "grammars/second/queries/extra.scm"
             ]
         );
-        assert!(
-            package.grammars[1]
-                .queries
-                .iter_files()
-                .any(|file| file.category.is_none()
-                    && file.source.path.as_str() == "grammars/second/queries/brackets.scm")
-        );
+        assert!(package.grammars[1]
+            .queries
+            .iter_files()
+            .any(|file| file.category.is_none()
+                && file.source.path.as_str() == "grammars/second/queries/brackets.scm"));
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -3903,12 +3935,10 @@ mod tests {
             diagnostic.primary_span.map(|span| span.source_id.get()),
             Some(0)
         );
-        assert!(
-            diagnostic
-                .notes
-                .iter()
-                .any(|note| note == "package path: src/grammar.json")
-        );
+        assert!(diagnostic
+            .notes
+            .iter()
+            .any(|note| note == "package path: src/grammar.json"));
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -3928,12 +3958,10 @@ mod tests {
             diagnostic.primary_span.map(|span| span.source_id.get()),
             Some(0)
         );
-        assert!(
-            diagnostic
-                .notes
-                .iter()
-                .any(|note| note == "package path: tree-sitter.json")
-        );
+        assert!(diagnostic
+            .notes
+            .iter()
+            .any(|note| note == "package path: tree-sitter.json"));
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -4024,19 +4052,15 @@ mod tests {
         assert_eq!(grammar.scanners.len(), 1);
         assert_eq!(grammar.scanners[0].kind, TreeSitterScannerKind::C);
         assert_eq!(grammar.scanners[0].externals.len(), 3);
-        assert!(
-            grammar
-                .queries
-                .well_known(WellKnownQuery::Highlights)
-                .is_some()
-        );
-        assert!(
-            grammar.corpus.iter().any(|fixture| fixture
-                .source
-                .path
-                .as_str()
-                .starts_with("test/highlight/"))
-        );
+        assert!(grammar
+            .queries
+            .well_known(WellKnownQuery::Highlights)
+            .is_some());
+        assert!(grammar.corpus.iter().any(|fixture| fixture
+            .source
+            .path
+            .as_str()
+            .starts_with("test/highlight/")));
     }
 
     fn test_package_root(name: &str) -> std::path::PathBuf {
