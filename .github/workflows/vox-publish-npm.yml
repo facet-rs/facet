@@ -1,8 +1,23 @@
-name: Publish npm
+# HANDWRITTEN: facet-dev hands off my pipelines
+#
+# Migrated from vox/.github/workflows/publish-npm.yml, which stopped
+# running once vox/ became a subdirectory of this monorepo instead of its
+# own repository (GitHub Actions only reads .github/workflows at the repo
+# root).
+
+name: Vox / Publish npm
 
 on:
   push:
     branches: [main]
+    paths:
+      - "vox/typescript/**"
+      - "vox/rust/vox/Cargo.toml"
+      - ".github/workflows/vox-publish-npm.yml"
+
+defaults:
+  run:
+    working-directory: vox
 
 jobs:
   publish:
@@ -13,7 +28,7 @@ jobs:
       contents: read
       id-token: write
     concurrency:
-      group: publish-npm-${{ github.ref }}
+      group: vox-publish-npm-${{ github.ref }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
@@ -29,6 +44,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           cache: pnpm
+          cache-dependency-path: vox/pnpm-lock.yaml
           node-version: 24
           registry-url: https://registry.npmjs.org
 

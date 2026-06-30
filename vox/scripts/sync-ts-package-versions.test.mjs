@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import {
   discoverPublicTypeScriptPackages,
-  readWorkspaceVersion,
+  readVoxPackageVersion,
   syncTypeScriptPackageVersions,
 } from "./sync-ts-package-versions.mjs";
 
@@ -14,15 +14,14 @@ function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-test("readWorkspaceVersion reads the workspace package version", () => {
-  const cargoToml = `[workspace]
-members = []
-
-[workspace.package]
+test("readVoxPackageVersion reads the vox package version", () => {
+  const cargoToml = `[package]
+name = "vox"
 version = "9.1.0"
+edition.workspace = true
 `;
 
-  assert.equal(readWorkspaceVersion(cargoToml), "9.1.0");
+  assert.equal(readVoxPackageVersion(cargoToml), "9.1.0");
 });
 
 test("discoverPublicTypeScriptPackages only returns non-private packages", () => {
@@ -48,19 +47,19 @@ test("discoverPublicTypeScriptPackages only returns non-private packages", () =>
   );
 });
 
-test("syncTypeScriptPackageVersions updates public packages to the Cargo workspace version", () => {
+test("syncTypeScriptPackageVersions updates public packages to the vox crate version", () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "vox-ts-sync-"));
   const packagesDir = join(repoRoot, "typescript", "packages");
   mkdirSync(join(packagesDir, "vox-core"), { recursive: true });
   mkdirSync(join(packagesDir, "vox-private"), { recursive: true });
+  mkdirSync(join(repoRoot, "rust", "vox"), { recursive: true });
 
   writeFileSync(
-    join(repoRoot, "Cargo.toml"),
-    `[workspace]
-members = []
-
-[workspace.package]
+    join(repoRoot, "rust", "vox", "Cargo.toml"),
+    `[package]
+name = "vox"
 version = "7.2.0"
+edition.workspace = true
 `,
   );
 
