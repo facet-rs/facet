@@ -12,6 +12,7 @@ export type GrammarRoot = {
   label: string;
   grammarPath: string;
   kind: "package" | "arborium";
+  manifestPath?: string;
 };
 
 export function sortedFiles<T extends DslBundleFile>(files: T[]): T[] {
@@ -25,14 +26,25 @@ export function normalizeBundleFiles(files: DslBundleFile[]): DslBundleFile[] {
 }
 
 export function discoverGrammarRoots(files: DslBundleFile[]): GrammarRoot[] {
-  const normalizedPaths = files.map((file) => normalizePath(file.path));
+  const normalizedFiles = files.map((file) => ({ ...file, path: normalizePath(file.path) }));
+  const normalizedPaths = normalizedFiles.map((file) => file.path);
+  const normalizedByPath = new Map(normalizedFiles.map((file) => [file.path, file]));
   const hasGrammarJson = normalizedPaths.some((path) => basename(path) === "grammar.json");
   const roots = new Map<string, GrammarRoot>();
+  for (const file of normalizedFiles) {
+    if (basename(file.path) !== "tree-sitter.json") {
+      continue;
+    }
+    for (const root of grammarRootsFromManifest(file.path, file.text, normalizedByPath, hasGrammarJson)) {
+      roots.set(root.id, root);
+    }
+  }
   for (const path of normalizedPaths) {
     const name = basename(path);
     if (hasGrammarJson ? name === "grammar.json" : name === "grammar.js") {
       const root = grammarRootFromPath(path);
-      roots.set(root.id, root);
+      const manifestPath = roots.get(root.id)?.manifestPath;
+      roots.set(root.id, manifestPath ? { ...root, manifestPath } : root);
     }
   }
   return [...roots.values()];
@@ -168,7 +180,7 @@ function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): 
   }
 
   const prefix = `${root.id}/`;
-  return files
+  const projected = files
     .filter((file) => file.path.startsWith(prefix))
     .map((file) => {
       const relative = file.path.slice(prefix.length);
@@ -181,6 +193,17 @@ function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): 
         sourcePath: file.path,
       };
     });
+  if (root.manifestPath && !projected.some((file) => file.sourcePath === root.manifestPath)) {
+    const manifest = files.find((file) => file.path === root.manifestPath);
+    if (manifest) {
+      projected.push({
+        path: "tree-sitter.json",
+        text: manifest.text,
+        sourcePath: manifest.path,
+      });
+    }
+  }
+  return projected;
 }
 
 async function grammarJsonForRoot(
@@ -233,6 +256,79 @@ function grammarRootFromPath(path: string): GrammarRoot {
     grammarPath: path,
     kind: path.includes("/def/grammar/") || path.startsWith("def/grammar/") ? "arborium" : "package",
   };
+}
+
+function grammarRootsFromManifest(
+  manifestPath: string,
+  text: string,
+  filesByPath: Map<string, DslBundleFile>,
+  hasGrammarJson: boolean,
+): GrammarRoot[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const grammars =
+    typeof parsed === "object" && parsed !== null && Array.isArray((parsed as { grammars?: unknown }).grammars)
+      ? (parsed as { grammars: unknown[] }).grammars
+      : [];
+  const baseDir = dirname(manifestPath);
+  const roots: GrammarRoot[] = [];
+  for (const grammar of grammars) {
+    if (typeof grammar !== "object" || grammar === null) {
+      continue;
+    }
+    const entry = grammar as { name?: unknown; path?: unknown };
+    const grammarBase = normalizePath(joinPath(baseDir, typeof entry.path === "string" ? entry.path : ""));
+    const grammarPath = manifestGrammarPath(grammarBase, filesByPath, hasGrammarJson);
+    if (!grammarPath) {
+      continue;
+    }
+    const root = grammarRootFromPath(grammarPath);
+    roots.push({
+      ...root,
+      label:
+        typeof entry.name === "string" && entry.name.length > 0 && root.id
+          ? `${entry.name} (${root.id})`
+          : root.label,
+      manifestPath,
+    });
+  }
+  return roots;
+}
+
+function manifestGrammarPath(
+  grammarBase: string,
+  filesByPath: Map<string, DslBundleFile>,
+  hasGrammarJson: boolean,
+): string | null {
+  for (const candidate of [joinPath(grammarBase, "src/grammar.json"), joinPath(grammarBase, "grammar.json")]) {
+    if (filesByPath.has(candidate)) {
+      return candidate;
+    }
+  }
+  const grammarJs = joinPath(grammarBase, "grammar.js");
+  if (!hasGrammarJson && filesByPath.has(grammarJs)) {
+    return grammarJs;
+  }
+  return null;
+}
+
+function dirname(path: string) {
+  const index = path.lastIndexOf("/");
+  return index >= 0 ? path.slice(0, index) : "";
+}
+
+function joinPath(left: string, right: string) {
+  if (!left) {
+    return right;
+  }
+  if (!right || right === ".") {
+    return left;
+  }
+  return `${left}/${right}`;
 }
 
 function rootDirectoryForGrammarPath(path: string) {

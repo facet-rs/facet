@@ -245,48 +245,39 @@ module.exports = grammar({
 `;
   const files = normalizeBundleFiles([
     {
-      path: "host/tree-sitter.json",
+      path: "tree-sitter.json",
       text: JSON.stringify({
         grammars: [
           {
             name: "host",
             scope: "source.host",
+            path: "grammars/host",
             injections: "queries/embed.scm",
           },
-        ],
-        metadata: {
-          version: "0.0.0",
-          links: { repository: "https://example.com/host" },
-        },
-      }),
-    },
-    { path: "host/grammar.js", text: hostGrammar },
-    {
-      path: "host/queries/embed.scm",
-      text: '((word) @injection.content\n  (#set! injection.language "text/x-child"))\n',
-    },
-    {
-      path: "child/tree-sitter.json",
-      text: JSON.stringify({
-        grammars: [
           {
             name: "child",
             scope: "source.child",
+            path: "grammars/child",
             "injection-regex": "^text/x-child$",
             highlights: "queries/child-highlights.scm",
           },
         ],
         metadata: {
           version: "0.0.0",
-          links: { repository: "https://example.com/child" },
+          links: { repository: "https://example.com/package" },
         },
       }),
     },
-    { path: "child/grammar.js", text: childGrammar },
-    { path: "child/queries/child-highlights.scm", text: "(word) @constant\n" },
+    { path: "grammars/host/grammar.js", text: hostGrammar },
+    {
+      path: "grammars/host/queries/embed.scm",
+      text: '((word) @injection.content\n  (#set! injection.language "text/x-child"))\n',
+    },
+    { path: "grammars/child/grammar.js", text: childGrammar },
+    { path: "grammars/child/queries/child-highlights.scm", text: "(word) @constant\n" },
   ]);
 
-  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "grammars/host", async (bundleFiles, grammarPath) =>
     emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
   );
   const response = JSON.parse(

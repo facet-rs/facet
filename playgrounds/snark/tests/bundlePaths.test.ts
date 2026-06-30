@@ -101,6 +101,48 @@ test("normalizes package root grammar.json to src/grammar.json", () => {
   ]);
 });
 
+test("projects package manifest into manifest-declared grammar roots", () => {
+  const manifest = JSON.stringify({
+    grammars: [
+      {
+        name: "host",
+        scope: "source.host",
+        path: "grammars/host",
+        highlights: "queries/host-highlights.scm",
+      },
+      {
+        name: "child",
+        scope: "source.child",
+        path: "grammars/child",
+      },
+    ],
+    metadata: {
+      version: "0.0.0",
+      links: { repository: "https://example.com/package" },
+    },
+  });
+  const files = normalizeBundleFiles([
+    { path: "tree-sitter-package/tree-sitter.json", text: manifest },
+    file("tree-sitter-package/grammars/host/src/grammar.json"),
+    file("tree-sitter-package/grammars/host/queries/host-highlights.scm"),
+    file("tree-sitter-package/grammars/child/src/grammar.json"),
+  ]);
+
+  const roots = discoverGrammarRoots(files);
+  assert.deepEqual(
+    roots.map((root) => root.id),
+    ["grammars/host", "grammars/child"],
+  );
+  assert.deepEqual(
+    projectedFilesForGrammarRootId(files, "grammars/host").map((entry) => [entry.path, entry.sourcePath]),
+    [
+      ["src/grammar.json", "grammars/host/src/grammar.json"],
+      ["queries/host-highlights.scm", "grammars/host/queries/host-highlights.scm"],
+      ["tree-sitter.json", "tree-sitter.json"],
+    ],
+  );
+});
+
 test("keeps grammar.json as the active grammar when a sibling grammar.js exists", () => {
   const files = normalizeBundleFiles([
     file("tree-sitter-frozen/grammar.json"),
