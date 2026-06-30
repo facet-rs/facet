@@ -1145,7 +1145,8 @@ fn layer_output(
                 &input,
             )
         });
-    let layers = if injections.is_empty() {
+    let child_injections = remap_layer_injections(&injections, host_input, &segments);
+    let layers = if child_injections.is_empty() {
         Vec::new()
     } else if depth + 1 >= MAX_INJECTION_LAYER_DEPTH {
         diagnostics.push(diagnostic(
@@ -1155,7 +1156,7 @@ fn layer_output(
         ));
         Vec::new()
     } else {
-        layer_outputs_at_depth(&input, &injections, embedded_languages, depth + 1)
+        layer_outputs_at_depth(host_input, &child_injections, embedded_languages, depth + 1)
     };
     LayerOutput {
         language: group.language,
@@ -1164,10 +1165,42 @@ fn layer_output(
         input,
         parse: Some(parse),
         highlights,
-        injections,
+        injections: child_injections,
         layers,
         diagnostics,
     }
+}
+
+fn remap_layer_injections(
+    injections: &[InjectionOutput],
+    root_input: &str,
+    segments: &[LayerSegment],
+) -> Vec<InjectionOutput> {
+    injections
+        .iter()
+        .filter_map(|injection| {
+            let segment =
+                segment_for_virtual_range(segments, injection.start_byte, injection.end_byte)?;
+            let start_byte =
+                segment.host_start + injection.start_byte.saturating_sub(segment.virtual_start);
+            let end_byte =
+                segment.host_start + injection.end_byte.saturating_sub(segment.virtual_start);
+            let (start_row, start_column) = point_for_byte(root_input, start_byte)?;
+            let (end_row, end_column) = point_for_byte(root_input, end_byte)?;
+            Some(InjectionOutput {
+                language: injection.language.clone(),
+                combined: injection.combined,
+                include_children: injection.include_children,
+                text: injection.text.clone(),
+                start_byte,
+                end_byte,
+                start_row,
+                start_column,
+                end_row,
+                end_column,
+            })
+        })
+        .collect()
 }
 
 fn embedded_language<'a>(
@@ -2315,7 +2348,17 @@ mod tests {
                     text: r#"{
   "name": "host",
   "rules": {
-    "document": { "type": "SYMBOL", "name": "code" },
+    "document": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "prefix" },
+        { "type": "SYMBOL", "name": "code" }
+      ]
+    },
+    "prefix": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[a-z]+" }
+    },
     "code": {
       "type": "TOKEN",
       "content": { "type": "PATTERN", "value": "[A-Z]+" }
@@ -2361,7 +2404,7 @@ mod tests {
                     text: "(word) @variable\n".to_owned(),
                 },
             ],
-            input: "PRINT".to_owned(),
+            input: "xxPRINT".to_owned(),
             run_corpus: false,
         };
 
@@ -2382,8 +2425,8 @@ mod tests {
         assert_eq!(layer.highlights.len(), 1);
         assert_eq!(layer.highlights[0].capture_name, "variable");
         assert_eq!(layer.highlights[0].text, "PRINT");
-        assert_eq!(layer.highlights[0].start_byte, 0);
-        assert_eq!(layer.highlights[0].end_byte, 5);
+        assert_eq!(layer.highlights[0].start_byte, 2);
+        assert_eq!(layer.highlights[0].end_byte, 7);
     }
 
     #[test]
@@ -2395,7 +2438,17 @@ mod tests {
                     text: r#"{
   "name": "host",
   "rules": {
-    "document": { "type": "SYMBOL", "name": "code" },
+    "document": {
+      "type": "SEQ",
+      "members": [
+        { "type": "SYMBOL", "name": "prefix" },
+        { "type": "SYMBOL", "name": "code" }
+      ]
+    },
+    "prefix": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[a-z]+" }
+    },
     "code": {
       "type": "TOKEN",
       "content": { "type": "PATTERN", "value": "[A-Z]+" }
@@ -2467,7 +2520,7 @@ mod tests {
                     text: "(word) @constant\n".to_owned(),
                 },
             ],
-            input: "PRINT".to_owned(),
+            input: "xxPRINT".to_owned(),
             run_corpus: false,
         };
 
@@ -2478,8 +2531,10 @@ mod tests {
         assert_eq!(response.layers.len(), 1);
         let text_layer = &response.layers[0];
         assert_eq!(text_layer.language, "text");
+        assert_eq!(text_layer.ranges[0].start_byte, 2);
         assert_eq!(text_layer.injections.len(), 1);
         assert_eq!(text_layer.injections[0].language, "inner");
+        assert_eq!(text_layer.injections[0].start_byte, 2);
         assert_eq!(text_layer.layers.len(), 1);
         let inner_layer = &text_layer.layers[0];
         assert_eq!(inner_layer.language, "inner");
@@ -2490,6 +2545,8 @@ mod tests {
         assert_eq!(inner_layer.highlights.len(), 1);
         assert_eq!(inner_layer.highlights[0].capture_name, "constant");
         assert_eq!(inner_layer.highlights[0].text, "PRINT");
+        assert_eq!(inner_layer.highlights[0].start_byte, 2);
+        assert_eq!(inner_layer.highlights[0].end_byte, 7);
     }
 
     fn external_scanner_smoke_grammar_json() -> String {

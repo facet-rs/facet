@@ -135,7 +135,8 @@ module.exports = grammar({
   name: "host",
   extras: $ => [/\\s/],
   rules: {
-    document: $ => repeat1($.word),
+    document: $ => seq($.prefix, $.word),
+    prefix: $ => /x+/,
     word: $ => /[a-z]+/,
   },
 });
@@ -183,7 +184,7 @@ module.exports = grammar({
     parseBundle(
       JSON.stringify({
         files: projected,
-        input: "alpha",
+        input: "xxalpha",
         run_corpus: false,
       }),
     ),
@@ -194,25 +195,29 @@ module.exports = grammar({
   assert.equal(response.layers[0].language, "child");
   assert.equal(response.layers[0].combined, true);
   assert.equal(response.layers[0].input, "alpha");
+  assert.equal(response.layers[0].ranges[0].start_byte, 2);
   assert.equal(response.layers[0].parse.sexp, "(document (word))");
   assert.deepEqual(
-    response.layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
+    response.layers[0].highlights.map((capture: { capture_name: string; text: string; start_byte: number }) => [
       capture.capture_name,
       capture.text,
+      capture.start_byte,
     ]),
-    [["variable", "alpha"]],
+    [["variable", "alpha", 2]],
   );
   assert.equal(response.layers[0].injections.length, 1);
   assert.equal(response.layers[0].injections[0].language, "inner");
+  assert.equal(response.layers[0].injections[0].start_byte, 2);
   assert.equal(response.layers[0].layers.length, 1);
   assert.equal(response.layers[0].layers[0].language, "inner");
   assert.equal(response.layers[0].layers[0].parse.sexp, "(document (word))");
   assert.deepEqual(
-    response.layers[0].layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
+    response.layers[0].layers[0].highlights.map((capture: { capture_name: string; text: string; start_byte: number }) => [
       capture.capture_name,
       capture.text,
+      capture.start_byte,
     ]),
-    [["constant", "alpha"]],
+    [["constant", "alpha", 2]],
   );
 });
 

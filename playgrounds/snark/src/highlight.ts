@@ -6,6 +6,7 @@ export interface CaptureRange {
   capture_name: string;
   start_byte: number;
   end_byte: number;
+  priority?: number;
 }
 
 export interface SelectedCapture<T extends CaptureRange> {
@@ -48,7 +49,7 @@ export function selectNonOverlapping<T extends CaptureRange>(
   byteToStringIndex: number[],
   inputLength: number,
 ): SelectedCapture<T>[] {
-  return captures
+  const selected = captures
     .map((capture) => ({
       capture,
       from: byteToStringIndex[capture.start_byte] ?? inputLength,
@@ -56,6 +57,11 @@ export function selectNonOverlapping<T extends CaptureRange>(
     }))
     .filter((entry) => entry.from < entry.to)
     .sort((left, right) => {
+      const leftPriority = left.capture.priority ?? 0;
+      const rightPriority = right.capture.priority ?? 0;
+      if (leftPriority !== rightPriority) {
+        return rightPriority - leftPriority;
+      }
       if (left.from !== right.from) {
         return left.from - right.from;
       }
@@ -65,12 +71,17 @@ export function selectNonOverlapping<T extends CaptureRange>(
       return left.capture.capture_name.localeCompare(right.capture.capture_name);
     })
     .reduce<SelectedCapture<T>[]>((selected, entry) => {
-      const previous = selected[selected.length - 1];
-      if (!previous || entry.from >= previous.to) {
+      if (!selected.some((kept) => rangesOverlap(kept.from, kept.to, entry.from, entry.to))) {
         selected.push(entry);
       }
       return selected;
-    }, []);
+    }, [])
+    .sort((left, right) => left.from - right.from || left.to - right.to);
+  return selected;
+}
+
+function rangesOverlap(leftFrom: number, leftTo: number, rightFrom: number, rightTo: number) {
+  return leftFrom < rightTo && rightFrom < leftTo;
 }
 
 export function captureClass(captureName: string): string {

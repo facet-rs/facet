@@ -214,7 +214,7 @@ export function App() {
   );
   const busy = busyTask !== null;
 
-  const editorCaptures = useMemo(() => result?.highlights ?? [], [result]);
+  const editorCaptures = useMemo(() => composedHighlights(result), [result]);
   const editorDiagnostic = useMemo(() => {
     const found = placedDiagnostic(result);
     return found?.primary_span
@@ -538,7 +538,7 @@ function ResultsDock({
 }) {
   const failure = result && !result.ok ? result : null;
   const sexp = result?.parse?.sexp ?? "";
-  const captures = result?.highlights ?? [];
+  const captures = composedHighlights(result);
   const tests = result?.tests.requested ? result : null;
   const unplaced = result?.diagnostics.filter((diagnostic) => !diagnostic.primary_span) ?? [];
   const recovered =
@@ -693,6 +693,23 @@ function ResultsDock({
       ) : null}
     </div>
   );
+}
+
+function composedHighlights(result: PlaygroundResponse | null): HighlightOutput[] {
+  if (!result) {
+    return [];
+  }
+  return [
+    ...result.highlights.map((highlight) => ({ ...highlight, priority: 0 })),
+    ...layerHighlights(result.layers, 1),
+  ];
+}
+
+function layerHighlights(layers: LayerOutput[], depth: number): HighlightOutput[] {
+  return layers.flatMap((layer) => [
+    ...layer.highlights.map((highlight) => ({ ...highlight, priority: depth })),
+    ...layerHighlights(layer.layers, depth + 1),
+  ]);
 }
 
 function BundleInventory({
