@@ -945,6 +945,7 @@ function sortedRuntimeBundleFiles(files: ProjectedDslBundleFile[]) {
 
 function isRuntimeBundlePath(path: string) {
   return (
+    path === "tree-sitter.json" ||
     path === "grammar.js" ||
     path === "src/grammar.json" ||
     path === "src/scanner.c" ||

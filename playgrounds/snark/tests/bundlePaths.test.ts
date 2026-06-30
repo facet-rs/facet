@@ -17,6 +17,7 @@ function file(path: string): DslBundleFile {
 
 test("normalizes a single Arborium def upload into Snark bundle paths", () => {
   const files = normalizeBundleFiles([
+    file("tree-sitter-json/def/grammar/tree-sitter.json"),
     file("tree-sitter-json/def/grammar/grammar.js"),
     file("tree-sitter-json/def/queries/highlights.scm"),
     file("tree-sitter-json/def/sample.json"),
@@ -25,7 +26,7 @@ test("normalizes a single Arborium def upload into Snark bundle paths", () => {
 
   assert.deepEqual(
     files.map((entry) => entry.path).sort(),
-    ["grammar.js", "queries/highlights.scm", "samples/package.json", "samples/sample.json"],
+    ["grammar.js", "queries/highlights.scm", "samples/package.json", "samples/sample.json", "tree-sitter.json"],
   );
   assert.deepEqual(discoverGrammarRoots(files), [
     {
@@ -80,6 +81,7 @@ test("prefers grammar.json under any path over grammar.js roots", () => {
 
 test("normalizes package root grammar.json to src/grammar.json", () => {
   const files = normalizeBundleFiles([
+    file("tree-sitter-nginx/tree-sitter.json"),
     file("tree-sitter-nginx/grammar.json"),
     file("tree-sitter-nginx/queries/highlights.scm"),
     file("tree-sitter-nginx/samples/nginx.conf"),
@@ -87,7 +89,7 @@ test("normalizes package root grammar.json to src/grammar.json", () => {
 
   assert.deepEqual(
     files.map((entry) => entry.path).sort(),
-    ["queries/highlights.scm", "samples/nginx.conf", "src/grammar.json"],
+    ["queries/highlights.scm", "samples/nginx.conf", "src/grammar.json", "tree-sitter.json"],
   );
   assert.deepEqual(discoverGrammarRoots(files), [
     {

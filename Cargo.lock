@@ -6594,6 +6594,7 @@ dependencies = [
  "facet",
  "facet-json",
  "margin",
+ "regex",
  "snark",
  "snark-dsl",
  "snark-scanner-host",

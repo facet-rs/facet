@@ -221,6 +221,72 @@ module.exports = grammar({
   );
 });
 
+test("resolves injected layers through tree-sitter injection-regex in WASM", async () => {
+  const hostGrammar = `
+module.exports = grammar({
+  name: "host",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => seq($.prefix, $.word),
+    prefix: $ => /x+/,
+    word: $ => /[a-z]+/,
+  },
+});
+`;
+  const childGrammar = `
+module.exports = grammar({
+  name: "child",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[a-z]+/,
+  },
+});
+`;
+  const files = normalizeBundleFiles([
+    { path: "host/grammar.js", text: hostGrammar },
+    {
+      path: "host/queries/injections.scm",
+      text: '((word) @injection.content\n  (#set! injection.language "text/x-child"))\n',
+    },
+    {
+      path: "child/tree-sitter.json",
+      text: JSON.stringify({
+        grammars: [
+          {
+            name: "child",
+            scope: "source.child",
+            "injection-regex": "^text/x-child$",
+          },
+        ],
+        metadata: {
+          version: "0.0.0",
+          links: { repository: "https://example.com/child" },
+        },
+      }),
+    },
+    { path: "child/grammar.js", text: childGrammar },
+  ]);
+
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: "xxalpha",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.layers.length, 1);
+  assert.equal(response.layers[0].language, "text/x-child");
+  assert.equal(response.layers[0].parse.sexp, "(document (word))");
+});
+
 test("reports injected layer parse diagnostics at root source coordinates", async () => {
   const hostGrammar = `
 module.exports = grammar({

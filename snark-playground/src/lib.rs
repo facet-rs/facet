@@ -11,10 +11,12 @@ use margin::{
     Annotation, AnnotationRole, Diagnostics as MarginDiagnostics, LayoutOptions, Report, Severity,
     Source, SourceId, Span, plan,
 };
+use regex::Regex;
 use snark::{
     corpus::{CorpusSource, HighlightAssertion},
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
+    manifest::TreeSitterConfig,
     parser::{
         ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
         ReducedExternalScanner, ReducedParseError, ReducedParseErrorKind, RuntimeInputEdit,
@@ -287,6 +289,7 @@ struct PreparedEmbeddedLanguage {
     files: Vec<BundleFile>,
     prepared: Option<PreparedGrammar>,
     scanner_selection: Option<ScannerSelection>,
+    injection_regex: Option<Regex>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -697,6 +700,7 @@ fn prepare_embedded_language(files: Vec<BundleFile>) -> PreparedEmbeddedLanguage
             files,
             prepared: None,
             scanner_selection: None,
+            injection_regex: None,
             diagnostics: vec![diagnostic(
                 "bundle",
                 "embedded language bundle does not contain src/grammar.json".to_owned(),
@@ -711,10 +715,12 @@ fn prepare_embedded_language(files: Vec<BundleFile>) -> PreparedEmbeddedLanguage
                 files,
                 prepared: None,
                 scanner_selection: None,
+                injection_regex: None,
                 diagnostics: vec![diagnostic(&stage, message, None)],
             };
         }
     };
+    let (injection_regex, diagnostics) = manifest_injection_regex(&files, &prepared.raw.name);
     let scanner_selection = scanner_selection(&files, &prepared.parser);
     bundle
         .active_scanner
@@ -724,6 +730,7 @@ fn prepare_embedded_language(files: Vec<BundleFile>) -> PreparedEmbeddedLanguage
             files,
             prepared: None,
             scanner_selection: None,
+            injection_regex,
             diagnostics: vec![diagnostic(
                 "scanner",
                 unsupported_external_scanner_message(&bundle, &prepared.parser),
@@ -736,7 +743,55 @@ fn prepare_embedded_language(files: Vec<BundleFile>) -> PreparedEmbeddedLanguage
         files,
         prepared: Some(prepared),
         scanner_selection: Some(scanner_selection),
-        diagnostics: Vec::new(),
+        injection_regex,
+        diagnostics,
+    }
+}
+
+fn manifest_injection_regex(
+    files: &[BundleFile],
+    grammar_name: &str,
+) -> (Option<Regex>, Vec<Diagnostic>) {
+    let Some(manifest) = find_file(files, "tree-sitter.json") else {
+        return (None, Vec::new());
+    };
+    let config = match facet_json::from_str::<TreeSitterConfig>(&manifest.text) {
+        Ok(config) => config,
+        Err(error) => {
+            return (
+                None,
+                vec![diagnostic(
+                    "manifest",
+                    format!("could not decode tree-sitter.json: {error}"),
+                    None,
+                )],
+            );
+        }
+    };
+    let grammar_config = config
+        .grammars
+        .iter()
+        .find(|grammar| grammar.name == grammar_name)
+        .or_else(|| {
+            if config.grammars.len() == 1 {
+                config.grammars.first()
+            } else {
+                None
+            }
+        });
+    let Some(source) = grammar_config.and_then(|grammar| grammar.injection_regex.as_deref()) else {
+        return (None, Vec::new());
+    };
+    match Regex::new(source) {
+        Ok(regex) => (Some(regex), Vec::new()),
+        Err(error) => (
+            None,
+            vec![diagnostic(
+                "manifest",
+                format!("could not compile injection-regex {source:?}: {error}"),
+                None,
+            )],
+        ),
     }
 }
 
@@ -1261,6 +1316,19 @@ fn embedded_language<'a>(
     embedded_languages
         .get(language)
         .or_else(|| embedded_languages.get(&language.to_ascii_lowercase()))
+        .or_else(|| {
+            embedded_languages
+                .values()
+                .find(|embedded| embedded.matches_injection_language(language))
+        })
+}
+
+impl PreparedEmbeddedLanguage {
+    fn matches_injection_language(&self, language: &str) -> bool {
+        self.injection_regex
+            .as_ref()
+            .is_some_and(|regex| regex.is_match(language))
+    }
 }
 
 fn layer_highlight_outputs(
@@ -1937,6 +2005,7 @@ fn is_ambiguous_package_path(path: &str, context: &NormalizationContext) -> bool
 
 fn normalize_arborium_def_path(relative: &str) -> Option<String> {
     match relative {
+        "grammar/tree-sitter.json" => Some("tree-sitter.json".to_owned()),
         "grammar/grammar.js" => Some("grammar.js".to_owned()),
         "grammar/grammar.json" | "grammar/src/grammar.json" => Some("src/grammar.json".to_owned()),
         "grammar/scanner.c" => Some("src/scanner.c".to_owned()),
@@ -1967,6 +2036,7 @@ fn normalize_arborium_def_path(relative: &str) -> Option<String> {
 fn normalize_package_path(path: &str) -> Option<String> {
     match path {
         "grammar.json" => return Some("src/grammar.json".to_owned()),
+        "tree-sitter.json" => return Some(path.to_owned()),
         "grammar.js"
         | "src/grammar.json"
         | "src/scanner.c"
@@ -1980,6 +2050,7 @@ fn normalize_package_path(path: &str) -> Option<String> {
     }
 
     for suffix in [
+        "/tree-sitter.json",
         "/grammar.js",
         "/src/grammar.json",
         "/grammar.json",
@@ -2037,6 +2108,10 @@ mod tests {
     fn normalizes_arborium_def_bundle_paths() {
         let files = normalize_bundle_files(vec![
             BundleFile {
+                path: "langs/group-acorn/css/def/grammar/tree-sitter.json".to_owned(),
+                text: String::new(),
+            },
+            BundleFile {
                 path: "langs/group-acorn/css/def/grammar/grammar.js".to_owned(),
                 text: "module.exports = grammar({ name: 'css', rules: { stylesheet: _ => '' } });"
                     .to_owned(),
@@ -2067,6 +2142,7 @@ mod tests {
         assert_eq!(summary.grammar_js_path.as_deref(), Some("grammar.js"));
         assert_eq!(summary.scanner_paths, vec!["src/scanner.c"]);
         assert_eq!(summary.query_paths, vec!["queries/highlights.scm"]);
+        assert!(find_file(&files, "tree-sitter.json").is_some());
         assert!(find_file(&files, "samples/sample.css").is_some());
         assert!(find_file(&files, "samples/showcase.css").is_some());
         assert_eq!(
@@ -2498,6 +2574,92 @@ mod tests {
         assert_eq!(layer.highlights[0].text, "PRINT");
         assert_eq!(layer.highlights[0].start_byte, 2);
         assert_eq!(layer.highlights[0].end_byte, 7);
+    }
+
+    #[test]
+    fn playground_response_resolves_injected_language_by_manifest_regex() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "code" },
+    "code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((code) @injection.content
+  (#set! injection.language "text/x-demo"))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/demo/tree-sitter.json".to_owned(),
+                    text: r#"{
+  "grammars": [
+    {
+      "name": "demo",
+      "scope": "source.demo",
+      "injection-regex": "^text/x-demo$"
+    }
+  ],
+  "metadata": {
+    "version": "0.0.0",
+    "links": { "repository": "https://example.com/demo" }
+  }
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/demo/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "demo",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+            ],
+            input: "PRINT".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.layers.len(), 1);
+        let layer = &response.layers[0];
+        assert_eq!(layer.language, "text/x-demo");
+        assert!(layer.diagnostics.is_empty(), "{:?}", layer.diagnostics);
+        assert_eq!(
+            layer.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(document (word))")
+        );
     }
 
     #[test]

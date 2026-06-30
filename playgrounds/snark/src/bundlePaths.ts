@@ -393,6 +393,8 @@ function isAmbiguousPackagePath(path: string, context: NormalizationContext) {
 
 function normalizeArboriumDefPath(relative: string) {
   switch (relative) {
+    case "grammar/tree-sitter.json":
+      return "tree-sitter.json";
     case "grammar/grammar.js":
       return "grammar.js";
     case "grammar/grammar.json":
@@ -433,6 +435,7 @@ function normalizeArboriumDefPath(relative: string) {
 function normalizePackagePath(path: string) {
   if (
     [
+      "tree-sitter.json",
       "grammar.json",
       "grammar.js",
       "src/grammar.json",
@@ -448,6 +451,7 @@ function normalizePackagePath(path: string) {
     return path === "grammar.json" ? "src/grammar.json" : path;
   }
   for (const suffix of [
+    "/tree-sitter.json",
     "/grammar.json",
     "/src/grammar.json",
     "/src/scanner.c",
