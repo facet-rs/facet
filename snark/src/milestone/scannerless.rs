@@ -190,6 +190,7 @@ impl<'grammar> ScannerlessParser<'grammar> {
                 Ok(match_nested_delimiters(open, close, input, position)
                     .map(|end| (Vec::new(), end)))
             }
+            RawRuleJson::AutoClose { .. } => Ok(None),
             RawRuleJson::Symbol { name } => {
                 let Some((node, end)) = self.parse_named_rule(name, input, position)? else {
                     return Ok(None);
@@ -339,6 +340,7 @@ impl<'grammar> ScannerlessParser<'grammar> {
                 Ok(match_nested_delimiters(open, close, input, position)
                     .map(|end| (Vec::new(), end)))
             }
+            RawRuleJson::AutoClose { .. } => Ok(None),
             RawRuleJson::Token { content } | RawRuleJson::ImmediateToken { content } => {
                 self.parse_extra(content, input, position)
             }

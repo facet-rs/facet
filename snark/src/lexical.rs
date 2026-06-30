@@ -54,6 +54,12 @@ impl LexicalFacts {
                     spelling: value.clone(),
                     flags: flags.clone(),
                 }),
+                GrammarExpr::AutoClose { tag, .. } => terminals.push(TerminalFact {
+                    expr: id,
+                    kind: TerminalKind::AutoClose,
+                    spelling: format!("auto_close({tag})"),
+                    flags: None,
+                }),
                 _ => {}
             }
         }
@@ -203,6 +209,8 @@ pub enum TerminalKind {
     String,
     /// Regex pattern token.
     Pattern,
+    /// Declarative implicit close token.
+    AutoClose,
 }
 
 /// External scanner host ABI contract facts.

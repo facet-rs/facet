@@ -315,6 +315,16 @@ globalThis.until = function until(...markers) {
 globalThis.nested = function nested(open, close) {
   return { type: "NESTED", open, close };
 };
+
+globalThis.auto_close = function auto_close(options) {
+  return {
+    type: "AUTO_CLOSE",
+    tag: options.tag,
+    open: options.open,
+    close: options.close,
+    closed_by: options.closed_by,
+  };
+};
 "#;
 
 #[cfg(all(feature = "native", feature = "boa"))]
@@ -551,6 +561,20 @@ mod tests {
         assert!(json.contains("\"markers\""));
         assert!(json.contains("\"type\": \"NESTED\""));
         assert!(json.contains("\"open\": \"{#\""));
+    }
+
+    #[cfg(feature = "boa")]
+    #[test]
+    fn emits_snark_auto_close_primitive_with_boa() {
+        let json = emit_source_with_boa(
+            "module.exports = grammar({ name: 'mini', rules: { source_file: $ => seq('<p>', auto_close({ tag: 'p', open: '<p>', close: '</p>', closed_by: ['<p>'] })) } });",
+            "mini/grammar.js",
+        )
+        .unwrap();
+
+        assert!(json.contains("\"type\": \"AUTO_CLOSE\""));
+        assert!(json.contains("\"tag\": \"p\""));
+        assert!(json.contains("\"closed_by\""));
     }
 
     #[cfg(feature = "native")]

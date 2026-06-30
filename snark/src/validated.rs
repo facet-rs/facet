@@ -478,6 +478,17 @@ impl ValidationBuilder {
                 open: open.clone(),
                 close: close.clone(),
             },
+            RawRuleJson::AutoClose {
+                tag,
+                open,
+                close,
+                closed_by,
+            } => GrammarExpr::AutoClose {
+                tag: tag.clone(),
+                open: open.clone(),
+                close: close.clone(),
+                closed_by: closed_by.clone(),
+            },
             RawRuleJson::Symbol { name } => GrammarExpr::Symbol(self.resolve_symbol(name)?),
             RawRuleJson::Choice { members } => {
                 let members = members
@@ -898,6 +909,17 @@ pub enum GrammarExpr {
         /// Closing delimiter.
         close: String,
     },
+    /// Declarative implicit close token for tag-stack grammars.
+    AutoClose {
+        /// Element/tag name this token implicitly closes.
+        tag: String,
+        /// Literal opening marker that pushes this tag.
+        open: String,
+        /// Literal explicit closing marker that pops this tag.
+        close: String,
+        /// Literal markers that trigger this implicit close when this tag is open.
+        closed_by: Vec<String>,
+    },
     /// Resolved symbol reference.
     Symbol(SymbolRef),
     /// Ordered choice.
@@ -1139,6 +1161,7 @@ fn external_name(rule: &RawRuleJson) -> Option<&str> {
 fn raw_rule_kind(rule: &RawRuleJson) -> &'static str {
     match rule {
         RawRuleJson::Alias { .. } => "ALIAS",
+        RawRuleJson::AutoClose { .. } => "AUTO_CLOSE",
         RawRuleJson::Blank => "BLANK",
         RawRuleJson::Choice { .. } => "CHOICE",
         RawRuleJson::Field { .. } => "FIELD",

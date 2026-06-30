@@ -2266,6 +2266,7 @@ impl<'a> ReducedWeavyStepper<'a> {
                 self.input,
                 byte_position,
             )),
+            parser_ir::ParserTerminalKind::AutoClose => Ok(None),
             parser_ir::ParserTerminalKind::Token
             | parser_ir::ParserTerminalKind::ImmediateToken => {
                 let Some(root) = terminal.lexical_root() else {
@@ -2365,6 +2366,7 @@ impl<'a> ReducedWeavyStepper<'a> {
                 self.input,
                 byte_position,
             )),
+            GrammarExpr::AutoClose { .. } => Ok(None),
             GrammarExpr::Token(content)
             | GrammarExpr::ImmediateToken(content)
             | GrammarExpr::Field { content, .. }
@@ -3223,6 +3225,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             parser_ir::CompiledLexExpr::Nested { open, close } => Ok(
                 parser_ir::match_nested_delimiters(open, close, self.input, byte_position),
             ),
+            parser_ir::CompiledLexExpr::AutoClose(_) => Ok(None),
             parser_ir::CompiledLexExpr::Seq(members) => {
                 let mut position = byte_position;
                 for member in members {

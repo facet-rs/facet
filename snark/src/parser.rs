@@ -825,9 +825,14 @@ fn seed_terminal_symbols(
         let kind = match terminal.kind {
             TerminalKind::String => ParserTerminalKind::String,
             TerminalKind::Pattern => ParserTerminalKind::Pattern,
+            TerminalKind::AutoClose => ParserTerminalKind::AutoClose,
         };
         let flags = normalized_regex_flags(terminal.flags.as_deref());
-        let key = (kind, terminal.spelling.clone(), flags.clone());
+        let spelling_key = match terminal.kind {
+            TerminalKind::AutoClose => format!("{}#{}", terminal.spelling, terminal.expr.get()),
+            TerminalKind::String | TerminalKind::Pattern => terminal.spelling.clone(),
+        };
+        let key = (kind, spelling_key, flags.clone());
         if let Some(id) = direct_terminal_by_key.get(&key).copied() {
             terminals[id.get() as usize]
                 .source_exprs
@@ -838,7 +843,7 @@ fn seed_terminal_symbols(
         direct_terminal_by_key.insert(key, id);
         let public_names = match terminal.kind {
             TerminalKind::String => vec![terminal.spelling.clone()],
-            TerminalKind::Pattern => Vec::new(),
+            TerminalKind::Pattern | TerminalKind::AutoClose => Vec::new(),
         };
         let lexical_rule = push_lexical_rule(
             lexical_rules,
@@ -940,6 +945,7 @@ fn direct_public_literal_name(grammar: &ValidatedGrammar, expr: GrammarExprId) -
         | GrammarExpr::PatternToken { .. }
         | GrammarExpr::Until { .. }
         | GrammarExpr::Nested { .. }
+        | GrammarExpr::AutoClose { .. }
         | GrammarExpr::Symbol(_)
         | GrammarExpr::Choice(_)
         | GrammarExpr::Seq(_)
@@ -1312,7 +1318,8 @@ impl<'a> ProductionNormalizer<'a> {
             GrammarExpr::StringToken(_)
             | GrammarExpr::PatternToken { .. }
             | GrammarExpr::Until { .. }
-            | GrammarExpr::Nested { .. } => {
+            | GrammarExpr::Nested { .. }
+            | GrammarExpr::AutoClose { .. } => {
                 Ok(vec![SequenceDraft::single(self.terminal_symbol(expr)?)])
             }
             GrammarExpr::Token(_) | GrammarExpr::ImmediateToken(_) => {
@@ -1907,6 +1914,8 @@ pub enum ParserTerminalKind {
     String,
     /// Regex pattern token.
     Pattern,
+    /// Declarative implicit close token.
+    AutoClose,
     /// `token(...)` lexical variable.
     Token,
     /// `token.immediate(...)` lexical variable.
@@ -3858,6 +3867,7 @@ pub(crate) enum CompiledLexExpr {
     Pattern(CompiledLexPattern),
     Until { markers: Vec<String> },
     Nested { open: String, close: String },
+    AutoClose(AutoCloseSpec),
     Seq(Vec<CompiledLexExpr>),
     Choice(Vec<CompiledLexExpr>),
     Repeat(Box<CompiledLexExpr>),
@@ -3870,6 +3880,14 @@ pub(crate) struct CompiledLexPattern {
     pub(crate) source: String,
     flags: Option<String>,
     regex: Option<Regex>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AutoCloseSpec {
+    pub(crate) tag: String,
+    pub(crate) open: String,
+    pub(crate) close: String,
+    pub(crate) closed_by: Vec<String>,
 }
 
 /// External scanner host used by the reduced parser oracle.
@@ -4842,6 +4860,7 @@ impl<'a> ReducedParser<'a> {
             ParserTerminalKind::Pattern => {
                 Ok(self.match_pattern(terminal.spelling(), terminal.flags(), input, byte_position))
             }
+            ParserTerminalKind::AutoClose => Ok(None),
             ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
                 let Some(root) = terminal.lexical_root() else {
                     return Err(ReducedParseError::new(
@@ -4948,6 +4967,7 @@ impl<'a> ReducedParser<'a> {
                 input,
                 byte_position,
             )),
+            CompiledLexExpr::AutoClose(_) => Ok(None),
             CompiledLexExpr::Seq(members) => {
                 let mut position = byte_position;
                 let mut inspected_end = byte_position;
@@ -5076,6 +5096,7 @@ impl<'a> ReducedParser<'a> {
             GrammarExpr::Nested { open, close } => {
                 Ok(match_nested_delimiters(open, close, input, byte_position))
             }
+            GrammarExpr::AutoClose { .. } => Ok(None),
             GrammarExpr::Token(content)
             | GrammarExpr::ImmediateToken(content)
             | GrammarExpr::Field { content, .. }
@@ -5544,6 +5565,23 @@ fn compile_terminal_matcher(
         ParserTerminalKind::Pattern => CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(
             compile_pattern(terminal.spelling(), terminal.flags()),
         )),
+        ParserTerminalKind::AutoClose => match grammar.expr(terminal.source_expr()) {
+            GrammarExpr::AutoClose {
+                tag,
+                open,
+                close,
+                closed_by,
+            } => CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(AutoCloseSpec {
+                tag: tag.clone(),
+                open: open.clone(),
+                close: close.clone(),
+                closed_by: closed_by.clone(),
+            })),
+            _ => CompiledTerminalMatcher::UnsupportedTerminal {
+                terminal: terminal.id(),
+                spelling: terminal.spelling().to_owned(),
+            },
+        },
         ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
             let Some(root) = terminal.lexical_root() else {
                 return CompiledTerminalMatcher::UnsupportedTerminal {
@@ -5586,6 +5624,17 @@ fn compile_lex_expr_inner(
             open: open.clone(),
             close: close.clone(),
         },
+        GrammarExpr::AutoClose {
+            tag,
+            open,
+            close,
+            closed_by,
+        } => CompiledLexExpr::AutoClose(AutoCloseSpec {
+            tag: tag.clone(),
+            open: open.clone(),
+            close: close.clone(),
+            closed_by: closed_by.clone(),
+        }),
         GrammarExpr::Token(content)
         | GrammarExpr::ImmediateToken(content)
         | GrammarExpr::Field { content, .. }
@@ -5681,6 +5730,7 @@ fn lexical_expr_completion_precedence(
         | GrammarExpr::PatternToken { .. }
         | GrammarExpr::Until { .. }
         | GrammarExpr::Nested { .. }
+        | GrammarExpr::AutoClose { .. }
         | GrammarExpr::Symbol(SymbolRef::External(_)) => None,
     }
 }
@@ -5691,7 +5741,7 @@ pub(crate) fn terminal_lexical_implicit_precedence(
 ) -> i32 {
     match terminal.kind() {
         ParserTerminalKind::String => 2,
-        ParserTerminalKind::Pattern => 0,
+        ParserTerminalKind::Pattern | ParserTerminalKind::AutoClose => 0,
         ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => terminal
             .lexical_root()
             .map(|root| lexical_expr_implicit_precedence(grammar, root, &mut Vec::new()))
@@ -5708,7 +5758,8 @@ fn lexical_expr_implicit_precedence(
         GrammarExpr::StringToken(_) => 2,
         GrammarExpr::PatternToken { .. }
         | GrammarExpr::Until { .. }
-        | GrammarExpr::Nested { .. } => 0,
+        | GrammarExpr::Nested { .. }
+        | GrammarExpr::AutoClose { .. } => 0,
         GrammarExpr::ImmediateToken(content) => {
             lexical_expr_implicit_precedence(grammar, *content, rule_stack) + 1
         }
@@ -6967,6 +7018,7 @@ impl<'a> RuntimeParser<'a> {
             }],
             byte_position: 0,
             scanner_snapshot: None,
+            auto_close_stack: Vec::new(),
             error_cost: 0,
             trace: Vec::new(),
             tree_events: Vec::new(),
@@ -7228,12 +7280,17 @@ impl<'a> RuntimeParser<'a> {
         {
             return vec![RuntimeStepOutcome::Branch(branch)];
         }
-        let token = match self.reduced.lex(
-            state_row,
-            input,
-            branch.byte_position,
-            branch.scanner_snapshot,
-        ) {
+        let token = match self
+            .runtime_auto_close_token(state_row, &branch, input)
+            .map(Ok)
+            .unwrap_or_else(|| {
+                self.reduced.lex(
+                    state_row,
+                    input,
+                    branch.byte_position,
+                    branch.scanner_snapshot,
+                )
+            }) {
             Ok(token) => token,
             Err(error) => {
                 if recovery == RuntimeRecoveryMode::SkipInvalidInput
@@ -7475,6 +7532,130 @@ impl<'a> RuntimeParser<'a> {
         Some(branch)
     }
 
+    fn runtime_auto_close_token(
+        &self,
+        state: &ParseState,
+        branch: &RuntimeBranch,
+        input: &str,
+    ) -> Option<ReducedToken> {
+        let open_tag = branch.auto_close_stack.last()?;
+        let mode = self
+            .reduced
+            .table
+            .lexical_modes()
+            .get(state.lex_mode().get() as usize)?;
+        let compiled_mode = self
+            .reduced
+            .runtime_plan
+            .get()
+            .compiled_lex_modes
+            .get(mode.id().get() as usize)?;
+        for terminal in mode.terminals() {
+            let Some(lookahead) = self.reduced.lookahead_for_terminal(state, *terminal) else {
+                continue;
+            };
+            if !state
+                .entries()
+                .iter()
+                .any(|entry| entry.lookahead() == lookahead)
+            {
+                continue;
+            }
+            let Some(terminal_row) = compiled_mode
+                .terminals
+                .iter()
+                .find(|row| row.terminal == *terminal)
+            else {
+                continue;
+            };
+            let CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) =
+                &terminal_row.matcher
+            else {
+                continue;
+            };
+            if spec.tag != *open_tag {
+                continue;
+            }
+            let marker_len = spec
+                .closed_by
+                .iter()
+                .filter(|marker| input[branch.byte_position..].starts_with(marker.as_str()))
+                .map(String::len)
+                .max()?;
+            return Some(ReducedToken {
+                lookahead,
+                end: branch.byte_position,
+                inspected_end: branch.byte_position + marker_len,
+                scanner: None,
+            });
+        }
+        None
+    }
+
+    fn update_auto_close_stack(
+        &self,
+        branch: &mut RuntimeBranch,
+        token: ReducedToken,
+        input: &str,
+    ) {
+        let LookaheadSymbol::Terminal(terminal) = token.lookahead else {
+            return;
+        };
+        if let Some(spec) = self.auto_close_spec_for_terminal(terminal) {
+            if branch.auto_close_stack.last() == Some(&spec.tag) {
+                branch.auto_close_stack.pop();
+            }
+            return;
+        }
+        let start = branch.byte_position;
+        let Some(text) = input.get(start..token.end) else {
+            return;
+        };
+        for spec in self.auto_close_specs() {
+            if text == spec.close {
+                if branch.auto_close_stack.last() == Some(&spec.tag) {
+                    branch.auto_close_stack.pop();
+                }
+                return;
+            }
+            if text == spec.open {
+                branch.auto_close_stack.push(spec.tag.clone());
+                return;
+            }
+        }
+    }
+
+    fn auto_close_spec_for_terminal(&self, terminal: TerminalId) -> Option<&AutoCloseSpec> {
+        self.reduced
+            .runtime_plan
+            .get()
+            .compiled_lex_modes
+            .iter()
+            .flat_map(|mode| mode.terminals.iter())
+            .find_map(|row| {
+                if row.terminal != terminal {
+                    return None;
+                }
+                match &row.matcher {
+                    CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) => Some(spec),
+                    _ => None,
+                }
+            })
+    }
+
+    fn auto_close_specs(&self) -> impl Iterator<Item = &AutoCloseSpec> {
+        self.reduced
+            .runtime_plan
+            .get()
+            .compiled_lex_modes
+            .iter()
+            .flat_map(|mode| mode.terminals.iter())
+            .filter_map(|row| match &row.matcher {
+                CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) => Some(spec),
+                _ => None,
+            })
+    }
+
     fn apply_runtime_action(
         &self,
         mut branch: RuntimeBranch,
@@ -7492,6 +7673,7 @@ impl<'a> RuntimeParser<'a> {
             ParseAction::Shift { state, .. } => {
                 let start = branch.byte_position;
                 let start_scanner_snapshot = branch.scanner_snapshot;
+                self.update_auto_close_stack(&mut branch, token, input);
                 branch.byte_position = token.end;
                 branch.commit_scanner_snapshot(token);
                 let (bytes, points) = input_ranges(input, line_index, start, token.end);
@@ -8330,6 +8512,7 @@ struct RuntimeBranch {
     stack: Vec<RuntimeStackEntry>,
     byte_position: usize,
     scanner_snapshot: Option<ScannerSnapshotId>,
+    auto_close_stack: Vec<String>,
     error_cost: u32,
     trace: Vec<ReducedTraceStep>,
     tree_events: Vec<TreeEvent>,
@@ -8348,6 +8531,7 @@ impl RuntimeBranch {
 struct RuntimeBranchKey {
     byte_position: usize,
     scanner_snapshot: Option<ScannerSnapshotId>,
+    auto_close_stack: Vec<String>,
     stack: Vec<ParseStateId>,
 }
 
@@ -8356,6 +8540,7 @@ impl RuntimeBranchKey {
         Self {
             byte_position: branch.byte_position,
             scanner_snapshot: branch.scanner_snapshot,
+            auto_close_stack: branch.auto_close_stack.clone(),
             stack: branch.stack.iter().map(|entry| entry.state).collect(),
         }
     }
@@ -11353,6 +11538,64 @@ extras (
                 );
             }
         }
+    }
+
+    #[test]
+    fn runtime_inserts_declarative_auto_close_tokens() {
+        let (validated, parser, table) = prepared_with_validated(
+            r##"{
+              "name": "mini_html",
+              "rules": {
+                "source_file": {
+                  "type": "REPEAT1",
+                  "content": { "type": "SYMBOL", "name": "element" }
+                },
+                "element": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "_start_p" },
+                    {
+                      "type": "REPEAT",
+                      "content": {
+                        "type": "CHOICE",
+                        "members": [
+                          { "type": "SYMBOL", "name": "text" },
+                          { "type": "SYMBOL", "name": "element" }
+                        ]
+                      }
+                    },
+                    {
+                      "type": "CHOICE",
+                      "members": [
+                        { "type": "SYMBOL", "name": "_end_p" },
+                        { "type": "SYMBOL", "name": "_implicit_end_p" }
+                      ]
+                    }
+                  ]
+                },
+                "_start_p": { "type": "STRING", "value": "<p>" },
+                "_end_p": { "type": "STRING", "value": "</p>" },
+                "_implicit_end_p": {
+                  "type": "AUTO_CLOSE",
+                  "tag": "p",
+                  "open": "<p>",
+                  "close": "</p>",
+                  "closed_by": ["<p>"]
+                },
+                "text": { "type": "PATTERN", "value": "[a-z]+" }
+              },
+              "extras": []
+            }"##,
+        );
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let report = runtime.parse_with_report("<p>one<p>two</p>").unwrap();
+
+        assert_eq!(
+            report.tree().to_sexp(),
+            "(source_file (element (text)) (element (text)))"
+        );
+        assert_eq!(report.accepted_count(), 1);
+        assert_eq!(report.failure_count(), 0);
     }
 
     fn flagged_regex_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {

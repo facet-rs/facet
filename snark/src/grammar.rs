@@ -278,6 +278,17 @@ pub enum RawRuleJson {
         /// Closing delimiter.
         close: String,
     },
+    /// Declarative implicit close token for tag-stack grammars.
+    AutoClose {
+        /// Element/tag name this token implicitly closes.
+        tag: String,
+        /// Literal opening marker that pushes this tag.
+        open: String,
+        /// Literal explicit closing marker that pops this tag.
+        close: String,
+        /// Literal markers that trigger this implicit close when this tag is open.
+        closed_by: Vec<String>,
+    },
     /// Reference to another rule or token.
     Symbol {
         /// Referenced symbol name.
