@@ -150,7 +150,8 @@ export function sourceExamplesForGrammarRootId(
   const corpusCases = projected
     .filter((file) => file.path.startsWith("test/corpus/") && file.path.endsWith(".txt"))
     .flatMap(corpusCaseExamples);
-  return sortedSampleFiles([...samples, ...corpusCases]);
+  const highlightFixtures = projected.filter(isHighlightFixturePath);
+  return sortedSampleFiles([...samples, ...corpusCases, ...highlightFixtures]);
 }
 
 export function preferredSampleForGrammarRootId(
@@ -181,6 +182,10 @@ export function normalizePath(path: string) {
 
 function isErrorSamplePath(path: string) {
   return /(^|[-_/])(errors?|invalid|broken)([-_.\\/]|$)/i.test(path);
+}
+
+function isHighlightFixturePath(file: DslBundleFile) {
+  return file.path.startsWith("test/highlight/") || file.path.startsWith("test/highlights/");
 }
 
 function corpusCaseExamples(file: ProjectedDslBundleFile): ProjectedDslBundleFile[] {

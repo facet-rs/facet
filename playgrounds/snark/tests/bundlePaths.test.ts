@@ -268,6 +268,38 @@ test("keeps explicit samples ahead of corpus case source examples", () => {
   assert.deepEqual(preferredSampleForGrammarRootId(files)?.path, "samples/basic.demo");
 });
 
+test("uses highlight fixtures as source examples after samples and corpus cases", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-demo/grammar.js"),
+    file("tree-sitter-demo/samples/basic.demo"),
+    {
+      path: "tree-sitter-demo/test/corpus/main.txt",
+      text: "====================\nCorpus case\n====================\n\nfrom corpus\n\n---\n\n(document)\n",
+    },
+    { path: "tree-sitter-demo/test/highlight/highlight.demo", text: "from highlight" },
+  ]);
+
+  assert.deepEqual(sourceExamplesForGrammarRootId(files).map((entry) => [entry.path, entry.text]), [
+    ["samples/basic.demo", ""],
+    ["test/corpus/main.txt#Corpus case", "from corpus"],
+    ["test/highlight/highlight.demo", "from highlight"],
+  ]);
+  assert.deepEqual(preferredSampleForGrammarRootId(files)?.path, "samples/basic.demo");
+});
+
+test("uses highlight fixture as preferred source when samples and corpus are absent", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-demo/grammar.js"),
+    { path: "tree-sitter-demo/test/highlights/highlight.demo", text: "only highlight" },
+  ]);
+
+  assert.deepEqual(preferredSampleForGrammarRootId(files), {
+    path: "test/highlights/highlight.demo",
+    sourcePath: "test/highlights/highlight.demo",
+    text: "only highlight",
+  });
+});
+
 test("selects the first projected sample for the chosen Arborium grammar root", () => {
   const files = normalizeBundleFiles([
     file("langs/group-maple/nginx/def/grammar/grammar.js"),
