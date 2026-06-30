@@ -177,6 +177,7 @@ export function App() {
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
   const parseRequestId = useRef(0);
+  const autoTestedKeyRef = useRef<string | null>(null);
   // The prepared session lives in the parse worker; here we only track which grammar it's
   // prepared for and the last input it parsed (for incremental-reparse gating).
   const preparedKeyRef = useRef<string | null>(null);
@@ -224,12 +225,17 @@ export function App() {
   useEffect(() => {
     const requestId = parseRequestId.current + 1;
     parseRequestId.current = requestId;
-    setBusyTask("parse");
+    const key = sessionCacheKey(activeGrammarRootId, projectedFiles);
+    const runBundledTests = hasBundledTests && autoTestedKeyRef.current !== key;
+    setBusyTask(runBundledTests ? "tests" : "parse");
 
     const timeout = window.setTimeout(() => {
-      void playgroundResponse(false)
+      void playgroundResponse(runBundledTests)
         .then((response) => {
           if (parseRequestId.current === requestId) {
+            if (runBundledTests) {
+              autoTestedKeyRef.current = key;
+            }
             setResult(response);
           }
         })
@@ -243,7 +249,7 @@ export function App() {
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [activeGrammarRootId, files, input, projectedFiles]);
+  }, [activeGrammarRootId, files, hasBundledTests, input, projectedFiles]);
 
   async function loadFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) {
@@ -258,6 +264,7 @@ export function App() {
     const next = normalizeBundleFiles(loaded);
     const nextGrammarRoot = preferredGrammarRootId(next);
     const nextSample = preferredSampleForGrammarRootId(next, nextGrammarRoot);
+    autoTestedKeyRef.current = null;
     preparedKeyRef.current = null;
     baselineInputRef.current = null;
     pendingSourceEditRef.current = null;
@@ -341,8 +348,10 @@ export function App() {
     const requestId = parseRequestId.current + 1;
     parseRequestId.current = requestId;
     setBusyTask("tests");
+    const key = sessionCacheKey(activeGrammarRootId, projectedFiles);
     const response = await playgroundResponse(true);
     if (parseRequestId.current === requestId) {
+      autoTestedKeyRef.current = key;
       setResult(response);
       setBusyTask(null);
     }
@@ -412,6 +421,7 @@ export function App() {
                 onChange={(event) => {
                   const nextGrammarRoot = event.currentTarget.value;
                   const nextSample = preferredSampleForGrammarRootId(files, nextGrammarRoot);
+                  autoTestedKeyRef.current = null;
                   preparedKeyRef.current = null;
                   baselineInputRef.current = null;
                   pendingSourceEditRef.current = null;
