@@ -11892,6 +11892,65 @@ extras (
         assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 6), (15, 20)]);
     }
 
+    #[test]
+    fn runtime_parse_session_reuse_metadata_survives_reparse_chains() {
+        let (validated, parser, table) = until_reuse_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let mut session = RuntimeParseSession::new(runtime);
+        session.parse_compact("hello {{name}} tail").unwrap();
+
+        let first_reparse = session
+            .reparse_compact(RuntimeInputEdit::new(8, 12, 13), "hello {{title}} tail")
+            .unwrap()
+            .clone();
+        assert_eq!(reused_byte_ranges(&first_reparse), vec![(0, 6), (15, 20)]);
+
+        let second_reparse = session
+            .reparse_compact(RuntimeInputEdit::new(16, 20, 19), "hello {{title}} end")
+            .unwrap()
+            .clone();
+        let scratch = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report("hello {{title}} end")
+            .unwrap();
+
+        rediff::assert_same!(second_reparse.tree(), scratch.tree());
+        assert_eq!(
+            second_reparse.tree().to_sexp(),
+            "(source_file (text) (interpolation (word)) (text))"
+        );
+        assert!(
+            !reused_byte_ranges(&second_reparse).is_empty(),
+            "second reparse should consume reusable metadata produced by the first reparse"
+        );
+
+        let (validated, parser, table) = wrapped_extra_reuse_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let mut session = RuntimeParseSession::new(runtime);
+        session.parse_compact("a#old\nb1").unwrap();
+
+        let first_reparse = session
+            .reparse_compact(RuntimeInputEdit::new(7, 8, 8), "a#old\nb2")
+            .unwrap()
+            .clone();
+        assert_eq!(reused_byte_ranges(&first_reparse), vec![(0, 7)]);
+
+        let second_reparse = session
+            .reparse_compact(RuntimeInputEdit::new(2, 5, 5), "a#new\nb2")
+            .unwrap()
+            .clone();
+        let scratch = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report("a#new\nb2")
+            .unwrap();
+
+        rediff::assert_same!(second_reparse.tree(), scratch.tree());
+        assert_eq!(
+            second_reparse.tree().to_sexp(),
+            "(source_file (wrapper (left) (comment) (right)) (suffix))"
+        );
+    }
+
     #[cfg(feature = "weavy-lowering")]
     #[test]
     fn lexical_primitives_parse_through_weavy_runtime() {
