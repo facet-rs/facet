@@ -134,7 +134,7 @@ module.exports = grammar({
   const first = JSON.parse(
     session.parse(
       JSON.stringify({
-        input: "alpha",
+        input: "alpha beta",
         run_corpus: false,
       }),
     ),
@@ -142,21 +142,23 @@ module.exports = grammar({
   const second = JSON.parse(
     session.reparse(
       JSON.stringify({
-        input: "alpha beta",
+        input: "gamma beta",
         run_corpus: false,
         edit: {
-          start_byte: "alpha".length,
+          start_byte: 0,
           old_end_byte: "alpha".length,
-          new_end_byte: "alpha beta".length,
+          new_end_byte: "gamma".length,
         },
       }),
     ),
   );
 
   assert.equal(first.ok, true);
-  assert.equal(first.parse.sexp, "(document (word))");
+  assert.equal(first.parse.sexp, "(document (word) (word))");
+  assert.equal(first.parse.reuse_node_count, 0);
   assert.equal(second.ok, true);
   assert.equal(second.parse.sexp, "(document (word) (word))");
+  assert.equal(second.parse.reuse_node_count, 1);
 });
 
 test("runs bundled corpus and highlight tests through generated grammar.json", () => {
