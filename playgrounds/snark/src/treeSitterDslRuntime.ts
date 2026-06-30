@@ -54,6 +54,11 @@ function sourceToCommonJs(source: string, path: string) {
     (_match, prefix, name, specifier) => `${prefix}const ${name} = require(${JSON.stringify(specifier)});`,
   );
   out = out.replace(
+    /(^|\n)\s*import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    (_match, prefix, names, specifier) =>
+      `${prefix}const { ${namedImportBindings(names)} } = require(${JSON.stringify(specifier)});`,
+  );
+  out = out.replace(
     /(^|\n)\s*import\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"]\s*;?/g,
     (_match, prefix, name, specifier) => `${prefix}const ${name} = __default(require(${JSON.stringify(specifier)}));`,
   );
@@ -70,6 +75,18 @@ function sourceToCommonJs(source: string, path: string) {
     throw new Error(`${path} uses unsupported ESM syntax`);
   }
   return out;
+}
+
+function namedImportBindings(names: string) {
+  return names
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .map((name) => {
+      const alias = /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/.exec(name);
+      return alias ? `${alias[1]}: ${alias[2]}` : name;
+    })
+    .join(", ");
 }
 
 function defaultExportValue(value: unknown) {

@@ -149,6 +149,46 @@ export const wrap = rule => repeat1(rule);
   });
 });
 
+test("resolves ESM named imports and import aliases in grammar modules", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+import { wrap as oneOrMore, word } from "./helpers.mjs";
+export default grammar({
+  name: "tiny_named_esm",
+  rules: {
+    document: $ => oneOrMore($.word),
+    word: $ => word,
+  },
+});
+`,
+      },
+      {
+        path: "helpers.mjs",
+        text: `
+export const word = /[a-z]+/;
+export const wrap = rule => repeat1(rule);
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_named_esm");
+  assert.deepEqual(grammar.rules.document, {
+    type: "REPEAT1",
+    content: { type: "SYMBOL", name: "word" },
+  });
+  assert.deepEqual(grammar.rules.word, {
+    type: "PATTERN",
+    value: "[a-z]+",
+  });
+});
+
 test("resolves inherited Arborium grammar modules by tree-sitter package name", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
