@@ -12,7 +12,7 @@ export function emitGrammarJsonFromDsl(
   const executeModule = new Function(
     `${prelude}
 ${snarkDslExtensions()}
-return function executeSnarkDslModule(source, module, exports, require, __default, process) {
+return function executeSnarkDslModule(source, module, exports, require, __default, process, __filename, __dirname) {
   eval(source);
   return module.exports;
 };`,
@@ -23,6 +23,8 @@ return function executeSnarkDslModule(source, module, exports, require, __defaul
     require: (specifier: string) => unknown,
     __default: (value: unknown) => unknown,
     process: { env: Record<string, string> },
+    __filename: string,
+    __dirname: string,
   ) => unknown;
 
   const loadModule = (path: string): unknown => {
@@ -48,7 +50,16 @@ return function executeSnarkDslModule(source, module, exports, require, __defaul
       builtinModule(specifier, fileSources) ?? loadModule(resolveRequire(specifier, dirname, modules));
     const commonJsSource = sourceToCommonJs(source, resolved);
 
-    module.exports = executeModule(commonJsSource, module, module.exports, require, defaultExportValue, { env: {} });
+    module.exports = executeModule(
+      commonJsSource,
+      module,
+      module.exports,
+      require,
+      defaultExportValue,
+      { env: {} },
+      resolved,
+      dirname || ".",
+    );
     return module.exports;
   };
 

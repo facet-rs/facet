@@ -718,6 +718,50 @@ exports.rules = $ => {
   });
 });
 
+test("provides CommonJS __dirname and __filename to grammar helpers", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+const helper = require("./helpers/helper");
+module.exports = grammar({
+  name: "tiny_commonjs_module_paths",
+  rules: {
+    document: $ => seq(helper.wordFromData(), helper.fileStem()),
+  },
+});
+`,
+      },
+      {
+        path: "helpers/helper.js",
+        text: `
+const fs = require("fs");
+const path = require("path");
+exports.wordFromData = () => fs.readFileSync(path.join(__dirname, "data", "keyword.txt"));
+exports.fileStem = () => path.basename(__filename).replace(".js", "");
+`,
+      },
+      {
+        path: "helpers/data/keyword.txt",
+        text: "alpha",
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_commonjs_module_paths");
+  assert.deepEqual(grammar.rules.document, {
+    type: "SEQ",
+    members: [
+      { type: "STRING", value: "alpha" },
+      { type: "STRING", value: "helper" },
+    ],
+  });
+});
+
 test("resolves inherited Arborium grammar modules by tree-sitter package name", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
