@@ -4666,6 +4666,87 @@ mod tests {
         );
     }
 
+    #[test]
+    fn playground_response_injects_css_from_html_style_layer() {
+        let html_grammar_js =
+            include_str!("../../playgrounds/snark/src/bundled/html/grammar.js").to_owned();
+        let html_grammar_json =
+            snark_dsl::emit_source_with_boa(&html_grammar_js, "html/grammar.js")
+                .expect("html grammar.js should emit grammar JSON");
+        let files = vec![
+            BundleFile {
+                path: "grammar.js".to_owned(),
+                text: html_grammar_js,
+            },
+            BundleFile {
+                path: "src/grammar.json".to_owned(),
+                text: html_grammar_json,
+            },
+            BundleFile {
+                path: "queries/highlights.scm".to_owned(),
+                text: include_str!("../../playgrounds/snark/src/bundled/html/queries/highlights.scm")
+                    .to_owned(),
+            },
+            BundleFile {
+                path: "queries/injections.scm".to_owned(),
+                text: include_str!("../../playgrounds/snark/src/bundled/html/queries/injections.scm")
+                    .to_owned(),
+            },
+            BundleFile {
+                path: "languages/css/src/grammar.json".to_owned(),
+                text: include_str!(
+                    "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/src/grammar.json"
+                )
+                .to_owned(),
+            },
+            BundleFile {
+                path: "languages/css/src/scanner.c".to_owned(),
+                text: snark_scanner_host::CSS_SCANNER_SOURCE.to_owned(),
+            },
+            BundleFile {
+                path: "languages/css/queries/highlights.scm".to_owned(),
+                text: include_str!(
+                    "../../snark/tests/fixtures/packages/tree-sitter-css-reduced/queries/highlights.scm"
+                )
+                .to_owned(),
+            },
+        ];
+        let request = PlaygroundRequest {
+            files,
+            input: "<style>a:hover { color: red; }</style>".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.language.as_deref(), Some("html"));
+        assert_eq!(response.layers.len(), 1);
+        let layer = &response.layers[0];
+        assert_eq!(layer.language, "css");
+        assert_eq!(layer.input, "a:hover { color: red; }");
+        assert_eq!(
+            layer.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some(
+                "(stylesheet (rule_set (selectors (pseudo_class_selector (tag_name) (class_name (identifier)))) (block (declaration (property_name) (plain_value)))))"
+            )
+        );
+        let parse = layer.parse.as_ref().expect("css layer parses");
+        assert_eq!(parse.accepted_error_count, 0);
+        assert_eq!(parse.accepted_missing_count, 0);
+        assert!(layer.diagnostics.is_empty(), "{:?}", layer.diagnostics);
+        assert!(
+            layer
+                .highlights
+                .iter()
+                .any(|capture| { capture.capture_name == "property" && capture.text == "color" })
+        );
+        assert!(layer.highlights.iter().any(|capture| {
+            capture.capture_name == "punctuation.delimiter" && capture.text == ":"
+        }));
+    }
+
     #[derive(Debug)]
     struct VendoredSampleResult {
         id: String,
