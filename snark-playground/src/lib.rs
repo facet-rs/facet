@@ -4371,33 +4371,14 @@ mod tests {
     fn vendored_playground_samples_parse_from_rust() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../playgrounds/snark/src/bundled");
-        let mut grammar_ids = std::fs::read_dir(&root)
-            .expect("vendored playground grammar directory should be readable")
-            .map(|entry| entry.expect("vendored grammar entry should be readable"))
-            .filter(|entry| {
-                entry
-                    .file_type()
-                    .expect("vendored grammar file type should be readable")
-                    .is_dir()
-            })
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        grammar_ids.sort();
+        let bundles = read_vendored_bundles(&root);
 
         let mut results = Vec::new();
-        for id in grammar_ids {
-            let dir = root.join(&id);
-            let grammar_path = dir.join("grammar.js");
-            let grammar_json = snark_dsl::emit_with_boa(&grammar_path)
-                .expect("grammar.js should emit grammar JSON");
-            let mut files = read_bundle_files(&dir);
-            files.push(BundleFile {
-                path: "src/grammar.json".to_owned(),
-                text: grammar_json,
-            });
-            files.sort_by(|left, right| left.path.cmp(&right.path));
+        for bundle in &bundles {
+            let files =
+                vendored_runtime_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
             let sample = preferred_sample_file(&files)
-                .unwrap_or_else(|| panic!("{id} should have a preferred sample"));
+                .unwrap_or_else(|| panic!("{} should have a preferred sample", bundle.id));
             let request = PlaygroundRequest {
                 files,
                 input: sample.text.clone(),
@@ -4406,7 +4387,7 @@ mod tests {
             let response =
                 playground_response(&facet_json::to_string(&request).expect("request serializes"));
             results.push(VendoredSampleResult {
-                id,
+                id: bundle.id.clone(),
                 sample: sample.path,
                 ok: response.ok,
                 language: response.language,
@@ -4479,6 +4460,14 @@ mod tests {
                     Some(0)
                 ),
                 (
+                    "fences",
+                    "samples/demo.md",
+                    true,
+                    Some("fences"),
+                    Some(0),
+                    Some(0)
+                ),
+                (
                     "gingembre",
                     "samples/blog-index.html",
                     true,
@@ -4499,6 +4488,14 @@ mod tests {
                     "samples/starwars_schema.graphql",
                     true,
                     Some("graphql"),
+                    Some(0),
+                    Some(0),
+                ),
+                (
+                    "html",
+                    "samples/implicit-close.html",
+                    true,
+                    Some("html"),
                     Some(0),
                     Some(0),
                 ),
@@ -4554,31 +4551,12 @@ mod tests {
     fn all_non_error_vendored_playground_samples_parse_from_rust() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../playgrounds/snark/src/bundled");
-        let mut grammar_ids = std::fs::read_dir(&root)
-            .expect("vendored playground grammar directory should be readable")
-            .map(|entry| entry.expect("vendored grammar entry should be readable"))
-            .filter(|entry| {
-                entry
-                    .file_type()
-                    .expect("vendored grammar file type should be readable")
-                    .is_dir()
-            })
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        grammar_ids.sort();
+        let bundles = read_vendored_bundles(&root);
 
         let mut failures = Vec::new();
-        for id in grammar_ids {
-            let dir = root.join(&id);
-            let grammar_path = dir.join("grammar.js");
-            let grammar_json = snark_dsl::emit_with_boa(&grammar_path)
-                .expect("grammar.js should emit grammar JSON");
-            let mut files = read_bundle_files(&dir);
-            files.push(BundleFile {
-                path: "src/grammar.json".to_owned(),
-                text: grammar_json,
-            });
-            files.sort_by(|left, right| left.path.cmp(&right.path));
+        for bundle in &bundles {
+            let files =
+                vendored_runtime_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
 
             let samples = files
                 .iter()
@@ -4602,7 +4580,7 @@ mod tests {
                     })
                 {
                     failures.push(VendoredSampleResult {
-                        id: id.clone(),
+                        id: bundle.id.clone(),
                         sample: sample.path,
                         ok: response.ok,
                         language: response.language,
@@ -4617,6 +4595,77 @@ mod tests {
         assert!(failures.is_empty(), "{failures:#?}");
     }
 
+    #[test]
+    fn vendored_gingembre_html_layer_reparse_from_rust() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../playgrounds/snark/src/bundled");
+        let bundles = read_vendored_bundles(&root);
+        let mut session = PlaygroundSession::prepare_files(vendored_runtime_files(
+            &bundles,
+            "gingembre",
+            &["html"],
+        ))
+        .unwrap();
+
+        let first_source = "<section><p>Hello {{ name }}<p>Again</p></section>";
+        let start_byte = first_source
+            .find("name")
+            .expect("fixture contains interpolation identifier");
+        let second_source = first_source.replace("name", "title");
+
+        let initial = PlaygroundParseRequest {
+            input: first_source.to_owned(),
+            run_corpus: false,
+            edit: None,
+        };
+        let initial = session.parse_json(&facet_json::to_string(&initial).unwrap());
+        let initial: PlaygroundResponse = facet_json::from_str(&initial).unwrap();
+        assert!(initial.ok, "{:?}", initial.diagnostics);
+        assert_eq!(initial.layers.len(), 1);
+        assert_eq!(initial.layers[0].language, "html");
+        assert_eq!(
+            initial.layers[0].input,
+            "<section><p>Hello <p>Again</p></section>"
+        );
+        let initial_parse = initial.layers[0].parse.as_ref().expect("html layer parses");
+        assert_eq!(initial_parse.accepted_error_count, 0);
+        assert_eq!(initial_parse.accepted_missing_count, 0);
+
+        let reparsed = PlaygroundParseRequest {
+            input: second_source,
+            run_corpus: false,
+            edit: Some(PlaygroundInputEdit {
+                start_byte,
+                old_end_byte: start_byte + "name".len(),
+                new_end_byte: start_byte + "title".len(),
+            }),
+        };
+        let reparsed = session.parse_json(&facet_json::to_string(&reparsed).unwrap());
+        let reparsed: PlaygroundResponse = facet_json::from_str(&reparsed).unwrap();
+
+        assert!(reparsed.ok, "{:?}", reparsed.diagnostics);
+        assert_eq!(reparsed.layers.len(), 1);
+        assert_eq!(reparsed.layers[0].language, "html");
+        assert_eq!(
+            reparsed.layers[0].input,
+            "<section><p>Hello <p>Again</p></section>"
+        );
+        let reparsed_parse = reparsed.layers[0]
+            .parse
+            .as_ref()
+            .expect("html layer reparses");
+        assert_eq!(reparsed_parse.accepted_error_count, 0);
+        assert_eq!(reparsed_parse.accepted_missing_count, 0);
+        assert_eq!(
+            reparsed.layers[0]
+                .ranges
+                .iter()
+                .map(|range| (range.start_byte, range.end_byte))
+                .collect::<Vec<_>>(),
+            vec![(0, 18), (29, 51)]
+        );
+    }
+
     #[derive(Debug)]
     struct VendoredSampleResult {
         id: String,
@@ -4626,6 +4675,85 @@ mod tests {
         error_count: Option<usize>,
         missing_count: Option<usize>,
         captures: usize,
+    }
+
+    struct VendoredBundle {
+        id: String,
+        grammar_name: String,
+        files: Vec<BundleFile>,
+    }
+
+    fn read_vendored_bundles(root: &std::path::Path) -> Vec<VendoredBundle> {
+        let mut ids = std::fs::read_dir(root)
+            .expect("vendored playground grammar directory should be readable")
+            .map(|entry| entry.expect("vendored grammar entry should be readable"))
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .expect("vendored grammar file type should be readable")
+                    .is_dir()
+            })
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        ids.sort();
+
+        ids.into_iter()
+            .map(|id| {
+                let dir = root.join(&id);
+                let grammar_path = dir.join("grammar.js");
+                let grammar_json =
+                    snark_dsl::emit_with_boa(&grammar_path).unwrap_or_else(|error| {
+                        panic!("{id} grammar.js should emit grammar JSON: {error}")
+                    });
+                let mut bundle_files = read_bundle_files(&dir);
+                bundle_files.push(BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: grammar_json.clone(),
+                });
+                bundle_files.sort_by(|left, right| left.path.cmp(&right.path));
+
+                let grammar_name = facet_json::from_str::<RawGrammarJson>(&grammar_json)
+                    .unwrap_or_else(|error| panic!("{id} grammar JSON should parse: {error}"))
+                    .name;
+                VendoredBundle {
+                    id,
+                    grammar_name,
+                    files: bundle_files,
+                }
+            })
+            .collect()
+    }
+
+    fn vendored_runtime_files(
+        bundles: &[VendoredBundle],
+        active_id: &str,
+        embedded_ids: &[&str],
+    ) -> Vec<BundleFile> {
+        let mut files = Vec::new();
+        for bundle in bundles {
+            if bundle.id == active_id {
+                files.extend(bundle.files.clone());
+            } else if embedded_ids
+                .iter()
+                .any(|embedded_id| *embedded_id == bundle.id)
+            {
+                files.extend(bundle.files.iter().cloned().map(|file| BundleFile {
+                    path: format!("languages/{}/{}", bundle.grammar_name, file.path),
+                    text: file.text,
+                }));
+            }
+        }
+
+        files.sort_by(|left, right| left.path.cmp(&right.path));
+        files
+    }
+
+    fn vendored_embedded_ids(id: &str) -> &'static [&'static str] {
+        match id {
+            "fences" => &["dot", "graphql", "json"],
+            "gingembre" => &["html"],
+            _ => &[],
+        }
     }
 
     fn read_bundle_files(root: &std::path::Path) -> Vec<BundleFile> {
