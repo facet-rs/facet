@@ -150,6 +150,16 @@ module.exports = grammar({
   },
 });
 `;
+  const innerGrammar = `
+module.exports = grammar({
+  name: "inner",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[a-z]+/,
+  },
+});
+`;
   const files = normalizeBundleFiles([
     { path: "host/grammar.js", text: hostGrammar },
     {
@@ -158,6 +168,12 @@ module.exports = grammar({
     },
     { path: "child/grammar.js", text: childGrammar },
     { path: "child/queries/highlights.scm", text: "(word) @variable\n" },
+    {
+      path: "child/queries/injections.scm",
+      text: '((word) @injection.content\n  (#set! injection.language "inner"))\n',
+    },
+    { path: "inner/grammar.js", text: innerGrammar },
+    { path: "inner/queries/highlights.scm", text: "(word) @constant\n" },
   ]);
 
   const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
@@ -185,6 +201,18 @@ module.exports = grammar({
       capture.text,
     ]),
     [["variable", "alpha"]],
+  );
+  assert.equal(response.layers[0].injections.length, 1);
+  assert.equal(response.layers[0].injections[0].language, "inner");
+  assert.equal(response.layers[0].layers.length, 1);
+  assert.equal(response.layers[0].layers[0].language, "inner");
+  assert.equal(response.layers[0].layers[0].parse.sexp, "(document (word))");
+  assert.deepEqual(
+    response.layers[0].layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
+      capture.capture_name,
+      capture.text,
+    ]),
+    [["constant", "alpha"]],
   );
 });
 

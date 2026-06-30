@@ -155,6 +155,8 @@ struct LayerOutput {
     input: String,
     parse: Option<ParseOutput>,
     highlights: Vec<HighlightOutput>,
+    injections: Vec<InjectionOutput>,
+    layers: Vec<LayerOutput>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -289,6 +291,7 @@ struct PreparedEmbeddedLanguage {
 }
 
 const PLAYGROUND_RECOVERY_STEP_LIMIT: usize = 1_000_000;
+const MAX_INJECTION_LAYER_DEPTH: usize = 8;
 
 /// Parse one playground request with Snark and return a JSON response.
 pub fn parse_bundle_json(request_json: &str) -> String {
@@ -957,6 +960,15 @@ fn layer_outputs(
     injections: &[InjectionOutput],
     embedded_languages: &BTreeMap<String, PreparedEmbeddedLanguage>,
 ) -> Vec<LayerOutput> {
+    layer_outputs_at_depth(host_input, injections, embedded_languages, 0)
+}
+
+fn layer_outputs_at_depth(
+    host_input: &str,
+    injections: &[InjectionOutput],
+    embedded_languages: &BTreeMap<String, PreparedEmbeddedLanguage>,
+    depth: usize,
+) -> Vec<LayerOutput> {
     let mut groups = Vec::<LayerGroup<'_>>::new();
     let mut combined_groups = BTreeMap::<String, usize>::new();
     for injection in injections {
@@ -984,7 +996,7 @@ fn layer_outputs(
 
     groups
         .into_iter()
-        .map(|group| layer_output(host_input, group, embedded_languages))
+        .map(|group| layer_output(host_input, group, embedded_languages, depth))
         .collect()
 }
 
@@ -992,6 +1004,7 @@ fn layer_output(
     host_input: &str,
     group: LayerGroup<'_>,
     embedded_languages: &BTreeMap<String, PreparedEmbeddedLanguage>,
+    depth: usize,
 ) -> LayerOutput {
     let ranges = group
         .regions
@@ -1031,6 +1044,8 @@ fn layer_output(
             input,
             parse: None,
             highlights: Vec::new(),
+            injections: Vec::new(),
+            layers: Vec::new(),
             diagnostics: vec![diagnostic(
                 "injection",
                 message,
@@ -1052,6 +1067,8 @@ fn layer_output(
             input,
             parse: None,
             highlights: Vec::new(),
+            injections: Vec::new(),
+            layers: Vec::new(),
             diagnostics: language.diagnostics.clone(),
         };
     };
@@ -1065,6 +1082,8 @@ fn layer_output(
                 input,
                 parse: None,
                 highlights: Vec::new(),
+                injections: Vec::new(),
+                layers: Vec::new(),
                 diagnostics: vec![diagnostic("runtime", error.to_string(), None)],
             };
         }
@@ -1088,6 +1107,8 @@ fn layer_output(
                 input,
                 parse: None,
                 highlights: Vec::new(),
+                injections: Vec::new(),
+                layers: Vec::new(),
                 diagnostics: vec![diagnostic],
             };
         }
@@ -1115,6 +1136,27 @@ fn layer_output(
                 &segments,
             )
         });
+    let injections =
+        find_file(&language.files, "queries/injections.scm").map_or_else(Vec::new, |query_file| {
+            injection_outputs(
+                &QuerySource(query_file.text.clone()),
+                &prepared.parser,
+                &report.report,
+                &input,
+            )
+        });
+    let layers = if injections.is_empty() {
+        Vec::new()
+    } else if depth + 1 >= MAX_INJECTION_LAYER_DEPTH {
+        diagnostics.push(diagnostic(
+            "injection",
+            format!("maximum injection layer depth {MAX_INJECTION_LAYER_DEPTH} reached"),
+            None,
+        ));
+        Vec::new()
+    } else {
+        layer_outputs_at_depth(&input, &injections, embedded_languages, depth + 1)
+    };
     LayerOutput {
         language: group.language,
         combined: group.combined,
@@ -1122,6 +1164,8 @@ fn layer_output(
         input,
         parse: Some(parse),
         highlights,
+        injections,
+        layers,
         diagnostics,
     }
 }
@@ -2340,6 +2384,112 @@ mod tests {
         assert_eq!(layer.highlights[0].text, "PRINT");
         assert_eq!(layer.highlights[0].start_byte, 0);
         assert_eq!(layer.highlights[0].end_byte, 5);
+    }
+
+    #[test]
+    fn playground_response_recurses_injected_language_layers() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "host",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "code" },
+    "code": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "queries/injections.scm".to_owned(),
+                    text: r#"((code) @injection.content
+  (#set! injection.language "text"))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "text",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/text/queries/injections.scm".to_owned(),
+                    text: r#"((word) @injection.content
+  (#set! injection.language "inner"))"#
+                        .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/inner/src/grammar.json".to_owned(),
+                    text: r#"{
+  "name": "inner",
+  "rules": {
+    "document": { "type": "SYMBOL", "name": "word" },
+    "word": {
+      "type": "TOKEN",
+      "content": { "type": "PATTERN", "value": "[A-Z]+" }
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"#
+                    .to_owned(),
+                },
+                BundleFile {
+                    path: "languages/inner/queries/highlights.scm".to_owned(),
+                    text: "(word) @constant\n".to_owned(),
+                },
+            ],
+            input: "PRINT".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        assert_eq!(response.layers.len(), 1);
+        let text_layer = &response.layers[0];
+        assert_eq!(text_layer.language, "text");
+        assert_eq!(text_layer.injections.len(), 1);
+        assert_eq!(text_layer.injections[0].language, "inner");
+        assert_eq!(text_layer.layers.len(), 1);
+        let inner_layer = &text_layer.layers[0];
+        assert_eq!(inner_layer.language, "inner");
+        assert_eq!(
+            inner_layer.parse.as_ref().map(|parse| parse.sexp.as_str()),
+            Some("(document (word))")
+        );
+        assert_eq!(inner_layer.highlights.len(), 1);
+        assert_eq!(inner_layer.highlights[0].capture_name, "constant");
+        assert_eq!(inner_layer.highlights[0].text, "PRINT");
     }
 
     fn external_scanner_smoke_grammar_json() -> String {

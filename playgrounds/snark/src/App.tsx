@@ -81,6 +81,8 @@ type LayerOutput = {
   input: string;
   parse: ParseOutput | null;
   highlights: HighlightOutput[];
+  injections: InjectionOutput[];
+  layers: LayerOutput[];
   diagnostics: Diagnostic[];
 };
 
