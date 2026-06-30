@@ -36,9 +36,10 @@ export function emitGrammarJsonFromDsl(
       "exports",
       "require",
       "__default",
+      "process",
       `${prelude}\n${snarkDslExtensions()}\n${commonJsSource}\n; return module.exports;`,
     );
-    module.exports = fn(module, module.exports, require, defaultExportValue);
+    module.exports = fn(module, module.exports, require, defaultExportValue, { env: {} });
     return module.exports;
   };
 

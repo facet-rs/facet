@@ -228,6 +228,40 @@ exports.keyword = name => words[name];
   });
 });
 
+test("provides an empty process.env for grammar.js feature helpers", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+const features = require("./features");
+module.exports = grammar({
+  name: "tiny_env_helper",
+  rules: {
+    document: $ => features.enabled ? "yes" : "no",
+  },
+});
+`,
+      },
+      {
+        path: "features.js",
+        text: `
+exports.enabled = !process.env.DISABLE_TINY_FEATURE;
+`,
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_env_helper");
+  assert.deepEqual(grammar.rules.document, {
+    type: "STRING",
+    value: "yes",
+  });
+});
+
 test("resolves inherited Arborium grammar modules by tree-sitter package name", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
