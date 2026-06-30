@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import init, { SnarkPlaygroundSession } from "@bearcove/snark-wasm";
+import init, { SnarkPlaygroundSession, parseBundle } from "@bearcove/snark-wasm";
 import { SourceEditor, type SourceEdit } from "./editor";
 import { captureClass } from "./highlight";
 import { defaultVendoredRootId, vendoredFiles } from "./bundled";
@@ -264,7 +264,22 @@ export function App() {
             baselineInput: null,
           };
         } catch (error) {
-          throw new PlaygroundRunError("snark", errorMessage(error));
+          try {
+            return JSON.parse(
+              parseBundle(
+                JSON.stringify({
+                  files: runnableFiles,
+                  input,
+                  run_corpus: runBundledTests,
+                }),
+              ),
+            ) as PlaygroundResponse;
+          } catch (fallbackError) {
+            throw new PlaygroundRunError(
+              "snark",
+              `${errorMessage(error)}; fallback parse failed: ${errorMessage(fallbackError)}`,
+            );
+          }
         }
         preparedSessionRef.current = entry;
       }
