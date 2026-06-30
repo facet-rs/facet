@@ -186,6 +186,15 @@ function builtinModule(specifier: string, fileSources: Map<string, string>) {
           const resolved = resolveUploadedFilePath(normalizePathForNodeBuiltin(path), fileSources);
           return fileSources.get(resolved) ?? "";
         },
+        existsSync(path: string) {
+          return uploadedPathExists(normalizePathForNodeBuiltin(path), fileSources);
+        },
+        readdirSync(path: string) {
+          return uploadedDirectoryEntries(normalizePathForNodeBuiltin(path), fileSources);
+        },
+        statSync(path: string) {
+          return uploadedPathStats(normalizePathForNodeBuiltin(path), fileSources);
+        },
         writeFileSync() {},
         appendFileSync() {},
       };
@@ -197,6 +206,9 @@ function builtinModule(specifier: string, fileSources: Map<string, string>) {
         },
         dirname(path: string) {
           return dirnamePath(path);
+        },
+        extname(path: string) {
+          return extnamePath(path);
         },
         join(...parts: string[]) {
           return normalizePathForNodeBuiltin(parts.join("/"));
@@ -235,6 +247,46 @@ function dirnamePath(path: string) {
   const normalized = normalizePathForNodeBuiltin(path);
   const index = normalized.lastIndexOf("/");
   return index >= 0 ? normalized.slice(0, index) : ".";
+}
+
+function extnamePath(path: string) {
+  const basename = basenamePath(path);
+  const index = basename.lastIndexOf(".");
+  return index > 0 ? basename.slice(index) : "";
+}
+
+function uploadedPathExists(path: string, fileSources: Map<string, string>) {
+  return fileSources.has(path) || uploadedDirectoryEntries(path, fileSources).length > 0;
+}
+
+function uploadedDirectoryEntries(path: string, fileSources: Map<string, string>) {
+  const prefix = path ? `${path}/` : "";
+  const entries = new Set<string>();
+  for (const filePath of fileSources.keys()) {
+    if (path && !filePath.startsWith(prefix)) {
+      continue;
+    }
+    const rest = path ? filePath.slice(prefix.length) : filePath;
+    if (!rest) {
+      continue;
+    }
+    entries.add(rest.split("/", 1)[0] ?? rest);
+  }
+  return [...entries].sort();
+}
+
+function uploadedPathStats(path: string, fileSources: Map<string, string>) {
+  if (!uploadedPathExists(path, fileSources)) {
+    throw new Error(`could not stat uploaded path ${path}`);
+  }
+  return {
+    isFile() {
+      return fileSources.has(path);
+    },
+    isDirectory() {
+      return !fileSources.has(path) && uploadedDirectoryEntries(path, fileSources).length > 0;
+    },
+  };
 }
 
 function exportedGrammarObject(exported: unknown, grammarPath: string): Record<string, unknown> {

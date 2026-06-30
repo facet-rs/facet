@@ -718,6 +718,64 @@ exports.rules = $ => {
   });
 });
 
+test("provides scoped fs directory helpers for grammar.js generation helpers", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+const helper = require("./helper");
+module.exports = grammar({
+  name: "tiny_directory_helper",
+  rules: {
+    document: $ => seq(...helper.keywords()),
+  },
+});
+`,
+      },
+      {
+        path: "helper.js",
+        text: `
+const fs = require("fs");
+const path = require("path");
+exports.keywords = () => {
+  const dir = path.join("data", "keywords");
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return [];
+  return fs.readdirSync(dir)
+    .filter(name => path.extname(name) === ".txt")
+    .filter(name => fs.statSync(path.join(dir, name)).isFile())
+    .map(name => fs.readFileSync(path.join(dir, name)));
+};
+`,
+      },
+      {
+        path: "data/keywords/first.txt",
+        text: "alpha",
+      },
+      {
+        path: "data/keywords/ignored.dat",
+        text: "ignored",
+      },
+      {
+        path: "data/keywords/second.txt",
+        text: "beta",
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_directory_helper");
+  assert.deepEqual(grammar.rules.document, {
+    type: "SEQ",
+    members: [
+      { type: "STRING", value: "alpha" },
+      { type: "STRING", value: "beta" },
+    ],
+  });
+});
+
 test("provides CommonJS __dirname and __filename to grammar helpers", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
