@@ -98,6 +98,28 @@ test("normalizes package root grammar.json to src/grammar.json", () => {
   ]);
 });
 
+test("keeps grammar.json as the active grammar when a sibling grammar.js exists", () => {
+  const files = normalizeBundleFiles([
+    file("tree-sitter-frozen/grammar.json"),
+    file("tree-sitter-frozen/grammar.js"),
+    file("tree-sitter-frozen/queries/highlights.scm"),
+  ]);
+
+  const roots = discoverGrammarRoots(files);
+  assert.deepEqual(roots, [
+    {
+      id: "",
+      label: "bundle root",
+      grammarPath: "src/grammar.json",
+      kind: "package",
+    },
+  ]);
+  assert.deepEqual(
+    projectedFilesForGrammarRootId(files, roots[0]?.id).map((entry) => entry.path),
+    ["src/grammar.json", "grammar.js", "queries/highlights.scm"],
+  );
+});
+
 test("selects the first uploaded sample for a single uploaded grammar root", () => {
   const files = normalizeBundleFiles([
     file("tree-sitter-nginx/grammar.json"),
