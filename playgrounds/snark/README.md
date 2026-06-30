@@ -39,3 +39,17 @@ For languages with `scanner.c`, the playground only executes scanners that have
 an explicit source-matched host adapter. The reduced CSS scanner from the current
 fixture is wired this way; arbitrary scanner compilation/execution in the
 browser is not.
+
+## Development Checks
+
+```sh
+pnpm --filter @bearcove/snark-playground test
+pnpm --filter @bearcove/snark-playground test:flow
+pnpm --filter @bearcove/snark-playground build
+```
+
+`test` covers bundle path normalization, highlighting composition, and the
+browser-side grammar.js DSL evaluator. `test:flow` rebuilds `snark-wasm/pkg/`
+from Rust sources and runs the WASM playground flow tests, including generated
+grammar.json, highlights, injections/layers, prepared-session reuse, bundled
+test execution, and vendored grammar samples.
