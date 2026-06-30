@@ -7,6 +7,8 @@ use snark::{
     validated::ValidatedGrammar,
 };
 
+const PLAYGROUND_RECOVERY_STEP_LIMIT: usize = 1_000_000;
+
 fn main() {
     let def = env::args_os()
         .nth(1)
@@ -74,9 +76,8 @@ fn main() {
                 .and_then(|limit| limit.parse().ok());
             let mut recovery_runtime =
                 RuntimeParser::new(&validated, &parser, &table).expect("runtime should build");
-            if let Some(limit) = recovery_limit {
-                recovery_runtime = recovery_runtime.with_recovery_step_limit(limit);
-            }
+            recovery_runtime = recovery_runtime
+                .with_recovery_step_limit(recovery_limit.unwrap_or(PLAYGROUND_RECOVERY_STEP_LIMIT));
             match recovery_runtime.parse_recovering_compact_with_report(&input) {
                 Ok(report) => {
                     println!(
