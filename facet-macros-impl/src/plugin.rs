@@ -16,7 +16,9 @@
 //! `#[facet(derive(Foo))]` maps to `::facet_foo::__facet_derive!`
 //! (lowercase the trait name, prefix with `facet_`)
 
-use crate::{Attribute, AttributeInner, FacetInner, IParse, Ident, ToTokenIter, ToTokens, TokenStream};
+use crate::{
+    Attribute, AttributeInner, FacetInner, IParse, Ident, ToTokenIter, ToTokens, TokenStream,
+};
 use quote::quote;
 
 /// A plugin reference - either a simple name or a full path.

@@ -47,7 +47,10 @@ pub fn parse(src: &str) -> Parse {
     let (green, cache) = p.builder.finish();
     let interner = cache.unwrap().into_interner().unwrap();
     let root = ResolvedNode::new_root_with_resolver(green, interner);
-    Parse { root, errors: p.errors }
+    Parse {
+        root,
+        errors: p.errors,
+    }
 }
 
 /// Convenience for parsing a bare expression (e.g. tests), wrapped in a `Template`.
@@ -191,7 +194,8 @@ impl<'src> Parser<'src> {
 
     /// True if the next thing is `{%[-]` immediately followed by one of `kws`.
     fn at_stmt_kw(&self, kws: &[SyntaxKind]) -> bool {
-        matches!(self.nth(0), Some(OpenStmt | OpenStmtTrim)) && matches!(self.nth(1), Some(k) if kws.contains(&k))
+        matches!(self.nth(0), Some(OpenStmt | OpenStmtTrim))
+            && matches!(self.nth(1), Some(k) if kws.contains(&k))
     }
 
     fn parse_statement(&mut self) {

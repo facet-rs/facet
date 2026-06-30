@@ -38,13 +38,19 @@ pub fn lex(src: &str) -> Vec<Lexeme<'_>> {
                 // token and stay in text mode.
                 if starts_with(pos, "{#") {
                     let end = lex_comment_end(src, pos);
-                    out.push(Lexeme { kind: SyntaxKind::Comment, text: &src[pos..end] });
+                    out.push(Lexeme {
+                        kind: SyntaxKind::Comment,
+                        text: &src[pos..end],
+                    });
                     pos = end;
                     continue;
                 }
                 // An opening delimiter ends the current text run.
                 if let Some((kind, len)) = open_delim(src, pos) {
-                    out.push(Lexeme { kind, text: &src[pos..pos + len] });
+                    out.push(Lexeme {
+                        kind,
+                        text: &src[pos..pos + len],
+                    });
                     pos += len;
                     mode = Mode::Code;
                     continue;
@@ -52,24 +58,32 @@ pub fn lex(src: &str) -> Vec<Lexeme<'_>> {
                 // Otherwise accumulate text until the next `{{` / `{%` / `{#`.
                 let start = pos;
                 while pos < bytes.len() {
-                    if starts_with(pos, "{{") || starts_with(pos, "{%") || starts_with(pos, "{#")
-                    {
+                    if starts_with(pos, "{{") || starts_with(pos, "{%") || starts_with(pos, "{#") {
                         break;
                     }
                     pos += next_char_len(src, pos);
                 }
-                out.push(Lexeme { kind: SyntaxKind::Text, text: &src[start..pos] });
+                out.push(Lexeme {
+                    kind: SyntaxKind::Text,
+                    text: &src[start..pos],
+                });
             }
             Mode::Code => {
                 // Closing delimiter returns to text mode.
                 if let Some((kind, len)) = close_delim(src, pos) {
-                    out.push(Lexeme { kind, text: &src[pos..pos + len] });
+                    out.push(Lexeme {
+                        kind,
+                        text: &src[pos..pos + len],
+                    });
                     pos += len;
                     mode = Mode::Text;
                     continue;
                 }
                 let (kind, len) = lex_code_token(src, pos);
-                out.push(Lexeme { kind, text: &src[pos..pos + len] });
+                out.push(Lexeme {
+                    kind,
+                    text: &src[pos..pos + len],
+                });
                 pos += len;
             }
         }
@@ -159,13 +173,24 @@ fn lex_code_token(src: &str, pos: usize) -> (SyntaxKind, usize) {
     if first.is_ascii_digit() {
         let mut len = s.bytes().take_while(|b| b.is_ascii_digit()).count();
         let mut is_float = false;
-        if s[len..].starts_with('.') && s[len + 1..].bytes().next().is_some_and(|b| b.is_ascii_digit())
+        if s[len..].starts_with('.')
+            && s[len + 1..]
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_digit())
         {
             is_float = true;
             len += 1; // dot
             len += s[len..].bytes().take_while(|b| b.is_ascii_digit()).count();
         }
-        return (if is_float { SyntaxKind::Float } else { SyntaxKind::Int }, len);
+        return (
+            if is_float {
+                SyntaxKind::Float
+            } else {
+                SyntaxKind::Int
+            },
+            len,
+        );
     }
 
     // String literal (single or double quoted, with backslash escapes).
@@ -299,7 +324,10 @@ mod tests {
         use SyntaxKind::*;
         assert_eq!(
             kinds("a {{ page.title | upper }} b"),
-            [Text, OpenExpr, Whitespace, Ident, Dot, Ident, Whitespace, Pipe, Whitespace, Ident, Whitespace, CloseExpr, Text]
+            [
+                Text, OpenExpr, Whitespace, Ident, Dot, Ident, Whitespace, Pipe, Whitespace, Ident,
+                Whitespace, CloseExpr, Text
+            ]
         );
     }
 
@@ -308,14 +336,31 @@ mod tests {
         use SyntaxKind::*;
         assert_eq!(
             kinds("{%- if x is not defined -%}"),
-            [OpenStmtTrim, Whitespace, IfKw, Whitespace, Ident, Whitespace, IsKw, Whitespace, NotKw, Whitespace, Ident, Whitespace, CloseStmtTrim]
+            [
+                OpenStmtTrim,
+                Whitespace,
+                IfKw,
+                Whitespace,
+                Ident,
+                Whitespace,
+                IsKw,
+                Whitespace,
+                NotKw,
+                Whitespace,
+                Ident,
+                Whitespace,
+                CloseStmtTrim
+            ]
         );
     }
 
     #[test]
     fn comment_is_one_token_and_nests() {
         use SyntaxKind::*;
-        assert_eq!(kinds("a {# outer {# inner #} still #} b"), [Text, Comment, Text]);
+        assert_eq!(
+            kinds("a {# outer {# inner #} still #} b"),
+            [Text, Comment, Text]
+        );
     }
 
     #[test]

@@ -36,5 +36,10 @@ fn main() {
             }
         }
     }
-    println!("\n{} templates: {} clean, {} with issues", files.len(), ok, err_files);
+    println!(
+        "\n{} templates: {} clean, {} with issues",
+        files.len(),
+        ok,
+        err_files
+    );
 }

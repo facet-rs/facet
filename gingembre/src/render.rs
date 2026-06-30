@@ -648,8 +648,10 @@ impl<'a, L: TemplateLoader> Renderer<'a, L> {
                             std::mem::swap(self.output, &mut captured);
                             let _ = self.render_nodes(body).await?;
                             std::mem::swap(self.output, &mut captured);
-                            self.ctx
-                                .set_safe(set_node.name.name.clone(), Value::from(captured.as_str()));
+                            self.ctx.set_safe(
+                                set_node.name.name.clone(),
+                                Value::from(captured.as_str()),
+                            );
                         }
                     }
                 }
@@ -1072,11 +1074,8 @@ mod tests {
     async fn test_set_block_captures_rendered_body() {
         // `{% set x %}…{% endset %}` renders the body and binds the string —
         // the body itself emits nothing inline.
-        let t = Template::parse(
-            "test",
-            "{% set x %}<b>{{ name }}</b>{% endset %}[{{ x }}]",
-        )
-        .unwrap();
+        let t =
+            Template::parse("test", "{% set x %}<b>{{ name }}</b>{% endset %}[{{ x }}]").unwrap();
         let mut ctx = Context::new();
         ctx.set("name", Value::from("hi"));
         let result = t.render(&ctx).await.unwrap();
