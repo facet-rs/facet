@@ -1326,6 +1326,54 @@ module.exports = grammar({
   assert.equal(response.highlight_tests[0].passed, true);
 });
 
+test("uses first corpus case as source input when an uploaded bundle has no samples", async () => {
+  const grammarJs = `
+module.exports = grammar({
+  name: "tiny_corpus_source",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[a-z]+/,
+  },
+});
+`;
+  const files = normalizeBundleFiles([
+    { path: "tree-sitter-corpus-source/grammar.js", text: grammarJs },
+    {
+      path: "tree-sitter-corpus-source/test/corpus/main.txt",
+      text: "====================\nWords\n====================\n\nalpha beta\n\n---\n\n(document (word) (word))\n",
+    },
+  ]);
+  const sample = preferredSampleForGrammarRootId(files);
+  assert.deepEqual(sample && { path: sample.path, text: sample.text }, {
+    path: "test/corpus/main.txt#Words",
+    text: "alpha beta",
+  });
+
+  const runnableFiles = await runnableFilesForBundle(files);
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: runnableFiles,
+        input: sample?.text ?? "",
+        run_corpus: true,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.parse.sexp, "(document (word) (word))");
+  assert.equal(response.corpus[0].passed, true);
+  assert.deepEqual(response.tests, {
+    requested: true,
+    corpus_passed: 1,
+    corpus_failed: 0,
+    highlight_assertions_passed: 0,
+    highlight_assertions_failed: 0,
+    highlight_fixture_errors: 0,
+  });
+});
+
 test("runs every vendored grammar sample through generated grammar.json and Snark WASM", async () => {
   const root = new URL("../src/bundled/", import.meta.url);
   const grammarIds = readdirSync(root)
