@@ -6436,7 +6436,7 @@ struct RuntimeReuseIndex {
 impl RuntimeReuseIndex {
     fn from_report(report: &RuntimeParseReport, edit: RuntimeInputEdit) -> Self {
         let delta = edit.new_end_byte as isize - edit.old_end_byte as isize;
-        let mut nodes = HashMap::new();
+        let mut nodes = HashMap::<RuntimeReuseKey, RuntimeReusableNode>::new();
         for node in report.reusable_nodes.iter().filter(|node| {
             !node.contains_error
                 && edit
@@ -6469,7 +6469,14 @@ impl RuntimeReuseIndex {
                 entry_state: shifted.entry_state,
                 scanner_snapshot: shifted.entry_scanner_snapshot,
             };
-            nodes.entry(key).or_insert(shifted);
+            nodes
+                .entry(key)
+                .and_modify(|current| {
+                    if shifted.end_byte > current.end_byte {
+                        *current = shifted.clone();
+                    }
+                })
+                .or_insert(shifted);
         }
         Self { nodes }
     }
@@ -10960,6 +10967,44 @@ extras (
         )
     }
 
+    fn wrapped_extra_reuse_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        prepared_with_validated(
+            r##"{
+              "name": "mini",
+              "rules": {
+                "source_file": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "wrapper" },
+                    { "type": "SYMBOL", "name": "suffix" }
+                  ]
+                },
+                "wrapper": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "left" },
+                    { "type": "SYMBOL", "name": "right" }
+                  ]
+                },
+                "left": { "type": "STRING", "value": "a" },
+                "right": { "type": "STRING", "value": "b" },
+                "suffix": { "type": "PATTERN", "value": "[0-9]+" },
+                "comment": {
+                  "type": "TOKEN",
+                  "content": {
+                    "type": "PATTERN",
+                    "value": "#[^\\n]*"
+                  }
+                }
+              },
+              "extras": [
+                { "type": "SYMBOL", "name": "comment" },
+                { "type": "PATTERN", "value": "\\s+" }
+              ]
+            }"##,
+        )
+    }
+
     fn reused_byte_ranges(report: &RuntimeParseReport) -> Vec<(usize, usize)> {
         report
             .tree_events()
@@ -11105,6 +11150,32 @@ extras (
             "(source_file (left) (comment) (right))"
         );
         assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 1), (6, 7)]);
+    }
+
+    #[test]
+    fn runtime_parse_session_reuses_node_with_attached_extra() {
+        let (validated, parser, table) = wrapped_extra_reuse_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let mut session = RuntimeParseSession::new(runtime);
+        let first = session.parse_compact("a#old\nb1").unwrap().clone();
+        assert_eq!(
+            first.tree().to_sexp(),
+            "(source_file (wrapper (left) (comment) (right)) (suffix))"
+        );
+
+        let edit = RuntimeInputEdit::new(7, 8, 8);
+        let reparsed = session.reparse_compact(edit, "a#old\nb2").unwrap().clone();
+        let scratch = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_compact_with_report("a#old\nb2")
+            .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert_eq!(
+            reparsed.tree().to_sexp(),
+            "(source_file (wrapper (left) (comment) (right)) (suffix))"
+        );
+        assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 7)]);
     }
 
     #[test]
