@@ -6418,6 +6418,7 @@ struct RuntimeReuseKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeReusableNode {
     tree: SexpNode,
+    source_node: TreeNodeId,
     symbol: NonterminalId,
     entry_state: ParseStateId,
     entry_scanner_snapshot: Option<ScannerSnapshotId>,
@@ -6426,6 +6427,7 @@ struct RuntimeReusableNode {
     end_byte: usize,
     lookahead_end_byte: usize,
     contains_error: bool,
+    tree_events: Vec<TreeEvent>,
 }
 
 #[derive(Debug, Clone)]
@@ -6458,10 +6460,17 @@ impl RuntimeReuseIndex {
             } else {
                 node.lookahead_end_byte
             };
+            let tree_events = node
+                .tree_events
+                .iter()
+                .cloned()
+                .map(|event| shift_tree_event_bytes(event, edit, delta))
+                .collect();
             let shifted = RuntimeReusableNode {
                 start_byte,
                 end_byte,
                 lookahead_end_byte,
+                tree_events,
                 ..node.clone()
             };
             let key = RuntimeReuseKey {
@@ -6500,6 +6509,124 @@ fn shift_byte(byte: usize, old_end_byte: usize, delta: isize) -> usize {
         byte.saturating_add_signed(delta)
     } else {
         byte
+    }
+}
+
+fn shift_byte_range(bytes: ByteRange, old_end_byte: usize, delta: isize) -> ByteRange {
+    let start = shift_byte(bytes.start().get() as usize, old_end_byte, delta);
+    let end = shift_byte(bytes.end().get() as usize, old_end_byte, delta);
+    ByteRange::new(
+        ByteOffset::new(u32::try_from(start).expect("shifted runtime byte offset fits u32")),
+        ByteOffset::new(u32::try_from(end).expect("shifted runtime byte offset fits u32")),
+    )
+    .expect("shifted runtime byte range is ordered")
+}
+
+fn shift_tree_event_bytes(event: TreeEvent, edit: RuntimeInputEdit, delta: isize) -> TreeEvent {
+    let shift = |bytes| shift_byte_range(bytes, edit.old_end_byte, delta);
+    match event {
+        TreeEvent::Token {
+            version,
+            symbol,
+            lookahead,
+            bytes,
+            points,
+            extra,
+            named,
+            keyword,
+        } => TreeEvent::Token {
+            version,
+            symbol,
+            lookahead,
+            bytes: shift(bytes),
+            points,
+            extra,
+            named,
+            keyword,
+        },
+        TreeEvent::Reduce {
+            version,
+            production,
+            metadata,
+            node,
+            bytes,
+            points,
+        } => TreeEvent::Reduce {
+            version,
+            production,
+            metadata,
+            node,
+            bytes: shift(bytes),
+            points,
+        },
+        TreeEvent::Missing {
+            version,
+            symbol,
+            bytes,
+            points,
+        } => TreeEvent::Missing {
+            version,
+            symbol,
+            bytes: shift(bytes),
+            points,
+        },
+        TreeEvent::Error {
+            version,
+            node,
+            bytes,
+            points,
+            error_cost,
+        } => TreeEvent::Error {
+            version,
+            node,
+            bytes: shift(bytes),
+            points,
+            error_cost,
+        },
+        TreeEvent::CloseNode {
+            version,
+            node,
+            public_node,
+            bytes,
+            points,
+        } => TreeEvent::CloseNode {
+            version,
+            node,
+            public_node,
+            bytes: shift(bytes),
+            points,
+        },
+        TreeEvent::ReuseNode {
+            version,
+            node,
+            bytes,
+            points,
+            scanner_snapshot,
+        } => TreeEvent::ReuseNode {
+            version,
+            node,
+            bytes: shift(bytes),
+            points,
+            scanner_snapshot,
+        },
+        TreeEvent::Alias {
+            version,
+            node,
+            alias,
+            named,
+            structural_index,
+            bytes,
+            points,
+        } => TreeEvent::Alias {
+            version,
+            node,
+            alias,
+            named,
+            structural_index,
+            bytes: shift(bytes),
+            points,
+        },
+        TreeEvent::OpenNode { .. } | TreeEvent::Field { .. } => event,
     }
 }
 
@@ -7223,11 +7350,21 @@ impl<'a> RuntimeParser<'a> {
             points,
             scanner_snapshot: reusable.entry_scanner_snapshot,
         };
+        let replayed_events = replay_reused_tree_events(
+            reusable,
+            branch.version,
+            node,
+            input,
+            line_index,
+            tree_store,
+        );
         if trace_detail == RuntimeTraceDetail::Full {
             tree_events.push(tree_event.clone());
+            tree_events.extend(replayed_events.clone());
             trace_events.push(TraceEvent::Tree(tree_event));
         } else {
             branch.tree_events.push(tree_event);
+            branch.tree_events.extend(replayed_events.clone());
         }
         push_full_runtime_trace(
             trace_events,
@@ -7254,6 +7391,7 @@ impl<'a> RuntimeParser<'a> {
         branch.scanner_snapshot = reusable.exit_scanner_snapshot;
         branch.reusable_nodes.push(RuntimeReusableNode {
             tree: reusable.tree.clone(),
+            source_node: node,
             symbol: reusable.symbol,
             entry_state,
             entry_scanner_snapshot: reusable.entry_scanner_snapshot,
@@ -7262,6 +7400,7 @@ impl<'a> RuntimeParser<'a> {
             end_byte: reusable.end_byte,
             lookahead_end_byte: reusable.lookahead_end_byte,
             contains_error: false,
+            tree_events: replayed_events,
         });
         Some(branch)
     }
@@ -7466,6 +7605,7 @@ impl<'a> RuntimeParser<'a> {
                 {
                     branch.reusable_nodes.push(RuntimeReusableNode {
                         tree: tree_store.node(*node).clone(),
+                        source_node: *node,
                         symbol,
                         entry_state: head_state,
                         entry_scanner_snapshot: *start_scanner_snapshot,
@@ -7474,6 +7614,16 @@ impl<'a> RuntimeParser<'a> {
                         end_byte: *end_byte,
                         lookahead_end_byte: *lookahead_end_byte,
                         contains_error: false,
+                        tree_events: subtree_tree_events(
+                            if trace_detail == RuntimeTraceDetail::Full {
+                                tree_events
+                            } else {
+                                &branch.tree_events
+                            },
+                            *start_byte,
+                            *end_byte,
+                            *node,
+                        ),
                     });
                 }
                 branch.stack.push(RuntimeStackEntry {
@@ -8375,6 +8525,255 @@ fn mark_reusable_nodes_with_errors(
         });
     }
     nodes
+}
+
+fn subtree_tree_events(
+    tree_events: &[TreeEvent],
+    start_byte: usize,
+    end_byte: usize,
+    root_node: TreeNodeId,
+) -> Vec<TreeEvent> {
+    let mut nodes = BTreeSet::from([root_node]);
+    for event in tree_events {
+        if let Some((start, end)) = tree_event_byte_range(event)
+            && start_byte <= start
+            && end <= end_byte
+            && let Some(node) = tree_event_node(event)
+        {
+            nodes.insert(node);
+        }
+    }
+
+    tree_events
+        .iter()
+        .filter(|event| match event {
+            TreeEvent::Field { node, child, .. } => {
+                nodes.contains(node) && child.is_none_or(|child| nodes.contains(&child))
+            }
+            _ => tree_event_byte_range(event)
+                .is_some_and(|(start, end)| start_byte <= start && end <= end_byte),
+        })
+        .cloned()
+        .collect()
+}
+
+fn replay_reused_tree_events(
+    reusable: &RuntimeReusableNode,
+    version: StackVersionId,
+    root_node: TreeNodeId,
+    input: &str,
+    line_index: &InputLineIndex,
+    tree_store: &mut RuntimeTreeStore,
+) -> Vec<TreeEvent> {
+    let mut node_map = BTreeMap::from([(reusable.source_node, root_node)]);
+    reusable
+        .tree_events
+        .iter()
+        .map(|event| {
+            replay_reused_tree_event(event, version, input, line_index, tree_store, &mut node_map)
+        })
+        .collect()
+}
+
+fn replay_reused_tree_event(
+    event: &TreeEvent,
+    version: StackVersionId,
+    input: &str,
+    line_index: &InputLineIndex,
+    tree_store: &mut RuntimeTreeStore,
+    node_map: &mut BTreeMap<TreeNodeId, TreeNodeId>,
+) -> TreeEvent {
+    let repoint = |bytes: ByteRange| {
+        input_ranges(
+            input,
+            line_index,
+            bytes.start().get() as usize,
+            bytes.end().get() as usize,
+        )
+    };
+    match event {
+        TreeEvent::OpenNode {
+            node,
+            symbol,
+            visible,
+            named,
+            ..
+        } => TreeEvent::OpenNode {
+            version,
+            node: remap_reused_node(*node, tree_store, node_map),
+            symbol: *symbol,
+            visible: *visible,
+            named: *named,
+        },
+        TreeEvent::Token {
+            symbol,
+            lookahead,
+            bytes,
+            extra,
+            named,
+            keyword,
+            ..
+        } => {
+            let (bytes, points) = repoint(*bytes);
+            TreeEvent::Token {
+                version,
+                symbol: *symbol,
+                lookahead: *lookahead,
+                bytes,
+                points,
+                extra: *extra,
+                named: *named,
+                keyword: *keyword,
+            }
+        }
+        TreeEvent::Reduce {
+            production,
+            metadata,
+            node,
+            bytes,
+            ..
+        } => {
+            let (bytes, points) = repoint(*bytes);
+            TreeEvent::Reduce {
+                version,
+                production: *production,
+                metadata: *metadata,
+                node: remap_reused_node(*node, tree_store, node_map),
+                bytes,
+                points,
+            }
+        }
+        TreeEvent::Missing { symbol, bytes, .. } => {
+            let (bytes, points) = repoint(*bytes);
+            TreeEvent::Missing {
+                version,
+                symbol: *symbol,
+                bytes,
+                points,
+            }
+        }
+        TreeEvent::Error {
+            node,
+            bytes,
+            error_cost,
+            ..
+        } => {
+            let (bytes, points) = repoint(*bytes);
+            TreeEvent::Error {
+                version,
+                node: remap_reused_node(*node, tree_store, node_map),
+                bytes,
+                points,
+                error_cost: *error_cost,
+            }
+        }
+        TreeEvent::CloseNode {
+            node,
+            public_node,
+            bytes,
+            ..
+        } => {
+            let (bytes, points) = repoint(*bytes);
+            TreeEvent::CloseNode {
+                version,
+                node: remap_reused_node(*node, tree_store, node_map),
+                public_node: *public_node,
+                bytes,
+                points,
+            }
+        }
+        TreeEvent::ReuseNode {
+            node,
+            bytes,
+            scanner_snapshot,
+            ..
+        } => {
+            let (bytes, points) = repoint(*bytes);
+            TreeEvent::ReuseNode {
+                version,
+                node: remap_reused_node(*node, tree_store, node_map),
+                bytes,
+                points,
+                scanner_snapshot: *scanner_snapshot,
+            }
+        }
+        TreeEvent::Field {
+            node,
+            child,
+            field,
+            structural_index,
+            ..
+        } => TreeEvent::Field {
+            version,
+            node: remap_reused_node(*node, tree_store, node_map),
+            child: child.map(|child| remap_reused_node(child, tree_store, node_map)),
+            field: *field,
+            structural_index: *structural_index,
+        },
+        TreeEvent::Alias {
+            node,
+            alias,
+            named,
+            structural_index,
+            bytes,
+            ..
+        } => {
+            let (bytes, points) = repoint(*bytes);
+            TreeEvent::Alias {
+                version,
+                node: remap_reused_node(*node, tree_store, node_map),
+                alias: *alias,
+                named: *named,
+                structural_index: *structural_index,
+                bytes,
+                points,
+            }
+        }
+    }
+}
+
+fn remap_reused_node(
+    node: TreeNodeId,
+    tree_store: &mut RuntimeTreeStore,
+    node_map: &mut BTreeMap<TreeNodeId, TreeNodeId>,
+) -> TreeNodeId {
+    if let Some(remapped) = node_map.get(&node) {
+        *remapped
+    } else {
+        let remapped = tree_store.push(SexpNode {
+            kind: "__reused_event_node".to_owned(),
+            children: Vec::new(),
+        });
+        node_map.insert(node, remapped);
+        remapped
+    }
+}
+
+fn tree_event_byte_range(event: &TreeEvent) -> Option<(usize, usize)> {
+    match event {
+        TreeEvent::Token { bytes, .. }
+        | TreeEvent::Reduce { bytes, .. }
+        | TreeEvent::Missing { bytes, .. }
+        | TreeEvent::Error { bytes, .. }
+        | TreeEvent::CloseNode { bytes, .. }
+        | TreeEvent::ReuseNode { bytes, .. }
+        | TreeEvent::Alias { bytes, .. } => {
+            Some((bytes.start().get() as usize, bytes.end().get() as usize))
+        }
+        TreeEvent::OpenNode { .. } | TreeEvent::Field { .. } => None,
+    }
+}
+
+const fn tree_event_node(event: &TreeEvent) -> Option<TreeNodeId> {
+    match event {
+        TreeEvent::OpenNode { node, .. }
+        | TreeEvent::Reduce { node, .. }
+        | TreeEvent::Error { node, .. }
+        | TreeEvent::CloseNode { node, .. }
+        | TreeEvent::ReuseNode { node, .. }
+        | TreeEvent::Alias { node, .. } => Some(*node),
+        TreeEvent::Token { .. } | TreeEvent::Missing { .. } | TreeEvent::Field { .. } => None,
+    }
 }
 
 fn lookahead_parser_symbol(lookahead: LookaheadSymbol) -> ParserSymbol {

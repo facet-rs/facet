@@ -127,6 +127,7 @@ module.exports = grammar({
       files: [
         { path: "grammar.js", text: grammarJs },
         { path: "src/grammar.json", text: grammarJson },
+        { path: "queries/highlights.scm", text: "(word) @variable\n" },
       ],
     }),
   );
@@ -159,6 +160,16 @@ module.exports = grammar({
   assert.equal(second.ok, true);
   assert.equal(second.parse.sexp, "(document (word) (word))");
   assert.equal(second.parse.reuse_node_count, 1);
+  assert.deepEqual(
+    second.highlights.map((capture: { capture_name: string; text: string }) => [
+      capture.capture_name,
+      capture.text,
+    ]),
+    [
+      ["variable", "gamma"],
+      ["variable", "beta"],
+    ],
+  );
 });
 
 test("runs bundled corpus and highlight tests through generated grammar.json", () => {

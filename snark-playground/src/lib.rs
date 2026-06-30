@@ -1579,9 +1579,10 @@ mod tests {
 
     #[test]
     fn playground_session_reparse_uses_runtime_reuse() {
-        let files = vec![BundleFile {
-            path: "src/grammar.json".to_owned(),
-            text: r##"{
+        let files = vec![
+            BundleFile {
+                path: "src/grammar.json".to_owned(),
+                text: r##"{
               "name": "mini",
               "rules": {
                 "source_file": {
@@ -1606,8 +1607,13 @@ mod tests {
                 }
               }
             }"##
-            .to_owned(),
-        }];
+                .to_owned(),
+            },
+            BundleFile {
+                path: "queries/highlights.scm".to_owned(),
+                text: "(insensitive) @variable\n(wrapped) @constant\n".to_owned(),
+            },
+        ];
         let mut session = PlaygroundSession::prepare_files(files).unwrap();
         let initial = PlaygroundParseRequest {
             input: "ABCXYZ".to_owned(),
@@ -1624,6 +1630,14 @@ mod tests {
         assert_eq!(
             initial.parse.as_ref().map(|parse| parse.reuse_node_count),
             Some(0)
+        );
+        assert_eq!(
+            initial
+                .highlights
+                .iter()
+                .map(|capture| (capture.capture_name.as_str(), capture.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("variable", "ABC"), ("constant", "XYZ")]
         );
 
         let reparsed = PlaygroundParseRequest {
@@ -1646,6 +1660,14 @@ mod tests {
         assert_eq!(
             reparsed.parse.as_ref().map(|parse| parse.reuse_node_count),
             Some(1)
+        );
+        assert_eq!(
+            reparsed
+                .highlights
+                .iter()
+                .map(|capture| (capture.capture_name.as_str(), capture.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("variable", "abc"), ("constant", "XYZ")]
         );
     }
 
