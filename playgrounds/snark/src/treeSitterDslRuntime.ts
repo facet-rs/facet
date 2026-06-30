@@ -6,7 +6,7 @@ export function emitGrammarJsonFromDsl(
   grammarPath: string,
 ): string {
   const prelude = officialDslPrelude(dslSource);
-  const modules = new Map(files.filter((file) => isJavaScriptModulePath(file.path)).map((file) => [file.path, file.text]));
+  const modules = new Map(files.filter((file) => isDslModulePath(file.path)).map((file) => [file.path, file.text]));
   const cache = new Map<string, { exports: unknown }>();
 
   const loadModule = (path: string): unknown => {
@@ -22,6 +22,11 @@ export function emitGrammarJsonFromDsl(
 
     const module = { exports: {} as unknown };
     cache.set(resolved, module);
+    if (resolved.endsWith(".json")) {
+      module.exports = JSON.parse(source);
+      return module.exports;
+    }
+
     const dirname = resolved.includes("/") ? resolved.slice(0, resolved.lastIndexOf("/")) : "";
     const require = (specifier: string) => loadModule(resolveRequire(specifier, dirname, modules));
     const commonJsSource = sourceToCommonJs(source, resolved);
@@ -43,8 +48,8 @@ export function emitGrammarJsonFromDsl(
   return `${JSON.stringify({ "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json", ...grammarObj }, null, 2)}\n`;
 }
 
-function isJavaScriptModulePath(path: string) {
-  return path.endsWith(".js") || path.endsWith(".mjs");
+function isDslModulePath(path: string) {
+  return path.endsWith(".js") || path.endsWith(".mjs") || path.endsWith(".json");
 }
 
 function sourceToCommonJs(source: string, path: string) {
@@ -176,7 +181,16 @@ function resolveRequire(specifier: string, dirname: string, modules: Map<string,
 }
 
 function resolveJsPath(path: string, modules: Map<string, string>) {
-  for (const candidate of [path, `${path}.js`, `${path}.mjs`, `${path}/index.js`, `${path}/index.mjs`, `${path}/grammar.js`]) {
+  for (const candidate of [
+    path,
+    `${path}.js`,
+    `${path}.mjs`,
+    `${path}.json`,
+    `${path}/index.js`,
+    `${path}/index.mjs`,
+    `${path}/index.json`,
+    `${path}/grammar.js`,
+  ]) {
     if (modules.has(candidate)) {
       return candidate;
     }

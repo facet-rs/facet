@@ -189,6 +189,45 @@ export const wrap = rule => repeat1(rule);
   });
 });
 
+test("resolves JSON helper modules required by grammar.js helpers", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "grammar.js",
+        text: `
+const helpers = require("./helpers");
+module.exports = grammar({
+  name: "tiny_json_helper",
+  rules: {
+    document: $ => helpers.keyword("alpha"),
+  },
+});
+`,
+      },
+      {
+        path: "helpers.js",
+        text: `
+const words = require("./words.json");
+exports.keyword = name => words[name];
+`,
+      },
+      {
+        path: "words.json",
+        text: JSON.stringify({ alpha: "a" }),
+      },
+    ],
+    "grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "tiny_json_helper");
+  assert.deepEqual(grammar.rules.document, {
+    type: "STRING",
+    value: "a",
+  });
+});
+
 test("resolves inherited Arborium grammar modules by tree-sitter package name", () => {
   const grammarJson = emitGrammarJsonFromDsl(
     officialDsl,
