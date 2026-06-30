@@ -1,16 +1,39 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const wsServerBuildTimeoutMs = 120_000;
 const wsServerStartupTimeoutMs = 5_000;
 
 let wsServerBuildPromise: Promise<void> | null = null;
+let cargoTargetDirPromise: Promise<string> | null = null;
+
+// `projectRoot` (vox/) may be a standalone Cargo workspace or a subdirectory
+// of a larger workspace (as in the facet monorepo), so the `target/` dir
+// isn't necessarily directly under it. Ask cargo where it actually is.
+function getCargoTargetDir(projectRoot: string): Promise<string> {
+  if (!cargoTargetDirPromise) {
+    cargoTargetDirPromise = execFileAsync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+      cwd: projectRoot,
+      maxBuffer: 64 * 1024 * 1024,
+    }).then(({ stdout }) => {
+      const metadata = JSON.parse(stdout) as { target_directory: string };
+      return metadata.target_directory;
+    });
+  }
+  return cargoTargetDirPromise;
+}
 
 export async function startWsServer(projectRoot: string, wsPort: number): Promise<ChildProcess> {
-  await buildWsServerBinary(projectRoot);
+  const [, targetDir] = await Promise.all([
+    buildWsServerBinary(projectRoot),
+    getCargoTargetDir(projectRoot),
+  ]);
 
   const binaryName = process.platform === "win32" ? "ws-peer-server.exe" : "ws-peer-server";
-  const binaryPath = join(projectRoot, "target", "debug", binaryName);
+  const binaryPath = join(targetDir, "debug", binaryName);
   const wsServer = spawn(binaryPath, [], {
     cwd: projectRoot,
     env: { ...process.env, WS_PORT: String(wsPort) },
