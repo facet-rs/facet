@@ -1,14 +1,13 @@
 import {
-  grammarRootForId,
+  filesWithGrammarJsonUsingEmitter,
   preferredGrammarRootId,
-  projectedFilesForGrammarRootId,
-  sortedFiles,
   type DslBundleFile,
 } from "./bundlePaths";
 
 export {
   discoverGrammarRoots,
   firstSampleForGrammarRootId,
+  filesWithGrammarJsonUsingEmitter,
   grammarRootForId,
   normalizeBundleFiles,
   normalizePath,
@@ -26,23 +25,7 @@ export async function filesWithGrammarJson(
   files: DslBundleFile[],
   grammarRootId = preferredGrammarRootId(files),
 ): Promise<DslBundleFile[]> {
-  const root = grammarRootForId(files, grammarRootId);
-  const rootFiles = projectedFilesForGrammarRootId(files, grammarRootId).map(({ path, text }) => ({
-    path,
-    text,
-  }));
-  if (rootFiles.some((file) => file.path === "src/grammar.json")) {
-    return rootFiles;
-  }
-
-  const grammarFile = root
-    ? files.find((file) => file.path === root.grammarPath)
-    : files.find((file) => file.path === "grammar.js");
-  if (!grammarFile) {
-    return rootFiles;
-  }
-  const grammarJson = await emitGrammarJsonInWorker(files, grammarFile.path);
-  return sortedFiles([...rootFiles, { path: "src/grammar.json", text: grammarJson }]);
+  return filesWithGrammarJsonUsingEmitter(files, grammarRootId, emitGrammarJsonInWorker);
 }
 
 function emitGrammarJsonInWorker(files: DslBundleFile[], grammarPath: string): Promise<string> {

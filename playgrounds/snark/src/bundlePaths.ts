@@ -54,6 +54,71 @@ export function projectedFilesForGrammarRootId(
   return filesForGrammarRoot(files, grammarRootForId(files, rootId));
 }
 
+export async function filesWithGrammarJsonUsingEmitter(
+  files: DslBundleFile[],
+  grammarRootId = preferredGrammarRootId(files),
+  emitGrammarJson: (files: DslBundleFile[], grammarPath: string) => Promise<string>,
+): Promise<DslBundleFile[]> {
+  const root = grammarRootForId(files, grammarRootId);
+  const rootFiles = projectedFilesForGrammarRootId(files, grammarRootId).map(({ path, text }) => ({
+    path,
+    text,
+  }));
+
+  const grammarJsonByRootId = new Map<string, string>();
+  const activeGrammarJson = await grammarJsonForRoot(
+    files,
+    grammarRootId,
+    grammarJsonByRootId,
+    emitGrammarJson,
+  );
+  const activeFiles = rootFiles.some((file) => file.path === "src/grammar.json")
+    ? rootFiles
+    : activeGrammarJson
+      ? sortedFiles([...rootFiles, { path: "src/grammar.json", text: activeGrammarJson }])
+      : rootFiles;
+
+  const embeddedFiles: DslBundleFile[] = [];
+  for (const candidate of discoverGrammarRoots(files)) {
+    if (candidate.id === (root?.id ?? "")) {
+      continue;
+    }
+    let grammarJson: string | null;
+    try {
+      grammarJson = await grammarJsonForRoot(
+        files,
+        candidate.id,
+        grammarJsonByRootId,
+        emitGrammarJson,
+      );
+    } catch {
+      continue;
+    }
+    if (!grammarJson) {
+      continue;
+    }
+    const languageName = grammarName(grammarJson);
+    if (!languageName) {
+      continue;
+    }
+    const projected = projectedFilesForGrammarRootId(files, candidate.id).map(({ path, text }) => ({
+      path,
+      text,
+    }));
+    const projectedWithGrammarJson = projected.some((file) => file.path === "src/grammar.json")
+      ? projected
+      : [...projected, { path: "src/grammar.json", text: grammarJson }];
+    embeddedFiles.push(
+      ...projectedWithGrammarJson.map((file) => ({
+        path: `languages/${languageName}/${file.path}`,
+        text: file.text,
+      })),
+    );
+  }
+
+  return sortedFiles([...activeFiles, ...embeddedFiles]);
+}
+
 export function firstSampleForGrammarRootId(
   files: DslBundleFile[],
   rootId = preferredGrammarRootId(files),
@@ -116,6 +181,48 @@ function filesForGrammarRoot(files: DslBundleFile[], root: GrammarRoot | null): 
         sourcePath: file.path,
       };
     });
+}
+
+async function grammarJsonForRoot(
+  files: DslBundleFile[],
+  grammarRootId: string,
+  cache: Map<string, string>,
+  emitGrammarJson: (files: DslBundleFile[], grammarPath: string) => Promise<string>,
+): Promise<string | null> {
+  const cached = cache.get(grammarRootId);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const projected = projectedFilesForGrammarRootId(files, grammarRootId).map(({ path, text }) => ({
+    path,
+    text,
+  }));
+  const existing = projected.find((file) => file.path === "src/grammar.json")?.text;
+  if (existing !== undefined) {
+    cache.set(grammarRootId, existing);
+    return existing;
+  }
+  const root = grammarRootForId(files, grammarRootId);
+  const grammarFile = root
+    ? files.find((file) => file.path === root.grammarPath)
+    : files.find((file) => file.path === "grammar.js");
+  if (!grammarFile) {
+    return null;
+  }
+  const grammarJson = await emitGrammarJson(files, grammarFile.path);
+  cache.set(grammarRootId, grammarJson);
+  return grammarJson;
+}
+
+function grammarName(grammarJson: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(grammarJson);
+  } catch {
+    return null;
+  }
+  const name = typeof parsed === "object" && parsed !== null ? (parsed as { name?: unknown }).name : null;
+  return typeof name === "string" && name.length > 0 ? name : null;
 }
 
 function grammarRootFromPath(path: string): GrammarRoot {

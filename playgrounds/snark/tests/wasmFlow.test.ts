@@ -10,6 +10,7 @@ import {
   preferredSampleForGrammarRootId,
   projectedFilesForGrammarRootId,
   sortedFiles,
+  filesWithGrammarJsonUsingEmitter,
   type DslBundleFile,
 } from "../src/bundlePaths.ts";
 import { emitGrammarJsonFromDsl } from "../src/treeSitterDslRuntime.ts";
@@ -126,6 +127,65 @@ module.exports = grammar({
   assert.equal(response.layers[0].combined, true);
   assert.equal(response.layers[0].input, "alphabeta");
   assert.equal(response.layers[0].parse.sexp, "(document (word))");
+});
+
+test("projects sibling grammar roots into embedded language layers", async () => {
+  const hostGrammar = `
+module.exports = grammar({
+  name: "host",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[a-z]+/,
+  },
+});
+`;
+  const childGrammar = `
+module.exports = grammar({
+  name: "child",
+  extras: $ => [/\\s/],
+  rules: {
+    document: $ => repeat1($.word),
+    word: $ => /[a-z]+/,
+  },
+});
+`;
+  const files = normalizeBundleFiles([
+    { path: "host/grammar.js", text: hostGrammar },
+    {
+      path: "host/queries/injections.scm",
+      text: '((word) @injection.content\n  (#set! injection.language "child")\n  (#set! injection.combined))\n',
+    },
+    { path: "child/grammar.js", text: childGrammar },
+    { path: "child/queries/highlights.scm", text: "(word) @variable\n" },
+  ]);
+
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "host", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: "alpha",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.layers.length, 1);
+  assert.equal(response.layers[0].language, "child");
+  assert.equal(response.layers[0].combined, true);
+  assert.equal(response.layers[0].input, "alpha");
+  assert.equal(response.layers[0].parse.sexp, "(document (word))");
+  assert.deepEqual(
+    response.layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
+      capture.capture_name,
+      capture.text,
+    ]),
+    [["variable", "alpha"]],
+  );
 });
 
 test("reports unsupported external scanners from Snark WASM", () => {
