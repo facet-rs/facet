@@ -471,6 +471,34 @@ impl ReducedWeavyPlan {
     }
 }
 
+/// Prepared Weavy runtime plan for repeated parses of one grammar/table pair.
+#[derive(Clone, Debug)]
+pub struct RuntimeWeavyPlan {
+    reduced: ReducedWeavyPlan,
+    compiled_lex_modes: Vec<parser_ir::CompiledLexMode>,
+}
+
+impl RuntimeWeavyPlan {
+    /// Lower parser tables and compile lex modes once for repeated runtime parses.
+    pub fn new(
+        grammar: &ValidatedGrammar,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+    ) -> Result<Self, ReducedWeavyError> {
+        let reduced = lower_reduced_parser(parser, table)?;
+        let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
+        Ok(Self {
+            reduced,
+            compiled_lex_modes,
+        })
+    }
+
+    /// Lowered Weavy parser/action program.
+    pub const fn reduced(&self) -> &ReducedWeavyPlan {
+        &self.reduced
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ReducedWeavyActionBlock {
     state: parser_ir::ParseStateId,
@@ -1110,9 +1138,61 @@ pub fn parse_runtime_with_report(
     parse_runtime_with_report_and_scanner(plan, grammar, parser, table, input, None)
 }
 
+/// Execute a prepared runtime stack/tree parser plan through Weavy.
+pub fn parse_prepared_runtime_with_report(
+    plan: &RuntimeWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+    parse_prepared_runtime_with_report_and_scanner(plan, grammar, parser, table, input, None)
+}
+
+/// Execute a prepared runtime stack/tree parser plan through Weavy with a scanner host.
+pub fn parse_prepared_runtime_with_report_and_scanner(
+    plan: &RuntimeWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+    parse_runtime_with_compiled_lex_modes(
+        &plan.reduced,
+        &plan.compiled_lex_modes,
+        grammar,
+        parser,
+        table,
+        input,
+        external_scanner,
+    )
+}
+
 /// Execute a runtime stack/tree parser plan through Weavy with a reduced scanner host.
 pub fn parse_runtime_with_report_and_scanner(
     plan: &ReducedWeavyPlan,
+    grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ReducedExternalScanner>,
+) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+    let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
+    parse_runtime_with_compiled_lex_modes(
+        plan,
+        &compiled_lex_modes,
+        grammar,
+        parser,
+        table,
+        input,
+        external_scanner,
+    )
+}
+
+fn parse_runtime_with_compiled_lex_modes(
+    plan: &ReducedWeavyPlan,
+    compiled_lex_modes: &[parser_ir::CompiledLexMode],
     grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
@@ -1124,7 +1204,6 @@ pub fn parse_runtime_with_report_and_scanner(
             stage: parser.stage(),
         });
     }
-    let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = Vec::new();
@@ -1179,7 +1258,7 @@ pub fn parse_runtime_with_report_and_scanner(
             grammar,
             parser,
             table,
-            &compiled_lex_modes,
+            compiled_lex_modes,
             input,
             external_scanner,
             branch,
@@ -1230,6 +1309,7 @@ pub fn parse_runtime_with_report_and_scanner(
             stats,
             trace_events,
             tree_events,
+            tree_store,
             accepted_version: first_version,
             accepted_count: accepted.len(),
             failure_count: failures.len(),
@@ -1254,6 +1334,7 @@ pub struct RuntimeWeavyReport {
     stats: RunStats,
     trace_events: Vec<parser_ir::TraceEvent>,
     tree_events: Vec<parser_ir::TreeEvent>,
+    tree_store: RuntimeWeavyTreeStore,
     accepted_version: parser_ir::StackVersionId,
     accepted_count: usize,
     failure_count: usize,
@@ -1293,6 +1374,18 @@ impl RuntimeWeavyReport {
             &self.trace_events,
             &self.tree_events,
         )
+    }
+
+    /// Accepted runtime tree with anonymous terminals and source ranges preserved.
+    pub fn accepted_resolved_tree(
+        &self,
+        parser: &parser_ir::ParserGrammar,
+        input: &str,
+    ) -> Option<parser_ir::RuntimeResolvedNode> {
+        let accepted_tree_events = self.accepted_tree_events();
+        parser_ir::resolved_tree_from_events(parser, input, &accepted_tree_events, |node| {
+            Some(self.tree_store.node(node).kind.clone())
+        })
     }
 
     /// Number of accepted runtime branches before identical-tree coalescing.
@@ -4035,7 +4128,7 @@ impl RuntimeWeavyFragment {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct RuntimeWeavyTreeStore {
     nodes: Vec<SexpNode>,
 }

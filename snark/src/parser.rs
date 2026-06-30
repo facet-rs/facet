@@ -8578,12 +8578,10 @@ impl RuntimeParseReport {
         parser: &ParserGrammar,
         input: &str,
     ) -> Option<RuntimeResolvedNode> {
-        resolved_tree_from_events(
-            parser,
-            &self.tree_store,
-            input,
-            &self.accepted_tree_events(),
-        )
+        let accepted_tree_events = self.accepted_tree_events();
+        resolved_tree_from_events(parser, input, &accepted_tree_events, |node| {
+            Some(self.tree_store.node(node).kind.clone())
+        })
     }
 
     /// Number of accepted runtime branches before identical-tree coalescing.
@@ -8971,12 +8969,15 @@ struct RuntimeResolvedItem {
     children: Vec<usize>,
 }
 
-fn resolved_tree_from_events(
+pub(crate) fn resolved_tree_from_events<F>(
     parser: &ParserGrammar,
-    tree_store: &RuntimeTreeStore,
     input: &str,
     tree_events: &[TreeEvent],
-) -> Option<RuntimeResolvedNode> {
+    mut node_kind: F,
+) -> Option<RuntimeResolvedNode>
+where
+    F: FnMut(TreeNodeId) -> Option<String>,
+{
     let field_by_child = tree_events
         .iter()
         .filter_map(|event| match event {
@@ -9038,7 +9039,7 @@ fn resolved_tree_from_events(
             } => {
                 let is_extra = matches!(event, TreeEvent::CloseNode { .. });
                 items.push(RuntimeResolvedItem {
-                    kind: tree_store.node(*node).kind.clone(),
+                    kind: node_kind(*node)?,
                     symbol: None,
                     field: field_by_child.get(node).cloned(),
                     node: Some(*node),
@@ -11173,6 +11174,30 @@ extras (
         let tree = report.accepted_resolved_tree(&parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
+        assert_eq!(tree.kind(), "template");
+        assert!(texts.contains(&"+"), "resolved terminals: {texts:?}");
+        assert!(texts.contains(&"*"), "resolved terminals: {texts:?}");
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn prepared_weavy_resolved_tree_preserves_anonymous_gingembre_operators() {
+        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let input = "{{ 1 + 2 * 3 }}";
+        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .parse_with_report(input)
+            .unwrap();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan, &validated, &parser, &table, input,
+        )
+        .unwrap();
+        let tree = weavy_report.accepted_resolved_tree(&parser, input).unwrap();
+        let texts = resolved_terminal_texts(&tree);
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
         assert_eq!(tree.kind(), "template");
         assert!(texts.contains(&"+"), "resolved terminals: {texts:?}");
         assert!(texts.contains(&"*"), "resolved terminals: {texts:?}");
