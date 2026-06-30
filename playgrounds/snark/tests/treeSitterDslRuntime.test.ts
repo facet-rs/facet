@@ -974,6 +974,45 @@ module.exports = grammar(CSS, {
   });
 });
 
+test("resolves normalized Arborium sibling grammar modules by tree-sitter package name", () => {
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [
+      {
+        path: "css/def/grammar/grammar.js",
+        text: `
+module.exports = grammar({
+  name: "css",
+  rules: {
+    stylesheet: $ => "a",
+  },
+});
+`,
+      },
+      {
+        path: "scss/def/grammar/grammar.js",
+        text: `
+const CSS = require("tree-sitter-css/grammar");
+module.exports = grammar(CSS, {
+  name: "scss",
+  rules: {
+    stylesheet: $ => "b",
+  },
+});
+`,
+      },
+    ],
+    "scss/def/grammar/grammar.js",
+  );
+
+  const grammar = JSON.parse(grammarJson);
+  assert.equal(grammar.name, "scss");
+  assert.deepEqual(grammar.rules.stylesheet, {
+    type: "STRING",
+    value: "b",
+  });
+});
+
 const arboriumXmlGrammarRoot = "/Users/amos/oss/arborium/langs/group-acorn/xml/def/grammar";
 const arboriumIdrisGrammarRoot = "/Users/amos/oss/arborium/langs/group-fern/idris/def/grammar";
 
