@@ -298,6 +298,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Build subject
         run: swift build -c release --package-path swift/subject
 
@@ -402,6 +407,15 @@ jobs:
     name: Rust / Windows
     runs-on: windows-2025
     timeout-minutes: 30
+    # None of this job's steps need vox/ as cwd (plain `cargo -p` invocations
+    # resolve fine from the workspace root regardless of cwd), and running
+    # `cargo nextest run` from vox/ resolves nextest's setup-script paths
+    # (.config/nextest.toml's `scripts/setup-test-env.cmd`) relative to cwd
+    # on Windows specifically, unlike Unix where it resolves relative to the
+    # workspace root regardless of cwd. Stay at the repo root to sidestep it.
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v6
 
