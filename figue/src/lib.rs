@@ -187,6 +187,8 @@ pub(crate) mod schema;
 pub(crate) mod span;
 pub(crate) mod span_registry;
 pub(crate) mod suggest;
+/// Convert typed CLI values back into command-line arguments.
+pub mod to_args;
 pub(crate) mod value_builder;
 
 use facet_core::Facet;
@@ -210,6 +212,9 @@ pub use help::{
 pub use json_schema::{JsonSchemaError, JsonSchemaFile, generate_json_schemas, write_json_schemas};
 pub use layers::env::MockEnv;
 pub use layers::file::FormatRegistry;
+pub use to_args::{
+    ToArgs, ToArgsError, to_args_string, to_args_string_with_current_exe, to_os_args,
+};
 
 /// Error from [`from_str`] / [`from_str_with_format`]: the config text failed to
 /// parse, or the parsed value did not deserialize into the target type.
