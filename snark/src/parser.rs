@@ -4019,81 +4019,6 @@ impl ReducedExternalScan<'_> {
     }
 }
 
-/// Successful reduced parse plus branch/conflict evidence.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReducedParseReport {
-    tree: SexpNode,
-    accepted_count: usize,
-    failure_count: usize,
-    max_live_branches: usize,
-    conflict_steps: Vec<ReducedConflictStep>,
-    branch_parents: Vec<ReducedBranchParent>,
-    branch_results: Vec<ReducedBranchResult>,
-}
-
-impl ReducedParseReport {
-    /// Reduced Tree-sitter-style S-expression tree.
-    pub const fn tree(&self) -> &SexpNode {
-        &self.tree
-    }
-
-    /// Number of accepted branches before identical-tree coalescing.
-    pub const fn accepted_count(&self) -> usize {
-        self.accepted_count
-    }
-
-    /// Number of branch failures observed while exploring the table.
-    pub const fn failure_count(&self) -> usize {
-        self.failure_count
-    }
-
-    /// Maximum number of queued live branches observed.
-    pub const fn max_live_branches(&self) -> usize {
-        self.max_live_branches
-    }
-
-    /// Multi-action table cells reached during branch execution.
-    pub fn conflict_steps(&self) -> &[ReducedConflictStep] {
-        &self.conflict_steps
-    }
-
-    /// Parent links for branches created by runtime forks.
-    pub fn branch_parents(&self) -> &[ReducedBranchParent] {
-        &self.branch_parents
-    }
-
-    /// Final accepted/failed outcomes by branch id.
-    pub fn branch_results(&self) -> &[ReducedBranchResult] {
-        &self.branch_results
-    }
-
-    /// Final outcomes for a branch or any descendant branch.
-    pub fn branch_descendant_results(&self, branch: ReducedBranchId) -> Vec<ReducedBranchResult> {
-        self.branch_results
-            .iter()
-            .copied()
-            .filter(|result| self.branch_descends_from(result.branch, branch))
-            .collect()
-    }
-
-    fn branch_descends_from(&self, mut branch: ReducedBranchId, ancestor: ReducedBranchId) -> bool {
-        loop {
-            if branch == ancestor {
-                return true;
-            }
-            let Some(parent) = self
-                .branch_parents
-                .iter()
-                .find(|link| link.branch == branch)
-                .and_then(|link| link.parent)
-            else {
-                return false;
-            };
-            branch = parent;
-        }
-    }
-}
-
 /// One multi-action table cell reached by the reduced parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReducedConflictStep {
@@ -4214,107 +4139,6 @@ impl<'a> ReducedParser<'a> {
         self
     }
 
-    /// Parse one input into a reduced Tree-sitter-style S-expression node.
-    pub fn parse(&self, input: &str) -> Result<SexpNode, ReducedParseError> {
-        self.parse_with_report(input).map(|report| report.tree)
-    }
-
-    /// Parse one input and return branch/conflict evidence for oracle tests.
-    pub fn parse_with_report(&self, input: &str) -> Result<ReducedParseReport, ReducedParseError> {
-        self.clear_lex_cache();
-        let mut branches = VecDeque::from([ReducedBranch {
-            id: ReducedBranchId::from_index(0),
-            stack: vec![ReducedStackEntry {
-                state: ParseStateId::from_index(0),
-                fragment: None,
-                extra: false,
-            }],
-            byte_position: 0,
-            scanner_snapshot: None,
-            trace: Vec::new(),
-        }]);
-        let mut accepted = Vec::<(SexpNode, Vec<ReducedTraceStep>)>::new();
-        let mut failures = Vec::<ReducedParseError>::new();
-        let mut conflict_steps = Vec::new();
-        let mut branch_parents = vec![ReducedBranchParent {
-            branch: ReducedBranchId::from_index(0),
-            parent: None,
-        }];
-        let mut branch_results = Vec::new();
-        let mut next_branch_index = 1usize;
-        let mut step_count = 0usize;
-        let step_limit = self.reduced_step_limit(input);
-        let mut max_live_branches = branches.len();
-
-        while let Some(branch) = branches.pop_front() {
-            step_count += 1;
-            if step_count > step_limit {
-                return Err(
-                    ReducedParseError::new(ReducedParseErrorKind::BranchStepLimit {
-                        limit: step_limit,
-                    })
-                    .with_trace(branch.trace),
-                );
-            }
-
-            for outcome in self.step_branch(
-                branch,
-                input,
-                &mut conflict_steps,
-                &mut branch_parents,
-                &mut next_branch_index,
-            ) {
-                match outcome {
-                    ReducedStepOutcome::Branch(branch) => branches.push_back(branch),
-                    ReducedStepOutcome::Accepted {
-                        branch,
-                        node,
-                        trace,
-                    } => {
-                        branch_results.push(ReducedBranchResult {
-                            branch,
-                            outcome: ReducedBranchFinalOutcome::Accepted,
-                        });
-                        accepted.push((node, trace));
-                    }
-                    ReducedStepOutcome::Failed { branch, error } => {
-                        branch_results.push(ReducedBranchResult {
-                            branch,
-                            outcome: ReducedBranchFinalOutcome::Failed,
-                        });
-                        failures.push(error);
-                    }
-                }
-            }
-            max_live_branches = max_live_branches.max(branches.len());
-        }
-
-        let Some((first_node, first_trace)) = accepted.first().cloned() else {
-            return Err(select_reduced_failure(failures).unwrap_or_else(|| {
-                ReducedParseError::new(ReducedParseErrorKind::NoViableBranch { failure_count: 0 })
-            }));
-        };
-        if accepted.iter().all(|(node, _)| *node == first_node) {
-            return Ok(ReducedParseReport {
-                tree: first_node,
-                accepted_count: accepted.len(),
-                failure_count: failures.len(),
-                max_live_branches,
-                conflict_steps,
-                branch_parents,
-                branch_results,
-            });
-        }
-
-        Err(
-            ReducedParseError::new(ReducedParseErrorKind::AmbiguousParse {
-                accepted_count: accepted.len(),
-                accepted: accepted.iter().map(|(node, _)| node.to_sexp()).collect(),
-            })
-            .with_trace(first_trace),
-        )
-    }
-
     fn parse_state(&self, state: ParseStateId) -> Result<&ParseState, ReducedParseError> {
         self.table
             .states()
@@ -4339,282 +4163,6 @@ impl<'a> ReducedParser<'a> {
         10_000usize
             .max(input_budget.saturating_add(table_budget))
             .min(500_000)
-    }
-
-    fn step_branch(
-        &self,
-        branch: ReducedBranch,
-        input: &str,
-        conflict_steps: &mut Vec<ReducedConflictStep>,
-        branch_parents: &mut Vec<ReducedBranchParent>,
-        next_branch_index: &mut usize,
-    ) -> Vec<ReducedStepOutcome> {
-        let source_branch = branch.id;
-        let state = match branch.stack.last() {
-            Some(entry) => entry.state,
-            None => {
-                return vec![ReducedStepOutcome::Failed {
-                    branch: source_branch,
-                    error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
-                        .with_trace(branch.trace),
-                }];
-            }
-        };
-        let state_row = match self.parse_state(state) {
-            Ok(state_row) => state_row,
-            Err(error) => {
-                return vec![ReducedStepOutcome::Failed {
-                    branch: source_branch,
-                    error: error.with_trace(branch.trace),
-                }];
-            }
-        };
-        let token = match self.lex(
-            state_row,
-            input,
-            branch.byte_position,
-            branch.scanner_snapshot,
-        ) {
-            Ok(token) => token,
-            Err(error) => {
-                return vec![ReducedStepOutcome::Failed {
-                    branch: source_branch,
-                    error: error.with_trace(branch.trace),
-                }];
-            }
-        };
-        let Some(entry) = state_row
-            .entries()
-            .iter()
-            .find(|entry| entry.lookahead() == token.lookahead)
-        else {
-            return vec![ReducedStepOutcome::Failed {
-                branch: source_branch,
-                error: ReducedParseError::new(ReducedParseErrorKind::NoAction {
-                    state,
-                    lookahead: token.lookahead,
-                    byte_position: branch.byte_position,
-                })
-                .with_trace(branch.trace),
-            }];
-        };
-
-        let is_conflict = entry.actions().len() > 1;
-        let mut conflict_outcomes = Vec::new();
-        let conflict_byte_position = branch.byte_position;
-
-        let mut outcomes = Vec::new();
-        for action in entry.actions() {
-            let mut branch = branch.clone();
-            if is_conflict {
-                let child = ReducedBranchId::from_index(*next_branch_index);
-                *next_branch_index += 1;
-                branch.id = child;
-                branch_parents.push(ReducedBranchParent {
-                    branch: child,
-                    parent: Some(source_branch),
-                });
-            }
-            branch.trace.push(ReducedTraceStep {
-                state,
-                byte_position: branch.byte_position,
-                lookahead: token.lookahead,
-                action: *action,
-            });
-            let outcome = self.apply_action(branch, token, *action, input);
-            if is_conflict {
-                conflict_outcomes.push(ReducedConflictActionOutcome {
-                    action: *action,
-                    result: match &outcome {
-                        ReducedStepOutcome::Branch(branch) => {
-                            ReducedConflictActionResult::Branch(branch.id)
-                        }
-                        ReducedStepOutcome::Accepted { branch, .. } => {
-                            ReducedConflictActionResult::Accepted(*branch)
-                        }
-                        ReducedStepOutcome::Failed { branch, .. } => {
-                            ReducedConflictActionResult::Failed(*branch)
-                        }
-                    },
-                });
-            }
-            outcomes.push(outcome);
-        }
-
-        if is_conflict {
-            conflict_steps.push(ReducedConflictStep {
-                branch: source_branch,
-                state,
-                byte_position: conflict_byte_position,
-                lookahead: token.lookahead,
-                actions: entry.actions().to_vec(),
-                outcomes: conflict_outcomes,
-            });
-        }
-        outcomes
-    }
-
-    fn apply_action(
-        &self,
-        mut branch: ReducedBranch,
-        token: ReducedToken,
-        action: ParseAction,
-        input: &str,
-    ) -> ReducedStepOutcome {
-        match action {
-            ParseAction::Shift { state, .. } => {
-                branch.byte_position = token.end;
-                branch.commit_scanner_snapshot(token);
-                branch.stack.push(ReducedStackEntry {
-                    state,
-                    fragment: Some(ReducedFragment::Hidden(Vec::new())),
-                    extra: false,
-                });
-                ReducedStepOutcome::Branch(branch)
-            }
-            ParseAction::ShiftExtra => {
-                branch.byte_position = token.end;
-                branch.commit_scanner_snapshot(token);
-                if let Some(fragment) = self.extra_fragment(token.lookahead) {
-                    let Some(state) = branch.stack.last().map(|entry| entry.state) else {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
-                                .with_trace(branch.trace),
-                        };
-                    };
-                    branch.stack.push(ReducedStackEntry {
-                        state,
-                        fragment: Some(fragment),
-                        extra: true,
-                    });
-                }
-                ReducedStepOutcome::Branch(branch)
-            }
-            ParseAction::Reduce {
-                production,
-                metadata,
-                symbol,
-                child_count,
-                ..
-            } => {
-                let reduction = match self.reduce_fragment(
-                    production,
-                    metadata,
-                    child_count,
-                    &mut branch.stack,
-                    false,
-                ) {
-                    Ok(reduction) => reduction,
-                    Err(error) => {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: error.with_trace(branch.trace),
-                        };
-                    }
-                };
-                let head_state = match branch.stack.last() {
-                    Some(entry) => entry.state,
-                    None => {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: ReducedParseError::new(ReducedParseErrorKind::EmptyStack)
-                                .with_trace(branch.trace),
-                        };
-                    }
-                };
-                let goto_state = match self.goto_state(head_state, symbol) {
-                    Ok(state) => state,
-                    Err(error) => {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: error.with_trace(branch.trace),
-                        };
-                    }
-                };
-                branch.stack.push(ReducedStackEntry {
-                    state: goto_state,
-                    fragment: Some(reduction.fragment),
-                    extra: false,
-                });
-                for fragment in reduction.trailing_extras {
-                    branch.stack.push(ReducedStackEntry {
-                        state: goto_state,
-                        fragment: Some(fragment),
-                        extra: true,
-                    });
-                }
-                ReducedStepOutcome::Branch(branch)
-            }
-            ParseAction::Accept {
-                production,
-                metadata,
-                child_count,
-                ..
-            } => {
-                if token.lookahead != LookaheadSymbol::Eof || branch.byte_position != input.len() {
-                    return ReducedStepOutcome::Failed {
-                        branch: branch.id,
-                        error: ReducedParseError::new(ReducedParseErrorKind::TrailingInput {
-                            byte_position: branch.byte_position,
-                        })
-                        .with_trace(branch.trace),
-                    };
-                }
-                let reduction = match self.reduce_fragment(
-                    production,
-                    metadata,
-                    child_count,
-                    &mut branch.stack,
-                    true,
-                ) {
-                    Ok(reduction) => reduction,
-                    Err(error) => {
-                        return ReducedStepOutcome::Failed {
-                            branch: branch.id,
-                            error: error.with_trace(branch.trace),
-                        };
-                    }
-                };
-                match reduction.fragment {
-                    ReducedFragment::Node(node) => {
-                        let node = match self.finish_accepted_root(node, &mut branch.stack) {
-                            Ok(node) => node,
-                            Err(error) => {
-                                return ReducedStepOutcome::Failed {
-                                    branch: branch.id,
-                                    error: error.with_trace(branch.trace),
-                                };
-                            }
-                        };
-                        ReducedStepOutcome::Accepted {
-                            branch: branch.id,
-                            node,
-                            trace: branch.trace,
-                        }
-                    }
-                    ReducedFragment::Hidden(_) => ReducedStepOutcome::Failed {
-                        branch: branch.id,
-                        error: ReducedParseError::new(ReducedParseErrorKind::AcceptedHiddenRoot)
-                            .with_trace(branch.trace),
-                    },
-                }
-            }
-            ParseAction::Recover => {
-                let state = branch
-                    .stack
-                    .last()
-                    .map(|entry| entry.state)
-                    .unwrap_or(ParseStateId::from_index(0));
-                ReducedStepOutcome::Failed {
-                    branch: branch.id,
-                    error: ReducedParseError::new(ReducedParseErrorKind::UnsupportedRecovery {
-                        state,
-                    })
-                    .with_trace(branch.trace),
-                }
-            }
-        }
     }
 
     fn lex(
@@ -4935,91 +4483,7 @@ impl<'a> ReducedParser<'a> {
             })
     }
 
-    fn reduce_fragment(
-        &self,
-        production: ProductionId,
-        metadata: ProductionMetadataId,
-        child_count: usize,
-        stack: &mut Vec<ReducedStackEntry>,
-        include_trailing_extras: bool,
-    ) -> Result<ReducedReduction, ReducedParseError> {
-        let production_row = &self.parser.productions[production.get() as usize];
-        let metadata_row = &self.parser.production_metadata[metadata.get() as usize];
-        let mut children = Vec::new();
-        let mut trailing_extras = Vec::new();
-        if !include_trailing_extras {
-            while stack.last().is_some_and(|entry| entry.extra) {
-                let entry = stack
-                    .pop()
-                    .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
-                let Some(fragment) = entry.fragment else {
-                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
-                };
-                trailing_extras.push(fragment);
-            }
-            trailing_extras.reverse();
-        }
-        let mut popped = Vec::new();
-        let mut remaining_children = child_count;
-        while remaining_children > 0 {
-            let entry = stack
-                .pop()
-                .ok_or_else(|| ReducedParseError::new(ReducedParseErrorKind::EmptyStack))?;
-            let Some(fragment) = entry.fragment else {
-                return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
-            };
-            if !entry.extra {
-                remaining_children -= 1;
-            }
-            popped.push((entry.extra, fragment));
-        }
-        popped.reverse();
-        let mut steps = production_row.steps().iter();
-        for (extra, fragment) in popped {
-            let mut step_children = fragment.into_children();
-            if !extra {
-                let Some(step) = steps.next() else {
-                    return Err(ReducedParseError::new(ReducedParseErrorKind::EmptyStack));
-                };
-                if let (Some(alias), Some(true)) = (step.alias(), step.alias_named()) {
-                    let alias_name = self.parser.aliases[alias.get() as usize].value.clone();
-                    if step_children.is_empty() {
-                        step_children.push(SexpChild {
-                            field: None,
-                            value: SexpValue::Node(SexpNode {
-                                kind: alias_name,
-                                children: Vec::new(),
-                            }),
-                        });
-                    } else {
-                        for child in &mut step_children {
-                            if let SexpValue::Node(node) = &mut child.value {
-                                node.kind.clone_from(&alias_name);
-                            }
-                        }
-                    }
-                }
-            }
-            children.extend(step_children);
-        }
-
-        if let Some(public_node) = metadata_row.public_node() {
-            let kind = self.parser.public_node_kinds[public_node.get() as usize]
-                .name()
-                .to_owned();
-            Ok(ReducedReduction {
-                fragment: ReducedFragment::Node(SexpNode { kind, children }),
-                trailing_extras,
-            })
-        } else {
-            Ok(ReducedReduction {
-                fragment: ReducedFragment::Hidden(children),
-                trailing_extras,
-            })
-        }
-    }
-
-    fn extra_fragment(&self, lookahead: LookaheadSymbol) -> Option<ReducedFragment> {
+    fn extra_fragment(&self, lookahead: LookaheadSymbol) -> Option<SexpNode> {
         let first = self.runtime_plan.get().first.as_ref()?;
         for extra in &self.parser.extra_roots {
             let ParserSymbol::Nonterminal(nonterminal) = extra.symbol else {
@@ -5037,36 +4501,12 @@ impl<'a> ReducedParser<'a> {
                 continue;
             };
             let kind = kind.name().to_owned();
-            return Some(ReducedFragment::Node(SexpNode {
+            return Some(SexpNode {
                 kind,
                 children: Vec::new(),
-            }));
+            });
         }
         None
-    }
-
-    fn finish_accepted_root(
-        &self,
-        mut node: SexpNode,
-        stack: &mut Vec<ReducedStackEntry>,
-    ) -> Result<SexpNode, ReducedParseError> {
-        let mut leading_children = Vec::new();
-        for entry in stack.drain(..) {
-            match (entry.extra, entry.fragment) {
-                (_, None) => {}
-                (true, Some(fragment)) => leading_children.extend(fragment.into_children()),
-                (false, Some(_)) => {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnreducedStackEntry { state: entry.state },
-                    ));
-                }
-            }
-        }
-        if !leading_children.is_empty() {
-            leading_children.extend(node.children);
-            node.children = leading_children;
-        }
-        Ok(node)
     }
 
     fn goto_state(
@@ -5146,14 +4586,12 @@ pub(crate) fn match_compiled_lex_terminal(
 ) -> Result<Option<LexMatch>, ReducedParseError> {
     match &terminal.matcher {
         CompiledTerminalMatcher::Expr(expr) => match_compiled_lex_expr(expr, input, byte_position),
-        CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => {
-            Err(ReducedParseError::new(
-                ReducedParseErrorKind::UnsupportedTerminal {
-                    terminal: *terminal,
-                    spelling: spelling.clone(),
-                },
-            ))
-        }
+        CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => Err(
+            ReducedParseError::new(ReducedParseErrorKind::UnsupportedTerminal {
+                terminal: *terminal,
+                spelling: spelling.clone(),
+            }),
+        ),
     }
 }
 
@@ -5164,9 +4602,14 @@ fn match_compiled_lex_expr(
 ) -> Result<Option<LexMatch>, ReducedParseError> {
     match expr {
         CompiledLexExpr::Blank => Ok(Some(LexMatch::new(byte_position, byte_position))),
-        CompiledLexExpr::String(value) => Ok(input[byte_position..].starts_with(value).then_some(
-            LexMatch::new(byte_position + value.len(), byte_position + value.len()),
-        )),
+        CompiledLexExpr::String(value) => {
+            Ok(input[byte_position..]
+                .starts_with(value)
+                .then_some(LexMatch::new(
+                    byte_position + value.len(),
+                    byte_position + value.len(),
+                )))
+        }
         CompiledLexExpr::Pattern(pattern) => {
             Ok(match_compiled_pattern(pattern, input, byte_position))
         }
@@ -5175,9 +4618,12 @@ fn match_compiled_lex_expr(
             input,
             byte_position,
         )),
-        CompiledLexExpr::Nested { open, close } => {
-            Ok(match_nested_delimiters_with_inspection(open, close, input, byte_position))
-        }
+        CompiledLexExpr::Nested { open, close } => Ok(match_nested_delimiters_with_inspection(
+            open,
+            close,
+            input,
+            byte_position,
+        )),
         CompiledLexExpr::AutoClose(_) => Ok(None),
         CompiledLexExpr::Seq(members) => {
             let mut position = byte_position;
@@ -6120,68 +5566,6 @@ fn push_reduced_candidate(
         Some(current)
             if reduced_candidate_order(*current, candidate) != ReducedCandidateOrder::Less => {}
         _ => *candidate_slot = Some(candidate),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReducedBranch {
-    id: ReducedBranchId,
-    stack: Vec<ReducedStackEntry>,
-    byte_position: usize,
-    scanner_snapshot: Option<ScannerSnapshotId>,
-    trace: Vec<ReducedTraceStep>,
-}
-
-impl ReducedBranch {
-    fn commit_scanner_snapshot(&mut self, token: ReducedToken) {
-        if let Some(scanner) = token.scanner {
-            self.scanner_snapshot = scanner.after();
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ReducedStepOutcome {
-    Branch(ReducedBranch),
-    Accepted {
-        branch: ReducedBranchId,
-        node: SexpNode,
-        trace: Vec<ReducedTraceStep>,
-    },
-    Failed {
-        branch: ReducedBranchId,
-        error: ReducedParseError,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReducedStackEntry {
-    state: ParseStateId,
-    fragment: Option<ReducedFragment>,
-    extra: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ReducedFragment {
-    Hidden(Vec<SexpChild>),
-    Node(SexpNode),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReducedReduction {
-    fragment: ReducedFragment,
-    trailing_extras: Vec<ReducedFragment>,
-}
-
-impl ReducedFragment {
-    fn into_children(self) -> Vec<SexpChild> {
-        match self {
-            Self::Hidden(children) => children,
-            Self::Node(node) => vec![SexpChild {
-                field: None,
-                value: SexpValue::Node(node),
-            }],
-        }
     }
 }
 
@@ -8037,9 +7421,7 @@ impl<'a> RuntimeParser<'a> {
         lookahead_end_byte: usize,
         start_scanner_snapshot: Option<ScannerSnapshotId>,
     ) -> Option<RuntimeFragment> {
-        let ReducedFragment::Node(node) = self.reduced.extra_fragment(lookahead)? else {
-            return None;
-        };
+        let node = self.reduced.extra_fragment(lookahead)?;
         let public_node = self
             .reduced
             .parser
@@ -11298,9 +10680,7 @@ extras (
                 .len(),
             1
         );
-        assert!(
-            grammar.alias_sequences()[alias_sequence.get() as usize].entries()[0].named()
-        );
+        assert!(grammar.alias_sequences()[alias_sequence.get() as usize].entries()[0].named());
         assert!(matches!(
             grammar.provenances()[item_metadata.provenance().unwrap().get() as usize].source(),
             ProvenanceSource::GrammarRule { .. }
@@ -11832,14 +11212,18 @@ extras (
             "[a-z]+".to_owned(),
             vec![None, Some(6), Some(9), Some(9), Some(16), None],
         )));
-        assert!(observed
-            .iter()
-            .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
-                && *ends == vec![None, None, Some(12), None, None, None]));
-        assert!(observed
-            .iter()
-            .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
-                && *ends == vec![None, None, None, None, Some(16), None]));
+        assert!(
+            observed
+                .iter()
+                .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                    && *ends == vec![None, None, Some(12), None, None, None])
+        );
+        assert!(
+            observed
+                .iter()
+                .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                    && *ends == vec![None, None, None, None, Some(16), None])
+        );
     }
 
     fn auto_close_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
@@ -12273,11 +11657,7 @@ extras (
         let edit = RuntimeInputEdit::new(2, 5, 5);
         let reparsed = session.reparse(edit, "a#new\nb").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
-            &plan,
-            &validated,
-            &parser,
-            &table,
-            "a#new\nb",
+            &plan, &validated, &parser, &table, "a#new\nb",
         )
         .unwrap();
 
@@ -12336,15 +11716,11 @@ extras (
 
         let edit = RuntimeInputEdit::new(4, 5, 5);
         let reparsed = session.reparse_recovering(edit, "a@\nb2").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_runtime_recovering_with_report_and_scanner(
-            &plan,
-            &validated,
-            &parser,
-            &table,
-            "a@\nb2",
-            None,
-        )
-        .unwrap();
+        let scratch =
+            crate::lower::weavy::parse_prepared_runtime_recovering_with_report_and_scanner(
+                &plan, &validated, &parser, &table, "a@\nb2", None,
+            )
+            .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert!(
@@ -12432,11 +11808,7 @@ extras (
         let input = "ABCXYZ";
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
-            &plan,
-            &validated,
-            &parser,
-            &table,
-            input,
+            &plan, &validated, &parser, &table, input,
         )
         .unwrap();
 
@@ -12483,11 +11855,7 @@ extras (
         let input = "alpha:123";
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
-            &plan,
-            &validated,
-            &parser,
-            &table,
-            input,
+            &plan, &validated, &parser, &table, input,
         )
         .unwrap();
 
@@ -12644,16 +12012,20 @@ extras (
             .collect::<Result<Vec<_>, ReducedParseError>>()
             .unwrap();
 
-        assert!(observed
-            .iter()
-            .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
-                && *ends == vec![Some(6), None, None, Some(34)]),
-            "observed: {observed:#?}");
-        assert!(observed
-            .iter()
-            .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
-                && *ends == vec![None, Some(34), Some(26), None]),
-            "observed: {observed:#?}");
+        assert!(
+            observed
+                .iter()
+                .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                    && *ends == vec![Some(6), None, None, Some(34)]),
+            "observed: {observed:#?}"
+        );
+        assert!(
+            observed
+                .iter()
+                .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                    && *ends == vec![None, Some(34), Some(26), None]),
+            "observed: {observed:#?}"
+        );
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -12670,7 +12042,10 @@ extras (
         );
 
         let edit = RuntimeInputEdit::new(8, 12, 13);
-        let reparsed = session.reparse(edit, "hello {{title}} tail").unwrap().clone();
+        let reparsed = session
+            .reparse(edit, "hello {{title}} tail")
+            .unwrap()
+            .clone();
         let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
             &plan,
             &validated,
@@ -12768,11 +12143,7 @@ extras (
         let input = "hello {# outer {# inner #} done #}";
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
-            &plan,
-            &validated,
-            &parser,
-            &table,
-            input,
+            &plan, &validated, &parser, &table, input,
         )
         .unwrap();
 
