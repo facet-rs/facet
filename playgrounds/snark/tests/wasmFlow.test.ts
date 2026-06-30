@@ -106,6 +106,47 @@ module.exports = grammar({
   );
 });
 
+test("reports unsupported external scanners from Snark WASM", () => {
+  const grammarJs = `
+module.exports = grammar({
+  name: "tiny_external",
+  externals: $ => [$.external_token],
+  rules: {
+    document: $ => $.external_token,
+  },
+});
+`;
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [{ path: "grammar.js", text: grammarJs }],
+    "grammar.js",
+  );
+
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: [
+          { path: "grammar.js", text: grammarJs },
+          { path: "src/grammar.json", text: grammarJson },
+          {
+            path: "src/scanner.c",
+            text: "void *tree_sitter_tiny_external_external_scanner_create(void) { return 0; }",
+          },
+        ],
+        input: "x",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.language, "tiny_external");
+  assert.equal(response.diagnostics[0].stage, "scanner");
+  assert.match(response.diagnostics[0].message, /external_token/);
+  assert.match(response.diagnostics[0].message, /source-matched reduced CSS scanner host/);
+  assert.equal(response.parse, null);
+});
+
 test("reuses a prepared Snark WASM session across inputs", () => {
   const grammarJs = `
 module.exports = grammar({

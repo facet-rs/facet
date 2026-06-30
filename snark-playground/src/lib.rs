@@ -234,6 +234,12 @@ struct ScannerSelection {
     active_scanner: Option<String>,
 }
 
+impl ScannerSelection {
+    fn supports_required_externals(&self, parser: &ParserGrammar) -> bool {
+        self.scanner.is_some() || parser.symbols().externals().is_empty()
+    }
+}
+
 const PLAYGROUND_RECOVERY_STEP_LIMIT: usize = 1_000_000;
 
 /// Parse one playground request with Snark and return a JSON response.
@@ -335,6 +341,24 @@ impl PlaygroundSession {
         bundle
             .active_scanner
             .clone_from(&scanner_selection.active_scanner);
+        if !scanner_selection.supports_required_externals(&prepared.parser) {
+            return Err(PlaygroundResponse {
+                ok: false,
+                language: Some(prepared.raw.name.clone()),
+                diagnostics: vec![diagnostic(
+                    "scanner",
+                    unsupported_external_scanner_message(&bundle, &prepared.parser),
+                    None,
+                )],
+                bundle,
+                parse: None,
+                highlights: Vec::new(),
+                corpus: Vec::new(),
+                highlight_tests: Vec::new(),
+                tests: TestSummary::not_requested(),
+                limitations: Vec::new(),
+            });
+        }
         Ok(Self {
             files,
             bundle,
@@ -368,6 +392,31 @@ impl PlaygroundSession {
             limitations: Vec::new(),
         }
     }
+}
+
+fn unsupported_external_scanner_message(bundle: &BundleSummary, parser: &ParserGrammar) -> String {
+    let externals = parser
+        .symbols()
+        .externals()
+        .iter()
+        .map(|external| {
+            external
+                .name()
+                .map_or_else(|| format!("#{}", external.ordinal()), ToOwned::to_owned)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let scanner_files = if bundle.scanner_paths.is_empty() {
+        "no scanner source was uploaded".to_owned()
+    } else {
+        format!(
+            "uploaded scanner source(s): {}",
+            bundle.scanner_paths.join(", ")
+        )
+    };
+    format!(
+        "grammar declares external token(s) [{externals}], but this playground can only execute the source-matched reduced CSS scanner host right now; {scanner_files}"
+    )
 }
 
 fn playground_response(request_json: &str) -> PlaygroundResponse {
@@ -1694,6 +1743,91 @@ mod tests {
             response.diagnostics[0]
                 .message
                 .contains("playground shell should evaluate grammar.js")
+        );
+    }
+
+    fn external_scanner_smoke_grammar_json() -> String {
+        r#"{
+  "name": "needs_scanner",
+  "rules": {
+    "source_file": { "type": "SYMBOL", "name": "external_token" }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [{ "type": "SYMBOL", "name": "external_token" }],
+  "inline": [],
+  "supertypes": []
+}"#
+        .to_owned()
+    }
+
+    #[test]
+    fn rejects_unsupported_external_scanner_bundles_during_prepare() {
+        let request = PlaygroundRequest {
+            files: vec![
+                BundleFile {
+                    path: "src/grammar.json".to_owned(),
+                    text: external_scanner_smoke_grammar_json(),
+                },
+                BundleFile {
+                    path: "src/scanner.c".to_owned(),
+                    text: "void *tree_sitter_needs_scanner_external_scanner_create(void) { return 0; }"
+                        .to_owned(),
+                },
+            ],
+            input: "x".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(!response.ok);
+        assert_eq!(response.language.as_deref(), Some("needs_scanner"));
+        assert_eq!(response.diagnostics[0].stage, "scanner");
+        assert!(
+            response.diagnostics[0].message.contains("external_token"),
+            "{}",
+            response.diagnostics[0].message
+        );
+        assert!(
+            response.diagnostics[0]
+                .message
+                .contains("source-matched reduced CSS scanner host"),
+            "{}",
+            response.diagnostics[0].message
+        );
+        assert!(
+            response.diagnostics[0].message.contains("src/scanner.c"),
+            "{}",
+            response.diagnostics[0].message
+        );
+        assert!(response.parse.is_none());
+    }
+
+    #[test]
+    fn rejects_external_grammar_without_uploaded_scanner_source() {
+        let request = PlaygroundRequest {
+            files: vec![BundleFile {
+                path: "src/grammar.json".to_owned(),
+                text: external_scanner_smoke_grammar_json(),
+            }],
+            input: "x".to_owned(),
+            run_corpus: false,
+        };
+
+        let response =
+            playground_response(&facet_json::to_string(&request).expect("request serializes"));
+
+        assert!(!response.ok);
+        assert_eq!(response.diagnostics[0].stage, "scanner");
+        assert!(
+            response.diagnostics[0]
+                .message
+                .contains("no scanner source was uploaded"),
+            "{}",
+            response.diagnostics[0].message
         );
     }
 
