@@ -5854,7 +5854,7 @@ pub(crate) fn match_until_markers<'a>(
     match_until_markers_with_inspection(markers, input, byte_position).map(|match_| match_.end)
 }
 
-fn match_until_markers_with_inspection<'a>(
+pub(crate) fn match_until_markers_with_inspection<'a>(
     markers: impl IntoIterator<Item = &'a str>,
     input: &str,
     byte_position: usize,
@@ -5888,7 +5888,7 @@ pub(crate) fn match_nested_delimiters(
         .map(|match_| match_.end)
 }
 
-fn match_nested_delimiters_with_inspection(
+pub(crate) fn match_nested_delimiters_with_inspection(
     open: &str,
     close: &str,
     input: &str,
@@ -12568,9 +12568,8 @@ extras (
         )
     }
 
-    fn reused_byte_ranges(report: &RuntimeParseReport) -> Vec<(usize, usize)> {
-        report
-            .tree_events()
+    fn reused_byte_ranges_from_events(events: &[TreeEvent]) -> Vec<(usize, usize)> {
+        events
             .iter()
             .filter_map(|event| match event {
                 TreeEvent::ReuseNode { bytes, .. } => {
@@ -12579,6 +12578,17 @@ extras (
                 _ => None,
             })
             .collect()
+    }
+
+    fn reused_byte_ranges(report: &RuntimeParseReport) -> Vec<(usize, usize)> {
+        reused_byte_ranges_from_events(report.tree_events())
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    fn weavy_reused_byte_ranges(
+        report: &crate::lower::weavy::RuntimeWeavyReport,
+    ) -> Vec<(usize, usize)> {
+        reused_byte_ranges_from_events(report.tree_events())
     }
 
     #[test]
@@ -12686,6 +12696,65 @@ extras (
                 .iter()
                 .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
             "node that inspected the edit boundary must not be reused"
+        );
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn weavy_runtime_parse_session_reparse_matches_full_parse_oracle() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        let first = session.parse("ABCXYZ").unwrap().clone();
+        assert_eq!(
+            first.tree().to_sexp(),
+            "(source_file (insensitive) (wrapped))"
+        );
+        assert_eq!(session.last_input(), Some("ABCXYZ"));
+
+        let edit = RuntimeInputEdit::new(0, 3, 3);
+        let reparsed = session.reparse(edit, "abcXYZ").unwrap().clone();
+        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan, &validated, &parser, &table, "abcXYZ",
+        )
+        .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert!(
+            reparsed
+                .tree_events()
+                .iter()
+                .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
+            "Weavy incremental reparse should reuse at least one accepted subtree"
+        );
+        assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(3, 6)]);
+        assert_eq!(session.last_input(), Some("abcXYZ"));
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn weavy_runtime_parse_session_does_not_reuse_node_that_peeked_into_edit() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let mut session =
+            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+        session.parse("ABCXYZ").unwrap();
+
+        let edit = RuntimeInputEdit::new(3, 6, 6);
+        let reparsed = session.reparse(edit, "ABCxyz").unwrap().clone();
+        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan, &validated, &parser, &table, "ABCxyz",
+        )
+        .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert!(
+            !reparsed
+                .tree_events()
+                .iter()
+                .any(|event| matches!(event, TreeEvent::ReuseNode { .. })),
+            "Weavy must not reuse a node that inspected the edit boundary"
         );
     }
 

@@ -20,12 +20,13 @@ use snark::{
         ReducedWeavyError, RuntimeWeavyPlan, RuntimeWeavyReport,
         parse_prepared_runtime_recovering_with_report_and_scanner,
         parse_prepared_runtime_with_report_and_scanner,
+        reparse_prepared_runtime_recovering_with_report_and_scanner,
+        reparse_prepared_runtime_with_report_and_scanner,
     },
     manifest::TreeSitterConfig,
     parser::{
         ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
-        ReducedExternalScanner, ReducedParseError, ReducedParseErrorKind, RuntimeInputEdit,
-        RuntimeParseReport, RuntimeParser, RuntimeParserPlan, RuntimeResolvedNode,
+        ReducedExternalScanner, ReducedParseError, RuntimeInputEdit, RuntimeResolvedNode,
         ScannerSnapshotId, TreeEvent,
     },
     query::QuerySource,
@@ -283,74 +284,38 @@ struct PreparedGrammar {
     validated: ValidatedGrammar,
     parser: ParserGrammar,
     table: ParseTable,
-    runtime_plan: RuntimeParserPlan,
     weavy_plan: RuntimeWeavyPlan,
 }
 
-impl PreparedGrammar {
-    fn runtime(&self) -> Result<RuntimeParser<'_>, ReducedParseError> {
-        RuntimeParser::new_with_plan(
-            &self.validated,
-            &self.parser,
-            &self.table,
-            &self.runtime_plan,
-        )
-    }
-}
-
-enum PlaygroundRuntimeReport {
-    Native(RuntimeParseReport),
-    Weavy(RuntimeWeavyReport),
-}
+struct PlaygroundRuntimeReport(RuntimeWeavyReport);
 
 impl PlaygroundRuntimeReport {
     fn accepted_tree_events(&self) -> Vec<TreeEvent> {
-        match self {
-            Self::Native(report) => report.accepted_tree_events(),
-            Self::Weavy(report) => report.accepted_tree_events(),
-        }
+        self.0.accepted_tree_events()
     }
 
     fn tree_sexp(&self) -> String {
-        match self {
-            Self::Native(report) => report.tree().to_sexp(),
-            Self::Weavy(report) => report.tree().to_sexp(),
-        }
+        self.0.tree().to_sexp()
     }
 
     fn accepted_count(&self) -> usize {
-        match self {
-            Self::Native(report) => report.accepted_count(),
-            Self::Weavy(report) => report.accepted_count(),
-        }
+        self.0.accepted_count()
     }
 
     fn failure_count(&self) -> usize {
-        match self {
-            Self::Native(report) => report.failure_count(),
-            Self::Weavy(report) => report.failure_count(),
-        }
+        self.0.failure_count()
     }
 
     fn max_live_versions(&self) -> usize {
-        match self {
-            Self::Native(report) => report.max_live_versions(),
-            Self::Weavy(report) => report.max_live_versions(),
-        }
+        self.0.max_live_versions()
     }
 
     fn trace_event_count(&self) -> usize {
-        match self {
-            Self::Native(report) => report.trace_events().len(),
-            Self::Weavy(report) => report.trace_events().len(),
-        }
+        self.0.trace_events().len()
     }
 
     fn tree_events(&self) -> &[TreeEvent] {
-        match self {
-            Self::Native(report) => report.tree_events(),
-            Self::Weavy(report) => report.tree_events(),
-        }
+        self.0.tree_events()
     }
 
     fn accepted_resolved_tree(
@@ -358,10 +323,7 @@ impl PlaygroundRuntimeReport {
         parser: &ParserGrammar,
         input: &str,
     ) -> Option<RuntimeResolvedNode> {
-        match self {
-            Self::Native(report) => report.accepted_resolved_tree(parser, input),
-            Self::Weavy(report) => report.accepted_resolved_tree(parser, input),
-        }
+        self.0.accepted_resolved_tree(parser, input)
     }
 }
 
@@ -384,7 +346,6 @@ struct PreparedEmbeddedLanguage {
     diagnostics: Vec<Diagnostic>,
 }
 
-const PLAYGROUND_RECOVERY_STEP_LIMIT: usize = 1_000_000;
 const MAX_INJECTION_LAYER_DEPTH: usize = 8;
 
 /// Parse one playground request with Snark and return a JSON response.
@@ -400,7 +361,7 @@ pub struct PlaygroundSession {
     scanner_selection: ScannerSelection,
     embedded_languages: BTreeMap<String, PreparedEmbeddedLanguage>,
     last_input: Option<String>,
-    last_report: Option<RuntimeParseReport>,
+    last_report: Option<RuntimeWeavyReport>,
 }
 
 impl PlaygroundSession {
@@ -619,13 +580,11 @@ fn playground_response_for_session(
                         format!(
                             "accepted parse contains {accepted_error_count} ERROR node(s) and {accepted_missing_count} MISSING node(s)"
                         ),
-                        playground_report
-                            .strict_error
-                            .as_ref()
-                            .and_then(|error| reduced_error_byte(error))
-                            .or(playground_report.strict_error_byte)
-                            .and_then(|byte| diagnostic_span(input, byte))
-                            .or_else(|| accepted_problem_span(&accepted_tree_events, input)),
+                        accepted_problem_span(&accepted_tree_events, input).or_else(|| {
+                            playground_report
+                                .strict_error_byte
+                                .and_then(|byte| diagnostic_span(input, byte))
+                        }),
                     ));
                 }
                 if let Some(query) = query_source_for_kind(
@@ -647,7 +606,7 @@ fn playground_response_for_session(
                     diagnostics.extend(layer_diagnostics(&layers));
                 }
             }
-            Err(error) => diagnostics.push(reduced_error_diagnostic("parse", &error, input)),
+            Err(diagnostic) => diagnostics.push(diagnostic),
         }
     }
 
@@ -684,56 +643,25 @@ fn parse_session_input(
     session: &mut PlaygroundSession,
     input: &str,
     edit: Option<RuntimeInputEdit>,
-) -> Result<PlaygroundParseReport, ReducedParseError> {
+) -> Result<PlaygroundParseReport, Diagnostic> {
     let scanner = session
         .scanner_selection
         .scanner
         .as_ref()
         .map(|scanner| scanner as &dyn ReducedExternalScanner);
-    if edit.is_none() {
-        match parse_strict_weavy_with_optional_scanner(&session.prepared, scanner, input) {
-            Ok(report) => {
-                session.last_input = Some(input.to_owned());
-                session.last_report = None;
-                return Ok(PlaygroundParseReport {
-                    report: PlaygroundRuntimeReport::Weavy(report),
-                    strict_error: None,
-                    strict_error_byte: None,
-                });
-            }
-            Err(strict_error) => {
-                if let Ok(report) =
-                    parse_recovering_weavy_with_optional_scanner(&session.prepared, scanner, input)
-                {
-                    session.last_input = Some(input.to_owned());
-                    session.last_report = None;
-                    return Ok(PlaygroundParseReport {
-                        report: PlaygroundRuntimeReport::Weavy(report),
-                        strict_error: None,
-                        strict_error_byte: reduced_weavy_error_byte(&strict_error),
-                    });
-                }
-            }
-        }
-    }
 
     let previous_input = session.last_input.clone();
-    let seeded_previous = if edit.is_some() && session.last_report.is_none() {
-        previous_input.as_deref().and_then(|old_input| {
-            let runtime = session.prepared.runtime().ok()?;
-            parse_strict_native_with_optional_scanner(runtime, scanner, old_input).ok()
-        })
-    } else {
-        None
-    };
-    let previous_report = session.last_report.as_ref().or(seeded_previous.as_ref());
-    let previous = edit.and_then(|edit| Some((previous_input.as_deref()?, previous_report?, edit)));
-    let runtime = session.prepared.runtime()?;
-    let report = parse_native_with_optional_recovery(runtime, scanner, input, previous)?;
-    if let PlaygroundRuntimeReport::Native(native) = &report.report {
-        session.last_input = Some(input.to_owned());
-        session.last_report = Some(native.clone());
-    }
+    let previous = edit.and_then(|edit| {
+        Some((
+            previous_input.as_deref()?,
+            session.last_report.as_ref()?,
+            edit,
+        ))
+    });
+    let report = parse_weavy_with_optional_recovery(&session.prepared, scanner, input, previous)
+        .map_err(|error| reduced_weavy_error_diagnostic("parse", &error, input))?;
+    session.last_input = Some(input.to_owned());
+    session.last_report = Some(report.report.0.clone());
     Ok(report)
 }
 
@@ -813,8 +741,6 @@ fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, Strin
         .map_err(|error| ("prepare".to_owned(), error.to_string()))?;
     let table = ParseTable::from_grammar(&parser)
         .map_err(|error| ("table".to_owned(), error.to_string()))?;
-    let runtime_plan = RuntimeParserPlan::new(&validated, &parser, &table)
-        .map_err(|error| ("runtime".to_owned(), error.to_string()))?;
     let weavy_plan = RuntimeWeavyPlan::new(&validated, &parser, &table)
         .map_err(|error| ("weavy".to_owned(), error.to_string()))?;
     Ok(PreparedGrammar {
@@ -822,7 +748,6 @@ fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, Strin
         validated,
         parser,
         table,
-        runtime_plan,
         weavy_plan,
     })
 }
@@ -1371,32 +1296,11 @@ fn layer_output(
         .scanner
         .as_ref()
         .map(|scanner| scanner as &dyn ReducedExternalScanner);
-    let report_result = match parse_strict_weavy_with_optional_scanner(prepared, scanner, &input) {
-        Ok(report) => Ok(PlaygroundParseReport {
-            report: PlaygroundRuntimeReport::Weavy(report),
-            strict_error: None,
-            strict_error_byte: None,
-        }),
-        Err(strict_error) => {
-            match parse_recovering_weavy_with_optional_scanner(prepared, scanner, &input) {
-                Ok(report) => Ok(PlaygroundParseReport {
-                    report: PlaygroundRuntimeReport::Weavy(report),
-                    strict_error: None,
-                    strict_error_byte: reduced_weavy_error_byte(&strict_error),
-                }),
-                Err(_) => match prepared.runtime() {
-                    Ok(runtime) => {
-                        parse_native_with_optional_recovery(runtime, scanner, &input, None)
-                    }
-                    Err(error) => Err(error),
-                },
-            }
-        }
-    };
+    let report_result = parse_weavy_with_optional_recovery(prepared, scanner, &input, None);
     let report = match report_result {
         Ok(report) => report,
         Err(error) => {
-            let diagnostic = reduced_error_diagnostic("parse", &error, &input);
+            let diagnostic = reduced_weavy_error_diagnostic("parse", &error, &input);
             return LayerOutput {
                 language: group.language,
                 combined: group.combined,
@@ -1415,10 +1319,7 @@ fn layer_output(
     let parse = parse_output(&report.report, &prepared.parser, &input);
     if parse.accepted_error_count > 0 || parse.accepted_missing_count > 0 {
         let primary_span = report
-            .strict_error
-            .as_ref()
-            .and_then(|error| reduced_error_byte(error))
-            .or(report.strict_error_byte)
+            .strict_error_byte
             .and_then(|byte| diagnostic_span(&input, byte))
             .or_else(|| accepted_problem_span(&accepted_tree_events, &input))
             .and_then(|span| remap_layer_span(&span, host_input, &segments));
@@ -1920,45 +1821,50 @@ fn parse_recovering_weavy_with_optional_scanner(
     )
 }
 
-fn parse_strict_native_with_optional_scanner<'a>(
-    runtime: RuntimeParser<'a>,
-    scanner: Option<&'a dyn ReducedExternalScanner>,
+fn parse_weavy_with_optional_recovery(
+    prepared: &PreparedGrammar,
+    scanner: Option<&dyn ReducedExternalScanner>,
     input: &str,
-) -> Result<RuntimeParseReport, ReducedParseError> {
-    let runtime = match scanner {
-        Some(scanner) => runtime.with_external_scanner(scanner),
-        None => runtime,
-    };
-    runtime.parse_compact_with_report(input)
-}
-
-fn parse_native_with_optional_recovery<'a>(
-    runtime: RuntimeParser<'a>,
-    scanner: Option<&'a dyn ReducedExternalScanner>,
-    input: &str,
-    previous: Option<(&str, &RuntimeParseReport, RuntimeInputEdit)>,
-) -> Result<PlaygroundParseReport, ReducedParseError> {
-    let runtime = match scanner {
-        Some(scanner) => runtime.with_external_scanner(scanner),
-        None => runtime,
-    }
-    .with_recovery_step_limit(PLAYGROUND_RECOVERY_STEP_LIMIT);
+    previous: Option<(&str, &RuntimeWeavyReport, RuntimeInputEdit)>,
+) -> Result<PlaygroundParseReport, ReducedWeavyError> {
     let strict = if let Some((old_input, previous_report, edit)) = previous {
-        runtime.reparse_compact_with_report(old_input, previous_report, edit, input)
+        reparse_prepared_runtime_with_report_and_scanner(
+            &prepared.weavy_plan,
+            &prepared.validated,
+            &prepared.parser,
+            &prepared.table,
+            old_input,
+            previous_report,
+            edit,
+            input,
+            scanner,
+        )
     } else {
-        runtime.parse_compact_with_report(input)
+        parse_strict_weavy_with_optional_scanner(prepared, scanner, input)
     };
     match strict {
         Ok(report) => Ok(PlaygroundParseReport {
-            report: PlaygroundRuntimeReport::Native(report),
-            strict_error: None,
+            report: PlaygroundRuntimeReport(report),
             strict_error_byte: None,
         }),
-        Err(strict_error) => match runtime.parse_recovering_compact_with_report(input) {
+        Err(strict_error) => match if let Some((old_input, previous_report, edit)) = previous {
+            reparse_prepared_runtime_recovering_with_report_and_scanner(
+                &prepared.weavy_plan,
+                &prepared.validated,
+                &prepared.parser,
+                &prepared.table,
+                old_input,
+                previous_report,
+                edit,
+                input,
+                scanner,
+            )
+        } else {
+            parse_recovering_weavy_with_optional_scanner(prepared, scanner, input)
+        } {
             Ok(report) => Ok(PlaygroundParseReport {
-                report: PlaygroundRuntimeReport::Native(report),
-                strict_error_byte: reduced_error_byte(&strict_error),
-                strict_error: Some(strict_error),
+                report: PlaygroundRuntimeReport(report),
+                strict_error_byte: reduced_weavy_error_byte(&strict_error),
             }),
             Err(_) => Err(strict_error),
         },
@@ -1967,7 +1873,6 @@ fn parse_native_with_optional_recovery<'a>(
 
 struct PlaygroundParseReport {
     report: PlaygroundRuntimeReport,
-    strict_error: Option<ReducedParseError>,
     strict_error_byte: Option<usize>,
 }
 
@@ -1988,18 +1893,13 @@ fn accepted_problem_span(events: &[TreeEvent], input: &str) -> Option<Diagnostic
     })
 }
 
-fn reduced_error_diagnostic(stage: &str, error: &ReducedParseError, input: &str) -> Diagnostic {
-    let span = reduced_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
+fn reduced_weavy_error_diagnostic(
+    stage: &str,
+    error: &ReducedWeavyError,
+    input: &str,
+) -> Diagnostic {
+    let span = reduced_weavy_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
     diagnostic(stage, error.to_string(), span)
-}
-
-fn reduced_error_byte(error: &ReducedParseError) -> Option<usize> {
-    match error.kind() {
-        ReducedParseErrorKind::NoToken { byte_position, .. }
-        | ReducedParseErrorKind::NoAction { byte_position, .. }
-        | ReducedParseErrorKind::TrailingInput { byte_position } => Some(*byte_position),
-        _ => error.trace().last().map(|step| step.byte_position),
-    }
 }
 
 fn reduced_weavy_error_byte(error: &ReducedWeavyError) -> Option<usize> {
@@ -4717,9 +4617,7 @@ mod tests {
         let mut session = PlaygroundSession::prepare_files(files).expect("session prepares");
         let report = parse_session_input(&mut session, "a@\nb1", None).expect("recovered parse");
 
-        let PlaygroundRuntimeReport::Weavy(weavy_report) = report.report else {
-            panic!("non-edit recovery should route through Weavy");
-        };
+        let weavy_report = &report.report.0;
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
@@ -4728,7 +4626,7 @@ mod tests {
             count_accepted_errors(&weavy_report.accepted_tree_events()),
             1
         );
-        assert!(session.last_report.is_none());
+        assert!(session.last_report.is_some());
     }
 
     #[test]
