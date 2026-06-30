@@ -407,6 +407,112 @@ module.exports = grammar({
   );
 });
 
+test("projects manifest-declared mixed roots into embedded language layers", async () => {
+  const manifest = JSON.stringify({
+    grammars: [
+      {
+        name: "host",
+        scope: "source.host",
+        path: "grammars/host",
+        injections: "queries/injections.scm",
+      },
+      {
+        name: "child",
+        scope: "source.child",
+        path: "grammars/child",
+        highlights: "queries/highlights.scm",
+      },
+    ],
+    metadata: {
+      version: "0.0.0",
+      links: { repository: "https://example.com/mixed" },
+    },
+  });
+  const files = normalizeBundleFiles([
+    { path: "tree-sitter-package/tree-sitter.json", text: manifest },
+    {
+      path: "tree-sitter-package/grammars/host/src/grammar.json",
+      text: JSON.stringify({
+        name: "host",
+        rules: {
+          document: { type: "SYMBOL", name: "code" },
+          code: {
+            type: "TOKEN",
+            content: { type: "PATTERN", value: "[A-Z]+" },
+          },
+        },
+        extras: [],
+        conflicts: [],
+        precedences: [],
+        externals: [],
+        inline: [],
+        supertypes: [],
+      }),
+    },
+    {
+      path: "tree-sitter-package/grammars/host/queries/injections.scm",
+      text: '((code) @injection.content\n  (#set! injection.language "child"))\n',
+    },
+    {
+      path: "tree-sitter-package/grammars/child/grammar.js",
+      text: `
+module.exports = grammar({
+  name: "child",
+  rules: {
+    document: $ => $.word,
+    word: $ => /[A-Z]+/,
+  },
+});
+`,
+    },
+    {
+      path: "tree-sitter-package/grammars/child/queries/highlights.scm",
+      text: "(word) @constant\n",
+    },
+  ]);
+  const projected = await filesWithGrammarJsonUsingEmitter(files, "grammars/host", async (bundleFiles, grammarPath) =>
+    emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
+  );
+
+  assert.deepEqual(
+    projected.map((file) => file.path),
+    [
+      "languages/child/grammar.js",
+      "languages/child/queries/highlights.scm",
+      "languages/child/src/grammar.json",
+      "languages/child/tree-sitter.json",
+      "queries/injections.scm",
+      "src/grammar.json",
+      "tree-sitter.json",
+    ],
+  );
+
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: projected,
+        input: "PRINT",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.language, "host");
+  assert.equal(response.injections.length, 1);
+  assert.equal(response.injections[0].language, "child");
+  assert.equal(response.layers.length, 1);
+  assert.equal(response.layers[0].language, "child");
+  assert.equal(response.layers[0].parse.sexp, "(document (word))");
+  assert.deepEqual(
+    response.layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
+      capture.capture_name,
+      capture.text,
+    ]),
+    [["constant", "PRINT"]],
+  );
+});
+
 test("injects scanner-free html from gingembre text chunks", async () => {
   const files = allBundledFiles();
   const projected = await filesWithGrammarJsonUsingEmitter(files, "gingembre", async (bundleFiles, grammarPath) =>
