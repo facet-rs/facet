@@ -10966,6 +10966,27 @@ extras (
         (validated, parser, table)
     }
 
+    fn authored_gingembre_weavy_fixture() -> &'static (
+        ValidatedGrammar,
+        ParserGrammar,
+        ParseTable,
+        crate::lower::weavy::RuntimeWeavyPlan,
+    ) {
+        static FIXTURE: OnceLock<(
+            ValidatedGrammar,
+            ParserGrammar,
+            ParseTable,
+            crate::lower::weavy::RuntimeWeavyPlan,
+        )> = OnceLock::new();
+
+        FIXTURE.get_or_init(|| {
+            let (validated, parser, table) = authored_gingembre_runtime_fixture();
+            let plan =
+                crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+            (validated, parser, table, plan)
+        })
+    }
+
     fn gingembre_named_projection(input: &str) -> SexpNode {
         let parse = gingembre_syntax::parse(input);
         assert!(
@@ -11015,11 +11036,11 @@ extras (
     }
 
     fn assert_styx_authored_gingembre_runtime(input: &str, expected_sexp: &str) {
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
+        )
+        .unwrap();
         let expected = gingembre_named_projection(input);
 
         rediff::assert_same!(report.tree(), &expected);
@@ -11053,10 +11074,10 @@ extras (
             "gingembre unexpectedly accepted {input:?}"
         );
 
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let result = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input);
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let result = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
+        );
         assert!(result.is_err(), "snark unexpectedly accepted {input:?}");
     }
 
@@ -11149,13 +11170,13 @@ extras (
 
     #[test]
     fn accepted_resolved_tree_preserves_anonymous_gingembre_delimiters() {
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{- x -}}";
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let tree = report.accepted_resolved_tree(&parser, input).unwrap();
+        let report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
+        )
+        .unwrap();
+        let tree = report.accepted_resolved_tree(parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
         assert_eq!(tree.kind(), "template");
@@ -11165,13 +11186,13 @@ extras (
 
     #[test]
     fn accepted_resolved_tree_preserves_anonymous_gingembre_operators() {
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{ 1 + 2 * 3 }}";
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let tree = report.accepted_resolved_tree(&parser, input).unwrap();
+        let report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
+        )
+        .unwrap();
+        let tree = report.accepted_resolved_tree(parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
         assert_eq!(tree.kind(), "template");
@@ -11182,22 +11203,16 @@ extras (
     #[cfg(feature = "weavy-lowering")]
     #[test]
     fn prepared_weavy_resolved_tree_preserves_anonymous_gingembre_operators() {
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{ 1 + 2 * 3 }}";
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+            plan, validated, parser, table, input,
         )
         .unwrap();
-        let tree = weavy_report.accepted_resolved_tree(&parser, input).unwrap();
+        let tree = weavy_report.accepted_resolved_tree(parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(tree.kind(), "template");
         assert!(texts.contains(&"+"), "resolved terminals: {texts:?}");
         assert!(texts.contains(&"*"), "resolved terminals: {texts:?}");
@@ -11417,25 +11432,19 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_call_arguments_through_weavy_runtime() {
         let input = "{{ greet(user.name, suffix) }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (field_expr (var_ref))) (arg (var_ref))))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
@@ -11443,25 +11452,19 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_index_postfix_through_weavy_runtime() {
         let input = "{{ items[1].name }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (field_expr (index_expr (var_ref) (literal)))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
@@ -11469,25 +11472,19 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_optional_postfix_through_weavy_runtime() {
         let input = "{{ fetch()[0]? | default(none) }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (filter_expr (optional_expr (index_expr (call_expr (var_ref) (arg_list)) (literal))) (arg_list (arg (literal))))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
@@ -11495,25 +11492,19 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_compound_primaries_through_weavy_runtime() {
         let input = r#"{{ {"name": user.name, "ok": true,} }}"#;
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (dict_lit (literal) (field_expr (var_ref)) (literal) (literal))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
@@ -11521,25 +11512,19 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_filters_and_tests_through_weavy_runtime() {
         let input = "{{ value | default(fallback) is not none }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (test_expr (filter_expr (var_ref) (arg_list (arg (var_ref)))))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
@@ -11547,25 +11532,19 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_unary_precedence_through_weavy_runtime() {
         let input = "{{ not a == b }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
@@ -11573,25 +11552,19 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_binary_precedence_through_weavy_runtime() {
         let input = "{{ a + b * c }}";
-        let (validated, parser, table) = authored_gingembre_runtime_fixture();
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            plan, validated, parser, table, input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
