@@ -1,14 +1,18 @@
-//! Structural fitness probe: parse representative gingembre templates with the real
-//! snark RuntimeParser and print the resolved s-expression, so we can eyeball whether
-//! the grammar's tree structure is rich enough to map onto `gingembre::ast::Template`
-//! — independent of (and prior to) solving leaf-text extraction.
+//! gingembre-snark: parse gingembre with snark's **Weavy** runtime and inspect the
+//! resolved CST (`RuntimeResolvedNode`) — kinds, fields, ranges, and terminal text
+//! including anonymous operators and `{%- -%}` trim markers.
+//!
+//! This is the input surface for lowering to `gingembre::ast::Template`. The point of
+//! this dump is to confirm the resolved tree carries everything the lowering needs
+//! (notably the anonymous-terminal text the bare s-expression dropped).
 
 use std::{env, path::PathBuf};
 
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    parser::{ParseTable, ParserGrammar, RuntimeParser},
+    lower::weavy::{RuntimeWeavyPlan, parse_prepared_runtime_with_report},
+    parser::{ParseTable, ParserGrammar, RuntimeResolvedNode},
     validated::ValidatedGrammar,
 };
 
@@ -29,9 +33,8 @@ fn main() {
         .prepare_productions_for_items()
         .expect("prepare productions");
     let table = ParseTable::from_grammar(&parser).expect("build parse table");
-    let runtime = RuntimeParser::new(&validated, &parser, &table).expect("runtime");
+    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("weavy plan");
 
-    // One template per AST node kind we care about, smallest form that exercises it.
     let samples: &[(&str, &str)] = &[
         ("text", "hello world"),
         ("print + field + filter", "{{ user.name | upper }}"),
@@ -56,17 +59,25 @@ fn main() {
 
     for (label, src) in samples {
         println!("### {label}\n  src: {src:?}");
-        match runtime.parse_compact_with_report(src) {
-            Ok(report) => {
-                let sexp = report.tree().to_sexp();
-                let flag = if sexp.contains("ERROR") || sexp.contains("MISSING") {
-                    "  ⚠ contains ERROR/MISSING"
-                } else {
-                    "  clean"
-                };
-                println!("{flag}\n  {sexp}\n");
-            }
-            Err(e) => println!("  PARSE ERROR: {e:?}\n"),
+        match parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, src) {
+            Ok(report) => match report.accepted_resolved_tree(&parser, src) {
+                Some(tree) => dump(&tree, 1),
+                None => println!("  (no accepted resolved tree)"),
+            },
+            Err(e) => println!("  PARSE ERROR: {e:?}"),
         }
+        println!();
+    }
+}
+
+/// Print the resolved tree: `field: kind (anon) "text"` per node, indented by depth.
+fn dump(node: &RuntimeResolvedNode, depth: usize) {
+    let indent = "  ".repeat(depth);
+    let field = node.field().map(|f| format!("{f}: ")).unwrap_or_default();
+    let anon = if node.named() { "" } else { " (anon)" };
+    let text = node.text().map(|t| format!("  {t:?}")).unwrap_or_default();
+    println!("{indent}{field}{}{anon}{text}", node.kind());
+    for child in node.children() {
+        dump(child, depth + 1);
     }
 }
