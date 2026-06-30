@@ -6692,6 +6692,49 @@ impl<'a> RuntimeParseSession<'a> {
             .as_ref()
             .expect("session report was just installed"))
     }
+
+    /// Parse a full input with recovery and make it the new session baseline.
+    pub fn parse_recovering_compact(
+        &mut self,
+        input: impl Into<String>,
+    ) -> Result<&RuntimeParseReport, ReducedParseError> {
+        let input = input.into();
+        let report = self.parser.parse_recovering_compact_with_report(&input)?;
+        self.last_input = Some(input);
+        self.last_report = Some(report);
+        Ok(self
+            .last_report
+            .as_ref()
+            .expect("session report was just installed"))
+    }
+
+    /// Reparse after an edit with recovery and make the new input the session baseline.
+    pub fn reparse_recovering_compact(
+        &mut self,
+        edit: RuntimeInputEdit,
+        new_input: impl Into<String>,
+    ) -> Result<&RuntimeParseReport, ReducedParseError> {
+        let new_input = new_input.into();
+        let report = if let (Some(old_input), Some(last_report)) =
+            (self.last_input.as_deref(), self.last_report.as_ref())
+        {
+            self.parser.reparse_recovering_compact_with_report(
+                old_input,
+                last_report,
+                edit,
+                &new_input,
+            )?
+        } else {
+            self.parser
+                .parse_recovering_compact_with_report(&new_input)?
+        };
+        self.last_input = Some(new_input);
+        self.last_report = Some(report);
+        Ok(self
+            .last_report
+            .as_ref()
+            .expect("session report was just installed"))
+    }
 }
 
 impl RuntimeInputEdit {
@@ -6834,6 +6877,20 @@ impl<'a> RuntimeParser<'a> {
         self.parse_compact_with_reuse_index(new_input, &reuse_index)
     }
 
+    /// Reparse one edited input with recovery using an accepted report from the
+    /// previous input as the reusable-subtree source.
+    pub fn reparse_recovering_compact_with_report(
+        &self,
+        old_input: &str,
+        previous_report: &RuntimeParseReport,
+        edit: RuntimeInputEdit,
+        new_input: &str,
+    ) -> Result<RuntimeParseReport, ReducedParseError> {
+        edit.validate_against(old_input, new_input)?;
+        let reuse_index = RuntimeReuseIndex::from_report(previous_report, edit);
+        self.parse_recovering_compact_with_reuse_index(new_input, &reuse_index)
+    }
+
     fn parse_with_report_mode(
         &self,
         input: &str,
@@ -6851,6 +6908,19 @@ impl<'a> RuntimeParser<'a> {
         self.parse_with_report_mode_reuse(
             input,
             RuntimeRecoveryMode::Strict,
+            RuntimeTraceDetail::Lineage,
+            Some(reuse_index),
+        )
+    }
+
+    fn parse_recovering_compact_with_reuse_index(
+        &self,
+        input: &str,
+        reuse_index: &RuntimeReuseIndex,
+    ) -> Result<RuntimeParseReport, ReducedParseError> {
+        self.parse_with_report_mode_reuse(
+            input,
+            RuntimeRecoveryMode::SkipInvalidInput,
             RuntimeTraceDetail::Lineage,
             Some(reuse_index),
         )
@@ -11575,6 +11645,37 @@ extras (
             "(source_file (wrapper (left) (comment) (right)) (suffix))"
         );
         assert_eq!(reused_byte_ranges(&reparsed), vec![(0, 7)]);
+    }
+
+    #[test]
+    fn runtime_parse_session_does_not_reuse_error_containing_node() {
+        let (validated, parser, table) = wrapped_extra_reuse_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .with_recovery_step_limit(128);
+        let mut session = RuntimeParseSession::new(runtime);
+        let first = session.parse_recovering_compact("a@\nb1").unwrap().clone();
+        assert_eq!(
+            first.tree().to_sexp(),
+            "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
+        );
+
+        let edit = RuntimeInputEdit::new(4, 5, 5);
+        let reparsed = session
+            .reparse_recovering_compact(edit, "a@\nb2")
+            .unwrap()
+            .clone();
+        let scratch = RuntimeParser::new(&validated, &parser, &table)
+            .unwrap()
+            .with_recovery_step_limit(128)
+            .parse_recovering_compact_with_report("a@\nb2")
+            .unwrap();
+
+        rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert!(
+            !reused_byte_ranges(&reparsed).contains(&(0, 4)),
+            "wrapper node contains ERROR and must not be reused"
+        );
     }
 
     #[test]
