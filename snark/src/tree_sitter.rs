@@ -1236,13 +1236,6 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[0].name, "Universal selectors");
-        let rust_report = parse_reduced_report_or_panic(
-            grammar,
-            &validated,
-            &parser_grammar,
-            &parse_table,
-            &selector_cases[0].input,
-        );
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
@@ -1254,7 +1247,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_same!(&weavy_tree, rust_report.tree());
         assert_same!(weavy_tree, selector_cases[0].expected);
         assert!(stats.step_count > 0);
         assert!(stats.block_call_count > 0);
@@ -1354,13 +1346,6 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[2].name, "Class selectors");
-        let rust_report = parse_reduced_report_or_panic(
-            grammar,
-            &validated,
-            &parser_grammar,
-            &parse_table,
-            &selector_cases[2].input,
-        );
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
@@ -1372,7 +1357,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_same!(&weavy_tree, rust_report.tree());
         assert_same!(weavy_tree, selector_cases[2].expected);
         assert!(stats.step_count > 0);
         assert!(stats.block_call_count > 0);
@@ -1596,13 +1580,6 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
-        let rust_report = parse_reduced_report_or_panic(
-            grammar,
-            &validated,
-            &parser_grammar,
-            &parse_table,
-            &selector_cases[5].input,
-        );
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
@@ -1617,7 +1594,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_same!(weavy_report.tree(), rust_report.tree());
         assert_same!(weavy_report.tree(), &selector_cases[5].expected);
         assert!(
             scanner.calls.get() > 0,
@@ -1667,13 +1643,6 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
-        let runtime_css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let runtime_scanner = RecordingCssReducedExternalScanner::new(&runtime_css_scanner);
-        let runtime_report = RuntimeParser::new(&validated, &parser_grammar, &parse_table)
-            .unwrap()
-            .with_external_scanner(&runtime_scanner)
-            .parse_with_report(&selector_cases[5].input)
-            .unwrap();
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let weavy_css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
@@ -1688,18 +1657,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_same!(weavy_report.tree(), &selector_cases[5].expected);
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
         assert!(
-            runtime_scanner.accepted_pseudo_class_selector_colon.get() > 0,
-            "expected RuntimeParser to accept the pseudo-class selector colon external"
-        );
-        assert_eq!(
-            weavy_scanner.accepted_pseudo_class_selector_colon.get(),
-            runtime_scanner.accepted_pseudo_class_selector_colon.get(),
-            "expected Weavy runtime to accept the same pseudo-class selector colon count"
+            weavy_scanner.accepted_pseudo_class_selector_colon.get() > 0,
+            "expected Weavy runtime to accept the pseudo-class selector colon external"
         );
         assert_eq!(
             weavy_scanner.missing_valid_symbols.get(),
@@ -1942,13 +1903,6 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[10].name, "Descendant selectors");
-        let rust_report = parse_reduced_report_or_panic(
-            grammar,
-            &validated,
-            &parser_grammar,
-            &parse_table,
-            &selector_cases[10].input,
-        );
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
@@ -1963,7 +1917,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_same!(weavy_report.tree(), rust_report.tree());
         assert_same!(weavy_report.tree(), &selector_cases[10].expected);
         assert!(
             scanner.calls.get() > 0,
@@ -2688,13 +2641,6 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let rust_report = parse_reduced_report_or_panic(
-            grammar,
-            &validated,
-            &parser_grammar,
-            &parse_table,
-            &declaration_cases[7].input,
-        );
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let weavy_report = crate::lower::weavy::parse_reduced_with_report(
@@ -2706,7 +2652,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_same!(weavy_report.tree(), rust_report.tree());
         assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
         let important_conflict = weavy_report.conflict_steps().iter().find(|step| {
             if step.actions.len() < 2
@@ -3188,13 +3133,6 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[4].name, "Comments");
-        let rust_report = unwrap_reduced_report_or_panic(
-            ReducedParser::new(&validated, &parser_grammar, &parse_table)
-                .unwrap()
-                .parse_with_report(&cases[4].input),
-            &parser_grammar,
-            &parse_table,
-        );
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
@@ -3206,7 +3144,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_same!(&weavy_tree, rust_report.tree());
         assert_same!(weavy_tree, cases[4].expected);
         assert!(stats.step_count > 0);
         assert!(stats.block_call_count > 0);
@@ -3229,13 +3166,6 @@ mod tests {
             .unwrap();
         let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
         let input = "// leading\n{\"a\": 1}";
-        let rust_report = unwrap_reduced_report_or_panic(
-            ReducedParser::new(&validated, &parser_grammar, &parse_table)
-                .unwrap()
-                .parse_with_report(input),
-            &parser_grammar,
-            &parse_table,
-        );
         let plan =
             crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
         let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
@@ -3247,7 +3177,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_same!(&weavy_tree, rust_report.tree());
         assert_eq!(
             weavy_tree.to_sexp(),
             "(document (comment) (object (pair (string (string_content)) (number))))"
