@@ -162,6 +162,10 @@ use figue_attrs as args;
 #[macro_use]
 mod macros;
 
+/// Arbitrary-based helper assertions for consumer roundtrip tests.
+#[cfg(feature = "arbitrary")]
+pub mod arbitrary_checks;
+
 pub(crate) mod builder;
 pub(crate) mod color;
 pub mod completions;
@@ -198,6 +202,11 @@ use facet_core::Facet;
 // ==========================================
 
 pub use crate::completions::{Shell, generate_completions_for_shape};
+#[cfg(feature = "arbitrary")]
+pub use arbitrary_checks::{
+    ArbitraryCheckError, TestToArgsConsistencyConfig, TestToArgsRoundTrip,
+    assert_to_args_consistency, assert_to_args_roundtrip,
+};
 pub use builder::builder;
 pub use config_format::{ConfigFormat, ConfigFormatError, JsonFormat, JsoncFormat};
 pub use config_value::ConfigValue;
@@ -677,3 +686,5 @@ mod tests {
         );
     }
 }
+
+
