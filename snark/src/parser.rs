@@ -3752,14 +3752,10 @@ impl TableConflict {
 /// currently supported by this reduced oracle. It is not the final recoverable,
 /// incremental, field/atom-complete GLR runtime.
 pub struct ReducedParser<'a> {
-    #[cfg(test)]
-    grammar: &'a ValidatedGrammar,
     parser: &'a ParserGrammar,
     table: &'a ParseTable,
     external_scanner: Option<&'a dyn ReducedExternalScanner>,
     runtime_plan: RuntimePlanRef<'a>,
-    #[cfg(test)]
-    regex_patterns: HashMap<(String, Option<String>), Option<Regex>>,
     lex_cache: RefCell<HashMap<LexCacheKey, Result<ReducedToken, ReducedParseError>>>,
     lex_mode_cache:
         RefCell<HashMap<LexModeCacheKey, Result<Vec<ReducedTokenCandidate>, ReducedParseError>>>,
@@ -4190,17 +4186,12 @@ impl<'a> ReducedParser<'a> {
                 stage: parser.stage(),
             }));
         }
-        #[cfg(not(test))]
         let _ = grammar;
         Ok(Self {
-            #[cfg(test)]
-            grammar,
             parser,
             table,
             external_scanner: None,
             runtime_plan,
-            #[cfg(test)]
-            regex_patterns: compile_regex_patterns(grammar, parser),
             lex_cache: RefCell::new(HashMap::new()),
             lex_mode_cache: RefCell::new(HashMap::new()),
         })
@@ -4859,62 +4850,13 @@ impl<'a> ReducedParser<'a> {
         spellings
     }
 
-    #[cfg(test)]
-    fn match_terminal(
-        &self,
-        terminal: &TerminalSymbol,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Option<usize>, ReducedParseError> {
-        match terminal.kind() {
-            ParserTerminalKind::String => Ok(input[byte_position..]
-                .starts_with(terminal.spelling())
-                .then_some(byte_position + terminal.spelling().len())),
-            ParserTerminalKind::Pattern => {
-                Ok(self.match_pattern(terminal.spelling(), terminal.flags(), input, byte_position))
-            }
-            ParserTerminalKind::AutoClose => Ok(None),
-            ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
-                let Some(root) = terminal.lexical_root() else {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnsupportedTerminal {
-                            terminal: terminal.id(),
-                            spelling: terminal.spelling().to_owned(),
-                        },
-                    ));
-                };
-                let (GrammarExpr::Token(content) | GrammarExpr::ImmediateToken(content)) =
-                    self.grammar.expr(root)
-                else {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnsupportedTerminal {
-                            terminal: terminal.id(),
-                            spelling: terminal.spelling().to_owned(),
-                        },
-                    ));
-                };
-                self.match_lexical_expr(*content, input, byte_position)
-            }
-        }
-    }
-
     fn match_compiled_terminal(
         &self,
         terminal: &CompiledLexTerminal,
         input: &str,
         byte_position: usize,
     ) -> Result<Option<LexMatch>, ReducedParseError> {
-        match &terminal.matcher {
-            CompiledTerminalMatcher::Expr(expr) => {
-                self.match_compiled_lex_expr(expr, input, byte_position)
-            }
-            CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => Err(
-                ReducedParseError::new(ReducedParseErrorKind::UnsupportedTerminal {
-                    terminal: *terminal,
-                    spelling: spelling.clone(),
-                }),
-            ),
-        }
+        match_compiled_lex_terminal(terminal, input, byte_position)
     }
 
     fn match_compiled_terminal_with_set(
@@ -4952,97 +4894,6 @@ impl<'a> ReducedParser<'a> {
         Ok(ends)
     }
 
-    fn match_compiled_lex_expr(
-        &self,
-        expr: &CompiledLexExpr,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Option<LexMatch>, ReducedParseError> {
-        match expr {
-            CompiledLexExpr::Blank => Ok(Some(LexMatch::new(byte_position, byte_position))),
-            CompiledLexExpr::String(value) => Ok(input[byte_position..]
-                .starts_with(value)
-                .then_some(LexMatch::new(
-                    byte_position + value.len(),
-                    byte_position + value.len(),
-                ))),
-            CompiledLexExpr::Pattern(pattern) => {
-                Ok(match_compiled_pattern(pattern, input, byte_position))
-            }
-            CompiledLexExpr::Until { markers } => Ok(match_until_markers_with_inspection(
-                markers.iter().map(String::as_str),
-                input,
-                byte_position,
-            )),
-            CompiledLexExpr::Nested { open, close } => Ok(match_nested_delimiters_with_inspection(
-                open,
-                close,
-                input,
-                byte_position,
-            )),
-            CompiledLexExpr::AutoClose(_) => Ok(None),
-            CompiledLexExpr::Seq(members) => {
-                let mut position = byte_position;
-                let mut inspected_end = byte_position;
-                for member in members {
-                    let Some(match_) = self.match_compiled_lex_expr(member, input, position)?
-                    else {
-                        return Ok(None);
-                    };
-                    position = match_.end;
-                    inspected_end = inspected_end.max(match_.inspected_end);
-                }
-                Ok(Some(LexMatch::new(position, inspected_end)))
-            }
-            CompiledLexExpr::Choice(members) => {
-                let mut best = None::<LexMatch>;
-                for member in members {
-                    if let Some(match_) =
-                        self.match_compiled_lex_expr(member, input, byte_position)?
-                        && best.is_none_or(|best| match_.end > best.end)
-                    {
-                        best = Some(match_);
-                    }
-                }
-                Ok(best)
-            }
-            CompiledLexExpr::Repeat(content) => {
-                let mut position = byte_position;
-                let mut inspected_end = byte_position;
-                while let Some(match_) = self.match_compiled_lex_expr(content, input, position)? {
-                    inspected_end = inspected_end.max(match_.inspected_end);
-                    if match_.end == position {
-                        break;
-                    }
-                    position = match_.end;
-                }
-                Ok(Some(LexMatch::new(position, inspected_end)))
-            }
-            CompiledLexExpr::Repeat1(content) => {
-                let Some(first) = self.match_compiled_lex_expr(content, input, byte_position)?
-                else {
-                    return Ok(None);
-                };
-                let mut position = first.end;
-                let mut inspected_end = first.inspected_end;
-                if position == byte_position {
-                    return Ok(None);
-                }
-                while let Some(match_) = self.match_compiled_lex_expr(content, input, position)? {
-                    inspected_end = inspected_end.max(match_.inspected_end);
-                    if match_.end == position {
-                        break;
-                    }
-                    position = match_.end;
-                }
-                Ok(Some(LexMatch::new(position, inspected_end)))
-            }
-            CompiledLexExpr::UnsupportedSymbol(expr) => Err(ReducedParseError::new(
-                ReducedParseErrorKind::UnsupportedLexicalSymbol { expr: *expr },
-            )),
-        }
-    }
-
     fn match_external(
         &self,
         state: &ParseState,
@@ -5073,161 +4924,6 @@ impl<'a> ReducedParser<'a> {
             byte_position,
             scanner_snapshot,
         })
-    }
-
-    #[cfg(test)]
-    fn match_lexical_expr(
-        &self,
-        expr: GrammarExprId,
-        input: &str,
-        byte_position: usize,
-    ) -> Result<Option<usize>, ReducedParseError> {
-        self.match_lexical_expr_inner(expr, input, byte_position, &mut Vec::new())
-    }
-
-    #[cfg(test)]
-    fn match_lexical_expr_inner(
-        &self,
-        expr: GrammarExprId,
-        input: &str,
-        byte_position: usize,
-        rule_stack: &mut Vec<RuleId>,
-    ) -> Result<Option<usize>, ReducedParseError> {
-        match self.grammar.expr(expr) {
-            GrammarExpr::Blank => Ok(Some(byte_position)),
-            GrammarExpr::StringToken(value) => Ok(input[byte_position..]
-                .starts_with(value)
-                .then_some(byte_position + value.len())),
-            GrammarExpr::PatternToken { value, flags } => {
-                Ok(self.match_pattern(value, flags.as_deref(), input, byte_position))
-            }
-            GrammarExpr::Until { markers } => Ok(match_until_markers(
-                markers.iter().map(String::as_str),
-                input,
-                byte_position,
-            )),
-            GrammarExpr::Nested { open, close } => {
-                Ok(match_nested_delimiters(open, close, input, byte_position))
-            }
-            GrammarExpr::AutoClose { .. } => Ok(None),
-            GrammarExpr::Token(content)
-            | GrammarExpr::ImmediateToken(content)
-            | GrammarExpr::Field { content, .. }
-            | GrammarExpr::Prec { content, .. }
-            | GrammarExpr::PrecDynamic { content, .. }
-            | GrammarExpr::Alias { content, .. }
-            | GrammarExpr::Reserved { content, .. } => {
-                self.match_lexical_expr_inner(*content, input, byte_position, rule_stack)
-            }
-            GrammarExpr::Choice(members) => {
-                let mut best = None;
-                for member in members {
-                    if let Some(end) =
-                        self.match_lexical_expr_inner(*member, input, byte_position, rule_stack)?
-                    {
-                        if best.is_none_or(|best| end > best) {
-                            best = Some(end);
-                        }
-                    }
-                }
-                Ok(best)
-            }
-            GrammarExpr::Seq(members) => {
-                let mut position = byte_position;
-                for member in members {
-                    let Some(end) =
-                        self.match_lexical_expr_inner(*member, input, position, rule_stack)?
-                    else {
-                        return Ok(None);
-                    };
-                    position = end;
-                }
-                Ok(Some(position))
-            }
-            GrammarExpr::Repeat(content) => {
-                let mut position = byte_position;
-                while let Some(end) =
-                    self.match_lexical_expr_inner(*content, input, position, rule_stack)?
-                {
-                    if end == position {
-                        break;
-                    }
-                    position = end;
-                }
-                Ok(Some(position))
-            }
-            GrammarExpr::Repeat1(content) => {
-                let Some(mut position) =
-                    self.match_lexical_expr_inner(*content, input, byte_position, rule_stack)?
-                else {
-                    return Ok(None);
-                };
-                if position == byte_position {
-                    return Ok(None);
-                }
-                while let Some(end) =
-                    self.match_lexical_expr_inner(*content, input, position, rule_stack)?
-                {
-                    if end == position {
-                        break;
-                    }
-                    position = end;
-                }
-                Ok(Some(position))
-            }
-            GrammarExpr::Symbol(SymbolRef::Rule(rule)) => {
-                if rule_stack.contains(rule) {
-                    return Err(ReducedParseError::new(
-                        ReducedParseErrorKind::UnsupportedLexicalSymbol { expr },
-                    ));
-                }
-                rule_stack.push(*rule);
-                let result = self.match_lexical_expr_inner(
-                    self.grammar.rule(*rule).expr(),
-                    input,
-                    byte_position,
-                    rule_stack,
-                );
-                rule_stack.pop();
-                result
-            }
-            GrammarExpr::Symbol(SymbolRef::External(_)) => Err(ReducedParseError::new(
-                ReducedParseErrorKind::UnsupportedLexicalSymbol { expr },
-            )),
-        }
-    }
-
-    #[cfg(test)]
-    fn match_pattern(
-        &self,
-        pattern: &str,
-        flags: Option<&str>,
-        input: &str,
-        byte_position: usize,
-    ) -> Option<usize> {
-        if regex_flags_are_empty(flags)
-            && let Some(result) = match_known_pattern(pattern, input, byte_position)
-        {
-            return result;
-        }
-        self.match_regex_leaf(pattern, flags, input, byte_position)
-    }
-
-    #[cfg(test)]
-    fn match_regex_leaf(
-        &self,
-        pattern: &str,
-        flags: Option<&str>,
-        input: &str,
-        byte_position: usize,
-    ) -> Option<usize> {
-        let haystack = input.get(byte_position..)?;
-        let key = (pattern.to_owned(), normalized_regex_flags(flags));
-        let regex = self.regex_patterns.get(&key)?.as_ref()?;
-        regex
-            .find(haystack)
-            .filter(|match_| match_.start() == 0)
-            .map(|match_| byte_position + match_.end())
     }
 
     fn lookahead_shifts_only_extra(&self, state: &ParseState, lookahead: LookaheadSymbol) -> bool {
@@ -5439,39 +5135,110 @@ fn match_known_pattern(pattern: &str, input: &str, byte_position: usize) -> Opti
     }
 }
 
-#[cfg(test)]
-fn compile_regex_patterns(
-    grammar: &ValidatedGrammar,
-    parser: &ParserGrammar,
-) -> HashMap<(String, Option<String>), Option<Regex>> {
-    let mut patterns = HashMap::new();
-    for (_, expr) in grammar.expressions() {
-        if let GrammarExpr::PatternToken { value, flags } = expr {
-            let key = (value.clone(), normalized_regex_flags(flags.as_deref()));
-            patterns
-                .entry(key)
-                .or_insert_with(|| compile_regex_leaf(value, flags.as_deref()));
-        }
-    }
-    for terminal in &parser.symbols.terminals {
-        if terminal.kind() == ParserTerminalKind::Pattern {
-            let key = (
-                terminal.spelling().to_owned(),
-                normalized_regex_flags(terminal.flags()),
-            );
-            patterns
-                .entry(key)
-                .or_insert_with(|| compile_regex_leaf(terminal.spelling(), terminal.flags()));
-        }
-    }
-    patterns
-}
-
 fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledLexPattern {
     CompiledLexPattern {
         source: pattern.to_owned(),
         flags: normalized_regex_flags(flags),
         regex: compile_regex_leaf(pattern, flags),
+    }
+}
+
+pub(crate) fn match_compiled_lex_terminal(
+    terminal: &CompiledLexTerminal,
+    input: &str,
+    byte_position: usize,
+) -> Result<Option<LexMatch>, ReducedParseError> {
+    match &terminal.matcher {
+        CompiledTerminalMatcher::Expr(expr) => match_compiled_lex_expr(expr, input, byte_position),
+        CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => {
+            Err(ReducedParseError::new(
+                ReducedParseErrorKind::UnsupportedTerminal {
+                    terminal: *terminal,
+                    spelling: spelling.clone(),
+                },
+            ))
+        }
+    }
+}
+
+fn match_compiled_lex_expr(
+    expr: &CompiledLexExpr,
+    input: &str,
+    byte_position: usize,
+) -> Result<Option<LexMatch>, ReducedParseError> {
+    match expr {
+        CompiledLexExpr::Blank => Ok(Some(LexMatch::new(byte_position, byte_position))),
+        CompiledLexExpr::String(value) => Ok(input[byte_position..].starts_with(value).then_some(
+            LexMatch::new(byte_position + value.len(), byte_position + value.len()),
+        )),
+        CompiledLexExpr::Pattern(pattern) => {
+            Ok(match_compiled_pattern(pattern, input, byte_position))
+        }
+        CompiledLexExpr::Until { markers } => Ok(match_until_markers_with_inspection(
+            markers.iter().map(String::as_str),
+            input,
+            byte_position,
+        )),
+        CompiledLexExpr::Nested { open, close } => {
+            Ok(match_nested_delimiters_with_inspection(open, close, input, byte_position))
+        }
+        CompiledLexExpr::AutoClose(_) => Ok(None),
+        CompiledLexExpr::Seq(members) => {
+            let mut position = byte_position;
+            let mut inspected_end = byte_position;
+            for member in members {
+                let Some(match_) = match_compiled_lex_expr(member, input, position)? else {
+                    return Ok(None);
+                };
+                position = match_.end;
+                inspected_end = inspected_end.max(match_.inspected_end);
+            }
+            Ok(Some(LexMatch::new(position, inspected_end)))
+        }
+        CompiledLexExpr::Choice(members) => {
+            let mut best = None::<LexMatch>;
+            for member in members {
+                if let Some(match_) = match_compiled_lex_expr(member, input, byte_position)?
+                    && best.is_none_or(|best| match_.end > best.end)
+                {
+                    best = Some(match_);
+                }
+            }
+            Ok(best)
+        }
+        CompiledLexExpr::Repeat(content) => {
+            let mut position = byte_position;
+            let mut inspected_end = byte_position;
+            while let Some(match_) = match_compiled_lex_expr(content, input, position)? {
+                inspected_end = inspected_end.max(match_.inspected_end);
+                if match_.end == position {
+                    break;
+                }
+                position = match_.end;
+            }
+            Ok(Some(LexMatch::new(position, inspected_end)))
+        }
+        CompiledLexExpr::Repeat1(content) => {
+            let Some(first) = match_compiled_lex_expr(content, input, byte_position)? else {
+                return Ok(None);
+            };
+            let mut position = first.end;
+            let mut inspected_end = first.inspected_end;
+            if position == byte_position {
+                return Ok(None);
+            }
+            while let Some(match_) = match_compiled_lex_expr(content, input, position)? {
+                inspected_end = inspected_end.max(match_.inspected_end);
+                if match_.end == position {
+                    break;
+                }
+                position = match_.end;
+            }
+            Ok(Some(LexMatch::new(position, inspected_end)))
+        }
+        CompiledLexExpr::UnsupportedSymbol(expr) => Err(ReducedParseError::new(
+            ReducedParseErrorKind::UnsupportedLexicalSymbol { expr: *expr },
+        )),
     }
 }
 
@@ -12152,8 +11919,8 @@ extras (
     }
 
     #[test]
-    fn compiled_lexer_matches_interpreted_terminal_matcher() {
-        let (validated, parser, table) = prepared_with_validated(
+    fn compiled_lexer_matches_expected_terminal_matches() {
+        let (validated, parser, _table) = prepared_with_validated(
             r##"{
               "name": "mini",
               "rules": {
@@ -12197,24 +11964,41 @@ extras (
               }
             }"##,
         );
-        let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
         let input = "=> abc ab3bz yxy q";
+        let byte_positions = [0usize, 3, 7, 8, 14, 18];
 
-        for terminal in parser.symbols.terminals() {
-            let compiled = compile_lex_terminal(&validated, terminal);
-            for byte_position in [0usize, 3, 7, 8, 14, 18] {
-                let interpreted = reduced.match_terminal(terminal, input, byte_position);
-                let compiled = reduced
-                    .match_compiled_terminal(&compiled, input, byte_position)
-                    .map(|result| result.map(|match_| match_.end));
-                assert_eq!(
-                    compiled,
-                    interpreted,
-                    "terminal `{}` at byte {byte_position}",
-                    terminal.spelling()
-                );
-            }
-        }
+        let observed = parser
+            .symbols
+            .terminals()
+            .iter()
+            .map(|terminal| {
+                Ok((
+                    terminal.kind(),
+                    terminal.spelling().to_owned(),
+                    compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, ReducedParseError>>()
+            .unwrap();
+
+        assert!(observed.contains(&(
+            ParserTerminalKind::String,
+            "=>".to_owned(),
+            vec![Some(2), None, None, None, None, None],
+        )));
+        assert!(observed.contains(&(
+            ParserTerminalKind::Pattern,
+            "[a-z]+".to_owned(),
+            vec![None, Some(6), Some(9), Some(9), Some(16), None],
+        )));
+        assert!(observed
+            .iter()
+            .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                && *ends == vec![None, None, Some(12), None, None, None]));
+        assert!(observed
+            .iter()
+            .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                && *ends == vec![None, None, None, None, Some(16), None]));
     }
 
     fn auto_close_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
@@ -12522,57 +12306,59 @@ extras (
         reused_byte_ranges_from_events(report.tree_events())
     }
 
-    #[test]
-    fn runtime_lexer_preserves_regex_flags() {
-        let (validated, parser, table) = flagged_regex_fixture();
-        let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
-        let input = "ABCXYZ";
+    fn compiled_terminal_end(
+        validated: &ValidatedGrammar,
+        terminal: &TerminalSymbol,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Option<usize>, ReducedParseError> {
+        let compiled = compile_lex_terminal(validated, terminal);
+        match_compiled_lex_terminal(&compiled, input, byte_position)
+            .map(|result| result.map(|match_| match_.end))
+    }
 
-        for terminal in parser.symbols.terminals() {
-            let compiled = compile_lex_terminal(&validated, terminal);
-            for byte_position in [0usize, 3] {
-                let interpreted = reduced.match_terminal(terminal, input, byte_position);
-                let compiled = reduced
-                    .match_compiled_terminal(&compiled, input, byte_position)
-                    .map(|result| result.map(|match_| match_.end));
-                assert_eq!(
-                    compiled,
-                    interpreted,
-                    "terminal `{}` at byte {byte_position}",
-                    terminal.spelling()
-                );
-            }
-        }
-
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        assert_eq!(
-            report.tree().to_sexp(),
-            "(source_file (insensitive) (wrapped))"
-        );
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
+    fn compiled_terminal_ends(
+        validated: &ValidatedGrammar,
+        terminal: &TerminalSymbol,
+        input: &str,
+        byte_positions: &[usize],
+    ) -> Result<Vec<Option<usize>>, ReducedParseError> {
+        byte_positions
+            .iter()
+            .map(|byte_position| compiled_terminal_end(validated, terminal, input, *byte_position))
+            .collect()
     }
 
     #[test]
-    fn runtime_parser_can_reuse_compiled_runtime_plan() {
-        let (validated, parser, table) = flagged_regex_fixture();
-        let plan = RuntimeParserPlan::new(&validated, &parser, &table).unwrap();
+    fn compiled_lexer_preserves_regex_flags() {
+        let (validated, parser, _table) = flagged_regex_fixture();
         let input = "ABCXYZ";
-        let fresh = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_compact_with_report(input)
+        let byte_positions = [0usize, 3];
+        let insensitive = parser
+            .symbols
+            .terminals()
+            .iter()
+            .find(|terminal| {
+                terminal.kind() == ParserTerminalKind::Pattern
+                    && terminal.spelling() == "abc"
+                    && terminal.flags() == Some("i")
+            })
             .unwrap();
-        let reused = RuntimeParser::new_with_plan(&validated, &parser, &table, &plan)
-            .unwrap()
-            .parse_compact_with_report(input)
+        let wrapped = parser
+            .symbols
+            .terminals()
+            .iter()
+            .find(|terminal| terminal.kind() == ParserTerminalKind::Token)
             .unwrap();
 
-        rediff::assert_same!(reused.tree(), fresh.tree());
-        assert_eq!(reused.trace_events(), fresh.trace_events());
-        assert_eq!(reused.tree_events(), fresh.tree_events());
+        assert_eq!(
+            compiled_terminal_ends(&validated, insensitive, input, &byte_positions).unwrap(),
+            vec![Some(3), None]
+        );
+        assert_eq!(
+            compiled_terminal_ends(&validated, wrapped, input, &byte_positions).unwrap(),
+            vec![None, Some(6)]
+        );
     }
 
     #[test]
@@ -12845,26 +12631,25 @@ extras (
 
     #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_lexer_preserves_regex_flags_through_weavy_runtime() {
+    fn weavy_runtime_preserves_regex_flags() {
         let (validated, parser, table) = flagged_regex_fixture();
         let input = "ABCXYZ";
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(source_file (insensitive) (wrapped))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
@@ -12895,38 +12680,24 @@ extras (
         )
     }
 
-    #[test]
-    fn runtime_lexer_resolves_symbol_references_inside_token() {
-        let (validated, parser, table) = lexical_symbol_fixture();
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report("alpha:123")
-            .unwrap();
-
-        assert_eq!(report.tree().to_sexp(), "(source_file)");
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
-    }
-
     #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_lexer_resolves_symbol_references_inside_token_through_weavy_runtime() {
+    fn weavy_runtime_resolves_symbol_references_inside_token() {
         let (validated, parser, table) = lexical_symbol_fixture();
         let input = "alpha:123";
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_eq!(weavy_report.tree().to_sexp(), "(source_file)");
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
@@ -13058,35 +12829,35 @@ extras (
     }
 
     #[test]
-    fn lexical_primitives_parse_until_and_nested_tokens() {
-        let (validated, parser, table) = lexical_primitives_fixture();
-        let reduced = ReducedParser::new(&validated, &parser, &table).unwrap();
+    fn compiled_lexical_primitives_match_until_and_nested_tokens() {
+        let (validated, parser, _table) = lexical_primitives_fixture();
         let input = "hello {# outer {# inner #} done #}";
+        let byte_positions = [0usize, 6, 15, 26];
 
-        for terminal in parser.symbols.terminals() {
-            let compiled = compile_lex_terminal(&validated, terminal);
-            for byte_position in [0usize, 6, 15, 26] {
-                let interpreted = reduced.match_terminal(terminal, input, byte_position);
-                let compiled = reduced
-                    .match_compiled_terminal(&compiled, input, byte_position)
-                    .map(|result| result.map(|match_| match_.end));
-                assert_eq!(
-                    compiled,
-                    interpreted,
-                    "terminal `{}` at byte {byte_position}",
-                    terminal.spelling()
-                );
-            }
-        }
-
-        let report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
+        let observed = parser
+            .symbols
+            .terminals()
+            .iter()
+            .map(|terminal| {
+                Ok((
+                    terminal.kind(),
+                    terminal.spelling().to_owned(),
+                    compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, ReducedParseError>>()
             .unwrap();
 
-        assert_eq!(report.tree().to_sexp(), "(source_file (text) (comment))");
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
+        assert!(observed
+            .iter()
+            .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                && *ends == vec![Some(6), None, None, Some(34)]),
+            "observed: {observed:#?}");
+        assert!(observed
+            .iter()
+            .any(|(kind, _, ends)| *kind == ParserTerminalKind::Token
+                && *ends == vec![None, Some(34), Some(26), None]),
+            "observed: {observed:#?}");
     }
 
     #[test]
@@ -13185,23 +12956,22 @@ extras (
     fn lexical_primitives_parse_through_weavy_runtime() {
         let (validated, parser, table) = lexical_primitives_fixture();
         let input = "hello {# outer {# inner #} done #}";
-        let runtime_report = RuntimeParser::new(&validated, &parser, &table)
-            .unwrap()
-            .parse_with_report(input)
-            .unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan, &validated, &parser, &table, input,
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            input,
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(source_file (text) (comment))"
         );
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().block_call_count > 0);
     }
 
