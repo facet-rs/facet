@@ -13,8 +13,8 @@ use crate::{
     query::{QueryBundle, QueryFile, QuerySource, WellKnownQuery},
     scanner::{ExternalTokenTable, ScannerSource, TreeSitterScanner, TreeSitterScannerKind},
     source::{
-        read_optional_source_string, read_source_string, PackageRelativePath, PackageRoot,
-        SourceFile, SourceIdAllocator,
+        PackageRelativePath, PackageRoot, SourceFile, SourceIdAllocator,
+        read_optional_source_string, read_source_string,
     },
 };
 
@@ -452,7 +452,7 @@ mod tests {
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
         lower::weavy::{
-            parse_prepared_runtime_with_report_and_scanner, RuntimeWeavyPlan, RuntimeWeavyReport,
+            RuntimeWeavyPlan, RuntimeWeavyReport, parse_prepared_runtime_with_report_and_scanner,
         },
         parser::{
             LookaheadSymbol, ParseStateId, ParseTable, ParserGenerationStage, ParserGrammar,
@@ -658,10 +658,12 @@ mod tests {
             root.kind == LexicalRootKind::ImmediateToken
                 && root.leading_extras == LeadingExtrasPolicy::Forbidden
         }));
-        assert!(lexical
-            .terminals()
-            .iter()
-            .any(|terminal| terminal.spelling == "\\d+"));
+        assert!(
+            lexical
+                .terminals()
+                .iter()
+                .any(|terminal| terminal.spelling == "\\d+")
+        );
         assert_eq!(
             lexical
                 .external_tokens()
@@ -713,29 +715,39 @@ mod tests {
         assert!(parser_grammar.supertypes().is_empty());
         assert!(parser_grammar.precedence_groups().is_empty());
         assert!(parser_grammar.glr_plan().conflicts().is_empty());
-        assert!(parser_grammar
-            .public_node_kinds()
-            .iter()
-            .any(|kind| kind.name() == "stylesheet"));
-        assert!(parser_grammar
-            .public_node_kinds()
-            .iter()
-            .any(|kind| kind.name() == "function_name"));
-        assert!(parser_grammar
-            .symbols()
-            .terminals()
-            .iter()
-            .any(|terminal| terminal.spelling() == "\\d+"));
-        assert!(parser_grammar
-            .symbols()
-            .nonterminals()
-            .iter()
-            .any(|symbol| symbol.name() == "stylesheet" && symbol.visible()));
-        assert!(parser_grammar
-            .symbols()
-            .nonterminals()
-            .iter()
-            .any(|symbol| symbol.name() == "_block_item" && symbol.inline()));
+        assert!(
+            parser_grammar
+                .public_node_kinds()
+                .iter()
+                .any(|kind| kind.name() == "stylesheet")
+        );
+        assert!(
+            parser_grammar
+                .public_node_kinds()
+                .iter()
+                .any(|kind| kind.name() == "function_name")
+        );
+        assert!(
+            parser_grammar
+                .symbols()
+                .terminals()
+                .iter()
+                .any(|terminal| terminal.spelling() == "\\d+")
+        );
+        assert!(
+            parser_grammar
+                .symbols()
+                .nonterminals()
+                .iter()
+                .any(|symbol| symbol.name() == "stylesheet" && symbol.visible())
+        );
+        assert!(
+            parser_grammar
+                .symbols()
+                .nonterminals()
+                .iter()
+                .any(|symbol| symbol.name() == "_block_item" && symbol.inline())
+        );
         let normalized_parser_grammar =
             ParserGrammar::normalize_from_validated(&validated, &lexical).unwrap();
         assert_eq!(
@@ -744,21 +756,25 @@ mod tests {
         );
         assert!(!normalized_parser_grammar.productions().is_empty());
         assert_eq!(normalized_parser_grammar.symbols().externals().len(), 3);
-        assert!(normalized_parser_grammar
-            .symbols()
-            .terminals()
-            .iter()
-            .any(|terminal| terminal.kind() == crate::parser::ParserTerminalKind::Token));
-        assert!(normalized_parser_grammar
-            .symbols()
-            .terminals()
-            .iter()
-            .any(|terminal| terminal.kind() == crate::parser::ParserTerminalKind::ImmediateToken));
-        assert!(normalized_parser_grammar
-            .symbols()
-            .nonterminals()
-            .iter()
-            .any(|symbol| symbol.origin() == crate::parser::NonterminalOrigin::RepeatAuxiliary));
+        assert!(
+            normalized_parser_grammar
+                .symbols()
+                .terminals()
+                .iter()
+                .any(|terminal| terminal.kind() == crate::parser::ParserTerminalKind::Token)
+        );
+        assert!(
+            normalized_parser_grammar.symbols().terminals().iter().any(
+                |terminal| terminal.kind() == crate::parser::ParserTerminalKind::ImmediateToken
+            )
+        );
+        assert!(
+            normalized_parser_grammar
+                .symbols()
+                .nonterminals()
+                .iter()
+                .any(|symbol| symbol.origin() == crate::parser::NonterminalOrigin::RepeatAuxiliary)
+        );
         assert!(!normalized_parser_grammar.alias_sequences().is_empty());
         assert!(!normalized_parser_grammar.provenances().is_empty());
         assert!(normalized_parser_grammar.fields().is_empty());
@@ -781,16 +797,20 @@ mod tests {
                 .len(),
             2
         );
-        assert!(prepared_parser_grammar
-            .item_preparation()
-            .unwrap()
-            .graph()
-            .reachable()
-            .contains(&prepared_parser_grammar.start()));
-        assert!(normalized_parser_grammar
-            .public_node_kinds()
-            .iter()
-            .any(|kind| kind.name() == "~"));
+        assert!(
+            prepared_parser_grammar
+                .item_preparation()
+                .unwrap()
+                .graph()
+                .reachable()
+                .contains(&prepared_parser_grammar.start())
+        );
+        assert!(
+            normalized_parser_grammar
+                .public_node_kinds()
+                .iter()
+                .any(|kind| kind.name() == "~")
+        );
         let highlights_query = grammar
             .queries
             .well_known(WellKnownQuery::Highlights)
@@ -891,15 +911,19 @@ mod tests {
         assert_eq!(grammar.scanners.len(), 1);
         assert_eq!(grammar.scanners[0].kind, TreeSitterScannerKind::C);
         assert_eq!(grammar.scanners[0].externals.len(), 3);
-        assert!(grammar
-            .queries
-            .well_known(WellKnownQuery::Highlights)
-            .is_some());
-        assert!(grammar.corpus.iter().any(|fixture| fixture
-            .source
-            .path
-            .as_str()
-            .starts_with("test/highlight/")));
+        assert!(
+            grammar
+                .queries
+                .well_known(WellKnownQuery::Highlights)
+                .is_some()
+        );
+        assert!(
+            grammar.corpus.iter().any(|fixture| fixture
+                .source
+                .path
+                .as_str()
+                .starts_with("test/highlight/"))
+        );
         let highlight_fixture = grammar
             .corpus
             .iter()
@@ -3223,22 +3247,30 @@ mod tests {
         );
         assert_eq!(second_external.ordinal().get(), 1);
         assert!(second_external.name().is_none());
-        assert!(grammar
-            .queries
-            .well_known(WellKnownQuery::Highlights)
-            .is_some());
-        assert!(grammar
-            .queries
-            .iter()
-            .any(|file| file.path.as_str() == "queries/brackets.scm"));
-        assert!(grammar
-            .corpus
-            .iter()
-            .any(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css"));
-        assert!(grammar
-            .corpus
-            .iter()
-            .any(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt"));
+        assert!(
+            grammar
+                .queries
+                .well_known(WellKnownQuery::Highlights)
+                .is_some()
+        );
+        assert!(
+            grammar
+                .queries
+                .iter()
+                .any(|file| file.path.as_str() == "queries/brackets.scm")
+        );
+        assert!(
+            grammar
+                .corpus
+                .iter()
+                .any(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
+        );
+        assert!(
+            grammar
+                .corpus
+                .iter()
+                .any(|fixture| fixture.source.path.as_str() == "test/corpus/selectors.txt")
+        );
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -3309,11 +3341,13 @@ mod tests {
                 "grammars/second/queries/extra.scm"
             ]
         );
-        assert!(package.grammars[1]
-            .queries
-            .iter_files()
-            .any(|file| file.category.is_none()
-                && file.source.path.as_str() == "grammars/second/queries/brackets.scm"));
+        assert!(
+            package.grammars[1]
+                .queries
+                .iter_files()
+                .any(|file| file.category.is_none()
+                    && file.source.path.as_str() == "grammars/second/queries/brackets.scm")
+        );
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -3333,10 +3367,12 @@ mod tests {
             diagnostic.primary_span.map(|span| span.source_id.get()),
             Some(0)
         );
-        assert!(diagnostic
-            .notes
-            .iter()
-            .any(|note| note == "package path: src/grammar.json"));
+        assert!(
+            diagnostic
+                .notes
+                .iter()
+                .any(|note| note == "package path: src/grammar.json")
+        );
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -3356,10 +3392,12 @@ mod tests {
             diagnostic.primary_span.map(|span| span.source_id.get()),
             Some(0)
         );
-        assert!(diagnostic
-            .notes
-            .iter()
-            .any(|note| note == "package path: tree-sitter.json"));
+        assert!(
+            diagnostic
+                .notes
+                .iter()
+                .any(|note| note == "package path: tree-sitter.json")
+        );
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -3450,15 +3488,19 @@ mod tests {
         assert_eq!(grammar.scanners.len(), 1);
         assert_eq!(grammar.scanners[0].kind, TreeSitterScannerKind::C);
         assert_eq!(grammar.scanners[0].externals.len(), 3);
-        assert!(grammar
-            .queries
-            .well_known(WellKnownQuery::Highlights)
-            .is_some());
-        assert!(grammar.corpus.iter().any(|fixture| fixture
-            .source
-            .path
-            .as_str()
-            .starts_with("test/highlight/")));
+        assert!(
+            grammar
+                .queries
+                .well_known(WellKnownQuery::Highlights)
+                .is_some()
+        );
+        assert!(
+            grammar.corpus.iter().any(|fixture| fixture
+                .source
+                .path
+                .as_str()
+                .starts_with("test/highlight/"))
+        );
     }
 
     fn test_package_root(name: &str) -> std::path::PathBuf {

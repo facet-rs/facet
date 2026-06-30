@@ -12,8 +12,8 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        parse_prepared_runtime_recovering_with_report_and_scanner,
-        parse_prepared_runtime_with_report, RuntimeWeavyPlan,
+        RuntimeWeavyPlan, parse_prepared_runtime_recovering_with_report_and_scanner,
+        parse_prepared_runtime_with_report,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,

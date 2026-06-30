@@ -9,7 +9,7 @@ use std::{env, path::PathBuf, time::Instant};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{parse_prepared_runtime_recovering_with_report_and_scanner, RuntimeWeavyPlan},
+    lower::weavy::{RuntimeWeavyPlan, parse_prepared_runtime_recovering_with_report_and_scanner},
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
