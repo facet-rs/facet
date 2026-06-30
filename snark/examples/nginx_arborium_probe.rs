@@ -3,11 +3,13 @@ use std::{env, path::PathBuf, time::Instant};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    parser::{ParseAction, ParseTable, ParserGrammar, ParserSymbol, RuntimeParser, TreeEvent},
+    lower::weavy::{
+        parse_prepared_runtime_recovering_with_report_and_scanner,
+        parse_prepared_runtime_with_report, RuntimeWeavyPlan,
+    },
+    parser::{ParseTable, ParserGrammar, ParserSymbol, TreeEvent},
     validated::ValidatedGrammar,
 };
-
-const PLAYGROUND_RECOVERY_STEP_LIMIT: usize = 1_000_000;
 
 fn main() {
     let def = env::args_os()
@@ -31,54 +33,31 @@ fn main() {
         .prepare_productions_for_items()
         .expect("productions should prepare");
     let table = ParseTable::from_grammar(&parser).expect("parse table should build");
+    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table)
+        .expect("Weavy runtime plan should build");
     let prepared_at = Instant::now();
 
     let input = std::fs::read_to_string(&sample).expect("sample should be readable");
     let dump_errors = env::var_os("SNARK_NGINX_DUMP_ERRORS").is_some();
     if dump_errors {
-        if let Err(error) = RuntimeParser::new(&validated, &parser, &table)
-            .expect("runtime should build")
-            .parse_with_report(&input)
+        if let Err(error) =
+            parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, &input)
         {
             println!("non-recovering parse error: {error}");
-            for step in error.trace().iter().rev().take(24).rev() {
-                let action = match step.action {
-                    ParseAction::Shift { state, .. } => format!("shift {}", state.get()),
-                    ParseAction::ShiftExtra => "shift-extra".to_owned(),
-                    ParseAction::Reduce { production, .. } => {
-                        format!("reduce {}", production.get())
-                    }
-                    ParseAction::Accept { .. } => "accept".to_owned(),
-                    ParseAction::Recover => "recover".to_owned(),
-                };
-                println!(
-                    "  trace state {} byte {} lookahead {:?} action {}",
-                    step.state.get(),
-                    step.byte_position,
-                    step.lookahead,
-                    action
-                );
-            }
         }
     }
-    let parse_result = RuntimeParser::new(&validated, &parser, &table)
-        .expect("runtime should build")
-        .parse_compact_with_report(&input);
+    let parse_result =
+        parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, &input);
     let parsed_at = Instant::now();
     println!("language: {}", raw.name);
     println!("input bytes: {}", input.len());
-    let report = match parse_result {
-        Ok(report) => report,
+    let (report, recovered) = match parse_result {
+        Ok(report) => (report, false),
         Err(error) => {
             println!("parse failed: {error}");
-            let recovery_limit = env::var("SNARK_NGINX_RECOVERY_LIMIT")
-                .ok()
-                .and_then(|limit| limit.parse().ok());
-            let mut recovery_runtime =
-                RuntimeParser::new(&validated, &parser, &table).expect("runtime should build");
-            recovery_runtime = recovery_runtime
-                .with_recovery_step_limit(recovery_limit.unwrap_or(PLAYGROUND_RECOVERY_STEP_LIMIT));
-            match recovery_runtime.parse_recovering_compact_with_report(&input) {
+            match parse_prepared_runtime_recovering_with_report_and_scanner(
+                &plan, &validated, &parser, &table, &input, None,
+            ) {
                 Ok(report) => {
                     println!(
                         "recovering parse accepted with {} ERROR and {} MISSING nodes",
@@ -93,40 +72,19 @@ fn main() {
                             .filter(|event| matches!(event, TreeEvent::Missing { .. }))
                             .count()
                     );
+                    (report, true)
                 }
                 Err(recovery_error) => {
                     println!("recovering parse failed: {recovery_error}");
-                    if dump_errors {
-                        for step in recovery_error.trace().iter().rev().take(48).rev() {
-                            let action = match step.action {
-                                ParseAction::Shift { state, .. } => {
-                                    format!("shift {}", state.get())
-                                }
-                                ParseAction::ShiftExtra => "shift-extra".to_owned(),
-                                ParseAction::Reduce { production, .. } => {
-                                    format!("reduce {}", production.get())
-                                }
-                                ParseAction::Accept { .. } => "accept".to_owned(),
-                                ParseAction::Recover => "recover".to_owned(),
-                            };
-                            println!(
-                                "  recovery trace state {} byte {} lookahead {:?} action {}",
-                                step.state.get(),
-                                step.byte_position,
-                                step.lookahead,
-                                action
-                            );
-                        }
-                    }
+                    println!("emit grammar.js: {:?}", emitted_at.duration_since(start));
+                    println!(
+                        "prepare parser: {:?}",
+                        prepared_at.duration_since(emitted_at)
+                    );
+                    println!("strict parse: {:?}", parsed_at.duration_since(prepared_at));
+                    return;
                 }
             }
-            println!("emit grammar.js: {:?}", emitted_at.duration_since(start));
-            println!(
-                "prepare parser: {:?}",
-                prepared_at.duration_since(emitted_at)
-            );
-            println!("strict parse: {:?}", parsed_at.duration_since(prepared_at));
-            return;
         }
     };
 
@@ -152,6 +110,7 @@ fn main() {
     println!("accepted branches: {}", report.accepted_count());
     println!("failed branches: {}", report.failure_count());
     println!("max live versions: {}", report.max_live_versions());
+    println!("recovered: {recovered}");
     println!("trace events: {}", report.trace_events().len());
     println!("tree events: {}", report.tree_events().len());
     println!("accepted tree events: {}", accepted_events.len());

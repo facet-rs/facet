@@ -1,6 +1,5 @@
-//! Benchmark the interpreted reduced parser vs the Weavy-lowered path on the same
-//! grammar + input, separating one-time setup (table build, runtime/plan construction)
-//! from steady-state per-parse cost.
+//! Benchmark the prepared Weavy runtime path on the same grammar + input, separating
+//! one-time setup from fresh-plan and warm-plan per-parse cost.
 //!
 //! Usage: cargo run --release -p snark --features json-import,weavy-lowering \
 //!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS]
@@ -10,8 +9,8 @@ use std::{env, path::PathBuf, time::Instant};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{lower_reduced_parser, parse_reduced_with_report},
-    parser::{ParseTable, ParserGrammar, RuntimeParser},
+    lower::weavy::{parse_prepared_runtime_recovering_with_report_and_scanner, RuntimeWeavyPlan},
+    parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
 
@@ -51,34 +50,26 @@ fn main() {
     let table = ParseTable::from_grammar(&parser).expect("table");
     let table_build = t.elapsed();
 
-    // ---- interpreted path ----
     let t = Instant::now();
-    let interp = RuntimeParser::new(&validated, &parser, &table).expect("runtime");
-    let interp_new = t.elapsed();
+    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("runtime weavy plan");
+    let plan_new = t.elapsed();
 
     let t = Instant::now();
     for _ in 0..iters {
-        let rt = RuntimeParser::new(&validated, &parser, &table).expect("runtime");
-        let _ = rt.parse_recovering_with_report(&input);
+        let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("runtime weavy plan");
+        let _ = parse_prepared_runtime_recovering_with_report_and_scanner(
+            &plan, &validated, &parser, &table, &input, None,
+        );
     }
-    let interp_cold_total = t.elapsed();
+    let fresh_plan_total = t.elapsed();
 
     let t = Instant::now();
     for _ in 0..iters {
-        let _ = interp.parse_recovering_with_report(&input);
+        let _ = parse_prepared_runtime_recovering_with_report_and_scanner(
+            &plan, &validated, &parser, &table, &input, None,
+        );
     }
-    let interp_warm_total = t.elapsed();
-
-    // ---- weavy path ----
-    let t = Instant::now();
-    let plan = lower_reduced_parser(&parser, &table).expect("lower");
-    let weavy_lower = t.elapsed();
-
-    let t = Instant::now();
-    for _ in 0..iters {
-        let _ = parse_reduced_with_report(&plan, &validated, &parser, &table, &input);
-    }
-    let weavy_total = t.elapsed();
+    let warm_plan_total = t.elapsed();
 
     println!("grammar: {}", grammar_js.display());
     println!("input:   {} ({} bytes)", input_file.display(), input.len());
@@ -86,20 +77,15 @@ fn main() {
 
     println!("one-time setup:");
     println!("  ParseTable::from_grammar   {:>8.1} ms", ms(table_build));
-    println!("  RuntimeParser::new         {:>8.1} ms", ms(interp_new));
-    println!("  lower_reduced_parser       {:>8.1} ms", ms(weavy_lower));
+    println!("  RuntimeWeavyPlan::new      {:>8.1} ms", ms(plan_new));
 
     println!("\nper-parse (avg over {iters}):");
     println!(
-        "  interpreted, fresh runtime {:>8.3} ms   (what the wasm demo does today)",
-        ms(interp_cold_total) / iters as f64
-    );
-    println!(
-        "  interpreted, warm runtime  {:>8.3} ms",
-        ms(interp_warm_total) / iters as f64
+        "  weavy, fresh plan          {:>8.3} ms",
+        ms(fresh_plan_total) / iters as f64
     );
     println!(
         "  weavy, warm plan           {:>8.3} ms",
-        ms(weavy_total) / iters as f64
+        ms(warm_plan_total) / iters as f64
     );
 }

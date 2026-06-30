@@ -43,7 +43,7 @@ snark-scanner-host = { path = "../snark-scanner-host" }
 
 [[example]]
 name = "weavy_bench"
-required-features = ["weavy-lowering"]
+required-features = ["json-import", "weavy-lowering"]
 
 [[example]]
 name = "gingembre_corpus"
@@ -51,6 +51,14 @@ required-features = ["json-import", "weavy-lowering"]
 
 [[example]]
 name = "arborium_check"
+required-features = ["json-import", "weavy-lowering"]
+
+[[example]]
+name = "pipeline_timing"
+required-features = ["json-import", "weavy-lowering"]
+
+[[example]]
+name = "nginx_arborium_probe"
 required-features = ["json-import", "weavy-lowering"]
 
 [lints]
