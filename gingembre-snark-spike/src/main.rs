@@ -18,9 +18,9 @@ use std::{env, path::PathBuf};
 use futures::executor::block_on;
 use gingembre::Context;
 use gingembre::ast::{
-    BinaryExpr, BinaryOp, BlockNode, BoolLit, CommentNode, ElifBranch, Expr, ExtendsNode, FieldExpr,
-    FilterExpr, FloatLit, ForNode, Ident, IfNode, IncludeNode, IntLit, ListLit, Literal, Node,
-    PrintNode, SetNode, SetValue, StringLit, Target, Template, TextNode, span,
+    BinaryExpr, BinaryOp, BlockNode, BoolLit, CallExpr, CommentNode, ElifBranch, Expr, ExtendsNode,
+    FieldExpr, FilterExpr, FloatLit, ForNode, Ident, IfNode, IncludeNode, IntLit, ListLit, Literal,
+    Node, PrintNode, SetNode, SetValue, StringLit, Target, Template, TextNode, span,
 };
 use snark::{
     grammar::RawGrammarJson,
@@ -64,6 +64,10 @@ const SAMPLES: &[(&str, &str)] = &[
     ("add vs cmp", "{{ 1 + 2 < 2 + 2 }}"),
     ("concat chain", "{{ \"a\" ~ \"b\" ~ \"c\" }}"),
     ("pow assoc", "{{ 2 ** 3 ** 2 }}"),
+    // Filter-with-args (the grammar tweak): `f(args)` after `|` binds to the filter.
+    ("filter args join", "{{ [1, 2, 3] | join(\"-\") }}"),
+    ("filter args default", "{{ \"x\" | default(\"y\") }}"),
+    ("filter chain args", "{{ [3, 1, 2] | sort | join(\",\") }}"),
 ];
 
 fn main() {
@@ -253,15 +257,74 @@ fn lower_expr(node: &RuntimeResolvedNode) -> Option<Expr> {
             field: named_child(node, "identifier").and_then(ident)?,
             span: span(0, 0),
         })),
-        "filter" => Some(Expr::Filter(FilterExpr {
-            expr: Box::new(node.children().iter().find_map(lower_expr)?),
-            filter: named_child(node, "identifier").and_then(ident)?,
-            args: Vec::new(),
-            kwargs: Vec::new(),
-            span: span(0, 0),
-        })),
+        "filter" => {
+            let (args, kwargs) = lower_args(node);
+            Some(Expr::Filter(FilterExpr {
+                expr: Box::new(node.children().iter().find_map(lower_expr)?),
+                filter: named_child(node, "identifier").and_then(ident)?,
+                args,
+                kwargs,
+                span: span(0, 0),
+            }))
+        }
+        "call" => {
+            let (args, kwargs) = lower_args(node);
+            let callee = node
+                .children()
+                .iter()
+                .find(|c| c.named() && c.kind() != "arg_list")?;
+            // snark parses `x | f(args)` as `call(filter(x, f), args)`, but
+            // gingembre's AST wants `Filter { expr, filter, args }`. Turn it
+            // inside out: hoist the call's args into the filter. (The clean fix
+            // lives in the grammar — a real precedence puzzle, see notes — this
+            // is the lowering doing it instead.)
+            if callee.kind() == "filter" {
+                Some(Expr::Filter(FilterExpr {
+                    expr: Box::new(callee.children().iter().find_map(lower_expr)?),
+                    filter: named_child(callee, "identifier").and_then(ident)?,
+                    args,
+                    kwargs,
+                    span: span(0, 0),
+                }))
+            } else {
+                Some(Expr::Call(CallExpr {
+                    func: Box::new(lower_expr(callee)?),
+                    args,
+                    kwargs,
+                    span: span(0, 0),
+                }))
+            }
+        }
         _ => None,
     }
+}
+
+/// Extract `(positional args, kwargs)` from the `arg_list` child of `node`.
+fn lower_args(node: &RuntimeResolvedNode) -> (Vec<Expr>, Vec<(Ident, Expr)>) {
+    let mut args = Vec::new();
+    let mut kwargs = Vec::new();
+    let Some(arg_list) = named_child(node, "arg_list") else {
+        return (args, kwargs);
+    };
+    for child in arg_list.children() {
+        match child.kind() {
+            "argument" => {
+                if let Some(expr) = child.children().iter().find_map(lower_expr) {
+                    args.push(expr);
+                }
+            }
+            "kwarg" => {
+                if let (Some(name), Some(value)) = (
+                    named_child(child, "identifier").and_then(ident),
+                    child.children().iter().find_map(lower_expr),
+                ) {
+                    kwargs.push((name, value));
+                }
+            }
+            _ => {}
+        }
+    }
+    (args, kwargs)
 }
 
 fn named_child<'a>(node: &'a RuntimeResolvedNode, kind: &str) -> Option<&'a RuntimeResolvedNode> {
