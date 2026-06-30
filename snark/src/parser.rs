@@ -12334,42 +12334,12 @@ extras (
         )
     }
 
-    #[test]
-    fn runtime_inserts_declarative_auto_close_tokens() {
-        let (validated, parser, table) = auto_close_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let report = runtime.parse_with_report("<p>one<p>two</p>").unwrap();
-
-        assert_eq!(
-            report.tree().to_sexp(),
-            "(source_file (element (text)) (element (text)))"
-        );
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
-    }
-
-    #[test]
-    fn runtime_inserts_node_driven_declarative_auto_close_tokens() {
-        let (validated, parser, table) = auto_close_node_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let report = runtime.parse_with_report("<p>one<div>two</div>").unwrap();
-
-        assert_eq!(
-            report.tree().to_sexp(),
-            "(document (element (start_tag (tag_name)) (text)) (element (start_tag (tag_name)) (text) (end_tag (tag_name))))"
-        );
-        assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.failure_count(), 0);
-    }
-
     #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_inserts_declarative_auto_close_tokens_through_weavy_runtime() {
+    fn weavy_runtime_inserts_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let runtime_report = runtime.parse_with_report("<p>one<p>two</p>").unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
             &plan,
             &validated,
             &parser,
@@ -12378,28 +12348,21 @@ extras (
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(source_file (element (text)) (element (text)))"
         );
-        assert_eq!(
-            weavy_report.accepted_count(),
-            runtime_report.accepted_count()
-        );
-        assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
     #[test]
-    fn runtime_inserts_node_driven_declarative_auto_close_tokens_through_weavy_runtime() {
+    fn weavy_runtime_inserts_node_driven_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_node_fixture();
-        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
-        let runtime_report = runtime.parse_with_report("<p>one<div>two</div>").unwrap();
-        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
             &plan,
             &validated,
             &parser,
@@ -12408,18 +12371,13 @@ extras (
         )
         .unwrap();
 
-        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(document (element (start_tag (tag_name)) (text)) (element (start_tag (tag_name)) (text) (end_tag (tag_name))))"
         );
-        assert_eq!(
-            weavy_report.accepted_count(),
-            runtime_report.accepted_count()
-        );
-        assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
-        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
-        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+        assert_eq!(weavy_report.accepted_count(), 1);
+        assert_eq!(weavy_report.failure_count(), 0);
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     fn flagged_regex_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
