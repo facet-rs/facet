@@ -483,11 +483,23 @@ impl ValidationBuilder {
                 open,
                 close,
                 closed_by,
+                open_node,
+                close_node,
+                tag_name_node,
+                start_prefix,
+                end_prefix,
+                closed_by_tags,
             } => GrammarExpr::AutoClose {
                 tag: tag.clone(),
                 open: open.clone(),
                 close: close.clone(),
                 closed_by: closed_by.clone(),
+                open_node: open_node.clone(),
+                close_node: close_node.clone(),
+                tag_name_node: tag_name_node.clone(),
+                start_prefix: start_prefix.clone(),
+                end_prefix: end_prefix.clone(),
+                closed_by_tags: closed_by_tags.clone(),
             },
             RawRuleJson::Symbol { name } => GrammarExpr::Symbol(self.resolve_symbol(name)?),
             RawRuleJson::Choice { members } => {
@@ -914,11 +926,23 @@ pub enum GrammarExpr {
         /// Element/tag name this token implicitly closes.
         tag: String,
         /// Literal opening marker that pushes this tag.
-        open: String,
+        open: Option<String>,
         /// Literal explicit closing marker that pops this tag.
-        close: String,
+        close: Option<String>,
         /// Literal markers that trigger this implicit close when this tag is open.
         closed_by: Vec<String>,
+        /// Public node kind whose reduced range pushes its tag-name child.
+        open_node: Option<String>,
+        /// Public node kind whose reduced range pops its tag-name child.
+        close_node: Option<String>,
+        /// Public child node kind that carries the tag-name text.
+        tag_name_node: Option<String>,
+        /// Prefix that begins a start tag at the current lexer position.
+        start_prefix: Option<String>,
+        /// Prefix that begins an end tag node range.
+        end_prefix: Option<String>,
+        /// Tag names that trigger this implicit close after `start_prefix`.
+        closed_by_tags: Vec<String>,
     },
     /// Resolved symbol reference.
     Symbol(SymbolRef),

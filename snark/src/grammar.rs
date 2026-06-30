@@ -283,11 +283,32 @@ pub enum RawRuleJson {
         /// Element/tag name this token implicitly closes.
         tag: String,
         /// Literal opening marker that pushes this tag.
-        open: String,
+        #[facet(default)]
+        open: Option<String>,
         /// Literal explicit closing marker that pops this tag.
-        close: String,
+        #[facet(default)]
+        close: Option<String>,
         /// Literal markers that trigger this implicit close when this tag is open.
+        #[facet(default)]
         closed_by: Vec<String>,
+        /// Public node kind whose reduced range pushes its tag-name child.
+        #[facet(default)]
+        open_node: Option<String>,
+        /// Public node kind whose reduced range pops its tag-name child.
+        #[facet(default)]
+        close_node: Option<String>,
+        /// Public child node kind that carries the tag-name text.
+        #[facet(default)]
+        tag_name_node: Option<String>,
+        /// Prefix that begins a start tag at the current lexer position.
+        #[facet(default)]
+        start_prefix: Option<String>,
+        /// Prefix that begins an end tag node range.
+        #[facet(default)]
+        end_prefix: Option<String>,
+        /// Tag names that trigger this implicit close after `start_prefix`.
+        #[facet(default)]
+        closed_by_tags: Vec<String>,
     },
     /// Reference to another rule or token.
     Symbol {

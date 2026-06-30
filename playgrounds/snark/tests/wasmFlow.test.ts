@@ -198,6 +198,62 @@ module.exports = grammar({
   assert.equal(response.parse.failure_count, 0);
 });
 
+test("runs a node-driven auto_close bundle through generated grammar.json and Snark WASM", () => {
+  const grammarJs = `
+module.exports = grammar({
+  name: "tiny_auto_close_nodes",
+  rules: {
+    document: $ => repeat1($.element),
+    element: $ => seq(
+      $.start_tag,
+      repeat(choice($.text, $.element)),
+      choice($.end_tag, $._implicit_p_end),
+    ),
+    start_tag: $ => seq("<", $.tag_name, ">"),
+    end_tag: $ => seq("</", $.tag_name, ">"),
+    _implicit_p_end: $ => auto_close({
+      tag: "p",
+      open_node: "start_tag",
+      close_node: "end_tag",
+      tag_name_node: "tag_name",
+      start_prefix: "<",
+      end_prefix: "</",
+      closed_by_tags: ["p", "div"],
+    }),
+    tag_name: $ => /[a-z]+/,
+    text: $ => /[a-z]+/,
+  },
+});
+`;
+  const grammarJson = emitGrammarJsonFromDsl(
+    officialDsl,
+    [{ path: "grammar.js", text: grammarJs }],
+    "grammar.js",
+  );
+
+  const response = JSON.parse(
+    parseBundle(
+      JSON.stringify({
+        files: [
+          { path: "grammar.js", text: grammarJs },
+          { path: "src/grammar.json", text: grammarJson },
+        ],
+        input: "<p>one<div>two</div>",
+        run_corpus: false,
+      }),
+    ),
+  );
+
+  assert.equal(response.ok, true, JSON.stringify(response.diagnostics, null, 2));
+  assert.equal(response.language, "tiny_auto_close_nodes");
+  assert.equal(
+    response.parse.sexp,
+    "(document (element (start_tag (tag_name)) (text)) (element (start_tag (tag_name)) (text) (end_tag (tag_name))))",
+  );
+  assert.equal(response.parse.accepted_count, 1);
+  assert.equal(response.parse.failure_count, 0);
+});
+
 test("runs highlight query text predicates through Snark WASM", () => {
   const grammarJs = `
 module.exports = grammar({

@@ -2903,6 +2903,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 let symbol = parser_nonterminal(*symbol);
                 let goto = self.goto_state(head_state, symbol)?;
                 let (_start_byte, end_byte) = reduction.fragment.byte_range();
+                self.update_auto_close_stack_for_reduction(&reduction.fragment);
                 self.stack.push(RuntimeWeavyStackEntry {
                     state: goto,
                     fragment: Some(reduction.fragment),
@@ -3162,11 +3163,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             if spec.tag != *open_tag {
                 continue;
             }
-            if !spec
-                .closed_by
-                .iter()
-                .any(|marker| self.input[byte_position..].starts_with(marker.as_str()))
-            {
+            if parser_ir::auto_close_trigger_len(spec, self.input, byte_position).is_none() {
                 continue;
             }
             return Ok(Some(ReducedWeavyToken {
@@ -3194,13 +3191,57 @@ impl<'a> RuntimeWeavyStepper<'a> {
             return;
         };
         let stack_edit = self.auto_close_specs().find_map(|spec| {
-            if text == spec.close {
+            if spec.close.as_deref() == Some(text) {
                 Some((false, spec.tag.clone()))
-            } else if text == spec.open {
+            } else if spec.open.as_deref() == Some(text) {
                 Some((true, spec.tag.clone()))
             } else {
                 None
             }
+        });
+        if let Some((push, tag)) = stack_edit {
+            if push {
+                self.auto_close_stack.push(tag);
+            } else if self.auto_close_stack.last() == Some(&tag) {
+                self.auto_close_stack.pop();
+            }
+        }
+    }
+
+    fn update_auto_close_stack_for_reduction(&mut self, fragment: &RuntimeWeavyFragment) {
+        let RuntimeWeavyFragment::Node {
+            node,
+            start_byte,
+            end_byte,
+        } = fragment
+        else {
+            return;
+        };
+        let reduced_node = self.tree_store.node(*node);
+        let stack_edit = self.auto_close_specs().find_map(|spec| {
+            if spec.open_node.as_deref() == Some(reduced_node.kind.as_str())
+                && parser_ir::auto_close_node_has_tag_name_child(reduced_node, spec)
+            {
+                return parser_ir::scan_auto_close_tag_in_range(
+                    self.input,
+                    *start_byte,
+                    *end_byte,
+                    spec.start_prefix.as_deref().unwrap_or("<"),
+                )
+                .map(|tag| (true, tag));
+            }
+            if spec.close_node.as_deref() == Some(reduced_node.kind.as_str())
+                && parser_ir::auto_close_node_has_tag_name_child(reduced_node, spec)
+            {
+                return parser_ir::scan_auto_close_tag_in_range(
+                    self.input,
+                    *start_byte,
+                    *end_byte,
+                    spec.end_prefix.as_deref().unwrap_or("</"),
+                )
+                .map(|tag| (false, tag));
+            }
+            None
         });
         if let Some((push, tag)) = stack_edit {
             if push {

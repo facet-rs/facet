@@ -224,6 +224,12 @@ globalThis.auto_close = function auto_close(options) {
     open: options.open,
     close: options.close,
     closed_by: options.closed_by,
+    open_node: options.open_node,
+    close_node: options.close_node,
+    tag_name_node: options.tag_name_node,
+    start_prefix: options.start_prefix,
+    end_prefix: options.end_prefix,
+    closed_by_tags: options.closed_by_tags,
   };
 };
 `;

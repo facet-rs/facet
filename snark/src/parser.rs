@@ -3885,9 +3885,15 @@ pub(crate) struct CompiledLexPattern {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AutoCloseSpec {
     pub(crate) tag: String,
-    pub(crate) open: String,
-    pub(crate) close: String,
+    pub(crate) open: Option<String>,
+    pub(crate) close: Option<String>,
     pub(crate) closed_by: Vec<String>,
+    pub(crate) open_node: Option<String>,
+    pub(crate) close_node: Option<String>,
+    pub(crate) tag_name_node: Option<String>,
+    pub(crate) start_prefix: Option<String>,
+    pub(crate) end_prefix: Option<String>,
+    pub(crate) closed_by_tags: Vec<String>,
 }
 
 /// External scanner host used by the reduced parser oracle.
@@ -5571,11 +5577,23 @@ fn compile_terminal_matcher(
                 open,
                 close,
                 closed_by,
+                open_node,
+                close_node,
+                tag_name_node,
+                start_prefix,
+                end_prefix,
+                closed_by_tags,
             } => CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(AutoCloseSpec {
                 tag: tag.clone(),
                 open: open.clone(),
                 close: close.clone(),
                 closed_by: closed_by.clone(),
+                open_node: open_node.clone(),
+                close_node: close_node.clone(),
+                tag_name_node: tag_name_node.clone(),
+                start_prefix: start_prefix.clone(),
+                end_prefix: end_prefix.clone(),
+                closed_by_tags: closed_by_tags.clone(),
             })),
             _ => CompiledTerminalMatcher::UnsupportedTerminal {
                 terminal: terminal.id(),
@@ -5629,11 +5647,23 @@ fn compile_lex_expr_inner(
             open,
             close,
             closed_by,
+            open_node,
+            close_node,
+            tag_name_node,
+            start_prefix,
+            end_prefix,
+            closed_by_tags,
         } => CompiledLexExpr::AutoClose(AutoCloseSpec {
             tag: tag.clone(),
             open: open.clone(),
             close: close.clone(),
             closed_by: closed_by.clone(),
+            open_node: open_node.clone(),
+            close_node: close_node.clone(),
+            tag_name_node: tag_name_node.clone(),
+            start_prefix: start_prefix.clone(),
+            end_prefix: end_prefix.clone(),
+            closed_by_tags: closed_by_tags.clone(),
         }),
         GrammarExpr::Token(content)
         | GrammarExpr::ImmediateToken(content)
@@ -7576,12 +7606,7 @@ impl<'a> RuntimeParser<'a> {
             if spec.tag != *open_tag {
                 continue;
             }
-            let marker_len = spec
-                .closed_by
-                .iter()
-                .filter(|marker| input[branch.byte_position..].starts_with(marker.as_str()))
-                .map(String::len)
-                .max()?;
+            let marker_len = auto_close_trigger_len(spec, input, branch.byte_position)?;
             return Some(ReducedToken {
                 lookahead,
                 end: branch.byte_position,
@@ -7612,14 +7637,63 @@ impl<'a> RuntimeParser<'a> {
             return;
         };
         for spec in self.auto_close_specs() {
-            if text == spec.close {
+            if spec.close.as_deref() == Some(text) {
                 if branch.auto_close_stack.last() == Some(&spec.tag) {
                     branch.auto_close_stack.pop();
                 }
                 return;
             }
-            if text == spec.open {
+            if spec.open.as_deref() == Some(text) {
                 branch.auto_close_stack.push(spec.tag.clone());
+                return;
+            }
+        }
+    }
+
+    fn update_auto_close_stack_for_reduction(
+        &self,
+        branch: &mut RuntimeBranch,
+        fragment: &RuntimeFragment,
+        tree_store: &RuntimeTreeStore,
+        input: &str,
+    ) {
+        let RuntimeFragment::Node {
+            node,
+            start_byte,
+            end_byte,
+            ..
+        } = fragment
+        else {
+            return;
+        };
+        let reduced_node = tree_store.node(*node);
+        for spec in self.auto_close_specs() {
+            if spec.open_node.as_deref() == Some(reduced_node.kind.as_str())
+                && auto_close_node_has_tag_name_child(reduced_node, spec)
+            {
+                let Some(tag) = scan_auto_close_tag_in_range(
+                    input,
+                    *start_byte,
+                    *end_byte,
+                    spec.start_prefix.as_deref().unwrap_or("<"),
+                ) else {
+                    continue;
+                };
+                branch.auto_close_stack.push(tag);
+                return;
+            }
+            if spec.close_node.as_deref() == Some(reduced_node.kind.as_str())
+                && auto_close_node_has_tag_name_child(reduced_node, spec)
+            {
+                let end_prefix = spec.end_prefix.as_deref().unwrap_or("</");
+                let Some(tag) =
+                    scan_auto_close_tag_in_range(input, *start_byte, *end_byte, end_prefix)
+                else {
+                    continue;
+                };
+                if branch.auto_close_stack.last() == Some(&tag) {
+                    branch.auto_close_stack.pop();
+                }
                 return;
             }
         }
@@ -7846,6 +7920,12 @@ impl<'a> RuntimeParser<'a> {
                     }
                 };
                 let (_start_byte, end_byte) = reduction.fragment.byte_range();
+                self.update_auto_close_stack_for_reduction(
+                    &mut branch,
+                    &reduction.fragment,
+                    tree_store,
+                    input,
+                );
                 if let RuntimeFragment::Node {
                     node,
                     start_byte,
@@ -8717,6 +8797,86 @@ impl RuntimeTreeStore {
     fn node(&self, id: TreeNodeId) -> &SexpNode {
         &self.nodes[id.get() as usize]
     }
+}
+
+pub(crate) fn auto_close_trigger_len(
+    spec: &AutoCloseSpec,
+    input: &str,
+    byte_position: usize,
+) -> Option<usize> {
+    let literal_trigger = spec
+        .closed_by
+        .iter()
+        .filter(|marker| input[byte_position..].starts_with(marker.as_str()))
+        .map(String::len)
+        .max();
+    let tag_trigger = spec
+        .start_prefix
+        .as_deref()
+        .and_then(|prefix| scan_auto_close_tag(input, byte_position, prefix))
+        .and_then(|(tag, end_byte)| {
+            spec.closed_by_tags
+                .iter()
+                .any(|closed_by| normalize_auto_close_tag(closed_by) == tag)
+                .then_some(end_byte - byte_position)
+        });
+    literal_trigger.max(tag_trigger)
+}
+
+pub(crate) fn scan_auto_close_tag_in_range(
+    input: &str,
+    start_byte: usize,
+    end_byte: usize,
+    prefix: &str,
+) -> Option<String> {
+    let (tag, tag_end) = scan_auto_close_tag(input, start_byte, prefix)?;
+    (tag_end <= end_byte).then_some(tag)
+}
+
+fn scan_auto_close_tag(input: &str, byte_position: usize, prefix: &str) -> Option<(String, usize)> {
+    let after_prefix = byte_position.checked_add(prefix.len())?;
+    if !input[byte_position..].starts_with(prefix) {
+        return None;
+    }
+    if prefix == "<" && input[after_prefix..].starts_with('/') {
+        return None;
+    }
+    let tag_start = after_prefix;
+    let tag_end = ascii_tag_name_end(input, tag_start);
+    (tag_end > tag_start).then(|| {
+        (
+            normalize_auto_close_tag(&input[tag_start..tag_end]),
+            tag_end,
+        )
+    })
+}
+
+fn ascii_tag_name_end(input: &str, byte_position: usize) -> usize {
+    input[byte_position..]
+        .char_indices()
+        .find_map(|(offset, ch)| {
+            (!(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == ':'))
+                .then_some(byte_position + offset)
+        })
+        .unwrap_or(input.len())
+}
+
+fn normalize_auto_close_tag(tag: &str) -> String {
+    tag.to_ascii_lowercase()
+}
+
+pub(crate) fn auto_close_node_has_tag_name_child(node: &SexpNode, spec: &AutoCloseSpec) -> bool {
+    let Some(tag_name_node) = &spec.tag_name_node else {
+        return true;
+    };
+    sexp_node_has_child_kind(node, tag_name_node)
+}
+
+fn sexp_node_has_child_kind(node: &SexpNode, kind: &str) -> bool {
+    node.children.iter().any(|child| match &child.value {
+        SexpValue::Node(child) => child.kind == kind || sexp_node_has_child_kind(child, kind),
+        SexpValue::Atom(_) => false,
+    })
 }
 
 fn next_trace_id(events: &[TraceEvent]) -> TraceEventId {
@@ -11588,6 +11748,72 @@ extras (
         )
     }
 
+    fn auto_close_node_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+        prepared_with_validated(
+            r##"{
+              "name": "mini_html_nodes",
+              "rules": {
+                "document": {
+                  "type": "REPEAT1",
+                  "content": { "type": "SYMBOL", "name": "element" }
+                },
+                "element": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "SYMBOL", "name": "start_tag" },
+                    {
+                      "type": "REPEAT",
+                      "content": {
+                        "type": "CHOICE",
+                        "members": [
+                          { "type": "SYMBOL", "name": "text" },
+                          { "type": "SYMBOL", "name": "element" }
+                        ]
+                      }
+                    },
+                    {
+                      "type": "CHOICE",
+                      "members": [
+                        { "type": "SYMBOL", "name": "end_tag" },
+                        { "type": "SYMBOL", "name": "_implicit_p_end" }
+                      ]
+                    }
+                  ]
+                },
+                "start_tag": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "STRING", "value": "<" },
+                    { "type": "SYMBOL", "name": "tag_name" },
+                    { "type": "STRING", "value": ">" }
+                  ]
+                },
+                "end_tag": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "STRING", "value": "</" },
+                    { "type": "SYMBOL", "name": "tag_name" },
+                    { "type": "STRING", "value": ">" }
+                  ]
+                },
+                "_implicit_p_end": {
+                  "type": "AUTO_CLOSE",
+                  "tag": "p",
+                  "open_node": "start_tag",
+                  "close_node": "end_tag",
+                  "tag_name_node": "tag_name",
+                  "start_prefix": "<",
+                  "end_prefix": "</",
+                  "closed_by_tags": ["p", "div"]
+                },
+                "tag_name": { "type": "PATTERN", "value": "[a-z]+" },
+                "text": { "type": "PATTERN", "value": "[a-z]+" }
+              },
+              "extras": []
+            }"##,
+        )
+    }
+
     #[test]
     fn runtime_inserts_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_fixture();
@@ -11597,6 +11823,20 @@ extras (
         assert_eq!(
             report.tree().to_sexp(),
             "(source_file (element (text)) (element (text)))"
+        );
+        assert_eq!(report.accepted_count(), 1);
+        assert_eq!(report.failure_count(), 0);
+    }
+
+    #[test]
+    fn runtime_inserts_node_driven_declarative_auto_close_tokens() {
+        let (validated, parser, table) = auto_close_node_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let report = runtime.parse_with_report("<p>one<div>two</div>").unwrap();
+
+        assert_eq!(
+            report.tree().to_sexp(),
+            "(document (element (start_tag (tag_name)) (text)) (element (start_tag (tag_name)) (text) (end_tag (tag_name))))"
         );
         assert_eq!(report.accepted_count(), 1);
         assert_eq!(report.failure_count(), 0);
@@ -11622,6 +11862,36 @@ extras (
         assert_eq!(
             weavy_report.tree().to_sexp(),
             "(source_file (element (text)) (element (text)))"
+        );
+        assert_eq!(
+            weavy_report.accepted_count(),
+            runtime_report.accepted_count()
+        );
+        assert_eq!(weavy_report.failure_count(), runtime_report.failure_count());
+        assert_eq!(weavy_report.trace_events(), runtime_report.trace_events());
+        assert_eq!(weavy_report.tree_events(), runtime_report.tree_events());
+    }
+
+    #[cfg(feature = "weavy-lowering")]
+    #[test]
+    fn runtime_inserts_node_driven_declarative_auto_close_tokens_through_weavy_runtime() {
+        let (validated, parser, table) = auto_close_node_fixture();
+        let runtime = RuntimeParser::new(&validated, &parser, &table).unwrap();
+        let runtime_report = runtime.parse_with_report("<p>one<div>two</div>").unwrap();
+        let plan = crate::lower::weavy::lower_reduced_parser(&parser, &table).unwrap();
+        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
+            &plan,
+            &validated,
+            &parser,
+            &table,
+            "<p>one<div>two</div>",
+        )
+        .unwrap();
+
+        rediff::assert_same!(weavy_report.tree(), runtime_report.tree());
+        assert_eq!(
+            weavy_report.tree().to_sexp(),
+            "(document (element (start_tag (tag_name)) (text)) (element (start_tag (tag_name)) (text) (end_tag (tag_name))))"
         );
         assert_eq!(
             weavy_report.accepted_count(),

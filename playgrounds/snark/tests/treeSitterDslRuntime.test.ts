@@ -119,7 +119,15 @@ test("emits Snark auto_close primitive nodes from grammar.js", () => {
 module.exports = grammar({
   name: "tiny_auto_close",
   rules: {
-    document: $ => seq("<p>", auto_close({ tag: "p", open: "<p>", close: "</p>", closed_by: ["<p>"] })),
+    document: $ => seq("<p>", auto_close({
+      tag: "p",
+      open_node: "start_tag",
+      close_node: "end_tag",
+      tag_name_node: "tag_name",
+      start_prefix: "<",
+      end_prefix: "</",
+      closed_by_tags: ["p", "div"],
+    })),
   },
 });
 `,
@@ -132,9 +140,12 @@ module.exports = grammar({
   assert.deepEqual(grammar.rules.document.members[1], {
     type: "AUTO_CLOSE",
     tag: "p",
-    open: "<p>",
-    close: "</p>",
-    closed_by: ["<p>"],
+    open_node: "start_tag",
+    close_node: "end_tag",
+    tag_name_node: "tag_name",
+    start_prefix: "<",
+    end_prefix: "</",
+    closed_by_tags: ["p", "div"],
   });
 });
 

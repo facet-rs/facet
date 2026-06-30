@@ -323,6 +323,12 @@ globalThis.auto_close = function auto_close(options) {
     open: options.open,
     close: options.close,
     closed_by: options.closed_by,
+    open_node: options.open_node,
+    close_node: options.close_node,
+    tag_name_node: options.tag_name_node,
+    start_prefix: options.start_prefix,
+    end_prefix: options.end_prefix,
+    closed_by_tags: options.closed_by_tags,
   };
 };
 "#;
@@ -567,14 +573,15 @@ mod tests {
     #[test]
     fn emits_snark_auto_close_primitive_with_boa() {
         let json = emit_source_with_boa(
-            "module.exports = grammar({ name: 'mini', rules: { source_file: $ => seq('<p>', auto_close({ tag: 'p', open: '<p>', close: '</p>', closed_by: ['<p>'] })) } });",
+            "module.exports = grammar({ name: 'mini', rules: { source_file: $ => seq('<p>', auto_close({ tag: 'p', open_node: 'start_tag', close_node: 'end_tag', tag_name_node: 'tag_name', start_prefix: '<', end_prefix: '</', closed_by_tags: ['p', 'div'] })) } });",
             "mini/grammar.js",
         )
         .unwrap();
 
         assert!(json.contains("\"type\": \"AUTO_CLOSE\""));
         assert!(json.contains("\"tag\": \"p\""));
-        assert!(json.contains("\"closed_by\""));
+        assert!(json.contains("\"open_node\": \"start_tag\""));
+        assert!(json.contains("\"closed_by_tags\""));
     }
 
     #[cfg(feature = "native")]
