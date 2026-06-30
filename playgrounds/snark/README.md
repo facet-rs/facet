@@ -29,6 +29,12 @@ Arborium grammar inheritance such as `require("tree-sitter-javascript/grammar")`
 can be resolved when the required authored grammar source is included in the
 uploaded directory.
 
+Uploads may contain more than one grammar root. The playground keeps those roots
+selectable and projects sibling roots under `languages/<name>/` for injections.
+Within one root, `src/grammar.json` or `grammar.json` is preferred over
+`grammar.js`; a sibling root that only has `grammar.js` is still evaluated and
+kept available as an embedded language.
+
 For languages with `scanner.c`, the playground only executes scanners that have
 an explicit source-matched host adapter. The reduced CSS scanner from the current
 fixture is wired this way; arbitrary scanner compilation/execution in the
