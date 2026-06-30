@@ -4,10 +4,10 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export function readWorkspaceVersion(cargoTomlSource) {
-  const match = cargoTomlSource.match(/\[workspace\.package\][\s\S]*?\nversion = "([^"]+)"/);
+export function readVoxPackageVersion(cargoTomlSource) {
+  const match = cargoTomlSource.match(/\[package\][\s\S]*?\nversion = "([^"]+)"/);
   if (!match?.[1]) {
-    throw new Error("Could not determine workspace version from Cargo.toml");
+    throw new Error("Could not determine vox package version from Cargo.toml");
   }
   return match[1];
 }
@@ -25,8 +25,8 @@ export function discoverPublicTypeScriptPackages(repoRoot) {
 }
 
 export function syncTypeScriptPackageVersions(repoRoot) {
-  const cargoTomlPath = join(repoRoot, "Cargo.toml");
-  const version = readWorkspaceVersion(readFileSync(cargoTomlPath, "utf8"));
+  const cargoTomlPath = join(repoRoot, "rust", "vox", "Cargo.toml");
+  const version = readVoxPackageVersion(readFileSync(cargoTomlPath, "utf8"));
   const packages = discoverPublicTypeScriptPackages(repoRoot);
 
   const updatedPackages = [];
@@ -49,7 +49,7 @@ if (entrypoint === fileURLToPath(import.meta.url)) {
   const repoRoot = process.cwd();
   const { version, updatedPackages } = syncTypeScriptPackageVersions(repoRoot);
   if (updatedPackages.length === 0) {
-    console.log(`TypeScript package versions already match Cargo workspace version ${version}`);
+    console.log(`TypeScript package versions already match vox crate version ${version}`);
   } else {
     console.log(`Synced ${updatedPackages.length} TypeScript packages to ${version}`);
     for (const pkg of updatedPackages) {
