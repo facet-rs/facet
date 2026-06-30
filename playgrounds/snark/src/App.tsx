@@ -40,6 +40,7 @@ type DiagnosticSpan = {
 
 type ParseOutput = {
   sexp: string;
+  tree: ResolvedTreeOutput | null;
   accepted_count: number;
   failure_count: number;
   max_live_versions: number;
@@ -49,6 +50,22 @@ type ParseOutput = {
   accepted_tree_event_count: number;
   accepted_error_count: number;
   accepted_missing_count: number;
+};
+
+type ResolvedTreeOutput = {
+  kind: string;
+  field: string | null;
+  text: string | null;
+  start_byte: number;
+  end_byte: number;
+  start_row: number;
+  start_column: number;
+  end_row: number;
+  end_column: number;
+  named: boolean;
+  visible: boolean;
+  extra: boolean;
+  children: ResolvedTreeOutput[];
 };
 
 type HighlightOutput = {

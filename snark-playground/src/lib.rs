@@ -20,7 +20,8 @@ use snark::{
     parser::{
         ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
         ReducedExternalScanner, ReducedParseError, ReducedParseErrorKind, RuntimeInputEdit,
-        RuntimeParseReport, RuntimeParser, RuntimeParserPlan, ScannerSnapshotId, TreeEvent,
+        RuntimeParseReport, RuntimeParser, RuntimeParserPlan, RuntimeResolvedNode,
+        ScannerSnapshotId, TreeEvent,
     },
     query::QuerySource,
     runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
@@ -111,6 +112,7 @@ struct BundleSummary {
 #[derive(Debug, Clone, Facet)]
 struct ParseOutput {
     sexp: String,
+    tree: Option<ResolvedTreeOutput>,
     accepted_count: usize,
     failure_count: usize,
     max_live_versions: usize,
@@ -120,6 +122,23 @@ struct ParseOutput {
     accepted_tree_event_count: usize,
     accepted_error_count: usize,
     accepted_missing_count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct ResolvedTreeOutput {
+    kind: String,
+    field: Option<String>,
+    text: Option<String>,
+    start_byte: u32,
+    end_byte: u32,
+    start_row: u32,
+    start_column: u32,
+    end_row: u32,
+    end_column: u32,
+    named: bool,
+    visible: bool,
+    extra: bool,
+    children: Vec<ResolvedTreeOutput>,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -537,7 +556,7 @@ fn playground_response_for_session(
                     let accepted_tree_events = report.accepted_tree_events();
                     let accepted_error_count = count_accepted_errors(&accepted_tree_events);
                     let accepted_missing_count = count_accepted_missing(&accepted_tree_events);
-                    parse = Some(parse_output(&report));
+                    parse = Some(parse_output(&report, &prepared.parser, input));
                     if accepted_error_count > 0 || accepted_missing_count > 0 {
                         diagnostics.push(diagnostic(
                             "parse",
@@ -625,10 +644,13 @@ fn count_reused_nodes(events: &[TreeEvent]) -> usize {
         .count()
 }
 
-fn parse_output(report: &RuntimeParseReport) -> ParseOutput {
+fn parse_output(report: &RuntimeParseReport, parser: &ParserGrammar, input: &str) -> ParseOutput {
     let accepted_tree_events = report.accepted_tree_events();
     ParseOutput {
         sexp: report.tree().to_sexp(),
+        tree: report
+            .accepted_resolved_tree(parser, input)
+            .map(|tree| resolved_tree_output(&tree)),
         accepted_count: report.accepted_count(),
         failure_count: report.failure_count(),
         max_live_versions: report.max_live_versions(),
@@ -638,6 +660,26 @@ fn parse_output(report: &RuntimeParseReport) -> ParseOutput {
         accepted_tree_event_count: accepted_tree_events.len(),
         accepted_error_count: count_accepted_errors(&accepted_tree_events),
         accepted_missing_count: count_accepted_missing(&accepted_tree_events),
+    }
+}
+
+fn resolved_tree_output(node: &RuntimeResolvedNode) -> ResolvedTreeOutput {
+    let bytes = node.bytes();
+    let points = node.points();
+    ResolvedTreeOutput {
+        kind: node.kind().to_owned(),
+        field: node.field().map(ToOwned::to_owned),
+        text: node.text().map(ToOwned::to_owned),
+        start_byte: bytes.start().get(),
+        end_byte: bytes.end().get(),
+        start_row: points.start().row().get(),
+        start_column: points.start().column().get(),
+        end_row: points.end().row().get(),
+        end_column: points.end().column().get(),
+        named: node.named(),
+        visible: node.visible(),
+        extra: node.extra(),
+        children: node.children().iter().map(resolved_tree_output).collect(),
     }
 }
 
@@ -1246,7 +1288,7 @@ fn layer_output(
         }
     };
     let mut diagnostics = Vec::new();
-    let parse = parse_output(&report.report);
+    let parse = parse_output(&report.report, &prepared.parser, &input);
     if parse.accepted_error_count > 0 || parse.accepted_missing_count > 0 {
         let primary_span = accepted_problem_span(&report.report.accepted_tree_events(), &input)
             .and_then(|span| remap_layer_span(&span, host_input, &segments));
@@ -2481,6 +2523,76 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("variable", "abc"), ("constant", "XYZ")]
         );
+    }
+
+    #[test]
+    fn playground_response_includes_ranged_tree_with_anonymous_terminals() {
+        let files = vec![BundleFile {
+            path: "src/grammar.json".to_owned(),
+            text: r##"{
+  "name": "mini_tree",
+  "rules": {
+    "template": {
+      "type": "SEQ",
+      "members": [
+        { "type": "STRING", "value": "{{-" },
+        { "type": "SYMBOL", "name": "expr" },
+        { "type": "STRING", "value": "-}}" }
+      ]
+    },
+    "expr": {
+      "type": "PREC_LEFT",
+      "value": 1,
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          { "type": "SYMBOL", "name": "number" },
+          {
+            "type": "SEQ",
+            "members": [
+              { "type": "SYMBOL", "name": "expr" },
+              { "type": "STRING", "value": "+" },
+              { "type": "SYMBOL", "name": "expr" }
+            ]
+          }
+        ]
+      }
+    },
+    "number": { "type": "PATTERN", "value": "\\d+" }
+  },
+  "extras": [{ "type": "PATTERN", "value": "\\s+" }],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}"##
+            .to_owned(),
+        }];
+        let mut session = PlaygroundSession::prepare_files(files).unwrap();
+        let request = PlaygroundParseRequest {
+            input: "{{- 1 + 2 -}}".to_owned(),
+            run_corpus: false,
+            edit: None,
+        };
+        let response = session.parse_json(&facet_json::to_string(&request).unwrap());
+        let response: PlaygroundResponse = facet_json::from_str(&response).unwrap();
+
+        assert!(response.ok, "{:?}", response.diagnostics);
+        let parse = response.parse.as_ref().expect("sample parses");
+        assert_eq!(
+            parse.sexp,
+            "(template (expr (expr (number)) (expr (number))))"
+        );
+        let tree = parse.tree.as_ref().expect("resolved tree is exported");
+        assert_eq!(tree.kind, "template");
+        assert_eq!(tree.start_byte, 0);
+        assert_eq!(tree.end_byte, request.input.len() as u32);
+
+        let texts = resolved_tree_texts(tree);
+        assert!(texts.contains(&"{{-"), "resolved terminal texts: {texts:?}");
+        assert!(texts.contains(&"+"), "resolved terminal texts: {texts:?}");
+        assert!(texts.contains(&"-}}"), "resolved terminal texts: {texts:?}");
     }
 
     #[test]
@@ -5001,6 +5113,21 @@ mod tests {
     fn is_error_sample(path: &str) -> bool {
         let lower = path.to_ascii_lowercase();
         lower.contains("error") || lower.contains("invalid") || lower.contains("fail")
+    }
+
+    fn resolved_tree_texts(node: &ResolvedTreeOutput) -> Vec<&str> {
+        let mut texts = Vec::new();
+        collect_resolved_tree_texts(node, &mut texts);
+        texts
+    }
+
+    fn collect_resolved_tree_texts<'a>(node: &'a ResolvedTreeOutput, texts: &mut Vec<&'a str>) {
+        if let Some(text) = node.text.as_deref() {
+            texts.push(text);
+        }
+        for child in &node.children {
+            collect_resolved_tree_texts(child, texts);
+        }
     }
 
     #[test]
