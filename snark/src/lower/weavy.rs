@@ -372,6 +372,8 @@ pub struct SnarkIntrinsicSemantics {
 pub struct SnarkIntrinsicSemanticStats {
     /// Total Snark dialect intrinsic ops.
     pub intrinsic_count: usize,
+    /// Semantic contract for each stable dialect/name identity.
+    pub descriptor_semantics: BTreeMap<IntrinsicDescriptor, SnarkIntrinsicSemantics>,
     /// Intrinsic counts grouped by stable dialect/name identity.
     pub descriptor_counts: BTreeMap<IntrinsicDescriptor, usize>,
     /// Intrinsic counts grouped by semantic domain.
@@ -388,8 +390,21 @@ impl SnarkIntrinsicSemanticStats {
             .descriptor_counts
             .entry(semantics.descriptor)
             .or_default() += 1;
+        self.descriptor_semantics
+            .entry(semantics.descriptor)
+            .and_modify(|existing| debug_assert_eq!(existing, &semantics))
+            .or_insert(semantics.clone());
         *self.domain_counts.entry(semantics.domain).or_default() += 1;
         *self.lowering_counts.entry(semantics.lowering).or_default() += 1;
+    }
+
+    /// Return the semantic contract for one stable dialect/name identity.
+    #[must_use]
+    pub fn descriptor_semantics(
+        &self,
+        descriptor: IntrinsicDescriptor,
+    ) -> Option<&SnarkIntrinsicSemantics> {
+        self.descriptor_semantics.get(&descriptor)
     }
 
     /// Return the number of intrinsics with one stable dialect/name identity.
@@ -6328,6 +6343,18 @@ mod tests {
         assert_eq!(stats.intrinsic_count, 2);
         assert_eq!(stats.descriptor_count(lex_descriptor), 1);
         assert_eq!(stats.descriptor_count(trace_descriptor), 1);
+        assert_eq!(
+            stats
+                .descriptor_semantics(lex_descriptor)
+                .map(|s| s.lowering),
+            Some(SnarkIntrinsicLowering::LexerGraph)
+        );
+        assert_eq!(
+            stats
+                .descriptor_semantics(trace_descriptor)
+                .map(|s| s.domain),
+            Some(SnarkIntrinsicDomain::Trace)
+        );
         assert_eq!(stats.domain_count(SnarkIntrinsicDomain::Lexing), 1);
         assert_eq!(stats.domain_count(SnarkIntrinsicDomain::Trace), 1);
         assert_eq!(stats.lowering_count(SnarkIntrinsicLowering::LexerGraph), 1);
@@ -6462,6 +6489,13 @@ mod tests {
         assert_eq!(
             analysis.parser_semantics.descriptor_count(lex.descriptor()),
             1
+        );
+        assert_eq!(
+            analysis
+                .parser_semantics
+                .descriptor_semantics(lex.descriptor())
+                .map(|semantics| semantics.lowering),
+            Some(SnarkIntrinsicLowering::LexerGraph)
         );
         assert_eq!(
             analysis
