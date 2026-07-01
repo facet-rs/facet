@@ -1551,7 +1551,6 @@ fn match_regex_automata_leaf(
 #[derive(Clone, Debug)]
 struct WeavyLiteralSet {
     automaton: AhoCorasick,
-    literals: Vec<String>,
     terminal_indices: Vec<usize>,
 }
 
@@ -1579,13 +1578,12 @@ impl WeavyLiteralSet {
             .ok()?;
         Some(Self {
             automaton,
-            literals,
             terminal_indices,
         })
     }
 
     fn len(&self) -> usize {
-        self.literals.len()
+        self.terminal_indices.len()
     }
 
     fn for_each_match(
@@ -6639,14 +6637,7 @@ mod tests {
             },
         ];
         let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
-        let literal_sources = direct_literal_set
-            .as_ref()
-            .unwrap()
-            .literals
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        assert_eq!(literal_sources, vec!["a", "ab"]);
+        assert_eq!(direct_literal_set.as_ref().unwrap().len(), 2);
         let mode = WeavyLexModeProgram {
             terminals,
             direct_literal_set,
