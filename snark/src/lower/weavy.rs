@@ -637,8 +637,8 @@ impl From<parser_ir::CompiledTerminalMatcher> for WeavyTerminalMatcher {
 enum WeavyLexExpr {
     Blank,
     String(String),
-    Pattern(parser_ir::CompiledLexPattern),
-    Until(parser_ir::CompiledUntilMatcher),
+    Pattern(crate::lex_match::CompiledPattern),
+    Until(crate::lex_match::CompiledUntilMatcher),
     Nested { open: String, close: String },
     AutoClose(Box<parser_ir::AutoCloseSpec>),
     Seq(Vec<WeavyLexExpr>),
@@ -3832,20 +3832,20 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     end: byte_position + value.len(),
                     inspected_end: byte_position + value.len(),
                 })),
-            WeavyLexExpr::Pattern(pattern) => Ok(parser_ir::match_compiled_pattern(
+            WeavyLexExpr::Pattern(pattern) => Ok(crate::lex_match::match_compiled_pattern(
                 pattern,
                 self.input,
                 byte_position,
             )),
-            WeavyLexExpr::Until(matcher) => {
-                Ok(parser_ir::match_compiled_until_markers_with_inspection(
+            WeavyLexExpr::Until(matcher) => Ok(
+                crate::lex_match::match_compiled_until_markers_with_inspection(
                     matcher,
                     self.input,
                     byte_position,
-                ))
-            }
+                ),
+            ),
             WeavyLexExpr::Nested { open, close } => {
-                Ok(parser_ir::match_nested_delimiters_with_inspection(
+                Ok(crate::lex_match::match_nested_delimiters_with_inspection(
                     open,
                     close,
                     self.input,
@@ -4376,7 +4376,7 @@ fn match_weavy_direct_pattern_set(
         let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher else {
             continue;
         };
-        ends[set_index] = parser_ir::match_compiled_pattern(pattern, input, byte_position);
+        ends[set_index] = crate::lex_match::match_compiled_pattern(pattern, input, byte_position);
     }
 }
 

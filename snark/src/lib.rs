@@ -12,6 +12,7 @@
 pub mod corpus;
 pub mod diagnostic;
 pub mod grammar;
+mod lex_match;
 pub mod lexical;
 pub mod lower;
 pub mod manifest;
