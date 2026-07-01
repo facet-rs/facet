@@ -12,3 +12,5 @@ publish = false
 [dependencies]
 snark = { path = "../snark", features = ["json-import", "weavy-lowering"] }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }
+facet = { path = "../facet" }
+facet-json = { path = "../facet-json" }

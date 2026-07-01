@@ -6622,6 +6622,8 @@ dependencies = [
 name = "snark-ts-diff"
 version = "0.0.0"
 dependencies = [
+ "facet",
+ "facet-json",
  "snark",
  "snark-dsl",
 ]
