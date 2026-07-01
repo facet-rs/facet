@@ -498,7 +498,7 @@ impl WeavyParserProgram {
 #[derive(Clone, Debug)]
 pub struct WeavyParsePlan {
     program: WeavyParserProgram,
-    compiled_lex_modes: Vec<parser_ir::CompiledLexMode>,
+    lexer_program: WeavyLexerProgram,
     auto_close_index: RuntimeWeavyAutoCloseIndex,
 }
 
@@ -511,10 +511,11 @@ impl WeavyParsePlan {
     ) -> Result<Self, WeavyParseError> {
         let program = lower_weavy_parser_program(parser, table)?;
         let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
-        let auto_close_index = RuntimeWeavyAutoCloseIndex::new(parser, &compiled_lex_modes);
+        let lexer_program = WeavyLexerProgram::from_compiled_modes(compiled_lex_modes);
+        let auto_close_index = RuntimeWeavyAutoCloseIndex::new(parser, &lexer_program);
         Ok(Self {
             program,
-            compiled_lex_modes,
+            lexer_program,
             auto_close_index,
         })
     }
@@ -522,6 +523,43 @@ impl WeavyParsePlan {
     /// Lowered Weavy parser/action program.
     pub const fn program(&self) -> &WeavyParserProgram {
         &self.program
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WeavyLexerProgram {
+    modes: Vec<WeavyLexModeProgram>,
+}
+
+impl WeavyLexerProgram {
+    fn from_compiled_modes(modes: Vec<parser_ir::CompiledLexMode>) -> Self {
+        Self {
+            modes: modes
+                .into_iter()
+                .map(|compiled| WeavyLexModeProgram { compiled })
+                .collect(),
+        }
+    }
+
+    fn mode(&self, mode: parser_ir::LexModeId) -> Result<&WeavyLexModeProgram, WeavyParseError> {
+        self.modes
+            .get(mode.get() as usize)
+            .ok_or(WeavyParseError::MissingLexMode { mode })
+    }
+
+    fn compiled_modes(&self) -> impl Iterator<Item = &parser_ir::CompiledLexMode> {
+        self.modes.iter().map(|mode| &mode.compiled)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WeavyLexModeProgram {
+    compiled: parser_ir::CompiledLexMode,
+}
+
+impl WeavyLexModeProgram {
+    fn compiled(&self) -> &parser_ir::CompiledLexMode {
+        &self.compiled
     }
 }
 
@@ -534,15 +572,12 @@ struct RuntimeWeavyAutoCloseIndex {
 }
 
 impl RuntimeWeavyAutoCloseIndex {
-    fn new(
-        parser: &parser_ir::ParserGrammar,
-        compiled_lex_modes: &[parser_ir::CompiledLexMode],
-    ) -> Self {
+    fn new(parser: &parser_ir::ParserGrammar, lexer_program: &WeavyLexerProgram) -> Self {
         let mut index = Self {
             terminal_specs: vec![None; parser.symbols().terminals().len()],
             ..Self::default()
         };
-        for mode in compiled_lex_modes {
+        for mode in lexer_program.compiled_modes() {
             for row in &mode.terminals {
                 let parser_ir::CompiledTerminalMatcher::Expr(
                     parser_ir::CompiledLexExpr::AutoClose(spec),
@@ -1193,7 +1228,7 @@ fn action_program_for(
 #[derive(Clone, Copy)]
 struct RuntimeWeavyInput<'a> {
     plan: &'a WeavyParserProgram,
-    compiled_lex_modes: &'a [parser_ir::CompiledLexMode],
+    lexer_program: &'a WeavyLexerProgram,
     auto_close_index: &'a RuntimeWeavyAutoCloseIndex,
     parser: &'a parser_ir::ParserGrammar,
     table: &'a parser_ir::ParseTable,
@@ -1250,10 +1285,10 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_weavy_with_compiled_lex_modes(
+    parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
             plan: &plan.program,
-            compiled_lex_modes: &plan.compiled_lex_modes,
+            lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
             table,
@@ -1275,10 +1310,10 @@ pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_weavy_with_compiled_lex_modes(
+    parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
             plan: &plan.program,
-            compiled_lex_modes: &plan.compiled_lex_modes,
+            lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
             table,
@@ -1300,10 +1335,10 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_weavy_with_compiled_lex_modes(
+    parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
             plan: &plan.program,
-            compiled_lex_modes: &plan.compiled_lex_modes,
+            lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
             table,
@@ -1325,10 +1360,10 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_weavy_with_compiled_lex_modes(
+    parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
             plan: &plan.program,
-            compiled_lex_modes: &plan.compiled_lex_modes,
+            lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
             table,
@@ -1525,10 +1560,10 @@ pub fn reparse_prepared_weavy_with_report_and_scanner(
 ) -> Result<WeavyParseReport, WeavyParseError> {
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
-    parse_weavy_with_compiled_lex_modes(
+    parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
             plan: &plan.program,
-            compiled_lex_modes: &plan.compiled_lex_modes,
+            lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
             table,
@@ -1556,10 +1591,10 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
 ) -> Result<WeavyParseReport, WeavyParseError> {
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
-    parse_weavy_with_compiled_lex_modes(
+    parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
             plan: &plan.program,
-            compiled_lex_modes: &plan.compiled_lex_modes,
+            lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
             table,
@@ -1839,7 +1874,7 @@ fn runtime_weavy_shift_tree_event_bytes(
     }
 }
 
-fn parse_weavy_with_compiled_lex_modes(
+fn parse_weavy_with_lexer_program(
     input_ctx: RuntimeWeavyInput<'_>,
     recovery: RuntimeWeavyRecoveryMode,
     reuse_index: Option<&RuntimeWeavyReuseIndex>,
@@ -2633,9 +2668,9 @@ fn tree_dynamic_precedence(
     events
         .iter()
         .map(|event| match event {
-            parser_ir::TreeEvent::Reduce { production, .. } => parser.productions()
-                [production.get() as usize]
-                .dynamic_precedence(),
+            parser_ir::TreeEvent::Reduce { production, .. } => {
+                parser.productions()[production.get() as usize].dynamic_precedence()
+            }
             _ => 0,
         })
         .sum()
@@ -2915,7 +2950,7 @@ struct RuntimeWeavyStepper<'a> {
     plan: &'a WeavyParserProgram,
     parser: &'a parser_ir::ParserGrammar,
     table: &'a parser_ir::ParseTable,
-    compiled_lex_modes: &'a [parser_ir::CompiledLexMode],
+    lexer_program: &'a WeavyLexerProgram,
     auto_close_index: &'a RuntimeWeavyAutoCloseIndex,
     input: &'a str,
     input_points: &'a RuntimeWeavyInputPoints,
@@ -2954,7 +2989,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             plan: stepper_input.input.plan,
             parser: stepper_input.input.parser,
             table: stepper_input.input.table,
-            compiled_lex_modes: stepper_input.input.compiled_lex_modes,
+            lexer_program: stepper_input.input.lexer_program,
             auto_close_index: stepper_input.input.auto_close_index,
             input: stepper_input.input.input,
             input_points: stepper_input.input_points,
@@ -2992,7 +3027,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             plan: stepper_input.input.plan,
             parser: stepper_input.input.parser,
             table: stepper_input.input.table,
-            compiled_lex_modes: stepper_input.input.compiled_lex_modes,
+            lexer_program: stepper_input.input.lexer_program,
             auto_close_index: stepper_input.input.auto_close_index,
             input: stepper_input.input.input,
             input_points: stepper_input.input_points,
@@ -3353,10 +3388,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .ok_or(WeavyParseError::MissingLexMode {
                 mode: state.lex_mode(),
             })?;
-        let compiled_mode = self
-            .compiled_lex_modes
-            .get(mode.id().get() as usize)
-            .ok_or(WeavyParseError::MissingLexMode { mode: mode.id() })?;
+        let mode_program = self.lexer_program.mode(mode.id())?;
+        let compiled_mode = mode_program.compiled();
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
         {
@@ -3485,10 +3518,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .ok_or(WeavyParseError::MissingLexMode {
                 mode: state.lex_mode(),
             })?;
-        let compiled_mode = self
-            .compiled_lex_modes
-            .get(mode.id().get() as usize)
-            .ok_or(WeavyParseError::MissingLexMode { mode: mode.id() })?;
+        let compiled_mode = self.lexer_program.mode(mode.id())?.compiled();
         for terminal in mode.terminals() {
             let Some(lookahead) = self.lookahead_for_terminal(state, *terminal) else {
                 continue;
