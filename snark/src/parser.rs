@@ -3320,7 +3320,7 @@ impl<'a> LrTableBuilder<'a> {
 /// whole set on each of the many LR-closure merges).
 #[derive(Debug, Clone, Default)]
 struct LookaheadInterner {
-    to_index: BTreeMap<LookaheadSymbol, u32>,
+    to_index: FxHashMap<LookaheadSymbol, u32>,
     from_index: Vec<LookaheadSymbol>,
 }
 
