@@ -3000,37 +3000,39 @@ impl<'a> LrTableBuilder<'a> {
     }
 
     fn closure(&self, items: Vec<LrItem>) -> Vec<LrItem> {
+        use std::collections::{BTreeSet, VecDeque};
         let mut map = ItemMap::from_items(items);
-        // Reused across the whole fixpoint: the loop mints no per-iteration Vec, does
-        // no clone, and does no sort — `insert` ORs into a bitset that absorbs dups.
+        // Worklist fixpoint: (re)process an item only when its lookahead set actually
+        // grew, so the work is proportional to real propagation instead of
+        // items × rounds (the old loop re-scanned and re-collected every key each
+        // pass — ~1.5s of BTreeMap churn on gingembre). Inserts only ever target
+        // (production, 0), so only those items can grow and get re-queued. Two reused
+        // scratch buffers keep the loop allocation-free.
+        let mut queued: BTreeSet<(ProductionId, usize)> = map.items.keys().copied().collect();
+        let mut worklist: VecDeque<(ProductionId, usize)> = queued.iter().copied().collect();
         let mut source = Vec::new();
         let mut lookaheads = Vec::new();
-        loop {
-            // Snapshot only the keys (cheap `Copy`s). Items added this round are picked
-            // up next pass; the fixpoint is monotone so evaluation order is irrelevant.
-            let keys: Vec<(ProductionId, usize)> = map.items.keys().copied().collect();
-            let mut changed = false;
-            for (production_id, dot) in keys {
-                let production = &self.grammar.productions[production_id.get() as usize];
-                let Some(step) = production.steps.get(dot) else {
-                    continue;
-                };
-                let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
-                    continue;
-                };
-                source.clear();
-                map.materialize_into((production_id, dot), &mut source);
-                lookaheads.clear();
-                self.first
-                    .first_of_steps_into(&production.steps[dot + 1..], &source, &mut lookaheads);
-                for production in &self.productions_by_lhs[nonterminal.get() as usize] {
-                    changed |= map.insert(*production, 0, &lookaheads);
+        while let Some((production_id, dot)) = worklist.pop_front() {
+            queued.remove(&(production_id, dot));
+            let production = &self.grammar.productions[production_id.get() as usize];
+            let Some(step) = production.steps.get(dot) else {
+                continue;
+            };
+            let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
+                continue;
+            };
+            source.clear();
+            map.materialize_into((production_id, dot), &mut source);
+            lookaheads.clear();
+            self.first
+                .first_of_steps_into(&production.steps[dot + 1..], &source, &mut lookaheads);
+            for target in &self.productions_by_lhs[nonterminal.get() as usize] {
+                if map.insert(*target, 0, &lookaheads) && queued.insert((*target, 0)) {
+                    worklist.push_back((*target, 0));
                 }
             }
-            if !changed {
-                return map.into_items();
-            }
         }
+        map.into_items()
     }
 
     fn group_goto_items(&self, item_set: &ItemSet) -> BTreeMap<ParserSymbol, Vec<LrItem>> {
