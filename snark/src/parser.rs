@@ -2980,9 +2980,9 @@ impl<'a> LrTableBuilder<'a> {
         let mut queue = VecDeque::new();
         let mut start_items = ItemMap::default();
         for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
-            start_items.insert(*production, 0, &[LookaheadSymbol::Eof]);
+            start_items.insert(*production, 0, &[LookaheadSymbol::Eof], &self.first.interner);
         }
-        let start_items = self.closure(start_items.into_items());
+        let start_items = self.closure(start_items.into_items(&self.first.interner));
         let start = push_item_set(&mut item_sets, &mut item_set_keys, start_items, &mut queue);
         debug_assert_eq!(start.get(), 0);
 
@@ -3001,7 +3001,8 @@ impl<'a> LrTableBuilder<'a> {
 
     fn closure(&self, items: Vec<LrItem>) -> Vec<LrItem> {
         use std::collections::{BTreeSet, VecDeque};
-        let mut map = ItemMap::from_items(items);
+        let interner = &self.first.interner;
+        let mut map = ItemMap::from_items(items, interner);
         // Worklist fixpoint: (re)process an item only when its lookahead set actually
         // grew, so the work is proportional to real propagation instead of
         // items × rounds (the old loop re-scanned and re-collected every key each
@@ -3010,8 +3011,10 @@ impl<'a> LrTableBuilder<'a> {
         // scratch buffers keep the loop allocation-free.
         let mut queued: BTreeSet<(ProductionId, usize)> = map.items.keys().copied().collect();
         let mut worklist: VecDeque<(ProductionId, usize)> = queued.iter().copied().collect();
-        let mut source = Vec::new();
-        let mut lookaheads = Vec::new();
+        // Reused bitsets: `fallback` = the current item's lookahead, `scratch` = the
+        // computed FIRST set. The whole loop is bitwise OR — no Vec, no interning, no sort.
+        let mut fallback = LookaheadBitset::default();
+        let mut scratch = LookaheadBitset::default();
         while let Some((production_id, dot)) = worklist.pop_front() {
             queued.remove(&(production_id, dot));
             let production = &self.grammar.productions[production_id.get() as usize];
@@ -3021,18 +3024,20 @@ impl<'a> LrTableBuilder<'a> {
             let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
                 continue;
             };
-            source.clear();
-            map.materialize_into((production_id, dot), &mut source);
-            lookaheads.clear();
+            fallback.clear();
+            if let Some(current) = map.items.get(&(production_id, dot)) {
+                fallback.or_from(current);
+            }
+            scratch.clear();
             self.first
-                .first_of_steps_into(&production.steps[dot + 1..], &source, &mut lookaheads);
+                .first_of_steps_into_bits(&production.steps[dot + 1..], &fallback, &mut scratch);
             for target in &self.productions_by_lhs[nonterminal.get() as usize] {
-                if map.insert(*target, 0, &lookaheads) && queued.insert((*target, 0)) {
+                if map.or_into((*target, 0), &scratch) && queued.insert((*target, 0)) {
                     worklist.push_back((*target, 0));
                 }
             }
         }
-        map.into_items()
+        map.into_items(interner)
     }
 
     fn group_goto_items(&self, item_set: &ItemSet) -> BTreeMap<ParserSymbol, Vec<LrItem>> {
@@ -3046,11 +3051,12 @@ impl<'a> LrTableBuilder<'a> {
                 item.production,
                 item.dot + 1,
                 item.lookahead.symbols(),
+                &self.first.interner,
             );
         }
         grouped
             .into_iter()
-            .map(|(symbol, items)| (symbol, items.into_items()))
+            .map(|(symbol, items)| (symbol, items.into_items(&self.first.interner)))
             .collect()
     }
 
@@ -3252,6 +3258,16 @@ impl LookaheadInterner {
         self.to_index.insert(symbol, index);
         index
     }
+
+    /// Index of an already-interned symbol. The interner is fully populated with every
+    /// possible lookahead symbol (all FIRST sets, every step lookahead, and EOF) before
+    /// the closure runs, so this never misses during table construction.
+    fn index_of(&self, symbol: LookaheadSymbol) -> u32 {
+        self.to_index
+            .get(&symbol)
+            .copied()
+            .expect("lookahead symbol should be pre-interned")
+    }
 }
 
 /// Growable bitset over interned lookahead indices.
@@ -3287,54 +3303,65 @@ impl LookaheadBitset {
     fn count(&self) -> usize {
         self.words.iter().map(|word| word.count_ones() as usize).sum()
     }
+
+    /// OR `other` into `self`; returns whether `self` gained any bit.
+    fn or_from(&mut self, other: &LookaheadBitset) -> bool {
+        if other.words.len() > self.words.len() {
+            self.words.resize(other.words.len(), 0);
+        }
+        let mut grew = false;
+        for (word, &incoming) in self.words.iter_mut().zip(&other.words) {
+            grew |= incoming & !*word != 0;
+            *word |= incoming;
+        }
+        grew
+    }
+
+    /// Clear all bits, keeping the allocation for reuse.
+    fn clear(&mut self) {
+        self.words.clear();
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 struct ItemMap {
-    interner: LookaheadInterner,
     items: BTreeMap<(ProductionId, usize), LookaheadBitset>,
 }
 
 impl ItemMap {
-    fn from_items(items: Vec<LrItem>) -> Self {
+    fn from_items(items: Vec<LrItem>, interner: &LookaheadInterner) -> Self {
         let mut map = Self::default();
         for item in items {
-            map.insert(item.production, item.dot, item.lookahead.symbols());
+            map.insert(item.production, item.dot, item.lookahead.symbols(), interner);
         }
         map
     }
 
+    /// Symbol-keyed insert for seeding and goto grouping (not the closure hot loop).
+    /// The interner is frozen, so this is a pure lookup + bitset OR.
     fn insert(
         &mut self,
         production: ProductionId,
         dot: usize,
         lookaheads: &[LookaheadSymbol],
+        interner: &LookaheadInterner,
     ) -> bool {
-        let Self { interner, items } = self;
-        let bitset = items.entry((production, dot)).or_default();
+        let bitset = self.items.entry((production, dot)).or_default();
         let mut changed = false;
         for &symbol in lookaheads {
-            changed |= bitset.set(interner.intern(symbol));
+            changed |= bitset.set(interner.index_of(symbol));
         }
         changed
     }
 
-    /// Append this item's lookahead symbols to `out` (unsorted; the bitset dedups, and
-    /// callers that need order re-sort once at a boundary). No allocation, no clone.
-    fn materialize_into(&self, key: (ProductionId, usize), out: &mut Vec<LookaheadSymbol>) {
-        if let Some(bitset) = self.items.get(&key) {
-            out.reserve(bitset.count());
-            out.extend(
-                bitset
-                    .indices()
-                    .map(|index| self.interner.from_index[index as usize]),
-            );
-        }
+    /// Bitset OR into an item's lookahead set — the LR-closure hot path. Returns
+    /// whether the set grew.
+    fn or_into(&mut self, key: (ProductionId, usize), bits: &LookaheadBitset) -> bool {
+        self.items.entry(key).or_default().or_from(bits)
     }
 
-    fn into_items(self) -> Vec<LrItem> {
-        let Self { interner, items } = self;
-        items
+    fn into_items(self, interner: &LookaheadInterner) -> Vec<LrItem> {
+        self.items
             .into_iter()
             .map(|((production, dot), bitset)| {
                 let mut symbols = Vec::with_capacity(bitset.count());
@@ -3354,6 +3381,11 @@ impl ItemMap {
 struct FirstFacts {
     nullable: Vec<bool>,
     first: Vec<Vec<LookaheadSymbol>>,
+    /// Shared, frozen index of every possible lookahead symbol. Built once so the LR
+    /// closure works entirely in bitsets (no per-symbol interning in the hot loop).
+    interner: LookaheadInterner,
+    /// FIRST(nonterminal) as a bitset over `interner`.
+    first_bits: Vec<LookaheadBitset>,
 }
 
 impl FirstFacts {
@@ -3371,20 +3403,75 @@ impl FirstFacts {
                 changed |= extend_lookaheads(&mut first[lhs], &symbols);
             }
             if !changed {
-                return Self { nullable, first };
+                break;
             }
+        }
+
+        // Freeze a complete lookahead interner: every FIRST-set symbol, every step's
+        // lookahead terminal, and EOF — every symbol the closure can ever place in a
+        // lookahead set — so `index_of` never misses and the loop needs no interning.
+        let mut interner = LookaheadInterner::default();
+        for symbols in &first {
+            for &symbol in symbols {
+                interner.intern(symbol);
+            }
+        }
+        interner.intern(LookaheadSymbol::Eof);
+        for production in &grammar.productions {
+            for step in &production.steps {
+                if let Some(symbol) = lookahead_for_step(step) {
+                    interner.intern(symbol);
+                }
+            }
+        }
+        let first_bits = first
+            .iter()
+            .map(|symbols| {
+                let mut bits = LookaheadBitset::default();
+                for &symbol in symbols {
+                    bits.set(interner.index_of(symbol));
+                }
+                bits
+            })
+            .collect();
+
+        Self {
+            nullable,
+            first,
+            interner,
+            first_bits,
         }
     }
 
     /// Append FIRST(steps)+fallback to `out` without sort/dedup — the LR closure ORs
     /// the result into a bitset (which dedups), so no `Vec` is minted per item.
-    fn first_of_steps_into(
+    /// Bitset FIRST(steps), falling through to `fallback` once every step is nullable:
+    /// OR the precomputed FIRST-bitsets (and terminal lookaheads) into `out`. No Vec,
+    /// no per-symbol interning, no sort — the LR-closure hot path is pure bitwise OR.
+    fn first_of_steps_into_bits(
         &self,
         steps: &[ProductionStep],
-        fallback: &[LookaheadSymbol],
-        out: &mut Vec<LookaheadSymbol>,
+        fallback: &LookaheadBitset,
+        out: &mut LookaheadBitset,
     ) {
-        first_of_steps_with_tables_into(steps, &self.nullable, &self.first, fallback, out);
+        for step in steps {
+            match lookahead_for_step(step) {
+                Some(symbol) => {
+                    out.set(self.interner.index_of(symbol));
+                    return;
+                }
+                None => {
+                    let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
+                        unreachable!("non-lookahead parser symbol should be nonterminal");
+                    };
+                    out.or_from(&self.first_bits[nonterminal.get() as usize]);
+                    if !self.nullable[nonterminal.get() as usize] {
+                        return;
+                    }
+                }
+            }
+        }
+        out.or_from(fallback);
     }
 }
 
