@@ -3246,8 +3246,8 @@ struct RuntimeWeavyStepperInput<'a> {
     input_points: &'a RuntimeWeavyInputPoints,
 }
 
-#[derive(Default)]
 struct RuntimeWeavyLexerScratch {
+    cache_policy: RuntimeWeavyLexSetCachePolicy,
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_literal_matches: RefCell<Option<PatternSet>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
@@ -3258,6 +3258,52 @@ struct RuntimeWeavyLexerScratch {
 }
 
 impl RuntimeWeavyLexerScratch {
+    fn new(cache_policy: RuntimeWeavyLexSetCachePolicy) -> Self {
+        Self {
+            cache_policy,
+            direct_literal_ends: RefCell::default(),
+            direct_literal_matches: RefCell::default(),
+            direct_pattern_ends: RefCell::default(),
+            direct_pattern_matches: RefCell::default(),
+            direct_pattern_dfa_caches: RefCell::default(),
+            direct_set_cache: RefCell::default(),
+        }
+    }
+
+    fn with_direct_set_matches<R>(
+        &self,
+        input: &str,
+        mode: parser_ir::LexModeId,
+        mode_program: &WeavyLexModeProgram,
+        byte_position: usize,
+        visit: impl FnOnce(&[Option<parser_ir::LexMatch>], &[Option<parser_ir::LexMatch>]) -> R,
+    ) -> R {
+        let key = RuntimeWeavyLexSetCacheKey {
+            mode,
+            byte_position,
+        };
+        if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled
+            && let Some(matches) = self.direct_set_cache.borrow().get(&key)
+        {
+            return visit(&matches.literal_ends, &matches.pattern_ends);
+        }
+        self.compute_direct_set_matches(input, mode, mode_program, byte_position);
+        if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled {
+            let matches = Arc::new(RuntimeWeavyDirectSetMatches {
+                literal_ends: self.direct_literal_ends.borrow().clone(),
+                pattern_ends: self.direct_pattern_ends.borrow().clone(),
+            });
+            self.direct_set_cache
+                .borrow_mut()
+                .insert(key, Arc::clone(&matches));
+            return visit(&matches.literal_ends, &matches.pattern_ends);
+        }
+        let direct_literal_ends = self.direct_literal_ends.borrow();
+        let direct_pattern_ends = self.direct_pattern_ends.borrow();
+        visit(&direct_literal_ends, &direct_pattern_ends)
+    }
+
+    #[cfg(test)]
     fn direct_set_matches(
         &self,
         input: &str,
@@ -3272,6 +3318,24 @@ impl RuntimeWeavyLexerScratch {
         if let Some(matches) = self.direct_set_cache.borrow().get(&key) {
             return Arc::clone(matches);
         }
+        self.compute_direct_set_matches(input, mode, mode_program, byte_position);
+        let matches = Arc::new(RuntimeWeavyDirectSetMatches {
+            literal_ends: self.direct_literal_ends.borrow().clone(),
+            pattern_ends: self.direct_pattern_ends.borrow().clone(),
+        });
+        self.direct_set_cache
+            .borrow_mut()
+            .insert(key, Arc::clone(&matches));
+        matches
+    }
+
+    fn compute_direct_set_matches(
+        &self,
+        input: &str,
+        mode: parser_ir::LexModeId,
+        mode_program: &WeavyLexModeProgram,
+        byte_position: usize,
+    ) {
         {
             let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
             let mut direct_literal_matches = self.direct_literal_matches.borrow_mut();
@@ -3301,15 +3365,19 @@ impl RuntimeWeavyLexerScratch {
                 direct_pattern_dfa_cache,
             );
         }
-        let matches = Arc::new(RuntimeWeavyDirectSetMatches {
-            literal_ends: self.direct_literal_ends.borrow().clone(),
-            pattern_ends: self.direct_pattern_ends.borrow().clone(),
-        });
-        self.direct_set_cache
-            .borrow_mut()
-            .insert(key, Arc::clone(&matches));
-        matches
     }
+}
+
+impl Default for RuntimeWeavyLexerScratch {
+    fn default() -> Self {
+        Self::new(RuntimeWeavyLexSetCachePolicy::Enabled)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeWeavyLexSetCachePolicy {
+    Disabled,
+    Enabled,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3988,7 +4056,13 @@ fn parse_weavy_with_lexer_program(
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
-    let lexer_scratch = RuntimeWeavyLexerScratch::default();
+    let lexer_scratch = RuntimeWeavyLexerScratch::new(
+        if recovery == RuntimeWeavyRecoveryMode::Strict && reuse_index.is_none() {
+            RuntimeWeavyLexSetCachePolicy::Disabled
+        } else {
+            RuntimeWeavyLexSetCachePolicy::Enabled
+        },
+    );
     let step_limit = match recovery {
         RuntimeWeavyRecoveryMode::Strict => {
             runtime_weavy_step_limit(input_ctx.table, input_ctx.input)
@@ -5562,50 +5636,54 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mode_program = self.lexer_program.mode(mode.id())?;
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
-        let direct_matches = self.lexer_scratch.direct_set_matches(
+        self.lexer_scratch.with_direct_set_matches(
             self.input,
             mode.id(),
             mode_program,
             byte_position,
-        );
-        for terminal_row in mode_program.terminals() {
-            let Some(match_) = self.match_compiled_terminal_with_set(
-                terminal_row,
-                byte_position,
-                &direct_matches.literal_ends,
-                &direct_matches.pattern_ends,
-            )?
-            else {
-                continue;
-            };
-            if match_.end == byte_position {
-                continue;
-            }
-            let candidate = RuntimeWeavyTokenCandidate {
-                lookahead: parser_ir::LookaheadSymbol::Terminal(terminal_row.terminal),
-                end: match_.end,
-                inspected_end: match_.inspected_end,
-                extra: false,
-                external: false,
-                immediate: terminal_row.immediate,
-                literal: terminal_row.literal,
-                lexical_precedence: terminal_row.lexical_precedence,
-                implicit_precedence: terminal_row.implicit_precedence,
-                scanner: None,
-            };
-            let Some(lookahead) = self.lookahead_for_terminal(state, terminal_row.terminal) else {
-                push_runtime_weavy_candidate(&mut best_rejected, candidate);
-                continue;
-            };
-            push_runtime_weavy_candidate(
-                &mut best,
-                RuntimeWeavyTokenCandidate {
-                    lookahead,
-                    extra: self.lookahead_shifts_only_extra(state, lookahead),
-                    ..candidate
-                },
-            );
-        }
+            |direct_literal_ends, direct_pattern_ends| -> Result<(), WeavyParseError> {
+                for terminal_row in mode_program.terminals() {
+                    let Some(match_) = self.match_compiled_terminal_with_set(
+                        terminal_row,
+                        byte_position,
+                        direct_literal_ends,
+                        direct_pattern_ends,
+                    )?
+                    else {
+                        continue;
+                    };
+                    if match_.end == byte_position {
+                        continue;
+                    }
+                    let candidate = RuntimeWeavyTokenCandidate {
+                        lookahead: parser_ir::LookaheadSymbol::Terminal(terminal_row.terminal),
+                        end: match_.end,
+                        inspected_end: match_.inspected_end,
+                        extra: false,
+                        external: false,
+                        immediate: terminal_row.immediate,
+                        literal: terminal_row.literal,
+                        lexical_precedence: terminal_row.lexical_precedence,
+                        implicit_precedence: terminal_row.implicit_precedence,
+                        scanner: None,
+                    };
+                    let Some(lookahead) = self.lookahead_for_terminal(state, terminal_row.terminal)
+                    else {
+                        push_runtime_weavy_candidate(&mut best_rejected, candidate);
+                        continue;
+                    };
+                    push_runtime_weavy_candidate(
+                        &mut best,
+                        RuntimeWeavyTokenCandidate {
+                            lookahead,
+                            extra: self.lookahead_shifts_only_extra(state, lookahead),
+                            ..candidate
+                        },
+                    );
+                }
+                Ok(())
+            },
+        )?;
         if let Some(candidate) = best {
             best_rejected = best_rejected.filter(|rejected| {
                 runtime_weavy_candidate_order(*rejected, candidate)
@@ -8132,6 +8210,59 @@ mod tests {
             vec![Some(parser_ir::LexMatch::new(4, 4))]
         );
         assert_eq!(second, first);
+    }
+
+    #[test]
+    fn lexer_scratch_can_bypass_direct_set_cache_for_strict_fresh_parse() {
+        let mut terminals = vec![
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(0),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("ab".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(1),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
+                    crate::lex_match::compile_pattern("[a-z]+", None).into(),
+                )),
+                immediate: false,
+                literal: false,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+        ];
+        let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&mut terminals);
+        let mode = WeavyLexModeProgram {
+            terminals,
+            external_count: 0,
+            direct_literal_set,
+            direct_pattern_set,
+        };
+        let scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
+        let lex_mode = parser_ir::LexModeId::from_index(0);
+
+        let first =
+            scratch.with_direct_set_matches("abcd", lex_mode, &mode, 0, |literal, pattern| {
+                (literal.to_vec(), pattern.to_vec())
+            });
+        let second =
+            scratch.with_direct_set_matches("zzzz", lex_mode, &mode, 0, |literal, pattern| {
+                (literal.to_vec(), pattern.to_vec())
+            });
+
+        assert!(scratch.direct_set_cache.borrow().is_empty());
+        assert_eq!(first.0, vec![Some(parser_ir::LexMatch::new(2, 2))]);
+        assert_eq!(first.1, vec![Some(parser_ir::LexMatch::new(4, 4))]);
+        assert_eq!(second.0, vec![None]);
+        assert_eq!(second.1, vec![Some(parser_ir::LexMatch::new(4, 4))]);
     }
 
     #[test]
