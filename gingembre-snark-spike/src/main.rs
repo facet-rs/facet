@@ -374,6 +374,48 @@ fn ast_proof() {
         ops.len(),
         weavy::jit::NATIVE_COPY_PATCH_AVAILABLE,
     );
+
+    // Item 4: implement gingembre SEMANTICS on the fully generated AST. For each expression:
+    // parse with snark -> JIT-materialize gen_ast::Expr -> lower into gingembre's AST ->
+    // render through gingembre's REAL evaluator. Oracle: byte-identical to gingembre's own
+    // parse+render of the same source. If they match, the generated AST carries the semantics.
+    let mut ctx = Context::new();
+    ctx.set("x", Value::from(42i64));
+    let cases = [
+        "{{ 1 + 2 }}",
+        "{{ 1 + 2 * 3 }}",
+        "{{ 10 - 2 - 3 }}",
+        "{{ 100 / 10 / 2 }}",
+        "{{ 2 * 3 + 4 * 5 }}",
+        "{{ 2 * 3 > 5 }}",
+        "{{ x }}",
+        "{{ x + 1 }}",
+    ];
+    for src in cases {
+        let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).expect("parse");
+        let resolved = report.accepted_resolved_tree(&parser, src).expect("resolved tree");
+        let node = find_expr(&resolved).expect("no expr under interpolation");
+
+        // Grammar surface -> generated AST (via JIT) -> gingembre AST -> single-print template.
+        let generated: Expr = expr_via_jit(node, &anns);
+        let lowered = gen_expr_to_gingembre(&generated);
+        let template = Template {
+            body: vec![Node::Print(PrintNode {
+                expr: lowered,
+                span: span(0, 0),
+            })],
+            span: span(0, 0),
+        };
+
+        let via_generated = render(template, src, &ctx);
+        let native = render(gingembre::parse_template_recovered(src), src, &ctx);
+        assert_eq!(
+            via_generated, native,
+            "generated-AST render must match gingembre's own for {src:?}"
+        );
+        println!("✓ item 4 {src:<20} -> {via_generated:?} (== gingembre native)");
+    }
+    println!("✓ item 4: gingembre semantics implemented on the FULLY GENERATED AST (oracle-matched)");
 }
 
 /// Item 3: the reflection ops as a flat Weavy program. Emitting these (instead of driving
@@ -981,6 +1023,39 @@ fn binary_op(text: &str) -> Option<BinaryOp> {
         "~" => BinaryOp::Concat,
         _ => return None,
     })
+}
+
+/// Item 4: give the GENERATED AST meaning through gingembre's own evaluator. Lower the
+/// grammar-generated `gen_ast::Expr` into `gingembre::ast::Expr` so gingembre's real
+/// semantics (arithmetic, precedence-in-tree, comparison, variable lookup) render it. This
+/// is the payoff — the fully generated types drive gingembre.
+fn gen_expr_to_gingembre(e: &gen_ast::Expr) -> Expr {
+    match e {
+        gen_ast::Expr::Number(n) => Expr::Literal(Literal::Int(IntLit {
+            value: *n,
+            span: span(0, 0),
+        })),
+        gen_ast::Expr::Variable(name) => Expr::Var(Ident {
+            name: name.clone(),
+            span: span(0, 0),
+        }),
+        gen_ast::Expr::Binary(b) => Expr::Binary(BinaryExpr {
+            left: Box::new(gen_expr_to_gingembre(&b.left)),
+            op: binary_op(&b.op).unwrap_or_else(|| panic!("unknown operator {:?}", b.op)),
+            right: Box::new(gen_expr_to_gingembre(&b.right)),
+            span: span(0, 0),
+        }),
+    }
+}
+
+/// Materialize a `gen_ast::Expr` from a resolved expression node by JIT-compiling the build
+/// ops (the whole pipeline: grammar surface -> reflection ops -> copy-and-patch JIT -> AST).
+fn expr_via_jit(node: &RuntimeResolvedNode, anns: &Annotations) -> gen_ast::Expr {
+    let mut ops = Vec::new();
+    let p = facet_reflect::Partial::alloc_owned::<gen_ast::Expr>().expect("alloc");
+    // Drive a throwaway reflective build to RECORD the op program, then JIT the same ops.
+    let _ = build(p, node, anns, &mut ops).expect("record build ops");
+    run_ops_via_weavy_jit::<gen_ast::Expr>(&ops)
 }
 
 /// Concatenate every terminal's source text under this node.
