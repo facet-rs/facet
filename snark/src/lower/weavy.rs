@@ -439,6 +439,7 @@ pub struct WeavyParserProgram {
     state_blocks: Vec<SnarkBlockId>,
     state_block_refs: Vec<BlockRef>,
     action_blocks: Vec<Vec<Vec<WeavyParserActionBlock>>>,
+    extra_node_index: RuntimeWeavyExtraNodeIndex,
 }
 
 impl WeavyParserProgram {
@@ -635,6 +636,52 @@ enum RuntimeWeavyAutoCloseStackEdit {
 struct RuntimeWeavyAutoCloseNodeEdit {
     spec: usize,
     push: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RuntimeWeavyExtraNodeIndex {
+    nodes: BTreeMap<parser_ir::LookaheadSymbol, RuntimeWeavyExtraNode>,
+}
+
+impl RuntimeWeavyExtraNodeIndex {
+    fn new(parser: &parser_ir::ParserGrammar) -> Self {
+        let Some(first) = runtime_weavy_first_sets(parser) else {
+            return Self::default();
+        };
+        let mut index = Self::default();
+        for extra in parser.extra_roots() {
+            let parser_ir::ParserSymbol::Nonterminal(nonterminal) = extra.symbol() else {
+                continue;
+            };
+            let Some(kind) = parser
+                .public_node_kinds()
+                .iter()
+                .find(|kind| kind.source() == parser_ir::PublicNodeKindSource::Rule(nonterminal))
+            else {
+                continue;
+            };
+            for lookahead in &first[nonterminal.get() as usize] {
+                index
+                    .nodes
+                    .entry(*lookahead)
+                    .or_insert(RuntimeWeavyExtraNode {
+                        kind: kind.name().to_owned(),
+                        public_node: kind.id(),
+                    });
+            }
+        }
+        index
+    }
+
+    fn get(&self, lookahead: parser_ir::LookaheadSymbol) -> Option<&RuntimeWeavyExtraNode> {
+        self.nodes.get(&lookahead)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RuntimeWeavyExtraNode {
+    kind: String,
+    public_node: parser_ir::PublicNodeKindId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1068,6 +1115,7 @@ fn lower_weavy_parser_program(
                 .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let extra_node_index = RuntimeWeavyExtraNodeIndex::new(parser);
 
     Ok(WeavyParserProgram {
         lowered,
@@ -1075,6 +1123,7 @@ fn lower_weavy_parser_program(
         state_blocks,
         state_block_refs,
         action_blocks,
+        extra_node_index,
     })
 }
 
@@ -3953,19 +4002,13 @@ impl<'a> RuntimeWeavyStepper<'a> {
         lookahead_end_byte: usize,
         start_scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
     ) -> Option<(RuntimeWeavyFragment, Vec<parser_ir::TreeEvent>)> {
-        let node = extra_node_for_lookahead(self.parser, lookahead)?;
-        let public_node = self
-            .parser
-            .public_node_kinds()
-            .iter()
-            .find(|kind| kind.name() == node.kind)
-            .map(parser_ir::PublicNodeKind::id);
-        let node = self.tree_store.push(node);
+        let extra_node = self.plan.extra_node_index.get(lookahead)?;
+        let node = self.tree_store.push_empty_node(extra_node.kind.clone());
         let (bytes, points) = runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
         let tree_event = parser_ir::TreeEvent::CloseNode {
             version,
             node,
-            public_node,
+            public_node: Some(extra_node.public_node),
             bytes,
             points,
         };
@@ -4196,30 +4239,6 @@ fn runtime_weavy_first_sets(
             return Some(first);
         }
     }
-}
-
-fn extra_node_for_lookahead(
-    parser: &parser_ir::ParserGrammar,
-    lookahead: parser_ir::LookaheadSymbol,
-) -> Option<SexpNode> {
-    let first = runtime_weavy_first_sets(parser)?;
-    for extra in parser.extra_roots() {
-        let parser_ir::ParserSymbol::Nonterminal(nonterminal) = extra.symbol() else {
-            continue;
-        };
-        if !first[nonterminal.get() as usize].contains(&lookahead) {
-            continue;
-        }
-        let kind = parser
-            .public_node_kinds()
-            .iter()
-            .find(|kind| kind.source() == parser_ir::PublicNodeKindSource::Rule(nonterminal))?;
-        return Some(SexpNode {
-            kind: kind.name().to_owned(),
-            children: Vec::new(),
-        });
-    }
-    None
 }
 
 fn runtime_weavy_first_of_steps(
