@@ -114,14 +114,14 @@ runtime over the same LR table:
   same tree-selection rules used for final roots.
 
 Snark needs a graph stack model, not a `Vec<Frame>` pretending ambiguity does
-not exist. Recommended types:
+not exist. Recommended table and execution data:
 
 - `parser_table::ParseTable`, `ParseState`, `ParseTableEntry`, `ParseAction`,
   `GotoAction`, `ProductionInfo`, `LexModeId`.
-- `runtime::StackVersionId`, `GraphStackNodeId`, `GraphStackLinkId`,
+- `StackVersionId`, `GraphStackNodeId`, `GraphStackLinkId`,
   `StackHead`, `StackMergeKey`, `BranchScore`.
-- `runtime::ReductionCandidate`, `ReductionPath`, `ReducedNodePlan`.
-- `runtime::TreeSelection { error_cost, dynamic_precedence, structural_order }`.
+- `ReductionCandidate`, `ReductionPath`, `ReducedNodePlan`.
+- `TreeSelection { error_cost, dynamic_precedence, structural_order }`.
 
 Snark's parser IR now owns the typed table ids and grammar facts; Weavy consumes
 those facts as the execution carrier rather than mirroring a second native

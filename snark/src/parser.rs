@@ -61,7 +61,7 @@ id_type!(ConflictId, "Declared or generated conflict id.");
 id_type!(ItemSetId, "LR item-set id.");
 id_type!(StackVersionId, "GLR stack-version id.");
 id_type!(GraphStackNodeId, "GLR graph-stack node id.");
-id_type!(TreeNodeId, "Runtime tree node id.");
+id_type!(TreeNodeId, "Parser tree node id.");
 id_type!(TraceEventId, "Structured parser trace event id.");
 id_type!(InternalSymbolId, "Internal parser sentinel symbol id.");
 id_type!(ReservedContextId, "Reserved-word context id.");
@@ -5671,7 +5671,7 @@ impl BranchRanking {
         self.dynamic_precedence
     }
 
-    /// Runtime progress count used as a stable branch-ranking tiebreaker.
+    /// Branch progress count used as a stable branch-ranking tiebreaker.
     pub const fn progress(&self) -> u32 {
         self.progress
     }
@@ -5682,7 +5682,7 @@ impl BranchRanking {
     }
 }
 
-/// Runtime tree operation emitted by parser actions.
+/// Tree operation emitted by parser actions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TreeEvent {
@@ -5690,7 +5690,7 @@ pub enum TreeEvent {
     OpenNode {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Public or internal symbol.
         symbol: ParserSymbol,
@@ -5726,7 +5726,7 @@ pub enum TreeEvent {
         production: ProductionId,
         /// Reduced production metadata.
         metadata: ProductionMetadataId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Byte range.
         bytes: ByteRange,
@@ -5748,7 +5748,7 @@ pub enum TreeEvent {
     Error {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Byte range.
         bytes: ByteRange,
@@ -5761,7 +5761,7 @@ pub enum TreeEvent {
     CloseNode {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Public node kind, when this close event materializes a visible node.
         public_node: Option<PublicNodeKindId>,
@@ -5774,7 +5774,7 @@ pub enum TreeEvent {
     ReuseNode {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Byte range.
         bytes: ByteRange,
@@ -5787,20 +5787,20 @@ pub enum TreeEvent {
     Field {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Parent runtime tree node.
+        /// Parent parser tree node.
         node: TreeNodeId,
-        /// Visible child runtime tree node, when the fielded step emitted one.
+        /// Visible child parser tree node, when the fielded step emitted one.
         child: Option<TreeNodeId>,
         /// Field id.
         field: FieldId,
         /// Structural child index.
         structural_index: usize,
     },
-    /// An alias emitted or renamed a runtime tree node at a structural child index.
+    /// An alias emitted or renamed a parser tree node at a structural child index.
     Alias {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node carrying the alias.
+        /// Parser tree node carrying the alias.
         node: TreeNodeId,
         /// Alias id.
         alias: AliasId,
