@@ -825,6 +825,8 @@ pub struct WeavyParsePlanReadiness {
     pub host_call_intrinsic_count: usize,
     /// Unique Snark dialect descriptors that still block fully-visible lowering.
     pub parser_barrier_descriptors: Vec<IntrinsicDescriptor>,
+    /// Distinct parser/action and lexer blockers with their remaining counts.
+    pub barrier_summaries: Vec<WeavyLoweringBarrierSummary>,
 }
 
 impl WeavyParsePlanReadiness {
@@ -833,8 +835,10 @@ impl WeavyParsePlanReadiness {
         parser_semantics: &SnarkIntrinsicSemanticStats,
         lexer: &WeavyLexerStats,
     ) -> Self {
+        let lexer_readiness = WeavyLexerReadiness::from_stats(lexer);
+        let barrier_summaries = lowering_barrier_summaries(parser_semantics, &lexer_readiness);
         Self {
-            lexer: WeavyLexerReadiness::from_stats(lexer),
+            lexer: lexer_readiness,
             dialect_op_intrinsic_count: parser_semantics
                 .lowering_count(SnarkIntrinsicLowering::DialectOp),
             lexer_graph_intrinsic_count: parser_semantics
@@ -846,6 +850,7 @@ impl WeavyParsePlanReadiness {
             opaque_intrinsic_count: parser.effect_stats.total.opaque_count,
             host_call_intrinsic_count: parser.effect_stats.total.calls_user_code_count,
             parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
+            barrier_summaries,
         }
     }
 
@@ -867,25 +872,41 @@ impl WeavyParsePlanReadiness {
     /// Return every parser/action and lexer blocker that still prevents fully-visible lowering.
     #[must_use]
     pub fn barriers(&self) -> Vec<WeavyLoweringBarrier> {
-        self.parser_barrier_descriptors
+        self.barrier_summaries
             .iter()
-            .copied()
-            .map(WeavyLoweringBarrier::ParserIntrinsic)
-            .chain(
-                self.lexer
-                    .barrier_kinds
-                    .iter()
-                    .copied()
-                    .map(WeavyLoweringBarrier::Lexer),
-            )
+            .map(|summary| summary.barrier)
             .collect()
     }
 
     /// Return the number of distinct parser/action and lexer blockers.
     #[must_use]
     pub fn barrier_count(&self) -> usize {
-        self.parser_barrier_descriptors.len() + self.lexer.barrier_kinds.len()
+        self.barrier_summaries.len()
     }
+
+    /// Return the total number of parser/action intrinsics and lexer leaves still blocked.
+    #[must_use]
+    pub fn barrier_instance_count(&self) -> usize {
+        self.barrier_summaries
+            .iter()
+            .map(|summary| summary.count)
+            .sum()
+    }
+}
+
+fn lowering_barrier_summaries(
+    parser_semantics: &SnarkIntrinsicSemanticStats,
+    lexer: &WeavyLexerReadiness,
+) -> Vec<WeavyLoweringBarrierSummary> {
+    parser_semantics
+        .barrier_descriptors()
+        .into_iter()
+        .map(|descriptor| WeavyLoweringBarrierSummary {
+            barrier: WeavyLoweringBarrier::ParserIntrinsic(descriptor),
+            count: parser_semantics.descriptor_count(descriptor),
+        })
+        .chain(lexer.barrier_summaries())
+        .collect()
 }
 
 /// One remaining blocker that prevents Snark's Weavy plan from being fully visible to lowering.
@@ -896,6 +917,16 @@ pub enum WeavyLoweringBarrier {
     ParserIntrinsic(IntrinsicDescriptor),
     /// A Snark lexer graph leaf still executes through fallback or unsupported matching.
     Lexer(WeavyLexerBarrierKind),
+}
+
+/// Counted lowering blocker for prioritizing Weavy optimizer/JIT work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub struct WeavyLoweringBarrierSummary {
+    /// Distinct parser/action or lexer blocker identity.
+    pub barrier: WeavyLoweringBarrier,
+    /// Number of intrinsics or lexer leaves represented by this blocker.
+    pub count: usize,
 }
 
 /// Lexer-side readiness for optimizer/JIT lowering.
@@ -949,6 +980,37 @@ impl WeavyLexerReadiness {
     #[must_use]
     pub fn is_fully_visible(&self) -> bool {
         self.barrier_kinds.is_empty()
+    }
+
+    /// Return every lexer blocker with the number of leaves it represents.
+    #[must_use]
+    pub fn barrier_summaries(&self) -> Vec<WeavyLoweringBarrierSummary> {
+        let mut summaries = Vec::new();
+        if self.rust_regex_fallback_count > 0 {
+            summaries.push(WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::RustRegexFallback),
+                count: self.rust_regex_fallback_count,
+            });
+        }
+        if self.unsupported_pattern_count > 0 {
+            summaries.push(WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                count: self.unsupported_pattern_count,
+            });
+        }
+        if self.unsupported_terminal_count > 0 {
+            summaries.push(WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedTerminal),
+                count: self.unsupported_terminal_count,
+            });
+        }
+        if self.unsupported_symbol_count > 0 {
+            summaries.push(WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedSymbol),
+                count: self.unsupported_symbol_count,
+            });
+        }
+        summaries
     }
 }
 
@@ -6422,6 +6484,21 @@ mod tests {
                 WeavyLexerBarrierKind::UnsupportedTerminal,
             ]
         );
+        assert_eq!(
+            readiness.barrier_summaries(),
+            vec![
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                    count: 1,
+                },
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(
+                        WeavyLexerBarrierKind::UnsupportedTerminal
+                    ),
+                    count: 1,
+                },
+            ]
+        );
         assert!(!readiness.is_fully_visible());
     }
 
@@ -6634,11 +6711,27 @@ mod tests {
             ]
         );
         assert_eq!(analysis.readiness.barrier_count(), 2);
+        assert_eq!(analysis.readiness.barrier_instance_count(), 2);
         assert_eq!(
             analysis.readiness.barriers(),
             vec![
                 WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
                 WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedTerminal),
+            ]
+        );
+        assert_eq!(
+            analysis.readiness.barrier_summaries,
+            vec![
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                    count: 1,
+                },
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(
+                        WeavyLexerBarrierKind::UnsupportedTerminal
+                    ),
+                    count: 1,
+                },
             ]
         );
         assert!(analysis.readiness.is_parser_fully_visible());
@@ -6699,9 +6792,17 @@ mod tests {
         );
         assert!(analysis.readiness.lexer.barrier_kinds.is_empty());
         assert_eq!(analysis.readiness.barrier_count(), 1);
+        assert_eq!(analysis.readiness.barrier_instance_count(), 1);
         assert_eq!(
             analysis.readiness.barriers(),
             vec![WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor())]
+        );
+        assert_eq!(
+            analysis.readiness.barrier_summaries,
+            vec![WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor()),
+                count: 1,
+            }]
         );
         assert!(analysis.readiness.lexer.is_fully_visible());
         assert!(!analysis.readiness.is_parser_fully_visible());
@@ -6723,7 +6824,10 @@ mod tests {
             program: WeavyParserProgram {
                 lowered: empty_lowered(),
                 dense: DenseSnarkWeavyLowered::new(
-                    vec![WeavyOp::Intrinsic(scanner.clone())],
+                    vec![
+                        WeavyOp::Intrinsic(scanner.clone()),
+                        WeavyOp::Intrinsic(scanner.clone()),
+                    ],
                     vec![],
                 ),
                 state_blocks: vec![],
@@ -6738,12 +6842,32 @@ mod tests {
         let readiness = plan.analysis().readiness;
 
         assert_eq!(readiness.barrier_count(), 3);
+        assert_eq!(readiness.barrier_instance_count(), 4);
         assert_eq!(
             readiness.barriers(),
             vec![
                 WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor()),
                 WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
                 WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedTerminal),
+            ]
+        );
+        assert_eq!(
+            readiness.barrier_summaries,
+            vec![
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor()),
+                    count: 2,
+                },
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                    count: 1,
+                },
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(
+                        WeavyLexerBarrierKind::UnsupportedTerminal
+                    ),
+                    count: 1,
+                },
             ]
         );
         assert!(!readiness.is_parser_fully_visible());
