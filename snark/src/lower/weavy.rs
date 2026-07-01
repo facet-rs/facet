@@ -1969,16 +1969,20 @@ impl WeavyLexModeProgram {
         self.terminals.iter().find(|row| row.terminal == terminal)
     }
 
-    fn match_direct_patterns(
+    fn match_direct_patterns_with_set(
         &self,
         input: &str,
         byte_position: usize,
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
-        matches: &mut Option<PatternSet>,
+        matches: &mut PatternSet,
         dfa_cache: Option<&mut HybridDfaCache>,
         terminal_indices: &mut Vec<usize>,
     ) {
-        match_weavy_direct_pattern_set(
+        if self.direct_pattern_set.is_none() {
+            ends.clear();
+            return;
+        }
+        match_weavy_direct_pattern_set_with_matches(
             input,
             self,
             byte_position,
@@ -1989,15 +1993,26 @@ impl WeavyLexModeProgram {
         );
     }
 
-    fn match_direct_literals(
+    fn match_direct_literals_with_set(
         &self,
         input: &str,
         byte_position: usize,
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
-        matches: &mut Option<PatternSet>,
+        matches: &mut PatternSet,
         terminal_indices: &mut Vec<usize>,
     ) {
-        match_weavy_literal_set(input, self, byte_position, ends, matches, terminal_indices);
+        let Some(literal_set) = &self.direct_literal_set else {
+            ends.clear();
+            return;
+        };
+        match_weavy_literal_set_with_matches(
+            input,
+            literal_set,
+            byte_position,
+            ends,
+            matches,
+            terminal_indices,
+        );
     }
 
     fn add_stats(&self, stats: &mut WeavyLexerStats) {
@@ -2418,24 +2433,18 @@ impl WeavyLiteralSet {
         self.automaton.pattern_len()
     }
 
-    fn for_each_match(
+    fn for_each_match_with_set(
         &self,
         input: &str,
         byte_position: usize,
-        matches: &mut Option<PatternSet>,
+        matches: &mut PatternSet,
         mut visit: impl FnMut(usize, usize, usize),
     ) {
         let Some(haystack) = input.get(byte_position..) else {
             return;
         };
+        matches.clear();
         let search = Input::new(haystack).anchored(Anchored::Yes);
-        let pattern_len = self.automaton.pattern_len();
-        let matches = matches.get_or_insert_with(|| PatternSet::new(pattern_len));
-        if matches.capacity() != pattern_len {
-            *matches = PatternSet::new(pattern_len);
-        } else {
-            matches.clear();
-        }
         self.automaton.which_overlapping_matches(&search, matches);
         for pattern_id in matches.iter() {
             let set_index = pattern_id.as_usize();
@@ -2570,11 +2579,11 @@ impl WeavyDirectPatternSet {
         self.dfa.as_ref().map(HybridDfa::create_cache)
     }
 
-    fn for_each_match(
+    fn for_each_match_with_set(
         &self,
         input: &str,
         byte_position: usize,
-        matches: &mut Option<PatternSet>,
+        matches: &mut PatternSet,
         dfa_cache: Option<&mut HybridDfaCache>,
         mut visit: impl FnMut(usize, usize, Option<parser_ir::LexMatch>),
     ) {
@@ -2606,14 +2615,8 @@ impl WeavyDirectPatternSet {
                 );
             }
         }
+        matches.clear();
         let search = Input::new(haystack).anchored(Anchored::Yes);
-        let pattern_len = self.automaton.pattern_len();
-        let matches = matches.get_or_insert_with(|| PatternSet::new(pattern_len));
-        if matches.capacity() != pattern_len {
-            *matches = PatternSet::new(pattern_len);
-        } else {
-            matches.clear();
-        }
         self.automaton.which_overlapping_matches(&search, matches);
         for pattern_id in matches.iter() {
             let set_index = pattern_id.as_usize();
@@ -3469,9 +3472,9 @@ struct RuntimeWeavyStepperInput<'a> {
 struct RuntimeWeavyLexerScratch {
     cache_policy: RuntimeWeavyLexSetCachePolicy,
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
-    direct_literal_matches: RefCell<Option<PatternSet>>,
+    direct_literal_matches: RefCell<HashMap<parser_ir::LexModeId, PatternSet>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
-    direct_pattern_matches: RefCell<Option<PatternSet>>,
+    direct_pattern_matches: RefCell<HashMap<parser_ir::LexModeId, PatternSet>>,
     direct_terminal_indices: RefCell<Vec<usize>>,
     direct_pattern_dfa_caches: RefCell<HashMap<parser_ir::LexModeId, Option<HybridDfaCache>>>,
     direct_set_cache:
@@ -3582,34 +3585,45 @@ impl RuntimeWeavyLexerScratch {
             let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
             let mut direct_literal_matches = self.direct_literal_matches.borrow_mut();
             let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
-            mode_program.match_direct_literals(
-                input,
-                byte_position,
-                &mut direct_literal_ends,
-                &mut direct_literal_matches,
-                &mut direct_terminal_indices,
-            );
+            if let Some(literal_set) = &mode_program.direct_literal_set {
+                let direct_literal_matches = direct_literal_matches
+                    .entry(mode)
+                    .or_insert_with(|| PatternSet::new(literal_set.len()));
+                mode_program.match_direct_literals_with_set(
+                    input,
+                    byte_position,
+                    &mut direct_literal_ends,
+                    direct_literal_matches,
+                    &mut direct_terminal_indices,
+                );
+            } else {
+                direct_literal_ends.clear();
+            }
         }
         {
             let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
             let mut direct_pattern_matches = self.direct_pattern_matches.borrow_mut();
             let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
             let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
-            let direct_pattern_dfa_cache =
-                mode_program.direct_pattern_set.as_ref().and_then(|set| {
-                    direct_pattern_dfa_caches
-                        .entry(mode)
-                        .or_insert_with(|| set.create_dfa_cache())
-                        .as_mut()
-                });
-            mode_program.match_direct_patterns(
-                input,
-                byte_position,
-                &mut direct_pattern_ends,
-                &mut direct_pattern_matches,
-                direct_pattern_dfa_cache,
-                &mut direct_terminal_indices,
-            );
+            if let Some(pattern_set) = &mode_program.direct_pattern_set {
+                let direct_pattern_dfa_cache = direct_pattern_dfa_caches
+                    .entry(mode)
+                    .or_insert_with(|| pattern_set.create_dfa_cache())
+                    .as_mut();
+                let direct_pattern_matches = direct_pattern_matches
+                    .entry(mode)
+                    .or_insert_with(|| PatternSet::new(pattern_set.pattern_len()));
+                mode_program.match_direct_patterns_with_set(
+                    input,
+                    byte_position,
+                    &mut direct_pattern_ends,
+                    direct_pattern_matches,
+                    direct_pattern_dfa_cache,
+                    &mut direct_terminal_indices,
+                );
+            } else {
+                direct_pattern_ends.clear();
+            }
         }
     }
 }
@@ -6730,6 +6744,7 @@ fn push_runtime_weavy_candidate(
     }
 }
 
+#[cfg(test)]
 fn match_weavy_literal_set(
     input: &str,
     mode: &WeavyLexModeProgram,
@@ -6742,9 +6757,27 @@ fn match_weavy_literal_set(
         ends.clear();
         return;
     };
+    match_weavy_literal_set_with_matches(
+        input,
+        literal_set,
+        byte_position,
+        ends,
+        runtime_weavy_pattern_set(matches, literal_set.len()),
+        terminal_indices,
+    );
+}
+
+fn match_weavy_literal_set_with_matches(
+    input: &str,
+    literal_set: &WeavyLiteralSet,
+    byte_position: usize,
+    ends: &mut Vec<Option<parser_ir::LexMatch>>,
+    matches: &mut PatternSet,
+    terminal_indices: &mut Vec<usize>,
+) {
     ends.clear();
     ends.resize(literal_set.len(), None);
-    literal_set.for_each_match(
+    literal_set.for_each_match_with_set(
         input,
         byte_position,
         matches,
@@ -6757,6 +6790,7 @@ fn match_weavy_literal_set(
     );
 }
 
+#[cfg(test)]
 fn match_weavy_direct_pattern_set(
     input: &str,
     mode: &WeavyLexModeProgram,
@@ -6770,9 +6804,33 @@ fn match_weavy_direct_pattern_set(
         ends.clear();
         return;
     };
+    match_weavy_direct_pattern_set_with_matches(
+        input,
+        mode,
+        byte_position,
+        ends,
+        runtime_weavy_pattern_set(matches, pattern_set.pattern_len()),
+        dfa_cache,
+        terminal_indices,
+    );
+}
+
+fn match_weavy_direct_pattern_set_with_matches(
+    input: &str,
+    mode: &WeavyLexModeProgram,
+    byte_position: usize,
+    ends: &mut Vec<Option<parser_ir::LexMatch>>,
+    matches: &mut PatternSet,
+    dfa_cache: Option<&mut HybridDfaCache>,
+    terminal_indices: &mut Vec<usize>,
+) {
+    let Some(pattern_set) = &mode.direct_pattern_set else {
+        ends.clear();
+        return;
+    };
     ends.clear();
     ends.resize(pattern_set.len(), None);
-    pattern_set.for_each_match(
+    pattern_set.for_each_match_with_set(
         input,
         byte_position,
         matches,
@@ -6797,6 +6855,18 @@ fn match_weavy_direct_pattern_set(
             ends[set_index] = match_;
         },
     );
+}
+
+#[cfg(test)]
+fn runtime_weavy_pattern_set(
+    matches: &mut Option<PatternSet>,
+    pattern_len: usize,
+) -> &mut PatternSet {
+    let matches = matches.get_or_insert_with(|| PatternSet::new(pattern_len));
+    if matches.capacity() != pattern_len {
+        *matches = PatternSet::new(pattern_len);
+    }
+    matches
 }
 
 fn runtime_weavy_first_sets(
