@@ -438,7 +438,7 @@ pub struct WeavyParserProgram {
     dense: DenseSnarkWeavyLowered,
     block_refs: BTreeMap<SnarkBlockId, BlockRef>,
     state_blocks: Vec<SnarkBlockId>,
-    action_blocks: Vec<BTreeMap<parser_ir::LookaheadSymbol, Vec<WeavyParserActionBlock>>>,
+    action_blocks: Vec<Vec<Vec<WeavyParserActionBlock>>>,
 }
 
 impl WeavyParserProgram {
@@ -469,18 +469,21 @@ impl WeavyParserProgram {
     fn action_block(
         &self,
         state: parser_ir::ParseStateId,
-        lookahead: parser_ir::LookaheadSymbol,
+        entry_index: usize,
+        action_index: usize,
         action: parser_ir::ParseAction,
     ) -> Result<BlockRef, WeavyParseError> {
         let block = self
             .action_blocks
             .get(state.get() as usize)
-            .and_then(|rows| rows.get(&lookahead))
-            .and_then(|blocks| blocks.iter().find(|block| block.action == action))
+            .and_then(|rows| rows.get(entry_index))
+            .and_then(|blocks| blocks.get(action_index))
+            .filter(|block| block.action == action)
             .map(|block| block.block)
             .ok_or(WeavyParseError::MissingActionBlock {
                 state,
-                lookahead,
+                entry_index,
+                action_index,
                 action,
             })?;
         self.block_ref(block)
@@ -677,8 +680,10 @@ pub enum WeavyParseError {
     MissingActionBlock {
         /// Parse state selecting the action.
         state: parser_ir::ParseStateId,
-        /// Lookahead selecting the action row.
-        lookahead: parser_ir::LookaheadSymbol,
+        /// Table entry selecting the action row.
+        entry_index: usize,
+        /// Index within the table entry action list.
+        action_index: usize,
         /// Action that needed a block.
         action: parser_ir::ParseAction,
     },
@@ -823,11 +828,12 @@ impl fmt::Display for WeavyParseError {
             }
             Self::MissingActionBlock {
                 state,
-                lookahead,
+                entry_index,
+                action_index,
                 action,
             } => write!(
                 f,
-                "action block for state {} lookahead {lookahead:?} action {action:?} is missing",
+                "action block for state {} entry {entry_index} action {action_index} ({action:?}) is missing",
                 state.get()
             ),
             Self::MissingLexMode { mode } => {
@@ -995,7 +1001,7 @@ fn lower_weavy_parser_program(
         })],
         blocks: BTreeMap::new(),
     };
-    let mut action_blocks = vec![BTreeMap::new(); table.states().len()];
+    let mut action_blocks = vec![Vec::new(); table.states().len()];
     let mut next_block = state_blocks.len();
 
     for state in table.states() {
@@ -1017,21 +1023,20 @@ fn lower_weavy_parser_program(
         );
 
         for entry in state.entries() {
+            let mut blocks = Vec::with_capacity(entry.actions().len());
             for action in entry.actions() {
                 let block = SnarkBlockId::from_index(next_block);
                 next_block += 1;
-                action_blocks[state.id().get() as usize]
-                    .entry(entry.lookahead())
-                    .or_insert_with(Vec::new)
-                    .push(WeavyParserActionBlock {
-                        action: *action,
-                        block,
-                    });
+                blocks.push(WeavyParserActionBlock {
+                    action: *action,
+                    block,
+                });
                 lowered.blocks.insert(
                     block,
                     action_program_for(state.id(), entry.lookahead(), *action),
                 );
             }
+            action_blocks[state.id().get() as usize].push(blocks);
         }
     }
 
@@ -1148,6 +1153,8 @@ struct RuntimeWeavyAction {
     token: RuntimeWeavyToken,
     lookahead: parser_ir::LookaheadTokenId,
     state: parser_ir::ParseStateId,
+    entry_index: usize,
+    action_index: usize,
     action: parser_ir::ParseAction,
 }
 
@@ -2363,7 +2370,8 @@ fn step_runtime_weavy_branch(
         return actions
             .iter()
             .zip(versions)
-            .map(|(action, version)| {
+            .enumerate()
+            .map(|(action_index, (action, version))| {
                 let mut branch = branch.clone();
                 branch.version = version;
                 run_runtime_weavy_action(
@@ -2373,6 +2381,8 @@ fn step_runtime_weavy_branch(
                         token: dispatch.token,
                         lookahead: dispatch.lookahead,
                         state,
+                        entry_index: dispatch.entry_index,
+                        action_index,
                         action: *action,
                     },
                     reuse_collection,
@@ -2390,6 +2400,8 @@ fn step_runtime_weavy_branch(
             token: dispatch.token,
             lookahead: dispatch.lookahead,
             state,
+            entry_index: dispatch.entry_index,
+            action_index: 0,
             action,
         },
         reuse_collection,
@@ -2536,7 +2548,8 @@ fn run_runtime_weavy_action(
 ) -> RuntimeWeavyStepOutcome {
     let block = match input_ctx.plan.action_block(
         action_ctx.state,
-        action_ctx.token.lookahead,
+        action_ctx.entry_index,
+        action_ctx.action_index,
         action_ctx.action,
     ) {
         Ok(block) => block,
@@ -2974,7 +2987,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         action_count: entry.actions().len(),
                     });
                 };
-                let block = self.plan.action_block(state, token.lookahead, *action)?;
+                let block = self.plan.action_block(state, entry_index, 0, *action)?;
                 Ok(Control::CallBlock(block))
             }
             SnarkIntrinsic::CommitLookahead { .. } => {
