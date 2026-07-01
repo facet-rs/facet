@@ -313,9 +313,196 @@ pub enum BranchRetireReason {
     Limit,
 }
 
+/// Broad semantic lane for one Snark dialect intrinsic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SnarkIntrinsicDomain {
+    /// Lexical matching against the source input.
+    Lexing,
+    /// Hand-written Tree-sitter external scanner boundary.
+    ExternalScanner,
+    /// Table-driven LR action selection and stack changes.
+    ParserControl,
+    /// GLR branch lifecycle operations.
+    GlrControl,
+    /// Recovery/error handling.
+    Recovery,
+    /// Runtime tree/event materialization.
+    Tree,
+    /// Query/highlight capture evaluation.
+    Query,
+    /// Diagnostic trace emission.
+    Trace,
+}
+
+/// How a Snark intrinsic is expected to become executable by Weavy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SnarkIntrinsicLowering {
+    /// Native Snark dialect operation with effects visible to Weavy passes.
+    DialectOp,
+    /// Snark-owned lowered lexer graph referenced by this intrinsic.
+    LexerGraph,
+    /// External host call that remains an optimization barrier.
+    HostCallBarrier,
+    /// Sink/event operation, normally removable when the sink is disabled.
+    SinkOp,
+}
+
+/// Optimizer-facing metadata for one Snark dialect intrinsic.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnarkIntrinsicSemantics {
+    /// Stable dialect/name identity.
+    pub descriptor: IntrinsicDescriptor,
+    /// Semantic lane used by optimizer and JIT planning.
+    pub domain: SnarkIntrinsicDomain,
+    /// How this intrinsic lowers beyond the canonical Snark dialect op.
+    pub lowering: SnarkIntrinsicLowering,
+    /// Conservative effect contract used for legal scheduling/fusion.
+    pub effect: EffectContract,
+}
+
 impl SnarkIntrinsic {
     /// The Weavy dialect name used by Snark intrinsics.
     pub const DIALECT: &'static str = "snark.tree_sitter";
+
+    /// Optimizer-facing semantic metadata for this Snark dialect op.
+    #[must_use]
+    pub fn semantics(&self) -> SnarkIntrinsicSemantics {
+        let descriptor = self.descriptor();
+        let (domain, lowering, effect) = match self {
+            Self::Lex { .. } => (
+                SnarkIntrinsicDomain::Lexing,
+                SnarkIntrinsicLowering::LexerGraph,
+                EffectContract::new()
+                    .read_resource(EffectResource::Input("source"))
+                    .write_resource(EffectResource::SideChannel("lookahead"))
+                    .may_fail(),
+            ),
+            Self::CallExternalScanner { .. } => (
+                SnarkIntrinsicDomain::ExternalScanner,
+                SnarkIntrinsicLowering::HostCallBarrier,
+                EffectContract::opaque()
+                    .read_resource(EffectResource::Input("source"))
+                    .read_resource(EffectResource::SideChannel("scanner_state"))
+                    .write_resource(EffectResource::SideChannel("scanner_state"))
+                    .write_resource(EffectResource::SideChannel("lookahead"))
+                    .may_fail()
+                    .calls_user_code(),
+            ),
+            Self::DispatchActions { .. } => (
+                SnarkIntrinsicDomain::ParserControl,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::SideChannel("parser_stack"))
+                    .read_resource(EffectResource::SideChannel("lookahead")),
+            ),
+            Self::CommitLookahead { .. } => (
+                SnarkIntrinsicDomain::ParserControl,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::SideChannel("lookahead"))
+                    .read_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::SideChannel("branch_cursor"))
+                    .write_resource(EffectResource::SideChannel("parser_stack")),
+            ),
+            Self::Shift { .. } => (
+                SnarkIntrinsicDomain::ParserControl,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::SideChannel("parser_stack"))
+                    .read_resource(EffectResource::SideChannel("lookahead"))
+                    .write_resource(EffectResource::SideChannel("parser_stack")),
+            ),
+            Self::ShiftExtra { .. } => (
+                SnarkIntrinsicDomain::ParserControl,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::SideChannel("lookahead"))
+                    .read_resource(EffectResource::SideChannel("branch_cursor"))
+                    .write_resource(EffectResource::SideChannel("branch_cursor")),
+            ),
+            Self::Reduce { .. } => (
+                SnarkIntrinsicDomain::Tree,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::Sink("tree_events")),
+            ),
+            Self::SplitGlr { .. } => (
+                SnarkIntrinsicDomain::GlrControl,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::SideChannel("glr_worklist")),
+            ),
+            Self::MergeGlr { .. } => (
+                SnarkIntrinsicDomain::GlrControl,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::SideChannel("glr_worklist")),
+            ),
+            Self::RetireBranch { .. } => (
+                SnarkIntrinsicDomain::GlrControl,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .write_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::SideChannel("glr_worklist")),
+            ),
+            Self::Recover { .. } => (
+                SnarkIntrinsicDomain::Recovery,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::Input("source"))
+                    .write_resource(EffectResource::SideChannel("branch_cursor"))
+                    .write_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::Sink("tree_events"))
+                    .may_fail(),
+            ),
+            Self::Accept { .. } => (
+                SnarkIntrinsicDomain::ParserControl,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::SideChannel("parser_stack"))
+                    .read_resource(EffectResource::SideChannel("branch_cursor"))
+                    .write_resource(EffectResource::Sink("tree_events"))
+                    .may_fail(),
+            ),
+            Self::EmitTrace { .. } => (
+                SnarkIntrinsicDomain::Trace,
+                SnarkIntrinsicLowering::SinkOp,
+                EffectContract::new().write_resource(EffectResource::Sink("parser_trace")),
+            ),
+            Self::EmitNode { .. } | Self::EmitTreeEvent { .. } => (
+                SnarkIntrinsicDomain::Tree,
+                SnarkIntrinsicLowering::SinkOp,
+                EffectContract::new().write_resource(EffectResource::Sink("tree_events")),
+            ),
+            Self::EmitCapture { .. } => (
+                SnarkIntrinsicDomain::Query,
+                SnarkIntrinsicLowering::SinkOp,
+                EffectContract::new().write_resource(EffectResource::Sink("query_captures")),
+            ),
+            Self::RunQuery { .. } => (
+                SnarkIntrinsicDomain::Query,
+                SnarkIntrinsicLowering::DialectOp,
+                EffectContract::new()
+                    .read_resource(EffectResource::Sink("tree_events"))
+                    .write_resource(EffectResource::Sink("query_captures"))
+                    .may_fail(),
+            ),
+        };
+        SnarkIntrinsicSemantics {
+            descriptor,
+            domain,
+            lowering,
+            effect,
+        }
+    }
 }
 
 impl IntrinsicOp for SnarkIntrinsic {
@@ -346,77 +533,7 @@ impl IntrinsicOp for SnarkIntrinsic {
     }
 
     fn effect(&self) -> EffectContract {
-        match self {
-            Self::Lex { .. } => EffectContract::new()
-                .read_resource(EffectResource::Input("source"))
-                .write_resource(EffectResource::SideChannel("lookahead"))
-                .may_fail(),
-            Self::CallExternalScanner { .. } => EffectContract::new()
-                .read_resource(EffectResource::Input("source"))
-                .read_resource(EffectResource::SideChannel("scanner_state"))
-                .write_resource(EffectResource::SideChannel("scanner_state"))
-                .write_resource(EffectResource::SideChannel("lookahead"))
-                .may_fail()
-                .calls_user_code(),
-            Self::DispatchActions { .. } => EffectContract::new()
-                .read_resource(EffectResource::SideChannel("parser_stack"))
-                .read_resource(EffectResource::SideChannel("lookahead")),
-            Self::CommitLookahead { .. } => EffectContract::new()
-                .read_resource(EffectResource::SideChannel("lookahead"))
-                .read_resource(EffectResource::SideChannel("parser_stack"))
-                .write_resource(EffectResource::SideChannel("branch_cursor"))
-                .write_resource(EffectResource::SideChannel("parser_stack")),
-            Self::Shift { .. } => EffectContract::new()
-                .read_resource(EffectResource::SideChannel("parser_stack"))
-                .read_resource(EffectResource::SideChannel("lookahead"))
-                .write_resource(EffectResource::SideChannel("parser_stack")),
-            Self::ShiftExtra { .. } => EffectContract::new()
-                .read_resource(EffectResource::SideChannel("lookahead"))
-                .read_resource(EffectResource::SideChannel("branch_cursor"))
-                .write_resource(EffectResource::SideChannel("branch_cursor")),
-            Self::Reduce { .. } => EffectContract::new()
-                .read_resource(EffectResource::SideChannel("parser_stack"))
-                .write_resource(EffectResource::SideChannel("parser_stack"))
-                .write_resource(EffectResource::Sink("tree_events")),
-            Self::SplitGlr { .. } => EffectContract::new()
-                .read_resource(EffectResource::SideChannel("parser_stack"))
-                .write_resource(EffectResource::SideChannel("parser_stack"))
-                .write_resource(EffectResource::SideChannel("glr_worklist")),
-            Self::MergeGlr { .. } => EffectContract::new()
-                .read_resource(EffectResource::SideChannel("parser_stack"))
-                .write_resource(EffectResource::SideChannel("parser_stack"))
-                .write_resource(EffectResource::SideChannel("glr_worklist")),
-            Self::RetireBranch { .. } => EffectContract::new()
-                .write_resource(EffectResource::SideChannel("parser_stack"))
-                .write_resource(EffectResource::SideChannel("glr_worklist")),
-            Self::Recover { .. } => EffectContract::new()
-                .read_resource(EffectResource::Input("source"))
-                .write_resource(EffectResource::SideChannel("branch_cursor"))
-                .write_resource(EffectResource::SideChannel("parser_stack"))
-                .write_resource(EffectResource::Sink("tree_events"))
-                .may_fail(),
-            Self::Accept { .. } => EffectContract::new()
-                .read_resource(EffectResource::SideChannel("parser_stack"))
-                .read_resource(EffectResource::SideChannel("branch_cursor"))
-                .write_resource(EffectResource::Sink("tree_events"))
-                .may_fail(),
-            Self::EmitTrace { .. } => {
-                EffectContract::new().write_resource(EffectResource::Sink("parser_trace"))
-            }
-            Self::EmitNode { .. } => {
-                EffectContract::new().write_resource(EffectResource::Sink("tree_events"))
-            }
-            Self::EmitTreeEvent { .. } => {
-                EffectContract::new().write_resource(EffectResource::Sink("tree_events"))
-            }
-            Self::EmitCapture { .. } => {
-                EffectContract::new().write_resource(EffectResource::Sink("query_captures"))
-            }
-            Self::RunQuery { .. } => EffectContract::new()
-                .read_resource(EffectResource::Sink("tree_events"))
-                .write_resource(EffectResource::Sink("query_captures"))
-                .may_fail(),
-        }
+        self.semantics().effect
     }
 }
 
@@ -5196,7 +5313,7 @@ fn runtime_weavy_input_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use weavy::ir::{EffectResource, ResourceAccess, ResourceEffect};
+    use weavy::ir::{EffectOrdering, EffectResource, ResourceAccess, ResourceEffect};
 
     #[test]
     fn intrinsic_descriptors_use_snark_tree_sitter_dialect() {
@@ -5273,6 +5390,41 @@ mod tests {
             resource: EffectResource::SideChannel("parser_stack"),
             access: ResourceAccess::Write,
         }));
+    }
+
+    #[test]
+    fn intrinsic_semantics_expose_lowering_shape_for_optimizer_passes() {
+        let lex = SnarkIntrinsic::Lex {
+            version: StackVersionId(0),
+            mode: LexModeId(3),
+            output: LookaheadTokenId(1),
+        }
+        .semantics();
+
+        assert_eq!(lex.descriptor.dialect, SnarkIntrinsic::DIALECT);
+        assert_eq!(lex.descriptor.name, "lex");
+        assert_eq!(lex.domain, SnarkIntrinsicDomain::Lexing);
+        assert_eq!(lex.lowering, SnarkIntrinsicLowering::LexerGraph);
+        assert!(!lex.effect.opaque);
+        assert!(!lex.effect.calls_user_code);
+        assert_ne!(lex.effect.ordering, EffectOrdering::Barrier);
+
+        let scanner = SnarkIntrinsic::CallExternalScanner {
+            version: StackVersionId(0),
+            state: ParseStateId(7),
+            valid_symbols: ValidSymbolSetId(3),
+            scanner_state: ExternalScannerStateId(2),
+            before: Some(ScannerSnapshotId(0)),
+            after: Some(ScannerSnapshotId(1)),
+            result: Some(LookaheadTokenId(4)),
+        }
+        .semantics();
+
+        assert_eq!(scanner.domain, SnarkIntrinsicDomain::ExternalScanner);
+        assert_eq!(scanner.lowering, SnarkIntrinsicLowering::HostCallBarrier);
+        assert!(scanner.effect.opaque);
+        assert!(scanner.effect.calls_user_code);
+        assert_eq!(scanner.effect.ordering, EffectOrdering::Barrier);
     }
 
     #[test]
