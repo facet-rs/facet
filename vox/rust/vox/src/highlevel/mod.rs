@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 #[cfg(any(
     all(feature = "transport-tcp", not(target_arch = "wasm32")),
     all(feature = "transport-local", not(target_arch = "wasm32")),
-    all(feature = "transport-websocket", not(target_arch = "wasm32"))
+    feature = "transport-websocket"
 ))]
 use vox_core::initiator;
 use vox_core::{
@@ -101,7 +101,7 @@ enum ConnectAddress {
     Tcp(String),
     #[cfg(all(feature = "transport-local", not(target_arch = "wasm32")))]
     Local(String),
-    #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
+    #[cfg(feature = "transport-websocket")]
     Ws(String),
 }
 
@@ -122,7 +122,7 @@ fn parse_connect_address(addr: String) -> Result<ConnectAddress, ConnectionError
         "tcp" => Ok(ConnectAddress::Tcp(host)),
         #[cfg(all(feature = "transport-local", not(target_arch = "wasm32")))]
         "local" => Ok(ConnectAddress::Local(host)),
-        #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
+        #[cfg(feature = "transport-websocket")]
         "ws" | "wss" => Ok(ConnectAddress::Ws(format!("{scheme}://{host}"))),
         _ => Err(ConnectionError::Protocol(format!(
             "unknown transport scheme: {scheme:?}"
@@ -335,7 +335,7 @@ impl ConnectBuilder {
         #[cfg(not(any(
             all(feature = "transport-tcp", not(target_arch = "wasm32")),
             all(feature = "transport-local", not(target_arch = "wasm32")),
-            all(feature = "transport-websocket", not(target_arch = "wasm32"))
+            all(feature = "transport-websocket")
         )))]
         let _ = (
             &metadata,
@@ -396,7 +396,7 @@ impl ConnectBuilder {
             // Native-only: `ws_link_source` is the tokio-tungstenite reconnect
             // source. Wasm clients use the lower-level vox_websocket::WsLink
             // (web_sys::WebSocket) directly.
-            #[cfg(all(feature = "transport-websocket", not(target_arch = "wasm32")))]
+            #[cfg(feature = "transport-websocket")]
             ConnectAddress::Ws(url) => {
                 tracing::trace!(
                     transport = "ws",
