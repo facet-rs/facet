@@ -25,8 +25,8 @@ use snark::{
     },
     manifest::TreeSitterConfig,
     parser::{
-        ExternalId, ParseTable, ParserGrammar, ParserRuntimeError, RuntimeExternalScan,
-        RuntimeExternalScanResult, RuntimeExternalScanner, RuntimeInputEdit, RuntimeResolvedNode,
+        ExternalId, ExternalScanRequest, ExternalScanResult, ExternalScannerHost, ParseTable,
+        ParserExecutionError, ParserGrammar, RuntimeInputEdit, RuntimeResolvedNode,
         ScannerSnapshotId, TreeEvent,
     },
     query::QuerySource,
@@ -282,7 +282,6 @@ struct HighlightAssertionOutput {
 
 struct PreparedGrammar {
     raw: RawGrammarJson,
-    validated: ValidatedGrammar,
     parser: ParserGrammar,
     table: ParseTable,
     weavy_plan: WeavyParsePlan,
@@ -645,7 +644,7 @@ fn parse_session_input(
         .scanner_selection
         .scanner
         .as_ref()
-        .map(|scanner| scanner as &dyn RuntimeExternalScanner);
+        .map(|scanner| scanner as &dyn ExternalScannerHost);
 
     let previous_input = session.last_input.clone();
     let previous = edit.and_then(|edit| {
@@ -742,7 +741,6 @@ fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, Strin
         .map_err(|error| ("weavy".to_owned(), error.to_string()))?;
     Ok(PreparedGrammar {
         raw,
-        validated,
         parser,
         table,
         weavy_plan,
@@ -946,7 +944,7 @@ impl CssBundleExternalScanner {
             .find_map(|(candidate, ordinal)| (*candidate == external).then_some(*ordinal))
     }
 
-    fn valid_symbol_mask(&self, request: RuntimeExternalScan<'_>) -> Option<Vec<bool>> {
+    fn valid_symbol_mask(&self, request: ExternalScanRequest<'_>) -> Option<Vec<bool>> {
         let width = self
             .external_ordinals
             .iter()
@@ -986,11 +984,11 @@ impl CssBundleExternalScanner {
     }
 }
 
-impl RuntimeExternalScanner for CssBundleExternalScanner {
+impl ExternalScannerHost for CssBundleExternalScanner {
     fn scan(
         &self,
-        request: RuntimeExternalScan<'_>,
-    ) -> Result<Option<RuntimeExternalScanResult>, ParserRuntimeError> {
+        request: ExternalScanRequest<'_>,
+    ) -> Result<Option<ExternalScanResult>, ParserExecutionError> {
         let Some(mask) = self.valid_symbol_mask(request) else {
             return Ok(None);
         };
@@ -1014,8 +1012,7 @@ impl RuntimeExternalScanner for CssBundleExternalScanner {
         }
         let after = self.intern_snapshot(scan.serialized_state());
         Ok(Some(
-            RuntimeExternalScanResult::new(scan.end_byte())
-                .with_snapshots(Some(before), Some(after)),
+            ExternalScanResult::new(scan.end_byte()).with_snapshots(Some(before), Some(after)),
         ))
     }
 }
@@ -1292,7 +1289,7 @@ fn layer_output(
     let scanner = scanner_selection
         .scanner
         .as_ref()
-        .map(|scanner| scanner as &dyn RuntimeExternalScanner);
+        .map(|scanner| scanner as &dyn ExternalScannerHost);
     let report_result = parse_weavy_with_optional_recovery(prepared, scanner, &input, None);
     let report = match report_result {
         Ok(report) => report,
@@ -1608,7 +1605,7 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
                 scanner_selection
                     .scanner
                     .as_ref()
-                    .map(|scanner| scanner as &dyn RuntimeExternalScanner),
+                    .map(|scanner| scanner as &dyn ExternalScannerHost),
                 &case.input,
             ) {
                 Ok(report) => {
@@ -1670,7 +1667,7 @@ fn run_highlight_tests(
             scanner_selection
                 .scanner
                 .as_ref()
-                .map(|scanner| scanner as &dyn RuntimeExternalScanner),
+                .map(|scanner| scanner as &dyn ExternalScannerHost),
             &file.text,
         ) {
             Ok(report) => report,
@@ -1790,12 +1787,11 @@ fn highlight_assertion_range(assertion: &HighlightAssertion) -> PointRange {
 
 fn parse_strict_weavy_with_optional_scanner(
     prepared: &PreparedGrammar,
-    scanner: Option<&dyn RuntimeExternalScanner>,
+    scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
         &prepared.weavy_plan,
-        &prepared.validated,
         &prepared.parser,
         &prepared.table,
         input,
@@ -1805,12 +1801,11 @@ fn parse_strict_weavy_with_optional_scanner(
 
 fn parse_recovering_weavy_with_optional_scanner(
     prepared: &PreparedGrammar,
-    scanner: Option<&dyn RuntimeExternalScanner>,
+    scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
         &prepared.weavy_plan,
-        &prepared.validated,
         &prepared.parser,
         &prepared.table,
         input,
@@ -1820,14 +1815,13 @@ fn parse_recovering_weavy_with_optional_scanner(
 
 fn parse_weavy_with_optional_recovery(
     prepared: &PreparedGrammar,
-    scanner: Option<&dyn RuntimeExternalScanner>,
+    scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
     previous: Option<(&str, &WeavyParseReport, RuntimeInputEdit)>,
 ) -> Result<PlaygroundParseReport, WeavyParseError> {
     let strict = if let Some((old_input, previous_report, edit)) = previous {
         reparse_prepared_weavy_with_report_and_scanner(
             &prepared.weavy_plan,
-            &prepared.validated,
             &prepared.parser,
             &prepared.table,
             old_input,
@@ -1847,7 +1841,6 @@ fn parse_weavy_with_optional_recovery(
         Err(strict_error) => match if let Some((old_input, previous_report, edit)) = previous {
             reparse_prepared_weavy_recovering_with_report_and_scanner(
                 &prepared.weavy_plan,
-                &prepared.validated,
                 &prepared.parser,
                 &prepared.table,
                 old_input,

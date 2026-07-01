@@ -1258,45 +1258,48 @@ module.exports = grammar({
       ],
     }),
   );
+  try {
+    const first = JSON.parse(
+      session.parse(
+        JSON.stringify({
+          input: "alpha beta",
+          run_corpus: false,
+        }),
+      ),
+    );
+    const second = JSON.parse(
+      session.reparse(
+        JSON.stringify({
+          input: "gamma beta",
+          run_corpus: false,
+          edit: {
+            start_byte: 0,
+            old_end_byte: "alpha".length,
+            new_end_byte: "gamma".length,
+          },
+        }),
+      ),
+    );
 
-  const first = JSON.parse(
-    session.parse(
-      JSON.stringify({
-        input: "alpha beta",
-        run_corpus: false,
-      }),
-    ),
-  );
-  const second = JSON.parse(
-    session.reparse(
-      JSON.stringify({
-        input: "gamma beta",
-        run_corpus: false,
-        edit: {
-          start_byte: 0,
-          old_end_byte: "alpha".length,
-          new_end_byte: "gamma".length,
-        },
-      }),
-    ),
-  );
-
-  assert.equal(first.ok, true);
-  assert.equal(first.parse.sexp, "(document (word) (word))");
-  assert.equal(first.parse.reuse_node_count, 0);
-  assert.equal(second.ok, true);
-  assert.equal(second.parse.sexp, "(document (word) (word))");
-  assert.equal(second.parse.reuse_node_count, 1);
-  assert.deepEqual(
-    second.highlights.map((capture: { capture_name: string; text: string }) => [
-      capture.capture_name,
-      capture.text,
-    ]),
-    [
-      ["variable", "gamma"],
-      ["variable", "beta"],
-    ],
-  );
+    assert.equal(first.ok, true);
+    assert.equal(first.parse.sexp, "(document (word) (word))");
+    assert.equal(first.parse.reuse_node_count, 0);
+    assert.equal(second.ok, true);
+    assert.equal(second.parse.sexp, "(document (word) (word))");
+    assert.equal(second.parse.reuse_node_count, 1);
+    assert.deepEqual(
+      second.highlights.map((capture: { capture_name: string; text: string }) => [
+        capture.capture_name,
+        capture.text,
+      ]),
+      [
+        ["variable", "gamma"],
+        ["variable", "beta"],
+      ],
+    );
+  } finally {
+    session.free();
+  }
 });
 
 test("refreshes injected layers when reparsing a prepared Snark WASM session", async () => {
@@ -1338,62 +1341,65 @@ module.exports = grammar({
       files: projected,
     }),
   );
+  try {
+    const first = JSON.parse(
+      session.parse(
+        JSON.stringify({
+          input: "xxalpha",
+          run_corpus: false,
+        }),
+      ),
+    );
+    const second = JSON.parse(
+      session.reparse(
+        JSON.stringify({
+          input: "xxbeta",
+          run_corpus: false,
+          edit: {
+            start_byte: 2,
+            old_end_byte: 7,
+            new_end_byte: 6,
+          },
+        }),
+      ),
+    );
 
-  const first = JSON.parse(
-    session.parse(
-      JSON.stringify({
-        input: "xxalpha",
-        run_corpus: false,
-      }),
-    ),
-  );
-  const second = JSON.parse(
-    session.reparse(
-      JSON.stringify({
-        input: "xxbeta",
-        run_corpus: false,
-        edit: {
-          start_byte: 2,
-          old_end_byte: 7,
-          new_end_byte: 6,
-        },
-      }),
-    ),
-  );
-
-  assert.equal(first.ok, true, JSON.stringify(first.diagnostics, null, 2));
-  assert.equal(first.parse.sexp, "(document (prefix) (code))");
-  assert.equal(first.layers.length, 1);
-  assert.equal(first.layers[0].language, "text");
-  assert.equal(first.layers[0].input, "alpha");
-  assert.deepEqual(
-    first.layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
-      capture.capture_name,
-      capture.text,
-    ]),
-    [["constant", "alpha"]],
-  );
-
-  assert.equal(second.ok, true, JSON.stringify(second.diagnostics, null, 2));
-  assert.equal(second.parse.sexp, "(document (prefix) (code))");
-  assert.equal(second.injections.length, 1);
-  assert.equal(second.injections[0].text, "beta");
-  assert.equal(second.injections[0].start_byte, 2);
-  assert.equal(second.injections[0].end_byte, 6);
-  assert.equal(second.layers.length, 1);
-  assert.equal(second.layers[0].language, "text");
-  assert.equal(second.layers[0].input, "beta");
-  assert.deepEqual(
-    second.layers[0].highlights.map(
-      (capture: { capture_name: string; text: string; start_byte: number; end_byte: number }) => [
+    assert.equal(first.ok, true, JSON.stringify(first.diagnostics, null, 2));
+    assert.equal(first.parse.sexp, "(document (prefix) (code))");
+    assert.equal(first.layers.length, 1);
+    assert.equal(first.layers[0].language, "text");
+    assert.equal(first.layers[0].input, "alpha");
+    assert.deepEqual(
+      first.layers[0].highlights.map((capture: { capture_name: string; text: string }) => [
         capture.capture_name,
         capture.text,
-        capture.start_byte,
-        capture.end_byte,
-      ],
-    ),
-    [["constant", "beta", 2, 6]],
-  );
+      ]),
+      [["constant", "alpha"]],
+    );
+
+    assert.equal(second.ok, true, JSON.stringify(second.diagnostics, null, 2));
+    assert.equal(second.parse.sexp, "(document (prefix) (code))");
+    assert.equal(second.injections.length, 1);
+    assert.equal(second.injections[0].text, "beta");
+    assert.equal(second.injections[0].start_byte, 2);
+    assert.equal(second.injections[0].end_byte, 6);
+    assert.equal(second.layers.length, 1);
+    assert.equal(second.layers[0].language, "text");
+    assert.equal(second.layers[0].input, "beta");
+    assert.deepEqual(
+      second.layers[0].highlights.map(
+        (capture: { capture_name: string; text: string; start_byte: number; end_byte: number }) => [
+          capture.capture_name,
+          capture.text,
+          capture.start_byte,
+          capture.end_byte,
+        ],
+      ),
+      [["constant", "beta", 2, 6]],
+    );
+  } finally {
+    session.free();
+  }
 });
 
 test("reparses vendored gingembre html layers through a prepared Snark WASM session", async () => {
@@ -1406,57 +1412,60 @@ test("reparses vendored gingembre html layers through a prepared Snark WASM sess
       files: projected,
     }),
   );
+  try {
+    const firstSource = "<section><p>Hello {{ name }}<p>Again</p></section>";
+    const startByte = firstSource.indexOf("name");
+    assert.notEqual(startByte, -1);
+    const secondSource = firstSource.replace("name", "title");
 
-  const firstSource = "<section><p>Hello {{ name }}<p>Again</p></section>";
-  const startByte = firstSource.indexOf("name");
-  assert.notEqual(startByte, -1);
-  const secondSource = firstSource.replace("name", "title");
+    const first = JSON.parse(
+      session.parse(
+        JSON.stringify({
+          input: firstSource,
+          run_corpus: false,
+        }),
+      ),
+    );
+    const second = JSON.parse(
+      session.reparse(
+        JSON.stringify({
+          input: secondSource,
+          run_corpus: false,
+          edit: {
+            start_byte: startByte,
+            old_end_byte: startByte + "name".length,
+            new_end_byte: startByte + "title".length,
+          },
+        }),
+      ),
+    );
 
-  const first = JSON.parse(
-    session.parse(
-      JSON.stringify({
-        input: firstSource,
-        run_corpus: false,
-      }),
-    ),
-  );
-  const second = JSON.parse(
-    session.reparse(
-      JSON.stringify({
-        input: secondSource,
-        run_corpus: false,
-        edit: {
-          start_byte: startByte,
-          old_end_byte: startByte + "name".length,
-          new_end_byte: startByte + "title".length,
-        },
-      }),
-    ),
-  );
+    assert.equal(first.ok, true, JSON.stringify(first.diagnostics, null, 2));
+    assert.equal(first.layers.length, 1);
+    assert.equal(first.layers[0].language, "html");
+    assert.equal(first.layers[0].input, "<section><p>Hello <p>Again</p></section>");
+    assert.equal(first.layers[0].parse.accepted_error_count, 0);
+    assert.equal(first.layers[0].parse.accepted_missing_count, 0);
 
-  assert.equal(first.ok, true, JSON.stringify(first.diagnostics, null, 2));
-  assert.equal(first.layers.length, 1);
-  assert.equal(first.layers[0].language, "html");
-  assert.equal(first.layers[0].input, "<section><p>Hello <p>Again</p></section>");
-  assert.equal(first.layers[0].parse.accepted_error_count, 0);
-  assert.equal(first.layers[0].parse.accepted_missing_count, 0);
-
-  assert.equal(second.ok, true, JSON.stringify(second.diagnostics, null, 2));
-  assert.equal(second.layers.length, 1);
-  assert.equal(second.layers[0].language, "html");
-  assert.equal(second.layers[0].input, "<section><p>Hello <p>Again</p></section>");
-  assert.equal(second.layers[0].parse.accepted_error_count, 0);
-  assert.equal(second.layers[0].parse.accepted_missing_count, 0);
-  assert.deepEqual(
-    second.layers[0].ranges.map((range: { start_byte: number; end_byte: number }) => [
-      range.start_byte,
-      range.end_byte,
-    ]),
-    [
-      [0, 18],
-      [29, 51],
-    ],
-  );
+    assert.equal(second.ok, true, JSON.stringify(second.diagnostics, null, 2));
+    assert.equal(second.layers.length, 1);
+    assert.equal(second.layers[0].language, "html");
+    assert.equal(second.layers[0].input, "<section><p>Hello <p>Again</p></section>");
+    assert.equal(second.layers[0].parse.accepted_error_count, 0);
+    assert.equal(second.layers[0].parse.accepted_missing_count, 0);
+    assert.deepEqual(
+      second.layers[0].ranges.map((range: { start_byte: number; end_byte: number }) => [
+        range.start_byte,
+        range.end_byte,
+      ]),
+      [
+        [0, 18],
+        [29, 51],
+      ],
+    );
+  } finally {
+    session.free();
+  }
 });
 
 test("runs bundled corpus and highlight tests through generated grammar.json", () => {

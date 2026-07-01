@@ -187,9 +187,9 @@ fn snark_surfaces_genuine_ambiguity_tree_sitter_hides() {
 
 #[test]
 fn bundled_graphql_and_thrift_lex_without_notoken() {
-    if !tree_sitter_available() {
-        eprintln!("skipping: `tree-sitter` CLI not found on PATH");
-        return;
+    let tree_sitter_available = tree_sitter_available();
+    if !tree_sitter_available {
+        eprintln!("skipping tree-sitter oracle: `tree-sitter` CLI not found on PATH");
     }
 
     let mut failures = Vec::new();
@@ -231,15 +231,17 @@ fn bundled_graphql_and_thrift_lex_without_notoken() {
                 "[{name}] Snark failed to lex/parse bundled sample: {sn}"
             ));
         }
-        let Ok(dir) = generate_parser(name, &grammar) else {
-            continue;
-        };
-        fs::write(dir.join("input.txt"), &input).expect("write bundled sample");
-        let ts = tree_sitter_parse_file(&dir, "input.txt");
-        if !ts.trim().is_empty() && ts.contains("ERROR") {
-            failures.push(format!(
-                "[{name}] tree-sitter did not parse the bundled sample cleanly: {ts}"
-            ));
+        if tree_sitter_available {
+            let Ok(dir) = generate_parser(name, &grammar) else {
+                continue;
+            };
+            fs::write(dir.join("input.txt"), &input).expect("write bundled sample");
+            let ts = tree_sitter_parse_file(&dir, "input.txt");
+            if !ts.trim().is_empty() && ts.contains("ERROR") {
+                failures.push(format!(
+                    "[{name}] tree-sitter did not parse the bundled sample cleanly: {ts}"
+                ));
+            }
         }
     }
 
