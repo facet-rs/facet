@@ -340,6 +340,9 @@ jobs:
       - name: Check vox (default features) for wasm32
         run: cargo check --target wasm32-unknown-unknown -p vox
 
+      - name: Check vox facade for wasm32 (websocket transport)
+        run: cargo check --target wasm32-unknown-unknown -p vox --no-default-features --features runtime,transport-websocket
+
       - name: Check vox-websocket for wasm32
         run: cargo check --target wasm32-unknown-unknown -p vox-websocket
 

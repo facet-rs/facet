@@ -410,6 +410,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
+ "base64 0.22.1",
  "bytes",
  "futures-util",
  "http",
@@ -426,8 +427,10 @@ dependencies = [
  "serde_core",
  "serde_json",
  "serde_path_to_error",
+ "sha1",
  "sync_wrapper",
  "tokio",
+ "tokio-tungstenite",
  "tower 0.5.3",
  "tower-layer",
  "tower-service",
@@ -4866,6 +4869,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 name = "peer-server"
 version = "0.2.2"
 dependencies = [
+ "axum",
  "spec-proto",
  "subject-rust",
  "tokio",
@@ -8335,6 +8339,7 @@ dependencies = [
 name = "vox-websocket"
 version = "0.10.0-rc.5"
 dependencies = [
+ "axum",
  "futures-channel",
  "futures-util",
  "js-sys",
@@ -8501,10 +8506,11 @@ dependencies = [
 name = "wasm-browser-tests"
 version = "0.10.0-rc.1"
 dependencies = [
+ "futures-util",
  "spec-proto",
- "vox-core",
+ "vox",
+ "vox-rt",
  "vox-types",
- "vox-websocket",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
