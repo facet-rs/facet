@@ -16,7 +16,9 @@ use std::{
 
 use regex::Regex;
 use regex_automata::{
-    Anchored, Input, MatchKind as RegexMatchKind, PatternSet, meta::Regex as AutomataRegex,
+    Anchored, Input, MatchKind as RegexMatchKind, PatternSet,
+    hybrid::dfa::{Cache as HybridDfaCache, DFA as HybridDfa, OverlappingState},
+    meta::Regex as AutomataRegex,
 };
 use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
@@ -1183,8 +1185,9 @@ impl WeavyLexModeProgram {
         byte_position: usize,
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
         matches: &mut Option<PatternSet>,
+        dfa_cache: Option<&mut HybridDfaCache>,
     ) {
-        match_weavy_direct_pattern_set(input, self, byte_position, ends, matches);
+        match_weavy_direct_pattern_set(input, self, byte_position, ends, matches, dfa_cache);
     }
 
     fn match_direct_literals(
@@ -1204,6 +1207,10 @@ impl WeavyLexModeProgram {
         }
         if self.direct_pattern_set.is_some() {
             stats.direct_pattern_set_count += 1;
+        }
+        if let Some(direct_pattern_set) = &self.direct_pattern_set {
+            stats.direct_pattern_leaf_rematch_terminal_count +=
+                direct_pattern_set.leaf_rematch_terminal_count();
         }
         for terminal in &self.terminals {
             terminal.add_stats(stats);
@@ -1245,7 +1252,6 @@ impl WeavyLexTerminal {
         }
         if self.direct_pattern_index.is_some() {
             stats.direct_pattern_terminal_count += 1;
-            stats.direct_pattern_leaf_rematch_terminal_count += 1;
         }
         self.matcher.add_stats(stats);
     }
@@ -1616,6 +1622,7 @@ impl WeavyLiteralSet {
 #[derive(Clone, Debug)]
 struct WeavyDirectPatternSet {
     automaton: AutomataRegex,
+    dfa: Option<HybridDfa>,
     terminal_indices: Vec<usize>,
 }
 
@@ -1647,12 +1654,17 @@ impl WeavyDirectPatternSet {
             .configure(AutomataRegex::config().match_kind(RegexMatchKind::All))
             .build_many(&regex_source_refs)
             .ok()?;
+        let dfa = HybridDfa::builder()
+            .configure(HybridDfa::config().match_kind(RegexMatchKind::All))
+            .build_many(&regex_source_refs)
+            .ok();
         let terminal_indices = entries
             .into_iter()
             .map(|(_, terminal_index, _)| terminal_index)
             .collect();
         Some(Self {
             automaton,
+            dfa,
             terminal_indices,
         })
     }
@@ -1661,16 +1673,50 @@ impl WeavyDirectPatternSet {
         self.automaton.pattern_len()
     }
 
+    fn leaf_rematch_terminal_count(&self) -> usize {
+        if self.dfa.is_some() { 0 } else { self.len() }
+    }
+
+    fn create_dfa_cache(&self) -> Option<HybridDfaCache> {
+        self.dfa.as_ref().map(HybridDfa::create_cache)
+    }
+
     fn for_each_match(
         &self,
         input: &str,
         byte_position: usize,
         matches: &mut Option<PatternSet>,
-        mut visit: impl FnMut(usize, usize),
+        dfa_cache: Option<&mut HybridDfaCache>,
+        mut visit: impl FnMut(usize, usize, Option<parser_ir::LexMatch>),
     ) {
         let Some(haystack) = input.get(byte_position..) else {
             return;
         };
+        if let (Some(dfa), Some(dfa_cache)) = (&self.dfa, dfa_cache) {
+            let search = Input::new(haystack).anchored(Anchored::Yes);
+            let mut state = OverlappingState::start();
+            loop {
+                if dfa
+                    .try_search_overlapping_fwd(dfa_cache, &search, &mut state)
+                    .is_err()
+                {
+                    break;
+                }
+                let Some(match_) = state.get_match() else {
+                    return;
+                };
+                let set_index = match_.pattern().as_usize();
+                let end = byte_position + match_.offset();
+                visit(
+                    set_index,
+                    self.terminal_indices[set_index],
+                    Some(parser_ir::LexMatch::new(
+                        end,
+                        crate::lex_match::pattern_inspected_end(input, end),
+                    )),
+                );
+            }
+        }
         let search = Input::new(haystack).anchored(Anchored::Yes);
         let pattern_len = self.automaton.pattern_len();
         let matches = matches.get_or_insert_with(|| PatternSet::new(pattern_len));
@@ -1682,7 +1728,7 @@ impl WeavyDirectPatternSet {
         self.automaton.which_overlapping_matches(&search, matches);
         for pattern_id in matches.iter() {
             let set_index = pattern_id.as_usize();
-            visit(set_index, self.terminal_indices[set_index]);
+            visit(set_index, self.terminal_indices[set_index], None);
         }
     }
 }
@@ -2373,6 +2419,7 @@ struct RuntimeWeavyLexerScratch {
     direct_literal_matches: RefCell<Option<PatternSet>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_matches: RefCell<Option<PatternSet>>,
+    direct_pattern_dfa_caches: RefCell<HashMap<parser_ir::LexModeId, Option<HybridDfaCache>>>,
     direct_set_cache:
         RefCell<HashMap<RuntimeWeavyLexSetCacheKey, Arc<RuntimeWeavyDirectSetMatches>>>,
 }
@@ -2405,11 +2452,20 @@ impl RuntimeWeavyLexerScratch {
         {
             let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
             let mut direct_pattern_matches = self.direct_pattern_matches.borrow_mut();
+            let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
+            let direct_pattern_dfa_cache =
+                mode_program.direct_pattern_set.as_ref().and_then(|set| {
+                    direct_pattern_dfa_caches
+                        .entry(mode)
+                        .or_insert_with(|| set.create_dfa_cache())
+                        .as_mut()
+                });
             mode_program.match_direct_patterns(
                 input,
                 byte_position,
                 &mut direct_pattern_ends,
                 &mut direct_pattern_matches,
+                direct_pattern_dfa_cache,
             );
         }
         let matches = Arc::new(RuntimeWeavyDirectSetMatches {
@@ -5506,6 +5562,7 @@ fn match_weavy_direct_pattern_set(
     byte_position: usize,
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
     matches: &mut Option<PatternSet>,
+    dfa_cache: Option<&mut HybridDfaCache>,
 ) {
     let Some(pattern_set) = &mode.direct_pattern_set else {
         ends.clear();
@@ -5517,7 +5574,12 @@ fn match_weavy_direct_pattern_set(
         input,
         byte_position,
         matches,
-        |set_index, terminal_index| {
+        dfa_cache,
+        |set_index, terminal_index, dfa_match| {
+            if let Some(match_) = dfa_match {
+                ends[set_index] = Some(match_);
+                return;
+            }
             let terminal = &mode.terminals[terminal_index];
             let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher
             else {
@@ -6543,7 +6605,7 @@ mod tests {
         assert_eq!(stats.direct_literal_terminal_count, 1);
         assert_eq!(stats.direct_pattern_set_count, 1);
         assert_eq!(stats.direct_pattern_terminal_count, 1);
-        assert_eq!(stats.direct_pattern_leaf_rematch_terminal_count, 1);
+        assert_eq!(stats.direct_pattern_leaf_rematch_terminal_count, 0);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Seq], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 2);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Choice], 1);
@@ -6597,7 +6659,7 @@ mod tests {
         assert_eq!(readiness.merged_literal_terminal_count, 1);
         assert_eq!(readiness.merged_pattern_set_count, 1);
         assert_eq!(readiness.merged_pattern_terminal_count, 1);
-        assert_eq!(readiness.merged_pattern_leaf_rematch_terminal_count, 1);
+        assert_eq!(readiness.merged_pattern_leaf_rematch_terminal_count, 0);
         assert_eq!(readiness.known_pattern_count, 1);
         assert_eq!(readiness.regex_automata_count, 2);
         assert_eq!(readiness.regex_fallback_count, 0);
@@ -6851,12 +6913,80 @@ mod tests {
         };
         let mut ends = Vec::new();
         let mut matches = None;
+        let mut dfa_cache = mode
+            .direct_pattern_set
+            .as_ref()
+            .and_then(WeavyDirectPatternSet::create_dfa_cache);
 
-        match_weavy_direct_pattern_set("abcd", &mode, 0, &mut ends, &mut matches);
+        match_weavy_direct_pattern_set(
+            "abcd",
+            &mode,
+            0,
+            &mut ends,
+            &mut matches,
+            dfa_cache.as_mut(),
+        );
 
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 3)));
+    }
+
+    #[test]
+    fn direct_pattern_set_reports_graphql_block_string_content_matches() {
+        let terminals = vec![WeavyLexTerminal {
+            terminal: parser_ir::TerminalId::from_index(0),
+            matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
+                crate::lex_match::compile_pattern("([^\"]|\\n|\"\"?[^\"])*", None).into(),
+            )),
+            immediate: false,
+            literal: false,
+            lexical_precedence: 0,
+            implicit_precedence: 0,
+            direct_literal_index: None,
+            direct_pattern_index: Some(0),
+        }];
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        assert_eq!(
+            direct_pattern_set
+                .as_ref()
+                .unwrap()
+                .leaf_rematch_terminal_count(),
+            0
+        );
+        let mode = WeavyLexModeProgram {
+            direct_pattern_set,
+            terminals,
+            direct_literal_set: None,
+        };
+        let mut ends = Vec::new();
+        let mut matches = None;
+        let mut dfa_cache = mode
+            .direct_pattern_set
+            .as_ref()
+            .and_then(WeavyDirectPatternSet::create_dfa_cache);
+
+        match_weavy_direct_pattern_set(
+            "\"\"\"text\"\"\"",
+            &mode,
+            3,
+            &mut ends,
+            &mut matches,
+            dfa_cache.as_mut(),
+        );
+
+        assert_eq!(ends, vec![Some(parser_ir::LexMatch::new(7, 8))]);
+
+        match_weavy_direct_pattern_set(
+            "\"\"\"\"\"\"",
+            &mode,
+            3,
+            &mut ends,
+            &mut matches,
+            dfa_cache.as_mut(),
+        );
+
+        assert_eq!(ends, vec![Some(parser_ir::LexMatch::new(3, 4))]);
     }
 
     #[test]
@@ -6977,7 +7107,7 @@ mod tests {
                 .readiness
                 .lexer
                 .merged_pattern_leaf_rematch_terminal_count,
-            1
+            0
         );
         assert_eq!(analysis.readiness.lexer.regex_fallback_count, 0);
         assert_eq!(analysis.readiness.lexer.rust_regex_fallback_count, 0);
