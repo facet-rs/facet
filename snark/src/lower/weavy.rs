@@ -1071,6 +1071,7 @@ struct RuntimeWeavyOutput<'a> {
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
     tree_events: &'a mut Vec<parser_ir::TreeEvent>,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
+    input_points: &'a RuntimeWeavyInputPoints,
     next_lookahead_index: &'a mut usize,
     stats: &'a mut RunStats,
 }
@@ -1081,6 +1082,7 @@ struct RuntimeWeavyStepperInput<'a> {
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
     tree_events: &'a mut Vec<parser_ir::TreeEvent>,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
+    input_points: &'a RuntimeWeavyInputPoints,
 }
 
 #[derive(Clone, Copy)]
@@ -1757,6 +1759,7 @@ fn parse_runtime_with_compiled_lex_modes(
     let mut next_version_index = 1usize;
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
+    let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let step_limit = match recovery {
         RuntimeWeavyRecoveryMode::Strict => {
             runtime_weavy_step_limit(input_ctx.table, input_ctx.input)
@@ -1800,6 +1803,7 @@ fn parse_runtime_with_compiled_lex_modes(
             trace_events: &mut trace_events,
             tree_events: &mut tree_events,
             tree_journal: &mut tree_journal,
+            input_points: &input_points,
             next_lookahead_index: &mut next_lookahead_index,
             stats: &mut stats,
         };
@@ -2212,6 +2216,7 @@ fn step_runtime_weavy_branch(
                     && let Some(branch) = recover_runtime_weavy_no_token(
                         branch.clone(),
                         input_ctx.input,
+                        output.input_points,
                         output.tree_store,
                         output.trace_events,
                         output.tree_events,
@@ -2307,7 +2312,7 @@ fn try_reuse_runtime_weavy_node(
         runtime_weavy_goto_state(input_ctx.table, entry_state, reusable.symbol).ok()?;
     let node = output.tree_store.push(reusable.tree.clone());
     let (bytes, points) =
-        runtime_weavy_input_ranges(input_ctx.input, reusable.start_byte, reusable.end_byte);
+        runtime_weavy_input_ranges(output.input_points, reusable.start_byte, reusable.end_byte);
     let tree_event = parser_ir::TreeEvent::ReuseNode {
         version: branch.version,
         node,
@@ -2319,7 +2324,7 @@ fn try_reuse_runtime_weavy_node(
         reusable,
         branch.version,
         node,
-        input_ctx.input,
+        output.input_points,
         output.tree_store,
     );
     output
@@ -2403,6 +2408,7 @@ fn run_runtime_weavy_state_probe(
             trace_events: &mut *output.trace_events,
             tree_events: &mut *output.tree_events,
             tree_journal: &mut *output.tree_journal,
+            input_points: output.input_points,
         },
         branch,
         parser_ir::LookaheadTokenId::from_index(*output.next_lookahead_index),
@@ -2451,6 +2457,7 @@ fn run_runtime_weavy_action(
             trace_events: &mut *output.trace_events,
             tree_events: &mut *output.tree_events,
             tree_journal: &mut *output.tree_journal,
+            input_points: output.input_points,
         },
         branch,
         action_ctx.lookahead,
@@ -2608,6 +2615,7 @@ fn recover_runtime_weavy_to_action_state(
 fn recover_runtime_weavy_no_token(
     mut branch: RuntimeWeavyBranch,
     input: &str,
+    input_points: &RuntimeWeavyInputPoints,
     tree_store: &mut RuntimeWeavyTreeStore,
     trace_events: &mut Vec<parser_ir::TraceEvent>,
     tree_events: &mut Vec<parser_ir::TreeEvent>,
@@ -2620,7 +2628,7 @@ fn recover_runtime_weavy_no_token(
         kind: "ERROR".to_owned(),
         children: Vec::new(),
     });
-    let (bytes, points) = runtime_weavy_input_ranges(input, start_byte, end_byte);
+    let (bytes, points) = runtime_weavy_input_ranges(input_points, start_byte, end_byte);
     trace_events.push(parser_ir::TraceEvent::Recover {
         version: branch.version,
         state,
@@ -2662,6 +2670,7 @@ fn runtime_weavy_lex_succeeds(
     let mut trace_events = Vec::new();
     let mut tree_events = Vec::new();
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
+    let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let stepper = RuntimeWeavyStepper::from_branch(
         RuntimeWeavyStepperInput {
             input: RuntimeWeavyInput {
@@ -2672,6 +2681,7 @@ fn runtime_weavy_lex_succeeds(
             trace_events: &mut trace_events,
             tree_events: &mut tree_events,
             tree_journal: &mut tree_journal,
+            input_points: &input_points,
         },
         branch.clone(),
         parser_ir::LookaheadTokenId::from_index(0),
@@ -2697,6 +2707,7 @@ struct RuntimeWeavyStepper<'a> {
     compiled_lex_modes: &'a [parser_ir::CompiledLexMode],
     auto_close_index: &'a RuntimeWeavyAutoCloseIndex,
     input: &'a str,
+    input_points: &'a RuntimeWeavyInputPoints,
     external_scanner: Option<&'a dyn RuntimeExternalScanner>,
     stack: Cow<'a, [RuntimeWeavyStackEntry]>,
     byte_position: usize,
@@ -2734,6 +2745,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             compiled_lex_modes: stepper_input.input.compiled_lex_modes,
             auto_close_index: stepper_input.input.auto_close_index,
             input: stepper_input.input.input,
+            input_points: stepper_input.input_points,
             external_scanner: stepper_input.input.external_scanner,
             stack: Cow::Owned(branch.stack),
             byte_position: branch.byte_position,
@@ -2770,6 +2782,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             compiled_lex_modes: stepper_input.input.compiled_lex_modes,
             auto_close_index: stepper_input.input.auto_close_index,
             input: stepper_input.input.input,
+            input_points: stepper_input.input_points,
             external_scanner: stepper_input.input.external_scanner,
             stack: Cow::Borrowed(&branch.stack),
             byte_position: branch.byte_position,
@@ -2895,7 +2908,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     expected: Vec::new(),
                 })?;
                 let start = self.committed_start.take().unwrap_or(self.byte_position);
-                let (bytes, points) = runtime_weavy_input_ranges(self.input, start, token.end);
+                let (bytes, points) =
+                    runtime_weavy_input_ranges(self.input_points, start, token.end);
                 let event = parser_ir::TreeEvent::Token {
                     version: self.version,
                     symbol: runtime_weavy_lookahead_parser_symbol(token.lookahead),
@@ -3647,7 +3661,11 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut trailing_extras = Vec::new();
         if !include_trailing_extras {
             while self.stack.last().is_some_and(|entry| entry.extra) {
-                let entry = self.stack.to_mut().pop().ok_or(RuntimeWeavyError::EmptyStack)?;
+                let entry = self
+                    .stack
+                    .to_mut()
+                    .pop()
+                    .ok_or(RuntimeWeavyError::EmptyStack)?;
                 let Some(fragment) = entry.fragment else {
                     return Err(RuntimeWeavyError::EmptyStack);
                 };
@@ -3658,7 +3676,11 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut popped = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
-            let entry = self.stack.to_mut().pop().ok_or(RuntimeWeavyError::EmptyStack)?;
+            let entry = self
+                .stack
+                .to_mut()
+                .pop()
+                .ok_or(RuntimeWeavyError::EmptyStack)?;
             let Some(fragment) = entry.fragment else {
                 return Err(RuntimeWeavyError::EmptyStack);
             };
@@ -3723,7 +3745,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         children: Vec::new(),
                     });
                     let (bytes, points) =
-                        runtime_weavy_input_ranges(self.input, alias_range.0, alias_range.1);
+                        runtime_weavy_input_ranges(self.input_points, alias_range.0, alias_range.1);
                     self.tree_events.push(parser_ir::TreeEvent::Alias {
                         version: self.version,
                         node: alias_node,
@@ -3762,7 +3784,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 .name()
                 .to_owned();
             let node = self.tree_store.push(SexpNode { kind, children });
-            let (bytes, points) = runtime_weavy_input_ranges(self.input, start_byte, end_byte);
+            let (bytes, points) =
+                runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
             self.tree_events.push(parser_ir::TreeEvent::Reduce {
                 version: self.version,
                 production,
@@ -3839,7 +3862,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .find(|kind| kind.name() == node.kind)
             .map(parser_ir::PublicNodeKind::id);
         let node = self.tree_store.push(node);
-        let (bytes, points) = runtime_weavy_input_ranges(self.input, start_byte, end_byte);
+        let (bytes, points) = runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
         let tree_event = parser_ir::TreeEvent::CloseNode {
             version,
             node,
@@ -4282,7 +4305,7 @@ fn replay_reused_runtime_weavy_tree_events(
     reusable: &RuntimeWeavyReusableNode,
     version: parser_ir::StackVersionId,
     root_node: parser_ir::TreeNodeId,
-    input: &str,
+    input_points: &RuntimeWeavyInputPoints,
     tree_store: &mut RuntimeWeavyTreeStore,
 ) -> Vec<parser_ir::TreeEvent> {
     let mut node_map = BTreeMap::from([(reusable.source_node, root_node)]);
@@ -4290,7 +4313,13 @@ fn replay_reused_runtime_weavy_tree_events(
         .tree_events
         .iter()
         .map(|event| {
-            replay_reused_runtime_weavy_tree_event(event, version, input, tree_store, &mut node_map)
+            replay_reused_runtime_weavy_tree_event(
+                event,
+                version,
+                input_points,
+                tree_store,
+                &mut node_map,
+            )
         })
         .collect()
 }
@@ -4298,13 +4327,13 @@ fn replay_reused_runtime_weavy_tree_events(
 fn replay_reused_runtime_weavy_tree_event(
     event: &parser_ir::TreeEvent,
     version: parser_ir::StackVersionId,
-    input: &str,
+    input_points: &RuntimeWeavyInputPoints,
     tree_store: &mut RuntimeWeavyTreeStore,
     node_map: &mut BTreeMap<parser_ir::TreeNodeId, parser_ir::TreeNodeId>,
 ) -> parser_ir::TreeEvent {
     let repoint = |bytes: ByteRange| {
         runtime_weavy_input_ranges(
-            input,
+            input_points,
             bytes.start().get() as usize,
             bytes.end().get() as usize,
         )
@@ -4553,34 +4582,57 @@ fn runtime_weavy_lookahead_parser_symbol(
     }
 }
 
-fn runtime_weavy_input_ranges(input: &str, start: usize, end: usize) -> (ByteRange, PointRange) {
-    let start = start.min(input.len());
-    let end = end.min(input.len()).max(start);
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RuntimeWeavyInputPoints {
+    input_len: usize,
+    line_starts: Vec<usize>,
+}
+
+impl RuntimeWeavyInputPoints {
+    fn new(input: &str) -> Self {
+        let mut line_starts = vec![0];
+        for (index, byte) in input.bytes().enumerate() {
+            if byte == b'\n' {
+                line_starts.push(index + 1);
+            }
+        }
+        Self {
+            input_len: input.len(),
+            line_starts,
+        }
+    }
+
+    fn point_at(&self, byte: usize) -> PointBytes {
+        let byte = byte.min(self.input_len);
+        let line_index = self
+            .line_starts
+            .partition_point(|line_start| *line_start <= byte)
+            .saturating_sub(1);
+        let line_start = self.line_starts[line_index];
+        PointBytes::new(
+            Row::new(u32::try_from(line_index).expect("runtime row fits u32")),
+            Utf8ColumnBytes::new(
+                u32::try_from(byte - line_start).expect("runtime column fits u32"),
+            ),
+        )
+    }
+}
+
+fn runtime_weavy_input_ranges(
+    input_points: &RuntimeWeavyInputPoints,
+    start: usize,
+    end: usize,
+) -> (ByteRange, PointRange) {
+    let start = start.min(input_points.input_len);
+    let end = end.min(input_points.input_len).max(start);
     let bytes = ByteRange::new(
         ByteOffset::new(u32::try_from(start).expect("runtime byte offset fits u32")),
         ByteOffset::new(u32::try_from(end).expect("runtime byte offset fits u32")),
     )
     .expect("runtime byte range is ordered");
-    let points = PointRange::new(
-        runtime_weavy_input_point_at(input, start),
-        runtime_weavy_input_point_at(input, end),
-    )
-    .expect("runtime point range is ordered");
+    let points = PointRange::new(input_points.point_at(start), input_points.point_at(end))
+        .expect("runtime point range is ordered");
     (bytes, points)
-}
-
-fn runtime_weavy_input_point_at(input: &str, byte: usize) -> PointBytes {
-    let mut row = 0u32;
-    let mut column = 0u32;
-    for ch in input[..byte.min(input.len())].chars() {
-        if ch == '\n' {
-            row += 1;
-            column = 0;
-        } else {
-            column += u32::try_from(ch.len_utf8()).expect("UTF-8 codepoint length fits u32");
-        }
-    }
-    PointBytes::new(Row::new(row), Utf8ColumnBytes::new(column))
 }
 
 #[cfg(test)]
