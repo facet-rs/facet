@@ -52,6 +52,30 @@ type ParseOutput = {
   accepted_missing_count: number;
 };
 
+type PlanOutput = {
+  fully_visible: boolean;
+  parser_fully_visible: boolean;
+  lexer_fully_visible: boolean;
+  neutral_weavy_only: boolean;
+  stencils_needed: boolean;
+  neutral_weavy_op_count: number;
+  snark_intrinsic_count: number;
+  snark_stencils: PlanStencilOutput[];
+  lowering_barriers: PlanBarrierOutput[];
+};
+
+type PlanStencilOutput = {
+  descriptor: string;
+  domain: string;
+  lowering: string;
+  count: number;
+};
+
+type PlanBarrierOutput = {
+  kind: string;
+  count: number;
+};
+
 type ResolvedTreeOutput = {
   kind: string;
   field: string | null;
@@ -169,6 +193,7 @@ type PlaygroundResponse = {
     scanner_paths: string[];
     active_scanner: string | null;
   };
+  plan: PlanOutput | null;
   parse: ParseOutput | null;
   highlights: HighlightOutput[];
   injections: InjectionOutput[];
@@ -941,6 +966,7 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
         .map((file) => file.path),
       active_scanner: null,
     },
+    plan: null,
     parse: null,
     highlights: [],
     injections: [],

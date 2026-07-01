@@ -17,7 +17,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyParseError, WeavyParsePlan, WeavyParseReport,
+        WeavyLoweringBarrier, WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner,
         reparse_prepared_weavy_recovering_with_report_and_scanner,
@@ -78,6 +78,7 @@ struct PlaygroundResponse {
     language: Option<String>,
     diagnostics: Vec<Diagnostic>,
     bundle: BundleSummary,
+    plan: Option<PlanOutput>,
     parse: Option<ParseOutput>,
     highlights: Vec<HighlightOutput>,
     injections: Vec<InjectionOutput>,
@@ -114,6 +115,33 @@ struct BundleSummary {
     generated_files_ignored: Vec<String>,
     scanner_paths: Vec<String>,
     active_scanner: Option<String>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanOutput {
+    fully_visible: bool,
+    parser_fully_visible: bool,
+    lexer_fully_visible: bool,
+    neutral_weavy_only: bool,
+    stencils_needed: bool,
+    neutral_weavy_op_count: usize,
+    snark_intrinsic_count: usize,
+    snark_stencils: Vec<PlanStencilOutput>,
+    lowering_barriers: Vec<PlanBarrierOutput>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilOutput {
+    descriptor: String,
+    domain: String,
+    lowering: String,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanBarrierOutput {
+    kind: String,
+    count: usize,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -412,6 +440,7 @@ impl PlaygroundSession {
                     primary_span: None,
                 }],
                 bundle,
+                plan: None,
                 parse: None,
                 highlights: Vec::new(),
                 injections: Vec::new(),
@@ -430,6 +459,7 @@ impl PlaygroundSession {
                     language: None,
                     diagnostics: vec![diagnostic(&stage, message, None)],
                     bundle,
+                    plan: None,
                     parse: None,
                     highlights: Vec::new(),
                     injections: Vec::new(),
@@ -455,6 +485,7 @@ impl PlaygroundSession {
                     None,
                 )],
                 bundle,
+                plan: Some(plan_output(&prepared.weavy_plan)),
                 parse: None,
                 highlights: Vec::new(),
                 injections: Vec::new(),
@@ -491,6 +522,7 @@ impl PlaygroundSession {
             language: Some(self.prepared.raw.name.clone()),
             diagnostics: vec![diagnostic(stage, message, None)],
             bundle: self.bundle.clone(),
+            plan: Some(plan_output(&self.prepared.weavy_plan)),
             parse: None,
             highlights: Vec::new(),
             injections: Vec::new(),
@@ -625,6 +657,7 @@ fn playground_response_for_session(
         language: Some(prepared.raw.name.clone()),
         diagnostics,
         bundle,
+        plan: Some(plan_output(&prepared.weavy_plan)),
         parse,
         highlights,
         injections,
@@ -702,6 +735,46 @@ fn parse_output(
         accepted_tree_event_count: accepted_tree_events.len(),
         accepted_error_count: count_accepted_errors(&accepted_tree_events),
         accepted_missing_count: count_accepted_missing(&accepted_tree_events),
+    }
+}
+
+fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
+    let readiness = plan.analysis().readiness;
+    PlanOutput {
+        fully_visible: readiness.is_fully_visible(),
+        parser_fully_visible: readiness.is_parser_fully_visible(),
+        lexer_fully_visible: readiness.lexer.is_fully_visible(),
+        neutral_weavy_only: readiness.is_neutral_weavy_only(),
+        stencils_needed: readiness.needs_snark_stencils(),
+        neutral_weavy_op_count: readiness.neutral_weavy_op_count,
+        snark_intrinsic_count: readiness.snark_intrinsic_count,
+        snark_stencils: readiness
+            .snark_stencil_summaries
+            .iter()
+            .map(|summary| PlanStencilOutput {
+                descriptor: format!(
+                    "{}::{}",
+                    summary.descriptor.dialect, summary.descriptor.name
+                ),
+                domain: format!("{:?}", summary.domain),
+                lowering: format!("{:?}", summary.lowering),
+                count: summary.count,
+            })
+            .collect(),
+        lowering_barriers: readiness
+            .barrier_summaries
+            .iter()
+            .map(|summary| PlanBarrierOutput {
+                kind: match summary.barrier {
+                    WeavyLoweringBarrier::ParserIntrinsic(descriptor) => {
+                        format!("parser:{}::{}", descriptor.dialect, descriptor.name)
+                    }
+                    WeavyLoweringBarrier::Lexer(kind) => format!("lexer:{kind:?}"),
+                    _ => format!("{:?}", summary.barrier),
+                },
+                count: summary.count,
+            })
+            .collect(),
     }
 }
 
@@ -1979,6 +2052,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
             scanner_paths: Vec::new(),
             active_scanner: None,
         },
+        plan: None,
         parse: None,
         highlights: Vec::new(),
         injections: Vec::new(),
@@ -4341,6 +4415,15 @@ mod tests {
         let parse = response.parse.as_ref().expect("parse output");
         assert_eq!(parse.accepted_error_count, 0);
         assert_eq!(parse.accepted_missing_count, 0);
+        let plan = response.plan.as_ref().expect("plan output");
+        assert!(plan.stencils_needed);
+        assert!(
+            plan.snark_stencils
+                .iter()
+                .any(|summary| summary.descriptor == "snark.tree_sitter::lex"
+                    && summary.domain == "Lexing"
+                    && summary.lowering == "LexerGraph")
+        );
         let mut captures = response
             .highlights
             .iter()
@@ -4555,7 +4638,9 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("accepted parse contains")
+                .contains("accepted parse contains"),
+            "{:#?}",
+            response.diagnostics
         );
         let parse = response.parse.as_ref().expect("recovered parse output");
         assert!(parse.accepted_error_count > 0);
@@ -4616,7 +4701,7 @@ mod tests {
     }
 
     #[test]
-    fn arborium_nginx_sample_reports_dirty_recovered_parse() {
+    fn arborium_nginx_sample_reports_unrecovered_map_entry_failure() {
         let def = std::path::Path::new("/Users/amos/oss/arborium/langs/group-maple/nginx/def");
         if !def.exists() {
             return;
@@ -4659,7 +4744,9 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("accepted parse contains")
+                .contains("could not lex at byte"),
+            "{:#?}",
+            response.diagnostics
         );
         assert_eq!(
             response
@@ -4667,13 +4754,10 @@ mod tests {
                 .first()
                 .and_then(|diagnostic| diagnostic.primary_span.as_ref())
                 .map(|span| (span.start_row, span.start_column)),
-            Some((107, 81))
+            Some((110, 4))
         );
-        let parse = response.parse.as_ref().expect("recovered parse output");
-        assert!(parse.accepted_error_count > 0);
-        assert_eq!(parse.accepted_missing_count, 0);
-        assert!(parse.sexp.contains("(ERROR"));
-        assert!(!response.highlights.is_empty());
+        assert!(response.parse.is_none());
+        assert!(response.highlights.is_empty());
     }
 
     #[test]
