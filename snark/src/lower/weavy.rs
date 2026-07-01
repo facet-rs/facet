@@ -250,11 +250,6 @@ pub enum SnarkIntrinsic {
         /// Why this branch was retired.
         reason: BranchRetireReason,
     },
-    /// Recover through Snark's generated recovery path.
-    Recover {
-        /// Parser state whose recovery action is being executed.
-        state: ParseStateId,
-    },
     /// Accept the input by reducing the root production.
     Accept {
         /// GLR stack version being accepted.
@@ -544,16 +539,6 @@ impl SnarkIntrinsic {
                     .write_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::SideChannel("glr_worklist")),
             ),
-            Self::Recover { .. } => (
-                SnarkIntrinsicDomain::Recovery,
-                SnarkIntrinsicLowering::DialectOp,
-                EffectContract::new()
-                    .read_resource(EffectResource::Input("source"))
-                    .write_resource(EffectResource::SideChannel("branch_cursor"))
-                    .write_resource(EffectResource::SideChannel("parser_stack"))
-                    .write_resource(EffectResource::Sink("tree_events"))
-                    .may_fail(),
-            ),
             Self::Accept { .. } => (
                 SnarkIntrinsicDomain::ParserControl,
                 SnarkIntrinsicLowering::DialectOp,
@@ -613,7 +598,6 @@ impl IntrinsicOp for SnarkIntrinsic {
             Self::SplitGlr { .. } => "split_glr",
             Self::MergeGlr { .. } => "merge_glr",
             Self::RetireBranch { .. } => "retire_branch",
-            Self::Recover { .. } => "recover",
             Self::Accept { .. } => "accept",
             Self::EmitTrace { .. } => "emit_trace",
             Self::EmitNode { .. } => "emit_node",
@@ -1946,11 +1930,6 @@ pub enum WeavyParseError {
         /// Unsupported lexical expression.
         expr: GrammarExprId,
     },
-    /// Weavy runtime execution reached recovery.
-    UnsupportedRecovery {
-        /// Parse state whose recovery action was reached.
-        state: parser_ir::ParseStateId,
-    },
     /// The Weavy parser stack was empty.
     EmptyStack,
     /// No token matched at the current byte offset.
@@ -2082,9 +2061,6 @@ impl fmt::Display for WeavyParseError {
             ),
             Self::UnsupportedLexicalSymbol { expr } => {
                 write!(f, "lexical expression {} is a symbol ref", expr.get())
-            }
-            Self::UnsupportedRecovery { state } => {
-                write!(f, "state {} reached unsupported recovery", state.get())
             }
             Self::EmptyStack => write!(f, "Weavy parser stack was empty"),
             Self::NoToken {
@@ -2346,9 +2322,6 @@ fn action_program_for(
             symbol: NonterminalId::from_index(symbol.get() as usize),
             child_count,
             dynamic_precedence,
-        })],
-        parser_ir::ParseAction::Recover => vec![WeavyOp::Intrinsic(SnarkIntrinsic::Recover {
-            state: ParseStateId::from_index(source_state.get() as usize),
         })],
     }
 }
@@ -4522,14 +4495,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 };
                 self.tree = Some(self.finish_runtime_root(node)?);
                 Ok(Control::Return)
-            }
-            SnarkIntrinsic::Recover { state } => {
-                let state = parser_state(*state);
-                self.trace_events.push(parser_ir::TraceEvent::Recover {
-                    version: self.version,
-                    state,
-                });
-                Err(WeavyParseError::UnsupportedRecovery { state })
             }
             SnarkIntrinsic::CallExternalScanner { .. }
             | SnarkIntrinsic::SplitGlr { .. }

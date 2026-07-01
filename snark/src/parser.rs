@@ -3124,11 +3124,7 @@ impl<'a> LrTableBuilder<'a> {
                             repetition: false,
                         },
                     ),
-                    ParserSymbol::Internal(internal) => push_action(
-                        &mut entries,
-                        LookaheadSymbol::ErrorRecovery(internal),
-                        ParseAction::Recover,
-                    ),
+                    ParserSymbol::Internal(_) => {}
                 }
             }
             for lookahead in self.extra_lookaheads() {
@@ -5346,8 +5342,6 @@ pub enum ParseAction {
         /// Dynamic precedence attached to the reduced subtree.
         dynamic_precedence: i32,
     },
-    /// Enter generated error recovery.
-    Recover,
 }
 
 /// GLR runtime table facts that are not specific to one stack version.

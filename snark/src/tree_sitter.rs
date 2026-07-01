@@ -2777,7 +2777,6 @@ mod tests {
                 | crate::lower::weavy::WeavyParseError::UnsupportedExternalScanner {
                     state, ..
                 }
-                | crate::lower::weavy::WeavyParseError::UnsupportedRecovery { state }
                 | crate::lower::weavy::WeavyParseError::MissingState { state }
                 | crate::lower::weavy::WeavyParseError::ExternalScannerError { state, .. }
                 | crate::lower::weavy::WeavyParseError::UnreducedStackEntry { state }
