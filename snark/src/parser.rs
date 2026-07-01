@@ -4473,13 +4473,13 @@ fn match_compiled_lex_expr(
             input,
             byte_position,
         )),
-        CompiledLexExpr::Until(matcher) => Ok(
-            crate::lex_match::match_compiled_until_markers_with_inspection(
-                matcher,
+        CompiledLexExpr::Until(matcher) => {
+            Ok(crate::lex_match::match_until_markers_with_inspection(
+                matcher.markers.iter().map(String::as_str),
                 input,
                 byte_position,
-            ),
-        ),
+            ))
+        }
         CompiledLexExpr::Nested { open, close } => {
             Ok(crate::lex_match::match_nested_delimiters_with_inspection(
                 open,
@@ -4677,6 +4677,10 @@ fn compile_auto_close_rules(rules: &[ValidatedAutoCloseRule]) -> Vec<AutoCloseRu
                 .collect(),
         })
         .collect()
+}
+
+fn normalize_auto_close_tag(tag: &str) -> String {
+    tag.to_ascii_lowercase()
 }
 
 fn compile_lex_expr_inner(
@@ -5318,85 +5322,6 @@ fn parser_symbol_kind(
     }
 }
 
-pub(crate) fn auto_close_trigger_len(
-    spec: &AutoCloseSpec,
-    open_tag: &str,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    let literal_trigger = spec
-        .closed_by
-        .iter()
-        .filter(|marker| input[byte_position..].starts_with(marker.as_str()))
-        .map(String::len)
-        .max();
-    let tag_trigger = spec
-        .start_prefix
-        .as_deref()
-        .and_then(|prefix| scan_auto_close_tag(input, byte_position, prefix))
-        .and_then(|(tag, end_byte)| {
-            auto_close_closed_by_tags(spec, open_tag)?
-                .iter()
-                .any(|closed_by| normalize_auto_close_tag(closed_by) == tag)
-                .then_some(end_byte - byte_position)
-        });
-    literal_trigger.max(tag_trigger)
-}
-
-fn auto_close_closed_by_tags<'a>(spec: &'a AutoCloseSpec, open_tag: &str) -> Option<&'a [String]> {
-    let open_tag = normalize_auto_close_tag(open_tag);
-    if let Some(rule) = spec.rules.iter().find(|rule| rule.tag == open_tag) {
-        return Some(&rule.closed_by_tags);
-    }
-    (normalize_auto_close_tag(&spec.tag) == open_tag).then_some(&spec.closed_by_tags)
-}
-
-pub(crate) fn auto_close_has_rule_for_tag(spec: &AutoCloseSpec, open_tag: &str) -> bool {
-    auto_close_closed_by_tags(spec, open_tag).is_some()
-}
-
-pub(crate) fn scan_auto_close_tag_in_range(
-    input: &str,
-    start_byte: usize,
-    end_byte: usize,
-    prefix: &str,
-) -> Option<String> {
-    let (tag, tag_end) = scan_auto_close_tag(input, start_byte, prefix)?;
-    (tag_end <= end_byte).then_some(tag)
-}
-
-fn scan_auto_close_tag(input: &str, byte_position: usize, prefix: &str) -> Option<(String, usize)> {
-    let after_prefix = byte_position.checked_add(prefix.len())?;
-    if !input[byte_position..].starts_with(prefix) {
-        return None;
-    }
-    if prefix == "<" && input[after_prefix..].starts_with('/') {
-        return None;
-    }
-    let tag_start = after_prefix;
-    let tag_end = ascii_tag_name_end(input, tag_start);
-    (tag_end > tag_start).then(|| {
-        (
-            normalize_auto_close_tag(&input[tag_start..tag_end]),
-            tag_end,
-        )
-    })
-}
-
-fn ascii_tag_name_end(input: &str, byte_position: usize) -> usize {
-    input[byte_position..]
-        .char_indices()
-        .find_map(|(offset, ch)| {
-            (!(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == ':'))
-                .then_some(byte_position + offset)
-        })
-        .unwrap_or(input.len())
-}
-
-fn normalize_auto_close_tag(tag: &str) -> String {
-    tag.to_ascii_lowercase()
-}
-
 pub(crate) fn tree_events_for_version_lineage(
     accepted_version: StackVersionId,
     trace_events: &[TraceEvent],
@@ -6004,10 +5929,7 @@ mod tests {
     use crate::{
         corpus::{SexpChild, SexpNode, SexpValue},
         grammar::RawGrammarJson,
-        lex_match::{
-            match_compiled_until_markers_with_inspection, match_pattern, match_pattern_with_flags,
-            match_until_markers_with_inspection,
-        },
+        lex_match::{match_pattern, match_pattern_with_flags, match_until_markers_with_inspection},
         lexical::LexicalFacts,
         validated::ValidatedGrammar,
     };
@@ -8418,8 +8340,12 @@ extras (
                 input,
                 byte_position,
             );
-            let compiled =
-                match_compiled_until_markers_with_inspection(&compiled, input, byte_position);
+            let compiled = match_compiled_lex_expr(
+                &CompiledLexExpr::Until(compiled.clone()),
+                input,
+                byte_position,
+            )
+            .unwrap();
             assert_eq!(compiled, interpreted, "byte position {byte_position}");
         }
     }

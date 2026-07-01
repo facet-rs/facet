@@ -14,6 +14,7 @@ use std::{
     sync::Arc,
 };
 
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind as AhoMatchKind};
 use regex::Regex;
 use regex_automata::{
     Anchored, Input, MatchKind as RegexMatchKind, PatternSet,
@@ -1424,6 +1425,179 @@ struct WeavyPatternKey {
     flags: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+struct WeavyUntilMatcher {
+    markers: Vec<String>,
+    automaton: Option<AhoCorasick>,
+}
+
+impl WeavyUntilMatcher {
+    fn from_compiled(matcher: crate::lex_match::CompiledUntilMatcher) -> Self {
+        let markers = matcher.markers;
+        let automaton = if markers.is_empty() {
+            None
+        } else {
+            AhoCorasickBuilder::new()
+                .match_kind(AhoMatchKind::LeftmostFirst)
+                .build(&markers)
+                .ok()
+        };
+        Self { markers, automaton }
+    }
+
+    fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
+        let haystack = input.get(byte_position..)?;
+        if self
+            .markers
+            .iter()
+            .any(|marker| haystack.starts_with(marker.as_str()))
+        {
+            return None;
+        }
+        let Some(automaton) = &self.automaton else {
+            return (byte_position < input.len())
+                .then_some(parser_ir::LexMatch::new(input.len(), input.len()));
+        };
+        let Some(match_) = automaton.find(haystack) else {
+            return (byte_position < input.len())
+                .then_some(parser_ir::LexMatch::new(input.len(), input.len()));
+        };
+        let end = byte_position + match_.start();
+        let marker_len = self
+            .markers
+            .iter()
+            .filter(|marker| haystack[match_.start()..].starts_with(marker.as_str()))
+            .map(String::len)
+            .min()
+            .unwrap_or(match_.len());
+        (end > byte_position).then_some(parser_ir::LexMatch::new(end, end + marker_len))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WeavyAutoCloseSpec {
+    tag: String,
+    open: Option<String>,
+    close: Option<String>,
+    closed_by: Vec<String>,
+    open_node: Option<String>,
+    close_node: Option<String>,
+    tag_name_node: Option<String>,
+    start_prefix: Option<String>,
+    end_prefix: Option<String>,
+    closed_by_tags: Vec<String>,
+    rules: Vec<WeavyAutoCloseRuleSpec>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WeavyAutoCloseRuleSpec {
+    tag: String,
+    closed_by_tags: Vec<String>,
+}
+
+impl WeavyAutoCloseSpec {
+    fn from_parser(spec: parser_ir::AutoCloseSpec) -> Self {
+        Self {
+            tag: spec.tag,
+            open: spec.open,
+            close: spec.close,
+            closed_by: spec.closed_by,
+            open_node: spec.open_node,
+            close_node: spec.close_node,
+            tag_name_node: spec.tag_name_node,
+            start_prefix: spec.start_prefix,
+            end_prefix: spec.end_prefix,
+            closed_by_tags: spec.closed_by_tags,
+            rules: spec
+                .rules
+                .into_iter()
+                .map(|rule| WeavyAutoCloseRuleSpec {
+                    tag: rule.tag,
+                    closed_by_tags: rule.closed_by_tags,
+                })
+                .collect(),
+        }
+    }
+
+    fn trigger_len(&self, open_tag: &str, input: &str, byte_position: usize) -> Option<usize> {
+        let literal_trigger = self
+            .closed_by
+            .iter()
+            .filter(|marker| input[byte_position..].starts_with(marker.as_str()))
+            .map(String::len)
+            .max();
+        let tag_trigger = self
+            .start_prefix
+            .as_deref()
+            .and_then(|prefix| weavy_scan_auto_close_tag(input, byte_position, prefix))
+            .and_then(|(tag, end_byte)| {
+                self.closed_by_tags_for(open_tag)?
+                    .iter()
+                    .any(|closed_by| normalize_weavy_auto_close_tag(closed_by) == tag)
+                    .then_some(end_byte - byte_position)
+            });
+        literal_trigger.max(tag_trigger)
+    }
+
+    fn has_rule_for_tag(&self, open_tag: &str) -> bool {
+        self.closed_by_tags_for(open_tag).is_some()
+    }
+
+    fn closed_by_tags_for(&self, open_tag: &str) -> Option<&[String]> {
+        let open_tag = normalize_weavy_auto_close_tag(open_tag);
+        if let Some(rule) = self.rules.iter().find(|rule| rule.tag == open_tag) {
+            return Some(&rule.closed_by_tags);
+        }
+        (normalize_weavy_auto_close_tag(&self.tag) == open_tag).then_some(&self.closed_by_tags)
+    }
+}
+
+fn weavy_scan_auto_close_tag_in_range(
+    input: &str,
+    start_byte: usize,
+    end_byte: usize,
+    prefix: &str,
+) -> Option<String> {
+    let (tag, tag_end) = weavy_scan_auto_close_tag(input, start_byte, prefix)?;
+    (tag_end <= end_byte).then_some(tag)
+}
+
+fn weavy_scan_auto_close_tag(
+    input: &str,
+    byte_position: usize,
+    prefix: &str,
+) -> Option<(String, usize)> {
+    let after_prefix = byte_position.checked_add(prefix.len())?;
+    if !input[byte_position..].starts_with(prefix) {
+        return None;
+    }
+    if prefix == "<" && input[after_prefix..].starts_with('/') {
+        return None;
+    }
+    let tag_start = after_prefix;
+    let tag_end = weavy_ascii_tag_name_end(input, tag_start);
+    (tag_end > tag_start).then(|| {
+        (
+            normalize_weavy_auto_close_tag(&input[tag_start..tag_end]),
+            tag_end,
+        )
+    })
+}
+
+fn weavy_ascii_tag_name_end(input: &str, byte_position: usize) -> usize {
+    input[byte_position..]
+        .char_indices()
+        .find_map(|(offset, ch)| {
+            (!(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == ':'))
+                .then_some(byte_position + offset)
+        })
+        .unwrap_or(input.len())
+}
+
+fn normalize_weavy_auto_close_tag(tag: &str) -> String {
+    tag.to_ascii_lowercase()
+}
+
 /// Lowered lexer operation kind visible to Snark/Weavy planning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
@@ -1675,9 +1849,9 @@ enum WeavyLexExpr {
     Blank,
     String(String),
     Pattern(WeavyPatternMatcher),
-    Until(crate::lex_match::CompiledUntilMatcher),
+    Until(WeavyUntilMatcher),
     Nested { open: String, close: String },
-    AutoClose(Box<parser_ir::AutoCloseSpec>),
+    AutoClose(Box<WeavyAutoCloseSpec>),
     Seq(Vec<WeavyLexExpr>),
     Choice(Vec<WeavyLexExpr>),
     Repeat(Box<WeavyLexExpr>),
@@ -1693,9 +1867,13 @@ impl WeavyLexExpr {
             parser_ir::CompiledLexExpr::Pattern(pattern) => {
                 Self::Pattern(compiler.pattern_matcher(pattern))
             }
-            parser_ir::CompiledLexExpr::Until(matcher) => Self::Until(matcher),
+            parser_ir::CompiledLexExpr::Until(matcher) => {
+                Self::Until(WeavyUntilMatcher::from_compiled(matcher))
+            }
             parser_ir::CompiledLexExpr::Nested { open, close } => Self::Nested { open, close },
-            parser_ir::CompiledLexExpr::AutoClose(spec) => Self::AutoClose(spec),
+            parser_ir::CompiledLexExpr::AutoClose(spec) => {
+                Self::AutoClose(Box::new(WeavyAutoCloseSpec::from_parser(*spec)))
+            }
             parser_ir::CompiledLexExpr::Seq(members) => Self::Seq(
                 members
                     .into_iter()
@@ -2190,7 +2368,7 @@ impl WeavyDirectPatternSet {
 
 #[derive(Clone, Debug, Default)]
 struct RuntimeWeavyAutoCloseIndex {
-    specs: Vec<parser_ir::AutoCloseSpec>,
+    specs: Vec<WeavyAutoCloseSpec>,
     terminal_specs: Vec<Option<usize>>,
     literal_edits: HashMap<String, RuntimeWeavyAutoCloseStackEdit>,
     node_edits: HashMap<String, Vec<RuntimeWeavyAutoCloseNodeEdit>>,
@@ -2218,7 +2396,7 @@ impl RuntimeWeavyAutoCloseIndex {
         index
     }
 
-    fn intern_spec(&mut self, spec: &parser_ir::AutoCloseSpec) -> usize {
+    fn intern_spec(&mut self, spec: &WeavyAutoCloseSpec) -> usize {
         if let Some(index) = self.specs.iter().position(|candidate| candidate == spec) {
             return index;
         }
@@ -2229,7 +2407,7 @@ impl RuntimeWeavyAutoCloseIndex {
         index
     }
 
-    fn index_literal_edits(&mut self, spec: &parser_ir::AutoCloseSpec) {
+    fn index_literal_edits(&mut self, spec: &WeavyAutoCloseSpec) {
         let tag = Arc::<str>::from(spec.tag.as_str());
         if let Some(close) = &spec.close {
             self.literal_edits
@@ -2243,7 +2421,7 @@ impl RuntimeWeavyAutoCloseIndex {
         }
     }
 
-    fn index_node_edits(&mut self, spec_index: usize, spec: &parser_ir::AutoCloseSpec) {
+    fn index_node_edits(&mut self, spec_index: usize, spec: &WeavyAutoCloseSpec) {
         if let Some(open_node) = &spec.open_node {
             self.node_edits.entry(open_node.clone()).or_default().push(
                 RuntimeWeavyAutoCloseNodeEdit {
@@ -2262,10 +2440,7 @@ impl RuntimeWeavyAutoCloseIndex {
         }
     }
 
-    fn spec_for_terminal(
-        &self,
-        terminal: parser_ir::TerminalId,
-    ) -> Option<&parser_ir::AutoCloseSpec> {
+    fn spec_for_terminal(&self, terminal: parser_ir::TerminalId) -> Option<&WeavyAutoCloseSpec> {
         let index = self
             .terminal_specs
             .get(terminal.get() as usize)
@@ -5319,9 +5494,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             else {
                 continue;
             };
-            let Some(marker_len) =
-                parser_ir::auto_close_trigger_len(spec, open_tag, self.input, byte_position)
-            else {
+            let Some(marker_len) = spec.trigger_len(open_tag, self.input, byte_position) else {
                 continue;
             };
             return Ok(Some(RuntimeWeavyToken {
@@ -5342,7 +5515,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             if self
                 .auto_close_stack
                 .last()
-                .is_some_and(|tag| parser_ir::auto_close_has_rule_for_tag(spec, tag))
+                .is_some_and(|tag| spec.has_rule_for_tag(tag))
             {
                 self.auto_close_stack.to_mut().pop();
             }
@@ -5393,7 +5566,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     return None;
                 }
                 if edit.push {
-                    return parser_ir::scan_auto_close_tag_in_range(
+                    return weavy_scan_auto_close_tag_in_range(
                         self.input,
                         *start_byte,
                         *end_byte,
@@ -5401,7 +5574,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     )
                     .map(|tag| RuntimeWeavyAutoCloseStackEdit::Push(Arc::from(tag)));
                 }
-                parser_ir::scan_auto_close_tag_in_range(
+                weavy_scan_auto_close_tag_in_range(
                     self.input,
                     *start_byte,
                     *end_byte,
@@ -5509,13 +5682,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     inspected_end: byte_position + value.len(),
                 })),
             WeavyLexExpr::Pattern(pattern) => Ok(pattern.match_input(self.input, byte_position)),
-            WeavyLexExpr::Until(matcher) => Ok(
-                crate::lex_match::match_compiled_until_markers_with_inspection(
-                    matcher,
-                    self.input,
-                    byte_position,
-                ),
-            ),
+            WeavyLexExpr::Until(matcher) => Ok(matcher.match_input(self.input, byte_position)),
             WeavyLexExpr::Nested { open, close } => {
                 Ok(crate::lex_match::match_nested_delimiters_with_inspection(
                     open,
@@ -8145,10 +8312,12 @@ mod tests {
                             crate::lex_match::compile_pattern("and\\b", None).into(),
                         ),
                         WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("[", None).into()),
-                        WeavyLexExpr::Until(crate::lex_match::compile_until_markers(&[
-                            "{{".to_owned(),
-                            "{%".to_owned(),
-                        ])),
+                        WeavyLexExpr::Until(WeavyUntilMatcher::from_compiled(
+                            crate::lex_match::compile_until_markers(&[
+                                "{{".to_owned(),
+                                "{%".to_owned(),
+                            ]),
+                        )),
                     ]),
                     WeavyLexExpr::Repeat(Box::new(WeavyLexExpr::Nested {
                         open: "{#".to_owned(),

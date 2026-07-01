@@ -1,4 +1,3 @@
-use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use regex::Regex;
 
 use crate::parser::LexMatch;
@@ -73,7 +72,6 @@ impl KnownPattern {
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledUntilMatcher {
     pub(crate) markers: Vec<String>,
-    automaton: Option<AhoCorasick>,
 }
 
 pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPattern {
@@ -107,15 +105,7 @@ pub(crate) fn compile_until_markers(markers: &[String]) -> CompiledUntilMatcher 
         .filter(|marker| !marker.is_empty())
         .cloned()
         .collect::<Vec<_>>();
-    let automaton = if markers.is_empty() {
-        None
-    } else {
-        AhoCorasickBuilder::new()
-            .match_kind(MatchKind::LeftmostFirst)
-            .build(&markers)
-            .ok()
-    };
-    CompiledUntilMatcher { markers, automaton }
+    CompiledUntilMatcher { markers }
 }
 
 #[cfg(test)]
@@ -205,36 +195,6 @@ pub(crate) fn match_until_markers_with_inspection<'a>(
     let end = byte_position + end_and_marker_len.0;
     let inspected_end = end + end_and_marker_len.1;
     (end > byte_position).then_some(LexMatch::new(end, inspected_end))
-}
-
-pub(crate) fn match_compiled_until_markers_with_inspection(
-    matcher: &CompiledUntilMatcher,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    let haystack = input.get(byte_position..)?;
-    if matcher
-        .markers
-        .iter()
-        .any(|marker| haystack.starts_with(marker.as_str()))
-    {
-        return None;
-    }
-    let Some(automaton) = &matcher.automaton else {
-        return (byte_position < input.len()).then_some(LexMatch::new(input.len(), input.len()));
-    };
-    let Some(match_) = automaton.find(haystack) else {
-        return (byte_position < input.len()).then_some(LexMatch::new(input.len(), input.len()));
-    };
-    let end = byte_position + match_.start();
-    let marker_len = matcher
-        .markers
-        .iter()
-        .filter(|marker| haystack[match_.start()..].starts_with(marker.as_str()))
-        .map(String::len)
-        .min()
-        .unwrap_or(match_.len());
-    (end > byte_position).then_some(LexMatch::new(end, end + marker_len))
 }
 
 pub(crate) fn match_nested_delimiters_with_inspection(
