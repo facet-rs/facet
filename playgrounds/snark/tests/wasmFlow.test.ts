@@ -133,11 +133,32 @@ module.exports = grammar({
   assert.equal(response.plan.stencils_needed, true);
   assert.ok(
     response.plan.snark_stencils.some(
-      (summary: { descriptor: string; domain: string; lowering: string; count: number }) =>
+      (summary: {
+        descriptor: string;
+        domain: string;
+        lowering: string;
+        count: number;
+        effect: {
+          ordering: string;
+          resource_count: number;
+          typed_memory_count: number;
+          may_fail: boolean;
+          may_allocate: boolean;
+          calls_user_code: boolean;
+          opaque: boolean;
+        };
+      }) =>
         summary.descriptor === "snark.tree_sitter::lex" &&
         summary.domain === "Lexing" &&
         summary.lowering === "LexerGraph" &&
-        summary.count > 0,
+        summary.count > 0 &&
+        summary.effect.ordering === "Ordered" &&
+        summary.effect.resource_count === 2 &&
+        summary.effect.typed_memory_count === 0 &&
+        summary.effect.may_fail === true &&
+        summary.effect.may_allocate === false &&
+        summary.effect.calls_user_code === false &&
+        summary.effect.opaque === false,
     ),
   );
   assert.equal(response.parse.sexp, "(document (word) (word))");

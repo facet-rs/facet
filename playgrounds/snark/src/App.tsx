@@ -68,7 +68,18 @@ type PlanStencilOutput = {
   descriptor: string;
   domain: string;
   lowering: string;
+  effect: PlanStencilEffectOutput;
   count: number;
+};
+
+type PlanStencilEffectOutput = {
+  ordering: string;
+  resource_count: number;
+  typed_memory_count: number;
+  may_fail: boolean;
+  may_allocate: boolean;
+  calls_user_code: boolean;
+  opaque: boolean;
 };
 
 type PlanBarrierOutput = {

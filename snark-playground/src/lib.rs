@@ -135,7 +135,19 @@ struct PlanStencilOutput {
     descriptor: String,
     domain: String,
     lowering: String,
+    effect: PlanStencilEffectOutput,
     count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilEffectOutput {
+    ordering: String,
+    resource_count: usize,
+    typed_memory_count: usize,
+    may_fail: bool,
+    may_allocate: bool,
+    calls_user_code: bool,
+    opaque: bool,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -758,6 +770,15 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
                 ),
                 domain: format!("{:?}", summary.domain),
                 lowering: format!("{:?}", summary.lowering),
+                effect: PlanStencilEffectOutput {
+                    ordering: format!("{:?}", summary.effect.ordering),
+                    resource_count: summary.effect.resources.len(),
+                    typed_memory_count: summary.effect.typed_memory.len(),
+                    may_fail: summary.effect.may_fail,
+                    may_allocate: summary.effect.may_allocate,
+                    calls_user_code: summary.effect.calls_user_code,
+                    opaque: summary.effect.opaque,
+                },
                 count: summary.count,
             })
             .collect(),
@@ -4417,13 +4438,17 @@ mod tests {
         assert_eq!(parse.accepted_missing_count, 0);
         let plan = response.plan.as_ref().expect("plan output");
         assert!(plan.stencils_needed);
-        assert!(
-            plan.snark_stencils
-                .iter()
-                .any(|summary| summary.descriptor == "snark.tree_sitter::lex"
-                    && summary.domain == "Lexing"
-                    && summary.lowering == "LexerGraph")
-        );
+        assert!(plan.snark_stencils.iter().any(|summary| summary.descriptor
+            == "snark.tree_sitter::lex"
+            && summary.domain == "Lexing"
+            && summary.lowering == "LexerGraph"
+            && summary.effect.ordering == "Ordered"
+            && summary.effect.resource_count == 2
+            && summary.effect.typed_memory_count == 0
+            && summary.effect.may_fail
+            && !summary.effect.may_allocate
+            && !summary.effect.calls_user_code
+            && !summary.effect.opaque));
         let mut captures = response
             .highlights
             .iter()

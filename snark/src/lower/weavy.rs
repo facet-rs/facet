@@ -387,6 +387,8 @@ pub struct WeavySnarkStencilSummary {
     pub domain: SnarkIntrinsicDomain,
     /// How this intrinsic lowers beyond the canonical Snark dialect op.
     pub lowering: SnarkIntrinsicLowering,
+    /// Conservative effect contract that bounds legal scheduling/fusion.
+    pub effect: EffectContract,
     /// Number of ops with this descriptor in the parser/action program.
     pub count: usize,
 }
@@ -464,6 +466,7 @@ impl SnarkIntrinsicSemanticStats {
                 descriptor: semantics.descriptor,
                 domain: semantics.domain,
                 lowering: semantics.lowering,
+                effect: semantics.effect.clone(),
                 count: self.descriptor_count(semantics.descriptor),
             })
             .collect()
@@ -7508,6 +7511,7 @@ mod tests {
                 descriptor: lex.descriptor(),
                 domain: SnarkIntrinsicDomain::Lexing,
                 lowering: SnarkIntrinsicLowering::LexerGraph,
+                effect: lex.effect(),
                 count: 1,
             }]
         );
@@ -7527,6 +7531,7 @@ mod tests {
                 descriptor: lex.descriptor(),
                 domain: SnarkIntrinsicDomain::Lexing,
                 lowering: SnarkIntrinsicLowering::LexerGraph,
+                effect: lex.effect(),
                 count: 1,
             }]
         );
@@ -7661,6 +7666,7 @@ mod tests {
                 descriptor: scanner.descriptor(),
                 domain: SnarkIntrinsicDomain::ExternalScanner,
                 lowering: SnarkIntrinsicLowering::HostCallBarrier,
+                effect: scanner.effect(),
                 count: 1,
             }]
         );
@@ -7731,6 +7737,7 @@ mod tests {
                 descriptor: scanner.descriptor(),
                 domain: SnarkIntrinsicDomain::ExternalScanner,
                 lowering: SnarkIntrinsicLowering::HostCallBarrier,
+                effect: scanner.effect(),
                 count: 2,
             }]
         );
