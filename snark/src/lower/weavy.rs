@@ -4617,7 +4617,10 @@ impl Ord for CostOrderedBranch {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct RuntimeWeavyTreeJournalHead(Option<usize>);
+struct RuntimeWeavyTreeJournalHead {
+    index: Option<usize>,
+    len: usize,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeWeavyTreeJournalEntry {
@@ -4636,7 +4639,10 @@ impl RuntimeWeavyTreeJournal {
         let index = self.entries.len();
         self.entries
             .push(RuntimeWeavyTreeJournalEntry { parent, event });
-        *head = RuntimeWeavyTreeJournalHead(Some(index));
+        *head = RuntimeWeavyTreeJournalHead {
+            index: Some(index),
+            len: parent.len + 1,
+        };
     }
 
     fn extend<I>(&mut self, head: &mut RuntimeWeavyTreeJournalHead, events: I)
@@ -4659,12 +4665,12 @@ impl RuntimeWeavyTreeJournal {
     }
 
     fn collect(&self, head: RuntimeWeavyTreeJournalHead) -> Vec<parser_ir::TreeEvent> {
-        let mut events = Vec::new();
-        let mut cursor = head.0;
+        let mut events = Vec::with_capacity(head.len);
+        let mut cursor = head.index;
         while let Some(index) = cursor {
             let entry = &self.entries[index];
             events.push(entry.event.clone());
-            cursor = entry.parent.0;
+            cursor = entry.parent.index;
         }
         events.reverse();
         events
@@ -4686,12 +4692,12 @@ impl RuntimeWeavyTreeJournal {
     }
 
     fn event_refs(&self, head: RuntimeWeavyTreeJournalHead) -> Vec<&parser_ir::TreeEvent> {
-        let mut events = Vec::new();
-        let mut cursor = head.0;
+        let mut events = Vec::with_capacity(head.len);
+        let mut cursor = head.index;
         while let Some(index) = cursor {
             let entry = &self.entries[index];
             events.push(&entry.event);
-            cursor = entry.parent.0;
+            cursor = entry.parent.index;
         }
         events.reverse();
         events
