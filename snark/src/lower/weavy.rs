@@ -427,7 +427,7 @@ pub fn empty_lowered() -> SnarkWeavyLowered {
 pub struct WeavyParserProgram {
     lowered: SnarkWeavyLowered,
     state_blocks: Vec<SnarkBlockId>,
-    action_blocks: Vec<WeavyParserActionBlock>,
+    action_blocks: Vec<BTreeMap<parser_ir::LookaheadSymbol, Vec<WeavyParserActionBlock>>>,
 }
 
 impl WeavyParserProgram {
@@ -458,10 +458,9 @@ impl WeavyParserProgram {
         action: parser_ir::ParseAction,
     ) -> Result<SnarkBlockId, RuntimeWeavyError> {
         self.action_blocks
-            .iter()
-            .find(|block| {
-                block.state == state && block.lookahead == lookahead && block.action == action
-            })
+            .get(state.get() as usize)
+            .and_then(|rows| rows.get(&lookahead))
+            .and_then(|blocks| blocks.iter().find(|block| block.action == action))
             .map(|block| block.block)
             .ok_or(RuntimeWeavyError::MissingActionBlock {
                 state,
@@ -616,8 +615,6 @@ struct RuntimeWeavyAutoCloseNodeEdit {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WeavyParserActionBlock {
-    state: parser_ir::ParseStateId,
-    lookahead: parser_ir::LookaheadSymbol,
     action: parser_ir::ParseAction,
     block: SnarkBlockId,
 }
@@ -947,7 +944,7 @@ fn lower_weavy_parser_program(
         })],
         blocks: BTreeMap::new(),
     };
-    let mut action_blocks = Vec::new();
+    let mut action_blocks = vec![BTreeMap::new(); table.states().len()];
     let mut next_block = state_blocks.len();
 
     for state in table.states() {
@@ -972,12 +969,13 @@ fn lower_weavy_parser_program(
             for action in entry.actions() {
                 let block = SnarkBlockId::from_index(next_block);
                 next_block += 1;
-                action_blocks.push(WeavyParserActionBlock {
-                    state: state.id(),
-                    lookahead: entry.lookahead(),
-                    action: *action,
-                    block,
-                });
+                action_blocks[state.id().get() as usize]
+                    .entry(entry.lookahead())
+                    .or_insert_with(Vec::new)
+                    .push(WeavyParserActionBlock {
+                        action: *action,
+                        block,
+                    });
                 lowered.blocks.insert(
                     block,
                     action_program_for(state.id(), entry.lookahead(), *action),
