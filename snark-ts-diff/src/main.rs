@@ -206,6 +206,29 @@ fn main() {
         return;
     }
 
+    if args.get(1).map(|s| s == "gennest").unwrap_or(false) {
+        let depth: usize = args
+            .get(2)
+            .and_then(|s| s.parse().ok())
+            .expect("usage: gennest <depth> <out-file>");
+        let out = args.get(3).expect("usage: gennest <depth> <out-file>");
+        // Structural stress fixture: depth-D nested single-child arrays with a
+        // string at the center — `[[[…"x"…]]]`. Pure reduce DEPTH, no wide
+        // repeat, contrasting the flat `gen` fixture (pure repeat WIDTH). If
+        // this scales linearly while flat goes super-linear, the reduce O(n^2)
+        // is repeat-width (hidden-rule re-flatten), not depth.
+        let mut s = String::with_capacity(depth * 2 + 3);
+        for _ in 0..depth {
+            s.push('[');
+        }
+        s.push_str("\"x\"");
+        for _ in 0..depth {
+            s.push(']');
+        }
+        fs::write(out, s).expect("write fixture");
+        return;
+    }
+
     if args.get(1).map(|s| s == "ladder").unwrap_or(false) {
         let grammar_path = args
             .get(2)
