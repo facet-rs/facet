@@ -1820,7 +1820,7 @@ pub enum ParserSymbol {
 }
 
 /// Lookahead key in an action table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum LookaheadSymbol {
     /// Normal lexical terminal.
@@ -2648,7 +2648,7 @@ impl ValidSymbolSet {
 }
 
 /// LR item.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LrItem {
     production: ProductionId,
     dot: usize,
@@ -2673,7 +2673,7 @@ impl LrItem {
 }
 
 /// Set of lookahead terminal/external/EOF symbols.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct LookaheadSet {
     symbols: Vec<LookaheadSymbol>,
 }
@@ -2975,7 +2975,7 @@ impl<'a> LrTableBuilder<'a> {
 
     fn item_sets(&self) -> (Vec<ItemSet>, Vec<ItemTransition>) {
         let mut item_sets = Vec::new();
-        let mut item_set_keys = BTreeMap::<ItemSetKey, ItemSetId>::new();
+        let mut item_set_keys = std::collections::HashMap::<u64, Vec<ItemSetId>>::new();
         let mut transitions = Vec::new();
         let mut queue = VecDeque::new();
         let mut start_items = ItemMap::default();
@@ -3235,8 +3235,6 @@ impl<'a> LrTableBuilder<'a> {
     }
 }
 
-type ItemSetKey = Vec<(ProductionId, usize, Vec<LookaheadSymbol>)>;
-
 /// Builder-local dense index of the lookahead symbols seen while closing one item
 /// set. Lets `ItemMap` store lookahead sets as bitsets keyed by index, so a merge is
 /// a bitwise OR instead of re-sorting a `Vec` on every insert — which was ~90% of
@@ -3364,9 +3362,10 @@ impl ItemMap {
         self.items
             .into_iter()
             .map(|((production, dot), bitset)| {
+                // Already in symbol order: the interner is built sorted, so ascending
+                // bitset indices materialize a symbol-sorted lookahead set — no sort.
                 let mut symbols = Vec::with_capacity(bitset.count());
                 symbols.extend(bitset.indices().map(|index| interner.from_index[index as usize]));
-                symbols.sort();
                 LrItem {
                     production,
                     dot,
@@ -3410,19 +3409,24 @@ impl FirstFacts {
         // Freeze a complete lookahead interner: every FIRST-set symbol, every step's
         // lookahead terminal, and EOF — every symbol the closure can ever place in a
         // lookahead set — so `index_of` never misses and the loop needs no interning.
-        let mut interner = LookaheadInterner::default();
+        // Intern in LookaheadSymbol order (via a sorted set) so a bitset's ascending
+        // index order IS symbol order — materialized lookahead sets come out sorted with
+        // no per-item sort (which dominated the table build outside the closure).
+        let mut all_symbols = std::collections::BTreeSet::new();
         for symbols in &first {
-            for &symbol in symbols {
-                interner.intern(symbol);
-            }
+            all_symbols.extend(symbols.iter().copied());
         }
-        interner.intern(LookaheadSymbol::Eof);
+        all_symbols.insert(LookaheadSymbol::Eof);
         for production in &grammar.productions {
             for step in &production.steps {
                 if let Some(symbol) = lookahead_for_step(step) {
-                    interner.intern(symbol);
+                    all_symbols.insert(symbol);
                 }
             }
+        }
+        let mut interner = LookaheadInterner::default();
+        for symbol in all_symbols {
+            interner.intern(symbol);
         }
         let first_bits = first
             .iter()
@@ -3546,26 +3550,77 @@ fn lookahead_for_step(step: &ProductionStep) -> Option<LookaheadSymbol> {
 
 fn push_item_set(
     item_sets: &mut Vec<ItemSet>,
-    item_set_keys: &mut BTreeMap<ItemSetKey, ItemSetId>,
+    item_set_index: &mut std::collections::HashMap<u64, Vec<ItemSetId>>,
     items: Vec<LrItem>,
     queue: &mut VecDeque<ItemSetId>,
 ) -> ItemSetId {
-    let key = item_set_key(&items);
-    if let Some(id) = item_set_keys.get(&key).copied() {
-        return id;
+    // Dedup identical LR item sets (state merging) by a hash of the item set, comparing
+    // full item sets only within a hash bucket (rare). The old key was a fresh
+    // `Vec<(prod, dot, Vec<lookahead>)>` per state, cloned and compared O(log n) times
+    // in a BTreeMap — most of the table-build time outside the closure.
+    let hash = hash_item_set(&items);
+    let bucket = item_set_index.entry(hash).or_default();
+    for &existing in bucket.iter() {
+        if item_sets[existing.get() as usize].items == items {
+            return existing;
+        }
     }
     let id = ItemSetId::from_index(item_sets.len());
-    item_set_keys.insert(key, id);
+    bucket.push(id);
     item_sets.push(ItemSet { id, items });
     queue.push_back(id);
     id
 }
 
-fn item_set_key(items: &[LrItem]) -> ItemSetKey {
-    items
-        .iter()
-        .map(|item| (item.production, item.dot, item.lookahead.symbols.clone()))
-        .collect()
+fn hash_item_set(items: &[LrItem]) -> u64 {
+    use std::hash::Hash;
+    let mut hasher = FxHasher::default();
+    items.hash(&mut hasher);
+    std::hash::Hasher::finish(&hasher)
+}
+
+/// Cheap non-cryptographic hasher (FxHash-style) for LR item-set dedup. SipHash's
+/// per-state cost dominated the table build; this is a rotate/xor/multiply mixer.
+#[derive(Default)]
+struct FxHasher {
+    hash: u64,
+}
+
+impl FxHasher {
+    const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+
+    #[inline]
+    fn add(&mut self, word: u64) {
+        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    }
+}
+
+impl std::hash::Hasher for FxHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.add(i);
+    }
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.add(u64::from(i));
+    }
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in chunks.by_ref() {
+            self.add(u64::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        for &byte in chunks.remainder() {
+            self.add(u64::from(byte));
+        }
+    }
 }
 
 fn sorted_lookaheads(mut symbols: Vec<LookaheadSymbol>) -> Vec<LookaheadSymbol> {
