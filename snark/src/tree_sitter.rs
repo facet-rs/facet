@@ -2125,21 +2125,21 @@ mod tests {
                 .trace_events()
                 .iter()
                 .any(|event| matches!(event, crate::parser::TraceEvent::GlrSplit { .. })),
-            "expected Weavy-carried runtime execution to emit a GLR split"
+            "expected Weavy runtime execution to emit a GLR split"
         );
         assert!(
             weavy_report
                 .trace_events()
                 .iter()
                 .any(|event| matches!(event, crate::parser::TraceEvent::GlrRetire { .. })),
-            "expected Weavy-carried runtime execution to retire a branch"
+            "expected Weavy runtime execution to retire a branch"
         );
         assert!(
             weavy_report
                 .tree_events()
                 .iter()
                 .any(|event| matches!(event, crate::parser::TreeEvent::Reduce { .. })),
-            "expected Weavy-carried runtime tree execution to emit reduce tree events"
+            "expected Weavy runtime tree execution to emit reduce tree events"
         );
         assert!(weavy_report.stats().step_count > 0);
     }

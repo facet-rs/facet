@@ -39,9 +39,7 @@ impl QuerySource {
 
     /// Execute the supported highlight-query subset against runtime tree events.
     ///
-    /// This is shared by the direct Snark runtime and Weavy-carried runtime
-    /// reports so query execution is checked against the same structured tree
-    /// event surface.
+    /// Weavy reports expose the structured tree-event surface consumed here.
     pub fn execute_runtime_highlights_from_tree_events(
         &self,
         parser: &ParserGrammar,
