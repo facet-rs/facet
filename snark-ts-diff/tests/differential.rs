@@ -20,7 +20,10 @@ use std::{env, fs};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
+    lower::weavy::{
+        WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_with_report,
+    },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
@@ -106,7 +109,13 @@ const CORPUS: &[(&str, &str, &[&str])] = &[
     ),
     number: ($) => /\d+/,
   }});"#,
-        &["1 + 2 * 3", "1 * 2 + 3", "1 + 2 + 3", "2 ^ 3 ^ 2", "1 + 2 * 3 ^ 4"],
+        &[
+            "1 + 2 * 3",
+            "1 * 2 + 3",
+            "1 + 2 + 3",
+            "2 ^ 3 ^ 2",
+            "1 + 2 * 3 ^ 4",
+        ],
     ),
 ];
 
@@ -176,6 +185,91 @@ fn snark_surfaces_genuine_ambiguity_tree_sitter_hides() {
     );
 }
 
+#[test]
+fn bundled_graphql_and_thrift_lex_without_notoken() {
+    if !tree_sitter_available() {
+        eprintln!("skipping: `tree-sitter` CLI not found on PATH");
+        return;
+    }
+
+    let mut failures = Vec::new();
+    for (name, grammar_path, sample_path) in [
+        (
+            "graphql",
+            bundled_path("graphql/grammar.js"),
+            bundled_path("graphql/samples/starwars_schema.graphql"),
+        ),
+        (
+            "thrift",
+            bundled_path("thrift/grammar.js"),
+            bundled_path("thrift/samples/tutorial.thrift"),
+        ),
+    ] {
+        let grammar = match fs::read_to_string(&grammar_path) {
+            Ok(grammar) => grammar,
+            Err(err) => {
+                failures.push(format!(
+                    "[{name}] could not read grammar {}: {err}",
+                    grammar_path.display()
+                ));
+                continue;
+            }
+        };
+        let input = match fs::read_to_string(&sample_path) {
+            Ok(input) => input,
+            Err(err) => {
+                failures.push(format!(
+                    "[{name}] could not read sample {}: {err}",
+                    sample_path.display()
+                ));
+                continue;
+            }
+        };
+        let sn = snark_sexp(&grammar_path, &input);
+        if sn.starts_with("PARSE-ERR:") || sn.contains("NoToken") {
+            failures.push(format!(
+                "[{name}] Snark failed to lex/parse bundled sample: {sn}"
+            ));
+        }
+        let Ok(dir) = generate_parser(name, &grammar) else {
+            continue;
+        };
+        fs::write(dir.join("input.txt"), &input).expect("write bundled sample");
+        let ts = tree_sitter_parse_file(&dir, "input.txt");
+        if !ts.trim().is_empty() && ts.contains("ERROR") {
+            failures.push(format!(
+                "[{name}] tree-sitter did not parse the bundled sample cleanly: {ts}"
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "bundled lexer regression(s):\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn bundled_graphql_unterminated_block_string_recovers_to_error_root() {
+    if !tree_sitter_available() {
+        eprintln!("skipping: `tree-sitter` CLI not found on PATH");
+        return;
+    }
+
+    let grammar_path = bundled_path("graphql/grammar.js");
+    let grammar = fs::read_to_string(&grammar_path).expect("read bundled GraphQL grammar");
+    let dir = generate_parser("graphql_unterminated_block_string", &grammar)
+        .expect("tree-sitter generate");
+    let input = "\"\"\"broken\n";
+    let tree_sitter_output = tree_sitter_sexp(&dir, input);
+    let ts = normalize(tree_sitter_output.lines().next().unwrap_or_default());
+    assert_eq!(ts, "(ERROR)");
+
+    let sn = normalize(&snark_recovering_sexp(&grammar_path, input));
+    assert_eq!(sn, ts);
+}
+
 // ---------------------------------------------------------------------------
 
 fn tree_sitter_available() -> bool {
@@ -205,13 +299,25 @@ fn generate_parser(name: &str, grammar: &str) -> Result<PathBuf, String> {
 
 fn tree_sitter_sexp(dir: &Path, input: &str) -> String {
     let _ = fs::write(dir.join("in.txt"), input);
+    tree_sitter_parse_file(dir, "in.txt")
+}
+
+fn tree_sitter_parse_file(dir: &Path, path: &str) -> String {
     let out = Command::new("tree-sitter")
         .arg("parse")
-        .arg("in.txt")
+        .arg(path)
         .current_dir(dir)
         .output()
         .expect("run tree-sitter parse");
     String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn bundled_path(relative: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("snark-ts-diff lives inside the facet workspace")
+        .join("playgrounds/snark/src/bundled")
+        .join(relative)
 }
 
 /// snark's named-node s-expression via the production (RuntimeWeavy) path.
@@ -245,7 +351,45 @@ fn snark_sexp(grammar_path: &Path, input: &str) -> String {
         Ok(p) => p,
         Err(e) => return format!("PLAN-ERR: {e:?}"),
     };
-    match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, input) {
+    match parse_prepared_weavy_with_report(&plan, &parser, &table, input) {
+        Ok(report) => report.tree().to_sexp(),
+        Err(e) => format!("PARSE-ERR: {e:?}"),
+    }
+}
+
+fn snark_recovering_sexp(grammar_path: &Path, input: &str) -> String {
+    let json = match snark_dsl::emit_with_boa(grammar_path) {
+        Ok(json) => json,
+        Err(e) => return format!("EMIT-ERR: {e}"),
+    };
+    let raw = match RawGrammarJson::from_tree_sitter_json_str(&json) {
+        Ok(raw) => raw,
+        Err(e) => return format!("IMPORT-ERR: {e:?}"),
+    };
+    let validated = match ValidatedGrammar::from_raw(&raw) {
+        Ok(v) => v,
+        Err(e) => return format!("VALIDATE-ERR: {e:?}"),
+    };
+    let lexical = LexicalFacts::from_grammar(&validated);
+    let normalized = match ParserGrammar::normalize_from_validated(&validated, &lexical) {
+        Ok(n) => n,
+        Err(e) => return format!("NORMALIZE-ERR: {e:?}"),
+    };
+    let parser = match normalized.prepare_productions_for_items() {
+        Ok(p) => p,
+        Err(e) => return format!("PREPARE-ERR: {e:?}"),
+    };
+    let table = match ParseTable::from_grammar(&parser) {
+        Ok(t) => t,
+        Err(e) => return format!("TABLE-ERR: {e:?}"),
+    };
+    let plan = match WeavyParsePlan::new(&validated, &parser, &table) {
+        Ok(p) => p,
+        Err(e) => return format!("PLAN-ERR: {e:?}"),
+    };
+    match parse_prepared_weavy_recovering_with_report_and_scanner(
+        &plan, &parser, &table, input, None,
+    ) {
         Ok(report) => report.tree().to_sexp(),
         Err(e) => format!("PARSE-ERR: {e:?}"),
     }

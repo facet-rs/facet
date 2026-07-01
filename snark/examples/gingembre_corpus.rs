@@ -54,7 +54,6 @@ fn main() {
     let t_p = std::time::Instant::now();
     let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
         &plan,
-        &validated,
         &parser,
         &table,
         probe_input,
@@ -79,7 +78,7 @@ fn main() {
     for path in &files {
         let input = std::fs::read_to_string(path).unwrap_or_default();
         let report = match parse_prepared_weavy_recovering_with_report_and_scanner(
-            &plan, &validated, &parser, &table, &input, None,
+            &plan, &parser, &table, &input, None,
         ) {
             Ok(report) => report,
             Err(error) => {

@@ -161,28 +161,25 @@ fn main() {
     let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
     let plan_new = t.elapsed();
     let analysis = lowered_analysis(plan.program().lowered());
+    let plan_analysis = plan.analysis();
 
     let strict_fresh_plan_total = mode.runs_strict_fresh().then(|| {
         bench_parse(iters, || {
             let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
-            parse_prepared_weavy_with_report_and_scanner(
-                &plan, &validated, &parser, &table, &input, None,
-            )
+            parse_prepared_weavy_with_report_and_scanner(&plan, &parser, &table, &input, None)
         })
     });
 
     let strict_warm_plan_total = mode.runs_strict_warm().then(|| {
         bench_parse(iters, || {
-            parse_prepared_weavy_with_report_and_scanner(
-                &plan, &validated, &parser, &table, &input, None,
-            )
+            parse_prepared_weavy_with_report_and_scanner(&plan, &parser, &table, &input, None)
         })
     });
 
     let recovering_warm_plan_total = mode.runs_recovering_warm().then(|| {
         bench_parse(iters, || {
             parse_prepared_weavy_recovering_with_report_and_scanner(
-                &plan, &validated, &parser, &table, &input, None,
+                &plan, &parser, &table, &input, None,
             )
         })
     });
@@ -216,6 +213,47 @@ fn main() {
         analysis.effect_stats.total.may_fail_count,
         analysis.effect_stats.total.side_channel_count
     );
+    let readiness = &plan_analysis.readiness;
+    println!(
+        "  readiness: full {:<5}  parser {:<5}  lexer {:<5}  neutral {:<5}",
+        readiness.is_fully_visible(),
+        readiness.is_parser_fully_visible(),
+        readiness.lexer.is_fully_visible(),
+        readiness.is_neutral_weavy_only()
+    );
+    println!(
+        "  weavy op ownership: neutral {:>6}  snark intrinsics {:>6}  stencils needed {:<5}",
+        readiness.neutral_weavy_op_count,
+        readiness.snark_intrinsic_count,
+        readiness.needs_snark_stencils()
+    );
+    println!(
+        "  parser lowering: dialect {:>6}  lexer-graph {:>6}  sinks {:>6}  host barriers {:>6}",
+        readiness.dialect_op_intrinsic_count,
+        readiness.lexer_graph_intrinsic_count,
+        readiness.sink_op_intrinsic_count,
+        readiness.host_call_barrier_intrinsic_count
+    );
+    println!(
+        "  lexer lowering: literal sets {:>4}/{:<4}  pattern sets {:>4}/{:<4}  rematch {:>4}  known {:>4}  regex-auto {:>4}  fallback {:>4}  unsupported {:>4}",
+        readiness.lexer.merged_literal_set_count,
+        readiness.lexer.merged_literal_terminal_count,
+        readiness.lexer.merged_pattern_set_count,
+        readiness.lexer.merged_pattern_terminal_count,
+        readiness.lexer.merged_pattern_leaf_rematch_terminal_count,
+        readiness.lexer.known_pattern_count,
+        readiness.lexer.regex_automata_count,
+        readiness.lexer.rust_regex_fallback_count,
+        readiness.lexer.unsupported_pattern_count
+            + readiness.lexer.unsupported_terminal_count
+            + readiness.lexer.unsupported_symbol_count
+    );
+    if !readiness.barrier_summaries.is_empty() {
+        println!("  lowering barriers:");
+        for summary in &readiness.barrier_summaries {
+            println!("    {:?}  x{}", summary.barrier, summary.count);
+        }
+    }
     println!("  intrinsics:");
     for (intrinsic, count) in &analysis.intrinsic_counts {
         println!(

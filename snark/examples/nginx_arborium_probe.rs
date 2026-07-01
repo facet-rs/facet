@@ -40,12 +40,11 @@ fn main() {
     let input = std::fs::read_to_string(&sample).expect("sample should be readable");
     let dump_errors = env::var_os("SNARK_NGINX_DUMP_ERRORS").is_some();
     if dump_errors
-        && let Err(error) =
-            parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, &input)
+        && let Err(error) = parse_prepared_weavy_with_report(&plan, &parser, &table, &input)
     {
         println!("non-recovering parse error: {error}");
     }
-    let parse_result = parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, &input);
+    let parse_result = parse_prepared_weavy_with_report(&plan, &parser, &table, &input);
     let parsed_at = Instant::now();
     println!("language: {}", raw.name);
     println!("input bytes: {}", input.len());
@@ -54,7 +53,7 @@ fn main() {
         Err(error) => {
             println!("parse failed: {error}");
             match parse_prepared_weavy_recovering_with_report_and_scanner(
-                &plan, &validated, &parser, &table, &input, None,
+                &plan, &parser, &table, &input, None,
             ) {
                 Ok(report) => {
                     println!(

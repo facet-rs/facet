@@ -76,13 +76,13 @@ fn main() {
     // Measure the entry points the playground calls: strict first, recovering
     // only when strict fails.
     let t0 = Instant::now();
-    let strict = parse_prepared_weavy_with_report(&runtime, &validated, &parser, &table, &input);
+    let strict = parse_prepared_weavy_with_report(&runtime, &parser, &table, &input);
     let t_strict = t0.elapsed().as_secs_f64() * 1000.0;
     let strict_ok = strict.is_ok();
 
     let t0 = Instant::now();
     let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
-        &runtime, &validated, &parser, &table, &input, None,
+        &runtime, &parser, &table, &input, None,
     );
     let t_recovering = t0.elapsed().as_secs_f64() * 1000.0;
 

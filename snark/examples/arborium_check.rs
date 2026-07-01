@@ -119,7 +119,7 @@ fn check_one(def: &Path, grammar_js: &Path) -> Result<CheckOk, CheckErr> {
     let sample_errors = first_sample(def).and_then(|sample| {
         let input = std::fs::read_to_string(&sample).ok()?;
         let report = parse_prepared_weavy_recovering_with_report_and_scanner(
-            &plan, &validated, &parser, &table, &input, None,
+            &plan, &parser, &table, &input, None,
         )
         .ok()?;
         Some(

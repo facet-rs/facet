@@ -14,16 +14,17 @@ use std::{
     sync::Arc,
 };
 
-use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind as AhoMatchKind};
 use regex::Regex;
 use regex_automata::{
-    Anchored, Input, MatchKind as RegexMatchKind, PatternSet, meta::Regex as AutomataRegex,
+    Anchored, Input, MatchKind as RegexMatchKind, PatternSet,
+    hybrid::dfa::{Cache as HybridDfaCache, DFA as HybridDfa, OverlappingState},
+    meta::Regex as AutomataRegex,
 };
 use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
     ir::{
         ControlOp, EffectContract, EffectResource, IntrinsicDescriptor, IntrinsicOp,
-        LoweredAnalysis, WeavyLowered, WeavyOp, dense_lowered_analysis, resolve_lowered,
+        LoweredAnalysis, WeavyLowered, WeavyOp, dense_lowered_analysis, resolve_lowered_ref,
     },
 };
 
@@ -251,11 +252,6 @@ pub enum SnarkIntrinsic {
         /// Why this branch was retired.
         reason: BranchRetireReason,
     },
-    /// Recover through Snark's generated recovery path.
-    Recover {
-        /// Parser state whose recovery action is being executed.
-        state: ParseStateId,
-    },
     /// Accept the input by reducing the root production.
     Accept {
         /// GLR stack version being accepted.
@@ -407,6 +403,20 @@ impl SnarkIntrinsicSemanticStats {
         self.descriptor_semantics.get(&descriptor)
     }
 
+    /// Return descriptor identities whose contracts still block fully-visible lowering.
+    #[must_use]
+    pub fn barrier_descriptors(&self) -> Vec<IntrinsicDescriptor> {
+        self.descriptor_semantics
+            .values()
+            .filter(|semantics| {
+                semantics.lowering == SnarkIntrinsicLowering::HostCallBarrier
+                    || semantics.effect.opaque
+                    || semantics.effect.calls_user_code
+            })
+            .map(|semantics| semantics.descriptor)
+            .collect()
+    }
+
     /// Return the number of intrinsics with one stable dialect/name identity.
     #[must_use]
     pub fn descriptor_count(&self, descriptor: IntrinsicDescriptor) -> usize {
@@ -531,16 +541,6 @@ impl SnarkIntrinsic {
                     .write_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::SideChannel("glr_worklist")),
             ),
-            Self::Recover { .. } => (
-                SnarkIntrinsicDomain::Recovery,
-                SnarkIntrinsicLowering::DialectOp,
-                EffectContract::new()
-                    .read_resource(EffectResource::Input("source"))
-                    .write_resource(EffectResource::SideChannel("branch_cursor"))
-                    .write_resource(EffectResource::SideChannel("parser_stack"))
-                    .write_resource(EffectResource::Sink("tree_events"))
-                    .may_fail(),
-            ),
             Self::Accept { .. } => (
                 SnarkIntrinsicDomain::ParserControl,
                 SnarkIntrinsicLowering::DialectOp,
@@ -600,7 +600,6 @@ impl IntrinsicOp for SnarkIntrinsic {
             Self::SplitGlr { .. } => "split_glr",
             Self::MergeGlr { .. } => "merge_glr",
             Self::RetireBranch { .. } => "retire_branch",
-            Self::Recover { .. } => "recover",
             Self::Accept { .. } => "accept",
             Self::EmitTrace { .. } => "emit_trace",
             Self::EmitNode { .. } => "emit_node",
@@ -797,6 +796,11 @@ pub struct WeavyParsePlanAnalysis {
 pub struct WeavyParsePlanReadiness {
     /// Lexer-side lowering readiness.
     pub lexer: WeavyLexerReadiness,
+    /// Canonical Weavy ops that are already neutral control/memory/aggregate ops.
+    pub neutral_weavy_op_count: usize,
+    /// Snark dialect intrinsics that still need Snark-specific execution,
+    /// Snark-specific JIT stencils, or further lowering into neutral Weavy ops.
+    pub snark_intrinsic_count: usize,
     /// Parser intrinsics still represented as Snark dialect ops.
     pub dialect_op_intrinsic_count: usize,
     /// Parser intrinsics that anchor a Snark-owned lexer graph.
@@ -809,6 +813,10 @@ pub struct WeavyParsePlanReadiness {
     pub opaque_intrinsic_count: usize,
     /// Intrinsics that call outside code.
     pub host_call_intrinsic_count: usize,
+    /// Unique Snark dialect descriptors that still block fully-visible lowering.
+    pub parser_barrier_descriptors: Vec<IntrinsicDescriptor>,
+    /// Distinct parser/action and lexer blockers with their remaining counts.
+    pub barrier_summaries: Vec<WeavyLoweringBarrierSummary>,
 }
 
 impl WeavyParsePlanReadiness {
@@ -817,8 +825,16 @@ impl WeavyParsePlanReadiness {
         parser_semantics: &SnarkIntrinsicSemanticStats,
         lexer: &WeavyLexerStats,
     ) -> Self {
+        let lexer_readiness = WeavyLexerReadiness::from_stats(lexer);
+        let barrier_summaries = lowering_barrier_summaries(parser_semantics, &lexer_readiness);
         Self {
-            lexer: WeavyLexerReadiness::from_stats(lexer),
+            lexer: lexer_readiness,
+            neutral_weavy_op_count: parser
+                .program_stats
+                .total
+                .op_count
+                .saturating_sub(parser.program_stats.total.intrinsic_op_count),
+            snark_intrinsic_count: parser_semantics.intrinsic_count,
             dialect_op_intrinsic_count: parser_semantics
                 .lowering_count(SnarkIntrinsicLowering::DialectOp),
             lexer_graph_intrinsic_count: parser_semantics
@@ -829,16 +845,98 @@ impl WeavyParsePlanReadiness {
                 .lowering_count(SnarkIntrinsicLowering::HostCallBarrier),
             opaque_intrinsic_count: parser.effect_stats.total.opaque_count,
             host_call_intrinsic_count: parser.effect_stats.total.calls_user_code_count,
+            parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
+            barrier_summaries,
         }
+    }
+
+    /// True when parser/action ops no longer require opaque or host-call execution.
+    #[must_use]
+    pub fn is_parser_fully_visible(&self) -> bool {
+        self.host_call_barrier_intrinsic_count == 0
+            && self.opaque_intrinsic_count == 0
+            && self.host_call_intrinsic_count == 0
+            && self.parser_barrier_descriptors.is_empty()
     }
 
     /// True when every parser op and lexer leaf is visible to Weavy planning.
     #[must_use]
-    pub const fn is_fully_visible(&self) -> bool {
-        self.lexer.is_fully_visible()
-            && self.opaque_intrinsic_count == 0
-            && self.host_call_intrinsic_count == 0
+    pub fn is_fully_visible(&self) -> bool {
+        self.is_parser_fully_visible() && self.lexer.is_fully_visible()
     }
+
+    /// True when the parser/action program no longer contains Snark dialect
+    /// intrinsics and can be run/JITed using only neutral Weavy ops.
+    #[must_use]
+    pub const fn is_neutral_weavy_only(&self) -> bool {
+        self.snark_intrinsic_count == 0
+    }
+
+    /// True when the current plan still needs Snark-specific intrinsic handlers
+    /// or stencils even though those intrinsics may have visible effects.
+    #[must_use]
+    pub const fn needs_snark_stencils(&self) -> bool {
+        self.snark_intrinsic_count > 0
+    }
+
+    /// Return every parser/action and lexer blocker that still prevents fully-visible lowering.
+    #[must_use]
+    pub fn barriers(&self) -> Vec<WeavyLoweringBarrier> {
+        self.barrier_summaries
+            .iter()
+            .map(|summary| summary.barrier)
+            .collect()
+    }
+
+    /// Return the number of distinct parser/action and lexer blockers.
+    #[must_use]
+    pub fn barrier_count(&self) -> usize {
+        self.barrier_summaries.len()
+    }
+
+    /// Return the total number of parser/action intrinsics and lexer leaves still blocked.
+    #[must_use]
+    pub fn barrier_instance_count(&self) -> usize {
+        self.barrier_summaries
+            .iter()
+            .map(|summary| summary.count)
+            .sum()
+    }
+}
+
+fn lowering_barrier_summaries(
+    parser_semantics: &SnarkIntrinsicSemanticStats,
+    lexer: &WeavyLexerReadiness,
+) -> Vec<WeavyLoweringBarrierSummary> {
+    parser_semantics
+        .barrier_descriptors()
+        .into_iter()
+        .map(|descriptor| WeavyLoweringBarrierSummary {
+            barrier: WeavyLoweringBarrier::ParserIntrinsic(descriptor),
+            count: parser_semantics.descriptor_count(descriptor),
+        })
+        .chain(lexer.barrier_summaries())
+        .collect()
+}
+
+/// One remaining blocker that prevents Snark's Weavy plan from being fully visible to lowering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum WeavyLoweringBarrier {
+    /// A Snark parser/action intrinsic still executes as an opaque or host-call barrier.
+    ParserIntrinsic(IntrinsicDescriptor),
+    /// A Snark lexer graph leaf still executes through fallback or unsupported matching.
+    Lexer(WeavyLexerBarrierKind),
+}
+
+/// Counted lowering blocker for prioritizing Weavy optimizer/JIT work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub struct WeavyLoweringBarrierSummary {
+    /// Distinct parser/action or lexer blocker identity.
+    pub barrier: WeavyLoweringBarrier,
+    /// Number of intrinsics or lexer leaves represented by this blocker.
+    pub count: usize,
 }
 
 /// Lexer-side readiness for optimizer/JIT lowering.
@@ -852,6 +950,9 @@ pub struct WeavyLexerReadiness {
     pub merged_pattern_set_count: usize,
     /// Pattern terminal rows covered by merged direct-pattern matching.
     pub merged_pattern_terminal_count: usize,
+    /// Merged pattern rows whose accepted end byte still comes from replaying
+    /// the terminal leaf matcher after the merged set reports a candidate.
+    pub merged_pattern_leaf_rematch_terminal_count: usize,
     /// Pattern leaves handled by named Snark matcher ops.
     pub known_pattern_count: usize,
     /// Regex leaves backed by regex-automata and visible to lowering.
@@ -866,6 +967,8 @@ pub struct WeavyLexerReadiness {
     pub unsupported_terminal_count: usize,
     /// Lexical symbol references still missing a resolver.
     pub unsupported_symbol_count: usize,
+    /// Unique lexer blocker kinds that still prevent fully-visible lowering.
+    pub barrier_kinds: Vec<WeavyLexerBarrierKind>,
 }
 
 impl WeavyLexerReadiness {
@@ -875,6 +978,8 @@ impl WeavyLexerReadiness {
             merged_literal_terminal_count: stats.direct_literal_terminal_count,
             merged_pattern_set_count: stats.direct_pattern_set_count,
             merged_pattern_terminal_count: stats.direct_pattern_terminal_count,
+            merged_pattern_leaf_rematch_terminal_count: stats
+                .direct_pattern_leaf_rematch_terminal_count,
             known_pattern_count: stats.known_pattern_count,
             regex_automata_count: stats.regex_automata_count,
             regex_fallback_count: stats.rust_regex_fallback_count,
@@ -882,17 +987,60 @@ impl WeavyLexerReadiness {
             unsupported_pattern_count: stats.unsupported_pattern_count,
             unsupported_terminal_count: stats.count(WeavyLexOpKind::UnsupportedTerminal),
             unsupported_symbol_count: stats.count(WeavyLexOpKind::UnsupportedSymbol),
+            barrier_kinds: stats.barrier_kinds(),
         }
     }
 
     /// True when lexer leaves no longer require fallback matching.
     #[must_use]
-    pub const fn is_fully_visible(&self) -> bool {
-        self.regex_fallback_count == 0
-            && self.unsupported_pattern_count == 0
-            && self.unsupported_terminal_count == 0
-            && self.unsupported_symbol_count == 0
+    pub fn is_fully_visible(&self) -> bool {
+        self.barrier_kinds.is_empty()
     }
+
+    /// Return every lexer blocker with the number of leaves it represents.
+    #[must_use]
+    pub fn barrier_summaries(&self) -> Vec<WeavyLoweringBarrierSummary> {
+        let mut summaries = Vec::new();
+        if self.rust_regex_fallback_count > 0 {
+            summaries.push(WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::RustRegexFallback),
+                count: self.rust_regex_fallback_count,
+            });
+        }
+        if self.unsupported_pattern_count > 0 {
+            summaries.push(WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                count: self.unsupported_pattern_count,
+            });
+        }
+        if self.unsupported_terminal_count > 0 {
+            summaries.push(WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedTerminal),
+                count: self.unsupported_terminal_count,
+            });
+        }
+        if self.unsupported_symbol_count > 0 {
+            summaries.push(WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedSymbol),
+                count: self.unsupported_symbol_count,
+            });
+        }
+        summaries
+    }
+}
+
+/// Lexer-side blocker category that remains opaque or unsupported to Weavy planning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum WeavyLexerBarrierKind {
+    /// A regex pattern still executes through the Rust regex fallback.
+    RustRegexFallback,
+    /// A pattern is unsupported by the current matcher compiler.
+    UnsupportedPattern,
+    /// A terminal root is unsupported by the current matcher compiler.
+    UnsupportedTerminal,
+    /// A lexical symbol reference is not resolved in the lowered lexer graph.
+    UnsupportedSymbol,
 }
 
 #[derive(Clone, Debug)]
@@ -973,6 +1121,9 @@ pub struct WeavyLexerStats {
     pub direct_pattern_set_count: usize,
     /// Number of terminal rows participating in merged direct-pattern sets.
     pub direct_pattern_terminal_count: usize,
+    /// Direct-pattern rows still replaying the terminal leaf matcher after the
+    /// merged set reports that the row matched.
+    pub direct_pattern_leaf_rematch_terminal_count: usize,
     /// Number of modes with a merged literal string set.
     pub direct_literal_set_count: usize,
     /// Number of terminal rows participating in merged literal string sets.
@@ -996,6 +1147,25 @@ impl WeavyLexerStats {
     #[must_use]
     pub fn count(&self, kind: WeavyLexOpKind) -> usize {
         self.op_counts.get(&kind).copied().unwrap_or_default()
+    }
+
+    /// Return the unique lexer blocker kinds that remain opaque or unsupported.
+    #[must_use]
+    pub fn barrier_kinds(&self) -> Vec<WeavyLexerBarrierKind> {
+        let mut kinds = Vec::new();
+        if self.rust_regex_fallback_count > 0 {
+            kinds.push(WeavyLexerBarrierKind::RustRegexFallback);
+        }
+        if self.unsupported_pattern_count > 0 {
+            kinds.push(WeavyLexerBarrierKind::UnsupportedPattern);
+        }
+        if self.count(WeavyLexOpKind::UnsupportedTerminal) > 0 {
+            kinds.push(WeavyLexerBarrierKind::UnsupportedTerminal);
+        }
+        if self.count(WeavyLexOpKind::UnsupportedSymbol) > 0 {
+            kinds.push(WeavyLexerBarrierKind::UnsupportedSymbol);
+        }
+        kinds
     }
 
     fn record(&mut self, kind: WeavyLexOpKind) {
@@ -1040,8 +1210,9 @@ impl WeavyLexModeProgram {
         byte_position: usize,
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
         matches: &mut Option<PatternSet>,
+        dfa_cache: Option<&mut HybridDfaCache>,
     ) {
-        match_weavy_direct_pattern_set(input, self, byte_position, ends, matches);
+        match_weavy_direct_pattern_set(input, self, byte_position, ends, matches, dfa_cache);
     }
 
     fn match_direct_literals(
@@ -1049,8 +1220,9 @@ impl WeavyLexModeProgram {
         input: &str,
         byte_position: usize,
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
+        matches: &mut Option<PatternSet>,
     ) {
-        match_weavy_literal_set(input, self, byte_position, ends);
+        match_weavy_literal_set(input, self, byte_position, ends, matches);
     }
 
     fn add_stats(&self, stats: &mut WeavyLexerStats) {
@@ -1060,6 +1232,10 @@ impl WeavyLexModeProgram {
         }
         if self.direct_pattern_set.is_some() {
             stats.direct_pattern_set_count += 1;
+        }
+        if let Some(direct_pattern_set) = &self.direct_pattern_set {
+            stats.direct_pattern_leaf_rematch_terminal_count +=
+                direct_pattern_set.leaf_rematch_terminal_count();
         }
         for terminal in &self.terminals {
             terminal.add_stats(stats);
@@ -1232,10 +1408,7 @@ impl WeavyLexExpr {
 
 #[derive(Clone, Debug)]
 enum WeavyPatternMatcher {
-    Known {
-        source: String,
-        regex_source: Option<String>,
-    },
+    Known(crate::lex_match::KnownPattern),
     Regex(WeavyRegexLeaf),
     Unsupported,
 }
@@ -1252,10 +1425,13 @@ impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
         let kind = value.kind();
         let regex_source = value.regex.as_ref().map(|regex| regex.as_str().to_owned());
         match kind {
-            crate::lex_match::CompiledPatternKind::Known => Self::Known {
-                source: value.source,
-                regex_source,
-            },
+            crate::lex_match::CompiledPatternKind::Known => {
+                let Some(pattern) = crate::lex_match::known_pattern_for_source(&value.source)
+                else {
+                    return Self::Unsupported;
+                };
+                Self::Known(pattern)
+            }
             crate::lex_match::CompiledPatternKind::Regex => match (value.regex, regex_source) {
                 (Some(regex), Some(regex_source)) => Self::Regex(WeavyRegexLeaf::new(
                     value.source,
@@ -1273,7 +1449,7 @@ impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
 impl WeavyPatternMatcher {
     const fn kind(&self) -> WeavyPatternMatcherKind {
         match self {
-            Self::Known { .. } => WeavyPatternMatcherKind::Known,
+            Self::Known(_) => WeavyPatternMatcherKind::Known,
             Self::Regex(_) => WeavyPatternMatcherKind::Regex,
             Self::Unsupported => WeavyPatternMatcherKind::Unsupported,
         }
@@ -1282,24 +1458,26 @@ impl WeavyPatternMatcher {
     const fn regex_lowering(&self) -> Option<WeavyRegexLowering> {
         match self {
             Self::Regex(leaf) => Some(leaf.lowering()),
-            Self::Known { .. } | Self::Unsupported => None,
+            Self::Known(_) | Self::Unsupported => None,
         }
     }
 
     fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
         match self {
-            Self::Known { source, .. } => {
-                crate::lex_match::match_known_pattern_source(source, input, byte_position)
+            Self::Known(pattern) => {
+                crate::lex_match::match_known_pattern(*pattern, input, byte_position)
             }
             Self::Regex(leaf) => leaf.match_input(input, byte_position),
             Self::Unsupported => None,
         }
     }
 
-    fn regex_source(&self) -> Option<&str> {
+    fn regex_source(&self) -> Option<Cow<'_, str>> {
         match self {
-            Self::Known { regex_source, .. } => regex_source.as_deref(),
-            Self::Regex(leaf) => Some(leaf.source()),
+            Self::Known(pattern) => {
+                crate::lex_match::regex_automata_leaf_source(pattern.source(), None).map(Cow::Owned)
+            }
+            Self::Regex(leaf) => Some(Cow::Borrowed(leaf.source())),
             Self::Unsupported => None,
         }
     }
@@ -1392,8 +1570,8 @@ fn match_regex_automata_leaf(
 
 #[derive(Clone, Debug)]
 struct WeavyLiteralSet {
-    automaton: AhoCorasick,
-    literals: Vec<String>,
+    automaton: AutomataRegex,
+    literal_lengths: Vec<usize>,
     terminal_indices: Vec<usize>,
 }
 
@@ -1415,96 +1593,25 @@ impl WeavyLiteralSet {
         if literals.is_empty() {
             return None;
         }
-        let automaton = AhoCorasickBuilder::new()
-            .match_kind(AhoMatchKind::Standard)
-            .build(&literals)
-            .ok()?;
-        Some(Self {
-            automaton,
-            literals,
-            terminal_indices,
-        })
-    }
-
-    fn len(&self) -> usize {
-        self.literals.len()
-    }
-
-    fn for_each_match(
-        &self,
-        input: &str,
-        byte_position: usize,
-        mut visit: impl FnMut(usize, usize, usize),
-    ) {
-        let Some(haystack) = input.get(byte_position..) else {
-            return;
-        };
-        for match_ in self.automaton.find_overlapping_iter(haystack) {
-            if match_.start() > 0 {
-                break;
-            }
-            let set_index = match_.pattern().as_usize();
-            visit(
-                set_index,
-                self.terminal_indices[set_index],
-                byte_position + match_.end(),
-            );
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct WeavyDirectPatternSet {
-    automaton: AutomataRegex,
-    regex_sources: Vec<String>,
-    terminal_indices: Vec<usize>,
-}
-
-impl WeavyDirectPatternSet {
-    fn from_terminals(terminals: &[WeavyLexTerminal]) -> Option<Self> {
-        let mut entries = terminals
+        let literal_lengths = literals.iter().map(String::len).collect::<Vec<_>>();
+        let regex_sources = literals
             .iter()
-            .enumerate()
-            .filter_map(|(terminal_index, terminal)| {
-                let direct_pattern_index = terminal.direct_pattern_index?;
-                let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher
-                else {
-                    return None;
-                };
-                let regex_source = pattern.regex_source()?;
-                Some((
-                    direct_pattern_index,
-                    terminal_index,
-                    regex_source.to_owned(),
-                ))
-            })
-            .collect::<Vec<_>>();
-        if entries.is_empty() {
-            return None;
-        }
-        entries.sort_by_key(|(direct_pattern_index, _, _)| *direct_pattern_index);
-        let regex_sources = entries
-            .iter()
-            .map(|(_, _, source)| source.clone())
+            .map(|literal| regex::escape(literal))
             .collect::<Vec<_>>();
         let regex_source_refs = regex_sources.iter().map(String::as_str).collect::<Vec<_>>();
         let automaton = AutomataRegex::builder()
             .configure(AutomataRegex::config().match_kind(RegexMatchKind::All))
             .build_many(&regex_source_refs)
             .ok()?;
-        let terminal_indices = entries
-            .into_iter()
-            .map(|(_, terminal_index, _)| terminal_index)
-            .collect();
         Some(Self {
             automaton,
-            regex_sources,
+            literal_lengths,
             terminal_indices,
         })
     }
 
     fn len(&self) -> usize {
-        self.regex_sources.len()
+        self.automaton.pattern_len()
     }
 
     fn for_each_match(
@@ -1512,7 +1619,7 @@ impl WeavyDirectPatternSet {
         input: &str,
         byte_position: usize,
         matches: &mut Option<PatternSet>,
-        mut visit: impl FnMut(usize, usize),
+        mut visit: impl FnMut(usize, usize, usize),
     ) {
         let Some(haystack) = input.get(byte_position..) else {
             return;
@@ -1528,7 +1635,125 @@ impl WeavyDirectPatternSet {
         self.automaton.which_overlapping_matches(&search, matches);
         for pattern_id in matches.iter() {
             let set_index = pattern_id.as_usize();
-            visit(set_index, self.terminal_indices[set_index]);
+            visit(
+                set_index,
+                self.terminal_indices[set_index],
+                byte_position + self.literal_lengths[set_index],
+            );
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WeavyDirectPatternSet {
+    automaton: AutomataRegex,
+    dfa: Option<HybridDfa>,
+    terminal_indices: Vec<usize>,
+}
+
+impl WeavyDirectPatternSet {
+    fn from_terminals(terminals: &[WeavyLexTerminal]) -> Option<Self> {
+        let mut entries = terminals
+            .iter()
+            .enumerate()
+            .filter_map(|(terminal_index, terminal)| {
+                let direct_pattern_index = terminal.direct_pattern_index?;
+                let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher
+                else {
+                    return None;
+                };
+                let regex_source = pattern.regex_source()?.into_owned();
+                Some((direct_pattern_index, terminal_index, regex_source))
+            })
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            return None;
+        }
+        entries.sort_by_key(|(direct_pattern_index, _, _)| *direct_pattern_index);
+        let regex_sources = entries
+            .iter()
+            .map(|(_, _, source)| source.clone())
+            .collect::<Vec<_>>();
+        let regex_source_refs = regex_sources.iter().map(String::as_str).collect::<Vec<_>>();
+        let automaton = AutomataRegex::builder()
+            .configure(AutomataRegex::config().match_kind(RegexMatchKind::All))
+            .build_many(&regex_source_refs)
+            .ok()?;
+        let dfa = HybridDfa::builder()
+            .configure(HybridDfa::config().match_kind(RegexMatchKind::All))
+            .build_many(&regex_source_refs)
+            .ok();
+        let terminal_indices = entries
+            .into_iter()
+            .map(|(_, terminal_index, _)| terminal_index)
+            .collect();
+        Some(Self {
+            automaton,
+            dfa,
+            terminal_indices,
+        })
+    }
+
+    fn len(&self) -> usize {
+        self.automaton.pattern_len()
+    }
+
+    fn leaf_rematch_terminal_count(&self) -> usize {
+        if self.dfa.is_some() { 0 } else { self.len() }
+    }
+
+    fn create_dfa_cache(&self) -> Option<HybridDfaCache> {
+        self.dfa.as_ref().map(HybridDfa::create_cache)
+    }
+
+    fn for_each_match(
+        &self,
+        input: &str,
+        byte_position: usize,
+        matches: &mut Option<PatternSet>,
+        dfa_cache: Option<&mut HybridDfaCache>,
+        mut visit: impl FnMut(usize, usize, Option<parser_ir::LexMatch>),
+    ) {
+        let Some(haystack) = input.get(byte_position..) else {
+            return;
+        };
+        if let (Some(dfa), Some(dfa_cache)) = (&self.dfa, dfa_cache) {
+            let search = Input::new(haystack).anchored(Anchored::Yes);
+            let mut state = OverlappingState::start();
+            loop {
+                if dfa
+                    .try_search_overlapping_fwd(dfa_cache, &search, &mut state)
+                    .is_err()
+                {
+                    break;
+                }
+                let Some(match_) = state.get_match() else {
+                    return;
+                };
+                let set_index = match_.pattern().as_usize();
+                let end = byte_position + match_.offset();
+                visit(
+                    set_index,
+                    self.terminal_indices[set_index],
+                    Some(parser_ir::LexMatch::new(
+                        end,
+                        crate::lex_match::pattern_inspected_end(input, end),
+                    )),
+                );
+            }
+        }
+        let search = Input::new(haystack).anchored(Anchored::Yes);
+        let pattern_len = self.automaton.pattern_len();
+        let matches = matches.get_or_insert_with(|| PatternSet::new(pattern_len));
+        if matches.capacity() != pattern_len {
+            *matches = PatternSet::new(pattern_len);
+        } else {
+            matches.clear();
+        }
+        self.automaton.which_overlapping_matches(&search, matches);
+        for pattern_id in matches.iter() {
+            let set_index = pattern_id.as_usize();
+            visit(set_index, self.terminal_indices[set_index], None);
         }
     }
 }
@@ -1785,11 +2010,6 @@ pub enum WeavyParseError {
         /// Unsupported lexical expression.
         expr: GrammarExprId,
     },
-    /// Weavy runtime execution reached recovery.
-    UnsupportedRecovery {
-        /// Parse state whose recovery action was reached.
-        state: parser_ir::ParseStateId,
-    },
     /// The Weavy parser stack was empty.
     EmptyStack,
     /// No token matched at the current byte offset.
@@ -1921,9 +2141,6 @@ impl fmt::Display for WeavyParseError {
             ),
             Self::UnsupportedLexicalSymbol { expr } => {
                 write!(f, "lexical expression {} is a symbol ref", expr.get())
-            }
-            Self::UnsupportedRecovery { state } => {
-                write!(f, "state {} reached unsupported recovery", state.get())
             }
             Self::EmptyStack => write!(f, "Weavy parser stack was empty"),
             Self::NoToken {
@@ -2082,7 +2299,7 @@ fn lower_weavy_parser_program(
     }
 
     let block_refs = lowered.block_refs();
-    let dense = resolve_lowered(lowered.clone()).map_err(|error| match error {
+    let dense = resolve_lowered_ref(&lowered).map_err(|error| match error {
         weavy::ir::ResolveError::MissingBlock(block) => WeavyParseError::MissingBlock { block },
         _ => WeavyParseError::UnsupportedCanonicalOp,
     })?;
@@ -2186,9 +2403,6 @@ fn action_program_for(
             child_count,
             dynamic_precedence,
         })],
-        parser_ir::ParseAction::Recover => vec![WeavyOp::Intrinsic(SnarkIntrinsic::Recover {
-            state: ParseStateId::from_index(source_state.get() as usize),
-        })],
     }
 }
 
@@ -2227,8 +2441,79 @@ struct RuntimeWeavyStepperInput<'a> {
 #[derive(Default)]
 struct RuntimeWeavyLexerScratch {
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
+    direct_literal_matches: RefCell<Option<PatternSet>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_matches: RefCell<Option<PatternSet>>,
+    direct_pattern_dfa_caches: RefCell<HashMap<parser_ir::LexModeId, Option<HybridDfaCache>>>,
+    direct_set_cache:
+        RefCell<HashMap<RuntimeWeavyLexSetCacheKey, Arc<RuntimeWeavyDirectSetMatches>>>,
+}
+
+impl RuntimeWeavyLexerScratch {
+    fn direct_set_matches(
+        &self,
+        input: &str,
+        mode: parser_ir::LexModeId,
+        mode_program: &WeavyLexModeProgram,
+        byte_position: usize,
+    ) -> Arc<RuntimeWeavyDirectSetMatches> {
+        let key = RuntimeWeavyLexSetCacheKey {
+            mode,
+            byte_position,
+        };
+        if let Some(matches) = self.direct_set_cache.borrow().get(&key) {
+            return Arc::clone(matches);
+        }
+        {
+            let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
+            let mut direct_literal_matches = self.direct_literal_matches.borrow_mut();
+            mode_program.match_direct_literals(
+                input,
+                byte_position,
+                &mut direct_literal_ends,
+                &mut direct_literal_matches,
+            );
+        }
+        {
+            let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
+            let mut direct_pattern_matches = self.direct_pattern_matches.borrow_mut();
+            let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
+            let direct_pattern_dfa_cache =
+                mode_program.direct_pattern_set.as_ref().and_then(|set| {
+                    direct_pattern_dfa_caches
+                        .entry(mode)
+                        .or_insert_with(|| set.create_dfa_cache())
+                        .as_mut()
+                });
+            mode_program.match_direct_patterns(
+                input,
+                byte_position,
+                &mut direct_pattern_ends,
+                &mut direct_pattern_matches,
+                direct_pattern_dfa_cache,
+            );
+        }
+        let matches = Arc::new(RuntimeWeavyDirectSetMatches {
+            literal_ends: self.direct_literal_ends.borrow().clone(),
+            pattern_ends: self.direct_pattern_ends.borrow().clone(),
+        });
+        self.direct_set_cache
+            .borrow_mut()
+            .insert(key, Arc::clone(&matches));
+        matches
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct RuntimeWeavyLexSetCacheKey {
+    mode: parser_ir::LexModeId,
+    byte_position: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RuntimeWeavyDirectSetMatches {
+    literal_ends: Vec<Option<parser_ir::LexMatch>>,
+    pattern_ends: Vec<Option<parser_ir::LexMatch>>,
 }
 
 #[derive(Clone, Copy)]
@@ -2244,18 +2529,16 @@ struct RuntimeWeavyAction {
 /// Execute a prepared parser plan through Weavy.
 pub fn parse_prepared_weavy_with_report(
     plan: &WeavyParsePlan,
-    grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_with_report_and_scanner(plan, grammar, parser, table, input, None)
+    parse_prepared_weavy_with_report_and_scanner(plan, parser, table, input, None)
 }
 
 /// Execute a prepared parser plan through Weavy with a scanner host.
 pub fn parse_prepared_weavy_with_report_and_scanner(
     plan: &WeavyParsePlan,
-    _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
@@ -2280,7 +2563,6 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
 /// Execute a prepared Weavy plan and collect reusable-node metadata.
 pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     plan: &WeavyParsePlan,
-    _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
@@ -2305,7 +2587,6 @@ pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
 /// Execute a prepared Weavy plan with skip-invalid recovery.
 pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
     plan: &WeavyParsePlan,
-    _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
@@ -2330,7 +2611,6 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
 /// Execute a recovering prepared Weavy plan and collect reusable-node metadata.
 pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
     plan: &WeavyParsePlan,
-    _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
@@ -2355,7 +2635,6 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
 /// Persistent Weavy parse session for edited inputs.
 pub struct WeavyParseSession<'a> {
     plan: &'a WeavyParsePlan,
-    grammar: &'a ValidatedGrammar,
     parser: &'a parser_ir::ParserGrammar,
     table: &'a parser_ir::ParseTable,
     external_scanner: Option<&'a dyn ExternalScannerHost>,
@@ -2367,13 +2646,11 @@ impl<'a> WeavyParseSession<'a> {
     /// Build a session over one prepared Weavy plan.
     pub const fn new(
         plan: &'a WeavyParsePlan,
-        grammar: &'a ValidatedGrammar,
         parser: &'a parser_ir::ParserGrammar,
         table: &'a parser_ir::ParseTable,
     ) -> Self {
         Self {
             plan,
-            grammar,
             parser,
             table,
             external_scanner: None,
@@ -2406,7 +2683,6 @@ impl<'a> WeavyParseSession<'a> {
         let input = input.into();
         let report = parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
             self.plan,
-            self.grammar,
             self.parser,
             self.table,
             &input,
@@ -2432,7 +2708,6 @@ impl<'a> WeavyParseSession<'a> {
         {
             reparse_prepared_weavy_with_report_and_scanner(
                 self.plan,
-                self.grammar,
                 self.parser,
                 self.table,
                 old_input,
@@ -2444,7 +2719,6 @@ impl<'a> WeavyParseSession<'a> {
         } else {
             parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
                 self.plan,
-                self.grammar,
                 self.parser,
                 self.table,
                 &new_input,
@@ -2467,7 +2741,6 @@ impl<'a> WeavyParseSession<'a> {
         let input = input.into();
         let report = parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
             self.plan,
-            self.grammar,
             self.parser,
             self.table,
             &input,
@@ -2493,7 +2766,6 @@ impl<'a> WeavyParseSession<'a> {
         {
             reparse_prepared_weavy_recovering_with_report_and_scanner(
                 self.plan,
-                self.grammar,
                 self.parser,
                 self.table,
                 old_input,
@@ -2505,7 +2777,6 @@ impl<'a> WeavyParseSession<'a> {
         } else {
             parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
                 self.plan,
-                self.grammar,
                 self.parser,
                 self.table,
                 &new_input,
@@ -2525,7 +2796,6 @@ impl<'a> WeavyParseSession<'a> {
 #[allow(clippy::too_many_arguments)]
 pub fn reparse_prepared_weavy_with_report_and_scanner(
     plan: &WeavyParsePlan,
-    _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     old_input: &str,
@@ -2556,7 +2826,6 @@ pub fn reparse_prepared_weavy_with_report_and_scanner(
 #[allow(clippy::too_many_arguments)]
 pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
     plan: &WeavyParsePlan,
-    _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     old_input: &str,
@@ -3392,6 +3661,22 @@ fn step_runtime_weavy_branch(
         Ok(dispatch) => dispatch,
         Err(error) => {
             if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
+                if let WeavyParseError::NoAction {
+                    lookahead: parser_ir::LookaheadSymbol::Eof,
+                    ..
+                } = error
+                    && let Some(accepted) = recover_runtime_weavy_eof_error_root(
+                        branch.clone(),
+                        input_ctx.input,
+                        output.input_points,
+                        output.tree_store,
+                        output.trace_events,
+                        output.tree_events,
+                        output.tree_journal,
+                    )
+                {
+                    return vec![accepted];
+                }
                 if matches!(error, WeavyParseError::NoToken { .. })
                     && input_ctx.input[branch.byte_position..].starts_with(['{', '}'])
                     && let Some(branch) = recover_runtime_weavy_to_viable_stack(
@@ -3435,13 +3720,30 @@ fn step_runtime_weavy_branch(
 
     let actions = match runtime_weavy_actions(
         input_ctx.table,
-        state,
+        dispatch.state,
         dispatch.entry_index,
         dispatch.token.lookahead,
         branch.byte_position,
     ) {
         Ok(actions) => actions,
         Err(error) => {
+            if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput
+                && let WeavyParseError::NoAction {
+                    lookahead: parser_ir::LookaheadSymbol::Eof,
+                    ..
+                } = error
+                && let Some(accepted) = recover_runtime_weavy_eof_error_root(
+                    branch,
+                    input_ctx.input,
+                    output.input_points,
+                    output.tree_store,
+                    output.trace_events,
+                    output.tree_events,
+                    output.tree_journal,
+                )
+            {
+                return vec![accepted];
+            }
             return vec![RuntimeWeavyStepOutcome::Failed {
                 version: source_version,
                 error,
@@ -3457,8 +3759,12 @@ fn step_runtime_weavy_branch(
                 version
             })
             .collect::<Vec<_>>();
-        let conflict =
-            runtime_weavy_conflict_id(input_ctx.table, state, dispatch.token.lookahead, actions);
+        let conflict = runtime_weavy_conflict_id(
+            input_ctx.table,
+            dispatch.state,
+            dispatch.token.lookahead,
+            actions,
+        );
         output.trace_events.push(parser_ir::TraceEvent::GlrSplit {
             source: source_version,
             conflict,
@@ -3836,6 +4142,51 @@ fn recover_runtime_weavy_to_action_state(
         }
     }
     None
+}
+
+fn recover_runtime_weavy_eof_error_root(
+    branch: RuntimeWeavyBranch,
+    input: &str,
+    input_points: &RuntimeWeavyInputPoints,
+    tree_store: &mut RuntimeWeavyTreeStore,
+    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    tree_events: &mut Vec<parser_ir::TreeEvent>,
+    tree_journal: &mut RuntimeWeavyTreeJournal,
+) -> Option<RuntimeWeavyStepOutcome> {
+    if branch.byte_position != input.len() {
+        return None;
+    }
+    let state = branch.stack.last().map(|entry| entry.state)?;
+    let error_cost = branch
+        .error_cost
+        .max(u32::try_from(input.len().max(1)).unwrap_or(u32::MAX));
+    let node = tree_store.push(SexpNode {
+        kind: "ERROR".to_owned(),
+        children: Vec::new(),
+    });
+    let (bytes, points) = runtime_weavy_input_ranges(input_points, 0, input.len());
+    trace_events.push(parser_ir::TraceEvent::Recover {
+        version: branch.version,
+        state,
+    });
+    let tree_event = parser_ir::TreeEvent::Error {
+        version: branch.version,
+        node,
+        bytes,
+        points,
+        error_cost,
+    };
+    let mut error_journal = RuntimeWeavyTreeJournalHead::default();
+    tree_journal.push(&mut error_journal, tree_event.clone());
+    tree_events.push(tree_event);
+    let accepted_tree_events = tree_journal.collect(error_journal);
+    Some(RuntimeWeavyStepOutcome::Accepted {
+        version: branch.version,
+        node: tree_store.materialize_node(node),
+        error_cost,
+        tree_events: accepted_tree_events,
+        reusable_nodes: Vec::new(),
+    })
 }
 
 fn recover_runtime_weavy_no_token(
@@ -4317,14 +4668,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 self.tree = Some(self.finish_runtime_root(node)?);
                 Ok(Control::Return)
             }
-            SnarkIntrinsic::Recover { state } => {
-                let state = parser_state(*state);
-                self.trace_events.push(parser_ir::TraceEvent::Recover {
-                    version: self.version,
-                    state,
-                });
-                Err(WeavyParseError::UnsupportedRecovery { state })
-            }
             SnarkIntrinsic::CallExternalScanner { .. }
             | SnarkIntrinsic::SplitGlr { .. }
             | SnarkIntrinsic::MergeGlr { .. }
@@ -4373,28 +4716,18 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mode_program = self.lexer_program.mode(mode.id())?;
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
-        {
-            let mut direct_literal_ends = self.lexer_scratch.direct_literal_ends.borrow_mut();
-            mode_program.match_direct_literals(self.input, byte_position, &mut direct_literal_ends);
-        }
-        {
-            let mut direct_pattern_ends = self.lexer_scratch.direct_pattern_ends.borrow_mut();
-            let mut direct_pattern_matches = self.lexer_scratch.direct_pattern_matches.borrow_mut();
-            mode_program.match_direct_patterns(
-                self.input,
-                byte_position,
-                &mut direct_pattern_ends,
-                &mut direct_pattern_matches,
-            );
-        }
-        let direct_literal_ends = self.lexer_scratch.direct_literal_ends.borrow();
-        let direct_pattern_ends = self.lexer_scratch.direct_pattern_ends.borrow();
+        let direct_matches = self.lexer_scratch.direct_set_matches(
+            self.input,
+            mode.id(),
+            mode_program,
+            byte_position,
+        );
         for terminal_row in mode_program.terminals() {
             let Some(match_) = self.match_compiled_terminal_with_set(
                 terminal_row,
                 byte_position,
-                &direct_literal_ends,
-                &direct_pattern_ends,
+                &direct_matches.literal_ends,
+                &direct_matches.pattern_ends,
             )?
             else {
                 continue;
@@ -5230,6 +5563,7 @@ fn match_weavy_literal_set(
     mode: &WeavyLexModeProgram,
     byte_position: usize,
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
+    matches: &mut Option<PatternSet>,
 ) {
     let Some(literal_set) = &mode.direct_literal_set else {
         ends.clear();
@@ -5237,9 +5571,14 @@ fn match_weavy_literal_set(
     };
     ends.clear();
     ends.resize(literal_set.len(), None);
-    literal_set.for_each_match(input, byte_position, |set_index, _terminal_index, end| {
-        ends[set_index] = Some(parser_ir::LexMatch::new(end, end));
-    });
+    literal_set.for_each_match(
+        input,
+        byte_position,
+        matches,
+        |set_index, _terminal_index, end| {
+            ends[set_index] = Some(parser_ir::LexMatch::new(end, end));
+        },
+    );
 }
 
 fn match_weavy_direct_pattern_set(
@@ -5248,6 +5587,7 @@ fn match_weavy_direct_pattern_set(
     byte_position: usize,
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
     matches: &mut Option<PatternSet>,
+    dfa_cache: Option<&mut HybridDfaCache>,
 ) {
     let Some(pattern_set) = &mode.direct_pattern_set else {
         ends.clear();
@@ -5259,7 +5599,12 @@ fn match_weavy_direct_pattern_set(
         input,
         byte_position,
         matches,
-        |set_index, terminal_index| {
+        dfa_cache,
+        |set_index, terminal_index, dfa_match| {
+            if let Some(match_) = dfa_match {
+                ends[set_index] = Some(match_);
+                return;
+            }
             let terminal = &mode.terminals[terminal_index];
             let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher
             else {
@@ -6285,6 +6630,7 @@ mod tests {
         assert_eq!(stats.direct_literal_terminal_count, 1);
         assert_eq!(stats.direct_pattern_set_count, 1);
         assert_eq!(stats.direct_pattern_terminal_count, 1);
+        assert_eq!(stats.direct_pattern_leaf_rematch_terminal_count, 0);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Seq], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 2);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Choice], 1);
@@ -6299,6 +6645,33 @@ mod tests {
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Nested], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::UnsupportedTerminal], 1);
         assert_eq!(stats.count(WeavyLexOpKind::UnsupportedSymbol), 0);
+        assert_eq!(
+            stats.barrier_kinds(),
+            vec![
+                WeavyLexerBarrierKind::UnsupportedPattern,
+                WeavyLexerBarrierKind::UnsupportedTerminal,
+            ]
+        );
+    }
+
+    #[test]
+    fn known_patterns_lower_to_named_weavy_leaves() {
+        let matcher = WeavyPatternMatcher::from(crate::lex_match::compile_pattern("and\\b", None));
+
+        let WeavyPatternMatcher::Known(pattern) = &matcher else {
+            panic!("expected a known pattern leaf");
+        };
+        assert_eq!(
+            *pattern,
+            crate::lex_match::KnownPattern::AsciiKeyword("and")
+        );
+        let regex_source = matcher.regex_source();
+        assert_eq!(regex_source.as_deref(), Some(r"(?:and\b)"));
+        assert_eq!(
+            matcher.match_input("and rest", 0),
+            Some(parser_ir::LexMatch::new(3, 4))
+        );
+        assert_eq!(matcher.match_input("anderson", 0), None);
     }
 
     #[test]
@@ -6311,6 +6684,7 @@ mod tests {
         assert_eq!(readiness.merged_literal_terminal_count, 1);
         assert_eq!(readiness.merged_pattern_set_count, 1);
         assert_eq!(readiness.merged_pattern_terminal_count, 1);
+        assert_eq!(readiness.merged_pattern_leaf_rematch_terminal_count, 0);
         assert_eq!(readiness.known_pattern_count, 1);
         assert_eq!(readiness.regex_automata_count, 2);
         assert_eq!(readiness.regex_fallback_count, 0);
@@ -6318,6 +6692,28 @@ mod tests {
         assert_eq!(readiness.unsupported_pattern_count, 1);
         assert_eq!(readiness.unsupported_terminal_count, 1);
         assert_eq!(readiness.unsupported_symbol_count, 0);
+        assert_eq!(
+            readiness.barrier_kinds,
+            vec![
+                WeavyLexerBarrierKind::UnsupportedPattern,
+                WeavyLexerBarrierKind::UnsupportedTerminal,
+            ]
+        );
+        assert_eq!(
+            readiness.barrier_summaries(),
+            vec![
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                    count: 1,
+                },
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(
+                        WeavyLexerBarrierKind::UnsupportedTerminal
+                    ),
+                    count: 1,
+                },
+            ]
+        );
         assert!(!readiness.is_fully_visible());
     }
 
@@ -6355,6 +6751,7 @@ mod tests {
                 .map(|s| s.domain),
             Some(SnarkIntrinsicDomain::Trace)
         );
+        assert!(stats.barrier_descriptors().is_empty());
         assert_eq!(stats.domain_count(SnarkIntrinsicDomain::Lexing), 1);
         assert_eq!(stats.domain_count(SnarkIntrinsicDomain::Trace), 1);
         assert_eq!(stats.lowering_count(SnarkIntrinsicLowering::LexerGraph), 1);
@@ -6386,26 +6783,122 @@ mod tests {
             },
         ];
         let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
-        let literal_sources = direct_literal_set
-            .as_ref()
-            .unwrap()
-            .literals
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        assert_eq!(literal_sources, vec!["a", "ab"]);
+        assert_eq!(direct_literal_set.as_ref().unwrap().len(), 2);
         let mode = WeavyLexModeProgram {
             terminals,
             direct_literal_set,
             direct_pattern_set: None,
         };
         let mut ends = Vec::new();
+        let mut matches = None;
 
-        match_weavy_literal_set("abc", &mode, 0, &mut ends);
+        match_weavy_literal_set("abc", &mode, 0, &mut ends, &mut matches);
 
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(1, 1)));
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 2)));
+    }
+
+    #[test]
+    fn literal_set_matches_punctuation_prefix_literals_together() {
+        let mut terminals = vec![
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(0),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("\"".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(1),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("\"\"\"".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+        ];
+        let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
+        let mode = WeavyLexModeProgram {
+            terminals,
+            direct_literal_set,
+            direct_pattern_set: None,
+        };
+        let mut ends = Vec::new();
+        let mut matches = None;
+
+        match_weavy_literal_set("\"\"\"x", &mode, 0, &mut ends, &mut matches);
+
+        assert_eq!(ends.len(), 2);
+        assert_eq!(ends[0], Some(parser_ir::LexMatch::new(1, 1)));
+        assert_eq!(ends[1], Some(parser_ir::LexMatch::new(3, 3)));
+    }
+
+    #[test]
+    fn literal_set_matches_namespace_prefix_literals_together() {
+        let mut terminals = vec![
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(0),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("netcore".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(1),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("netstd".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(2),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("java".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(3),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("java.swift".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+        ];
+        let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
+        let mode = WeavyLexModeProgram {
+            terminals,
+            direct_literal_set,
+            direct_pattern_set: None,
+        };
+        let mut ends = Vec::new();
+        let mut matches = None;
+
+        match_weavy_literal_set("netstd tutorial", &mode, 0, &mut ends, &mut matches);
+        assert_eq!(ends[0], None);
+        assert_eq!(ends[1], Some(parser_ir::LexMatch::new(6, 6)));
+
+        match_weavy_literal_set("java.swift tutorial", &mode, 0, &mut ends, &mut matches);
+        assert_eq!(ends[2], Some(parser_ir::LexMatch::new(4, 4)));
+        assert_eq!(ends[3], Some(parser_ir::LexMatch::new(10, 10)));
     }
 
     #[test]
@@ -6437,14 +6930,7 @@ mod tests {
             },
         ];
         let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
-        let regex_sources = direct_pattern_set
-            .as_ref()
-            .unwrap()
-            .regex_sources
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        assert_eq!(regex_sources, vec![r"\A(?:[a-z]+)", r"\A(?:[a-z]{2})"]);
+        assert_eq!(direct_pattern_set.as_ref().unwrap().len(), 2);
         let mode = WeavyLexModeProgram {
             direct_pattern_set,
             terminals,
@@ -6452,12 +6938,134 @@ mod tests {
         };
         let mut ends = Vec::new();
         let mut matches = None;
+        let mut dfa_cache = mode
+            .direct_pattern_set
+            .as_ref()
+            .and_then(WeavyDirectPatternSet::create_dfa_cache);
 
-        match_weavy_direct_pattern_set("abcd", &mode, 0, &mut ends, &mut matches);
+        match_weavy_direct_pattern_set(
+            "abcd",
+            &mode,
+            0,
+            &mut ends,
+            &mut matches,
+            dfa_cache.as_mut(),
+        );
 
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 3)));
+    }
+
+    #[test]
+    fn direct_pattern_set_reports_graphql_block_string_content_matches() {
+        let terminals = vec![WeavyLexTerminal {
+            terminal: parser_ir::TerminalId::from_index(0),
+            matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
+                crate::lex_match::compile_pattern("([^\"]|\\n|\"\"?[^\"])*", None).into(),
+            )),
+            immediate: false,
+            literal: false,
+            lexical_precedence: 0,
+            implicit_precedence: 0,
+            direct_literal_index: None,
+            direct_pattern_index: Some(0),
+        }];
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        assert_eq!(
+            direct_pattern_set
+                .as_ref()
+                .unwrap()
+                .leaf_rematch_terminal_count(),
+            0
+        );
+        let mode = WeavyLexModeProgram {
+            direct_pattern_set,
+            terminals,
+            direct_literal_set: None,
+        };
+        let mut ends = Vec::new();
+        let mut matches = None;
+        let mut dfa_cache = mode
+            .direct_pattern_set
+            .as_ref()
+            .and_then(WeavyDirectPatternSet::create_dfa_cache);
+
+        match_weavy_direct_pattern_set(
+            "\"\"\"text\"\"\"",
+            &mode,
+            3,
+            &mut ends,
+            &mut matches,
+            dfa_cache.as_mut(),
+        );
+
+        assert_eq!(ends, vec![Some(parser_ir::LexMatch::new(7, 8))]);
+
+        match_weavy_direct_pattern_set(
+            "\"\"\"\"\"\"",
+            &mode,
+            3,
+            &mut ends,
+            &mut matches,
+            dfa_cache.as_mut(),
+        );
+
+        assert_eq!(ends, vec![Some(parser_ir::LexMatch::new(3, 4))]);
+    }
+
+    #[test]
+    fn lexer_scratch_caches_direct_set_matches_by_mode_and_position() {
+        let mut terminals = vec![
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(0),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("ab".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(1),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
+                    crate::lex_match::compile_pattern("[a-z]+", None).into(),
+                )),
+                immediate: false,
+                literal: false,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: Some(0),
+            },
+        ];
+        let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        let mode = WeavyLexModeProgram {
+            terminals,
+            direct_literal_set,
+            direct_pattern_set,
+        };
+        let scratch = RuntimeWeavyLexerScratch::default();
+        let lex_mode = parser_ir::LexModeId::from_index(0);
+
+        let first = scratch.direct_set_matches("abcd", lex_mode, &mode, 0);
+        scratch.direct_literal_ends.borrow_mut().clear();
+        scratch.direct_pattern_ends.borrow_mut().clear();
+        let second = scratch.direct_set_matches("zzzz", lex_mode, &mode, 0);
+
+        assert_eq!(scratch.direct_set_cache.borrow().len(), 1);
+        assert!(Arc::ptr_eq(&second, &first));
+        assert_eq!(
+            first.literal_ends,
+            vec![Some(parser_ir::LexMatch::new(2, 2))]
+        );
+        assert_eq!(
+            first.pattern_ends,
+            vec![Some(parser_ir::LexMatch::new(4, 4))]
+        );
+        assert_eq!(second, first);
     }
 
     #[test]
@@ -6513,14 +7121,84 @@ mod tests {
         assert_eq!(analysis.lexer.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 0);
         assert_eq!(analysis.readiness.opaque_intrinsic_count, 0);
+        assert_eq!(analysis.readiness.neutral_weavy_op_count, 0);
+        assert_eq!(analysis.readiness.snark_intrinsic_count, 1);
         assert_eq!(analysis.readiness.lexer_graph_intrinsic_count, 1);
         assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.sink_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.host_call_barrier_intrinsic_count, 0);
+        assert!(analysis.readiness.parser_barrier_descriptors.is_empty());
         assert_eq!(analysis.readiness.lexer.regex_automata_count, 2);
+        assert_eq!(
+            analysis
+                .readiness
+                .lexer
+                .merged_pattern_leaf_rematch_terminal_count,
+            0
+        );
         assert_eq!(analysis.readiness.lexer.regex_fallback_count, 0);
         assert_eq!(analysis.readiness.lexer.rust_regex_fallback_count, 0);
+        assert_eq!(
+            analysis.readiness.lexer.barrier_kinds,
+            vec![
+                WeavyLexerBarrierKind::UnsupportedPattern,
+                WeavyLexerBarrierKind::UnsupportedTerminal,
+            ]
+        );
+        assert_eq!(analysis.readiness.barrier_count(), 2);
+        assert_eq!(analysis.readiness.barrier_instance_count(), 2);
+        assert_eq!(
+            analysis.readiness.barriers(),
+            vec![
+                WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedTerminal),
+            ]
+        );
+        assert_eq!(
+            analysis.readiness.barrier_summaries,
+            vec![
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                    count: 1,
+                },
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(
+                        WeavyLexerBarrierKind::UnsupportedTerminal
+                    ),
+                    count: 1,
+                },
+            ]
+        );
+        assert!(analysis.readiness.is_parser_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
+        assert!(!analysis.readiness.is_neutral_weavy_only());
+        assert!(analysis.readiness.needs_snark_stencils());
+    }
+
+    #[test]
+    fn parse_plan_readiness_distinguishes_neutral_weavy_ops_from_visible_intrinsics() {
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense: DenseSnarkWeavyLowered::new(
+                    vec![WeavyOp::Control(ControlOp::Return)],
+                    vec![],
+                ),
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+            },
+            lexer_program: WeavyLexerProgram { modes: vec![] },
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+        };
+
+        let readiness = plan.analysis().readiness;
+
+        assert_eq!(readiness.neutral_weavy_op_count, 1);
+        assert_eq!(readiness.snark_intrinsic_count, 0);
+        assert!(readiness.is_neutral_weavy_only());
+        assert!(!readiness.needs_snark_stencils());
     }
 
     #[test]
@@ -6567,12 +7245,105 @@ mod tests {
         );
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 1);
         assert_eq!(analysis.readiness.opaque_intrinsic_count, 1);
+        assert_eq!(analysis.readiness.neutral_weavy_op_count, 0);
+        assert_eq!(analysis.readiness.snark_intrinsic_count, 1);
         assert_eq!(analysis.readiness.host_call_barrier_intrinsic_count, 1);
         assert_eq!(analysis.readiness.lexer_graph_intrinsic_count, 0);
         assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.sink_op_intrinsic_count, 0);
+        assert_eq!(
+            analysis.readiness.parser_barrier_descriptors,
+            vec![scanner.descriptor()]
+        );
+        assert!(analysis.readiness.lexer.barrier_kinds.is_empty());
+        assert_eq!(analysis.readiness.barrier_count(), 1);
+        assert_eq!(analysis.readiness.barrier_instance_count(), 1);
+        assert_eq!(
+            analysis.readiness.barriers(),
+            vec![WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor())]
+        );
+        assert_eq!(
+            analysis.readiness.barrier_summaries,
+            vec![WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor()),
+                count: 1,
+            }]
+        );
         assert!(analysis.readiness.lexer.is_fully_visible());
+        assert!(!analysis.readiness.is_parser_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
+        assert!(!analysis.readiness.is_neutral_weavy_only());
+        assert!(analysis.readiness.needs_snark_stencils());
+    }
+
+    #[test]
+    fn parse_plan_readiness_combines_parser_and_lexer_barriers() {
+        let scanner = SnarkIntrinsic::CallExternalScanner {
+            version: StackVersionId(0),
+            state: ParseStateId(7),
+            valid_symbols: ValidSymbolSetId(3),
+            scanner_state: ExternalScannerStateId(2),
+            before: Some(ScannerSnapshotId(0)),
+            after: Some(ScannerSnapshotId(1)),
+            result: Some(LookaheadTokenId(4)),
+        };
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense: DenseSnarkWeavyLowered::new(
+                    vec![
+                        WeavyOp::Intrinsic(scanner.clone()),
+                        WeavyOp::Intrinsic(scanner.clone()),
+                    ],
+                    vec![],
+                ),
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+            },
+            lexer_program: sample_lexer_program(),
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+        };
+
+        let readiness = plan.analysis().readiness;
+
+        assert_eq!(readiness.barrier_count(), 3);
+        assert_eq!(readiness.barrier_instance_count(), 4);
+        assert_eq!(readiness.neutral_weavy_op_count, 0);
+        assert_eq!(readiness.snark_intrinsic_count, 2);
+        assert_eq!(
+            readiness.barriers(),
+            vec![
+                WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor()),
+                WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedTerminal),
+            ]
+        );
+        assert_eq!(
+            readiness.barrier_summaries,
+            vec![
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor()),
+                    count: 2,
+                },
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                    count: 1,
+                },
+                WeavyLoweringBarrierSummary {
+                    barrier: WeavyLoweringBarrier::Lexer(
+                        WeavyLexerBarrierKind::UnsupportedTerminal
+                    ),
+                    count: 1,
+                },
+            ]
+        );
+        assert!(!readiness.is_parser_fully_visible());
+        assert!(!readiness.lexer.is_fully_visible());
+        assert!(!readiness.is_fully_visible());
+        assert!(!readiness.is_neutral_weavy_only());
+        assert!(readiness.needs_snark_stencils());
     }
 
     #[test]

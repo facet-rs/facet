@@ -3019,8 +3019,10 @@ impl<'a> LrTableBuilder<'a> {
         let mut pool: Vec<ItemMap> = Vec::new();
         let mut sig_buf: Vec<u64> = Vec::new();
         let mut order_buf: Vec<u32> = Vec::new();
-        let mut scratch = ClosureScratch::default();
-        scratch.queued = vec![false; self.item_count];
+        let mut scratch = ClosureScratch {
+            queued: vec![false; self.item_count],
+            ..ClosureScratch::default()
+        };
         let interner = &self.first.interner;
         let width = self.lookahead_width();
         let item_count = self.item_count;
@@ -3204,11 +3206,7 @@ impl<'a> LrTableBuilder<'a> {
                             repetition: false,
                         },
                     ),
-                    ParserSymbol::Internal(internal) => push_action(
-                        &mut entries,
-                        LookaheadSymbol::ErrorRecovery(internal),
-                        ParseAction::Recover,
-                    ),
+                    ParserSymbol::Internal(_) => {}
                 }
             }
             for lookahead in self.extra_lookaheads() {
@@ -5637,8 +5635,6 @@ pub enum ParseAction {
         /// Dynamic precedence attached to the reduced subtree.
         dynamic_precedence: i32,
     },
-    /// Enter generated error recovery.
-    Recover,
 }
 
 /// GLR runtime table facts that are not specific to one stack version.
@@ -6577,11 +6573,10 @@ extras (
     }
 
     fn assert_styx_authored_gingembre_runtime(input: &str, expected_sexp: &str) {
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
         let expected = gingembre_named_projection(input);
 
         rediff::assert_same!(report.tree(), &expected);
@@ -6615,10 +6610,9 @@ extras (
             "gingembre unexpectedly accepted {input:?}"
         );
 
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let result = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        );
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let result =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input);
         assert!(result.is_err(), "snark unexpectedly accepted {input:?}");
     }
 
@@ -6711,12 +6705,11 @@ extras (
 
     #[test]
     fn accepted_resolved_tree_preserves_anonymous_gingembre_delimiters() {
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{- x -}}";
-        let report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
         let tree = report.accepted_resolved_tree(parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
@@ -6727,12 +6720,11 @@ extras (
 
     #[test]
     fn accepted_resolved_tree_preserves_anonymous_gingembre_operators() {
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{ 1 + 2 * 3 }}";
-        let report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
         let tree = report.accepted_resolved_tree(parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
@@ -6744,12 +6736,11 @@ extras (
     #[cfg(feature = "weavy-lowering")]
     #[test]
     fn prepared_weavy_resolved_tree_preserves_anonymous_gingembre_operators() {
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{ 1 + 2 * 3 }}";
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
         let tree = weavy_report.accepted_resolved_tree(parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
@@ -6973,11 +6964,10 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_call_arguments_through_weavy_runtime() {
         let input = "{{ greet(user.name, suffix) }}";
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -6993,11 +6983,10 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_index_postfix_through_weavy_runtime() {
         let input = "{{ items[1].name }}";
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -7013,11 +7002,10 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_optional_postfix_through_weavy_runtime() {
         let input = "{{ fetch()[0]? | default(none) }}";
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -7033,11 +7021,10 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_compound_primaries_through_weavy_runtime() {
         let input = r#"{{ {"name": user.name, "ok": true,} }}"#;
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -7053,11 +7040,10 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_filters_and_tests_through_weavy_runtime() {
         let input = "{{ value | default(fallback) is not none }}";
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -7073,11 +7059,10 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_unary_precedence_through_weavy_runtime() {
         let input = "{{ not a == b }}";
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -7093,11 +7078,10 @@ extras (
     #[test]
     fn parses_styx_authored_gingembre_binary_precedence_through_weavy_runtime() {
         let input = "{{ a + b * c }}";
-        let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            plan, validated, parser, table, input,
-        )
-        .unwrap();
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
+                .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -7900,7 +7884,6 @@ extras (
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
-            &validated,
             &parser,
             &table,
             "<p>one<p>two</p>",
@@ -7923,7 +7906,6 @@ extras (
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
-            &validated,
             &parser,
             &table,
             "<p>one<div>two</div>",
@@ -8137,8 +8119,7 @@ extras (
     fn weavy_runtime_parse_session_reparse_matches_full_parse_oracle() {
         let (validated, parser, table) = flagged_regex_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         let first = session.parse("ABCXYZ").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8148,10 +8129,9 @@ extras (
 
         let edit = RuntimeInputEdit::new(0, 3, 3);
         let reparsed = session.reparse(edit, "abcXYZ").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
-            &plan, &validated, &parser, &table, "abcXYZ",
-        )
-        .unwrap();
+        let scratch =
+            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, "abcXYZ")
+                .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert!(
@@ -8170,16 +8150,14 @@ extras (
     fn weavy_runtime_parse_session_does_not_reuse_node_that_peeked_into_edit() {
         let (validated, parser, table) = flagged_regex_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         session.parse("ABCXYZ").unwrap();
 
         let edit = RuntimeInputEdit::new(3, 6, 6);
         let reparsed = session.reparse(edit, "ABCxyz").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
-            &plan, &validated, &parser, &table, "ABCxyz",
-        )
-        .unwrap();
+        let scratch =
+            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, "ABCxyz")
+                .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert!(
@@ -8196,8 +8174,7 @@ extras (
     fn weavy_runtime_parse_session_reuses_suffix_across_edited_extra() {
         let (validated, parser, table) = extra_comment_reuse_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         let first = session.parse("a#old\nb").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8207,7 +8184,7 @@ extras (
         let edit = RuntimeInputEdit::new(2, 5, 5);
         let reparsed = session.reparse(edit, "a#new\nb").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
-            &plan, &validated, &parser, &table, "a#new\nb",
+            &plan, &parser, &table, "a#new\nb",
         )
         .unwrap();
 
@@ -8224,8 +8201,7 @@ extras (
     fn weavy_runtime_parse_session_reuses_node_with_attached_extra() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         let first = session.parse("a#old\nb1").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8236,7 +8212,6 @@ extras (
         let reparsed = session.reparse(edit, "a#old\nb2").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
-            &validated,
             &parser,
             &table,
             "a#old\nb2",
@@ -8256,8 +8231,7 @@ extras (
     fn weavy_runtime_parse_session_does_not_reuse_error_containing_node() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         let first = session.parse_recovering("a@\nb1").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8267,7 +8241,7 @@ extras (
         let edit = RuntimeInputEdit::new(4, 5, 5);
         let reparsed = session.reparse_recovering(edit, "a@\nb2").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_recovering_with_report_and_scanner(
-            &plan, &validated, &parser, &table, "a@\nb2", None,
+            &plan, &parser, &table, "a@\nb2", None,
         )
         .unwrap();
 
@@ -8286,7 +8260,7 @@ extras (
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let weavy_report =
             crate::lower::weavy::parse_prepared_weavy_recovering_with_report_and_scanner(
-                &plan, &validated, &parser, &table, input, None,
+                &plan, &parser, &table, input, None,
             )
             .unwrap();
 
@@ -8310,8 +8284,7 @@ extras (
     fn weavy_runtime_parse_session_does_not_reuse_root_across_boundary_insertion() {
         let (validated, parser, table) = repeated_word_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         let first = session.parse("alpha").unwrap().clone();
         assert_eq!(first.tree().to_sexp(), "(source_file (word))");
 
@@ -8319,7 +8292,6 @@ extras (
         let reparsed = session.reparse(edit, "alpha beta").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
-            &validated,
             &parser,
             &table,
             "alpha beta",
@@ -8336,8 +8308,7 @@ extras (
     fn weavy_runtime_parse_session_rejects_mismatched_edit_context() {
         let (validated, parser, table) = flagged_regex_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         session.parse("ABCXYZ").unwrap();
 
         let error = session
@@ -8356,10 +8327,9 @@ extras (
         let (validated, parser, table) = flagged_regex_fixture();
         let input = "ABCXYZ";
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, input)
+                .unwrap();
 
         assert_eq!(
             weavy_report.tree().to_sexp(),
@@ -8403,10 +8373,9 @@ extras (
         let (validated, parser, table) = lexical_symbol_fixture();
         let input = "alpha:123";
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, input)
+                .unwrap();
 
         assert_eq!(weavy_report.tree().to_sexp(), "(source_file)");
         assert_eq!(weavy_report.accepted_count(), 1);
@@ -8599,8 +8568,7 @@ extras (
     fn weavy_runtime_parse_session_reuses_until_text_around_interpolation_edit() {
         let (validated, parser, table) = until_reuse_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         let first = session.parse("hello {{name}} tail").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8614,7 +8582,6 @@ extras (
             .clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
-            &validated,
             &parser,
             &table,
             "hello {{title}} tail",
@@ -8634,8 +8601,7 @@ extras (
     fn weavy_runtime_parse_session_reuse_metadata_survives_reparse_chains() {
         let (validated, parser, table) = until_reuse_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         session.parse("hello {{name}} tail").unwrap();
 
         let first_reparse = session
@@ -8653,7 +8619,6 @@ extras (
             .clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
-            &validated,
             &parser,
             &table,
             "hello {{title}} end",
@@ -8672,8 +8637,7 @@ extras (
 
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let mut session =
-            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
+        let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         session.parse("a#old\nb1").unwrap();
 
         let first_reparse = session
@@ -8688,7 +8652,6 @@ extras (
             .clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
-            &validated,
             &parser,
             &table,
             "a#new\nb2",
@@ -8708,10 +8671,9 @@ extras (
         let (validated, parser, table) = lexical_primitives_fixture();
         let input = "hello {# outer {# inner #} done #}";
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
-            &plan, &validated, &parser, &table, input,
-        )
-        .unwrap();
+        let weavy_report =
+            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, input)
+                .unwrap();
 
         assert_eq!(
             weavy_report.tree().to_sexp(),
