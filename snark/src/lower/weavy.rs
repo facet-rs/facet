@@ -24,7 +24,7 @@ use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
     ir::{
         ControlOp, EffectContract, EffectResource, IntrinsicDescriptor, IntrinsicOp,
-        LoweredAnalysis, WeavyLowered, WeavyOp, dense_lowered_analysis, resolve_lowered,
+        LoweredAnalysis, WeavyLowered, WeavyOp, dense_lowered_analysis, resolve_lowered_ref,
     },
 };
 
@@ -2299,7 +2299,7 @@ fn lower_weavy_parser_program(
     }
 
     let block_refs = lowered.block_refs();
-    let dense = resolve_lowered(lowered.clone()).map_err(|error| match error {
+    let dense = resolve_lowered_ref(&lowered).map_err(|error| match error {
         weavy::ir::ResolveError::MissingBlock(block) => WeavyParseError::MissingBlock { block },
         _ => WeavyParseError::UnsupportedCanonicalOp,
     })?;
