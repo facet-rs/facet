@@ -1,6 +1,6 @@
 //! Phase-by-phase timing of the full grammar pipeline for one grammar, native release.
 //! Records where the time actually goes: grammar.js -> JSON (boa) -> decode -> validate
-//! -> lexical -> normalize -> prepare -> parse table -> Weavy runtime plan ->
+//! -> lexical -> normalize -> prepare -> parse table -> Weavy parse plan ->
 //! parse. Compare the table-build line against everything else.
 //!
 //! Usage: cargo run --release -p snark --features json-import,weavy-lowering \
@@ -71,7 +71,7 @@ fn main() {
     );
     let (t_plan, runtime) = phase!(
         "plan",
-        WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy runtime plan")
+        WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy parse plan")
     );
     // Measure the entry points the playground calls: strict first, recovering
     // only when strict fails.
@@ -101,7 +101,7 @@ fn main() {
         ("normalize -> ParserGrammar", t_normalize),
         ("prepare productions", t_prepare),
         ("** ParseTable::from_grammar", t_table),
-        ("Weavy runtime plan", t_plan),
+        ("Weavy parse plan", t_plan),
     ];
     println!("---- one-time prepare ----");
     for (label, ms) in rows {

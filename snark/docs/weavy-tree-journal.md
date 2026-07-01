@@ -90,7 +90,7 @@ during GLR forking. At accept, the accepted branch's lineage is materialized int
 `Vec<TreeEvent>` (the cactus walk, `collect`), and the pool is dropped when the parse
 function returns. It never enters the report.
 
-`RuntimeWeavySession` retains only `last_report: Option<RuntimeWeavyReport>`, and the
+`WeavyParseSession` retains only `last_report: Option<WeavyParseReport>`, and the
 report holds:
 
 - `tree_events: Vec<TreeEvent>` — the materialized **accepted lineage** (no dead branches),

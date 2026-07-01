@@ -49,7 +49,7 @@ fn main() {
     // Time one Weavy plan construction and one parse in isolation.
     let probe_input = "alpha";
     let t_plan = std::time::Instant::now();
-    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("runtime weavy plan");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
     let plan_ms = t_plan.elapsed().as_secs_f64() * 1000.0;
     let t_p = std::time::Instant::now();
     let _ = parse_prepared_weavy_recovering_with_report_and_scanner(

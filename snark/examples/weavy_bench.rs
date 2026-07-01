@@ -87,14 +87,13 @@ fn main() {
     let table_build = t.elapsed();
 
     let t = Instant::now();
-    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("runtime weavy plan");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
     let plan_new = t.elapsed();
 
     let strict_fresh_plan_total = mode.runs_strict_fresh().then(|| {
         let t = Instant::now();
         for _ in 0..iters {
-            let plan =
-                WeavyParsePlan::new(&validated, &parser, &table).expect("runtime weavy plan");
+            let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
             let _ = parse_prepared_weavy_with_report_and_scanner(
                 &plan, &validated, &parser, &table, &input, None,
             );

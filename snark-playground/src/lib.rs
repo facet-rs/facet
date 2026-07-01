@@ -287,9 +287,9 @@ struct PreparedGrammar {
     weavy_plan: WeavyParsePlan,
 }
 
-struct PlaygroundRuntimeReport(WeavyParseReport);
+struct WeavyPlaygroundReport(WeavyParseReport);
 
-impl PlaygroundRuntimeReport {
+impl WeavyPlaygroundReport {
     fn accepted_tree_events(&self) -> Vec<TreeEvent> {
         self.0.accepted_tree_events()
     }
@@ -687,7 +687,7 @@ fn count_reused_nodes(events: &[TreeEvent]) -> usize {
 }
 
 fn parse_output(
-    report: &PlaygroundRuntimeReport,
+    report: &WeavyPlaygroundReport,
     parser: &ParserGrammar,
     input: &str,
 ) -> ParseOutput {
@@ -1844,7 +1844,7 @@ fn parse_weavy_with_optional_recovery(
     };
     match strict {
         Ok(report) => Ok(PlaygroundParseReport {
-            report: PlaygroundRuntimeReport(report),
+            report: WeavyPlaygroundReport(report),
             strict_error_byte: None,
         }),
         Err(strict_error) => match if let Some((old_input, previous_report, edit)) = previous {
@@ -1863,8 +1863,8 @@ fn parse_weavy_with_optional_recovery(
             parse_recovering_weavy_with_optional_scanner(prepared, scanner, input)
         } {
             Ok(report) => Ok(PlaygroundParseReport {
-                report: PlaygroundRuntimeReport(report),
-                strict_error_byte: runtime_weavy_error_byte(&strict_error),
+                report: WeavyPlaygroundReport(report),
+                strict_error_byte: weavy_parse_error_byte(&strict_error),
             }),
             Err(_) => Err(strict_error),
         },
@@ -1872,7 +1872,7 @@ fn parse_weavy_with_optional_recovery(
 }
 
 struct PlaygroundParseReport {
-    report: PlaygroundRuntimeReport,
+    report: WeavyPlaygroundReport,
     strict_error_byte: Option<usize>,
 }
 
@@ -1894,11 +1894,11 @@ fn accepted_problem_span(events: &[TreeEvent], input: &str) -> Option<Diagnostic
 }
 
 fn runtime_weavy_error_diagnostic(stage: &str, error: &WeavyParseError, input: &str) -> Diagnostic {
-    let span = runtime_weavy_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
+    let span = weavy_parse_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
     diagnostic(stage, error.to_string(), span)
 }
 
-fn runtime_weavy_error_byte(error: &WeavyParseError) -> Option<usize> {
+fn weavy_parse_error_byte(error: &WeavyParseError) -> Option<usize> {
     match error {
         WeavyParseError::NoToken { byte_position, .. }
         | WeavyParseError::NoAction { byte_position, .. }

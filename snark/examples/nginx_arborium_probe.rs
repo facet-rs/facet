@@ -34,7 +34,7 @@ fn main() {
         .expect("productions should prepare");
     let table = ParseTable::from_grammar(&parser).expect("parse table should build");
     let plan =
-        WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy runtime plan should build");
+        WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy parse plan should build");
     let prepared_at = Instant::now();
 
     let input = std::fs::read_to_string(&sample).expect("sample should be readable");

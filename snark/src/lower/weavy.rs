@@ -470,7 +470,7 @@ impl WeavyParserProgram {
     }
 }
 
-/// Prepared Weavy runtime plan for repeated parses of one grammar/table pair.
+/// Prepared Weavy parse plan for repeated parses of one grammar/table pair.
 #[derive(Clone, Debug)]
 pub struct WeavyParsePlan {
     program: WeavyParserProgram,
