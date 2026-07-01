@@ -1218,7 +1218,7 @@ fn snark_stencil_family_summaries(
             .entry((summary.stencil.family, summary.stencil.execution))
             .or_default() += summary.count;
     }
-    counts
+    let mut summaries = counts
         .into_iter()
         .map(
             |((family, execution), count)| WeavySnarkStencilFamilySummary {
@@ -1227,7 +1227,15 @@ fn snark_stencil_family_summaries(
                 count,
             },
         )
-        .collect()
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.family.cmp(&right.family))
+            .then_with(|| left.execution.cmp(&right.execution))
+    });
+    summaries
 }
 
 fn lowering_barrier_summaries(
@@ -8357,6 +8365,74 @@ mod tests {
         assert!(!readiness.is_fully_visible());
         assert!(!readiness.is_neutral_weavy_only());
         assert!(readiness.needs_snark_stencils());
+    }
+
+    #[test]
+    fn parse_plan_readiness_prioritizes_stencil_families_by_count() {
+        let lex = SnarkIntrinsic::Lex {
+            version: StackVersionId(0),
+            mode: LexModeId(0),
+            output: LookaheadTokenId(0),
+        };
+        let commit = SnarkIntrinsic::CommitLookahead {
+            version: StackVersionId(0),
+            lookahead: LookaheadTokenId(0),
+        };
+        let reduce = SnarkIntrinsic::Reduce {
+            version: StackVersionId(0),
+            production: ProductionId(2),
+            metadata: ProductionMetadataId(3),
+            symbol: NonterminalId(4),
+            child_count: 2,
+            dynamic_precedence: 0,
+            aliases: None,
+        };
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense: DenseSnarkWeavyLowered::new(
+                    vec![
+                        WeavyOp::Intrinsic(lex.clone()),
+                        WeavyOp::Intrinsic(lex.clone()),
+                        WeavyOp::Intrinsic(commit.clone()),
+                        WeavyOp::Intrinsic(commit.clone()),
+                        WeavyOp::Intrinsic(commit.clone()),
+                        WeavyOp::Intrinsic(reduce.clone()),
+                        WeavyOp::Intrinsic(reduce.clone()),
+                        WeavyOp::Intrinsic(reduce.clone()),
+                        WeavyOp::Intrinsic(reduce.clone()),
+                    ],
+                    vec![],
+                ),
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+            },
+            lexer_program: WeavyLexerProgram { modes: vec![] },
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+        };
+
+        assert_eq!(
+            plan.analysis().readiness.snark_stencil_family_summaries,
+            vec![
+                WeavySnarkStencilFamilySummary {
+                    family: SnarkStencilFamily::TreeBuilder,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    count: 4,
+                },
+                WeavySnarkStencilFamilySummary {
+                    family: SnarkStencilFamily::ParserCursor,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    count: 3,
+                },
+                WeavySnarkStencilFamilySummary {
+                    family: SnarkStencilFamily::Lexer,
+                    execution: SnarkStencilExecution::LexerGraph,
+                    count: 2,
+                },
+            ]
+        );
     }
 
     #[test]
