@@ -234,6 +234,21 @@ fn main() {
         readiness.sink_op_intrinsic_count,
         readiness.host_call_barrier_intrinsic_count
     );
+    if !readiness.snark_stencil_summaries.is_empty() {
+        println!("  snark stencil obligations:");
+        for summary in &readiness.snark_stencil_summaries {
+            println!(
+                "    {:<36} {:<16?} {:<16?} x{}",
+                format!(
+                    "{}::{}",
+                    summary.descriptor.dialect, summary.descriptor.name
+                ),
+                summary.domain,
+                summary.lowering,
+                summary.count
+            );
+        }
+    }
     println!(
         "  lexer lowering: literal sets {:>4}/{:<4}  pattern sets {:>4}/{:<4}  rematch {:>4}  known {:>4}  regex-auto {:>4}  fallback {:>4}  unsupported {:>4}",
         readiness.lexer.merged_literal_set_count,
