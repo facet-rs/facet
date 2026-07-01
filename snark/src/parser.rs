@@ -2983,6 +2983,7 @@ impl<'a> LrTableBuilder<'a> {
         let mut item_set_keys = std::collections::HashMap::<u64, Vec<ItemSetId>>::new();
         let mut sigs: Vec<Vec<u64>> = Vec::new();
         let mut pool: Vec<ItemMap> = Vec::new();
+        let mut scratch = ClosureScratch::default();
         let interner = &self.first.interner;
         let width = self.lookahead_width();
         let mut transitions = Vec::new();
@@ -2991,7 +2992,7 @@ impl<'a> LrTableBuilder<'a> {
         for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
             start_items.insert(*production, 0, &[LookaheadSymbol::Eof], interner);
         }
-        let start_items = self.closure(start_items);
+        let start_items = self.closure(start_items, &mut scratch);
         let start = push_item_set(
             &mut item_sets,
             &mut item_set_keys,
@@ -3006,7 +3007,7 @@ impl<'a> LrTableBuilder<'a> {
         while let Some(from) = queue.pop_front() {
             let grouped = self.group_goto_items(&item_sets[from.get() as usize], &mut pool);
             for (symbol, items) in grouped {
-                let target_items = self.closure(items);
+                let target_items = self.closure(items, &mut scratch);
                 let to = push_item_set(
                     &mut item_sets,
                     &mut item_set_keys,
@@ -3023,22 +3024,22 @@ impl<'a> LrTableBuilder<'a> {
         (item_sets, transitions)
     }
 
-    fn closure(&self, mut map: ItemMap) -> ItemMap {
-        use std::collections::VecDeque;
+    fn closure(&self, mut map: ItemMap, scratch: &mut ClosureScratch) -> ItemMap {
         // Worklist fixpoint: (re)process an item only when its lookahead set actually
         // grew, so the work is proportional to real propagation instead of
         // items × rounds (the old loop re-scanned and re-collected every key each
         // pass — ~1.5s of BTreeMap churn on gingembre). Inserts only ever target
-        // (production, 0), so only those items can grow and get re-queued. Two reused
-        // scratch buffers keep the loop allocation-free.
-        let mut queued: FxHashSet<(ProductionId, usize)> = map.rows.keys().copied().collect();
-        let mut worklist: VecDeque<(ProductionId, usize)> = queued.iter().copied().collect();
-        // Reused bitsets: `fallback` = the current item's lookahead, `scratch` = the
-        // computed FIRST set. The whole loop is bitwise OR — no Vec, no interning, no sort.
-        let mut fallback = LookaheadBitset::default();
-        let mut scratch = LookaheadBitset::default();
-        while let Some((production_id, dot)) = worklist.pop_front() {
-            queued.remove(&(production_id, dot));
+        // (production, 0), so only those items can grow and get re-queued. All scratch
+        // buffers are reused across closures (via the caller's ClosureScratch) so the
+        // whole loop is allocation-free after warmup.
+        scratch.queued.clear();
+        scratch.worklist.clear();
+        for key in map.rows.keys() {
+            scratch.queued.insert(*key);
+            scratch.worklist.push_back(*key);
+        }
+        while let Some((production_id, dot)) = scratch.worklist.pop_front() {
+            scratch.queued.remove(&(production_id, dot));
             let production = &self.grammar.productions[production_id.get() as usize];
             let Some(step) = production.steps.get(dot) else {
                 continue;
@@ -3046,16 +3047,21 @@ impl<'a> LrTableBuilder<'a> {
             let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
                 continue;
             };
-            fallback.clear();
+            // `fallback` = the current item's lookahead, `first` = the computed FIRST
+            // set. The whole loop is bitwise OR — no Vec, no interning, no sort.
+            scratch.fallback.clear();
             if let Some(current) = map.words_of((production_id, dot)) {
-                fallback.or_from_slice(current);
+                scratch.fallback.or_from_slice(current);
             }
-            scratch.clear();
-            self.first
-                .first_of_steps_into_bits(&production.steps[dot + 1..], &fallback, &mut scratch);
+            scratch.first.clear();
+            self.first.first_of_steps_into_bits(
+                &production.steps[dot + 1..],
+                &scratch.fallback,
+                &mut scratch.first,
+            );
             for target in &self.productions_by_lhs[nonterminal.get() as usize] {
-                if map.or_into((*target, 0), &scratch) && queued.insert((*target, 0)) {
-                    worklist.push_back((*target, 0));
+                if map.or_into((*target, 0), &scratch.first) && scratch.queued.insert((*target, 0)) {
+                    scratch.worklist.push_back((*target, 0));
                 }
             }
         }
@@ -3336,6 +3342,17 @@ impl LookaheadBitset {
     fn clear(&mut self) {
         self.words.clear();
     }
+}
+
+/// Reusable scratch for the LR closure fixpoint, threaded across closures so the
+/// worklist/queue and FIRST bitsets are allocated once for the whole build instead
+/// of per item set.
+#[derive(Default)]
+struct ClosureScratch {
+    queued: FxHashSet<(ProductionId, usize)>,
+    worklist: std::collections::VecDeque<(ProductionId, usize)>,
+    fallback: LookaheadBitset,
+    first: LookaheadBitset,
 }
 
 /// One LR item set under construction. Every lookahead set is exactly `width` u64
