@@ -4252,10 +4252,7 @@ pub(crate) struct CompiledLexTerminal {
 #[derive(Debug, Clone)]
 pub(crate) enum CompiledTerminalMatcher {
     Expr(CompiledLexExpr),
-    UnsupportedTerminal {
-        terminal: TerminalId,
-        spelling: String,
-    },
+    UnsupportedTerminal { terminal: TerminalId },
 }
 
 #[derive(Debug, Clone)]
@@ -4508,14 +4505,12 @@ fn compile_terminal_matcher(
             }
             _ => CompiledTerminalMatcher::UnsupportedTerminal {
                 terminal: terminal.id(),
-                spelling: terminal.spelling().to_owned(),
             },
         },
         ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
             let Some(root) = terminal.lexical_root() else {
                 return CompiledTerminalMatcher::UnsupportedTerminal {
                     terminal: terminal.id(),
-                    spelling: terminal.spelling().to_owned(),
                 };
             };
             let (GrammarExpr::Token(content) | GrammarExpr::ImmediateToken(content)) =
@@ -4523,7 +4518,6 @@ fn compile_terminal_matcher(
             else {
                 return CompiledTerminalMatcher::UnsupportedTerminal {
                     terminal: terminal.id(),
-                    spelling: terminal.spelling().to_owned(),
                 };
             };
             CompiledTerminalMatcher::Expr(compile_lex_expr(grammar, *content))
