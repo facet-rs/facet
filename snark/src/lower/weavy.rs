@@ -2381,6 +2381,59 @@ struct RuntimeWeavyLexerScratch {
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_matches: RefCell<Option<PatternSet>>,
+    direct_set_cache: RefCell<HashMap<RuntimeWeavyLexSetCacheKey, RuntimeWeavyDirectSetMatches>>,
+}
+
+impl RuntimeWeavyLexerScratch {
+    fn direct_set_matches(
+        &self,
+        input: &str,
+        mode: parser_ir::LexModeId,
+        mode_program: &WeavyLexModeProgram,
+        byte_position: usize,
+    ) -> RuntimeWeavyDirectSetMatches {
+        let key = RuntimeWeavyLexSetCacheKey {
+            mode,
+            byte_position,
+        };
+        if let Some(matches) = self.direct_set_cache.borrow().get(&key) {
+            return matches.clone();
+        }
+        {
+            let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
+            mode_program.match_direct_literals(input, byte_position, &mut direct_literal_ends);
+        }
+        {
+            let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
+            let mut direct_pattern_matches = self.direct_pattern_matches.borrow_mut();
+            mode_program.match_direct_patterns(
+                input,
+                byte_position,
+                &mut direct_pattern_ends,
+                &mut direct_pattern_matches,
+            );
+        }
+        let matches = RuntimeWeavyDirectSetMatches {
+            literal_ends: self.direct_literal_ends.borrow().clone(),
+            pattern_ends: self.direct_pattern_ends.borrow().clone(),
+        };
+        self.direct_set_cache
+            .borrow_mut()
+            .insert(key, matches.clone());
+        matches
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct RuntimeWeavyLexSetCacheKey {
+    mode: parser_ir::LexModeId,
+    byte_position: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RuntimeWeavyDirectSetMatches {
+    literal_ends: Vec<Option<parser_ir::LexMatch>>,
+    pattern_ends: Vec<Option<parser_ir::LexMatch>>,
 }
 
 #[derive(Clone, Copy)]
@@ -4525,28 +4578,18 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mode_program = self.lexer_program.mode(mode.id())?;
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
-        {
-            let mut direct_literal_ends = self.lexer_scratch.direct_literal_ends.borrow_mut();
-            mode_program.match_direct_literals(self.input, byte_position, &mut direct_literal_ends);
-        }
-        {
-            let mut direct_pattern_ends = self.lexer_scratch.direct_pattern_ends.borrow_mut();
-            let mut direct_pattern_matches = self.lexer_scratch.direct_pattern_matches.borrow_mut();
-            mode_program.match_direct_patterns(
-                self.input,
-                byte_position,
-                &mut direct_pattern_ends,
-                &mut direct_pattern_matches,
-            );
-        }
-        let direct_literal_ends = self.lexer_scratch.direct_literal_ends.borrow();
-        let direct_pattern_ends = self.lexer_scratch.direct_pattern_ends.borrow();
+        let direct_matches = self.lexer_scratch.direct_set_matches(
+            self.input,
+            mode.id(),
+            mode_program,
+            byte_position,
+        );
         for terminal_row in mode_program.terminals() {
             let Some(match_) = self.match_compiled_terminal_with_set(
                 terminal_row,
                 byte_position,
-                &direct_literal_ends,
-                &direct_pattern_ends,
+                &direct_matches.literal_ends,
+                &direct_matches.pattern_ends,
             )?
             else {
                 continue;
@@ -6640,6 +6683,59 @@ mod tests {
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 3)));
+    }
+
+    #[test]
+    fn lexer_scratch_caches_direct_set_matches_by_mode_and_position() {
+        let mut terminals = vec![
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(0),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("ab".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(1),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
+                    crate::lex_match::compile_pattern("[a-z]+", None).into(),
+                )),
+                immediate: false,
+                literal: false,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: Some(0),
+            },
+        ];
+        let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        let mode = WeavyLexModeProgram {
+            terminals,
+            direct_literal_set,
+            direct_pattern_set,
+        };
+        let scratch = RuntimeWeavyLexerScratch::default();
+        let lex_mode = parser_ir::LexModeId::from_index(0);
+
+        let first = scratch.direct_set_matches("abcd", lex_mode, &mode, 0);
+        scratch.direct_literal_ends.borrow_mut().clear();
+        scratch.direct_pattern_ends.borrow_mut().clear();
+        let second = scratch.direct_set_matches("zzzz", lex_mode, &mode, 0);
+
+        assert_eq!(scratch.direct_set_cache.borrow().len(), 1);
+        assert_eq!(
+            first.literal_ends,
+            vec![Some(parser_ir::LexMatch::new(2, 2))]
+        );
+        assert_eq!(
+            first.pattern_ends,
+            vec![Some(parser_ir::LexMatch::new(4, 4))]
+        );
+        assert_eq!(second, first);
     }
 
     #[test]
