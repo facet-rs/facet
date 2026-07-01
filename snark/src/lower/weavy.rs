@@ -8,7 +8,7 @@
 use std::{
     borrow::Cow,
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap},
     error::Error,
     fmt,
     sync::Arc,
@@ -3319,7 +3319,7 @@ fn parse_weavy_with_lexer_program(
         state: parser_ir::ParseStateId::from_index(0),
     });
 
-    let mut branches = VecDeque::from([RuntimeWeavyBranch {
+    let initial_branch = RuntimeWeavyBranch {
         version: parser_ir::StackVersionId::from_index(0),
         stack: vec![RuntimeWeavyStackEntry {
             state: parser_ir::ParseStateId::from_index(0),
@@ -3333,12 +3333,15 @@ fn parse_weavy_with_lexer_program(
         error_cost: 0,
         tree_journal: RuntimeWeavyTreeJournalHead::default(),
         reusable_nodes: Vec::new(),
-    }]);
+    };
     let mut queued_recovery_costs = HashMap::new();
     if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
-        let branch = branches.front().expect("initial branch exists");
-        queued_recovery_costs.insert(RuntimeWeavyBranchKey::from_branch(branch), 0);
+        queued_recovery_costs.insert(RuntimeWeavyBranchKey::from_branch(&initial_branch), 0);
     }
+    let mut branches = BinaryHeap::from([CostOrderedBranch(initial_branch)]);
+    // Lowest error_cost among accepted parses so far. Once the frontier's cheapest
+    // branch exceeds it, no cheaper repair can exist and we stop expanding.
+    let mut min_accepted_cost: Option<u32> = None;
     let mut accepted = Vec::<(
         parser_ir::StackVersionId,
         SexpNode,
@@ -3363,7 +3366,13 @@ fn parse_weavy_with_lexer_program(
     let mut max_live_versions = branches.len();
     let mut stats = RunStats::default();
 
-    while let Some(branch) = branches.pop_front() {
+    while let Some(CostOrderedBranch(branch)) = branches.pop() {
+        // Best-first termination: branches pop cheapest-first, so once we've accepted a
+        // parse at cost C and the next branch already costs more, no cheaper repair
+        // remains — every min-cost parse has been collected.
+        if min_accepted_cost.is_some_and(|best| branch.error_cost > best) {
+            break;
+        }
         if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
             let key = RuntimeWeavyBranchKey::from_branch(&branch);
             if queued_recovery_costs
@@ -3428,6 +3437,8 @@ fn parse_weavy_with_lexer_program(
                         version,
                         reason: parser_ir::BranchRetireReason::Accepted,
                     });
+                    min_accepted_cost =
+                        Some(min_accepted_cost.map_or(error_cost, |best| best.min(error_cost)));
                     accepted.push((version, node, error_cost, tree_events, reusable_nodes));
                 }
                 RuntimeWeavyStepOutcome::Failed { version, error } => {
@@ -3668,6 +3679,30 @@ struct RuntimeWeavyBranch {
     error_cost: u32,
     tree_journal: RuntimeWeavyTreeJournalHead,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
+}
+
+/// Orders branches so a `BinaryHeap` pops the lowest `error_cost` first — best-first
+/// (uniform-cost) recovery search. The cheapest repair completes first, so once a
+/// complete parse is accepted every remaining branch that costs more can be pruned
+/// instead of ground through in FIFO order (which let the live set explode).
+struct CostOrderedBranch(RuntimeWeavyBranch);
+
+impl PartialEq for CostOrderedBranch {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.error_cost == other.0.error_cost
+    }
+}
+impl Eq for CostOrderedBranch {}
+impl PartialOrd for CostOrderedBranch {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for CostOrderedBranch {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Reversed: lower error_cost sorts as "greater" so the max-heap yields it first.
+        other.0.error_cost.cmp(&self.0.error_cost)
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -4241,10 +4276,10 @@ fn enqueue_runtime_weavy_branch(
     recovery: RuntimeWeavyRecoveryMode,
     queued_recovery_costs: &mut HashMap<RuntimeWeavyBranchKey, u32>,
     trace_events: &mut Vec<parser_ir::TraceEvent>,
-    branches: &mut VecDeque<RuntimeWeavyBranch>,
+    branches: &mut BinaryHeap<CostOrderedBranch>,
 ) {
     if recovery == RuntimeWeavyRecoveryMode::Strict {
-        branches.push_back(branch);
+        branches.push(CostOrderedBranch(branch));
         return;
     }
     let key = RuntimeWeavyBranchKey::from_branch(&branch);
@@ -4257,7 +4292,7 @@ fn enqueue_runtime_weavy_branch(
         }
         _ => {
             queued_recovery_costs.insert(key, branch.error_cost);
-            branches.push_back(branch);
+            branches.push(CostOrderedBranch(branch));
         }
     }
 }
