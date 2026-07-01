@@ -9,7 +9,22 @@ plumbing) is out of scope — another agent owns it.
 Static audit only; nothing here has been measured against a live profile run in
 this pass. Ranked by expected impact given call frequency.
 
-## 1. `runtime_weavy_input_point_at` rescans from byte 0 every call — O(n) per call, called ~once per token/reduction → O(n²) total
+## Current Status
+
+- **Resolved:** byte-to-point lookup now uses a per-parse
+  `RuntimeWeavyInputPoints` line-start index instead of rescanning from byte
+  zero for every range.
+- **Resolved:** direct-pattern matching now reuses
+  `RuntimeWeavyStepper::direct_pattern_ends` instead of allocating a fresh
+  `Vec<Option<LexMatch>>` per lex call.
+- **Open:** `RegexSet::matches` still returns a per-call match result. Removing
+  that allocation likely means moving this direct-pattern path to a
+  `regex-automata` API with caller-owned cache/match storage.
+
+The findings below are kept as historical provenance. Resolved entries are not
+current work items.
+
+## 1. [RESOLVED] `runtime_weavy_input_point_at` rescanned from byte 0 every call — O(n) per call, called ~once per token/reduction → O(n²) total
 
 - **File**: `snark/src/lower/weavy.rs:4401-4413`, called from `runtime_weavy_input_ranges` (`weavy.rs:4385-4399`).
 - **Call sites** (all in the lex-adjacent hot path, `weavy.rs`):
@@ -25,7 +40,7 @@ this pass. Ranked by expected impact given call frequency.
   - For reduce/extra-fragment points: store the already-computed `PointBytes` (not just `usize` bytes) on `RuntimeWeavyFragment` when a fragment is created (at shift time, where the point is cheap to get from the cursor above), and reuse those cached points when building the reduced node's `bytes`/`points` instead of re-deriving them from raw byte offsets.
 - **Confidence**: high on the algorithmic complexity/mechanism; medium on present-day real-world weight in the 181KB benchmark specifically (may be masked by the malloc costs today), high on it being worth fixing regardless since the fix is cheap and removes a standing quadratic-time landmine.
 
-## 2. `match_compiled_direct_pattern_set` allocates a fresh `Vec<Option<LexMatch>>` on every `lex()` call
+## 2. [RESOLVED] `match_compiled_direct_pattern_set` allocated a fresh `Vec<Option<LexMatch>>` on every `lex()` call
 
 - **File**: `snark/src/lower/weavy.rs:3287-3306`, specifically `weavy.rs:3295`:
   ```rust
@@ -39,7 +54,7 @@ this pass. Ranked by expected impact given call frequency.
   Either way the Vec's backing allocation is made once (or once per lex-mode width) and reused, not malloc'd per token.
 - **Confidence**: high — the allocation is unconditional whenever a lex mode has a direct-pattern set (which JSON's number/string-body patterns are likely to hit), and the fix is a straightforward buffer-reuse.
 
-## 3. `RegexSet::matches(haystack)` allocates an internal match-set buffer on every `lex()` call
+## 3. [OPEN] `RegexSet::matches(haystack)` allocates an internal match-set buffer on every `lex()` call
 
 - **File**: `snark/src/lower/weavy.rs:3299` inside the same `match_compiled_direct_pattern_set`:
   ```rust
@@ -58,6 +73,9 @@ this pass. Ranked by expected impact given call frequency.
 
 ## Summary (ranked)
 
-1. **`runtime_weavy_input_point_at` full rescan-from-zero, O(n²) total** (`weavy.rs:4401`) — algorithmic, not malloc, but the biggest standing risk as input size grows; fix by maintaining an incremental byte→point cursor instead of rescanning, and caching computed points on fragments instead of re-deriving from raw byte offsets at reduce time.
-2. **`vec![None; ...]` per `lex()` call in `match_compiled_direct_pattern_set`** (`weavy.rs:3295`) — per-token malloc/free churn, same frequency class as the already-found `RuntimeWeavyBranch.clone()`; fix by reusing a scratch buffer across calls.
-3. **`RegexSet::matches()` internal allocation per `lex()` call** (`weavy.rs:3299`) — same per-token frequency as #2; fix needs an API reuse path in the `regex` crate (verify availability before implementing).
+1. **Resolved:** byte-to-point lookup uses `RuntimeWeavyInputPoints`, not a
+   full rescan from byte zero.
+2. **Resolved:** direct-pattern result storage uses
+   `RuntimeWeavyStepper::direct_pattern_ends`, not a per-token allocation.
+3. **Open:** `RegexSet::matches()` still allocates/returns a fresh match result
+   per call; fix needs a reusable-buffer API path, likely via `regex-automata`.

@@ -22,7 +22,24 @@ cheap to compare. `snark/src/lower/weavy.rs` reuses this exact type as the
 *runtime* parser's output tree, rebuilt fresh on every reduce. That reuse is
 the root cause of findings 1–3.
 
-## 1. [CRITICAL, confirmed, O(n²)] `subtree_tree_events` walks the whole journal on every reduce, unconditionally
+## Current Status
+
+- **Resolved:** reusable-node collection is opt-in. From-scratch/report parses
+  no longer build reusable-node payloads or walk subtree events for every
+  reduction.
+- **Resolved:** Weavy parse trees are stored by handle in
+  `RuntimeWeavyTreeStore` child lists. Reductions no longer deep-clone child
+  subtrees into owned `SexpNode` children on every fold.
+- **Resolved:** flat-width and nested-depth JSON ladders are linear after the
+  reuse opt-in and handle-based tree-store fixes.
+- **Still open:** the remaining items are constant-factor or linear work:
+  intern node/alias names, collapse double event storage if it proves hot, and
+  avoid the final one-off tree clone if report shape changes.
+
+The detailed findings below are retained as provenance. Resolved critical
+entries describe the pre-fix state, not current behavior.
+
+## 1. [RESOLVED, was O(n²)] `subtree_tree_events` walked the whole journal on every reduce, unconditionally
 
 `snark/src/lower/weavy.rs:2823-2828`, called from `run_runtime_weavy_action`'s
 `Reduce` arm, for **every** reduction that produces a `RuntimeWeavyFragment::Node`
@@ -72,7 +89,7 @@ never uses.
 - Or, at minimum, make `reusable_nodes` population itself lazy/opt-in (see
   finding 3) so this cost disappears entirely for parses that never edit.
 
-## 2. [CRITICAL, confirmed, O(n·depth)] `into_children` deep-clones the whole child subtree on every fold
+## 2. [RESOLVED, was O(n·depth)] `into_children` deep-cloned the whole child subtree on every fold
 
 `snark/src/lower/weavy.rs:4040-4048`:
 
@@ -123,7 +140,7 @@ which case `Rc` is actually *required* for correctness of a take/move-based
 scheme, not just an optimization — verify with the GLR-machinery agent before
 attempting a move-based rewrite.)
 
-## 3. [HIGH, confirmed] `reusable_nodes` (incremental-reuse bookkeeping) populated unconditionally, on every reduce, even for parses that never edit
+## 3. [RESOLVED] `reusable_nodes` (incremental-reuse bookkeeping) populated unconditionally, on every reduce, even for parses that never edit
 
 `snark/src/lower/weavy.rs:2812-2829` (fresh reduce) and mirrored at
 weavy.rs:2186-2198 (reuse-path) push a `RuntimeWeavyReusableNode` for **every**
@@ -277,22 +294,20 @@ per grammar. Not worth touching unless a profile of grammar *loading itself*
 
 | # | Finding | Asymptotic cost | Confidence |
 |---|---|---|---|
-| 1 | `subtree_tree_events`/`event_refs` walks whole journal per reduce | O(n²) | Confirmed |
-| 2 | `into_children` deep-clones child subtree per fold | O(n·depth) | Confirmed |
-| 3 | `reusable_nodes` populated unconditionally (wraps 1+2) | drives 1+2 | Confirmed |
-| 4 | Node-kind `String::to_owned()` per reduce | O(n) | Confirmed |
-| 5 | Alias-name `String` clone per aliased step | O(aliased steps) | Confirmed |
-| 6 | Double journal+flat `Vec<TreeEvent>` storage | O(n), cheap items | Confirmed |
-| 7 | One extra full-tree clone at accept | O(n), once | Confirmed |
-| 8 | `tree_store` retained as dead weight alongside `tree` | O(n·depth) retained | Confirmed, follows from #2 |
-| 9 | Grammar-prep clones | O(grammar size), once | Confirmed, not hot per-parse |
+| # | Finding | Status |
+|---|---|---|
+| 1 | `subtree_tree_events`/`event_refs` walked the whole journal per reduce | Resolved by opt-in reuse collection |
+| 2 | `into_children` deep-cloned child subtrees per fold | Resolved by handle-based tree storage |
+| 3 | `reusable_nodes` populated unconditionally | Resolved by opt-in reuse collection |
+| 4 | Node-kind `String::to_owned()` per reduce | Open linear constant-factor item |
+| 5 | Alias-name `String` clone per aliased step | Open linear constant-factor item |
+| 6 | Double journal+flat `Vec<TreeEvent>` storage | Open if profile asks for it |
+| 7 | One extra full-tree clone at accept | Open one-off report-shape cleanup |
+| 8 | `tree_store` retained alongside `tree` | Mostly resolved by handle-based tree storage |
+| 9 | Grammar-prep clones | Not hot per-parse |
 
-**Recommended order of attack**: fix 3 first (make reuse bookkeeping opt-in/lazy) —
-it's the smallest, most surgical change and it eliminates 1's O(n²) walk and
-most of 2's clones for any caller that isn't doing incremental edits, which
-almost certainly includes the JSON throughput bench. Then tackle 2 properly
-(indirection through construction, single flatten pass) since it's the one
-whose cost survives even after 3 is fixed (fold-in cloning happens regardless
-of whether reuse bookkeeping exists). 4/5 (interning) are cheap, independent,
-and can land any time. 6/7/8 are cleanup that mostly resolves itself once 2
-is restructured.
+**Remaining order of attack**: measure before touching the linear items. If the
+next profile still points at tree/report materialization, start with node/alias
+name interning (#4/#5). If event storage shows up instead, collapse the
+journal-plus-flat event duplication (#6). The algorithmic width/depth scaling
+issues from #1–#3 are no longer current work items.
