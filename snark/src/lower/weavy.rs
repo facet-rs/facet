@@ -4263,6 +4263,7 @@ fn parse_weavy_with_lexer_program(
     };
     let mut max_live_versions = branches.len();
     let mut stats = RunStats::default();
+    let mut branch_outcomes = Vec::new();
 
     while let Some(CostOrderedBranch(branch)) = branches.pop() {
         // Best-first termination: branches pop cheapest-first, so once we've accepted a
@@ -4308,15 +4309,20 @@ fn parse_weavy_with_lexer_program(
             stats: &mut stats,
             external_scanner_errors: &external_scanner_errors,
         };
-        for outcome in step_runtime_weavy_branch(
+        branch_outcomes.clear();
+        step_runtime_weavy_branch(
             input_ctx,
             branch,
             &mut output,
-            &mut next_version_index,
-            recovery,
-            reuse_index,
-            reuse_collection,
-        ) {
+            RuntimeWeavyBranchStep {
+                next_version_index: &mut next_version_index,
+                recovery,
+                reuse_index,
+                reuse_collection,
+                outcomes: &mut branch_outcomes,
+            },
+        );
+        for outcome in branch_outcomes.drain(..) {
             match outcome {
                 RuntimeWeavyStepOutcome::Branch(branch) => enqueue_runtime_weavy_branch(
                     branch,
@@ -4737,6 +4743,14 @@ enum RuntimeWeavyStepOutcome {
     },
 }
 
+struct RuntimeWeavyBranchStep<'a, 'out> {
+    next_version_index: &'a mut usize,
+    recovery: RuntimeWeavyRecoveryMode,
+    reuse_index: Option<&'a RuntimeWeavyReuseIndex>,
+    reuse_collection: RuntimeWeavyReuseCollection,
+    outcomes: &'out mut Vec<RuntimeWeavyStepOutcome>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeWeavyDispatch {
     state: parser_ir::ParseStateId,
@@ -4749,31 +4763,30 @@ fn step_runtime_weavy_branch(
     input_ctx: RuntimeWeavyInput<'_>,
     branch: RuntimeWeavyBranch,
     output: &mut RuntimeWeavyOutput<'_>,
-    next_version_index: &mut usize,
-    recovery: RuntimeWeavyRecoveryMode,
-    reuse_index: Option<&RuntimeWeavyReuseIndex>,
-    reuse_collection: RuntimeWeavyReuseCollection,
-) -> Vec<RuntimeWeavyStepOutcome> {
+    step: RuntimeWeavyBranchStep<'_, '_>,
+) {
     let source_version = branch.version;
     let state = match branch.stack.last() {
         Some(entry) => entry.state,
         None => {
-            return vec![RuntimeWeavyStepOutcome::Failed {
+            step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
                 version: source_version,
                 error: RuntimeWeavyStepError::EmptyStack,
-            }];
+            });
+            return;
         }
     };
-    if let Some(reuse_index) = reuse_index
+    if let Some(reuse_index) = step.reuse_index
         && let Some(branch) =
             try_reuse_runtime_weavy_node(branch.clone(), reuse_index, input_ctx, output)
     {
-        return vec![RuntimeWeavyStepOutcome::Branch(branch)];
+        step.outcomes.push(RuntimeWeavyStepOutcome::Branch(branch));
+        return;
     }
     let dispatch = match run_runtime_weavy_state_probe(input_ctx, &branch, output) {
         Ok(dispatch) => dispatch,
         Err(error) => {
-            if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
+            if step.recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
                 if let RuntimeWeavyStepError::NoAction {
                     lookahead: parser_ir::LookaheadSymbol::Eof,
                     ..
@@ -4788,7 +4801,8 @@ fn step_runtime_weavy_branch(
                         output.tree_journal,
                     )
                 {
-                    return vec![accepted];
+                    step.outcomes.push(accepted);
+                    return;
                 }
                 if matches!(error, RuntimeWeavyStepError::NoToken { .. })
                     && input_ctx.input[branch.byte_position..].starts_with(['{', '}'])
@@ -4800,7 +4814,8 @@ fn step_runtime_weavy_branch(
                         output.trace_events,
                     )
                 {
-                    return vec![RuntimeWeavyStepOutcome::Branch(branch)];
+                    step.outcomes.push(RuntimeWeavyStepOutcome::Branch(branch));
+                    return;
                 }
                 if matches!(error, RuntimeWeavyStepError::NoToken { .. })
                     && let Some(branch) = recover_runtime_weavy_no_token(
@@ -4813,7 +4828,8 @@ fn step_runtime_weavy_branch(
                         output.tree_journal,
                     )
                 {
-                    return vec![RuntimeWeavyStepOutcome::Branch(branch)];
+                    step.outcomes.push(RuntimeWeavyStepOutcome::Branch(branch));
+                    return;
                 }
                 if let RuntimeWeavyStepError::NoAction { lookahead, .. } = error
                     && let Some(branch) = recover_runtime_weavy_to_action_state(
@@ -4823,13 +4839,15 @@ fn step_runtime_weavy_branch(
                         output.trace_events,
                     )
                 {
-                    return vec![RuntimeWeavyStepOutcome::Branch(branch)];
+                    step.outcomes.push(RuntimeWeavyStepOutcome::Branch(branch));
+                    return;
                 }
             }
-            return vec![RuntimeWeavyStepOutcome::Failed {
+            step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
                 version: source_version,
                 error,
-            }];
+            });
+            return;
         }
     };
 
@@ -4842,7 +4860,7 @@ fn step_runtime_weavy_branch(
     ) {
         Ok(actions) => actions,
         Err(error) => {
-            if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput
+            if step.recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput
                 && let RuntimeWeavyStepError::NoAction {
                     lookahead: parser_ir::LookaheadSymbol::Eof,
                     ..
@@ -4857,20 +4875,22 @@ fn step_runtime_weavy_branch(
                     output.tree_journal,
                 )
             {
-                return vec![accepted];
+                step.outcomes.push(accepted);
+                return;
             }
-            return vec![RuntimeWeavyStepOutcome::Failed {
+            step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
                 version: source_version,
                 error,
-            }];
+            });
+            return;
         }
     };
 
     if actions.len() > 1 {
         let versions = (0..actions.len())
             .map(|_| {
-                let version = parser_ir::StackVersionId::from_index(*next_version_index);
-                *next_version_index += 1;
+                let version = parser_ir::StackVersionId::from_index(*step.next_version_index);
+                *step.next_version_index += 1;
                 version
             })
             .collect::<Vec<_>>();
@@ -4885,33 +4905,29 @@ fn step_runtime_weavy_branch(
             conflict,
             branches: versions.clone(),
         });
-        return actions
-            .iter()
-            .zip(versions)
-            .enumerate()
-            .map(|(action_index, (action, version))| {
-                let mut branch = branch.clone();
-                branch.version = version;
-                run_runtime_weavy_action(
-                    input_ctx,
-                    branch,
-                    RuntimeWeavyAction {
-                        token: dispatch.token,
-                        lookahead: dispatch.lookahead,
-                        state,
-                        entry_index: dispatch.entry_index,
-                        action_index,
-                        action: *action,
-                    },
-                    reuse_collection,
-                    output,
-                )
-            })
-            .collect();
+        for (action_index, (action, version)) in actions.iter().zip(versions).enumerate() {
+            let mut branch = branch.clone();
+            branch.version = version;
+            step.outcomes.push(run_runtime_weavy_action(
+                input_ctx,
+                branch,
+                RuntimeWeavyAction {
+                    token: dispatch.token,
+                    lookahead: dispatch.lookahead,
+                    state,
+                    entry_index: dispatch.entry_index,
+                    action_index,
+                    action: *action,
+                },
+                step.reuse_collection,
+                output,
+            ));
+        }
+        return;
     }
 
     let action = actions[0];
-    vec![run_runtime_weavy_action(
+    step.outcomes.push(run_runtime_weavy_action(
         input_ctx,
         branch,
         RuntimeWeavyAction {
@@ -4922,9 +4938,9 @@ fn step_runtime_weavy_branch(
             action_index: 0,
             action,
         },
-        reuse_collection,
+        step.reuse_collection,
         output,
-    )]
+    ));
 }
 
 fn try_reuse_runtime_weavy_node(
