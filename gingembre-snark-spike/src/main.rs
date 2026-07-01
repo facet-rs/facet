@@ -91,6 +91,14 @@ fn main() {
     // Repro mode: `gingembre-snark-spike <grammar.js> <input>` dumps snark's
     // resolved tree for one grammar + input (for comparing against tree-sitter).
     let args: Vec<String> = env::args().collect();
+    if args.get(1).map(|s| s == "--corpus").unwrap_or(false) {
+        corpus(
+            args.get(2)
+                .map(String::as_str)
+                .unwrap_or("/Users/amos/bearcove/fasterthanli.me/templates"),
+        );
+        return;
+    }
     if let (Some(grammar), Some(input)) = (args.get(1), args.get(2)) {
         repro(grammar, input);
         return;
@@ -145,6 +153,70 @@ fn main() {
         }
     }
     println!("\n{pass} pass / {fail} fail");
+}
+
+/// Corpus mode: parse every *.jinja under `dir` with snark's gingembre grammar and
+/// bucket by clean-parse / no-tree / hard-fail. First-cut GRAMMAR coverage of the real
+/// ftl templates (the render/lowering oracle is a separate, harder pass that needs the
+/// site's data + template loader).
+fn corpus(dir: &str) {
+    let repo = env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .and_then(|p| p.parent().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let grammar_js = repo.join("playgrounds/snark/src/bundled/gingembre/grammar.js");
+    let grammar_json = snark_dsl::emit_with_boa(&grammar_js).expect("emit grammar.js -> json");
+    let raw = RawGrammarJson::from_tree_sitter_json_str(&grammar_json).expect("import json");
+    let validated = ValidatedGrammar::from_raw(&raw).expect("validate");
+    let lexical = LexicalFacts::from_grammar(&validated);
+    let normalized =
+        ParserGrammar::normalize_from_validated(&validated, &lexical).expect("normalize");
+    let parser = normalized
+        .prepare_productions_for_items()
+        .expect("prepare productions");
+    let table = ParseTable::from_grammar(&parser).expect("build parse table");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy plan");
+
+    let mut files = Vec::new();
+    collect_jinja(std::path::Path::new(dir), &mut files);
+    files.sort();
+    let (mut clean, mut notree, mut failed) = (0usize, 0usize, 0usize);
+    for f in &files {
+        let src = std::fs::read_to_string(f).unwrap_or_default();
+        let name = f
+            .strip_prefix(dir)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| f.display().to_string());
+        match parse_prepared_weavy_with_report(&plan, &parser, &table, &src) {
+            Ok(report) => match report.accepted_resolved_tree(&parser, &src) {
+                Some(_) => clean += 1,
+                None => {
+                    println!("~ {name}: parsed, no accepted tree");
+                    notree += 1;
+                }
+            },
+            Err(e) => {
+                let msg = format!("{e:?}");
+                println!("✗ {name} ({} B): {}", src.len(), &msg[..msg.len().min(160)]);
+                failed += 1;
+            }
+        }
+    }
+    println!("\n{clean} clean / {notree} no-tree / {failed} failed   (of {} templates)", files.len());
+}
+
+fn collect_jinja(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_jinja(&path, out);
+        } else if path.extension().is_some_and(|e| e == "jinja") {
+            out.push(path);
+        }
+    }
 }
 
 fn repro(grammar_path: &str, input: &str) {
