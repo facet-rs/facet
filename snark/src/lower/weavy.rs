@@ -1363,6 +1363,7 @@ fn match_regex_automata_leaf(
 #[derive(Clone, Debug)]
 struct WeavyLiteralSet {
     automaton: AhoCorasick,
+    literals: Vec<String>,
     terminal_indices: Vec<usize>,
 }
 
@@ -1390,12 +1391,13 @@ impl WeavyLiteralSet {
             .ok()?;
         Some(Self {
             automaton,
+            literals,
             terminal_indices,
         })
     }
 
     fn len(&self) -> usize {
-        self.terminal_indices.len()
+        self.literals.len()
     }
 
     fn for_each_match(
@@ -1424,6 +1426,7 @@ impl WeavyLiteralSet {
 #[derive(Clone, Debug)]
 struct WeavyDirectPatternSet {
     automaton: AutomataRegex,
+    regex_sources: Vec<String>,
     terminal_indices: Vec<usize>,
 }
 
@@ -1452,11 +1455,12 @@ impl WeavyDirectPatternSet {
         entries.sort_by_key(|(direct_pattern_index, _, _)| *direct_pattern_index);
         let regex_sources = entries
             .iter()
-            .map(|(_, _, source)| source.as_str())
+            .map(|(_, _, source)| source.clone())
             .collect::<Vec<_>>();
+        let regex_source_refs = regex_sources.iter().map(String::as_str).collect::<Vec<_>>();
         let automaton = AutomataRegex::builder()
             .configure(AutomataRegex::config().match_kind(RegexMatchKind::All))
-            .build_many(&regex_sources)
+            .build_many(&regex_source_refs)
             .ok()?;
         let terminal_indices = entries
             .into_iter()
@@ -1464,12 +1468,13 @@ impl WeavyDirectPatternSet {
             .collect();
         Some(Self {
             automaton,
+            regex_sources,
             terminal_indices,
         })
     }
 
     fn len(&self) -> usize {
-        self.terminal_indices.len()
+        self.regex_sources.len()
     }
 
     fn for_each_match(
@@ -6335,6 +6340,14 @@ mod tests {
             },
         ];
         let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
+        let literal_sources = direct_literal_set
+            .as_ref()
+            .unwrap()
+            .literals
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(literal_sources, vec!["a", "ab"]);
         let mode = WeavyLexModeProgram {
             terminals,
             direct_literal_set,
@@ -6377,8 +6390,17 @@ mod tests {
                 direct_pattern_index: Some(1),
             },
         ];
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        let regex_sources = direct_pattern_set
+            .as_ref()
+            .unwrap()
+            .regex_sources
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(regex_sources, vec![r"\A(?:[a-z]+)", r"\A(?:[a-z]{2})"]);
         let mode = WeavyLexModeProgram {
-            direct_pattern_set: WeavyDirectPatternSet::from_terminals(&terminals),
+            direct_pattern_set,
             terminals,
             direct_literal_set: None,
         };
