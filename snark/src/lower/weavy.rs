@@ -923,6 +923,9 @@ pub struct WeavyLexerReadiness {
     pub merged_pattern_set_count: usize,
     /// Pattern terminal rows covered by merged direct-pattern matching.
     pub merged_pattern_terminal_count: usize,
+    /// Merged pattern rows whose accepted end byte still comes from replaying
+    /// the terminal leaf matcher after the merged set reports a candidate.
+    pub merged_pattern_leaf_rematch_terminal_count: usize,
     /// Pattern leaves handled by named Snark matcher ops.
     pub known_pattern_count: usize,
     /// Regex leaves backed by regex-automata and visible to lowering.
@@ -948,6 +951,8 @@ impl WeavyLexerReadiness {
             merged_literal_terminal_count: stats.direct_literal_terminal_count,
             merged_pattern_set_count: stats.direct_pattern_set_count,
             merged_pattern_terminal_count: stats.direct_pattern_terminal_count,
+            merged_pattern_leaf_rematch_terminal_count: stats
+                .direct_pattern_leaf_rematch_terminal_count,
             known_pattern_count: stats.known_pattern_count,
             regex_automata_count: stats.regex_automata_count,
             regex_fallback_count: stats.rust_regex_fallback_count,
@@ -1089,6 +1094,9 @@ pub struct WeavyLexerStats {
     pub direct_pattern_set_count: usize,
     /// Number of terminal rows participating in merged direct-pattern sets.
     pub direct_pattern_terminal_count: usize,
+    /// Direct-pattern rows still replaying the terminal leaf matcher after the
+    /// merged set reports that the row matched.
+    pub direct_pattern_leaf_rematch_terminal_count: usize,
     /// Number of modes with a merged literal string set.
     pub direct_literal_set_count: usize,
     /// Number of terminal rows participating in merged literal string sets.
@@ -1237,6 +1245,7 @@ impl WeavyLexTerminal {
         }
         if self.direct_pattern_index.is_some() {
             stats.direct_pattern_terminal_count += 1;
+            stats.direct_pattern_leaf_rematch_terminal_count += 1;
         }
         self.matcher.add_stats(stats);
     }
@@ -6534,6 +6543,7 @@ mod tests {
         assert_eq!(stats.direct_literal_terminal_count, 1);
         assert_eq!(stats.direct_pattern_set_count, 1);
         assert_eq!(stats.direct_pattern_terminal_count, 1);
+        assert_eq!(stats.direct_pattern_leaf_rematch_terminal_count, 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Seq], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 2);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Choice], 1);
@@ -6587,6 +6597,7 @@ mod tests {
         assert_eq!(readiness.merged_literal_terminal_count, 1);
         assert_eq!(readiness.merged_pattern_set_count, 1);
         assert_eq!(readiness.merged_pattern_terminal_count, 1);
+        assert_eq!(readiness.merged_pattern_leaf_rematch_terminal_count, 1);
         assert_eq!(readiness.known_pattern_count, 1);
         assert_eq!(readiness.regex_automata_count, 2);
         assert_eq!(readiness.regex_fallback_count, 0);
@@ -6961,6 +6972,13 @@ mod tests {
         assert_eq!(analysis.readiness.host_call_barrier_intrinsic_count, 0);
         assert!(analysis.readiness.parser_barrier_descriptors.is_empty());
         assert_eq!(analysis.readiness.lexer.regex_automata_count, 2);
+        assert_eq!(
+            analysis
+                .readiness
+                .lexer
+                .merged_pattern_leaf_rematch_terminal_count,
+            1
+        );
         assert_eq!(analysis.readiness.lexer.regex_fallback_count, 0);
         assert_eq!(analysis.readiness.lexer.rust_regex_fallback_count, 0);
         assert_eq!(
