@@ -796,6 +796,11 @@ pub struct WeavyParsePlanAnalysis {
 pub struct WeavyParsePlanReadiness {
     /// Lexer-side lowering readiness.
     pub lexer: WeavyLexerReadiness,
+    /// Canonical Weavy ops that are already neutral control/memory/aggregate ops.
+    pub neutral_weavy_op_count: usize,
+    /// Snark dialect intrinsics that still need Snark-specific execution,
+    /// Snark-specific JIT stencils, or further lowering into neutral Weavy ops.
+    pub snark_intrinsic_count: usize,
     /// Parser intrinsics still represented as Snark dialect ops.
     pub dialect_op_intrinsic_count: usize,
     /// Parser intrinsics that anchor a Snark-owned lexer graph.
@@ -824,6 +829,12 @@ impl WeavyParsePlanReadiness {
         let barrier_summaries = lowering_barrier_summaries(parser_semantics, &lexer_readiness);
         Self {
             lexer: lexer_readiness,
+            neutral_weavy_op_count: parser
+                .program_stats
+                .total
+                .op_count
+                .saturating_sub(parser.program_stats.total.intrinsic_op_count),
+            snark_intrinsic_count: parser_semantics.intrinsic_count,
             dialect_op_intrinsic_count: parser_semantics
                 .lowering_count(SnarkIntrinsicLowering::DialectOp),
             lexer_graph_intrinsic_count: parser_semantics
@@ -852,6 +863,20 @@ impl WeavyParsePlanReadiness {
     #[must_use]
     pub fn is_fully_visible(&self) -> bool {
         self.is_parser_fully_visible() && self.lexer.is_fully_visible()
+    }
+
+    /// True when the parser/action program no longer contains Snark dialect
+    /// intrinsics and can be run/JITed using only neutral Weavy ops.
+    #[must_use]
+    pub const fn is_neutral_weavy_only(&self) -> bool {
+        self.snark_intrinsic_count == 0
+    }
+
+    /// True when the current plan still needs Snark-specific intrinsic handlers
+    /// or stencils even though those intrinsics may have visible effects.
+    #[must_use]
+    pub const fn needs_snark_stencils(&self) -> bool {
+        self.snark_intrinsic_count > 0
     }
 
     /// Return every parser/action and lexer blocker that still prevents fully-visible lowering.
@@ -7096,6 +7121,8 @@ mod tests {
         assert_eq!(analysis.lexer.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 0);
         assert_eq!(analysis.readiness.opaque_intrinsic_count, 0);
+        assert_eq!(analysis.readiness.neutral_weavy_op_count, 0);
+        assert_eq!(analysis.readiness.snark_intrinsic_count, 1);
         assert_eq!(analysis.readiness.lexer_graph_intrinsic_count, 1);
         assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.sink_op_intrinsic_count, 0);
@@ -7144,6 +7171,34 @@ mod tests {
         );
         assert!(analysis.readiness.is_parser_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
+        assert!(!analysis.readiness.is_neutral_weavy_only());
+        assert!(analysis.readiness.needs_snark_stencils());
+    }
+
+    #[test]
+    fn parse_plan_readiness_distinguishes_neutral_weavy_ops_from_visible_intrinsics() {
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense: DenseSnarkWeavyLowered::new(
+                    vec![WeavyOp::Control(ControlOp::Return)],
+                    vec![],
+                ),
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+            },
+            lexer_program: WeavyLexerProgram { modes: vec![] },
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+        };
+
+        let readiness = plan.analysis().readiness;
+
+        assert_eq!(readiness.neutral_weavy_op_count, 1);
+        assert_eq!(readiness.snark_intrinsic_count, 0);
+        assert!(readiness.is_neutral_weavy_only());
+        assert!(!readiness.needs_snark_stencils());
     }
 
     #[test]
@@ -7190,6 +7245,8 @@ mod tests {
         );
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 1);
         assert_eq!(analysis.readiness.opaque_intrinsic_count, 1);
+        assert_eq!(analysis.readiness.neutral_weavy_op_count, 0);
+        assert_eq!(analysis.readiness.snark_intrinsic_count, 1);
         assert_eq!(analysis.readiness.host_call_barrier_intrinsic_count, 1);
         assert_eq!(analysis.readiness.lexer_graph_intrinsic_count, 0);
         assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
@@ -7215,6 +7272,8 @@ mod tests {
         assert!(analysis.readiness.lexer.is_fully_visible());
         assert!(!analysis.readiness.is_parser_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
+        assert!(!analysis.readiness.is_neutral_weavy_only());
+        assert!(analysis.readiness.needs_snark_stencils());
     }
 
     #[test]
@@ -7251,6 +7310,8 @@ mod tests {
 
         assert_eq!(readiness.barrier_count(), 3);
         assert_eq!(readiness.barrier_instance_count(), 4);
+        assert_eq!(readiness.neutral_weavy_op_count, 0);
+        assert_eq!(readiness.snark_intrinsic_count, 2);
         assert_eq!(
             readiness.barriers(),
             vec![
@@ -7281,6 +7342,8 @@ mod tests {
         assert!(!readiness.is_parser_fully_visible());
         assert!(!readiness.lexer.is_fully_visible());
         assert!(!readiness.is_fully_visible());
+        assert!(!readiness.is_neutral_weavy_only());
+        assert!(readiness.needs_snark_stencils());
     }
 
     #[test]

@@ -215,10 +215,17 @@ fn main() {
     );
     let readiness = &plan_analysis.readiness;
     println!(
-        "  readiness: full {:<5}  parser {:<5}  lexer {:<5}",
+        "  readiness: full {:<5}  parser {:<5}  lexer {:<5}  neutral {:<5}",
         readiness.is_fully_visible(),
         readiness.is_parser_fully_visible(),
-        readiness.lexer.is_fully_visible()
+        readiness.lexer.is_fully_visible(),
+        readiness.is_neutral_weavy_only()
+    );
+    println!(
+        "  weavy op ownership: neutral {:>6}  snark intrinsics {:>6}  stencils needed {:<5}",
+        readiness.neutral_weavy_op_count,
+        readiness.snark_intrinsic_count,
+        readiness.needs_snark_stencils()
     );
     println!(
         "  parser lowering: dialect {:>6}  lexer-graph {:>6}  sinks {:>6}  host barriers {:>6}",
