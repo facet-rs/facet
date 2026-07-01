@@ -6394,7 +6394,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
             }
             trailing_extras.reverse();
         }
-        let mut popped = Vec::new();
+        let mut start_byte = self.stack.last().map(|entry| entry.end_byte).unwrap_or(0);
+        let mut end_byte = start_byte;
+        let mut lookahead_end_byte = end_byte;
+        let mut start_scanner_snapshot = None;
+        let mut saw_fragment = false;
+        let mut field_events = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
             let entry = self
@@ -6405,41 +6410,18 @@ impl<'a> RuntimeWeavyStepper<'a> {
             let Some(fragment) = entry.fragment else {
                 return Err(RuntimeWeavyStepError::EmptyStack);
             };
+            let (fragment_start, fragment_end) = fragment.byte_range();
+            let fragment_lookahead_end = fragment.lookahead_end_byte();
+            let fragment_start_scanner_snapshot = fragment.start_scanner_snapshot();
             if !entry.extra {
                 remaining_children -= 1;
-            }
-            popped.push((entry.extra, fragment));
-        }
-        popped.reverse();
-        let start_byte = popped
-            .first()
-            .map(|(_, fragment)| fragment.byte_range().0)
-            .unwrap_or_else(|| self.stack.last().map(|entry| entry.end_byte).unwrap_or(0));
-        let end_byte = popped
-            .last()
-            .map(|(_, fragment)| fragment.byte_range().1)
-            .unwrap_or(start_byte);
-        let lookahead_end_byte = popped
-            .iter()
-            .map(|(_, fragment)| fragment.lookahead_end_byte())
-            .max()
-            .unwrap_or(end_byte);
-        let start_scanner_snapshot = popped
-            .first()
-            .map(|(_, fragment)| fragment.start_scanner_snapshot())
-            .unwrap_or(None);
-        let mut steps = production_row.steps().iter();
-        let mut structural_index = 0usize;
-        let mut field_events = Vec::new();
-        for (extra, fragment) in popped {
-            let alias_range = fragment.byte_range();
-            let mut step_visible_nodes = fragment.visible_nodes(self.tree_store);
-            let mut field_child = self.tree_store.single_child_node(step_visible_nodes);
-            let mut step_children = fragment.into_children(self.tree_store);
-            if !extra {
-                let Some(step) = steps.next() else {
+                let Some(step) = production_row.steps().get(remaining_children) else {
                     return Err(RuntimeWeavyStepError::EmptyStack);
                 };
+                let alias_range = fragment.byte_range();
+                let mut step_visible_nodes = fragment.visible_nodes(self.tree_store);
+                let mut field_child = self.tree_store.single_child_node(step_visible_nodes);
+                let mut step_children = fragment.into_children(self.tree_store);
                 if let (Some(alias), Some(named)) = (step.alias(), step.alias_named()) {
                     let alias_name = self.parser.aliases()[alias.get() as usize]
                         .value()
@@ -6462,7 +6444,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         node: alias_node,
                         alias,
                         named,
-                        structural_index,
+                        structural_index: remaining_children,
                         bytes,
                         points,
                     });
@@ -6472,15 +6454,29 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     }
                 }
                 if let Some(field) = step.field() {
-                    field_events.push((structural_index, field, field_child));
+                    field_events.push((remaining_children, field, field_child));
                 }
-                structural_index += 1;
+                visible_nodes = self
+                    .tree_store
+                    .concat_children(step_visible_nodes, visible_nodes);
+                children = self.tree_store.concat_children(step_children, children);
+            } else {
+                let step_visible_nodes = fragment.visible_nodes(self.tree_store);
+                let step_children = fragment.into_children(self.tree_store);
+                visible_nodes = self
+                    .tree_store
+                    .concat_children(step_visible_nodes, visible_nodes);
+                children = self.tree_store.concat_children(step_children, children);
             }
-            visible_nodes = self
-                .tree_store
-                .concat_children(visible_nodes, step_visible_nodes);
-            children = self.tree_store.concat_children(children, step_children);
+            start_byte = fragment_start;
+            if !saw_fragment {
+                end_byte = fragment_end;
+                saw_fragment = true;
+            }
+            lookahead_end_byte = lookahead_end_byte.max(fragment_lookahead_end);
+            start_scanner_snapshot = fragment_start_scanner_snapshot;
         }
+        field_events.reverse();
 
         if let Some(public_node) = metadata_row.public_node() {
             let kind = self.parser.public_node_kinds()[public_node.get() as usize]
