@@ -4247,7 +4247,6 @@ pub(crate) struct CompiledLexTerminal {
     pub(crate) literal: bool,
     pub(crate) lexical_precedence: i32,
     pub(crate) implicit_precedence: i32,
-    pub(crate) direct_pattern_index: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -4445,7 +4444,7 @@ pub(crate) fn compile_lex_modes(
         .lexical_modes()
         .iter()
         .map(|mode| {
-            let mut terminals = mode
+            let terminals = mode
                 .terminals()
                 .iter()
                 .map(|terminal| {
@@ -4458,27 +4457,12 @@ pub(crate) fn compile_lex_modes(
                         .clone()
                 })
                 .collect::<Vec<_>>();
-            assign_direct_pattern_indices(&mut terminals);
             CompiledLexMode {
                 terminals,
                 external_count: mode.externals().len(),
             }
         })
         .collect()
-}
-
-fn assign_direct_pattern_indices(terminals: &mut [CompiledLexTerminal]) {
-    let mut set_index = 0usize;
-    for terminal in terminals {
-        let CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(pattern)) = &terminal.matcher
-        else {
-            continue;
-        };
-        if pattern.regex.is_some() {
-            terminal.direct_pattern_index = Some(set_index);
-            set_index += 1;
-        }
-    }
 }
 
 fn compile_lex_terminal(
@@ -4492,7 +4476,6 @@ fn compile_lex_terminal(
         literal: terminal.kind() == ParserTerminalKind::String,
         lexical_precedence: terminal_lexical_completion_precedence(grammar, terminal),
         implicit_precedence: terminal_lexical_implicit_precedence(grammar, terminal),
-        direct_pattern_index: None,
     }
 }
 

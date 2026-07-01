@@ -8,7 +8,6 @@ pub(crate) const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|
 pub(crate) struct CompiledPattern {
     pub(crate) source: String,
     pub(crate) flags: Option<String>,
-    pub(crate) regex: Option<Regex>,
     kind: CompiledPatternKind,
 }
 
@@ -16,7 +15,6 @@ pub(crate) struct CompiledPattern {
 pub(crate) enum CompiledPatternKind {
     Known,
     Regex,
-    Unsupported,
 }
 
 impl CompiledPattern {
@@ -80,21 +78,14 @@ pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPat
         .is_none()
         .then(|| known_pattern_for_source(pattern))
         .flatten();
-    let regex = known
-        .is_none()
-        .then(|| compile_regex_leaf(pattern, flags.as_deref()))
-        .flatten();
     let kind = if known.is_some() {
         CompiledPatternKind::Known
-    } else if regex.is_some() {
-        CompiledPatternKind::Regex
     } else {
-        CompiledPatternKind::Unsupported
+        CompiledPatternKind::Regex
     };
     CompiledPattern {
         source: pattern.to_owned(),
         flags,
-        regex,
         kind,
     }
 }

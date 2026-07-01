@@ -1403,16 +1403,18 @@ impl WeavyLexerCompiler {
 
     fn direct_pattern_set(
         &mut self,
-        terminals: &[WeavyLexTerminal],
+        terminals: &mut [WeavyLexTerminal],
     ) -> Option<WeavyDirectPatternSet> {
         let entries = WeavyDirectPatternSet::entries_from_terminals(terminals);
         if entries.is_empty() {
             return None;
         }
         if let Some(set) = self.direct_pattern_sets.get(&entries) {
+            WeavyDirectPatternSet::assign_terminal_slots(terminals, &entries);
             return Some(set.clone());
         }
         let set = WeavyDirectPatternSet::from_entries(&entries)?;
+        WeavyDirectPatternSet::assign_terminal_slots(terminals, &entries);
         self.direct_pattern_sets.insert(entries, set.clone());
         Some(set)
     }
@@ -1730,7 +1732,7 @@ impl WeavyLexModeProgram {
             .map(|terminal| WeavyLexTerminal::from_compiled(terminal, compiler))
             .collect::<Vec<_>>();
         let direct_literal_set = compiler.literal_set(&mut terminals);
-        let direct_pattern_set = compiler.direct_pattern_set(&terminals);
+        let direct_pattern_set = compiler.direct_pattern_set(&mut terminals);
         Self {
             terminals,
             external_count: compiled.external_count,
@@ -1812,7 +1814,7 @@ impl WeavyLexTerminal {
             lexical_precedence: value.lexical_precedence,
             implicit_precedence: value.implicit_precedence,
             direct_literal_index: None,
-            direct_pattern_index: value.direct_pattern_index,
+            direct_pattern_index: None,
         }
     }
 
@@ -1992,7 +1994,6 @@ impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
                     .map(Self::Regex)
                     .unwrap_or(Self::Unsupported)
             }
-            crate::lex_match::CompiledPatternKind::Unsupported => Self::Unsupported,
         }
     }
 }
@@ -2234,31 +2235,45 @@ struct WeavyDirectPatternSetEntry {
 
 impl WeavyDirectPatternSet {
     #[cfg(test)]
-    fn from_terminals(terminals: &[WeavyLexTerminal]) -> Option<Self> {
+    fn from_terminals(terminals: &mut [WeavyLexTerminal]) -> Option<Self> {
         let entries = Self::entries_from_terminals(terminals);
-        Self::from_entries(&entries)
+        let set = Self::from_entries(&entries)?;
+        Self::assign_terminal_slots(terminals, &entries);
+        Some(set)
     }
 
     fn entries_from_terminals(terminals: &[WeavyLexTerminal]) -> Vec<WeavyDirectPatternSetEntry> {
-        let mut entries = terminals
-            .iter()
-            .enumerate()
-            .filter_map(|(terminal_index, terminal)| {
-                let direct_pattern_index = terminal.direct_pattern_index?;
-                let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher
-                else {
-                    return None;
-                };
-                let regex_source = pattern.regex_source()?.into_owned();
-                Some(WeavyDirectPatternSetEntry {
-                    direct_pattern_index,
-                    terminal_index,
-                    regex_source,
-                })
-            })
-            .collect::<Vec<_>>();
-        entries.sort_by_key(|entry| entry.direct_pattern_index);
+        let mut entries = Vec::new();
+        for (terminal_index, terminal) in terminals.iter().enumerate() {
+            let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher
+            else {
+                continue;
+            };
+            let Some(regex_source) = pattern.regex_source().map(Cow::into_owned) else {
+                continue;
+            };
+            let direct_pattern_index = entries.len();
+            entries.push(WeavyDirectPatternSetEntry {
+                direct_pattern_index,
+                terminal_index,
+                regex_source,
+            });
+        }
         entries
+    }
+
+    fn assign_terminal_slots(
+        terminals: &mut [WeavyLexTerminal],
+        entries: &[WeavyDirectPatternSetEntry],
+    ) {
+        for terminal in terminals.iter_mut() {
+            terminal.direct_pattern_index = None;
+        }
+        for entry in entries {
+            if let Some(terminal) = terminals.get_mut(entry.terminal_index) {
+                terminal.direct_pattern_index = Some(entry.direct_pattern_index);
+            }
+        }
     }
 
     fn from_entries(entries: &[WeavyDirectPatternSetEntry]) -> Option<Self> {
@@ -7734,7 +7749,7 @@ mod tests {
 
     #[test]
     fn direct_pattern_set_reports_all_overlapping_root_matches() {
-        let terminals = vec![
+        let mut terminals = vec![
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(0),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
@@ -7745,7 +7760,7 @@ mod tests {
                 lexical_precedence: 0,
                 implicit_precedence: 0,
                 direct_literal_index: None,
-                direct_pattern_index: Some(0),
+                direct_pattern_index: None,
             },
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(1),
@@ -7757,10 +7772,10 @@ mod tests {
                 lexical_precedence: 0,
                 implicit_precedence: 0,
                 direct_literal_index: None,
-                direct_pattern_index: Some(1),
+                direct_pattern_index: None,
             },
         ];
-        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&mut terminals);
         assert_eq!(direct_pattern_set.as_ref().unwrap().len(), 2);
         let mode = WeavyLexModeProgram {
             direct_pattern_set,
@@ -7791,7 +7806,7 @@ mod tests {
 
     #[test]
     fn direct_pattern_set_reports_graphql_block_string_content_matches() {
-        let terminals = vec![WeavyLexTerminal {
+        let mut terminals = vec![WeavyLexTerminal {
             terminal: parser_ir::TerminalId::from_index(0),
             matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
                 crate::lex_match::compile_pattern("([^\"]|\\n|\"\"?[^\"])*", None).into(),
@@ -7801,9 +7816,9 @@ mod tests {
             lexical_precedence: 0,
             implicit_precedence: 0,
             direct_literal_index: None,
-            direct_pattern_index: Some(0),
+            direct_pattern_index: None,
         }];
-        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&mut terminals);
         assert_eq!(
             direct_pattern_set
                 .as_ref()
@@ -7848,8 +7863,8 @@ mod tests {
     }
 
     #[test]
-    fn direct_pattern_set_uses_original_sparse_pattern_slots() {
-        let terminals = vec![
+    fn direct_pattern_set_assigns_compact_weavy_slots() {
+        let mut terminals = vec![
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(0),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
@@ -7860,7 +7875,7 @@ mod tests {
                 lexical_precedence: 0,
                 implicit_precedence: 0,
                 direct_literal_index: None,
-                direct_pattern_index: Some(2),
+                direct_pattern_index: None,
             },
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(1),
@@ -7872,10 +7887,10 @@ mod tests {
                 lexical_precedence: 0,
                 implicit_precedence: 0,
                 direct_literal_index: None,
-                direct_pattern_index: Some(5),
+                direct_pattern_index: None,
             },
         ];
-        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&mut terminals);
         let mode = WeavyLexModeProgram {
             direct_pattern_set,
             terminals,
@@ -7898,9 +7913,9 @@ mod tests {
             dfa_cache.as_mut(),
         );
 
-        assert_eq!(ends.len(), 6);
-        assert_eq!(ends[2], Some(parser_ir::LexMatch::new(4, 4)));
-        assert_eq!(ends[5], None);
+        assert_eq!(ends.len(), 2);
+        assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
+        assert_eq!(ends[1], None);
     }
 
     #[test]
@@ -7926,11 +7941,11 @@ mod tests {
                 lexical_precedence: 0,
                 implicit_precedence: 0,
                 direct_literal_index: None,
-                direct_pattern_index: Some(0),
+                direct_pattern_index: None,
             },
         ];
         let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
-        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&mut terminals);
         let mode = WeavyLexModeProgram {
             terminals,
             external_count: 0,
@@ -8401,11 +8416,11 @@ mod tests {
                 lexical_precedence: 0,
                 implicit_precedence: 0,
                 direct_literal_index: None,
-                direct_pattern_index: Some(0),
+                direct_pattern_index: None,
             },
         ];
         let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
-        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&mut terminals);
         WeavyLexerProgram {
             modes: vec![WeavyLexModeProgram {
                 terminals,
