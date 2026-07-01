@@ -6614,6 +6614,7 @@ dependencies = [
  "snark",
  "snark-dsl",
  "snark-scanner-host",
+ "web-time",
 ]
 
 [[package]]

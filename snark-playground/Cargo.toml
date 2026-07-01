@@ -13,6 +13,7 @@ facet.workspace = true
 facet-json.workspace = true
 margin.workspace = true
 regex.workspace = true
+web-time = "1"
 snark = { path = "../snark", features = ["tree-sitter-import"] }
 snark-scanner-host = { path = "../snark-scanner-host" }
 

@@ -10,6 +10,6 @@
   "module": "pkg/snark_wasm.js",
   "types": "pkg/snark_wasm.d.ts",
   "scripts": {
-    "build": "cargo build --release --target wasm32-unknown-unknown -p snark-wasm && wasm-bindgen --out-dir pkg --target web ../target/wasm32-unknown-unknown/release/snark_wasm.wasm && rm -f pkg/.gitignore"
+    "build": "cargo build --release --target wasm32-unknown-unknown -p snark-wasm && wasm-bindgen --out-dir pkg --target web ../target/wasm32-unknown-unknown/release/snark_wasm.wasm && wasm-opt -O3 pkg/snark_wasm_bg.wasm -o pkg/snark_wasm_bg.wasm && rm -f pkg/.gitignore"
   }
 }
