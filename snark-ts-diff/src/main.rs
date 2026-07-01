@@ -196,6 +196,16 @@ fn run_ladder(grammar_path: &str, max_objects: u64) {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    if args.get(1).map(|s| s == "gen").unwrap_or(false) {
+        let n: u64 = args
+            .get(2)
+            .and_then(|s| s.parse().ok())
+            .expect("usage: gen <objects> <out-file>");
+        let out = args.get(3).expect("usage: gen <objects> <out-file>");
+        fs::write(out, gen_json(n)).expect("write fixture");
+        return;
+    }
+
     if args.get(1).map(|s| s == "ladder").unwrap_or(false) {
         let grammar_path = args
             .get(2)
