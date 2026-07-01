@@ -106,7 +106,13 @@ const CORPUS: &[(&str, &str, &[&str])] = &[
     ),
     number: ($) => /\d+/,
   }});"#,
-        &["1 + 2 * 3", "1 * 2 + 3", "1 + 2 + 3", "2 ^ 3 ^ 2", "1 + 2 * 3 ^ 4"],
+        &[
+            "1 + 2 * 3",
+            "1 * 2 + 3",
+            "1 + 2 + 3",
+            "2 ^ 3 ^ 2",
+            "1 + 2 * 3 ^ 4",
+        ],
     ),
 ];
 
@@ -245,7 +251,7 @@ fn snark_sexp(grammar_path: &Path, input: &str) -> String {
         Ok(p) => p,
         Err(e) => return format!("PLAN-ERR: {e:?}"),
     };
-    match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, input) {
+    match parse_prepared_weavy_with_report(&plan, &parser, &table, input) {
         Ok(report) => report.tree().to_sexp(),
         Err(e) => format!("PARSE-ERR: {e:?}"),
     }

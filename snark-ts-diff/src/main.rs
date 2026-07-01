@@ -30,7 +30,6 @@ use snark::{
 /// One prepared grammar: everything the parse entrypoint needs, built once so
 /// the timed loop measures only parsing, never grammar preparation.
 struct Prepared {
-    validated: ValidatedGrammar,
     parser: ParserGrammar,
     table: ParseTable,
     plan: WeavyParsePlan,
@@ -47,7 +46,6 @@ fn prepare(grammar_path: &str) -> Prepared {
     let table = ParseTable::from_grammar(&parser).expect("table");
     let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("plan");
     Prepared {
-        validated,
         parser,
         table,
         plan,
@@ -59,7 +57,10 @@ fn prepare(grammar_path: &str) -> Prepared {
 fn run_tablebench(grammar_path: &str, iters: usize) {
     let t = Instant::now();
     let json = snark_dsl::emit_with_boa(Path::new(grammar_path)).expect("emit");
-    println!("emit_with_boa: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    println!(
+        "emit_with_boa: {:.1} ms",
+        t.elapsed().as_secs_f64() * 1000.0
+    );
     let raw = RawGrammarJson::from_tree_sitter_json_str(&json).expect("import");
     let validated = ValidatedGrammar::from_raw(&raw).expect("validate");
     let lexical = LexicalFacts::from_grammar(&validated);
@@ -86,12 +87,11 @@ fn run_tablebench(grammar_path: &str, iters: usize) {
 
 /// Best (min) parse time in ms over `iters` runs, after one warm-up.
 fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
-    let _ = parse_prepared_weavy_with_report(&p.plan, &p.validated, &p.parser, &p.table, input);
+    let _ = parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, input);
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        let _ =
-            parse_prepared_weavy_with_report(&p.plan, &p.validated, &p.parser, &p.table, input);
+        let _ = parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, input);
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     best_ms
@@ -214,7 +214,9 @@ fn run_ladder(grammar_path: &str, max_objects: u64) {
         };
         let ratio = ts_ms.map(|ts| snark_ms / ts).unwrap_or(0.0);
 
-        let ts_ms_s = ts_ms.map(|v| format!("{v:.3}")).unwrap_or_else(|| "-".into());
+        let ts_ms_s = ts_ms
+            .map(|v| format!("{v:.3}"))
+            .unwrap_or_else(|| "-".into());
         println!(
             "{n:>8} {bytes:>10} {snark_ms:>12.3} {snk_x:>7.2} {ts_ms_s:>12} {ts_x:>7.2} {ratio:>10.0}"
         );
@@ -280,9 +282,7 @@ fn main() {
     let iters: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
 
     let p = prepare(grammar_path);
-    if let Err(e) =
-        parse_prepared_weavy_with_report(&p.plan, &p.validated, &p.parser, &p.table, &input)
-    {
+    if let Err(e) = parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, &input) {
         eprintln!("parse failed: {e:?}");
         std::process::exit(1);
     }

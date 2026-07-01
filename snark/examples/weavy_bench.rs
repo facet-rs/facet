@@ -166,24 +166,20 @@ fn main() {
     let strict_fresh_plan_total = mode.runs_strict_fresh().then(|| {
         bench_parse(iters, || {
             let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
-            parse_prepared_weavy_with_report_and_scanner(
-                &plan, &validated, &parser, &table, &input, None,
-            )
+            parse_prepared_weavy_with_report_and_scanner(&plan, &parser, &table, &input, None)
         })
     });
 
     let strict_warm_plan_total = mode.runs_strict_warm().then(|| {
         bench_parse(iters, || {
-            parse_prepared_weavy_with_report_and_scanner(
-                &plan, &validated, &parser, &table, &input, None,
-            )
+            parse_prepared_weavy_with_report_and_scanner(&plan, &parser, &table, &input, None)
         })
     });
 
     let recovering_warm_plan_total = mode.runs_recovering_warm().then(|| {
         bench_parse(iters, || {
             parse_prepared_weavy_recovering_with_report_and_scanner(
-                &plan, &validated, &parser, &table, &input, None,
+                &plan, &parser, &table, &input, None,
             )
         })
     });

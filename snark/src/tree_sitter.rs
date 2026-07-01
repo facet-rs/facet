@@ -1092,7 +1092,6 @@ mod tests {
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
-                &validated,
                 &parser_grammar,
                 &parse_table,
                 &highlight_fixture.source.body.0,
@@ -1432,7 +1431,6 @@ mod tests {
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
-                &validated,
                 &parser_grammar,
                 &parse_table,
                 &selector_cases[5].input,
@@ -1496,7 +1494,6 @@ mod tests {
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
-                &validated,
                 &parser_grammar,
                 &parse_table,
                 &selector_cases[5].input,
@@ -1757,7 +1754,6 @@ mod tests {
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
-                &validated,
                 &parser_grammar,
                 &parse_table,
                 &selector_cases[10].input,
@@ -2054,7 +2050,6 @@ mod tests {
             let weavy_report = unwrap_weavy_report_or_panic(
                 parse_prepared_weavy_with_report_and_scanner(
                     &plan,
-                    &validated,
                     &parser_grammar,
                     &parse_table,
                     &case.input,
@@ -2108,7 +2103,6 @@ mod tests {
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
-                &validated,
                 &parser_grammar,
                 &parse_table,
                 &declaration_cases[7].input,
@@ -2174,7 +2168,6 @@ mod tests {
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
-                &validated,
                 &parser_grammar,
                 &parse_table,
                 &declaration_cases[7].input,
@@ -2231,7 +2224,6 @@ mod tests {
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
-                &validated,
                 &parser_grammar,
                 &parse_table,
                 &declaration_cases[7].input,
@@ -2742,7 +2734,6 @@ mod tests {
         unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
-                validated,
                 parser_grammar,
                 parse_table,
                 input,
@@ -2764,7 +2755,6 @@ mod tests {
         unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
-                validated,
                 parser_grammar,
                 parse_table,
                 input,
