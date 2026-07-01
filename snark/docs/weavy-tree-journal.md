@@ -93,20 +93,21 @@ function returns. It never enters the report.
 `RuntimeWeavySession` retains only `last_report: Option<RuntimeWeavyReport>`, and the
 report holds:
 
-- `tree_events: Vec<TreeEvent>` — the materialized **accepted lineage** (no dead branches), and
-- `reusable_nodes: Vec<RuntimeWeavyReusableNode>` — each carrying its own compact, copied
-  subtree `tree_events: Vec` (byte-shifted by the edit delta on reuse).
+- `tree_events: Vec<TreeEvent>` — the materialized **accepted lineage** (no dead branches),
+- `tree_store: RuntimeWeavyTreeStore` — handle-based accepted nodes/child lists used to
+  avoid reduce-time subtree copies, and
+- `reusable_nodes: Vec<RuntimeWeavyReusableNode>` — populated only when reuse collection is
+  requested, each carrying the compact payload needed for incremental replay.
 
 So nothing speculative survives a parse. **Materialization-at-accept *is* the compaction**;
 the "if it's the full pool, fix is compact-at-accept" branch above does not apply, because
 it already compacts. The only memory held across an edit is the accepted tree, bounded by
 input size — not the speculative garbage. There is no slow session leak.
 
-### Known minor redundancy (not a leak)
+### Reuse payloads are opt-in
 
-Reusable nodes store *copied* `tree_events` per node, so the accepted events are
-materialized in ~2 places (`report.tree_events` + per-node `reusable_nodes[*].tree_events`),
-and reuse clones+shifts them. This is bounded per edit.
-The flagged future optimization is to store a journal slice/range (or regenerate from
-`RuntimeTreeStore`) instead of copying per-node event vectors — worth doing only if a
-heap profile of a long editing session asks for it.
+Reusable nodes still store the compact subtree/event payload needed to replay a subtree
+across an edit, but the parser only builds that payload when the caller asks for
+incremental reuse. From-scratch report parses leave reuse collection disabled, so large
+flat repeats and deep nesting build by tree-store handle and materialize the final
+S-expression once at accept.

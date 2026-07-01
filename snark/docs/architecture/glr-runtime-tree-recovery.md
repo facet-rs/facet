@@ -44,7 +44,7 @@ The current module split already points at the final shape:
 - `scanner`: external scanner host ABI and scanner-state snapshots.
 - `runtime_input`: byte/point edits and included ranges.
 - `corpus`: corpus S-expression parsing and normalization oracle.
-- future runtime modules should be final-shape and narrow:
+- Weavy-side runtime pieces should stay final-shape and narrow:
   `runtime::table`, `runtime::stack`, `runtime::tree`,
   `runtime::recover`, `runtime::incremental`, and
   `runtime::sexp`.

@@ -123,10 +123,9 @@ not exist. Recommended types:
 - `runtime::ReductionCandidate`, `ReductionPath`, `ReducedNodePlan`.
 - `runtime::TreeSelection { error_cost, dynamic_precedence, structural_order }`.
 
-The existing `lower::weavy::{ParseStateId, ProductionId, LexModeId,
-AliasSequenceId, ExternalScannerStateId}` ids are suitable lowering identities,
-but Snark still needs pre-Weavy table/runtime ids and typed data that can be
-interpreted and traced before lowering.
+Snark's parser IR now owns the typed table ids and grammar facts; Weavy consumes
+those facts as the execution carrier rather than mirroring a second native
+runtime.
 
 ## Conflict Handling
 
