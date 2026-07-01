@@ -6439,7 +6439,7 @@ extras (
 "#
     }
 
-    fn authored_gingembre_runtime_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+    fn authored_gingembre_parser_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
         use facet_styx::RenderError;
 
         let source = authored_gingembre_styx();
@@ -6469,7 +6469,7 @@ extras (
         )> = OnceLock::new();
 
         FIXTURE.get_or_init(|| {
-            let (validated, parser, table) = authored_gingembre_runtime_fixture();
+            let (validated, parser, table) = authored_gingembre_parser_fixture();
             let plan =
                 crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
             (validated, parser, table, plan)
@@ -6523,7 +6523,7 @@ extras (
         })
     }
 
-    fn assert_styx_authored_gingembre_runtime(input: &str, expected_sexp: &str) {
+    fn assert_styx_authored_gingembre_parse(input: &str, expected_sexp: &str) {
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
         let report =
             crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
@@ -6643,12 +6643,12 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_interpolation_like_gingembre() {
-        assert_styx_authored_gingembre_runtime("{{ x }}", "(template (interpolation (var_ref)))");
+        assert_styx_authored_gingembre_parse("{{ x }}", "(template (interpolation (var_ref)))");
     }
 
     #[test]
     fn parses_styx_authored_gingembre_trim_interpolation_like_gingembre() {
-        assert_styx_authored_gingembre_runtime("{{- x -}}", "(template (interpolation (var_ref)))");
+        assert_styx_authored_gingembre_parse("{{- x -}}", "(template (interpolation (var_ref)))");
     }
 
     #[test]
@@ -6698,25 +6698,16 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_literals_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
-            "{{ true }}",
-            "(template (interpolation (literal)))",
-        );
-        assert_styx_authored_gingembre_runtime(
-            "{{ none }}",
-            "(template (interpolation (literal)))",
-        );
-        assert_styx_authored_gingembre_runtime("{{ 42 }}", "(template (interpolation (literal)))");
-        assert_styx_authored_gingembre_runtime(
-            "{{ 1.25 }}",
-            "(template (interpolation (literal)))",
-        );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse("{{ true }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse("{{ none }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse("{{ 42 }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse("{{ 1.25 }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse(
             r#"{{ "x" }}"#,
             "(template (interpolation (literal)))",
         );
-        assert_styx_authored_gingembre_runtime("{{ 'x' }}", "(template (interpolation (literal)))");
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse("{{ 'x' }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse(
             r#"{{ "a\"b" }}"#,
             "(template (interpolation (literal)))",
         );
@@ -6738,7 +6729,7 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_field_access_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ user.name }}",
             "(template (interpolation (field_expr (var_ref))))",
         );
@@ -6746,7 +6737,7 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_call_arguments_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet(user.name, suffix) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (field_expr (var_ref))) (arg (var_ref))))))",
         );
@@ -6754,15 +6745,15 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_call_arg_shapes_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet() }}",
             "(template (interpolation (call_expr (var_ref) (arg_list))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet(suffix,) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (var_ref))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet(name=user.name) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (kw_arg (field_expr (var_ref)))))))",
         );
@@ -6770,15 +6761,15 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_index_postfix_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ items[1] }}",
             "(template (interpolation (index_expr (var_ref) (literal))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ items[1].name }}",
             "(template (interpolation (field_expr (index_expr (var_ref) (literal)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ fetch()[0] }}",
             "(template (interpolation (index_expr (call_expr (var_ref) (arg_list)) (literal))))",
         );
@@ -6786,15 +6777,15 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_optional_postfix_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ user? }}",
             "(template (interpolation (optional_expr (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ user?.name }}",
             "(template (interpolation (field_expr (optional_expr (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ fetch()[0]? | default(none) }}",
             "(template (interpolation (filter_expr (optional_expr (index_expr (call_expr (var_ref) (arg_list)) (literal))) (arg_list (arg (literal))))))",
         );
@@ -6802,17 +6793,17 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_compound_primaries_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ (a + b) * c }}",
             "(template (interpolation (binary_expr (paren_expr (binary_expr (var_ref) (var_ref))) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ [1, user.name, none,] }}",
             "(template (interpolation (list_lit (literal) (field_expr (var_ref)) (literal))))",
         );
-        assert_styx_authored_gingembre_runtime("{{ [] }}", "(template (interpolation (list_lit)))");
-        assert_styx_authored_gingembre_runtime("{{ {} }}", "(template (interpolation (dict_lit)))");
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse("{{ [] }}", "(template (interpolation (list_lit)))");
+        assert_styx_authored_gingembre_parse("{{ {} }}", "(template (interpolation (dict_lit)))");
+        assert_styx_authored_gingembre_parse(
             r#"{{ {"name": user.name, "ok": true,} }}"#,
             "(template (interpolation (dict_lit (literal) (field_expr (var_ref)) (literal) (literal))))",
         );
@@ -6820,39 +6811,39 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_binary_precedence_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a + b * c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a * b + c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a + b + c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a - b ~ c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a / b % c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a ** b ** c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a or b and c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a == b + c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a not in xs }}",
             "(template (interpolation (binary_expr (var_ref) (var_ref))))",
         );
@@ -6860,27 +6851,27 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_filters_and_tests_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ name | upper }}",
             "(template (interpolation (filter_expr (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ items | slice(0, 2) }}",
             "(template (interpolation (filter_expr (var_ref) (arg_list (arg (literal)) (arg (literal))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ value | default(fallback) is not none }}",
             "(template (interpolation (test_expr (filter_expr (var_ref) (arg_list (arg (var_ref)))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ value is none or fallback }}",
             "(template (interpolation (binary_expr (test_expr (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a + b is sameas(c) }}",
             "(template (interpolation (test_expr (binary_expr (var_ref) (var_ref)) (arg_list (arg (var_ref))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ name | upper ** power }}",
             "(template (interpolation (binary_expr (filter_expr (var_ref)) (var_ref))))",
         );
@@ -6888,19 +6879,19 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_unary_precedence_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ not a and b }}",
             "(template (interpolation (binary_expr (unary_expr (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ not a == b }}",
             "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a * -b }}",
             "(template (interpolation (binary_expr (var_ref) (unary_expr (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ -a ** b }}",
             "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))",
         );

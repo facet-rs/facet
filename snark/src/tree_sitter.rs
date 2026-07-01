@@ -1098,13 +1098,11 @@ mod tests {
             &parser_grammar,
             &parse_table,
         );
-        let captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &highlight_fixture.source.body.0,
-            );
+        let captures = highlights_query.body.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &highlight_fixture.source.body.0,
+        );
 
         assert_css_highlight_assertions_covered(&assertions, &captures);
         assert!(
@@ -2158,13 +2156,11 @@ mod tests {
             &parser_grammar,
             &parse_table,
         );
-        let weavy_captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &declaration_cases[7].input,
-            );
+        let weavy_captures = highlights_query.body.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &declaration_cases[7].input,
+        );
 
         assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
         assert_important_keyword_capture(&weavy_captures);
@@ -2378,19 +2374,16 @@ mod tests {
 "#
             .to_owned(),
         );
-        let weavy_captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &cases[0].input,
-            );
-        let weavy_field_captures = field_regression_query
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &cases[0].input,
-            );
+        let weavy_captures = highlights_query.body.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &cases[0].input,
+        );
+        let weavy_field_captures = field_regression_query.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &cases[0].input,
+        );
 
         assert_same!(weavy_report.tree(), &cases[0].expected);
         assert_eq!(
@@ -2436,13 +2429,11 @@ mod tests {
             &parse_table,
             &cases[4].input,
         );
-        let weavy_captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &cases[4].input,
-            );
+        let weavy_captures = highlights_query.body.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &cases[4].input,
+        );
 
         assert_same!(weavy_report.tree(), &cases[4].expected);
         assert_eq!(

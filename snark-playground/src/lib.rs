@@ -1223,7 +1223,7 @@ fn highlight_outputs(
     input: &str,
 ) -> Vec<HighlightOutput> {
     query
-        .execute_runtime_highlights_from_tree_events(parser, tree_events, input)
+        .execute_highlights_from_tree_events(parser, tree_events, input)
         .into_iter()
         .map(|capture| {
             let bytes = capture.bytes();
@@ -1324,7 +1324,7 @@ fn injection_outputs(
     input: &str,
 ) -> Vec<InjectionOutput> {
     query
-        .execute_runtime_injections_from_tree_events(parser, tree_events, input)
+        .execute_injections_from_tree_events(parser, tree_events, input)
         .into_iter()
         .flat_map(|region| {
             let language = region.language().to_owned();
@@ -1702,7 +1702,7 @@ fn layer_highlight_outputs(
     segments: &[LayerSegment],
 ) -> Vec<HighlightOutput> {
     query
-        .execute_runtime_highlights_from_tree_events(parser, tree_events, input)
+        .execute_highlights_from_tree_events(parser, tree_events, input)
         .into_iter()
         .flat_map(|capture| {
             let bytes = capture.bytes();
@@ -1883,7 +1883,7 @@ fn run_highlight_tests(
             }
         };
         let accepted_tree_events = report.accepted_tree_events();
-        let captures = query.execute_runtime_highlights_from_tree_events(
+        let captures = query.execute_highlights_from_tree_events(
             &prepared.parser,
             &accepted_tree_events,
             &file.text,
@@ -2681,7 +2681,7 @@ mod tests {
     }
 
     #[test]
-    fn playground_session_reparse_uses_runtime_reuse() {
+    fn playground_session_reparse_uses_weavy_reuse() {
         let files = vec![
             BundleFile {
                 path: "src/grammar.json".to_owned(),
@@ -4317,7 +4317,7 @@ mod tests {
     }
 
     #[test]
-    fn uses_source_matched_css_scanner_for_runtime_parse() {
+    fn uses_source_matched_css_scanner_for_weavy_parse() {
         let files = vec![
             BundleFile {
                 path: "src/grammar.json".to_owned(),
@@ -4907,7 +4907,7 @@ mod tests {
         let mut results = Vec::new();
         for bundle in &bundles {
             let files =
-                vendored_runtime_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
+                vendored_playground_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
             let mut session =
                 PlaygroundSession::prepare_files(files.clone()).unwrap_or_else(|response| {
                     panic!("{} should prepare: {:#?}", bundle.id, response.diagnostics)
@@ -5095,7 +5095,7 @@ mod tests {
         let mut failures = Vec::new();
         for bundle in &bundles {
             let files =
-                vendored_runtime_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
+                vendored_playground_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
             let mut session = match PlaygroundSession::prepare_files(files.clone()) {
                 Ok(session) => session,
                 Err(response) => {
@@ -5155,7 +5155,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../playgrounds/snark/src/bundled");
         let bundles = read_vendored_bundles(&root);
-        let mut session = PlaygroundSession::prepare_files(vendored_runtime_files(
+        let mut session = PlaygroundSession::prepare_files(vendored_playground_files(
             &bundles,
             "gingembre",
             &["html"],
@@ -5360,7 +5360,7 @@ mod tests {
             .collect()
     }
 
-    fn vendored_runtime_files(
+    fn vendored_playground_files(
         bundles: &[VendoredBundle],
         active_id: &str,
         embedded_ids: &[&str],
