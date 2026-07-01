@@ -79,6 +79,14 @@ const SAMPLES: &[(&str, &str)] = &[
 ];
 
 fn main() {
+    // Repro mode: `gingembre-snark-spike <grammar.js> <input>` dumps snark's
+    // resolved tree for one grammar + input (for comparing against tree-sitter).
+    let args: Vec<String> = env::args().collect();
+    if let (Some(grammar), Some(input)) = (args.get(1), args.get(2)) {
+        repro(grammar, input);
+        return;
+    }
+
     let repo = env::var_os("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .and_then(|p| p.parent().map(PathBuf::from))
@@ -129,6 +137,28 @@ fn main() {
         }
     }
     println!("\n{pass} pass / {fail} fail");
+}
+
+fn repro(grammar_path: &str, input: &str) {
+    let grammar_json =
+        snark_dsl::emit_with_boa(std::path::Path::new(grammar_path)).expect("emit");
+    let raw = RawGrammarJson::from_tree_sitter_json_str(&grammar_json).expect("import");
+    let validated = ValidatedGrammar::from_raw(&raw).expect("validate");
+    let lexical = LexicalFacts::from_grammar(&validated);
+    let normalized =
+        ParserGrammar::normalize_from_validated(&validated, &lexical).expect("normalize");
+    let parser = normalized
+        .prepare_productions_for_items()
+        .expect("prepare");
+    let table = ParseTable::from_grammar(&parser).expect("table");
+    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("plan");
+    match parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, input) {
+        Ok(report) => match report.accepted_resolved_tree(&parser, input) {
+            Some(tree) => dump(&tree, 0),
+            None => println!("(no resolved tree)"),
+        },
+        Err(e) => println!("parse error: {e:?}"),
+    }
 }
 
 fn render(ast: Template, src: &str, ctx: &Context) -> Result<String, String> {
