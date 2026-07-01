@@ -2924,6 +2924,13 @@ struct LrTableBuilder<'a> {
     grammar: &'a ParserGrammar,
     productions_by_lhs: Vec<Vec<ProductionId>>,
     first: FirstFacts,
+    /// Dense LR-item indexing: `(prod, dot)` maps to `item_base[prod] + dot`, a single
+    /// `u32` in `0..item_count`. Lets the closure use flat arrays/flags instead of
+    /// hashing `(prod, dot)` tuples. `item_key[dense] == (prod, dot)`, and because the
+    /// mapping is monotonic, dense order *is* `(prod, dot)` order (canonical for dedup).
+    item_base: Vec<u32>,
+    item_key: Vec<(ProductionId, usize)>,
+    item_count: usize,
 }
 
 impl<'a> LrTableBuilder<'a> {
@@ -2952,11 +2959,32 @@ impl<'a> LrTableBuilder<'a> {
             ));
         }
         let first = FirstFacts::new(grammar, item_preparation.graph());
+        let mut item_base = Vec::with_capacity(grammar.productions.len());
+        let mut item_key = Vec::new();
+        let mut count = 0u32;
+        for production in &grammar.productions {
+            item_base.push(count);
+            // dot ranges 0..=steps.len() (a complete item has dot == steps.len()).
+            for dot in 0..=production.steps.len() {
+                item_key.push((production.id, dot));
+            }
+            count += production.steps.len() as u32 + 1;
+        }
+        let item_count = count as usize;
         Ok(Self {
             grammar,
             productions_by_lhs,
             first,
+            item_base,
+            item_key,
+            item_count,
         })
+    }
+
+    /// Dense LR-item index for `(production, dot)`.
+    #[inline]
+    fn dense(&self, production: ProductionId, dot: usize) -> u32 {
+        self.item_base[production.get() as usize] + dot as u32
     }
 
     fn build(&self) -> Result<ParseTable, ParserTableBuildError> {
@@ -2980,19 +3008,21 @@ impl<'a> LrTableBuilder<'a> {
 
     fn item_sets(&self) -> (Vec<ItemSet>, Vec<ItemTransition>) {
         let mut item_sets = Vec::new();
-        let mut item_set_keys = std::collections::HashMap::<u64, Vec<ItemSetId>>::new();
+        let mut item_set_keys = FxHashMap::<u64, Vec<ItemSetId>>::default();
         let mut sigs: Vec<Vec<u64>> = Vec::new();
         let mut pool: Vec<ItemMap> = Vec::new();
         let mut sig_buf: Vec<u64> = Vec::new();
-        let mut keys_buf: Vec<(ProductionId, usize)> = Vec::new();
+        let mut order_buf: Vec<u32> = Vec::new();
         let mut scratch = ClosureScratch::default();
+        scratch.queued = vec![false; self.item_count];
         let interner = &self.first.interner;
         let width = self.lookahead_width();
+        let item_count = self.item_count;
         let mut transitions = Vec::new();
         let mut queue = VecDeque::new();
-        let mut start_items = take_map(&mut pool, width);
+        let mut start_items = take_map(&mut pool, width, item_count);
         for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
-            start_items.insert(*production, 0, &[LookaheadSymbol::Eof], interner);
+            start_items.insert(self.dense(*production, 0), &[LookaheadSymbol::Eof], interner);
         }
         let start_items = self.closure(start_items, &mut scratch);
         let start = push_item_set(
@@ -3001,7 +3031,8 @@ impl<'a> LrTableBuilder<'a> {
             &mut sigs,
             &mut pool,
             &mut sig_buf,
-            &mut keys_buf,
+            &mut order_buf,
+            &self.item_key,
             start_items,
             interner,
             &mut queue,
@@ -3018,7 +3049,8 @@ impl<'a> LrTableBuilder<'a> {
                     &mut sigs,
                     &mut pool,
                     &mut sig_buf,
-                    &mut keys_buf,
+                    &mut order_buf,
+                    &self.item_key,
                     target_items,
                     interner,
                     &mut queue,
@@ -3038,14 +3070,18 @@ impl<'a> LrTableBuilder<'a> {
         // (production, 0), so only those items can grow and get re-queued. All scratch
         // buffers are reused across closures (via the caller's ClosureScratch) so the
         // whole loop is allocation-free after warmup.
-        scratch.queued.clear();
         scratch.worklist.clear();
-        for key in map.rows.keys() {
-            scratch.queued.insert(*key);
-            scratch.worklist.push_back(*key);
+        // `queued` is all-false here (self-clearing across closures). Seed from the
+        // items already in the map.
+        for &dense in &map.present {
+            if !scratch.queued[dense as usize] {
+                scratch.queued[dense as usize] = true;
+                scratch.worklist.push_back(dense);
+            }
         }
-        while let Some((production_id, dot)) = scratch.worklist.pop_front() {
-            scratch.queued.remove(&(production_id, dot));
+        while let Some(dense) = scratch.worklist.pop_front() {
+            scratch.queued[dense as usize] = false;
+            let (production_id, dot) = self.item_key[dense as usize];
             let production = &self.grammar.productions[production_id.get() as usize];
             let Some(step) = production.steps.get(dot) else {
                 continue;
@@ -3062,14 +3098,18 @@ impl<'a> LrTableBuilder<'a> {
             scratch.first.or_from(&self.first.suffix_first[production_index][dot]);
             if self.first.suffix_nullable[production_index][dot] {
                 scratch.fallback.clear();
-                if let Some(current) = map.words_of((production_id, dot)) {
+                if let Some(current) = map.words_of(dense) {
                     scratch.fallback.or_from_slice(current);
                 }
                 scratch.first.or_from(&scratch.fallback);
             }
             for target in &self.productions_by_lhs[nonterminal.get() as usize] {
-                if map.or_into((*target, 0), &scratch.first) && scratch.queued.insert((*target, 0)) {
-                    scratch.worklist.push_back((*target, 0));
+                let target_dense = self.dense(*target, 0);
+                if map.or_into(target_dense, &scratch.first)
+                    && !scratch.queued[target_dense as usize]
+                {
+                    scratch.queued[target_dense as usize] = true;
+                    scratch.worklist.push_back(target_dense);
                 }
             }
         }
@@ -3082,21 +3122,18 @@ impl<'a> LrTableBuilder<'a> {
         pool: &mut Vec<ItemMap>,
     ) -> BTreeMap<ParserSymbol, ItemMap> {
         let width = self.lookahead_width();
+        let item_count = self.item_count;
         let mut grouped = BTreeMap::<ParserSymbol, ItemMap>::new();
         for item in &item_set.items {
             let production = &self.grammar.productions[item.production.get() as usize];
             let Some(step) = production.steps.get(item.dot) else {
                 continue;
             };
+            let dense = self.dense(item.production, item.dot + 1);
             grouped
                 .entry(step.symbol)
-                .or_insert_with(|| take_map(pool, width))
-                .insert(
-                    item.production,
-                    item.dot + 1,
-                    item.lookahead.symbols(),
-                    &self.first.interner,
-                );
+                .or_insert_with(|| take_map(pool, width, item_count))
+                .insert(dense, item.lookahead.symbols(), &self.first.interner);
         }
         grouped
     }
@@ -3357,62 +3394,74 @@ impl LookaheadBitset {
 /// of per item set.
 #[derive(Default)]
 struct ClosureScratch {
-    queued: FxHashSet<(ProductionId, usize)>,
-    worklist: std::collections::VecDeque<(ProductionId, usize)>,
+    /// `queued[dense]` = item is on the worklist. Self-clearing: every set flag is
+    /// cleared when its item is popped, so the whole array is false between closures
+    /// and needs no reset. Sized to the builder's `item_count`.
+    queued: Vec<bool>,
+    worklist: std::collections::VecDeque<u32>,
     fallback: LookaheadBitset,
     first: LookaheadBitset,
 }
 
-/// One LR item set under construction. Every lookahead set is exactly `width` u64
-/// words (the lookahead universe is frozen), so all rows live in a single flat
-/// arena — item `(prod, dot)` at `rows[&key] * width`. No per-item bitset heap
-/// allocation and no rehash-driven realloc in the closure hot loop.
+/// One LR item set under construction, dense-indexed. Every lookahead set is exactly
+/// `width` u64 words (the lookahead universe is frozen), so all rows live in one flat
+/// arena: dense item `d` at `(row_of[d] - 1) * width`. `row_of` (0 = absent) and the
+/// `present` list are keyed by the dense item index — no `(prod, dot)` hashing in the
+/// closure hot loop.
 #[derive(Debug, Clone)]
 struct ItemMap {
     width: usize,
-    rows: FxHashMap<(ProductionId, usize), u32>,
+    row_of: Vec<u32>,
+    present: Vec<u32>,
     words: Vec<u64>,
 }
 
 impl ItemMap {
-    fn new(width: usize) -> Self {
+    fn new(width: usize, item_count: usize) -> Self {
         Self {
             width: width.max(1),
-            rows: FxHashMap::default(),
+            row_of: vec![0; item_count],
+            present: Vec::new(),
             words: Vec::new(),
         }
     }
 
-    /// Byte offset of `key`'s row, appending a zeroed row to the arena if new.
-    fn row_base(&mut self, key: (ProductionId, usize)) -> usize {
-        if let Some(&row) = self.rows.get(&key) {
-            return row as usize * self.width;
+    /// Clear for reuse from the pool, keeping allocations — only touched rows reset.
+    fn reset(&mut self) {
+        for &dense in &self.present {
+            self.row_of[dense as usize] = 0;
+        }
+        self.present.clear();
+        self.words.clear();
+    }
+
+    /// Byte offset of dense item `dense`'s row, appending a zeroed row if new.
+    fn row_base(&mut self, dense: u32) -> usize {
+        let slot = self.row_of[dense as usize];
+        if slot != 0 {
+            return (slot as usize - 1) * self.width;
         }
         let base = self.words.len();
-        let row = (base / self.width) as u32;
         self.words.resize(base + self.width, 0);
-        self.rows.insert(key, row);
+        self.row_of[dense as usize] = (base / self.width) as u32 + 1;
+        self.present.push(dense);
         base
     }
 
-    /// The row words for `key`, if present.
-    fn words_of(&self, key: (ProductionId, usize)) -> Option<&[u64]> {
-        self.rows.get(&key).map(|&row| {
-            let base = row as usize * self.width;
-            &self.words[base..base + self.width]
-        })
+    /// The row words for dense item `dense`, if present.
+    fn words_of(&self, dense: u32) -> Option<&[u64]> {
+        let slot = self.row_of[dense as usize];
+        if slot == 0 {
+            return None;
+        }
+        let base = (slot as usize - 1) * self.width;
+        Some(&self.words[base..base + self.width])
     }
 
     /// Symbol-keyed insert for seeding and goto grouping (not the closure hot loop).
     /// The interner is frozen, so this is a pure lookup + bit set.
-    fn insert(
-        &mut self,
-        production: ProductionId,
-        dot: usize,
-        lookaheads: &[LookaheadSymbol],
-        interner: &LookaheadInterner,
-    ) -> bool {
-        let base = self.row_base((production, dot));
+    fn insert(&mut self, dense: u32, lookaheads: &[LookaheadSymbol], interner: &LookaheadInterner) -> bool {
+        let base = self.row_base(dense);
         let mut changed = false;
         for &symbol in lookaheads {
             let index = interner.index_of(symbol) as usize;
@@ -3427,8 +3476,8 @@ impl ItemMap {
     /// Bitset OR into an item's lookahead set — the LR-closure hot path. `bits` holds
     /// at most `width` words (indices are interned `< universe`). Returns whether the
     /// set grew.
-    fn or_into(&mut self, key: (ProductionId, usize), bits: &LookaheadBitset) -> bool {
-        let base = self.row_base(key);
+    fn or_into(&mut self, dense: u32, bits: &LookaheadBitset) -> bool {
+        let base = self.row_base(dense);
         let mut grew = false;
         for (offset, &incoming) in bits.words.iter().enumerate() {
             let word = base + offset;
@@ -3438,16 +3487,27 @@ impl ItemMap {
         grew
     }
 
-    fn materialize(&self, interner: &LookaheadInterner) -> Vec<LrItem> {
-        // Arena is hash-ordered; sort by (prod, dot) for a canonical, reproducible
-        // item vec. Only genuinely-new states reach here (borrows so the map's
-        // buffers can be recycled afterwards).
-        let mut entries: Vec<_> = self.rows.iter().map(|(&key, &row)| (key, row)).collect();
-        entries.sort_unstable_by_key(|(key, _)| *key);
-        entries
+    /// Present dense indices sorted into `order` — dense order *is* (prod, dot) order,
+    /// so this is the canonical iteration order for both dedup and materialization.
+    fn sorted_present(&self, order: &mut Vec<u32>) {
+        order.clear();
+        order.extend_from_slice(&self.present);
+        order.sort_unstable();
+    }
+
+    fn materialize(
+        &self,
+        item_key: &[(ProductionId, usize)],
+        interner: &LookaheadInterner,
+    ) -> Vec<LrItem> {
+        // Only genuinely-new states reach here (borrows so the map can be recycled).
+        let mut order = Vec::with_capacity(self.present.len());
+        self.sorted_present(&mut order);
+        order
             .into_iter()
-            .map(|((production, dot), row)| {
-                let base = row as usize * self.width;
+            .map(|dense| {
+                let (production, dot) = item_key[dense as usize];
+                let base = (self.row_of[dense as usize] as usize - 1) * self.width;
                 let words = &self.words[base..base + self.width];
                 // Ascending bit index = symbol order (the interner is built sorted),
                 // so the lookahead set materializes already sorted with no sort.
@@ -3470,22 +3530,17 @@ impl ItemMap {
     }
 
     /// Write this item set's dense canonical dedup key into `sig` (cleared first),
-    /// using `keys` as scratch: the sorted (prod, dot) keys plus each item's lookahead
-    /// words, with trailing zero words trimmed so it matches set-equality regardless
-    /// of how a bitset grew. Cheap to hash and compare versus materialized
-    /// `Vec<LrItem>` symbol vecs, and both buffers are reused across item sets.
-    fn write_signature(&self, keys: &mut Vec<(ProductionId, usize)>, sig: &mut Vec<u64>) {
-        keys.clear();
-        keys.extend(self.rows.keys().copied());
-        keys.sort_unstable();
+    /// using `order` as scratch: the sorted dense indices (already (prod, dot) order,
+    /// each uniquely encoding the item) plus each item's lookahead words with trailing
+    /// zero words trimmed. Cheap to hash/compare; both buffers reused across item sets.
+    fn write_signature(&self, order: &mut Vec<u32>, sig: &mut Vec<u64>) {
+        self.sorted_present(order);
         sig.clear();
-        for &key in keys.iter() {
-            let (production, dot) = key;
-            let base = self.rows[&key] as usize * self.width;
+        for &dense in order.iter() {
+            let base = (self.row_of[dense as usize] as usize - 1) * self.width;
             let words = &self.words[base..base + self.width];
             let end = words.iter().rposition(|&w| w != 0).map_or(0, |i| i + 1);
-            sig.push(u64::from(production.get()));
-            sig.push(dot as u64);
+            sig.push(u64::from(dense));
             sig.push(end as u64);
             sig.extend_from_slice(&words[..end]);
         }
@@ -3675,32 +3730,32 @@ fn lookahead_for_step(step: &ProductionStep) -> Option<LookaheadSymbol> {
 }
 
 /// Pull a cleared `ItemMap` from the pool (buffers retained) or make a fresh one.
-fn take_map(pool: &mut Vec<ItemMap>, width: usize) -> ItemMap {
+fn take_map(pool: &mut Vec<ItemMap>, width: usize, item_count: usize) -> ItemMap {
     match pool.pop() {
         Some(mut map) => {
             map.width = width.max(1);
             map
         }
-        None => ItemMap::new(width),
+        None => ItemMap::new(width, item_count),
     }
 }
 
-/// Return a consumed `ItemMap` to the pool, keeping its `rows`/`words` allocations
-/// so the next item set reuses them (no rehash, no arena realloc after warmup).
+/// Return a consumed `ItemMap` to the pool, keeping its allocations so the next item
+/// set reuses them (no realloc after warmup).
 fn recycle_map(pool: &mut Vec<ItemMap>, mut map: ItemMap) {
-    map.rows.clear();
-    map.words.clear();
+    map.reset();
     pool.push(map);
 }
 
 #[allow(clippy::too_many_arguments)]
 fn push_item_set(
     item_sets: &mut Vec<ItemSet>,
-    item_set_index: &mut std::collections::HashMap<u64, Vec<ItemSetId>>,
+    item_set_index: &mut FxHashMap<u64, Vec<ItemSetId>>,
     sigs: &mut Vec<Vec<u64>>,
     pool: &mut Vec<ItemMap>,
     sig: &mut Vec<u64>,
-    keys: &mut Vec<(ProductionId, usize)>,
+    order: &mut Vec<u32>,
+    item_key: &[(ProductionId, usize)],
     map: ItemMap,
     interner: &LookaheadInterner,
     queue: &mut VecDeque<ItemSetId>,
@@ -3712,7 +3767,7 @@ fn push_item_set(
     // states, so building their symbol vecs was pure waste. Only a genuinely-new
     // state pays materialization (and a sig clone); either way the map's buffers go
     // back to the pool and the sig/keys scratch is reused.
-    map.write_signature(keys, sig);
+    map.write_signature(order, sig);
     let hash = hash_signature(sig);
     let bucket = item_set_index.entry(hash).or_default();
     for &existing in bucket.iter() {
@@ -3723,7 +3778,7 @@ fn push_item_set(
     }
     let id = ItemSetId::from_index(item_sets.len());
     bucket.push(id);
-    let items = map.materialize(interner);
+    let items = map.materialize(item_key, interner);
     item_sets.push(ItemSet { id, items });
     sigs.push(sig.clone());
     recycle_map(pool, map);
@@ -3799,7 +3854,6 @@ impl std::hash::BuildHasher for BuildFxHasher {
 }
 
 type FxHashMap<K, V> = std::collections::HashMap<K, V, BuildFxHasher>;
-type FxHashSet<K> = std::collections::HashSet<K, BuildFxHasher>;
 
 fn sorted_lookaheads(mut symbols: Vec<LookaheadSymbol>) -> Vec<LookaheadSymbol> {
     symbols.sort();
