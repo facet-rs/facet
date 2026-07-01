@@ -724,6 +724,8 @@ pub struct WeavyLexerReadiness {
     pub known_pattern_count: usize,
     /// Pattern leaves still delegated to the Rust regex engine.
     pub regex_fallback_count: usize,
+    /// Regex leaves still backed by the Rust regex crate fallback.
+    pub rust_regex_fallback_count: usize,
     /// Pattern leaves unsupported by the current matcher compiler.
     pub unsupported_pattern_count: usize,
     /// Terminal roots still missing a lowered matcher.
@@ -740,7 +742,8 @@ impl WeavyLexerReadiness {
             merged_pattern_set_count: stats.direct_pattern_set_count,
             merged_pattern_terminal_count: stats.direct_pattern_terminal_count,
             known_pattern_count: stats.known_pattern_count,
-            regex_fallback_count: stats.regex_pattern_count,
+            regex_fallback_count: stats.rust_regex_fallback_count,
+            rust_regex_fallback_count: stats.rust_regex_fallback_count,
             unsupported_pattern_count: stats.unsupported_pattern_count,
             unsupported_terminal_count: stats.count(WeavyLexOpKind::UnsupportedTerminal),
             unsupported_symbol_count: stats.count(WeavyLexOpKind::UnsupportedSymbol),
@@ -843,6 +846,8 @@ pub struct WeavyLexerStats {
     pub known_pattern_count: usize,
     /// Number of pattern nodes backed by the Rust regex engine.
     pub regex_pattern_count: usize,
+    /// Number of regex pattern nodes still using the Rust regex fallback engine.
+    pub rust_regex_fallback_count: usize,
     /// Number of pattern nodes unsupported by the current matcher compiler.
     pub unsupported_pattern_count: usize,
     /// Recursive operation counts inside terminal matcher graphs.
@@ -1044,7 +1049,15 @@ impl WeavyLexExpr {
                 stats.record(WeavyLexOpKind::Pattern);
                 match pattern.kind() {
                     WeavyPatternMatcherKind::Known => stats.known_pattern_count += 1,
-                    WeavyPatternMatcherKind::Regex => stats.regex_pattern_count += 1,
+                    WeavyPatternMatcherKind::Regex => {
+                        stats.regex_pattern_count += 1;
+                        match pattern.regex_lowering() {
+                            Some(WeavyRegexLowering::RustRegexFallback) => {
+                                stats.rust_regex_fallback_count += 1;
+                            }
+                            None => {}
+                        }
+                    }
                     WeavyPatternMatcherKind::Unsupported => stats.unsupported_pattern_count += 1,
                 }
             }
@@ -1082,10 +1095,7 @@ enum WeavyPatternMatcher {
         source: String,
         regex_source: Option<String>,
     },
-    Regex {
-        regex: Regex,
-        regex_source: String,
-    },
+    Regex(WeavyRegexLeaf),
     Unsupported,
 }
 
@@ -1106,10 +1116,10 @@ impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
                 regex_source,
             },
             crate::lex_match::CompiledPatternKind::Regex => match (value.regex, regex_source) {
-                (Some(regex), Some(regex_source)) => Self::Regex {
-                    regex,
-                    regex_source,
-                },
+                (Some(regex), Some(regex_source)) => Self::Regex(WeavyRegexLeaf {
+                    source: regex_source,
+                    engine: WeavyRegexEngine::RustRegexFallback(regex),
+                }),
                 _ => Self::Unsupported,
             },
             crate::lex_match::CompiledPatternKind::Unsupported => Self::Unsupported,
@@ -1121,8 +1131,15 @@ impl WeavyPatternMatcher {
     const fn kind(&self) -> WeavyPatternMatcherKind {
         match self {
             Self::Known { .. } => WeavyPatternMatcherKind::Known,
-            Self::Regex { .. } => WeavyPatternMatcherKind::Regex,
+            Self::Regex(_) => WeavyPatternMatcherKind::Regex,
             Self::Unsupported => WeavyPatternMatcherKind::Unsupported,
+        }
+    }
+
+    const fn regex_lowering(&self) -> Option<WeavyRegexLowering> {
+        match self {
+            Self::Regex(leaf) => Some(leaf.lowering()),
+            Self::Known { .. } | Self::Unsupported => None,
         }
     }
 
@@ -1131,9 +1148,7 @@ impl WeavyPatternMatcher {
             Self::Known { source, .. } => {
                 crate::lex_match::match_known_pattern_source(source, input, byte_position)
             }
-            Self::Regex { regex, .. } => {
-                crate::lex_match::match_regex_leaf(regex, input, byte_position)
-            }
+            Self::Regex(leaf) => leaf.match_input(input, byte_position),
             Self::Unsupported => None,
         }
     }
@@ -1141,10 +1156,56 @@ impl WeavyPatternMatcher {
     fn regex_source(&self) -> Option<&str> {
         match self {
             Self::Known { regex_source, .. } => regex_source.as_deref(),
-            Self::Regex { regex_source, .. } => Some(regex_source.as_str()),
+            Self::Regex(leaf) => Some(leaf.source()),
             Self::Unsupported => None,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct WeavyRegexLeaf {
+    source: String,
+    engine: WeavyRegexEngine,
+}
+
+impl WeavyRegexLeaf {
+    fn source(&self) -> &str {
+        self.source.as_str()
+    }
+
+    const fn lowering(&self) -> WeavyRegexLowering {
+        self.engine.lowering()
+    }
+
+    fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
+        self.engine.match_input(input, byte_position)
+    }
+}
+
+#[derive(Clone, Debug)]
+enum WeavyRegexEngine {
+    RustRegexFallback(Regex),
+}
+
+impl WeavyRegexEngine {
+    const fn lowering(&self) -> WeavyRegexLowering {
+        match self {
+            Self::RustRegexFallback(_) => WeavyRegexLowering::RustRegexFallback,
+        }
+    }
+
+    fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
+        match self {
+            Self::RustRegexFallback(regex) => {
+                crate::lex_match::match_regex_leaf(regex, input, byte_position)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WeavyRegexLowering {
+    RustRegexFallback,
 }
 
 #[derive(Clone, Debug)]
@@ -5952,6 +6013,7 @@ mod tests {
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Pattern], 4);
         assert_eq!(stats.known_pattern_count, 1);
         assert_eq!(stats.regex_pattern_count, 2);
+        assert_eq!(stats.rust_regex_fallback_count, 2);
         assert_eq!(stats.unsupported_pattern_count, 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Repeat], 1);
@@ -5972,6 +6034,7 @@ mod tests {
         assert_eq!(readiness.merged_pattern_terminal_count, 1);
         assert_eq!(readiness.known_pattern_count, 1);
         assert_eq!(readiness.regex_fallback_count, 2);
+        assert_eq!(readiness.rust_regex_fallback_count, 2);
         assert_eq!(readiness.unsupported_pattern_count, 1);
         assert_eq!(readiness.unsupported_terminal_count, 1);
         assert_eq!(readiness.unsupported_symbol_count, 0);
@@ -6047,6 +6110,7 @@ mod tests {
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 0);
         assert_eq!(analysis.readiness.opaque_intrinsic_count, 0);
         assert_eq!(analysis.readiness.lexer.regex_fallback_count, 2);
+        assert_eq!(analysis.readiness.lexer.rust_regex_fallback_count, 2);
         assert!(!analysis.readiness.is_fully_visible());
     }
 
