@@ -567,7 +567,8 @@ impl SnarkIntrinsicSemanticStats {
     /// handler, JIT stencil, or further lowering into neutral Weavy ops.
     #[must_use]
     pub fn stencil_summaries(&self) -> Vec<WeavySnarkStencilSummary> {
-        self.descriptor_semantics
+        let mut summaries = self
+            .descriptor_semantics
             .values()
             .map(|semantics| WeavySnarkStencilSummary {
                 descriptor: semantics.descriptor,
@@ -577,7 +578,14 @@ impl SnarkIntrinsicSemanticStats {
                 stencil: semantics.stencil.clone(),
                 count: self.descriptor_count(semantics.descriptor),
             })
-            .collect()
+            .collect::<Vec<_>>();
+        summaries.sort_by(|left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.descriptor.cmp(&right.descriptor))
+        });
+        summaries
     }
 }
 
@@ -8407,7 +8415,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_plan_readiness_prioritizes_stencil_families_by_count() {
+    fn parse_plan_readiness_prioritizes_stencil_summaries_by_count() {
         let lex = SnarkIntrinsic::Lex {
             version: StackVersionId(0),
             mode: LexModeId(0),
@@ -8451,9 +8459,39 @@ mod tests {
             lexer_program: WeavyLexerProgram { modes: vec![] },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
         };
+        let readiness = plan.analysis().readiness;
 
         assert_eq!(
-            plan.analysis().readiness.snark_stencil_family_summaries,
+            readiness.snark_stencil_summaries,
+            vec![
+                WeavySnarkStencilSummary {
+                    descriptor: reduce.descriptor(),
+                    domain: SnarkIntrinsicDomain::Tree,
+                    lowering: SnarkIntrinsicLowering::DialectOp,
+                    effect: reduce.effect(),
+                    stencil: reduce.semantics().stencil,
+                    count: 4,
+                },
+                WeavySnarkStencilSummary {
+                    descriptor: commit.descriptor(),
+                    domain: SnarkIntrinsicDomain::ParserControl,
+                    lowering: SnarkIntrinsicLowering::DialectOp,
+                    effect: commit.effect(),
+                    stencil: commit.semantics().stencil,
+                    count: 3,
+                },
+                WeavySnarkStencilSummary {
+                    descriptor: lex.descriptor(),
+                    domain: SnarkIntrinsicDomain::Lexing,
+                    lowering: SnarkIntrinsicLowering::LexerGraph,
+                    effect: lex.effect(),
+                    stencil: lex.semantics().stencil,
+                    count: 2,
+                },
+            ]
+        );
+        assert_eq!(
+            readiness.snark_stencil_family_summaries,
             vec![
                 WeavySnarkStencilFamilySummary {
                     family: SnarkStencilFamily::TreeBuilder,
