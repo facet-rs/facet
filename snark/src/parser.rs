@@ -2982,26 +2982,36 @@ impl<'a> LrTableBuilder<'a> {
         let mut item_sets = Vec::new();
         let mut item_set_keys = std::collections::HashMap::<u64, Vec<ItemSetId>>::new();
         let mut sigs: Vec<Vec<u64>> = Vec::new();
+        let mut pool: Vec<ItemMap> = Vec::new();
         let interner = &self.first.interner;
+        let width = self.lookahead_width();
         let mut transitions = Vec::new();
         let mut queue = VecDeque::new();
-        let mut start_items = ItemMap::new(self.lookahead_width());
+        let mut start_items = take_map(&mut pool, width);
         for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
             start_items.insert(*production, 0, &[LookaheadSymbol::Eof], interner);
         }
         let start_items = self.closure(start_items);
-        let start =
-            push_item_set(&mut item_sets, &mut item_set_keys, &mut sigs, start_items, interner, &mut queue);
+        let start = push_item_set(
+            &mut item_sets,
+            &mut item_set_keys,
+            &mut sigs,
+            &mut pool,
+            start_items,
+            interner,
+            &mut queue,
+        );
         debug_assert_eq!(start.get(), 0);
 
         while let Some(from) = queue.pop_front() {
-            let grouped = self.group_goto_items(&item_sets[from.get() as usize]);
+            let grouped = self.group_goto_items(&item_sets[from.get() as usize], &mut pool);
             for (symbol, items) in grouped {
                 let target_items = self.closure(items);
                 let to = push_item_set(
                     &mut item_sets,
                     &mut item_set_keys,
                     &mut sigs,
+                    &mut pool,
                     target_items,
                     interner,
                     &mut queue,
@@ -3052,7 +3062,11 @@ impl<'a> LrTableBuilder<'a> {
         map
     }
 
-    fn group_goto_items(&self, item_set: &ItemSet) -> BTreeMap<ParserSymbol, ItemMap> {
+    fn group_goto_items(
+        &self,
+        item_set: &ItemSet,
+        pool: &mut Vec<ItemMap>,
+    ) -> BTreeMap<ParserSymbol, ItemMap> {
         let width = self.lookahead_width();
         let mut grouped = BTreeMap::<ParserSymbol, ItemMap>::new();
         for item in &item_set.items {
@@ -3062,7 +3076,7 @@ impl<'a> LrTableBuilder<'a> {
             };
             grouped
                 .entry(step.symbol)
-                .or_insert_with(|| ItemMap::new(width))
+                .or_insert_with(|| take_map(pool, width))
                 .insert(
                     item.production,
                     item.dot + 1,
@@ -3399,9 +3413,10 @@ impl ItemMap {
         grew
     }
 
-    fn into_items(self, interner: &LookaheadInterner) -> Vec<LrItem> {
+    fn materialize(&self, interner: &LookaheadInterner) -> Vec<LrItem> {
         // Arena is hash-ordered; sort by (prod, dot) for a canonical, reproducible
-        // item vec. Only genuinely-new states reach here.
+        // item vec. Only genuinely-new states reach here (borrows so the map's
+        // buffers can be recycled afterwards).
         let mut entries: Vec<_> = self.rows.iter().map(|(&key, &row)| (key, row)).collect();
         entries.sort_unstable_by_key(|(key, _)| *key);
         entries
@@ -3623,10 +3638,30 @@ fn lookahead_for_step(step: &ProductionStep) -> Option<LookaheadSymbol> {
     }
 }
 
+/// Pull a cleared `ItemMap` from the pool (buffers retained) or make a fresh one.
+fn take_map(pool: &mut Vec<ItemMap>, width: usize) -> ItemMap {
+    match pool.pop() {
+        Some(mut map) => {
+            map.width = width.max(1);
+            map
+        }
+        None => ItemMap::new(width),
+    }
+}
+
+/// Return a consumed `ItemMap` to the pool, keeping its `rows`/`words` allocations
+/// so the next item set reuses them (no rehash, no arena realloc after warmup).
+fn recycle_map(pool: &mut Vec<ItemMap>, mut map: ItemMap) {
+    map.rows.clear();
+    map.words.clear();
+    pool.push(map);
+}
+
 fn push_item_set(
     item_sets: &mut Vec<ItemSet>,
     item_set_index: &mut std::collections::HashMap<u64, Vec<ItemSetId>>,
     sigs: &mut Vec<Vec<u64>>,
+    pool: &mut Vec<ItemMap>,
     map: ItemMap,
     interner: &LookaheadInterner,
     queue: &mut VecDeque<ItemSetId>,
@@ -3635,21 +3670,23 @@ fn push_item_set(
     // the sorted (prod, dot) keys plus their lookahead words — hashed to bucket and
     // compared word-for-word only within a bucket. Crucially we dedup *before*
     // materializing `Vec<LrItem>`: most goto targets are duplicates of existing
-    // states, so building their symbol vecs (into_items) was pure waste. Only a
-    // genuinely-new state pays materialization.
+    // states, so building their symbol vecs was pure waste. Only a genuinely-new
+    // state pays materialization; either way the map's buffers go back to the pool.
     let sig = map.signature();
     let hash = hash_signature(&sig);
     let bucket = item_set_index.entry(hash).or_default();
     for &existing in bucket.iter() {
         if sigs[existing.get() as usize] == sig {
+            recycle_map(pool, map);
             return existing;
         }
     }
     let id = ItemSetId::from_index(item_sets.len());
     bucket.push(id);
-    let items = map.into_items(interner);
+    let items = map.materialize(interner);
     item_sets.push(ItemSet { id, items });
     sigs.push(sig);
+    recycle_map(pool, map);
     queue.push_back(id);
     id
 }
