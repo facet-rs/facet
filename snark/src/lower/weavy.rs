@@ -15,10 +15,10 @@ use std::{
 };
 
 use weavy::{
-    Control, RunError, RunStats, Step,
+    BlockRef, Control, RunError, RunStats, Step,
     ir::{
         ControlOp, EffectContract, EffectResource, IntrinsicDescriptor, IntrinsicOp, WeavyLowered,
-        WeavyOp,
+        WeavyOp, resolve_lowered,
     },
 };
 
@@ -33,8 +33,14 @@ use crate::{
 /// A lowered Snark program carried by canonical Weavy ops.
 pub type SnarkWeavyLowered = WeavyLowered<SnarkBlockId, SnarkIntrinsic>;
 
+/// A dense lowered Snark program ready for hot-path execution.
+pub type DenseSnarkWeavyLowered = weavy::ir::DenseWeavyLowered<SnarkIntrinsic>;
+
 /// One canonical Snark/Weavy operation.
 pub type SnarkWeavyOp = WeavyOp<SnarkBlockId, SnarkIntrinsic>;
+
+/// One dense Snark/Weavy operation.
+pub type DenseSnarkWeavyOp = WeavyOp<BlockRef, SnarkIntrinsic>;
 
 macro_rules! id_type {
     ($name:ident, $doc:literal) => {
@@ -429,6 +435,8 @@ pub fn empty_lowered() -> SnarkWeavyLowered {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeavyParserProgram {
     lowered: SnarkWeavyLowered,
+    dense: DenseSnarkWeavyLowered,
+    block_refs: BTreeMap<SnarkBlockId, BlockRef>,
     state_blocks: Vec<SnarkBlockId>,
     action_blocks: Vec<BTreeMap<parser_ir::LookaheadSymbol, Vec<WeavyParserActionBlock>>>,
 }
@@ -444,11 +452,18 @@ impl WeavyParserProgram {
         &self.state_blocks
     }
 
-    fn state_block(&self, state: parser_ir::ParseStateId) -> Result<SnarkBlockId, WeavyParseError> {
+    fn state_block_symbol(
+        &self,
+        state: parser_ir::ParseStateId,
+    ) -> Result<SnarkBlockId, WeavyParseError> {
         self.state_blocks
             .get(state.get() as usize)
             .copied()
             .ok_or(WeavyParseError::MissingStateBlock { state })
+    }
+
+    fn state_block(&self, state: parser_ir::ParseStateId) -> Result<BlockRef, WeavyParseError> {
+        self.block_ref(self.state_block_symbol(state)?)
     }
 
     fn action_block(
@@ -456,8 +471,9 @@ impl WeavyParserProgram {
         state: parser_ir::ParseStateId,
         lookahead: parser_ir::LookaheadSymbol,
         action: parser_ir::ParseAction,
-    ) -> Result<SnarkBlockId, WeavyParseError> {
-        self.action_blocks
+    ) -> Result<BlockRef, WeavyParseError> {
+        let block = self
+            .action_blocks
             .get(state.get() as usize)
             .and_then(|rows| rows.get(&lookahead))
             .and_then(|blocks| blocks.iter().find(|block| block.action == action))
@@ -466,7 +482,15 @@ impl WeavyParserProgram {
                 state,
                 lookahead,
                 action,
-            })
+            })?;
+        self.block_ref(block)
+    }
+
+    fn block_ref(&self, block: SnarkBlockId) -> Result<BlockRef, WeavyParseError> {
+        self.block_refs
+            .get(&block)
+            .copied()
+            .ok_or(WeavyParseError::MissingDenseBlock { block })
     }
 }
 
@@ -658,6 +682,16 @@ pub enum WeavyParseError {
         /// Missing Snark block.
         block: SnarkBlockId,
     },
+    /// A symbolic Snark block did not have a dense execution ref.
+    MissingDenseBlock {
+        /// Missing Snark block.
+        block: SnarkBlockId,
+    },
+    /// The dense Weavy runner referenced a missing block index.
+    MissingDenseRuntimeBlock {
+        /// Missing dense block index.
+        block: usize,
+    },
     /// Weavy runtime execution reached a multi-action cell.
     UnsupportedConflict {
         /// Parse state containing the conflict.
@@ -790,6 +824,12 @@ impl fmt::Display for WeavyParseError {
                 write!(f, "lexical mode {} is missing", mode.get())
             }
             Self::MissingBlock { block } => write!(f, "Weavy block {} is missing", block.get()),
+            Self::MissingDenseBlock { block } => {
+                write!(f, "dense ref for Weavy block {} is missing", block.get())
+            }
+            Self::MissingDenseRuntimeBlock { block } => {
+                write!(f, "dense Weavy block {block} is missing")
+            }
             Self::UnsupportedConflict {
                 state,
                 lookahead,
@@ -985,8 +1025,16 @@ fn lower_weavy_parser_program(
         }
     }
 
+    let block_refs = lowered.block_refs();
+    let dense = resolve_lowered(lowered.clone()).map_err(|error| match error {
+        weavy::ir::ResolveError::MissingBlock(block) => WeavyParseError::MissingBlock { block },
+        _ => WeavyParseError::UnsupportedCanonicalOp,
+    })?;
+
     Ok(WeavyParserProgram {
         lowered,
+        dense,
+        block_refs,
         state_blocks,
         action_blocks,
     })
@@ -2501,16 +2549,18 @@ fn run_runtime_weavy_action(
 
 fn run_runtime_weavy_block(
     plan: &WeavyParserProgram,
-    block: SnarkBlockId,
+    block: BlockRef,
     stepper: &mut RuntimeWeavyStepper<'_>,
 ) -> Result<RunStats, WeavyParseError> {
     let trampoline = [WeavyOp::Control(ControlOp::CallBlock {
         block,
         base_offset: 0,
     })];
-    match weavy::run_program_with_stats(&trampoline, &plan.lowered.blocks, stepper) {
+    match weavy::run_dense_program_with_stats(&trampoline, &plan.dense.blocks, stepper) {
         Ok(stats) => Ok(stats),
-        Err(RunError::MissingBlock(block)) => Err(WeavyParseError::MissingBlock { block }),
+        Err(RunError::MissingBlock(block)) => Err(WeavyParseError::MissingDenseRuntimeBlock {
+            block: block.index(),
+        }),
         Err(RunError::Step(error)) => Err(error),
     }
 }
@@ -2817,7 +2867,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
     fn step_intrinsic<'program>(
         &mut self,
         intrinsic: &SnarkIntrinsic,
-    ) -> Result<Control<'program, SnarkBlockId, SnarkWeavyOp, SnarkBlockId>, WeavyParseError> {
+    ) -> Result<Control<'program, BlockRef, DenseSnarkWeavyOp, BlockRef>, WeavyParseError> {
         match intrinsic {
             SnarkIntrinsic::Lex { .. } => {
                 let state = self.stack.last().ok_or(WeavyParseError::EmptyStack)?.state;
@@ -3900,14 +3950,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
     }
 }
 
-impl<'program> Step<'program, SnarkBlockId, SnarkWeavyOp> for RuntimeWeavyStepper<'_> {
+impl<'program> Step<'program, BlockRef, DenseSnarkWeavyOp> for RuntimeWeavyStepper<'_> {
     type Error = WeavyParseError;
-    type Continuation = SnarkBlockId;
+    type Continuation = BlockRef;
 
     fn step(
         &mut self,
-        op: &'program SnarkWeavyOp,
-    ) -> Result<Control<'program, SnarkBlockId, SnarkWeavyOp, Self::Continuation>, Self::Error>
+        op: &'program DenseSnarkWeavyOp,
+    ) -> Result<Control<'program, BlockRef, DenseSnarkWeavyOp, Self::Continuation>, Self::Error>
     {
         match op {
             WeavyOp::Control(ControlOp::CallBlock { block, .. }) => Ok(Control::CallBlock(*block)),
@@ -3926,7 +3976,7 @@ impl<'program> Step<'program, SnarkBlockId, SnarkWeavyOp> for RuntimeWeavySteppe
     fn after_return(
         &mut self,
         continuation: Self::Continuation,
-    ) -> Result<Control<'program, SnarkBlockId, SnarkWeavyOp, Self::Continuation>, Self::Error>
+    ) -> Result<Control<'program, BlockRef, DenseSnarkWeavyOp, Self::Continuation>, Self::Error>
     {
         Ok(Control::CallBlock(continuation))
     }
