@@ -341,7 +341,8 @@ fn ast_proof() {
         let expr_node = find_expr(&resolved).expect("no expr under interpolation");
 
         let partial = facet_reflect::Partial::alloc_owned::<PExpr>().expect("alloc");
-        let value: PExpr = build(partial, expr_node, &anns)
+        let mut ops = Vec::new();
+        let value: PExpr = build(partial, expr_node, &anns, &mut ops)
             .expect("build via reflection")
             .build()
             .expect("finalize")
@@ -353,38 +354,106 @@ fn ast_proof() {
     // Oracle: the precedence one must nest right (`*` binds tighter than `+`).
     let report = parse_prepared_weavy_with_report(&plan, &parser, &table, "{{ 1 + 2 * 3 }}").unwrap();
     let resolved = report.accepted_resolved_tree(&parser, "{{ 1 + 2 * 3 }}").unwrap();
+    let mut ops = Vec::new();
     let value: PExpr = build(
         facet_reflect::Partial::alloc_owned::<PExpr>().unwrap(),
         find_expr(&resolved).unwrap(),
         &anns,
+        &mut ops,
     )
     .unwrap()
     .build()
     .unwrap()
     .materialize::<PExpr>()
     .unwrap();
-    assert_eq!(
-        value,
-        PExpr::Binary(Box::new(PBin {
-            left: PExpr::Number(1),
-            op: "+".into(),
-            right: PExpr::Binary(Box::new(PBin {
-                left: PExpr::Number(2),
-                op: "*".into(),
-                right: PExpr::Number(3),
-            })),
-        }))
-    );
+    let expected = PExpr::Binary(Box::new(PBin {
+        left: PExpr::Number(1),
+        op: "+".into(),
+        right: PExpr::Binary(Box::new(PBin {
+            left: PExpr::Number(2),
+            op: "*".into(),
+            right: PExpr::Number(3),
+        })),
+    }));
+    assert_eq!(value, expected);
     println!("✓ generic Shape-driven reflection builder: grammar surface -> nested #[derive(Facet)] AST");
+
+    // Item 3: run the SAME build ops as a Weavy program through the weavy runtime.
+    let via_weavy: PExpr = run_ops_via_weavy(&ops);
+    assert_eq!(via_weavy, expected, "weavy-run ops must reproduce the reflected AST");
+    println!(
+        "✓ item 3: {} build ops emitted as a Weavy program, run through weavy::run -> identical AST",
+        ops.len()
+    );
+}
+
+/// Item 3: the reflection ops as a flat Weavy program. Emitting these (instead of driving
+/// `Partial` directly) is what lets materialization be lowered to the copy-and-patch JIT —
+/// the same substrate as facet-json's `weavy_deser`. Here we run them through weavy's
+/// interpreter (`weavy::run`); the JIT compiles the identical op stream.
+#[derive(Clone, Debug)]
+enum BuildOp {
+    SelectVariant(String),
+    BeginNthField(usize),
+    BeginField(String),
+    BeginSmartPtr,
+    SetI64(i64),
+    SetStr(String),
+    End,
+}
+
+struct AstBuilder<'f> {
+    partial: Option<facet_reflect::Partial<'f, false>>,
+}
+
+impl<'p, 'f> weavy::Step<'p, u32, BuildOp> for AstBuilder<'f> {
+    type Error = facet_reflect::ReflectError;
+    type Continuation = ();
+    fn step(
+        &mut self,
+        op: &'p BuildOp,
+    ) -> Result<weavy::Control<'p, u32, BuildOp, ()>, Self::Error> {
+        let p = self.partial.take().expect("partial present");
+        let p = match op {
+            BuildOp::SelectVariant(v) => p.select_variant_named(v)?,
+            BuildOp::BeginNthField(i) => p.begin_nth_field(*i)?,
+            BuildOp::BeginField(f) => p.begin_field(f)?,
+            BuildOp::BeginSmartPtr => p.begin_smart_ptr()?,
+            BuildOp::SetI64(v) => p.set(*v)?,
+            BuildOp::SetStr(s) => p.set(s.clone())?,
+            BuildOp::End => p.end()?,
+        };
+        self.partial = Some(p);
+        Ok(weavy::Control::Continue)
+    }
+}
+
+/// Run a flat Weavy program of build ops through the weavy runtime, materializing `T`.
+fn run_ops_via_weavy<T: facet::Facet<'static>>(ops: &[BuildOp]) -> T {
+    let mut builder = AstBuilder {
+        partial: Some(facet_reflect::Partial::alloc_owned::<T>().expect("alloc")),
+    };
+    let lowered = weavy::Lowered::<u32, BuildOp>::new(ops.to_vec());
+    weavy::run(&lowered, &mut builder).expect("weavy run");
+    builder
+        .partial
+        .take()
+        .unwrap()
+        .build()
+        .expect("build")
+        .materialize::<T>()
+        .expect("materialize")
 }
 
 /// The one generic builder. Dispatches on the target facet Shape (the type supplies
-/// structure); the tree supplies data; the grammar `Annotations` supply the mapping —
-/// which variant a node is, which child feeds a field. Nothing hardcoded per node kind.
+/// structure); the tree supplies data; the grammar `Annotations` supply the mapping. It
+/// records a flat `BuildOp` program as it goes — that program IS the Weavy IR for the
+/// materialization (see `run_ops_via_weavy`).
 fn build<'f>(
     mut p: facet_reflect::Partial<'f, false>,
     node: &RuntimeResolvedNode,
     anns: &Annotations,
+    ops: &mut Vec<BuildOp>,
 ) -> Result<facet_reflect::Partial<'f, false>, facet_reflect::ReflectError> {
     use facet_core::{Def, Type, UserType};
 
@@ -400,8 +469,10 @@ fn build<'f>(
 
     // Smart pointer (Box<...>): step through it, build the pointee, pop back.
     if matches!(p.shape().def, Def::Pointer(_)) {
+        ops.push(BuildOp::BeginSmartPtr);
         p = p.begin_smart_ptr()?;
-        p = build(p, node, anns)?;
+        p = build(p, node, anns, ops)?;
+        ops.push(BuildOp::End);
         return p.end();
     }
     match p.shape().ty {
@@ -410,9 +481,12 @@ fn build<'f>(
                 .get(node.kind())
                 .and_then(|a| a.as_variant.as_deref())
                 .unwrap_or_else(|| panic!("no `as` variant annotation for node {:?}", node.kind()));
+            ops.push(BuildOp::SelectVariant(variant.to_string()));
             p = p.select_variant_named(variant)?;
+            ops.push(BuildOp::BeginNthField(0));
             p = p.begin_nth_field(0)?; // newtype variant payload
-            p = build(p, node, anns)?;
+            p = build(p, node, anns, ops)?;
+            ops.push(BuildOp::End);
             p = p.end()?;
         }
         Type::User(UserType::Struct(st)) => {
@@ -424,8 +498,10 @@ fn build<'f>(
                     panic!("no field mapping for {}.{}", node.kind(), field.name)
                 });
                 let child = select_child(node, &field_ann.from);
+                ops.push(BuildOp::BeginField(field.name.to_string()));
                 p = p.begin_field(field.name)?;
-                p = build(p, child, anns)?;
+                p = build(p, child, anns, ops)?;
+                ops.push(BuildOp::End);
                 p = p.end()?;
             }
         }
@@ -433,8 +509,11 @@ fn build<'f>(
             // Scalar leaf: set from the node's text per the target scalar type.
             let text = leaf_text(node).unwrap_or_default();
             if p.shape().is_type::<i64>() {
-                p = p.set(text.trim().parse::<i64>().unwrap_or(0))?;
+                let v = text.trim().parse::<i64>().unwrap_or(0);
+                ops.push(BuildOp::SetI64(v));
+                p = p.set(v)?;
             } else if p.shape().is_type::<String>() {
+                ops.push(BuildOp::SetStr(text.clone()));
                 p = p.set(text)?;
             } else {
                 panic!("unsupported scalar shape {}", p.shape());
