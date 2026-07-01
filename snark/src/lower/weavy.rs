@@ -964,6 +964,52 @@ pub fn parse_reduced_with_report(
     parse_reduced_with_report_and_scanner(plan, grammar, parser, table, input, None)
 }
 
+#[derive(Clone, Copy)]
+struct ReducedWeavyInput<'a> {
+    plan: &'a ReducedWeavyPlan,
+    grammar: &'a ValidatedGrammar,
+    parser: &'a parser_ir::ParserGrammar,
+    table: &'a parser_ir::ParseTable,
+    input: &'a str,
+    external_scanner: Option<&'a dyn ReducedExternalScanner>,
+}
+
+#[derive(Clone, Copy)]
+struct RuntimeWeavyInput<'a> {
+    plan: &'a ReducedWeavyPlan,
+    compiled_lex_modes: &'a [parser_ir::CompiledLexMode],
+    grammar: &'a ValidatedGrammar,
+    parser: &'a parser_ir::ParserGrammar,
+    table: &'a parser_ir::ParseTable,
+    input: &'a str,
+    external_scanner: Option<&'a dyn ReducedExternalScanner>,
+}
+
+struct RuntimeWeavyOutput<'a> {
+    tree_store: &'a mut RuntimeWeavyTreeStore,
+    trace_events: &'a mut Vec<parser_ir::TraceEvent>,
+    tree_events: &'a mut Vec<parser_ir::TreeEvent>,
+    tree_journal: &'a mut RuntimeWeavyTreeJournal,
+    next_lookahead_index: &'a mut usize,
+    stats: &'a mut RunStats,
+}
+
+struct RuntimeWeavyStepperInput<'a> {
+    input: RuntimeWeavyInput<'a>,
+    tree_store: &'a mut RuntimeWeavyTreeStore,
+    trace_events: &'a mut Vec<parser_ir::TraceEvent>,
+    tree_events: &'a mut Vec<parser_ir::TreeEvent>,
+    tree_journal: &'a mut RuntimeWeavyTreeJournal,
+}
+
+#[derive(Clone, Copy)]
+struct RuntimeWeavyAction {
+    token: ReducedWeavyToken,
+    lookahead: parser_ir::LookaheadTokenId,
+    state: parser_ir::ParseStateId,
+    action: parser_ir::ParseAction,
+}
+
 /// Execute a reduced parser plan through Weavy with a reduced external scanner host.
 pub fn parse_reduced_with_report_and_scanner(
     plan: &ReducedWeavyPlan,
@@ -978,6 +1024,14 @@ pub fn parse_reduced_with_report_and_scanner(
             stage: parser.stage(),
         });
     }
+    let input_ctx = ReducedWeavyInput {
+        plan,
+        grammar,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
     let mut branches = VecDeque::from([ReducedWeavyBranch {
         id: parser_ir::ReducedBranchId::from_index(0),
         stack: vec![ReducedWeavyStackEntry {
@@ -1009,12 +1063,7 @@ pub fn parse_reduced_with_report_and_scanner(
         }
 
         for outcome in step_reduced_weavy_branch(
-            plan,
-            grammar,
-            parser,
-            table,
-            input,
-            external_scanner,
+            input_ctx,
             branch,
             &mut conflict_steps,
             &mut branch_parents,
@@ -1184,13 +1233,15 @@ pub fn parse_prepared_runtime_with_report_and_scanner(
     external_scanner: Option<&dyn ReducedExternalScanner>,
 ) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
     parse_runtime_with_compiled_lex_modes(
-        &plan.reduced,
-        &plan.compiled_lex_modes,
-        grammar,
-        parser,
-        table,
-        input,
-        external_scanner,
+        RuntimeWeavyInput {
+            plan: &plan.reduced,
+            compiled_lex_modes: &plan.compiled_lex_modes,
+            grammar,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
         RuntimeWeavyRecoveryMode::Strict,
         None,
     )
@@ -1206,13 +1257,15 @@ pub fn parse_prepared_runtime_recovering_with_report_and_scanner(
     external_scanner: Option<&dyn ReducedExternalScanner>,
 ) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
     parse_runtime_with_compiled_lex_modes(
-        &plan.reduced,
-        &plan.compiled_lex_modes,
-        grammar,
-        parser,
-        table,
-        input,
-        external_scanner,
+        RuntimeWeavyInput {
+            plan: &plan.reduced,
+            compiled_lex_modes: &plan.compiled_lex_modes,
+            grammar,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
     )
@@ -1229,13 +1282,15 @@ pub fn parse_runtime_with_report_and_scanner(
 ) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
     let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
     parse_runtime_with_compiled_lex_modes(
-        plan,
-        &compiled_lex_modes,
-        grammar,
-        parser,
-        table,
-        input,
-        external_scanner,
+        RuntimeWeavyInput {
+            plan,
+            compiled_lex_modes: &compiled_lex_modes,
+            grammar,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
         RuntimeWeavyRecoveryMode::Strict,
         None,
     )
@@ -1252,13 +1307,15 @@ pub fn parse_runtime_recovering_with_report_and_scanner(
 ) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
     let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
     parse_runtime_with_compiled_lex_modes(
-        plan,
-        &compiled_lex_modes,
-        grammar,
-        parser,
-        table,
-        input,
-        external_scanner,
+        RuntimeWeavyInput {
+            plan,
+            compiled_lex_modes: &compiled_lex_modes,
+            grammar,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
     )
@@ -1449,13 +1506,15 @@ pub fn reparse_prepared_runtime_with_report_and_scanner(
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
     parse_runtime_with_compiled_lex_modes(
-        &plan.reduced,
-        &plan.compiled_lex_modes,
-        grammar,
-        parser,
-        table,
-        new_input,
-        external_scanner,
+        RuntimeWeavyInput {
+            plan: &plan.reduced,
+            compiled_lex_modes: &plan.compiled_lex_modes,
+            grammar,
+            parser,
+            table,
+            input: new_input,
+            external_scanner,
+        },
         RuntimeWeavyRecoveryMode::Strict,
         Some(&reuse_index),
     )
@@ -1477,13 +1536,15 @@ pub fn reparse_prepared_runtime_recovering_with_report_and_scanner(
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
     parse_runtime_with_compiled_lex_modes(
-        &plan.reduced,
-        &plan.compiled_lex_modes,
-        grammar,
-        parser,
-        table,
-        new_input,
-        external_scanner,
+        RuntimeWeavyInput {
+            plan: &plan.reduced,
+            compiled_lex_modes: &plan.compiled_lex_modes,
+            grammar,
+            parser,
+            table,
+            input: new_input,
+            external_scanner,
+        },
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         Some(&reuse_index),
     )
@@ -1757,19 +1818,13 @@ fn runtime_weavy_shift_tree_event_bytes(
 }
 
 fn parse_runtime_with_compiled_lex_modes(
-    plan: &ReducedWeavyPlan,
-    compiled_lex_modes: &[parser_ir::CompiledLexMode],
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    input_ctx: RuntimeWeavyInput<'_>,
     recovery: RuntimeWeavyRecoveryMode,
     reuse_index: Option<&RuntimeWeavyReuseIndex>,
 ) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
-    if parser.stage() != parser_ir::ParserGenerationStage::Productions {
+    if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(ReducedWeavyError::WrongStage {
-            stage: parser.stage(),
+            stage: input_ctx.parser.stage(),
         });
     }
 
@@ -1819,9 +1874,11 @@ fn parse_runtime_with_compiled_lex_modes(
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
     let step_limit = match recovery {
-        RuntimeWeavyRecoveryMode::Strict => reduced_weavy_step_limit(table, input),
+        RuntimeWeavyRecoveryMode::Strict => {
+            reduced_weavy_step_limit(input_ctx.table, input_ctx.input)
+        }
         RuntimeWeavyRecoveryMode::SkipInvalidInput => {
-            reduced_weavy_recovery_step_limit(table, input)
+            reduced_weavy_recovery_step_limit(input_ctx.table, input_ctx.input)
         }
     };
     let mut max_live_versions = branches.len();
@@ -1854,22 +1911,19 @@ fn parse_runtime_with_compiled_lex_modes(
             return Err(ReducedWeavyError::BranchStepLimit { limit: step_limit });
         }
 
+        let mut output = RuntimeWeavyOutput {
+            tree_store: &mut tree_store,
+            trace_events: &mut trace_events,
+            tree_events: &mut tree_events,
+            tree_journal: &mut tree_journal,
+            next_lookahead_index: &mut next_lookahead_index,
+            stats: &mut stats,
+        };
         for outcome in step_runtime_weavy_branch(
-            plan,
-            grammar,
-            parser,
-            table,
-            compiled_lex_modes,
-            input,
-            external_scanner,
+            input_ctx,
             branch,
-            &mut tree_store,
-            &mut trace_events,
-            &mut tree_events,
-            &mut tree_journal,
+            &mut output,
             &mut next_version_index,
-            &mut next_lookahead_index,
-            &mut stats,
             recovery,
             reuse_index,
         ) {
@@ -2046,12 +2100,7 @@ impl RuntimeWeavyReport {
 }
 
 fn step_reduced_weavy_branch(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    input_ctx: ReducedWeavyInput<'_>,
     branch: ReducedWeavyBranch,
     conflict_steps: &mut Vec<parser_ir::ReducedConflictStep>,
     branch_parents: &mut Vec<parser_ir::ReducedBranchParent>,
@@ -2068,16 +2117,7 @@ fn step_reduced_weavy_branch(
             }];
         }
     };
-    let dispatch = match run_reduced_weavy_state_probe(
-        plan,
-        grammar,
-        parser,
-        table,
-        input,
-        external_scanner,
-        branch.clone(),
-        stats,
-    ) {
+    let dispatch = match run_reduced_weavy_state_probe(input_ctx, branch.clone(), stats) {
         Ok(dispatch) => dispatch,
         Err(error) => {
             return vec![ReducedWeavyStepOutcome::Failed {
@@ -2102,12 +2142,7 @@ fn step_reduced_weavy_branch(
             });
         }
         let outcome = run_reduced_weavy_action(
-            plan,
-            grammar,
-            parser,
-            table,
-            input,
-            external_scanner,
+            input_ctx,
             action_branch,
             dispatch.token,
             state,
@@ -2148,12 +2183,7 @@ fn step_reduced_weavy_branch(
 }
 
 fn run_reduced_weavy_state_probe(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    input_ctx: ReducedWeavyInput<'_>,
     branch: ReducedWeavyBranch,
     stats: &mut RunStats,
 ) -> Result<ReducedWeavyDispatch, ReducedWeavyError> {
@@ -2162,18 +2192,10 @@ fn run_reduced_weavy_state_probe(
         .last()
         .ok_or(ReducedWeavyError::EmptyStack)?
         .state;
-    let block = plan.state_block(state)?;
-    let mut stepper = ReducedWeavyStepper::from_branch(
-        plan,
-        grammar,
-        parser,
-        table,
-        input,
-        external_scanner,
-        branch,
-        ReducedWeavyMode::ProbeState,
-    );
-    let run_stats = run_reduced_weavy_block(plan, block, &mut stepper)?;
+    let block = input_ctx.plan.state_block(state)?;
+    let mut stepper =
+        ReducedWeavyStepper::from_branch(input_ctx, branch, ReducedWeavyMode::ProbeState);
+    let run_stats = run_reduced_weavy_block(input_ctx.plan, block, &mut stepper)?;
     add_run_stats(stats, run_stats);
     stepper.dispatch.ok_or(ReducedWeavyError::NoAction {
         state,
@@ -2186,19 +2208,14 @@ fn run_reduced_weavy_state_probe(
 }
 
 fn run_reduced_weavy_action(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    input_ctx: ReducedWeavyInput<'_>,
     branch: ReducedWeavyBranch,
     token: ReducedWeavyToken,
     state: parser_ir::ParseStateId,
     action: parser_ir::ParseAction,
     stats: &mut RunStats,
 ) -> ReducedWeavyStepOutcome {
-    let block = match plan.action_block(state, token.lookahead, action) {
+    let block = match input_ctx.plan.action_block(state, token.lookahead, action) {
         Ok(block) => block,
         Err(error) => {
             return ReducedWeavyStepOutcome::Failed {
@@ -2207,19 +2224,11 @@ fn run_reduced_weavy_action(
             };
         }
     };
-    let mut stepper = ReducedWeavyStepper::from_branch(
-        plan,
-        grammar,
-        parser,
-        table,
-        input,
-        external_scanner,
-        branch,
-        ReducedWeavyMode::ApplyAction,
-    );
+    let mut stepper =
+        ReducedWeavyStepper::from_branch(input_ctx, branch, ReducedWeavyMode::ApplyAction);
     stepper.lookahead = Some(token);
     let branch = stepper.branch;
-    match run_reduced_weavy_block(plan, block, &mut stepper) {
+    match run_reduced_weavy_block(input_ctx.plan, block, &mut stepper) {
         Ok(run_stats) => add_run_stats(stats, run_stats),
         Err(error) => {
             return ReducedWeavyStepOutcome::Failed { branch, error };
@@ -2454,21 +2463,10 @@ struct RuntimeWeavyDispatch {
 }
 
 fn step_runtime_weavy_branch(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    compiled_lex_modes: &[parser_ir::CompiledLexMode],
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    input_ctx: RuntimeWeavyInput<'_>,
     branch: RuntimeWeavyBranch,
-    tree_store: &mut RuntimeWeavyTreeStore,
-    trace_events: &mut Vec<parser_ir::TraceEvent>,
-    tree_events: &mut Vec<parser_ir::TreeEvent>,
-    tree_journal: &mut RuntimeWeavyTreeJournal,
+    output: &mut RuntimeWeavyOutput<'_>,
     next_version_index: &mut usize,
-    next_lookahead_index: &mut usize,
-    stats: &mut RunStats,
     recovery: RuntimeWeavyRecoveryMode,
     reuse_index: Option<&RuntimeWeavyReuseIndex>,
 ) -> Vec<RuntimeWeavyStepOutcome> {
@@ -2483,50 +2481,21 @@ fn step_runtime_weavy_branch(
         }
     };
     if let Some(reuse_index) = reuse_index
-        && let Some(branch) = try_reuse_runtime_weavy_node(
-            branch.clone(),
-            reuse_index,
-            input,
-            table,
-            tree_store,
-            trace_events,
-            tree_events,
-            tree_journal,
-        )
+        && let Some(branch) =
+            try_reuse_runtime_weavy_node(branch.clone(), reuse_index, input_ctx, output)
     {
         return vec![RuntimeWeavyStepOutcome::Branch(branch)];
     }
-    let dispatch = match run_runtime_weavy_state_probe(
-        plan,
-        grammar,
-        parser,
-        table,
-        compiled_lex_modes,
-        input,
-        external_scanner,
-        branch.clone(),
-        tree_store,
-        trace_events,
-        tree_events,
-        tree_journal,
-        next_lookahead_index,
-        stats,
-    ) {
+    let dispatch = match run_runtime_weavy_state_probe(input_ctx, branch.clone(), output) {
         Ok(dispatch) => dispatch,
         Err(error) => {
             if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
                 if matches!(error, ReducedWeavyError::NoToken { .. })
-                    && input[branch.byte_position..].starts_with(['{', '}'])
+                    && input_ctx.input[branch.byte_position..].starts_with(['{', '}'])
                     && let Some(branch) = recover_runtime_weavy_to_viable_stack(
-                        plan,
-                        grammar,
-                        parser,
-                        table,
-                        compiled_lex_modes,
-                        input,
-                        external_scanner,
+                        input_ctx,
                         branch.clone(),
-                        trace_events,
+                        output.trace_events,
                     )
                 {
                     return vec![RuntimeWeavyStepOutcome::Branch(branch)];
@@ -2534,21 +2503,21 @@ fn step_runtime_weavy_branch(
                 if matches!(error, ReducedWeavyError::NoToken { .. })
                     && let Some(branch) = recover_runtime_weavy_no_token(
                         branch.clone(),
-                        input,
-                        tree_store,
-                        trace_events,
-                        tree_events,
-                        tree_journal,
+                        input_ctx.input,
+                        output.tree_store,
+                        output.trace_events,
+                        output.tree_events,
+                        output.tree_journal,
                     )
                 {
                     return vec![RuntimeWeavyStepOutcome::Branch(branch)];
                 }
                 if let ReducedWeavyError::NoAction { lookahead, .. } = error
                     && let Some(branch) = recover_runtime_weavy_to_action_state(
-                        table,
+                        input_ctx.table,
                         branch.clone(),
                         lookahead,
-                        trace_events,
+                        output.trace_events,
                     )
                 {
                     return vec![RuntimeWeavyStepOutcome::Branch(branch)];
@@ -2569,9 +2538,13 @@ fn step_runtime_weavy_branch(
                 version
             })
             .collect::<Vec<_>>();
-        let conflict =
-            runtime_weavy_conflict_id(table, state, dispatch.token.lookahead, &dispatch.actions);
-        trace_events.push(parser_ir::TraceEvent::GlrSplit {
+        let conflict = runtime_weavy_conflict_id(
+            input_ctx.table,
+            state,
+            dispatch.token.lookahead,
+            &dispatch.actions,
+        );
+        output.trace_events.push(parser_ir::TraceEvent::GlrSplit {
             source: source_version,
             conflict,
             branches: versions.clone(),
@@ -2584,23 +2557,15 @@ fn step_runtime_weavy_branch(
                 let mut branch = branch.clone();
                 branch.version = version;
                 run_runtime_weavy_action(
-                    plan,
-                    grammar,
-                    parser,
-                    table,
-                    compiled_lex_modes,
-                    input,
-                    external_scanner,
+                    input_ctx,
                     branch,
-                    dispatch.token,
-                    dispatch.lookahead,
-                    state,
-                    *action,
-                    tree_store,
-                    trace_events,
-                    tree_events,
-                    tree_journal,
-                    stats,
+                    RuntimeWeavyAction {
+                        token: dispatch.token,
+                        lookahead: dispatch.lookahead,
+                        state,
+                        action: *action,
+                    },
+                    output,
                 )
             })
             .collect();
@@ -2608,41 +2573,31 @@ fn step_runtime_weavy_branch(
 
     let action = dispatch.actions[0];
     vec![run_runtime_weavy_action(
-        plan,
-        grammar,
-        parser,
-        table,
-        compiled_lex_modes,
-        input,
-        external_scanner,
+        input_ctx,
         branch,
-        dispatch.token,
-        dispatch.lookahead,
-        state,
-        action,
-        tree_store,
-        trace_events,
-        tree_events,
-        tree_journal,
-        stats,
+        RuntimeWeavyAction {
+            token: dispatch.token,
+            lookahead: dispatch.lookahead,
+            state,
+            action,
+        },
+        output,
     )]
 }
 
 fn try_reuse_runtime_weavy_node(
     mut branch: RuntimeWeavyBranch,
     reuse_index: &RuntimeWeavyReuseIndex,
-    input: &str,
-    table: &parser_ir::ParseTable,
-    tree_store: &mut RuntimeWeavyTreeStore,
-    trace_events: &mut Vec<parser_ir::TraceEvent>,
-    tree_events: &mut Vec<parser_ir::TreeEvent>,
-    tree_journal: &mut RuntimeWeavyTreeJournal,
+    input_ctx: RuntimeWeavyInput<'_>,
+    output: &mut RuntimeWeavyOutput<'_>,
 ) -> Option<RuntimeWeavyBranch> {
     let entry_state = branch.stack.last().map(|entry| entry.state)?;
     let reusable = reuse_index.get(branch.byte_position, entry_state, branch.scanner_snapshot)?;
-    let goto_state = runtime_weavy_goto_state(table, entry_state, reusable.symbol).ok()?;
-    let node = tree_store.push(reusable.tree.clone());
-    let (bytes, points) = runtime_weavy_input_ranges(input, reusable.start_byte, reusable.end_byte);
+    let goto_state =
+        runtime_weavy_goto_state(input_ctx.table, entry_state, reusable.symbol).ok()?;
+    let node = output.tree_store.push(reusable.tree.clone());
+    let (bytes, points) =
+        runtime_weavy_input_ranges(input_ctx.input, reusable.start_byte, reusable.end_byte);
     let tree_event = parser_ir::TreeEvent::ReuseNode {
         version: branch.version,
         node,
@@ -2650,15 +2605,26 @@ fn try_reuse_runtime_weavy_node(
         points,
         scanner_snapshot: reusable.entry_scanner_snapshot,
     };
-    let replayed_events =
-        replay_reused_runtime_weavy_tree_events(reusable, branch.version, node, input, tree_store);
-    tree_journal.push(&mut branch.tree_journal, tree_event.clone());
-    tree_journal.extend(&mut branch.tree_journal, replayed_events.clone());
-    tree_events.push(tree_event.clone());
-    tree_events.extend(replayed_events.clone());
-    trace_events.push(parser_ir::TraceEvent::Tree(tree_event));
-    trace_events.push(parser_ir::TraceEvent::StateEnter {
-        id: next_runtime_weavy_trace_id(trace_events),
+    let replayed_events = replay_reused_runtime_weavy_tree_events(
+        reusable,
+        branch.version,
+        node,
+        input_ctx.input,
+        output.tree_store,
+    );
+    output
+        .tree_journal
+        .push(&mut branch.tree_journal, tree_event.clone());
+    output
+        .tree_journal
+        .extend(&mut branch.tree_journal, replayed_events.clone());
+    output.tree_events.push(tree_event.clone());
+    output.tree_events.extend(replayed_events.clone());
+    output
+        .trace_events
+        .push(parser_ir::TraceEvent::Tree(tree_event));
+    output.trace_events.push(parser_ir::TraceEvent::StateEnter {
+        id: next_runtime_weavy_trace_id(output.trace_events),
         version: branch.version,
         state: goto_state,
     });
@@ -2710,49 +2676,34 @@ fn runtime_weavy_goto_state(
 }
 
 fn run_runtime_weavy_state_probe(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    compiled_lex_modes: &[parser_ir::CompiledLexMode],
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    input_ctx: RuntimeWeavyInput<'_>,
     branch: RuntimeWeavyBranch,
-    tree_store: &mut RuntimeWeavyTreeStore,
-    trace_events: &mut Vec<parser_ir::TraceEvent>,
-    tree_events: &mut Vec<parser_ir::TreeEvent>,
-    tree_journal: &mut RuntimeWeavyTreeJournal,
-    next_lookahead_index: &mut usize,
-    stats: &mut RunStats,
+    output: &mut RuntimeWeavyOutput<'_>,
 ) -> Result<RuntimeWeavyDispatch, ReducedWeavyError> {
     let state = branch
         .stack
         .last()
         .ok_or(ReducedWeavyError::EmptyStack)?
         .state;
-    let block = plan.state_block(state)?;
+    let block = input_ctx.plan.state_block(state)?;
     let mut stepper = RuntimeWeavyStepper::from_branch(
-        plan,
-        grammar,
-        parser,
-        table,
-        compiled_lex_modes,
-        input,
-        external_scanner,
+        RuntimeWeavyStepperInput {
+            input: input_ctx,
+            tree_store: &mut *output.tree_store,
+            trace_events: &mut *output.trace_events,
+            tree_events: &mut *output.tree_events,
+            tree_journal: &mut *output.tree_journal,
+        },
         branch,
-        parser_ir::LookaheadTokenId::from_index(*next_lookahead_index),
+        parser_ir::LookaheadTokenId::from_index(*output.next_lookahead_index),
         RuntimeWeavyMode::ProbeState,
-        tree_store,
-        tree_journal,
-        trace_events,
-        tree_events,
     );
-    let run_result = run_runtime_weavy_block(plan, block, &mut stepper);
+    let run_result = run_runtime_weavy_block(input_ctx.plan, block, &mut stepper);
     if stepper.lookahead.is_some() {
-        *next_lookahead_index += 1;
+        *output.next_lookahead_index += 1;
     }
     let run_stats = run_result?;
-    add_run_stats(stats, run_stats);
+    add_run_stats(output.stats, run_stats);
     stepper.dispatch.ok_or(ReducedWeavyError::NoAction {
         state,
         lookahead: stepper
@@ -2764,25 +2715,16 @@ fn run_runtime_weavy_state_probe(
 }
 
 fn run_runtime_weavy_action(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    compiled_lex_modes: &[parser_ir::CompiledLexMode],
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    input_ctx: RuntimeWeavyInput<'_>,
     branch: RuntimeWeavyBranch,
-    token: ReducedWeavyToken,
-    lookahead: parser_ir::LookaheadTokenId,
-    state: parser_ir::ParseStateId,
-    action: parser_ir::ParseAction,
-    tree_store: &mut RuntimeWeavyTreeStore,
-    trace_events: &mut Vec<parser_ir::TraceEvent>,
-    tree_events: &mut Vec<parser_ir::TreeEvent>,
-    tree_journal: &mut RuntimeWeavyTreeJournal,
-    stats: &mut RunStats,
+    action_ctx: RuntimeWeavyAction,
+    output: &mut RuntimeWeavyOutput<'_>,
 ) -> RuntimeWeavyStepOutcome {
-    let block = match plan.action_block(state, token.lookahead, action) {
+    let block = match input_ctx.plan.action_block(
+        action_ctx.state,
+        action_ctx.token.lookahead,
+        action_ctx.action,
+    ) {
         Ok(block) => block,
         Err(error) => {
             return RuntimeWeavyStepOutcome::Failed {
@@ -2792,25 +2734,21 @@ fn run_runtime_weavy_action(
         }
     };
     let mut stepper = RuntimeWeavyStepper::from_branch(
-        plan,
-        grammar,
-        parser,
-        table,
-        compiled_lex_modes,
-        input,
-        external_scanner,
+        RuntimeWeavyStepperInput {
+            input: input_ctx,
+            tree_store: &mut *output.tree_store,
+            trace_events: &mut *output.trace_events,
+            tree_events: &mut *output.tree_events,
+            tree_journal: &mut *output.tree_journal,
+        },
         branch,
-        lookahead,
+        action_ctx.lookahead,
         RuntimeWeavyMode::ApplyAction,
-        tree_store,
-        tree_journal,
-        trace_events,
-        tree_events,
     );
-    stepper.lookahead = Some(token);
+    stepper.lookahead = Some(action_ctx.token);
     let version = stepper.version;
-    match run_runtime_weavy_block(plan, block, &mut stepper) {
-        Ok(run_stats) => add_run_stats(stats, run_stats),
+    match run_runtime_weavy_block(input_ctx.plan, block, &mut stepper) {
+        Ok(run_stats) => add_run_stats(output.stats, run_stats),
         Err(error) => {
             return RuntimeWeavyStepOutcome::Failed { version, error };
         }
@@ -2897,34 +2835,18 @@ fn enqueue_runtime_weavy_branch(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn recover_runtime_weavy_to_viable_stack(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    compiled_lex_modes: &[parser_ir::CompiledLexMode],
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    input_ctx: RuntimeWeavyInput<'_>,
     mut branch: RuntimeWeavyBranch,
     trace_events: &mut Vec<parser_ir::TraceEvent>,
 ) -> Option<RuntimeWeavyBranch> {
-    if external_scanner.is_some() || branch.stack.len() <= 1 {
+    if input_ctx.external_scanner.is_some() || branch.stack.len() <= 1 {
         return None;
     }
     let original_len = branch.stack.len();
     for len in (1..original_len).rev() {
         let state = branch.stack[len - 1].state;
-        if runtime_weavy_lex_succeeds(
-            plan,
-            grammar,
-            parser,
-            table,
-            compiled_lex_modes,
-            input,
-            &branch,
-            state,
-        ) {
+        if runtime_weavy_lex_succeeds(input_ctx, &branch, state) {
             branch.stack.truncate(len);
             branch.error_cost = branch
                 .error_cost
@@ -3019,14 +2941,8 @@ fn recover_runtime_weavy_no_token(
     Some(branch)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn runtime_weavy_lex_succeeds(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    compiled_lex_modes: &[parser_ir::CompiledLexMode],
-    input: &str,
+    input_ctx: RuntimeWeavyInput<'_>,
     branch: &RuntimeWeavyBranch,
     state: parser_ir::ParseStateId,
 ) -> bool {
@@ -3035,20 +2951,19 @@ fn runtime_weavy_lex_succeeds(
     let mut tree_events = Vec::new();
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
     let stepper = RuntimeWeavyStepper::from_branch(
-        plan,
-        grammar,
-        parser,
-        table,
-        compiled_lex_modes,
-        input,
-        None,
+        RuntimeWeavyStepperInput {
+            input: RuntimeWeavyInput {
+                external_scanner: None,
+                ..input_ctx
+            },
+            tree_store: &mut tree_store,
+            trace_events: &mut trace_events,
+            tree_events: &mut tree_events,
+            tree_journal: &mut tree_journal,
+        },
         branch.clone(),
         parser_ir::LookaheadTokenId::from_index(0),
         RuntimeWeavyMode::ProbeState,
-        &mut tree_store,
-        &mut tree_journal,
-        &mut trace_events,
-        &mut tree_events,
     );
     let Ok(state_row) = stepper.parse_state(state) else {
         return false;
@@ -3088,22 +3003,17 @@ struct ReducedWeavyStepper<'a> {
 
 impl<'a> ReducedWeavyStepper<'a> {
     fn from_branch(
-        plan: &'a ReducedWeavyPlan,
-        grammar: &'a ValidatedGrammar,
-        parser: &'a parser_ir::ParserGrammar,
-        table: &'a parser_ir::ParseTable,
-        input: &'a str,
-        external_scanner: Option<&'a dyn ReducedExternalScanner>,
+        input_ctx: ReducedWeavyInput<'a>,
         branch: ReducedWeavyBranch,
         mode: ReducedWeavyMode,
     ) -> Self {
         Self {
-            plan,
-            grammar,
-            parser,
-            table,
-            input,
-            external_scanner,
+            plan: input_ctx.plan,
+            grammar: input_ctx.grammar,
+            parser: input_ctx.parser,
+            table: input_ctx.table,
+            input: input_ctx.input,
+            external_scanner: input_ctx.external_scanner,
             stack: branch.stack,
             byte_position: branch.byte_position,
             scanner_snapshot: branch.scanner_snapshot,
@@ -3580,7 +3490,7 @@ impl<'a> ReducedWeavyStepper<'a> {
                 self.input,
                 byte_position,
             )),
-            GrammarExpr::AutoClose { .. } => Ok(None),
+            GrammarExpr::AutoClose(_) => Ok(None),
             GrammarExpr::Token(content)
             | GrammarExpr::ImmediateToken(content)
             | GrammarExpr::Field { content, .. }
@@ -3888,31 +3798,20 @@ struct RuntimeWeavyStepper<'a> {
 }
 
 impl<'a> RuntimeWeavyStepper<'a> {
-    #[allow(clippy::too_many_arguments)]
     fn from_branch(
-        plan: &'a ReducedWeavyPlan,
-        grammar: &'a ValidatedGrammar,
-        parser: &'a parser_ir::ParserGrammar,
-        table: &'a parser_ir::ParseTable,
-        compiled_lex_modes: &'a [parser_ir::CompiledLexMode],
-        input: &'a str,
-        external_scanner: Option<&'a dyn ReducedExternalScanner>,
+        stepper_input: RuntimeWeavyStepperInput<'a>,
         branch: RuntimeWeavyBranch,
         lookahead_id: parser_ir::LookaheadTokenId,
         mode: RuntimeWeavyMode,
-        tree_store: &'a mut RuntimeWeavyTreeStore,
-        tree_journal: &'a mut RuntimeWeavyTreeJournal,
-        trace_events: &'a mut Vec<parser_ir::TraceEvent>,
-        tree_events: &'a mut Vec<parser_ir::TreeEvent>,
     ) -> Self {
         Self {
-            plan,
-            grammar,
-            parser,
-            table,
-            compiled_lex_modes,
-            input,
-            external_scanner,
+            plan: stepper_input.input.plan,
+            grammar: stepper_input.input.grammar,
+            parser: stepper_input.input.parser,
+            table: stepper_input.input.table,
+            compiled_lex_modes: stepper_input.input.compiled_lex_modes,
+            input: stepper_input.input.input,
+            external_scanner: stepper_input.input.external_scanner,
             stack: branch.stack,
             byte_position: branch.byte_position,
             scanner_snapshot: branch.scanner_snapshot,
@@ -3925,12 +3824,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
             mode,
             dispatch: None,
             version: branch.version,
-            tree_store,
-            tree_journal,
+            tree_store: stepper_input.tree_store,
+            tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
             reusable_nodes: branch.reusable_nodes,
-            trace_events,
-            tree_events,
+            trace_events: stepper_input.trace_events,
+            tree_events: stepper_input.tree_events,
         }
     }
 

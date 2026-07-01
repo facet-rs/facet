@@ -117,7 +117,7 @@ fn main() {
         }
     }
 
-    worst.sort_by(|a, b| b.0.cmp(&a.0));
+    worst.sort_by_key(|(total, _, _)| std::cmp::Reverse(*total));
     println!("\n==== summary ====");
     println!("templates: {}", files.len());
     println!("clean:     {clean}");
@@ -149,10 +149,10 @@ fn collect_templates(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
             if name == "arborium-header.html" {
                 continue;
             }
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if text.contains("{{") || text.contains("{%") || text.contains("{#") {
-                    out.push(path);
-                }
+            if let Ok(text) = std::fs::read_to_string(&path)
+                && (text.contains("{{") || text.contains("{%") || text.contains("{#"))
+            {
+                out.push(path);
             }
         }
     }

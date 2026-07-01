@@ -39,12 +39,11 @@ fn main() {
 
     let input = std::fs::read_to_string(&sample).expect("sample should be readable");
     let dump_errors = env::var_os("SNARK_NGINX_DUMP_ERRORS").is_some();
-    if dump_errors {
-        if let Err(error) =
+    if dump_errors
+        && let Err(error) =
             parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, &input)
-        {
-            println!("non-recovering parse error: {error}");
-        }
+    {
+        println!("non-recovering parse error: {error}");
     }
     let parse_result =
         parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, &input);

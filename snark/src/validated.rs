@@ -490,19 +490,19 @@ impl ValidationBuilder {
                 end_prefix,
                 closed_by_tags,
                 rules,
-            } => GrammarExpr::AutoClose {
-                tag: tag.clone(),
-                open: open.clone(),
-                close: close.clone(),
+            } => GrammarExpr::AutoClose(Box::new(AutoCloseExpr {
+                tag: tag.as_ref().clone(),
+                open: open.as_deref().cloned(),
+                close: close.as_deref().cloned(),
                 closed_by: closed_by.clone(),
-                open_node: open_node.clone(),
-                close_node: close_node.clone(),
-                tag_name_node: tag_name_node.clone(),
-                start_prefix: start_prefix.clone(),
-                end_prefix: end_prefix.clone(),
+                open_node: open_node.as_deref().cloned(),
+                close_node: close_node.as_deref().cloned(),
+                tag_name_node: tag_name_node.as_deref().cloned(),
+                start_prefix: start_prefix.as_deref().cloned(),
+                end_prefix: end_prefix.as_deref().cloned(),
                 closed_by_tags: closed_by_tags.clone(),
                 rules: rules.iter().map(AutoCloseRule::from).collect(),
-            },
+            })),
             RawRuleJson::Symbol { name } => GrammarExpr::Symbol(self.resolve_symbol(name)?),
             RawRuleJson::Choice { members } => {
                 let members = members
@@ -924,6 +924,33 @@ impl From<&RawAutoCloseRuleJson> for AutoCloseRule {
     }
 }
 
+/// Validated declarative implicit-close token payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoCloseExpr {
+    /// Element/tag name this token implicitly closes.
+    pub(crate) tag: String,
+    /// Literal opening marker that pushes this tag.
+    pub(crate) open: Option<String>,
+    /// Literal explicit closing marker that pops this tag.
+    pub(crate) close: Option<String>,
+    /// Literal markers that trigger this implicit close when this tag is open.
+    pub(crate) closed_by: Vec<String>,
+    /// Public node kind whose reduced range pushes its tag-name child.
+    pub(crate) open_node: Option<String>,
+    /// Public node kind whose reduced range pops its tag-name child.
+    pub(crate) close_node: Option<String>,
+    /// Public child node kind that carries the tag-name text.
+    pub(crate) tag_name_node: Option<String>,
+    /// Prefix that begins a start tag at the current lexer position.
+    pub(crate) start_prefix: Option<String>,
+    /// Prefix that begins an end tag node range.
+    pub(crate) end_prefix: Option<String>,
+    /// Tag names that trigger this implicit close after `start_prefix`.
+    pub(crate) closed_by_tags: Vec<String>,
+    /// Content-model relation rows for one table-driven implicit-close token.
+    pub(crate) rules: Vec<AutoCloseRule>,
+}
+
 /// Validated grammar expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -952,30 +979,7 @@ pub enum GrammarExpr {
         close: String,
     },
     /// Declarative implicit close token for tag-stack grammars.
-    AutoClose {
-        /// Element/tag name this token implicitly closes.
-        tag: String,
-        /// Literal opening marker that pushes this tag.
-        open: Option<String>,
-        /// Literal explicit closing marker that pops this tag.
-        close: Option<String>,
-        /// Literal markers that trigger this implicit close when this tag is open.
-        closed_by: Vec<String>,
-        /// Public node kind whose reduced range pushes its tag-name child.
-        open_node: Option<String>,
-        /// Public node kind whose reduced range pops its tag-name child.
-        close_node: Option<String>,
-        /// Public child node kind that carries the tag-name text.
-        tag_name_node: Option<String>,
-        /// Prefix that begins a start tag at the current lexer position.
-        start_prefix: Option<String>,
-        /// Prefix that begins an end tag node range.
-        end_prefix: Option<String>,
-        /// Tag names that trigger this implicit close after `start_prefix`.
-        closed_by_tags: Vec<String>,
-        /// Content-model relation rows for one table-driven implicit-close token.
-        rules: Vec<AutoCloseRule>,
-    },
+    AutoClose(Box<AutoCloseExpr>),
     /// Resolved symbol reference.
     Symbol(SymbolRef),
     /// Ordered choice.
