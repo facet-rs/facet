@@ -14,8 +14,9 @@
 //! Fixtures are generated with facet-json (never hand-emitted) as `[{"k":0,
 //! "v":"x0"},…]`, which the bundled `jsonb` grammar accepts.
 
+use std::process::Command;
 use std::time::Instant;
-use std::{env, fs, path::Path};
+use std::{env, fs, path::Path, path::PathBuf};
 
 use facet::Facet;
 use snark::{
@@ -95,25 +96,100 @@ fn iters_for(bytes: usize) -> usize {
     }
 }
 
+/// Generate a real tree-sitter parser for `grammar_path` in a scratch dir and
+/// return it, or `None` if the `tree-sitter` CLI is missing / generate fails.
+/// The reference is tree-sitter's OUTPUT/behaviour, never its generated `.c`.
+fn tree_sitter_setup(grammar_path: &str) -> Option<PathBuf> {
+    let ok = Command::new("tree-sitter")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !ok {
+        return None;
+    }
+    let dir = env::temp_dir().join("snark-ts-diff-ladder");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).ok()?;
+    fs::copy(grammar_path, dir.join("grammar.js")).ok()?;
+    let out = Command::new("tree-sitter")
+        .arg("generate")
+        .current_dir(&dir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(dir)
+}
+
+/// Best (min) tree-sitter parse time in ms for `input`, via `parse --time`
+/// (internal parse duration, excludes process startup + parser load). Warms
+/// once so the on-demand C-parser compile isn't charged to the measurement.
+fn tree_sitter_best_ms(dir: &Path, input: &str, iters: usize) -> Option<f64> {
+    let file = dir.join("in.json");
+    fs::write(&file, input).ok()?;
+    let run = || -> Option<f64> {
+        let out = Command::new("tree-sitter")
+            .args(["parse", "in.json", "--quiet", "--time"])
+            .current_dir(dir)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.lines()
+            .rev()
+            .find_map(|line| line.split("Parse:").nth(1))
+            .and_then(|rest| rest.split("ms").next())
+            .and_then(|ms| ms.trim().parse::<f64>().ok())
+    };
+    run(); // warm
+    let mut best = f64::INFINITY;
+    for _ in 0..iters.max(1) {
+        if let Some(ms) = run() {
+            best = best.min(ms);
+        }
+    }
+    best.is_finite().then_some(best)
+}
+
 fn run_ladder(grammar_path: &str, max_objects: u64) {
     let p = prepare(grammar_path);
+    let ts_dir = tree_sitter_setup(grammar_path);
+    if ts_dir.is_none() {
+        eprintln!("note: `tree-sitter` CLI unavailable — snark-only ladder");
+    }
     println!(
-        "{:>8} {:>10} {:>12} {:>12} {:>8}",
-        "objects", "bytes", "min_ms", "bytes/ms", "x_prev"
+        "{:>8} {:>10} {:>12} {:>7} {:>12} {:>7} {:>10}",
+        "objects", "bytes", "snark_ms", "snk_x", "ts_ms", "ts_x", "snark/ts"
     );
     let counts = [250u64, 500, 1000, 2000, 4000, 8000, 16000, 32000];
-    let mut prev_ms: Option<f64> = None;
+    let (mut prev_snark, mut prev_ts): (Option<f64>, Option<f64>) = (None, None);
     for &n in &counts {
         if n > max_objects {
             break;
         }
         let input = gen_json(n);
         let bytes = input.len();
-        let ms = best_parse_ms(&p, &input, iters_for(bytes));
-        let bpm = bytes as f64 / ms;
-        let x_prev = prev_ms.map(|prev| ms / prev).unwrap_or(0.0);
-        println!("{n:>8} {bytes:>10} {ms:>12.3} {bpm:>12.0} {x_prev:>8.2}");
-        prev_ms = Some(ms);
+        let iters = iters_for(bytes);
+
+        let snark_ms = best_parse_ms(&p, &input, iters);
+        let snk_x = prev_snark.map(|prev| snark_ms / prev).unwrap_or(0.0);
+
+        let ts_ms = ts_dir
+            .as_deref()
+            .and_then(|dir| tree_sitter_best_ms(dir, &input, iters.min(10)));
+        let ts_x = match (ts_ms, prev_ts) {
+            (Some(cur), Some(prev)) if prev > 0.0 => cur / prev,
+            _ => 0.0,
+        };
+        let ratio = ts_ms.map(|ts| snark_ms / ts).unwrap_or(0.0);
+
+        let ts_ms_s = ts_ms.map(|v| format!("{v:.3}")).unwrap_or_else(|| "-".into());
+        println!(
+            "{n:>8} {bytes:>10} {snark_ms:>12.3} {snk_x:>7.2} {ts_ms_s:>12} {ts_x:>7.2} {ratio:>10.0}"
+        );
+        prev_snark = Some(snark_ms);
+        prev_ts = ts_ms;
     }
 }
 
