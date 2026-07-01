@@ -4536,7 +4536,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 match &row.matcher {
                     parser_ir::CompiledTerminalMatcher::Expr(
                         parser_ir::CompiledLexExpr::AutoClose(spec),
-                    ) => Some(spec),
+                    ) => Some(spec.as_ref()),
                     _ => None,
                 }
             })
@@ -4549,7 +4549,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .filter_map(|row| match &row.matcher {
                 parser_ir::CompiledTerminalMatcher::Expr(
                     parser_ir::CompiledLexExpr::AutoClose(spec),
-                ) => Some(spec),
+                ) => Some(spec.as_ref()),
                 _ => None,
             })
     }

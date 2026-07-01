@@ -3859,7 +3859,7 @@ pub(crate) enum CompiledLexExpr {
     Pattern(CompiledLexPattern),
     Until { markers: Vec<String> },
     Nested { open: String, close: String },
-    AutoClose(AutoCloseSpec),
+    AutoClose(Box<AutoCloseSpec>),
     Seq(Vec<CompiledLexExpr>),
     Choice(Vec<CompiledLexExpr>),
     Repeat(Box<CompiledLexExpr>),
@@ -4800,19 +4800,21 @@ fn compile_terminal_matcher(
                 end_prefix,
                 closed_by_tags,
                 rules,
-            } => CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(AutoCloseSpec {
-                tag: tag.clone(),
-                open: open.clone(),
-                close: close.clone(),
-                closed_by: closed_by.clone(),
-                open_node: open_node.clone(),
-                close_node: close_node.clone(),
-                tag_name_node: tag_name_node.clone(),
-                start_prefix: start_prefix.clone(),
-                end_prefix: end_prefix.clone(),
-                closed_by_tags: closed_by_tags.clone(),
-                rules: compile_auto_close_rules(rules),
-            })),
+            } => {
+                CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(Box::new(AutoCloseSpec {
+                    tag: tag.clone(),
+                    open: open.clone(),
+                    close: close.clone(),
+                    closed_by: closed_by.clone(),
+                    open_node: open_node.clone(),
+                    close_node: close_node.clone(),
+                    tag_name_node: tag_name_node.clone(),
+                    start_prefix: start_prefix.clone(),
+                    end_prefix: end_prefix.clone(),
+                    closed_by_tags: closed_by_tags.clone(),
+                    rules: compile_auto_close_rules(rules),
+                })))
+            }
             _ => CompiledTerminalMatcher::UnsupportedTerminal {
                 terminal: terminal.id(),
                 spelling: terminal.spelling().to_owned(),
@@ -4886,7 +4888,7 @@ fn compile_lex_expr_inner(
             end_prefix,
             closed_by_tags,
             rules,
-        } => CompiledLexExpr::AutoClose(AutoCloseSpec {
+        } => CompiledLexExpr::AutoClose(Box::new(AutoCloseSpec {
             tag: tag.clone(),
             open: open.clone(),
             close: close.clone(),
@@ -4898,7 +4900,7 @@ fn compile_lex_expr_inner(
             end_prefix: end_prefix.clone(),
             closed_by_tags: closed_by_tags.clone(),
             rules: compile_auto_close_rules(rules),
-        }),
+        })),
         GrammarExpr::Token(content)
         | GrammarExpr::ImmediateToken(content)
         | GrammarExpr::Field { content, .. }
@@ -6741,7 +6743,9 @@ impl<'a> RuntimeParser<'a> {
                     return None;
                 }
                 match &row.matcher {
-                    CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) => Some(spec),
+                    CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) => {
+                        Some(spec.as_ref())
+                    }
                     _ => None,
                 }
             })
@@ -6755,7 +6759,9 @@ impl<'a> RuntimeParser<'a> {
             .iter()
             .flat_map(|mode| mode.terminals.iter())
             .filter_map(|row| match &row.matcher {
-                CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) => Some(spec),
+                CompiledTerminalMatcher::Expr(CompiledLexExpr::AutoClose(spec)) => {
+                    Some(spec.as_ref())
+                }
                 _ => None,
             })
     }
