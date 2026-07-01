@@ -11,6 +11,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap},
     error::Error,
     fmt,
+    ops::Range,
     sync::Arc,
 };
 
@@ -4647,6 +4648,16 @@ impl RuntimeWeavyTreeJournal {
         }
     }
 
+    fn extend_from_slice(
+        &mut self,
+        head: &mut RuntimeWeavyTreeJournalHead,
+        events: &[parser_ir::TreeEvent],
+    ) {
+        for event in events {
+            self.push(head, event.clone());
+        }
+    }
+
     fn collect(&self, head: RuntimeWeavyTreeJournalHead) -> Vec<parser_ir::TreeEvent> {
         let mut events = Vec::new();
         let mut cursor = head.0;
@@ -5791,8 +5802,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 let metadata = parser_metadata(*metadata);
                 let reduction =
                     self.runtime_reduce_fragment(production, metadata, *child_count, false)?;
-                self.tree_journal
-                    .extend(&mut self.tree_journal_head, reduction.tree_events.clone());
+                self.tree_journal.extend_from_slice(
+                    &mut self.tree_journal_head,
+                    &self.tree_events[reduction.tree_event_range.clone()],
+                );
                 self.trace_events.push(parser_ir::TraceEvent::Reduce {
                     version: self.version,
                     production,
@@ -5888,8 +5901,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 let metadata = parser_metadata(*metadata);
                 let reduction =
                     self.runtime_reduce_fragment(production, metadata, *child_count, true)?;
-                self.tree_journal
-                    .extend(&mut self.tree_journal_head, reduction.tree_events.clone());
+                self.tree_journal.extend_from_slice(
+                    &mut self.tree_journal_head,
+                    &self.tree_events[reduction.tree_event_range.clone()],
+                );
                 self.trace_events.push(parser_ir::TraceEvent::Reduce {
                     version: self.version,
                     production,
@@ -6300,7 +6315,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
     ) -> Result<RuntimeWeavyReduction, RuntimeWeavyStepError> {
         let production_row = &self.parser.productions()[production.get() as usize];
         let metadata_row = &self.parser.production_metadata()[metadata.get() as usize];
-        let mut emitted_tree_events = Vec::new();
+        let tree_event_start = self.tree_events.len();
         let mut children = self.tree_store.empty_children();
         let mut visible_nodes = self.tree_store.empty_children();
         let mut trailing_extras = Vec::new();
@@ -6390,15 +6405,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         bytes,
                         points,
                     });
-                    emitted_tree_events.push(parser_ir::TreeEvent::Alias {
-                        version: self.version,
-                        node: alias_node,
-                        alias,
-                        named,
-                        structural_index,
-                        bytes,
-                        points,
-                    });
                     if named {
                         field_child = Some(alias_node);
                         step_visible_nodes = self.tree_store.child_node(None, alias_node);
@@ -6430,23 +6436,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 bytes,
                 points,
             });
-            emitted_tree_events.push(parser_ir::TreeEvent::Reduce {
-                version: self.version,
-                production,
-                metadata,
-                node,
-                bytes,
-                points,
-            });
             for (structural_index, field, child) in field_events {
                 self.tree_events.push(parser_ir::TreeEvent::Field {
-                    version: self.version,
-                    node,
-                    child,
-                    field,
-                    structural_index,
-                });
-                emitted_tree_events.push(parser_ir::TreeEvent::Field {
                     version: self.version,
                     node,
                     child,
@@ -6463,7 +6454,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     start_scanner_snapshot,
                 },
                 trailing_extras,
-                tree_events: emitted_tree_events,
+                tree_event_range: tree_event_start..self.tree_events.len(),
             })
         } else {
             Ok(RuntimeWeavyReduction {
@@ -6476,7 +6467,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     start_scanner_snapshot,
                 },
                 trailing_extras,
-                tree_events: emitted_tree_events,
+                tree_event_range: tree_event_start..self.tree_events.len(),
             })
         }
     }
@@ -6847,7 +6838,7 @@ enum RuntimeWeavyFragment {
 struct RuntimeWeavyReduction {
     fragment: RuntimeWeavyFragment,
     trailing_extras: Vec<RuntimeWeavyFragment>,
-    tree_events: Vec<parser_ir::TreeEvent>,
+    tree_event_range: Range<usize>,
 }
 
 impl RuntimeWeavyFragment {
