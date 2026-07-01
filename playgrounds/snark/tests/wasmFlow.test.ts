@@ -138,6 +138,14 @@ module.exports = grammar({
     ),
   );
   assert.ok(
+    response.plan.snark_stencil_executions.some(
+      (summary: { execution: string; families: string[]; count: number }) =>
+        summary.execution === "LexerGraph" &&
+        summary.families.includes("Lexer") &&
+        summary.count > 0,
+    ),
+  );
+  assert.ok(
     response.plan.snark_stencil_states.some(
       (summary: { state: string; count: number }) =>
         summary.state === "LexerProgram" && summary.count > 0,

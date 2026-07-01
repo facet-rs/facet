@@ -144,6 +144,7 @@ struct PlanOutput {
     snark_intrinsic_count: usize,
     snark_stencils: Vec<PlanStencilOutput>,
     snark_stencil_families: Vec<PlanStencilFamilyOutput>,
+    snark_stencil_executions: Vec<PlanStencilExecutionOutput>,
     snark_stencil_states: Vec<PlanStencilStateOutput>,
     lowering_barriers: Vec<PlanBarrierOutput>,
 }
@@ -152,6 +153,15 @@ struct PlanOutput {
 struct PlanStencilFamilyOutput {
     family: String,
     execution: String,
+    state: Vec<String>,
+    effect: PlanStencilEffectOutput,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilExecutionOutput {
+    execution: String,
+    families: Vec<String>,
     state: Vec<String>,
     effect: PlanStencilEffectOutput,
     count: usize,
@@ -869,6 +879,33 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
             .map(|summary| PlanStencilFamilyOutput {
                 family: format!("{:?}", summary.family),
                 execution: format!("{:?}", summary.execution),
+                state: summary
+                    .state
+                    .iter()
+                    .map(|state| format!("{state:?}"))
+                    .collect(),
+                effect: PlanStencilEffectOutput {
+                    ordering: format!("{:?}", summary.effect.ordering),
+                    resource_count: summary.effect.resources.len(),
+                    typed_memory_count: summary.effect.typed_memory.len(),
+                    may_fail: summary.effect.may_fail,
+                    may_allocate: summary.effect.may_allocate,
+                    calls_user_code: summary.effect.calls_user_code,
+                    opaque: summary.effect.opaque,
+                },
+                count: summary.count,
+            })
+            .collect(),
+        snark_stencil_executions: readiness
+            .snark_stencil_execution_summaries
+            .iter()
+            .map(|summary| PlanStencilExecutionOutput {
+                execution: format!("{:?}", summary.execution),
+                families: summary
+                    .families
+                    .iter()
+                    .map(|family| format!("{family:?}"))
+                    .collect(),
                 state: summary
                     .state
                     .iter()
@@ -4611,6 +4648,21 @@ mod tests {
                     && summary.effect.typed_memory_count == 0
                     && summary.effect.may_fail
                     && !summary.effect.may_allocate
+                    && !summary.effect.calls_user_code
+                    && !summary.effect.opaque
+                    && summary.count > 0)
+        );
+        assert!(
+            plan.snark_stencil_executions
+                .iter()
+                .any(|summary| summary.execution == "LexerGraph"
+                    && summary.families.iter().any(|family| family == "Lexer")
+                    && summary.state.iter().any(|state| state == "LexerProgram")
+                    && summary.state.iter().any(|state| state == "ScannerState")
+                    && summary.effect.ordering == "Ordered"
+                    && summary.effect.resource_count >= 3
+                    && summary.effect.typed_memory_count == 0
+                    && summary.effect.may_fail
                     && !summary.effect.calls_user_code
                     && !summary.effect.opaque
                     && summary.count > 0)

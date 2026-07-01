@@ -185,6 +185,28 @@ fn main() {
         }
     }
 
+    if !analysis
+        .readiness
+        .snark_stencil_execution_summaries
+        .is_empty()
+    {
+        println!("  stencil execution lanes:");
+        for summary in &analysis.readiness.snark_stencil_execution_summaries {
+            println!(
+                "    {:?}: {}  families={:?}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+                summary.execution,
+                summary.count,
+                summary.families,
+                summary.state,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque
+            );
+        }
+    }
+
     if !analysis.readiness.snark_stencil_state_summaries.is_empty() {
         println!("  stencil state surfaces:");
         for summary in &analysis.readiness.snark_stencil_state_summaries {

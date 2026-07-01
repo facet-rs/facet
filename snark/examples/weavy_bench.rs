@@ -266,6 +266,23 @@ fn main() {
             );
         }
     }
+    if !readiness.snark_stencil_execution_summaries.is_empty() {
+        println!("  snark stencil execution lanes:");
+        for summary in &readiness.snark_stencil_execution_summaries {
+            println!(
+                "    {:<16?} x{}  families={:?}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+                summary.execution,
+                summary.count,
+                summary.families,
+                summary.state,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque
+            );
+        }
+    }
     if !readiness.snark_stencil_state_summaries.is_empty() {
         println!("  snark stencil state surfaces:");
         for summary in &readiness.snark_stencil_state_summaries {

@@ -500,6 +500,21 @@ pub struct WeavySnarkStencilFamilySummary {
     pub count: usize,
 }
 
+/// Snark stencil obligations grouped by execution strategy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavySnarkStencilExecutionSummary {
+    /// Execution strategy a backend/JIT must provide for these stencils.
+    pub execution: SnarkStencilExecution,
+    /// Stencil families covered by this execution strategy.
+    pub families: Vec<SnarkStencilFamily>,
+    /// Union of session state required by descriptors in this execution lane.
+    pub state: Vec<SnarkStencilState>,
+    /// Conservative union of effect contracts for descriptors in this execution lane.
+    pub effect: EffectContract,
+    /// Number of Snark intrinsic ops represented by this execution strategy.
+    pub count: usize,
+}
+
 /// Snark stencil obligations grouped by required session state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeavySnarkStencilStateSummary {
@@ -1134,6 +1149,8 @@ pub struct WeavyParsePlanReadiness {
     pub snark_stencil_summaries: Vec<WeavySnarkStencilSummary>,
     /// Snark stencil obligations grouped by family for backend/JIT prioritization.
     pub snark_stencil_family_summaries: Vec<WeavySnarkStencilFamilySummary>,
+    /// Snark stencil obligations grouped by execution strategy for backend/JIT prioritization.
+    pub snark_stencil_execution_summaries: Vec<WeavySnarkStencilExecutionSummary>,
     /// Snark stencil obligations grouped by session state for ABI prioritization.
     pub snark_stencil_state_summaries: Vec<WeavySnarkStencilStateSummary>,
     /// Unique Snark dialect descriptors that still block fully-visible lowering.
@@ -1153,6 +1170,8 @@ impl WeavyParsePlanReadiness {
         let snark_stencil_summaries = parser_semantics.stencil_summaries();
         let snark_stencil_family_summaries =
             snark_stencil_family_summaries(&snark_stencil_summaries);
+        let snark_stencil_execution_summaries =
+            snark_stencil_execution_summaries(&snark_stencil_summaries);
         let snark_stencil_state_summaries = snark_stencil_state_summaries(&snark_stencil_summaries);
         Self {
             lexer: lexer_readiness,
@@ -1174,6 +1193,7 @@ impl WeavyParsePlanReadiness {
             host_call_intrinsic_count: parser.effect_stats.total.calls_user_code_count,
             snark_stencil_summaries,
             snark_stencil_family_summaries,
+            snark_stencil_execution_summaries,
             snark_stencil_state_summaries,
             parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
             barrier_summaries,
@@ -1289,6 +1309,46 @@ fn snark_stencil_state_summaries(
             .count
             .cmp(&left.count)
             .then_with(|| left.state.cmp(&right.state))
+    });
+    summaries
+}
+
+fn snark_stencil_execution_summaries(
+    summaries: &[WeavySnarkStencilSummary],
+) -> Vec<WeavySnarkStencilExecutionSummary> {
+    let mut counts = BTreeMap::<
+        SnarkStencilExecution,
+        (
+            usize,
+            BTreeSet<SnarkStencilFamily>,
+            BTreeSet<SnarkStencilState>,
+            EffectContract,
+        ),
+    >::new();
+    for summary in summaries {
+        let (count, families, state, effect) = counts.entry(summary.stencil.execution).or_default();
+        *count += summary.count;
+        families.insert(summary.stencil.family);
+        state.extend(summary.stencil.state.iter().copied());
+        effect.accumulate(summary.effect.clone());
+    }
+    let mut summaries = counts
+        .into_iter()
+        .map(
+            |(execution, (count, families, state, effect))| WeavySnarkStencilExecutionSummary {
+                execution,
+                families: families.into_iter().collect(),
+                state: state.into_iter().collect(),
+                effect,
+                count,
+            },
+        )
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.execution.cmp(&right.execution))
     });
     summaries
 }
@@ -8175,6 +8235,25 @@ mod tests {
             }]
         );
         assert_eq!(
+            analysis.readiness.snark_stencil_execution_summaries,
+            vec![WeavySnarkStencilExecutionSummary {
+                execution: SnarkStencilExecution::LexerGraph,
+                families: vec![SnarkStencilFamily::Lexer],
+                state: vec![
+                    SnarkStencilState::SourceInput,
+                    SnarkStencilState::ParseTable,
+                    SnarkStencilState::LexerProgram,
+                    SnarkStencilState::ParserStack,
+                    SnarkStencilState::BranchCursor,
+                    SnarkStencilState::Lookahead,
+                    SnarkStencilState::ScannerState,
+                    SnarkStencilState::AutoCloseStack,
+                ],
+                effect: lex.effect(),
+                count: 1,
+            }]
+        );
+        assert_eq!(
             analysis.readiness.snark_stencil_state_summaries,
             vec![
                 WeavySnarkStencilStateSummary {
@@ -8283,6 +8362,7 @@ mod tests {
         assert_eq!(readiness.snark_intrinsic_count, 0);
         assert!(readiness.snark_stencil_summaries.is_empty());
         assert!(readiness.snark_stencil_family_summaries.is_empty());
+        assert!(readiness.snark_stencil_execution_summaries.is_empty());
         assert!(readiness.snark_stencil_state_summaries.is_empty());
         assert!(readiness.is_neutral_weavy_only());
         assert!(!readiness.needs_snark_stencils());
@@ -8354,6 +8434,22 @@ mod tests {
             vec![WeavySnarkStencilFamilySummary {
                 family: SnarkStencilFamily::ExternalScanner,
                 execution: SnarkStencilExecution::HostCall,
+                state: vec![
+                    SnarkStencilState::SourceInput,
+                    SnarkStencilState::ParseTable,
+                    SnarkStencilState::BranchCursor,
+                    SnarkStencilState::Lookahead,
+                    SnarkStencilState::ScannerState,
+                ],
+                effect: scanner.effect(),
+                count: 1,
+            }]
+        );
+        assert_eq!(
+            analysis.readiness.snark_stencil_execution_summaries,
+            vec![WeavySnarkStencilExecutionSummary {
+                execution: SnarkStencilExecution::HostCall,
+                families: vec![SnarkStencilFamily::ExternalScanner],
                 state: vec![
                     SnarkStencilState::SourceInput,
                     SnarkStencilState::ParseTable,
@@ -8442,6 +8538,22 @@ mod tests {
             vec![WeavySnarkStencilFamilySummary {
                 family: SnarkStencilFamily::ExternalScanner,
                 execution: SnarkStencilExecution::HostCall,
+                state: vec![
+                    SnarkStencilState::SourceInput,
+                    SnarkStencilState::ParseTable,
+                    SnarkStencilState::BranchCursor,
+                    SnarkStencilState::Lookahead,
+                    SnarkStencilState::ScannerState,
+                ],
+                effect: scanner.effect(),
+                count: 2,
+            }]
+        );
+        assert_eq!(
+            readiness.snark_stencil_execution_summaries,
+            vec![WeavySnarkStencilExecutionSummary {
+                execution: SnarkStencilExecution::HostCall,
+                families: vec![SnarkStencilFamily::ExternalScanner],
                 state: vec![
                     SnarkStencilState::SourceInput,
                     SnarkStencilState::ParseTable,
@@ -8611,6 +8723,50 @@ mod tests {
                 },
             ]
         );
+        let mut expected_direct_effect = reduce.effect();
+        expected_direct_effect.accumulate(commit.effect());
+        assert_eq!(
+            readiness.snark_stencil_execution_summaries,
+            vec![
+                WeavySnarkStencilExecutionSummary {
+                    execution: SnarkStencilExecution::DirectStencil,
+                    families: vec![
+                        SnarkStencilFamily::ParserCursor,
+                        SnarkStencilFamily::TreeBuilder,
+                    ],
+                    state: vec![
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::ScannerState,
+                        SnarkStencilState::AutoCloseStack,
+                        SnarkStencilState::TreeStore,
+                        SnarkStencilState::TreeJournal,
+                        SnarkStencilState::TraceSink,
+                        SnarkStencilState::TreeEventSink,
+                    ],
+                    effect: expected_direct_effect,
+                    count: 7,
+                },
+                WeavySnarkStencilExecutionSummary {
+                    execution: SnarkStencilExecution::LexerGraph,
+                    families: vec![SnarkStencilFamily::Lexer],
+                    state: vec![
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::ScannerState,
+                        SnarkStencilState::AutoCloseStack,
+                    ],
+                    effect: lex.effect(),
+                    count: 2,
+                },
+            ]
+        );
         assert_eq!(
             readiness.snark_stencil_state_summaries,
             vec![
@@ -8696,6 +8852,7 @@ mod tests {
         assert_eq!(readiness.neutral_weavy_op_count, 1);
         assert_eq!(readiness.snark_intrinsic_count, 0);
         assert!(readiness.snark_stencil_summaries.is_empty());
+        assert!(readiness.snark_stencil_execution_summaries.is_empty());
         assert!(readiness.snark_stencil_state_summaries.is_empty());
         assert!(readiness.is_parser_fully_visible());
         assert!(!readiness.lexer.is_fully_visible());
