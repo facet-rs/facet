@@ -2976,22 +2976,31 @@ impl<'a> LrTableBuilder<'a> {
     fn item_sets(&self) -> (Vec<ItemSet>, Vec<ItemTransition>) {
         let mut item_sets = Vec::new();
         let mut item_set_keys = std::collections::HashMap::<u64, Vec<ItemSetId>>::new();
+        let mut sigs: Vec<Vec<u64>> = Vec::new();
+        let interner = &self.first.interner;
         let mut transitions = Vec::new();
         let mut queue = VecDeque::new();
         let mut start_items = ItemMap::default();
         for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
-            start_items.insert(*production, 0, &[LookaheadSymbol::Eof], &self.first.interner);
+            start_items.insert(*production, 0, &[LookaheadSymbol::Eof], interner);
         }
-        let start_items = self.closure(start_items.into_items(&self.first.interner));
-        let start = push_item_set(&mut item_sets, &mut item_set_keys, start_items, &mut queue);
+        let start_items = self.closure(start_items);
+        let start =
+            push_item_set(&mut item_sets, &mut item_set_keys, &mut sigs, start_items, interner, &mut queue);
         debug_assert_eq!(start.get(), 0);
 
         while let Some(from) = queue.pop_front() {
             let grouped = self.group_goto_items(&item_sets[from.get() as usize]);
             for (symbol, items) in grouped {
                 let target_items = self.closure(items);
-                let to =
-                    push_item_set(&mut item_sets, &mut item_set_keys, target_items, &mut queue);
+                let to = push_item_set(
+                    &mut item_sets,
+                    &mut item_set_keys,
+                    &mut sigs,
+                    target_items,
+                    interner,
+                    &mut queue,
+                );
                 transitions.push(ItemTransition { from, symbol, to });
             }
         }
@@ -2999,10 +3008,8 @@ impl<'a> LrTableBuilder<'a> {
         (item_sets, transitions)
     }
 
-    fn closure(&self, items: Vec<LrItem>) -> Vec<LrItem> {
+    fn closure(&self, mut map: ItemMap) -> ItemMap {
         use std::collections::{BTreeSet, VecDeque};
-        let interner = &self.first.interner;
-        let mut map = ItemMap::from_items(items, interner);
         // Worklist fixpoint: (re)process an item only when its lookahead set actually
         // grew, so the work is proportional to real propagation instead of
         // items × rounds (the old loop re-scanned and re-collected every key each
@@ -3037,10 +3044,10 @@ impl<'a> LrTableBuilder<'a> {
                 }
             }
         }
-        map.into_items(interner)
+        map
     }
 
-    fn group_goto_items(&self, item_set: &ItemSet) -> BTreeMap<ParserSymbol, Vec<LrItem>> {
+    fn group_goto_items(&self, item_set: &ItemSet) -> BTreeMap<ParserSymbol, ItemMap> {
         let mut grouped = BTreeMap::<ParserSymbol, ItemMap>::new();
         for item in &item_set.items {
             let production = &self.grammar.productions[item.production.get() as usize];
@@ -3055,9 +3062,6 @@ impl<'a> LrTableBuilder<'a> {
             );
         }
         grouped
-            .into_iter()
-            .map(|(symbol, items)| (symbol, items.into_items(&self.first.interner)))
-            .collect()
     }
 
     fn parse_states(
@@ -3327,14 +3331,6 @@ struct ItemMap {
 }
 
 impl ItemMap {
-    fn from_items(items: Vec<LrItem>, interner: &LookaheadInterner) -> Self {
-        let mut map = Self::default();
-        for item in items {
-            map.insert(item.production, item.dot, item.lookahead.symbols(), interner);
-        }
-        map
-    }
-
     /// Symbol-keyed insert for seeding and goto grouping (not the closure hot loop).
     /// The interner is frozen, so this is a pure lookup + bitset OR.
     fn insert(
@@ -3373,6 +3369,23 @@ impl ItemMap {
                 }
             })
             .collect()
+    }
+
+    /// Dense canonical key for state dedup: the sorted (prod, dot) keys plus each
+    /// item's lookahead words, with trailing zero words trimmed so it matches
+    /// set-equality regardless of how a bitset grew. Cheap to hash and compare
+    /// versus materialized `Vec<LrItem>` symbol vecs.
+    fn signature(&self) -> Vec<u64> {
+        let mut sig = Vec::new();
+        for ((production, dot), bitset) in &self.items {
+            let end = bitset.words.iter().rposition(|&w| w != 0).map_or(0, |i| i + 1);
+            let words = &bitset.words[..end];
+            sig.push(u64::from(production.get()));
+            sig.push(*dot as u64);
+            sig.push(words.len() as u64);
+            sig.extend_from_slice(words);
+        }
+        sig
     }
 }
 
@@ -3551,32 +3564,41 @@ fn lookahead_for_step(step: &ProductionStep) -> Option<LookaheadSymbol> {
 fn push_item_set(
     item_sets: &mut Vec<ItemSet>,
     item_set_index: &mut std::collections::HashMap<u64, Vec<ItemSetId>>,
-    items: Vec<LrItem>,
+    sigs: &mut Vec<Vec<u64>>,
+    map: ItemMap,
+    interner: &LookaheadInterner,
     queue: &mut VecDeque<ItemSetId>,
 ) -> ItemSetId {
-    // Dedup identical LR item sets (state merging) by a hash of the item set, comparing
-    // full item sets only within a hash bucket (rare). The old key was a fresh
-    // `Vec<(prod, dot, Vec<lookahead>)>` per state, cloned and compared O(log n) times
-    // in a BTreeMap — most of the table-build time outside the closure.
-    let hash = hash_item_set(&items);
+    // Dedup identical LR item sets (state merging) on a dense bitset *signature* —
+    // the sorted (prod, dot) keys plus their lookahead words — hashed to bucket and
+    // compared word-for-word only within a bucket. Crucially we dedup *before*
+    // materializing `Vec<LrItem>`: most goto targets are duplicates of existing
+    // states, so building their symbol vecs (into_items) was pure waste. Only a
+    // genuinely-new state pays materialization.
+    let sig = map.signature();
+    let hash = hash_signature(&sig);
     let bucket = item_set_index.entry(hash).or_default();
     for &existing in bucket.iter() {
-        if item_sets[existing.get() as usize].items == items {
+        if sigs[existing.get() as usize] == sig {
             return existing;
         }
     }
     let id = ItemSetId::from_index(item_sets.len());
     bucket.push(id);
+    let items = map.into_items(interner);
     item_sets.push(ItemSet { id, items });
+    sigs.push(sig);
     queue.push_back(id);
     id
 }
 
-fn hash_item_set(items: &[LrItem]) -> u64 {
-    use std::hash::Hash;
+fn hash_signature(sig: &[u64]) -> u64 {
+    use std::hash::Hasher;
     let mut hasher = FxHasher::default();
-    items.hash(&mut hasher);
-    std::hash::Hasher::finish(&hasher)
+    for &word in sig {
+        hasher.write_u64(word);
+    }
+    hasher.finish()
 }
 
 /// Cheap non-cryptographic hasher (FxHash-style) for LR item-set dedup. SipHash's
