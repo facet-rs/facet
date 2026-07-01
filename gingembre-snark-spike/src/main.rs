@@ -223,22 +223,30 @@ fn collect_jinja(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// A grammar-generated AST type would look like this. Hand-written here only to prove the
-/// materialization; in the real thing this `#[derive(Facet)]` is emitted from the annotated
-/// grammar, and the field mapping below comes from the annotations.
+// A grammar-generated AST. Hand-written here only to prove the materialization; the real
+// thing emits these `#[derive(Facet)]` types from the annotated grammar. Recursive, to
+// prove nesting + precedence (`1 + 2 * 3` -> Binary(1, +, Binary(2, *, 3))).
 #[derive(facet::Facet, Debug, PartialEq)]
-struct BinExpr {
-    left: i64,
-    op: String,
-    right: i64,
+#[repr(u8)]
+enum PExpr {
+    Number(i64),
+    Variable(String),
+    Binary(Box<PBin>),
 }
 
-/// PROOF: parse `{{ 1 + 2 }}` with snark, then materialize the `binary` resolved node
-/// straight into a `#[derive(Facet)]` Rust struct via facet-reflect's `Partial` — the
-/// reflection primitive, driven from the tree. No facet-format, no hand-rolled struct
-/// building. This is the keeper mechanism: parse into concrete typed storage by reflection.
+#[derive(facet::Facet, Debug, PartialEq)]
+struct PBin {
+    left: PExpr,
+    op: String,
+    right: PExpr,
+}
+
+/// PROOF: ONE generic reflection builder dispatching on the target facet `Shape`, driven
+/// from snark's resolved tree — enum→variant, struct→fields, scalar→set. No facet-format.
+/// The gingembre grammar has NO field labels, so the field/variant mapping comes from
+/// `hint_*` (the stand-in for grammar annotations) — which is the whole point: annotations
+/// are load-bearing, not sugar.
 fn ast_proof() {
-    use facet_reflect::Partial;
     let repo = env::var_os("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .and_then(|p| p.parent().map(PathBuf::from))
@@ -254,54 +262,127 @@ fn ast_proof() {
     let table = ParseTable::from_grammar(&parser).expect("table");
     let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("plan");
 
-    let src = "{{ 1 + 2 }}";
-    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).expect("parse");
-    let resolved = report
-        .accepted_resolved_tree(&parser, src)
-        .expect("resolved tree");
-    let binary = find_kind(&resolved, "binary").expect("no `binary` node in tree");
+    for src in ["{{ 1 + 2 }}", "{{ 1 + 2 * 3 }}", "{{ x }}"] {
+        let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).expect("parse");
+        let resolved = report
+            .accepted_resolved_tree(&parser, src)
+            .expect("resolved tree");
+        let expr_node = find_expr(&resolved).expect("no expr under interpolation");
 
-    // Field mapping (annotation-driven in the real thing): two named operands + anon operator.
-    let named: Vec<&RuntimeResolvedNode> =
-        binary.children().iter().filter(|c| c.named()).collect();
-    let op = binary
-        .children()
-        .iter()
-        .find(|c| !c.named())
-        .and_then(|c| c.text())
-        .unwrap_or_default()
-        .to_string();
-    let left: i64 = leaf_text(named[0]).and_then(|t| t.parse().ok()).expect("left i64");
-    let right: i64 = leaf_text(named[1]).and_then(|t| t.parse().ok()).expect("right i64");
+        let partial = facet_reflect::Partial::alloc_owned::<PExpr>().expect("alloc");
+        let value: PExpr = build(partial, expr_node)
+            .expect("build via reflection")
+            .build()
+            .expect("finalize")
+            .materialize::<PExpr>()
+            .expect("materialize");
+        println!("snark {src:<16?} -> {value:?}");
+    }
 
-    // Drive the reflection primitive: alloc -> begin_field/set/end per field -> build.
-    let value: BinExpr = Partial::alloc_owned::<BinExpr>()
-        .expect("alloc")
-        .begin_field("left")
-        .and_then(|p| p.set(left))
-        .and_then(|p| p.end())
-        .and_then(|p| p.begin_field("op"))
-        .and_then(|p| p.set(op))
-        .and_then(|p| p.end())
-        .and_then(|p| p.begin_field("right"))
-        .and_then(|p| p.set(right))
-        .and_then(|p| p.end())
-        .expect("drive partial")
-        .build()
-        .expect("build")
-        .materialize::<BinExpr>()
-        .expect("materialize");
-
-    println!("snark parsed {src:?}  ->  reflected into Rust type:  {value:?}");
+    // Oracle: the precedence one must nest right (`*` binds tighter than `+`).
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, "{{ 1 + 2 * 3 }}").unwrap();
+    let resolved = report.accepted_resolved_tree(&parser, "{{ 1 + 2 * 3 }}").unwrap();
+    let value: PExpr = build(
+        facet_reflect::Partial::alloc_owned::<PExpr>().unwrap(),
+        find_expr(&resolved).unwrap(),
+    )
+    .unwrap()
+    .build()
+    .unwrap()
+    .materialize::<PExpr>()
+    .unwrap();
     assert_eq!(
         value,
-        BinExpr {
-            left: 1,
+        PExpr::Binary(Box::new(PBin {
+            left: PExpr::Number(1),
             op: "+".into(),
-            right: 2
-        }
+            right: PExpr::Binary(Box::new(PBin {
+                left: PExpr::Number(2),
+                op: "*".into(),
+                right: PExpr::Number(3),
+            })),
+        }))
     );
-    println!("✓ grammar surface -> #[derive(Facet)] value via facet-reflect Partial (no facet-format)");
+    println!("✓ generic Shape-driven reflection builder: grammar surface -> nested #[derive(Facet)] AST");
+}
+
+/// The one generic builder. Dispatches on the target facet Shape; the tree supplies data,
+/// the Shape supplies structure, `hint_*` supplies the gingembre mapping (→ annotations).
+fn build<'f>(
+    mut p: facet_reflect::Partial<'f, false>,
+    node: &RuntimeResolvedNode,
+) -> Result<facet_reflect::Partial<'f, false>, facet_reflect::ReflectError> {
+    use facet_core::{Def, Type, UserType};
+
+    // Smart pointer (Box<...>): step through it, build the pointee, pop back.
+    if matches!(p.shape().def, Def::Pointer(_)) {
+        p = p.begin_smart_ptr()?;
+        p = build(p, node)?;
+        return p.end();
+    }
+    match p.shape().ty {
+        Type::User(UserType::Enum(_)) => {
+            let (variant, payload) = hint_variant(node);
+            p = p.select_variant_named(variant)?;
+            p = p.begin_nth_field(0)?; // newtype variants
+            p = build(p, payload)?;
+            p = p.end()?;
+        }
+        Type::User(UserType::Struct(st)) => {
+            for field in st.fields.iter() {
+                let child = hint_child(node, field.name);
+                p = p.begin_field(field.name)?;
+                p = build(p, child)?;
+                p = p.end()?;
+            }
+        }
+        _ => {
+            // Scalar leaf: set from the node's text per the target scalar type.
+            let text = leaf_text(node).unwrap_or_default();
+            if p.shape().is_type::<i64>() {
+                p = p.set(text.trim().parse::<i64>().unwrap_or(0))?;
+            } else if p.shape().is_type::<String>() {
+                p = p.set(text)?;
+            } else {
+                panic!("unsupported scalar shape {}", p.shape());
+            }
+        }
+    }
+    Ok(p)
+}
+
+// --- hints: stand-in for the grammar annotations (gingembre has no field labels) ---
+
+/// For an `Expr` enum position: which variant this node is, and which node carries the payload.
+fn hint_variant(node: &RuntimeResolvedNode) -> (&'static str, &RuntimeResolvedNode) {
+    match node.kind() {
+        "binary" => ("Binary", node),
+        "variable" => ("Variable", node),
+        // `literal` wraps `number`/`string`/`boolean`; number -> Number(i64).
+        "literal" => {
+            let inner = node.children().iter().find(|c| c.named()).unwrap_or(node);
+            ("Number", inner)
+        }
+        other => panic!("no variant hint for node kind {other:?}"),
+    }
+}
+
+/// For a `PBin` struct field: which child of `node` feeds it.
+fn hint_child<'a>(node: &'a RuntimeResolvedNode, field: &str) -> &'a RuntimeResolvedNode {
+    let named: Vec<&RuntimeResolvedNode> = node.children().iter().filter(|c| c.named()).collect();
+    match field {
+        "left" => named[0],
+        "right" => named[1],
+        // operator is the anonymous token between the operands.
+        "op" => node.children().iter().find(|c| !c.named()).unwrap(),
+        other => panic!("no child hint for field {other:?}"),
+    }
+}
+
+/// The first named node under the interpolation (the expression).
+fn find_expr(node: &RuntimeResolvedNode) -> Option<&RuntimeResolvedNode> {
+    let interp = find_kind(node, "interpolation")?;
+    interp.children().iter().find(|c| c.named())
 }
 
 fn find_kind<'a>(node: &'a RuntimeResolvedNode, kind: &str) -> Option<&'a RuntimeResolvedNode> {
