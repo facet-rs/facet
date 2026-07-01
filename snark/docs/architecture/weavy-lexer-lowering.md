@@ -66,13 +66,13 @@ This lets the lowered lexer move incrementally without weakening correctness:
 the first compiled graph can cover literals and direct pattern sets, then expand
 to composed token expressions and declarative scanner primitives.
 
-## Non-Endpoint Optimizations
+## Current Bridge
 
-Replacing `regex::RegexSet::matches` with a caller-cache API would reduce one
-allocation in the current interpreter. It is not the architecture endpoint.
-That kind of change should only land when it is measured as an immediate bridge
-and does not obscure the direction above: merged lex-mode automata lowered into
-Snark's Weavy program, with the interpreter kept as the oracle.
+Direct pattern sets currently use `regex-automata` with caller-provided match
+scratch, so the old per-token `regex::RegexSet::matches` allocation is gone.
+This is still a bridge, not the architecture endpoint. The direction above
+remains: merged lex-mode automata lowered into Snark's Weavy program, with the
+Rust matcher kept as the oracle.
 
 ## JIT Path
 
