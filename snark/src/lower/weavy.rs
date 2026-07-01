@@ -2215,6 +2215,7 @@ impl RuntimeWeavyBranchKey {
 fn runtime_weavy_actions(
     table: &parser_ir::ParseTable,
     state: parser_ir::ParseStateId,
+    entry_index: usize,
     lookahead: parser_ir::LookaheadSymbol,
     byte_position: usize,
 ) -> Result<&[parser_ir::ParseAction], WeavyParseError> {
@@ -2224,8 +2225,8 @@ fn runtime_weavy_actions(
         .ok_or(WeavyParseError::MissingState { state })?;
     state_row
         .entries()
-        .iter()
-        .find(|entry| entry.lookahead() == lookahead)
+        .get(entry_index)
+        .filter(|entry| entry.lookahead() == lookahead)
         .map(parser_ir::TableEntry::actions)
         .ok_or(WeavyParseError::NoAction {
             state,
@@ -2255,6 +2256,7 @@ struct RuntimeWeavyDispatch {
     state: parser_ir::ParseStateId,
     token: RuntimeWeavyToken,
     lookahead: parser_ir::LookaheadTokenId,
+    entry_index: usize,
 }
 
 fn step_runtime_weavy_branch(
@@ -2330,6 +2332,7 @@ fn step_runtime_weavy_branch(
     let actions = match runtime_weavy_actions(
         input_ctx.table,
         state,
+        dispatch.entry_index,
         dispatch.token.lookahead,
         branch.byte_position,
     ) {
@@ -2945,10 +2948,11 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     expected: Vec::new(),
                 })?;
                 let state_row = self.parse_state(state)?;
-                let entry = state_row
+                let (entry_index, entry) = state_row
                     .entries()
                     .iter()
-                    .find(|entry| entry.lookahead() == token.lookahead)
+                    .enumerate()
+                    .find(|(_, entry)| entry.lookahead() == token.lookahead)
                     .ok_or(WeavyParseError::NoAction {
                         state,
                         lookahead: token.lookahead,
@@ -2959,6 +2963,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         state,
                         token,
                         lookahead: self.lookahead_id,
+                        entry_index,
                     });
                     return Ok(Control::Return);
                 }
