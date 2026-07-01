@@ -1415,6 +1415,11 @@ pub struct WeavyLexerReadiness {
     pub merged_pattern_set_count: usize,
     /// Pattern terminal rows covered by merged direct-pattern matching.
     pub merged_pattern_terminal_count: usize,
+    /// Modes whose merged direct-pattern matcher is backed by one DFA.
+    pub merged_pattern_dfa_set_count: usize,
+    /// Pattern terminal rows whose accepted end byte comes directly from the
+    /// merged DFA.
+    pub merged_pattern_dfa_terminal_count: usize,
     /// Merged pattern rows whose accepted end byte still comes from replaying
     /// the terminal leaf matcher after the merged set reports a candidate.
     pub merged_pattern_leaf_rematch_terminal_count: usize,
@@ -1445,6 +1450,8 @@ impl WeavyLexerReadiness {
             merged_literal_terminal_count: stats.direct_literal_terminal_count,
             merged_pattern_set_count: stats.direct_pattern_set_count,
             merged_pattern_terminal_count: stats.direct_pattern_terminal_count,
+            merged_pattern_dfa_set_count: stats.direct_pattern_dfa_set_count,
+            merged_pattern_dfa_terminal_count: stats.direct_pattern_dfa_terminal_count,
             merged_pattern_leaf_rematch_terminal_count: stats
                 .direct_pattern_leaf_rematch_terminal_count,
             known_pattern_count: stats.known_pattern_count,
@@ -1833,6 +1840,11 @@ pub struct WeavyLexerStats {
     pub direct_pattern_set_count: usize,
     /// Number of terminal rows participating in merged direct-pattern sets.
     pub direct_pattern_terminal_count: usize,
+    /// Number of merged direct-pattern sets backed by one DFA.
+    pub direct_pattern_dfa_set_count: usize,
+    /// Number of direct-pattern terminal rows whose end byte comes directly
+    /// from the merged DFA.
+    pub direct_pattern_dfa_terminal_count: usize,
     /// Direct-pattern rows still replaying the terminal leaf matcher after the
     /// merged set reports that the row matched.
     pub direct_pattern_leaf_rematch_terminal_count: usize,
@@ -1957,6 +1969,10 @@ impl WeavyLexModeProgram {
             stats.direct_pattern_set_count += 1;
         }
         if let Some(direct_pattern_set) = &self.direct_pattern_set {
+            if direct_pattern_set.is_dfa_backed() {
+                stats.direct_pattern_dfa_set_count += 1;
+                stats.direct_pattern_dfa_terminal_count += direct_pattern_set.pattern_len();
+            }
             stats.direct_pattern_leaf_rematch_terminal_count +=
                 direct_pattern_set.leaf_rematch_terminal_count();
         }
@@ -2506,6 +2522,10 @@ impl WeavyDirectPatternSet {
         } else {
             self.pattern_len()
         }
+    }
+
+    fn is_dfa_backed(&self) -> bool {
+        self.dfa.is_some()
     }
 
     fn create_dfa_cache(&self) -> Option<HybridDfaCache> {
@@ -7577,6 +7597,8 @@ mod tests {
         assert_eq!(stats.direct_literal_terminal_count, 1);
         assert_eq!(stats.direct_pattern_set_count, 1);
         assert_eq!(stats.direct_pattern_terminal_count, 1);
+        assert_eq!(stats.direct_pattern_dfa_set_count, 1);
+        assert_eq!(stats.direct_pattern_dfa_terminal_count, 1);
         assert_eq!(stats.direct_pattern_leaf_rematch_terminal_count, 0);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Seq], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 2);
@@ -7782,6 +7804,8 @@ mod tests {
         assert_eq!(readiness.merged_literal_terminal_count, 1);
         assert_eq!(readiness.merged_pattern_set_count, 1);
         assert_eq!(readiness.merged_pattern_terminal_count, 1);
+        assert_eq!(readiness.merged_pattern_dfa_set_count, 1);
+        assert_eq!(readiness.merged_pattern_dfa_terminal_count, 1);
         assert_eq!(readiness.merged_pattern_leaf_rematch_terminal_count, 0);
         assert_eq!(readiness.known_pattern_count, 1);
         assert_eq!(readiness.regex_automata_count, 2);
@@ -8439,6 +8463,11 @@ mod tests {
         );
         assert!(analysis.readiness.parser_barrier_descriptors.is_empty());
         assert_eq!(analysis.readiness.lexer.regex_automata_count, 2);
+        assert_eq!(analysis.readiness.lexer.merged_pattern_dfa_set_count, 1);
+        assert_eq!(
+            analysis.readiness.lexer.merged_pattern_dfa_terminal_count,
+            1
+        );
         assert_eq!(
             analysis
                 .readiness
