@@ -432,6 +432,7 @@ proptest = "^1"
 quote = "1"
 ratatui = "^0.30"
 regex = { version = "1.12.4", default-features = false, features = ["std", "unicode"] }
+regex-automata = { version = "0.4.14", default-features = false, features = ["std", "unicode", "meta", "perf"] }
 rowan = "^0.16"
 smartstring = { version = "^1.0.1", default-features = false }
 smol_str = { version = "^0.3.4", default-features = false }

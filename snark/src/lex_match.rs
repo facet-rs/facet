@@ -8,6 +8,7 @@ pub(crate) const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledPattern {
     pub(crate) source: String,
+    pub(crate) flags: Option<String>,
     pub(crate) regex: Option<Regex>,
     kind: CompiledPatternKind,
 }
@@ -43,6 +44,7 @@ pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPat
     };
     CompiledPattern {
         source: pattern.to_owned(),
+        flags,
         regex,
         kind,
     }
@@ -248,7 +250,7 @@ fn is_known_pattern_source(pattern: &str) -> bool {
     )
 }
 
-fn pattern_inspected_end(input: &str, end: usize) -> usize {
+pub(crate) fn pattern_inspected_end(input: &str, end: usize) -> usize {
     if end >= input.len() {
         return input.len();
     }
@@ -301,6 +303,16 @@ fn cached_regex(pattern: &str, flags: Option<&str>) -> Option<Regex> {
 
 fn compile_regex_leaf(pattern: &str, flags: Option<&str>) -> Option<Regex> {
     Regex::new(&anchored_regex_source(pattern, flags)?).ok()
+}
+
+pub(crate) fn regex_automata_leaf_source(pattern: &str, flags: Option<&str>) -> Option<String> {
+    let body = rust_regex_source(pattern);
+    let flags = rust_regex_flags(flags)?;
+    Some(if flags.is_empty() {
+        format!("(?:{})", body)
+    } else {
+        format!("(?{}:{})", flags, body)
+    })
 }
 
 fn anchored_regex_source(pattern: &str, flags: Option<&str>) -> Option<String> {

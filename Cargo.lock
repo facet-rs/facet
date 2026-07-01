@@ -6584,6 +6584,7 @@ dependencies = [
  "indexmap 2.14.0",
  "rediff",
  "regex",
+ "regex-automata",
  "snark-dsl",
  "snark-scanner-host",
  "weavy",
