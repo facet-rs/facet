@@ -976,17 +976,6 @@ struct RuntimeWeavyAction {
     action: parser_ir::ParseAction,
 }
 
-/// Execute a runtime stack/tree parser plan through Weavy and return runtime evidence.
-pub fn parse_runtime_with_report(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
-    parse_runtime_with_report_and_scanner(plan, grammar, parser, table, input, None)
-}
-
 /// Execute a prepared runtime stack/tree parser plan through Weavy.
 pub fn parse_prepared_runtime_with_report(
     plan: &RuntimeWeavyPlan,
@@ -1034,54 +1023,6 @@ pub fn parse_prepared_runtime_recovering_with_report_and_scanner(
         RuntimeWeavyInput {
             plan: &plan.reduced,
             compiled_lex_modes: &plan.compiled_lex_modes,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
-        RuntimeWeavyRecoveryMode::SkipInvalidInput,
-        None,
-    )
-}
-
-/// Execute a runtime stack/tree parser plan through Weavy with a reduced scanner host.
-pub fn parse_runtime_with_report_and_scanner(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
-) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
-    let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
-    parse_runtime_with_compiled_lex_modes(
-        RuntimeWeavyInput {
-            plan,
-            compiled_lex_modes: &compiled_lex_modes,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
-        RuntimeWeavyRecoveryMode::Strict,
-        None,
-    )
-}
-
-/// Execute a runtime stack/tree parser plan through Weavy with skip-invalid recovery.
-pub fn parse_runtime_recovering_with_report_and_scanner(
-    plan: &ReducedWeavyPlan,
-    grammar: &ValidatedGrammar,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
-) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
-    let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
-    parse_runtime_with_compiled_lex_modes(
-        RuntimeWeavyInput {
-            plan,
-            compiled_lex_modes: &compiled_lex_modes,
             parser,
             table,
             input,

@@ -1089,17 +1089,19 @@ mod tests {
             .unwrap();
         let assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
         let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
-            &plan,
-            &validated,
+        let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
+        let weavy_report = unwrap_weavy_report_or_panic(
+            parse_prepared_runtime_with_report_and_scanner(
+                &plan,
+                &validated,
+                &parser_grammar,
+                &parse_table,
+                &highlight_fixture.source.body.0,
+                Some(&scanner),
+            ),
             &parser_grammar,
             &parse_table,
-            &highlight_fixture.source.body.0,
-            Some(&scanner),
-        )
-        .unwrap();
+        );
         let captures = highlights_query
             .body
             .execute_runtime_highlights_from_tree_events(
@@ -1493,19 +1495,21 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
         let weavy_scanner = RecordingCssReducedExternalScanner::new(&weavy_css_scanner);
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
-            &plan,
-            &validated,
+        let weavy_report = unwrap_weavy_report_or_panic(
+            parse_prepared_runtime_with_report_and_scanner(
+                &plan,
+                &validated,
+                &parser_grammar,
+                &parse_table,
+                &selector_cases[5].input,
+                Some(&weavy_scanner),
+            ),
             &parser_grammar,
             &parse_table,
-            &selector_cases[5].input,
-            Some(&weavy_scanner),
-        )
-        .unwrap();
+        );
 
         assert_same!(weavy_report.tree(), &selector_cases[5].expected);
         assert!(
@@ -2033,8 +2037,7 @@ mod tests {
             .prepare_productions_for_items()
             .unwrap();
         let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let statement_fixture = grammar
             .corpus
             .iter()
@@ -2055,15 +2058,18 @@ mod tests {
             let case = &statement_cases[case_index];
             assert_eq!(case.name, case_name);
             let weavy_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-            let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
-                &plan,
-                &validated,
+            let weavy_report = unwrap_weavy_report_or_panic(
+                parse_prepared_runtime_with_report_and_scanner(
+                    &plan,
+                    &validated,
+                    &parser_grammar,
+                    &parse_table,
+                    &case.input,
+                    Some(&weavy_scanner),
+                ),
                 &parser_grammar,
                 &parse_table,
-                &case.input,
-                Some(&weavy_scanner),
-            )
-            .unwrap();
+            );
 
             assert_same!(weavy_report.tree(), &case.expected);
             assert_eq!(
@@ -2106,17 +2112,19 @@ mod tests {
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
         let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
-            &plan,
-            &validated,
+        let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
+        let weavy_report = unwrap_weavy_report_or_panic(
+            parse_prepared_runtime_with_report_and_scanner(
+                &plan,
+                &validated,
+                &parser_grammar,
+                &parse_table,
+                &declaration_cases[7].input,
+                Some(&scanner),
+            ),
             &parser_grammar,
             &parse_table,
-            &declaration_cases[7].input,
-            Some(&scanner),
-        )
-        .unwrap();
+        );
 
         assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
         assert!(
@@ -2171,17 +2179,19 @@ mod tests {
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
         let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report_and_scanner(
-            &plan,
-            &validated,
+        let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
+        let weavy_report = unwrap_weavy_report_or_panic(
+            parse_prepared_runtime_with_report_and_scanner(
+                &plan,
+                &validated,
+                &parser_grammar,
+                &parse_table,
+                &declaration_cases[7].input,
+                Some(&scanner),
+            ),
             &parser_grammar,
             &parse_table,
-            &declaration_cases[7].input,
-            Some(&scanner),
-        )
-        .unwrap();
+        );
         let weavy_captures = highlights_query
             .body
             .execute_runtime_highlights_from_tree_events(
@@ -2395,16 +2405,12 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[0].name, "Arrays");
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan,
+        let weavy_report = parse_weavy_report_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
             &cases[0].input,
-        )
-        .unwrap();
+        );
         let field_regression_query = QuerySource(
             r#"
 (pair
@@ -2468,16 +2474,12 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[4].name, "Comments");
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_runtime_with_report(
-            &plan,
+        let weavy_report = parse_weavy_report_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
             &cases[4].input,
-        )
-        .unwrap();
+        );
         let weavy_captures = highlights_query
             .body
             .execute_runtime_highlights_from_tree_events(
