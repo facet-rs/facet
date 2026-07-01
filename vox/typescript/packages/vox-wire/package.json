@@ -26,12 +26,12 @@
     "README.md"
   ],
   "dependencies": {
-    "@bearcove/phon-schema": "0.2.0-rc.0",
-    "@bearcove/phon-engine": "0.2.0-rc.0"
+    "@bearcove/phon-engine": "0.2.0-rc.0",
+    "@bearcove/phon-schema": "0.2.0-rc.0"
   },
   "devDependencies": {
-    "@types/node": "^25.0.0",
-    "vitest": "^4.0.0"
+    "@types/node": "^25.9.4",
+    "vitest": "^4.1.9"
   },
   "license": "MIT OR Apache-2.0",
   "description": "Wire message codecs and helpers for Vox",

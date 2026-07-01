@@ -43,7 +43,7 @@
     "typescript": "^5.3.0"
   },
   "peerDependencies": {
-    "monaco-editor": "^0.40.0 || ^0.50.0"
+    "monaco-editor": "^0.40.0 || ^0.50.0 || ^0.55.0"
   },
   "publishConfig": {
     "access": "public"

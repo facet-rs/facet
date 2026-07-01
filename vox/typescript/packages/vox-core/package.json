@@ -26,12 +26,12 @@
     "README.md"
   ],
   "dependencies": {
-    "@bearcove/phon-schema": "0.2.0-rc.0",
     "@bearcove/phon-engine": "0.2.0-rc.0",
+    "@bearcove/phon-schema": "0.2.0-rc.0",
     "@bearcove/vox-wire": "workspace:*"
   },
   "devDependencies": {
-    "vitest": "^4.0.0"
+    "vitest": "^4.1.9"
   },
   "license": "MIT OR Apache-2.0",
   "description": "Core protocol runtime and transport abstractions for Vox",

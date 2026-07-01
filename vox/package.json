@@ -10,9 +10,9 @@
     "lint": "oxlint typescript"
   },
   "devDependencies": {
-    "@types/node": "^25.0.0",
-    "@typescript/native-preview": "7.0.0-dev.20260619.1",
-    "oxlint": "^1.60.0",
+    "@types/node": "^25.9.4",
+    "@typescript/native-preview": "7.0.0-dev.20260628.1",
+    "oxlint": "^1.71.0",
     "tsdown": "^0.22.3",
     "typescript": "^6.0.0"
   },
