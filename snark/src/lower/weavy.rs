@@ -735,7 +735,7 @@ impl WeavyParsePlan {
         let parser_semantics = self.program.semantic_stats();
         let lexer = self.lexer_stats();
         WeavyParsePlanAnalysis {
-            readiness: WeavyParsePlanReadiness::from_parts(&parser, &lexer),
+            readiness: WeavyParsePlanReadiness::from_parts(&parser, &parser_semantics, &lexer),
             parser,
             parser_semantics,
             lexer,
@@ -767,6 +767,14 @@ pub struct WeavyParsePlanAnalysis {
 pub struct WeavyParsePlanReadiness {
     /// Lexer-side lowering readiness.
     pub lexer: WeavyLexerReadiness,
+    /// Parser intrinsics still represented as Snark dialect ops.
+    pub dialect_op_intrinsic_count: usize,
+    /// Parser intrinsics that anchor a Snark-owned lexer graph.
+    pub lexer_graph_intrinsic_count: usize,
+    /// Parser intrinsics that write optional sinks.
+    pub sink_op_intrinsic_count: usize,
+    /// Parser intrinsics that remain external host-call barriers.
+    pub host_call_barrier_intrinsic_count: usize,
     /// Opaque parser/action intrinsics that remain hard barriers.
     pub opaque_intrinsic_count: usize,
     /// Intrinsics that call outside code.
@@ -774,9 +782,21 @@ pub struct WeavyParsePlanReadiness {
 }
 
 impl WeavyParsePlanReadiness {
-    fn from_parts(parser: &LoweredAnalysis, lexer: &WeavyLexerStats) -> Self {
+    fn from_parts(
+        parser: &LoweredAnalysis,
+        parser_semantics: &SnarkIntrinsicSemanticStats,
+        lexer: &WeavyLexerStats,
+    ) -> Self {
         Self {
             lexer: WeavyLexerReadiness::from_stats(lexer),
+            dialect_op_intrinsic_count: parser_semantics
+                .lowering_count(SnarkIntrinsicLowering::DialectOp),
+            lexer_graph_intrinsic_count: parser_semantics
+                .lowering_count(SnarkIntrinsicLowering::LexerGraph),
+            sink_op_intrinsic_count: parser_semantics
+                .lowering_count(SnarkIntrinsicLowering::SinkOp),
+            host_call_barrier_intrinsic_count: parser_semantics
+                .lowering_count(SnarkIntrinsicLowering::HostCallBarrier),
             opaque_intrinsic_count: parser.effect_stats.total.opaque_count,
             host_call_intrinsic_count: parser.effect_stats.total.calls_user_code_count,
         }
@@ -6414,6 +6434,10 @@ mod tests {
         assert_eq!(analysis.lexer.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 0);
         assert_eq!(analysis.readiness.opaque_intrinsic_count, 0);
+        assert_eq!(analysis.readiness.lexer_graph_intrinsic_count, 1);
+        assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
+        assert_eq!(analysis.readiness.sink_op_intrinsic_count, 0);
+        assert_eq!(analysis.readiness.host_call_barrier_intrinsic_count, 0);
         assert_eq!(analysis.readiness.lexer.regex_automata_count, 2);
         assert_eq!(analysis.readiness.lexer.regex_fallback_count, 0);
         assert_eq!(analysis.readiness.lexer.rust_regex_fallback_count, 0);
@@ -6464,6 +6488,10 @@ mod tests {
         );
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 1);
         assert_eq!(analysis.readiness.opaque_intrinsic_count, 1);
+        assert_eq!(analysis.readiness.host_call_barrier_intrinsic_count, 1);
+        assert_eq!(analysis.readiness.lexer_graph_intrinsic_count, 0);
+        assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
+        assert_eq!(analysis.readiness.sink_op_intrinsic_count, 0);
         assert!(analysis.readiness.lexer.is_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
     }
