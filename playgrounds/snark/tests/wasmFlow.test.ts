@@ -132,6 +132,12 @@ module.exports = grammar({
   assert.equal(response.language, "tiny_playground");
   assert.equal(response.plan.stencils_needed, true);
   assert.ok(
+    response.plan.snark_stencil_families.some(
+      (summary: { family: string; execution: string; count: number }) =>
+        summary.family === "Lexer" && summary.execution === "LexerGraph" && summary.count > 0,
+    ),
+  );
+  assert.ok(
     response.plan.snark_stencils.some(
       (summary: {
         descriptor: string;

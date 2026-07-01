@@ -4568,6 +4568,13 @@ mod tests {
         assert_eq!(parse.accepted_missing_count, 0);
         let plan = response.plan.as_ref().expect("plan output");
         assert!(plan.stencils_needed);
+        assert!(
+            plan.snark_stencil_families
+                .iter()
+                .any(|summary| summary.family == "Lexer"
+                    && summary.execution == "LexerGraph"
+                    && summary.count > 0)
+        );
         assert!(plan.snark_stencils.iter().any(|summary| summary.descriptor
             == "snark.tree_sitter::lex"
             && summary.domain == "Lexing"

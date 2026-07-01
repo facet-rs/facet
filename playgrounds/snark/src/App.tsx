@@ -62,7 +62,14 @@ type PlanOutput = {
   neutral_weavy_op_count: number;
   snark_intrinsic_count: number;
   snark_stencils: PlanStencilOutput[];
+  snark_stencil_families: PlanStencilFamilyOutput[];
   lowering_barriers: PlanBarrierOutput[];
+};
+
+type PlanStencilFamilyOutput = {
+  family: string;
+  execution: string;
+  count: number;
 };
 
 type PlanStencilOutput = {
