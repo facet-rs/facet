@@ -3009,14 +3009,14 @@ impl<'a> LrTableBuilder<'a> {
     }
 
     fn closure(&self, mut map: ItemMap) -> ItemMap {
-        use std::collections::{BTreeSet, VecDeque};
+        use std::collections::VecDeque;
         // Worklist fixpoint: (re)process an item only when its lookahead set actually
         // grew, so the work is proportional to real propagation instead of
         // items × rounds (the old loop re-scanned and re-collected every key each
         // pass — ~1.5s of BTreeMap churn on gingembre). Inserts only ever target
         // (production, 0), so only those items can grow and get re-queued. Two reused
         // scratch buffers keep the loop allocation-free.
-        let mut queued: BTreeSet<(ProductionId, usize)> = map.items.keys().copied().collect();
+        let mut queued: FxHashSet<(ProductionId, usize)> = map.items.keys().copied().collect();
         let mut worklist: VecDeque<(ProductionId, usize)> = queued.iter().copied().collect();
         // Reused bitsets: `fallback` = the current item's lookahead, `scratch` = the
         // computed FIRST set. The whole loop is bitwise OR — no Vec, no interning, no sort.
@@ -3327,7 +3327,7 @@ impl LookaheadBitset {
 
 #[derive(Debug, Clone, Default)]
 struct ItemMap {
-    items: BTreeMap<(ProductionId, usize), LookaheadBitset>,
+    items: FxHashMap<(ProductionId, usize), LookaheadBitset>,
 }
 
 impl ItemMap {
@@ -3355,7 +3355,11 @@ impl ItemMap {
     }
 
     fn into_items(self, interner: &LookaheadInterner) -> Vec<LrItem> {
-        self.items
+        // The map is hash-ordered; sort by (prod, dot) for a canonical, reproducible
+        // item vec. Only genuinely-new states reach here.
+        let mut entries: Vec<_> = self.items.into_iter().collect();
+        entries.sort_unstable_by_key(|(key, _)| *key);
+        entries
             .into_iter()
             .map(|((production, dot), bitset)| {
                 // Already in symbol order: the interner is built sorted, so ascending
@@ -3376,12 +3380,16 @@ impl ItemMap {
     /// set-equality regardless of how a bitset grew. Cheap to hash and compare
     /// versus materialized `Vec<LrItem>` symbol vecs.
     fn signature(&self) -> Vec<u64> {
-        let mut sig = Vec::new();
-        for ((production, dot), bitset) in &self.items {
+        let mut keys: Vec<(ProductionId, usize)> = self.items.keys().copied().collect();
+        keys.sort_unstable();
+        let mut sig = Vec::with_capacity(keys.len() * 3);
+        for key in keys {
+            let (production, dot) = key;
+            let bitset = &self.items[&key];
             let end = bitset.words.iter().rposition(|&w| w != 0).map_or(0, |i| i + 1);
             let words = &bitset.words[..end];
             sig.push(u64::from(production.get()));
-            sig.push(*dot as u64);
+            sig.push(dot as u64);
             sig.push(words.len() as u64);
             sig.extend_from_slice(words);
         }
@@ -3644,6 +3652,23 @@ impl std::hash::Hasher for FxHasher {
         }
     }
 }
+
+/// `BuildHasher` for `FxHasher` so the closure's item map/queue can be plain hash
+/// collections keyed on integer ids — O(1) with no ordered-tree node splits/memmoves
+/// (which dominated the closure after the materialization cut). Deterministic (no
+/// random seed), so table builds stay reproducible.
+#[derive(Default, Clone)]
+struct BuildFxHasher;
+
+impl std::hash::BuildHasher for BuildFxHasher {
+    type Hasher = FxHasher;
+    fn build_hasher(&self) -> FxHasher {
+        FxHasher::default()
+    }
+}
+
+type FxHashMap<K, V> = std::collections::HashMap<K, V, BuildFxHasher>;
+type FxHashSet<K> = std::collections::HashSet<K, BuildFxHasher>;
 
 fn sorted_lookaheads(mut symbols: Vec<LookaheadSymbol>) -> Vec<LookaheadSymbol> {
     symbols.sort();
