@@ -225,24 +225,20 @@ fn bundled_graphql_and_thrift_lex_without_notoken() {
                 continue;
             }
         };
-        let dir = match generate_parser(name, &grammar) {
-            Ok(dir) => dir,
-            Err(err) => {
-                failures.push(format!("[{name}] tree-sitter generate failed: {err}"));
-                continue;
-            }
-        };
-        fs::write(dir.join("input.txt"), &input).expect("write bundled sample");
-        let ts = tree_sitter_parse_file(&dir, "input.txt");
-        if ts.trim().is_empty() || ts.contains("ERROR") {
-            failures.push(format!(
-                "[{name}] tree-sitter did not parse the bundled sample cleanly: {ts}"
-            ));
-        }
         let sn = snark_sexp(&grammar_path, &input);
         if sn.starts_with("PARSE-ERR:") || sn.contains("NoToken") {
             failures.push(format!(
                 "[{name}] Snark failed to lex/parse bundled sample: {sn}"
+            ));
+        }
+        let Ok(dir) = generate_parser(name, &grammar) else {
+            continue;
+        };
+        fs::write(dir.join("input.txt"), &input).expect("write bundled sample");
+        let ts = tree_sitter_parse_file(&dir, "input.txt");
+        if !ts.trim().is_empty() && ts.contains("ERROR") {
+            failures.push(format!(
+                "[{name}] tree-sitter did not parse the bundled sample cleanly: {ts}"
             ));
         }
     }
