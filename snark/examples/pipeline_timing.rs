@@ -73,6 +73,7 @@ fn main() {
         "plan",
         WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy parse plan")
     );
+    let analysis = runtime.analysis();
     // Measure the entry points the playground calls: strict first, recovering
     // only when strict fails.
     let t0 = Instant::now();
@@ -122,4 +123,47 @@ fn main() {
         "  {:<40} {:>11.3} ms",
         "parse_prepared_weavy_recovering", t_recovering
     );
+
+    println!("\n---- weavy lowering readiness ----");
+    println!(
+        "  parser ops: {} neutral, {} snark intrinsics",
+        analysis.readiness.neutral_weavy_op_count, analysis.readiness.snark_intrinsic_count
+    );
+    println!(
+        "  intrinsic lanes: {} dialect, {} lexer graph, {} sink, {} host-call barrier",
+        analysis.readiness.dialect_op_intrinsic_count,
+        analysis.readiness.lexer_graph_intrinsic_count,
+        analysis.readiness.sink_op_intrinsic_count,
+        analysis.readiness.host_call_barrier_intrinsic_count
+    );
+    println!(
+        "  lexer leaves: {} regex-automata, {} rust-regex fallback, {} unsupported pattern, {} unsupported terminal, {} unsupported symbol",
+        analysis.readiness.lexer.regex_automata_count,
+        analysis.readiness.lexer.rust_regex_fallback_count,
+        analysis.readiness.lexer.unsupported_pattern_count,
+        analysis.readiness.lexer.unsupported_terminal_count,
+        analysis.readiness.lexer.unsupported_symbol_count
+    );
+    println!(
+        "  merged lexer sets: {} literal sets ({} terminals), {} pattern sets ({} terminals)",
+        analysis.readiness.lexer.merged_literal_set_count,
+        analysis.readiness.lexer.merged_literal_terminal_count,
+        analysis.readiness.lexer.merged_pattern_set_count,
+        analysis.readiness.lexer.merged_pattern_terminal_count
+    );
+    println!(
+        "  fully visible? parser={} all={} neutral-weavy-only={} needs-snark-stencils={}",
+        analysis.readiness.is_parser_fully_visible(),
+        analysis.readiness.is_fully_visible(),
+        analysis.readiness.is_neutral_weavy_only(),
+        analysis.readiness.needs_snark_stencils()
+    );
+    if analysis.readiness.barrier_summaries.is_empty() {
+        println!("  blockers: none");
+    } else {
+        println!("  blockers:");
+        for summary in &analysis.readiness.barrier_summaries {
+            println!("    {:?}: {}", summary.barrier, summary.count);
+        }
+    }
 }
