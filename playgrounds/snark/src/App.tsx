@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { runParse } from "./parseClient";
+import { runBenchmark, BenchPanel, type BenchReport } from "./benchmark";
 import { SourceEditor, type SourceEdit } from "./editor";
 import { captureClass } from "./highlight";
 import { defaultVendoredRootId, vendoredFiles } from "./bundled";
@@ -155,6 +156,10 @@ type HighlightAssertionOutput = {
   message: string | null;
 };
 
+type PhaseTiming = { name: string; ms: number };
+
+type Timings = { prepare: PhaseTiming[]; parse: PhaseTiming | null };
+
 type PlaygroundResponse = {
   ok: boolean;
   language: string | null;
@@ -176,10 +181,13 @@ type PlaygroundResponse = {
   corpus: CorpusOutput[];
   highlight_tests: HighlightTestOutput[];
   tests: TestSummary;
+  timings: Timings;
 };
 
 const defaultFiles: BundleFile[] = vendoredFiles;
 const defaultGrammarRoot = defaultVendoredRootId;
+// One frame (~60fps). Leading-edge throttle interval for live re-parsing.
+const PARSE_THROTTLE_MS = 16;
 const defaultSample = preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
 
 type PendingSourceEdit = {
@@ -197,7 +205,9 @@ export function App() {
   const [selectedSamplePath, setSelectedSamplePath] = useState(defaultSample?.path ?? "");
   const [input, setInput] = useState(defaultSample?.text ?? "");
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
-  const [busyTask, setBusyTask] = useState<"parse" | "tests" | null>(null);
+  const [busyTask, setBusyTask] = useState<"parse" | "tests" | "bench" | null>(null);
+  const [benchReport, setBenchReport] = useState<BenchReport | null>(null);
+  const [benchProgress, setBenchProgress] = useState("");
   const parseRequestId = useRef(0);
   const autoTestedKeyRef = useRef<string | null>(null);
   const bundledTestSnapshotRef = useRef<BundledTestSnapshot | null>(null);
@@ -206,6 +216,14 @@ export function App() {
   const preparedKeyRef = useRef<string | null>(null);
   const baselineInputRef = useRef<string | null>(null);
   const pendingSourceEditRef = useRef<PendingSourceEdit | null>(null);
+  // In-flight/last DSL emit keyed by session key, so repeated prepare-triggering
+  // renders (StrictMode double-invoke, effect churn during the multi-second prepare
+  // window) reuse one grammar.js -> grammar.json emit instead of respawning the DSL
+  // worker each time.
+  const grammarJsonCacheRef = useRef<{ key: string; promise: Promise<BundleFile[]> } | null>(null);
+  // Leading-edge throttle: the parse itself is ~a few ms, so the first change runs
+  // immediately and a burst (fast typing) coalesces to at most one run per frame.
+  const lastParseAtRef = useRef(0);
 
   const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
   const activeGrammarRoot = useMemo(
@@ -237,6 +255,56 @@ export function App() {
   );
   const busy = busyTask !== null;
 
+  const handleRunBenchmark = async (): Promise<BenchReport> => {
+    const grammar = activeGrammarRootId;
+    const samples = projectedFiles
+      .filter((file) => file.path.startsWith("samples/"))
+      .map((file) => ({ name: file.path.replace(/^samples\//, ""), text: file.text }));
+    if (!samples.length) {
+      throw new Error(`grammar "${grammar}" has no samples to benchmark`);
+    }
+    setBusyTask("bench");
+    setBenchProgress(`0/${samples.length}`);
+    try {
+      const key = sessionCacheKey(grammar, projectedFiles);
+      const parse = async (text: string) => {
+        const runnableFiles =
+          preparedKeyRef.current !== key ? await filesWithGrammarJson(files, grammar) : null;
+        const { response, prepared } = await runParse({
+          key,
+          files: runnableFiles,
+          input: text,
+          runCorpus: false,
+          edit: null,
+          useReparse: false,
+        });
+        if (prepared) preparedKeyRef.current = key;
+        return JSON.parse(response) as PlaygroundResponse;
+      };
+      const report = await runBenchmark({
+        grammar,
+        samples,
+        parse,
+        onProgress: (done, total, name) => setBenchProgress(`${done}/${total} · ${name}`),
+      });
+      setBenchReport(report);
+      window.__snarkBenchResult = report;
+      return report;
+    } finally {
+      setBusyTask(null);
+      setBenchProgress("");
+    }
+  };
+
+  const benchHandlerRef = useRef(handleRunBenchmark);
+  benchHandlerRef.current = handleRunBenchmark;
+  useEffect(() => {
+    window.__snarkRunBenchmark = () => benchHandlerRef.current();
+    return () => {
+      delete window.__snarkRunBenchmark;
+    };
+  }, []);
+
   const editorCaptures = useMemo(() => composedHighlights(result), [result]);
   const editorDiagnostic = useMemo(() => {
     const found = placedDiagnostic(result);
@@ -250,9 +318,14 @@ export function App() {
     parseRequestId.current = requestId;
     const key = sessionCacheKey(activeGrammarRootId, projectedFiles);
     const runBundledTests = hasBundledTests && autoTestedKeyRef.current !== key;
-    setBusyTask(runBundledTests ? "tests" : "parse");
+    // Only flash the busy indicator for genuinely slow work — a grammar (re)prepare or
+    // a test run. A live reparse is a few ms; a spinner would just flicker.
+    if (runBundledTests || preparedKeyRef.current !== key) {
+      setBusyTask(runBundledTests ? "tests" : "parse");
+    }
 
-    const timeout = window.setTimeout(() => {
+    const run = () => {
+      lastParseAtRef.current = performance.now();
       void playgroundResponse(runBundledTests)
         .then((response) => {
           if (parseRequestId.current === requestId) {
@@ -267,8 +340,18 @@ export function App() {
             setBusyTask(null);
           }
         });
-    }, 150);
+    };
 
+    // Leading edge: run now if it's been at least one frame since the last parse;
+    // otherwise schedule the trailing run exactly one frame after it. A burst of
+    // edits keeps clearing this timeout and collapses to a single run.
+    const sinceLast = performance.now() - lastParseAtRef.current;
+    const delay = Math.max(0, PARSE_THROTTLE_MS - sinceLast);
+    if (delay === 0) {
+      run();
+      return;
+    }
+    const timeout = window.setTimeout(run, delay);
     return () => {
       window.clearTimeout(timeout);
     };
@@ -317,14 +400,27 @@ export function App() {
       const key = sessionCacheKey(activeGrammarRootId, projectedFiles);
       const needPrepare = preparedKeyRef.current !== key;
 
-      // Only emit grammar.js -> grammar.json (in the DSL worker) when the bundle changed.
+      // Only emit grammar.js -> grammar.json (in the DSL worker) when the bundle
+      // changed, and dedup concurrent/repeat emits for the same key via a cached
+      // promise so we never respawn the DSL worker for a language we're already emitting.
       let runnableFiles: BundleFile[] | null = null;
       if (needPrepare) {
-        runnableFiles = await filesWithGrammarJson(files, activeGrammarRootId).catch(
-          (error: unknown) => {
-            throw new PlaygroundRunError("grammar.js", errorMessage(error));
-          },
-        );
+        if (grammarJsonCacheRef.current?.key !== key) {
+          const emitStart = performance.now();
+          const promise = filesWithGrammarJson(files, activeGrammarRootId).then((emitted) => {
+            console.log(
+              `[snark load] DSL emit grammar.js -> grammar.json: ${(performance.now() - emitStart).toFixed(0)} ms`,
+            );
+            return emitted;
+          });
+          grammarJsonCacheRef.current = { key, promise };
+        }
+        try {
+          runnableFiles = await grammarJsonCacheRef.current.promise;
+        } catch (error) {
+          grammarJsonCacheRef.current = null; // allow a later attempt to retry the emit
+          throw new PlaygroundRunError("grammar.js", errorMessage(error));
+        }
       }
 
       const pendingEdit = pendingSourceEditRef.current;
@@ -515,6 +611,15 @@ export function App() {
           onChange={(value, edit) => updateSourceInput(value, "", edit)}
         />
 
+        <div className="dock bench-dock">
+          <BenchPanel
+            report={benchReport}
+            running={busyTask === "bench"}
+            progress={benchProgress}
+            onRun={() => void handleRunBenchmark()}
+          />
+        </div>
+
         <ResultsDock result={result} onUseInput={(value, sourcePath = "") => updateSourceInput(value, sourcePath)} />
       </section>
     </main>
@@ -526,13 +631,13 @@ function StatusPill({
   busyTask,
 }: {
   result: PlaygroundResponse | null;
-  busyTask: "parse" | "tests" | null;
+  busyTask: "parse" | "tests" | "bench" | null;
 }) {
   if (busyTask) {
     return (
       <span className="pill busy">
         <span className="dot" />
-        {busyTask === "tests" ? "Running tests" : "Parsing"}
+        {busyTask === "tests" ? "Running tests" : busyTask === "bench" ? "Benchmarking" : "Parsing"}
       </span>
     );
   }
@@ -574,6 +679,37 @@ function StatusPill({
   );
 }
 
+// A collapsible panel whose body is mounted only while open — so a collapsed panel
+// costs nothing to reconcile. `<details>` hides content with CSS but React still
+// renders (and the browser still lays out) every node, which is what made switching
+// pages re-render the whole parse tree / capture list on every parse.
+function Panel({
+  title,
+  meta,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  meta?: ReactNode;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={`panel ${open ? "open" : ""}`}>
+      <button
+        type="button"
+        className="panel-summary"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <span className="panel-title">{title}</span>
+        {meta != null ? <span className="panel-meta">{meta}</span> : null}
+      </button>
+      {open ? <div className="panel-body">{children}</div> : null}
+    </div>
+  );
+}
 
 function ResultsDock({
   result,
@@ -592,6 +728,12 @@ function ResultsDock({
     failure?.parse &&
     (failure.parse.accepted_error_count > 0 || failure.parse.accepted_missing_count > 0);
 
+  const timingRows: Array<{ name: string; ms: number; kind: "prepare" | "parse" }> = [
+    ...(result?.timings?.prepare ?? []).map((phase) => ({ ...phase, kind: "prepare" as const })),
+    ...(result?.timings?.parse ? [{ ...result.timings.parse, kind: "parse" as const }] : []),
+  ];
+  const maxTimingMs = timingRows.reduce((max, row) => Math.max(max, row.ms), 0) || 1;
+
   return (
     <div className="dock">
       {failure ? (
@@ -606,75 +748,93 @@ function ResultsDock({
         </div>
       ) : null}
 
-      <details className="panel" open={!failure || Boolean(recovered)}>
-        <summary>
-          <span className="panel-title">S-expression</span>
-          {result?.parse ? (
-            <span className="panel-meta">
+      {timingRows.length ? (
+        <Panel
+          title="Timings"
+          defaultOpen
+          meta={
+            result?.timings?.parse
+              ? `run parser ${result.timings.parse.ms.toFixed(2)} ms`
+              : "prepare only"
+          }
+        >
+          <div className="timing-list">
+            {timingRows.map((row) => (
+              <div className={`timing-row timing-${row.kind}`} key={`${row.kind}-${row.name}`}>
+                <span className="timing-name">{row.name}</span>
+                <span className="timing-track">
+                  <span
+                    className="timing-bar"
+                    style={{ width: `${Math.max(2, (row.ms / maxTimingMs) * 100)}%` }}
+                  />
+                </span>
+                <span className="timing-ms">{row.ms.toFixed(row.ms >= 1 ? 2 : 3)} ms</span>
+              </div>
+            ))}
+          </div>
+          <p className="timing-note">
+            Prepare phases run once per grammar; “run parser” is live per input — watch it stay flat as input grows.
+          </p>
+        </Panel>
+      ) : null}
+
+      <Panel
+        title="S-expression"
+        meta={
+          result?.parse ? (
+            <>
               {result.parse.accepted_count} accepted · {result.parse.failure_count} failed
               {result.parse.reuse_node_count ? ` · ${result.parse.reuse_node_count} reused` : ""}
               {result.parse.accepted_error_count || result.parse.accepted_missing_count
                 ? ` · ${result.parse.accepted_error_count} ERROR · ${result.parse.accepted_missing_count} MISSING`
                 : ""}
-            </span>
-          ) : null}
-        </summary>
-        <div className="panel-body">
-          {sexp ? <pre className="sexp">{sexp}</pre> : <p className="empty">No parse tree.</p>}
-        </div>
-      </details>
+            </>
+          ) : undefined
+        }
+      >
+        {sexp ? <pre className="sexp">{sexp}</pre> : <p className="empty">No parse tree.</p>}
+      </Panel>
 
-      <details className="panel">
-        <summary>
-          <span className="panel-title">Captures</span>
-          <span className="panel-meta">{captures.length}</span>
-        </summary>
-        <div className="panel-body">
-          {captures.length ? (
-            <div className="capture-list">
-              {captures.map((capture, index) => (
-                <div className="capture-row" key={`${capture.capture_name}-${capture.start_byte}-${index}`}>
-                  <span className={`capture-chip ${captureClass(capture.capture_name)}`}>
-                    @{capture.capture_name}
-                  </span>
-                  <code>{capture.text}</code>
-                  <span className="capture-loc">
-                    {capture.start_row}:{capture.start_column}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="empty">No captures.</p>
-          )}
-        </div>
-      </details>
+      <Panel title="Captures" meta={captures.length}>
+        {captures.length ? (
+          <div className="capture-list">
+            {captures.map((capture, index) => (
+              <div className="capture-row" key={`${capture.capture_name}-${capture.start_byte}-${index}`}>
+                <span className={`capture-chip ${captureClass(capture.capture_name)}`}>
+                  @{capture.capture_name}
+                </span>
+                <code>{capture.text}</code>
+                <span className="capture-loc">
+                  {capture.start_row}:{capture.start_column}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="empty">No captures.</p>
+        )}
+      </Panel>
 
       {layers.length ? (
-        <details className="panel" open>
-          <summary>
-            <span className="panel-title">Layers</span>
-            <span className="panel-meta">{countLayers(layers)}</span>
-          </summary>
-          <div className="panel-body">
-            <LayerList layers={layers} />
-          </div>
-        </details>
+        <Panel title="Layers" meta={countLayers(layers)}>
+          <LayerList layers={layers} />
+        </Panel>
       ) : null}
 
       {tests ? (
-        <details className="panel" open>
-          <summary>
-            <span className="panel-title">Tests</span>
-            <span className="panel-meta">
+        <Panel
+          title="Tests"
+          defaultOpen
+          meta={
+            <>
               {tests.tests.corpus_passed + tests.tests.highlight_assertions_passed} pass ·{" "}
               {tests.tests.corpus_failed +
                 tests.tests.highlight_assertions_failed +
                 tests.tests.highlight_fixture_errors}{" "}
               fail
-            </span>
-          </summary>
-          <div className="panel-body">
+            </>
+          }
+        >
             <div className="corpus-list">
               {tests.corpus.map((caseResult, index) => (
                 <details className="case" key={`${caseResult.path}-${caseResult.case_name}-${index}`}>
@@ -747,8 +907,7 @@ function ResultsDock({
                 </details>
               ))}
             </div>
-          </div>
-        </details>
+        </Panel>
       ) : null}
     </div>
   );
@@ -955,6 +1114,7 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
       highlight_assertions_failed: 0,
       highlight_fixture_errors: 0,
     },
+    timings: { prepare: [], parse: null },
   };
 }
 

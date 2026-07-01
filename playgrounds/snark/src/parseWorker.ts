@@ -34,16 +34,27 @@ function post(response: ParseWorkerResponse) {
 self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
   const { id, key, files, input, runCorpus, edit, useReparse } = event.data;
   try {
+    const initStart = performance.now();
     await ready;
+    const initMs = performance.now() - initStart;
+    if (initMs > 1) console.log(`[snark load] wasm instantiate: ${initMs.toFixed(0)} ms`);
 
-    // (Re)prepare the session when the grammar bundle changed.
-    if (files) {
+    // (Re)prepare the session when the grammar bundle changed — but only if we're not
+    // already prepared for this exact key. The key is content-hashed (grammar + files),
+    // so an unchanged language yields the same key; redundant prepare requests (React
+    // StrictMode double-invoke, effect churn during the multi-second prepare window,
+    // repeated typing/sample switches) must not rebuild the tables again.
+    if (files && sessionKey !== key) {
       if (session) {
         session.free();
         session = null;
         sessionKey = null;
       }
+      const prepStart = performance.now();
       session = new SnarkPlaygroundSession(JSON.stringify({ files }));
+      console.log(
+        `[snark load] session prepare (tables + plan): ${(performance.now() - prepStart).toFixed(0)} ms`,
+      );
       sessionKey = key;
     }
 

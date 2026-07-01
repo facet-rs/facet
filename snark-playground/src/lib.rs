@@ -72,6 +72,21 @@ struct BundleFile {
     text: String,
 }
 
+/// Per-phase wall-clock timing surfaced to the playground UI. `prepare` holds the
+/// one-time grammar-preparation phases (parse json, validate, normalize, compile
+/// tables, build plan); `parse` is the live per-input run.
+#[derive(Debug, Clone, Facet, Default)]
+struct Timings {
+    prepare: Vec<PhaseTiming>,
+    parse: Option<PhaseTiming>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PhaseTiming {
+    name: String,
+    ms: f64,
+}
+
 #[derive(Debug, Clone, Facet)]
 struct PlaygroundResponse {
     ok: bool,
@@ -85,6 +100,7 @@ struct PlaygroundResponse {
     corpus: Vec<CorpusOutput>,
     highlight_tests: Vec<HighlightTestOutput>,
     tests: TestSummary,
+    timings: Timings,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -340,10 +356,27 @@ impl ScannerSelection {
 
 struct PreparedEmbeddedLanguage {
     files: Vec<BundleFile>,
-    prepared: Option<PreparedGrammar>,
-    scanner_selection: Option<ScannerSelection>,
     injection_regex: Option<Regex>,
     diagnostics: Vec<Diagnostic>,
+    /// Parse table + scanner, built lazily the first time this language is actually
+    /// injected. Building every vendored grammar's table up front cost seconds per
+    /// session for grammars that a given host grammar never injects.
+    resolved: std::cell::OnceCell<ResolvedEmbeddedLanguage>,
+}
+
+struct ResolvedEmbeddedLanguage {
+    prepared: Option<PreparedGrammar>,
+    scanner_selection: Option<ScannerSelection>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl PreparedEmbeddedLanguage {
+    /// Build (once) and return this language's parse table + scanner. Cheap on every
+    /// call after the first.
+    fn resolved(&self) -> &ResolvedEmbeddedLanguage {
+        self.resolved
+            .get_or_init(|| resolve_embedded_language(&self.files))
+    }
 }
 
 const MAX_INJECTION_LAYER_DEPTH: usize = 8;
@@ -357,6 +390,9 @@ pub struct PlaygroundSession {
     embedded_languages: BTreeMap<String, PreparedEmbeddedLanguage>,
     last_input: Option<String>,
     last_report: Option<WeavyParseReport>,
+    /// Per-phase timings from `prepare_grammar`, echoed with every parse response
+    /// so the UI can show where one-time preparation spends its time.
+    prepare_timings: Vec<PhaseTiming>,
 }
 
 impl PlaygroundSession {
@@ -419,11 +455,12 @@ impl PlaygroundSession {
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
+                timings: Timings::default(),
             }));
         };
 
-        let prepared = match prepare_grammar(&grammar_file.text) {
-            Ok(prepared) => prepared,
+        let (prepared, prepare_timings) = match prepare_grammar(&grammar_file.text) {
+            Ok(result) => result,
             Err((stage, message)) => {
                 return Err(Box::new(PlaygroundResponse {
                     ok: false,
@@ -437,6 +474,7 @@ impl PlaygroundSession {
                     corpus: Vec::new(),
                     highlight_tests: Vec::new(),
                     tests: TestSummary::not_requested(),
+                    timings: Timings::default(),
                 }));
             }
         };
@@ -462,6 +500,7 @@ impl PlaygroundSession {
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
+                timings: Timings::default(),
             }));
         }
         let embedded_languages = prepare_embedded_languages(&files);
@@ -473,6 +512,7 @@ impl PlaygroundSession {
             embedded_languages,
             last_input: None,
             last_report: None,
+            prepare_timings,
         })
     }
 
@@ -498,6 +538,7 @@ impl PlaygroundSession {
             corpus: Vec::new(),
             highlight_tests: Vec::new(),
             tests: TestSummary::not_requested(),
+            timings: Timings::default(),
         }
     }
 }
@@ -559,9 +600,13 @@ fn playground_response_for_session(
     let mut highlights = Vec::new();
     let mut injections = Vec::new();
     let mut layers = Vec::new();
+    let mut parse_ms = None;
     let should_parse_input = !input.is_empty() || !run_corpus;
     if should_parse_input {
-        match parse_session_input(session, input, edit) {
+        let parse_start = web_time::Instant::now();
+        let outcome = parse_session_input(session, input, edit);
+        parse_ms = Some(parse_start.elapsed().as_secs_f64() * 1000.0);
+        match outcome {
             Ok(playground_report) => {
                 let files = &session.files;
                 let prepared = &session.prepared;
@@ -619,6 +664,13 @@ fn playground_response_for_session(
         Vec::new()
     };
     let tests = TestSummary::from_results(run_corpus, &corpus, &highlight_tests);
+    let timings = Timings {
+        prepare: session.prepare_timings.clone(),
+        parse: parse_ms.map(|ms| PhaseTiming {
+            name: "run parser".to_owned(),
+            ms,
+        }),
+    };
 
     PlaygroundResponse {
         ok: diagnostics.is_empty(),
@@ -632,6 +684,7 @@ fn playground_response_for_session(
         corpus,
         highlight_tests,
         tests,
+        timings,
     }
 }
 
@@ -725,26 +778,54 @@ fn resolved_tree_output(node: &RuntimeResolvedNode) -> ResolvedTreeOutput {
     }
 }
 
-fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, String)> {
+/// Record the elapsed time since `since` as a named phase, then reset `since`.
+fn lap(timings: &mut Vec<PhaseTiming>, name: &str, since: &mut web_time::Instant) {
+    let ms = since.elapsed().as_secs_f64() * 1000.0;
+    timings.push(PhaseTiming {
+        name: name.to_owned(),
+        ms,
+    });
+    *since = web_time::Instant::now();
+}
+
+fn prepare_grammar(
+    grammar_json: &str,
+) -> Result<(PreparedGrammar, Vec<PhaseTiming>), (String, String)> {
+    let mut timings = Vec::new();
+    let mut since = web_time::Instant::now();
+
     let raw = facet_json::from_str::<RawGrammarJson>(grammar_json)
         .map_err(|error| ("grammar".to_owned(), error.to_string()))?;
+    lap(&mut timings, "parse grammar.json", &mut since);
+
     let validated = ValidatedGrammar::from_raw(&raw)
         .map_err(|error| ("validate".to_owned(), error.to_string()))?;
+    lap(&mut timings, "validate", &mut since);
+
     let lexical = LexicalFacts::from_grammar(&validated);
     let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
         .map_err(|error| ("normalize".to_owned(), error.to_string()))?
         .prepare_productions_for_items()
         .map_err(|error| ("prepare".to_owned(), error.to_string()))?;
+    lap(&mut timings, "normalize", &mut since);
+
     let table = ParseTable::from_grammar(&parser)
         .map_err(|error| ("table".to_owned(), error.to_string()))?;
+    lap(&mut timings, "compile tables", &mut since);
+
     let weavy_plan = WeavyParsePlan::new(&validated, &parser, &table)
         .map_err(|error| ("weavy".to_owned(), error.to_string()))?;
-    Ok(PreparedGrammar {
-        raw,
-        parser,
-        table,
-        weavy_plan,
-    })
+    lap(&mut timings, "build plan", &mut since);
+
+    Ok((
+        PreparedGrammar {
+            raw,
+            parser,
+            table,
+            weavy_plan,
+        },
+        timings,
+    ))
 }
 
 fn prepare_embedded_languages(files: &[BundleFile]) -> BTreeMap<String, PreparedEmbeddedLanguage> {
@@ -769,43 +850,59 @@ fn prepare_embedded_languages(files: &[BundleFile]) -> BTreeMap<String, Prepared
 }
 
 fn prepare_embedded_language(files: Vec<BundleFile>) -> PreparedEmbeddedLanguage {
-    let mut bundle = summarize_bundle(&files);
     let Some(grammar_file) = find_file(&files, "src/grammar.json") else {
         return PreparedEmbeddedLanguage {
-            files,
-            prepared: None,
-            scanner_selection: None,
             injection_regex: None,
             diagnostics: vec![diagnostic(
                 "bundle",
                 "embedded language bundle does not contain src/grammar.json".to_owned(),
                 None,
             )],
+            resolved: std::cell::OnceCell::new(),
+            files,
+        };
+    };
+    // Cheap: parse grammar.json only for the language name, so injections can be routed
+    // to it. The parse table (the expensive part) is deferred to `resolved()`, built
+    // only if this language is actually injected — most vendored grammars never are.
+    let (injection_regex, diagnostics) =
+        match facet_json::from_str::<RawGrammarJson>(&grammar_file.text) {
+            Ok(raw) => manifest_injection_regex(&files, &raw.name),
+            Err(error) => (None, vec![diagnostic("grammar", error.to_string(), None)]),
+        };
+    PreparedEmbeddedLanguage {
+        files,
+        injection_regex,
+        diagnostics,
+        resolved: std::cell::OnceCell::new(),
+    }
+}
+
+/// Build an embedded language's parse table + scanner. Called lazily on first injection.
+fn resolve_embedded_language(files: &[BundleFile]) -> ResolvedEmbeddedLanguage {
+    let Some(grammar_file) = find_file(files, "src/grammar.json") else {
+        return ResolvedEmbeddedLanguage {
+            prepared: None,
+            scanner_selection: None,
+            diagnostics: Vec::new(),
         };
     };
     let prepared = match prepare_grammar(&grammar_file.text) {
-        Ok(prepared) => prepared,
+        Ok((prepared, _)) => prepared,
         Err((stage, message)) => {
-            return PreparedEmbeddedLanguage {
-                files,
+            return ResolvedEmbeddedLanguage {
                 prepared: None,
                 scanner_selection: None,
-                injection_regex: None,
                 diagnostics: vec![diagnostic(&stage, message, None)],
             };
         }
     };
-    let (injection_regex, diagnostics) = manifest_injection_regex(&files, &prepared.raw.name);
-    let scanner_selection = scanner_selection(&files, &prepared.parser);
-    bundle
-        .active_scanner
-        .clone_from(&scanner_selection.active_scanner);
+    let scanner_selection = scanner_selection(files, &prepared.parser);
     if !scanner_selection.supports_required_externals(&prepared.parser) {
-        return PreparedEmbeddedLanguage {
-            files,
+        let bundle = summarize_bundle(files);
+        return ResolvedEmbeddedLanguage {
             prepared: None,
             scanner_selection: None,
-            injection_regex,
             diagnostics: vec![diagnostic(
                 "scanner",
                 unsupported_external_scanner_message(&bundle, &prepared.parser),
@@ -813,13 +910,10 @@ fn prepare_embedded_language(files: Vec<BundleFile>) -> PreparedEmbeddedLanguage
             )],
         };
     }
-
-    PreparedEmbeddedLanguage {
-        files,
+    ResolvedEmbeddedLanguage {
         prepared: Some(prepared),
         scanner_selection: Some(scanner_selection),
-        injection_regex,
-        diagnostics,
+        diagnostics: Vec::new(),
     }
 }
 
@@ -1270,10 +1364,11 @@ fn layer_output(
             )],
         };
     };
-    let (Some(prepared), Some(scanner_selection)) = (
-        language.prepared.as_ref(),
-        language.scanner_selection.as_ref(),
-    ) else {
+    // Build this language's parse table now, on first injection (cached thereafter).
+    let resolved = language.resolved();
+    let (Some(prepared), Some(scanner_selection)) =
+        (resolved.prepared.as_ref(), resolved.scanner_selection.as_ref())
+    else {
         return LayerOutput {
             language: group.language,
             combined: group.combined,
@@ -1283,7 +1378,12 @@ fn layer_output(
             highlights: Vec::new(),
             injections: Vec::new(),
             layers: Vec::new(),
-            diagnostics: language.diagnostics.clone(),
+            diagnostics: language
+                .diagnostics
+                .iter()
+                .chain(&resolved.diagnostics)
+                .cloned()
+                .collect(),
         };
     };
     let scanner = scanner_selection
@@ -1986,6 +2086,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
         corpus: Vec::new(),
         highlight_tests: Vec::new(),
         tests: TestSummary::not_requested(),
+        timings: Timings::default(),
     }
 }
 

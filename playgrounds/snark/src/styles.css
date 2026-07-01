@@ -570,27 +570,28 @@ select {
   border-bottom: 1px solid var(--line-soft);
 }
 
-.panel > summary {
+.panel-summary {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 10px 16px;
   cursor: pointer;
-  list-style: none;
   user-select: none;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
 }
 
-.panel > summary::-webkit-details-marker {
-  display: none;
-}
-
-.panel > summary::before {
+.panel-summary::before {
   content: "▸";
   color: var(--text-faint);
   transition: transform 120ms ease;
 }
 
-.panel[open] > summary::before {
+.panel.open > .panel-summary::before {
   transform: rotate(90deg);
 }
 
@@ -898,4 +899,196 @@ select {
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
+}
+
+/* Phase-timing panel: where prepare + parse spend their time. */
+.timing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timing-row {
+  display: grid;
+  grid-template-columns: 9rem 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.timing-name {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timing-track {
+  height: 8px;
+  background: var(--line-soft);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.timing-bar {
+  display: block;
+  height: 100%;
+  background: var(--line);
+  border-radius: 4px;
+}
+
+.timing-parse .timing-bar {
+  background: var(--accent);
+}
+
+.timing-parse .timing-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.timing-ms {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.timing-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Benchmark panel: one-click size-ladder run, charted. */
+.bench-dock {
+  padding-bottom: 0;
+}
+
+.bench-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-accent {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.btn-accent:disabled {
+  opacity: 0.6;
+}
+
+.bench-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.bench-chart {
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  display: block;
+  background: var(--code-bg);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+
+.bench-axis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.bench-ideal {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.bench-line {
+  stroke-width: 2;
+}
+
+.bench-line-parse {
+  stroke: var(--accent);
+}
+
+.bench-line-wall {
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  opacity: 0.7;
+}
+
+.bench-dot {
+  fill: var(--accent);
+}
+
+.bench-axis-label {
+  fill: var(--text-faint);
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.bench-legend {
+  display: flex;
+  gap: 14px;
+  margin: 6px 0 10px;
+  font-size: 11px;
+}
+
+.bench-legend-parse {
+  color: var(--accent);
+}
+
+.bench-legend-wall {
+  color: var(--text-dim);
+}
+
+.bench-legend-ideal {
+  color: var(--text-faint);
+}
+
+.bench-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.bench-table th,
+.bench-table td {
+  text-align: right;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.bench-table th:first-child,
+.bench-table td:first-child {
+  text-align: left;
+}
+
+.bench-table th {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.bench-num {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.bench-num-parse {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.bench-prepare {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }

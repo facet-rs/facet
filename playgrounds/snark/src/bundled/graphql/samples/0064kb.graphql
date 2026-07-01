@@ -1,0 +1,4050 @@
+# GraphQL schema — parse-scaling ladder sample.
+# Real SDL (enums, interfaces, object types with field args, inputs), sized so you
+# can click up the ladder and watch "run parser" grow linearly with the input.
+
+schema {
+  query: Query
+}
+
+type Query {
+  entity0(id: ID!): Entity0
+  entity1(id: ID!): Entity1
+  entity2(id: ID!): Entity2
+  entity3(id: ID!): Entity3
+  entity4(id: ID!): Entity4
+  entity5(id: ID!): Entity5
+  entity6(id: ID!): Entity6
+  entity7(id: ID!): Entity7
+}
+
+"""Domain module 0 — generated for the parse-scaling ladder."""
+enum Status0 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node0 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity0 implements Node0 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status0
+  score: Float
+  tags: [String!]!
+  parent: Entity0
+  related(first: Int = 10, after: String, filter: Filter0): [Entity0!]!
+}
+
+input Filter0 {
+  status: Status0
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 1 — generated for the parse-scaling ladder."""
+enum Status1 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node1 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity1 implements Node1 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status1
+  score: Float
+  tags: [String!]!
+  parent: Entity1
+  related(first: Int = 10, after: String, filter: Filter1): [Entity1!]!
+}
+
+input Filter1 {
+  status: Status1
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 2 — generated for the parse-scaling ladder."""
+enum Status2 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node2 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity2 implements Node2 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status2
+  score: Float
+  tags: [String!]!
+  parent: Entity2
+  related(first: Int = 10, after: String, filter: Filter2): [Entity2!]!
+}
+
+input Filter2 {
+  status: Status2
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 3 — generated for the parse-scaling ladder."""
+enum Status3 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node3 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity3 implements Node3 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status3
+  score: Float
+  tags: [String!]!
+  parent: Entity3
+  related(first: Int = 10, after: String, filter: Filter3): [Entity3!]!
+}
+
+input Filter3 {
+  status: Status3
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 4 — generated for the parse-scaling ladder."""
+enum Status4 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node4 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity4 implements Node4 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status4
+  score: Float
+  tags: [String!]!
+  parent: Entity4
+  related(first: Int = 10, after: String, filter: Filter4): [Entity4!]!
+}
+
+input Filter4 {
+  status: Status4
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 5 — generated for the parse-scaling ladder."""
+enum Status5 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node5 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity5 implements Node5 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status5
+  score: Float
+  tags: [String!]!
+  parent: Entity5
+  related(first: Int = 10, after: String, filter: Filter5): [Entity5!]!
+}
+
+input Filter5 {
+  status: Status5
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 6 — generated for the parse-scaling ladder."""
+enum Status6 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node6 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity6 implements Node6 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status6
+  score: Float
+  tags: [String!]!
+  parent: Entity6
+  related(first: Int = 10, after: String, filter: Filter6): [Entity6!]!
+}
+
+input Filter6 {
+  status: Status6
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 7 — generated for the parse-scaling ladder."""
+enum Status7 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node7 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity7 implements Node7 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status7
+  score: Float
+  tags: [String!]!
+  parent: Entity7
+  related(first: Int = 10, after: String, filter: Filter7): [Entity7!]!
+}
+
+input Filter7 {
+  status: Status7
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 8 — generated for the parse-scaling ladder."""
+enum Status8 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node8 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity8 implements Node8 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status8
+  score: Float
+  tags: [String!]!
+  parent: Entity8
+  related(first: Int = 10, after: String, filter: Filter8): [Entity8!]!
+}
+
+input Filter8 {
+  status: Status8
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 9 — generated for the parse-scaling ladder."""
+enum Status9 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node9 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity9 implements Node9 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status9
+  score: Float
+  tags: [String!]!
+  parent: Entity9
+  related(first: Int = 10, after: String, filter: Filter9): [Entity9!]!
+}
+
+input Filter9 {
+  status: Status9
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 10 — generated for the parse-scaling ladder."""
+enum Status10 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node10 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity10 implements Node10 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status10
+  score: Float
+  tags: [String!]!
+  parent: Entity10
+  related(first: Int = 10, after: String, filter: Filter10): [Entity10!]!
+}
+
+input Filter10 {
+  status: Status10
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 11 — generated for the parse-scaling ladder."""
+enum Status11 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node11 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity11 implements Node11 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status11
+  score: Float
+  tags: [String!]!
+  parent: Entity11
+  related(first: Int = 10, after: String, filter: Filter11): [Entity11!]!
+}
+
+input Filter11 {
+  status: Status11
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 12 — generated for the parse-scaling ladder."""
+enum Status12 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node12 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity12 implements Node12 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status12
+  score: Float
+  tags: [String!]!
+  parent: Entity12
+  related(first: Int = 10, after: String, filter: Filter12): [Entity12!]!
+}
+
+input Filter12 {
+  status: Status12
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 13 — generated for the parse-scaling ladder."""
+enum Status13 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node13 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity13 implements Node13 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status13
+  score: Float
+  tags: [String!]!
+  parent: Entity13
+  related(first: Int = 10, after: String, filter: Filter13): [Entity13!]!
+}
+
+input Filter13 {
+  status: Status13
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 14 — generated for the parse-scaling ladder."""
+enum Status14 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node14 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity14 implements Node14 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status14
+  score: Float
+  tags: [String!]!
+  parent: Entity14
+  related(first: Int = 10, after: String, filter: Filter14): [Entity14!]!
+}
+
+input Filter14 {
+  status: Status14
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 15 — generated for the parse-scaling ladder."""
+enum Status15 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node15 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity15 implements Node15 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status15
+  score: Float
+  tags: [String!]!
+  parent: Entity15
+  related(first: Int = 10, after: String, filter: Filter15): [Entity15!]!
+}
+
+input Filter15 {
+  status: Status15
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 16 — generated for the parse-scaling ladder."""
+enum Status16 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node16 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity16 implements Node16 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status16
+  score: Float
+  tags: [String!]!
+  parent: Entity16
+  related(first: Int = 10, after: String, filter: Filter16): [Entity16!]!
+}
+
+input Filter16 {
+  status: Status16
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 17 — generated for the parse-scaling ladder."""
+enum Status17 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node17 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity17 implements Node17 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status17
+  score: Float
+  tags: [String!]!
+  parent: Entity17
+  related(first: Int = 10, after: String, filter: Filter17): [Entity17!]!
+}
+
+input Filter17 {
+  status: Status17
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 18 — generated for the parse-scaling ladder."""
+enum Status18 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node18 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity18 implements Node18 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status18
+  score: Float
+  tags: [String!]!
+  parent: Entity18
+  related(first: Int = 10, after: String, filter: Filter18): [Entity18!]!
+}
+
+input Filter18 {
+  status: Status18
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 19 — generated for the parse-scaling ladder."""
+enum Status19 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node19 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity19 implements Node19 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status19
+  score: Float
+  tags: [String!]!
+  parent: Entity19
+  related(first: Int = 10, after: String, filter: Filter19): [Entity19!]!
+}
+
+input Filter19 {
+  status: Status19
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 20 — generated for the parse-scaling ladder."""
+enum Status20 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node20 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity20 implements Node20 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status20
+  score: Float
+  tags: [String!]!
+  parent: Entity20
+  related(first: Int = 10, after: String, filter: Filter20): [Entity20!]!
+}
+
+input Filter20 {
+  status: Status20
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 21 — generated for the parse-scaling ladder."""
+enum Status21 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node21 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity21 implements Node21 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status21
+  score: Float
+  tags: [String!]!
+  parent: Entity21
+  related(first: Int = 10, after: String, filter: Filter21): [Entity21!]!
+}
+
+input Filter21 {
+  status: Status21
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 22 — generated for the parse-scaling ladder."""
+enum Status22 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node22 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity22 implements Node22 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status22
+  score: Float
+  tags: [String!]!
+  parent: Entity22
+  related(first: Int = 10, after: String, filter: Filter22): [Entity22!]!
+}
+
+input Filter22 {
+  status: Status22
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 23 — generated for the parse-scaling ladder."""
+enum Status23 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node23 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity23 implements Node23 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status23
+  score: Float
+  tags: [String!]!
+  parent: Entity23
+  related(first: Int = 10, after: String, filter: Filter23): [Entity23!]!
+}
+
+input Filter23 {
+  status: Status23
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 24 — generated for the parse-scaling ladder."""
+enum Status24 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node24 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity24 implements Node24 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status24
+  score: Float
+  tags: [String!]!
+  parent: Entity24
+  related(first: Int = 10, after: String, filter: Filter24): [Entity24!]!
+}
+
+input Filter24 {
+  status: Status24
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 25 — generated for the parse-scaling ladder."""
+enum Status25 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node25 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity25 implements Node25 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status25
+  score: Float
+  tags: [String!]!
+  parent: Entity25
+  related(first: Int = 10, after: String, filter: Filter25): [Entity25!]!
+}
+
+input Filter25 {
+  status: Status25
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 26 — generated for the parse-scaling ladder."""
+enum Status26 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node26 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity26 implements Node26 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status26
+  score: Float
+  tags: [String!]!
+  parent: Entity26
+  related(first: Int = 10, after: String, filter: Filter26): [Entity26!]!
+}
+
+input Filter26 {
+  status: Status26
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 27 — generated for the parse-scaling ladder."""
+enum Status27 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node27 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity27 implements Node27 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status27
+  score: Float
+  tags: [String!]!
+  parent: Entity27
+  related(first: Int = 10, after: String, filter: Filter27): [Entity27!]!
+}
+
+input Filter27 {
+  status: Status27
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 28 — generated for the parse-scaling ladder."""
+enum Status28 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node28 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity28 implements Node28 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status28
+  score: Float
+  tags: [String!]!
+  parent: Entity28
+  related(first: Int = 10, after: String, filter: Filter28): [Entity28!]!
+}
+
+input Filter28 {
+  status: Status28
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 29 — generated for the parse-scaling ladder."""
+enum Status29 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node29 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity29 implements Node29 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status29
+  score: Float
+  tags: [String!]!
+  parent: Entity29
+  related(first: Int = 10, after: String, filter: Filter29): [Entity29!]!
+}
+
+input Filter29 {
+  status: Status29
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 30 — generated for the parse-scaling ladder."""
+enum Status30 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node30 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity30 implements Node30 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status30
+  score: Float
+  tags: [String!]!
+  parent: Entity30
+  related(first: Int = 10, after: String, filter: Filter30): [Entity30!]!
+}
+
+input Filter30 {
+  status: Status30
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 31 — generated for the parse-scaling ladder."""
+enum Status31 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node31 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity31 implements Node31 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status31
+  score: Float
+  tags: [String!]!
+  parent: Entity31
+  related(first: Int = 10, after: String, filter: Filter31): [Entity31!]!
+}
+
+input Filter31 {
+  status: Status31
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 32 — generated for the parse-scaling ladder."""
+enum Status32 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node32 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity32 implements Node32 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status32
+  score: Float
+  tags: [String!]!
+  parent: Entity32
+  related(first: Int = 10, after: String, filter: Filter32): [Entity32!]!
+}
+
+input Filter32 {
+  status: Status32
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 33 — generated for the parse-scaling ladder."""
+enum Status33 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node33 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity33 implements Node33 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status33
+  score: Float
+  tags: [String!]!
+  parent: Entity33
+  related(first: Int = 10, after: String, filter: Filter33): [Entity33!]!
+}
+
+input Filter33 {
+  status: Status33
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 34 — generated for the parse-scaling ladder."""
+enum Status34 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node34 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity34 implements Node34 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status34
+  score: Float
+  tags: [String!]!
+  parent: Entity34
+  related(first: Int = 10, after: String, filter: Filter34): [Entity34!]!
+}
+
+input Filter34 {
+  status: Status34
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 35 — generated for the parse-scaling ladder."""
+enum Status35 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node35 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity35 implements Node35 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status35
+  score: Float
+  tags: [String!]!
+  parent: Entity35
+  related(first: Int = 10, after: String, filter: Filter35): [Entity35!]!
+}
+
+input Filter35 {
+  status: Status35
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 36 — generated for the parse-scaling ladder."""
+enum Status36 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node36 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity36 implements Node36 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status36
+  score: Float
+  tags: [String!]!
+  parent: Entity36
+  related(first: Int = 10, after: String, filter: Filter36): [Entity36!]!
+}
+
+input Filter36 {
+  status: Status36
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 37 — generated for the parse-scaling ladder."""
+enum Status37 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node37 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity37 implements Node37 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status37
+  score: Float
+  tags: [String!]!
+  parent: Entity37
+  related(first: Int = 10, after: String, filter: Filter37): [Entity37!]!
+}
+
+input Filter37 {
+  status: Status37
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 38 — generated for the parse-scaling ladder."""
+enum Status38 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node38 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity38 implements Node38 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status38
+  score: Float
+  tags: [String!]!
+  parent: Entity38
+  related(first: Int = 10, after: String, filter: Filter38): [Entity38!]!
+}
+
+input Filter38 {
+  status: Status38
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 39 — generated for the parse-scaling ladder."""
+enum Status39 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node39 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity39 implements Node39 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status39
+  score: Float
+  tags: [String!]!
+  parent: Entity39
+  related(first: Int = 10, after: String, filter: Filter39): [Entity39!]!
+}
+
+input Filter39 {
+  status: Status39
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 40 — generated for the parse-scaling ladder."""
+enum Status40 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node40 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity40 implements Node40 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status40
+  score: Float
+  tags: [String!]!
+  parent: Entity40
+  related(first: Int = 10, after: String, filter: Filter40): [Entity40!]!
+}
+
+input Filter40 {
+  status: Status40
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 41 — generated for the parse-scaling ladder."""
+enum Status41 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node41 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity41 implements Node41 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status41
+  score: Float
+  tags: [String!]!
+  parent: Entity41
+  related(first: Int = 10, after: String, filter: Filter41): [Entity41!]!
+}
+
+input Filter41 {
+  status: Status41
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 42 — generated for the parse-scaling ladder."""
+enum Status42 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node42 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity42 implements Node42 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status42
+  score: Float
+  tags: [String!]!
+  parent: Entity42
+  related(first: Int = 10, after: String, filter: Filter42): [Entity42!]!
+}
+
+input Filter42 {
+  status: Status42
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 43 — generated for the parse-scaling ladder."""
+enum Status43 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node43 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity43 implements Node43 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status43
+  score: Float
+  tags: [String!]!
+  parent: Entity43
+  related(first: Int = 10, after: String, filter: Filter43): [Entity43!]!
+}
+
+input Filter43 {
+  status: Status43
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 44 — generated for the parse-scaling ladder."""
+enum Status44 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node44 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity44 implements Node44 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status44
+  score: Float
+  tags: [String!]!
+  parent: Entity44
+  related(first: Int = 10, after: String, filter: Filter44): [Entity44!]!
+}
+
+input Filter44 {
+  status: Status44
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 45 — generated for the parse-scaling ladder."""
+enum Status45 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node45 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity45 implements Node45 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status45
+  score: Float
+  tags: [String!]!
+  parent: Entity45
+  related(first: Int = 10, after: String, filter: Filter45): [Entity45!]!
+}
+
+input Filter45 {
+  status: Status45
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 46 — generated for the parse-scaling ladder."""
+enum Status46 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node46 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity46 implements Node46 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status46
+  score: Float
+  tags: [String!]!
+  parent: Entity46
+  related(first: Int = 10, after: String, filter: Filter46): [Entity46!]!
+}
+
+input Filter46 {
+  status: Status46
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 47 — generated for the parse-scaling ladder."""
+enum Status47 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node47 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity47 implements Node47 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status47
+  score: Float
+  tags: [String!]!
+  parent: Entity47
+  related(first: Int = 10, after: String, filter: Filter47): [Entity47!]!
+}
+
+input Filter47 {
+  status: Status47
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 48 — generated for the parse-scaling ladder."""
+enum Status48 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node48 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity48 implements Node48 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status48
+  score: Float
+  tags: [String!]!
+  parent: Entity48
+  related(first: Int = 10, after: String, filter: Filter48): [Entity48!]!
+}
+
+input Filter48 {
+  status: Status48
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 49 — generated for the parse-scaling ladder."""
+enum Status49 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node49 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity49 implements Node49 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status49
+  score: Float
+  tags: [String!]!
+  parent: Entity49
+  related(first: Int = 10, after: String, filter: Filter49): [Entity49!]!
+}
+
+input Filter49 {
+  status: Status49
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 50 — generated for the parse-scaling ladder."""
+enum Status50 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node50 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity50 implements Node50 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status50
+  score: Float
+  tags: [String!]!
+  parent: Entity50
+  related(first: Int = 10, after: String, filter: Filter50): [Entity50!]!
+}
+
+input Filter50 {
+  status: Status50
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 51 — generated for the parse-scaling ladder."""
+enum Status51 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node51 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity51 implements Node51 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status51
+  score: Float
+  tags: [String!]!
+  parent: Entity51
+  related(first: Int = 10, after: String, filter: Filter51): [Entity51!]!
+}
+
+input Filter51 {
+  status: Status51
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 52 — generated for the parse-scaling ladder."""
+enum Status52 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node52 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity52 implements Node52 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status52
+  score: Float
+  tags: [String!]!
+  parent: Entity52
+  related(first: Int = 10, after: String, filter: Filter52): [Entity52!]!
+}
+
+input Filter52 {
+  status: Status52
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 53 — generated for the parse-scaling ladder."""
+enum Status53 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node53 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity53 implements Node53 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status53
+  score: Float
+  tags: [String!]!
+  parent: Entity53
+  related(first: Int = 10, after: String, filter: Filter53): [Entity53!]!
+}
+
+input Filter53 {
+  status: Status53
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 54 — generated for the parse-scaling ladder."""
+enum Status54 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node54 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity54 implements Node54 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status54
+  score: Float
+  tags: [String!]!
+  parent: Entity54
+  related(first: Int = 10, after: String, filter: Filter54): [Entity54!]!
+}
+
+input Filter54 {
+  status: Status54
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 55 — generated for the parse-scaling ladder."""
+enum Status55 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node55 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity55 implements Node55 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status55
+  score: Float
+  tags: [String!]!
+  parent: Entity55
+  related(first: Int = 10, after: String, filter: Filter55): [Entity55!]!
+}
+
+input Filter55 {
+  status: Status55
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 56 — generated for the parse-scaling ladder."""
+enum Status56 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node56 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity56 implements Node56 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status56
+  score: Float
+  tags: [String!]!
+  parent: Entity56
+  related(first: Int = 10, after: String, filter: Filter56): [Entity56!]!
+}
+
+input Filter56 {
+  status: Status56
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 57 — generated for the parse-scaling ladder."""
+enum Status57 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node57 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity57 implements Node57 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status57
+  score: Float
+  tags: [String!]!
+  parent: Entity57
+  related(first: Int = 10, after: String, filter: Filter57): [Entity57!]!
+}
+
+input Filter57 {
+  status: Status57
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 58 — generated for the parse-scaling ladder."""
+enum Status58 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node58 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity58 implements Node58 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status58
+  score: Float
+  tags: [String!]!
+  parent: Entity58
+  related(first: Int = 10, after: String, filter: Filter58): [Entity58!]!
+}
+
+input Filter58 {
+  status: Status58
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 59 — generated for the parse-scaling ladder."""
+enum Status59 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node59 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity59 implements Node59 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status59
+  score: Float
+  tags: [String!]!
+  parent: Entity59
+  related(first: Int = 10, after: String, filter: Filter59): [Entity59!]!
+}
+
+input Filter59 {
+  status: Status59
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 60 — generated for the parse-scaling ladder."""
+enum Status60 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node60 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity60 implements Node60 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status60
+  score: Float
+  tags: [String!]!
+  parent: Entity60
+  related(first: Int = 10, after: String, filter: Filter60): [Entity60!]!
+}
+
+input Filter60 {
+  status: Status60
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 61 — generated for the parse-scaling ladder."""
+enum Status61 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node61 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity61 implements Node61 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status61
+  score: Float
+  tags: [String!]!
+  parent: Entity61
+  related(first: Int = 10, after: String, filter: Filter61): [Entity61!]!
+}
+
+input Filter61 {
+  status: Status61
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 62 — generated for the parse-scaling ladder."""
+enum Status62 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node62 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity62 implements Node62 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status62
+  score: Float
+  tags: [String!]!
+  parent: Entity62
+  related(first: Int = 10, after: String, filter: Filter62): [Entity62!]!
+}
+
+input Filter62 {
+  status: Status62
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 63 — generated for the parse-scaling ladder."""
+enum Status63 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node63 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity63 implements Node63 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status63
+  score: Float
+  tags: [String!]!
+  parent: Entity63
+  related(first: Int = 10, after: String, filter: Filter63): [Entity63!]!
+}
+
+input Filter63 {
+  status: Status63
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 64 — generated for the parse-scaling ladder."""
+enum Status64 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node64 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity64 implements Node64 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status64
+  score: Float
+  tags: [String!]!
+  parent: Entity64
+  related(first: Int = 10, after: String, filter: Filter64): [Entity64!]!
+}
+
+input Filter64 {
+  status: Status64
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 65 — generated for the parse-scaling ladder."""
+enum Status65 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node65 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity65 implements Node65 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status65
+  score: Float
+  tags: [String!]!
+  parent: Entity65
+  related(first: Int = 10, after: String, filter: Filter65): [Entity65!]!
+}
+
+input Filter65 {
+  status: Status65
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 66 — generated for the parse-scaling ladder."""
+enum Status66 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node66 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity66 implements Node66 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status66
+  score: Float
+  tags: [String!]!
+  parent: Entity66
+  related(first: Int = 10, after: String, filter: Filter66): [Entity66!]!
+}
+
+input Filter66 {
+  status: Status66
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 67 — generated for the parse-scaling ladder."""
+enum Status67 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node67 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity67 implements Node67 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status67
+  score: Float
+  tags: [String!]!
+  parent: Entity67
+  related(first: Int = 10, after: String, filter: Filter67): [Entity67!]!
+}
+
+input Filter67 {
+  status: Status67
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 68 — generated for the parse-scaling ladder."""
+enum Status68 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node68 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity68 implements Node68 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status68
+  score: Float
+  tags: [String!]!
+  parent: Entity68
+  related(first: Int = 10, after: String, filter: Filter68): [Entity68!]!
+}
+
+input Filter68 {
+  status: Status68
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 69 — generated for the parse-scaling ladder."""
+enum Status69 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node69 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity69 implements Node69 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status69
+  score: Float
+  tags: [String!]!
+  parent: Entity69
+  related(first: Int = 10, after: String, filter: Filter69): [Entity69!]!
+}
+
+input Filter69 {
+  status: Status69
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 70 — generated for the parse-scaling ladder."""
+enum Status70 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node70 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity70 implements Node70 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status70
+  score: Float
+  tags: [String!]!
+  parent: Entity70
+  related(first: Int = 10, after: String, filter: Filter70): [Entity70!]!
+}
+
+input Filter70 {
+  status: Status70
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 71 — generated for the parse-scaling ladder."""
+enum Status71 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node71 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity71 implements Node71 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status71
+  score: Float
+  tags: [String!]!
+  parent: Entity71
+  related(first: Int = 10, after: String, filter: Filter71): [Entity71!]!
+}
+
+input Filter71 {
+  status: Status71
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 72 — generated for the parse-scaling ladder."""
+enum Status72 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node72 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity72 implements Node72 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status72
+  score: Float
+  tags: [String!]!
+  parent: Entity72
+  related(first: Int = 10, after: String, filter: Filter72): [Entity72!]!
+}
+
+input Filter72 {
+  status: Status72
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 73 — generated for the parse-scaling ladder."""
+enum Status73 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node73 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity73 implements Node73 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status73
+  score: Float
+  tags: [String!]!
+  parent: Entity73
+  related(first: Int = 10, after: String, filter: Filter73): [Entity73!]!
+}
+
+input Filter73 {
+  status: Status73
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 74 — generated for the parse-scaling ladder."""
+enum Status74 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node74 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity74 implements Node74 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status74
+  score: Float
+  tags: [String!]!
+  parent: Entity74
+  related(first: Int = 10, after: String, filter: Filter74): [Entity74!]!
+}
+
+input Filter74 {
+  status: Status74
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 75 — generated for the parse-scaling ladder."""
+enum Status75 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node75 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity75 implements Node75 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status75
+  score: Float
+  tags: [String!]!
+  parent: Entity75
+  related(first: Int = 10, after: String, filter: Filter75): [Entity75!]!
+}
+
+input Filter75 {
+  status: Status75
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 76 — generated for the parse-scaling ladder."""
+enum Status76 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node76 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity76 implements Node76 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status76
+  score: Float
+  tags: [String!]!
+  parent: Entity76
+  related(first: Int = 10, after: String, filter: Filter76): [Entity76!]!
+}
+
+input Filter76 {
+  status: Status76
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 77 — generated for the parse-scaling ladder."""
+enum Status77 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node77 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity77 implements Node77 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status77
+  score: Float
+  tags: [String!]!
+  parent: Entity77
+  related(first: Int = 10, after: String, filter: Filter77): [Entity77!]!
+}
+
+input Filter77 {
+  status: Status77
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 78 — generated for the parse-scaling ladder."""
+enum Status78 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node78 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity78 implements Node78 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status78
+  score: Float
+  tags: [String!]!
+  parent: Entity78
+  related(first: Int = 10, after: String, filter: Filter78): [Entity78!]!
+}
+
+input Filter78 {
+  status: Status78
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 79 — generated for the parse-scaling ladder."""
+enum Status79 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node79 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity79 implements Node79 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status79
+  score: Float
+  tags: [String!]!
+  parent: Entity79
+  related(first: Int = 10, after: String, filter: Filter79): [Entity79!]!
+}
+
+input Filter79 {
+  status: Status79
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 80 — generated for the parse-scaling ladder."""
+enum Status80 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node80 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity80 implements Node80 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status80
+  score: Float
+  tags: [String!]!
+  parent: Entity80
+  related(first: Int = 10, after: String, filter: Filter80): [Entity80!]!
+}
+
+input Filter80 {
+  status: Status80
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 81 — generated for the parse-scaling ladder."""
+enum Status81 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node81 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity81 implements Node81 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status81
+  score: Float
+  tags: [String!]!
+  parent: Entity81
+  related(first: Int = 10, after: String, filter: Filter81): [Entity81!]!
+}
+
+input Filter81 {
+  status: Status81
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 82 — generated for the parse-scaling ladder."""
+enum Status82 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node82 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity82 implements Node82 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status82
+  score: Float
+  tags: [String!]!
+  parent: Entity82
+  related(first: Int = 10, after: String, filter: Filter82): [Entity82!]!
+}
+
+input Filter82 {
+  status: Status82
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 83 — generated for the parse-scaling ladder."""
+enum Status83 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node83 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity83 implements Node83 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status83
+  score: Float
+  tags: [String!]!
+  parent: Entity83
+  related(first: Int = 10, after: String, filter: Filter83): [Entity83!]!
+}
+
+input Filter83 {
+  status: Status83
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 84 — generated for the parse-scaling ladder."""
+enum Status84 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node84 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity84 implements Node84 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status84
+  score: Float
+  tags: [String!]!
+  parent: Entity84
+  related(first: Int = 10, after: String, filter: Filter84): [Entity84!]!
+}
+
+input Filter84 {
+  status: Status84
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 85 — generated for the parse-scaling ladder."""
+enum Status85 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node85 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity85 implements Node85 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status85
+  score: Float
+  tags: [String!]!
+  parent: Entity85
+  related(first: Int = 10, after: String, filter: Filter85): [Entity85!]!
+}
+
+input Filter85 {
+  status: Status85
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 86 — generated for the parse-scaling ladder."""
+enum Status86 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node86 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity86 implements Node86 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status86
+  score: Float
+  tags: [String!]!
+  parent: Entity86
+  related(first: Int = 10, after: String, filter: Filter86): [Entity86!]!
+}
+
+input Filter86 {
+  status: Status86
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 87 — generated for the parse-scaling ladder."""
+enum Status87 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node87 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity87 implements Node87 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status87
+  score: Float
+  tags: [String!]!
+  parent: Entity87
+  related(first: Int = 10, after: String, filter: Filter87): [Entity87!]!
+}
+
+input Filter87 {
+  status: Status87
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 88 — generated for the parse-scaling ladder."""
+enum Status88 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node88 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity88 implements Node88 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status88
+  score: Float
+  tags: [String!]!
+  parent: Entity88
+  related(first: Int = 10, after: String, filter: Filter88): [Entity88!]!
+}
+
+input Filter88 {
+  status: Status88
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 89 — generated for the parse-scaling ladder."""
+enum Status89 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node89 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity89 implements Node89 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status89
+  score: Float
+  tags: [String!]!
+  parent: Entity89
+  related(first: Int = 10, after: String, filter: Filter89): [Entity89!]!
+}
+
+input Filter89 {
+  status: Status89
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 90 — generated for the parse-scaling ladder."""
+enum Status90 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node90 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity90 implements Node90 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status90
+  score: Float
+  tags: [String!]!
+  parent: Entity90
+  related(first: Int = 10, after: String, filter: Filter90): [Entity90!]!
+}
+
+input Filter90 {
+  status: Status90
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 91 — generated for the parse-scaling ladder."""
+enum Status91 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node91 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity91 implements Node91 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status91
+  score: Float
+  tags: [String!]!
+  parent: Entity91
+  related(first: Int = 10, after: String, filter: Filter91): [Entity91!]!
+}
+
+input Filter91 {
+  status: Status91
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 92 — generated for the parse-scaling ladder."""
+enum Status92 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node92 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity92 implements Node92 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status92
+  score: Float
+  tags: [String!]!
+  parent: Entity92
+  related(first: Int = 10, after: String, filter: Filter92): [Entity92!]!
+}
+
+input Filter92 {
+  status: Status92
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 93 — generated for the parse-scaling ladder."""
+enum Status93 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node93 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity93 implements Node93 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status93
+  score: Float
+  tags: [String!]!
+  parent: Entity93
+  related(first: Int = 10, after: String, filter: Filter93): [Entity93!]!
+}
+
+input Filter93 {
+  status: Status93
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 94 — generated for the parse-scaling ladder."""
+enum Status94 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node94 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity94 implements Node94 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status94
+  score: Float
+  tags: [String!]!
+  parent: Entity94
+  related(first: Int = 10, after: String, filter: Filter94): [Entity94!]!
+}
+
+input Filter94 {
+  status: Status94
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 95 — generated for the parse-scaling ladder."""
+enum Status95 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node95 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity95 implements Node95 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status95
+  score: Float
+  tags: [String!]!
+  parent: Entity95
+  related(first: Int = 10, after: String, filter: Filter95): [Entity95!]!
+}
+
+input Filter95 {
+  status: Status95
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 96 — generated for the parse-scaling ladder."""
+enum Status96 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node96 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity96 implements Node96 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status96
+  score: Float
+  tags: [String!]!
+  parent: Entity96
+  related(first: Int = 10, after: String, filter: Filter96): [Entity96!]!
+}
+
+input Filter96 {
+  status: Status96
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 97 — generated for the parse-scaling ladder."""
+enum Status97 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node97 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity97 implements Node97 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status97
+  score: Float
+  tags: [String!]!
+  parent: Entity97
+  related(first: Int = 10, after: String, filter: Filter97): [Entity97!]!
+}
+
+input Filter97 {
+  status: Status97
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 98 — generated for the parse-scaling ladder."""
+enum Status98 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node98 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity98 implements Node98 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status98
+  score: Float
+  tags: [String!]!
+  parent: Entity98
+  related(first: Int = 10, after: String, filter: Filter98): [Entity98!]!
+}
+
+input Filter98 {
+  status: Status98
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 99 — generated for the parse-scaling ladder."""
+enum Status99 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node99 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity99 implements Node99 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status99
+  score: Float
+  tags: [String!]!
+  parent: Entity99
+  related(first: Int = 10, after: String, filter: Filter99): [Entity99!]!
+}
+
+input Filter99 {
+  status: Status99
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 100 — generated for the parse-scaling ladder."""
+enum Status100 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node100 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity100 implements Node100 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status100
+  score: Float
+  tags: [String!]!
+  parent: Entity100
+  related(first: Int = 10, after: String, filter: Filter100): [Entity100!]!
+}
+
+input Filter100 {
+  status: Status100
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 101 — generated for the parse-scaling ladder."""
+enum Status101 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node101 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity101 implements Node101 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status101
+  score: Float
+  tags: [String!]!
+  parent: Entity101
+  related(first: Int = 10, after: String, filter: Filter101): [Entity101!]!
+}
+
+input Filter101 {
+  status: Status101
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 102 — generated for the parse-scaling ladder."""
+enum Status102 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node102 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity102 implements Node102 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status102
+  score: Float
+  tags: [String!]!
+  parent: Entity102
+  related(first: Int = 10, after: String, filter: Filter102): [Entity102!]!
+}
+
+input Filter102 {
+  status: Status102
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 103 — generated for the parse-scaling ladder."""
+enum Status103 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node103 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity103 implements Node103 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status103
+  score: Float
+  tags: [String!]!
+  parent: Entity103
+  related(first: Int = 10, after: String, filter: Filter103): [Entity103!]!
+}
+
+input Filter103 {
+  status: Status103
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 104 — generated for the parse-scaling ladder."""
+enum Status104 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node104 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity104 implements Node104 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status104
+  score: Float
+  tags: [String!]!
+  parent: Entity104
+  related(first: Int = 10, after: String, filter: Filter104): [Entity104!]!
+}
+
+input Filter104 {
+  status: Status104
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 105 — generated for the parse-scaling ladder."""
+enum Status105 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node105 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity105 implements Node105 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status105
+  score: Float
+  tags: [String!]!
+  parent: Entity105
+  related(first: Int = 10, after: String, filter: Filter105): [Entity105!]!
+}
+
+input Filter105 {
+  status: Status105
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 106 — generated for the parse-scaling ladder."""
+enum Status106 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node106 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity106 implements Node106 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status106
+  score: Float
+  tags: [String!]!
+  parent: Entity106
+  related(first: Int = 10, after: String, filter: Filter106): [Entity106!]!
+}
+
+input Filter106 {
+  status: Status106
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 107 — generated for the parse-scaling ladder."""
+enum Status107 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node107 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity107 implements Node107 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status107
+  score: Float
+  tags: [String!]!
+  parent: Entity107
+  related(first: Int = 10, after: String, filter: Filter107): [Entity107!]!
+}
+
+input Filter107 {
+  status: Status107
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 108 — generated for the parse-scaling ladder."""
+enum Status108 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node108 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity108 implements Node108 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status108
+  score: Float
+  tags: [String!]!
+  parent: Entity108
+  related(first: Int = 10, after: String, filter: Filter108): [Entity108!]!
+}
+
+input Filter108 {
+  status: Status108
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 109 — generated for the parse-scaling ladder."""
+enum Status109 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node109 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity109 implements Node109 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status109
+  score: Float
+  tags: [String!]!
+  parent: Entity109
+  related(first: Int = 10, after: String, filter: Filter109): [Entity109!]!
+}
+
+input Filter109 {
+  status: Status109
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 110 — generated for the parse-scaling ladder."""
+enum Status110 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node110 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity110 implements Node110 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status110
+  score: Float
+  tags: [String!]!
+  parent: Entity110
+  related(first: Int = 10, after: String, filter: Filter110): [Entity110!]!
+}
+
+input Filter110 {
+  status: Status110
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 111 — generated for the parse-scaling ladder."""
+enum Status111 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node111 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity111 implements Node111 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status111
+  score: Float
+  tags: [String!]!
+  parent: Entity111
+  related(first: Int = 10, after: String, filter: Filter111): [Entity111!]!
+}
+
+input Filter111 {
+  status: Status111
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 112 — generated for the parse-scaling ladder."""
+enum Status112 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node112 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity112 implements Node112 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status112
+  score: Float
+  tags: [String!]!
+  parent: Entity112
+  related(first: Int = 10, after: String, filter: Filter112): [Entity112!]!
+}
+
+input Filter112 {
+  status: Status112
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 113 — generated for the parse-scaling ladder."""
+enum Status113 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node113 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity113 implements Node113 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status113
+  score: Float
+  tags: [String!]!
+  parent: Entity113
+  related(first: Int = 10, after: String, filter: Filter113): [Entity113!]!
+}
+
+input Filter113 {
+  status: Status113
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 114 — generated for the parse-scaling ladder."""
+enum Status114 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node114 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity114 implements Node114 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status114
+  score: Float
+  tags: [String!]!
+  parent: Entity114
+  related(first: Int = 10, after: String, filter: Filter114): [Entity114!]!
+}
+
+input Filter114 {
+  status: Status114
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 115 — generated for the parse-scaling ladder."""
+enum Status115 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node115 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity115 implements Node115 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status115
+  score: Float
+  tags: [String!]!
+  parent: Entity115
+  related(first: Int = 10, after: String, filter: Filter115): [Entity115!]!
+}
+
+input Filter115 {
+  status: Status115
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 116 — generated for the parse-scaling ladder."""
+enum Status116 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node116 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity116 implements Node116 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status116
+  score: Float
+  tags: [String!]!
+  parent: Entity116
+  related(first: Int = 10, after: String, filter: Filter116): [Entity116!]!
+}
+
+input Filter116 {
+  status: Status116
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 117 — generated for the parse-scaling ladder."""
+enum Status117 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node117 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity117 implements Node117 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status117
+  score: Float
+  tags: [String!]!
+  parent: Entity117
+  related(first: Int = 10, after: String, filter: Filter117): [Entity117!]!
+}
+
+input Filter117 {
+  status: Status117
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 118 — generated for the parse-scaling ladder."""
+enum Status118 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node118 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity118 implements Node118 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status118
+  score: Float
+  tags: [String!]!
+  parent: Entity118
+  related(first: Int = 10, after: String, filter: Filter118): [Entity118!]!
+}
+
+input Filter118 {
+  status: Status118
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 119 — generated for the parse-scaling ladder."""
+enum Status119 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node119 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity119 implements Node119 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status119
+  score: Float
+  tags: [String!]!
+  parent: Entity119
+  related(first: Int = 10, after: String, filter: Filter119): [Entity119!]!
+}
+
+input Filter119 {
+  status: Status119
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 120 — generated for the parse-scaling ladder."""
+enum Status120 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node120 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity120 implements Node120 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status120
+  score: Float
+  tags: [String!]!
+  parent: Entity120
+  related(first: Int = 10, after: String, filter: Filter120): [Entity120!]!
+}
+
+input Filter120 {
+  status: Status120
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 121 — generated for the parse-scaling ladder."""
+enum Status121 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node121 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity121 implements Node121 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status121
+  score: Float
+  tags: [String!]!
+  parent: Entity121
+  related(first: Int = 10, after: String, filter: Filter121): [Entity121!]!
+}
+
+input Filter121 {
+  status: Status121
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 122 — generated for the parse-scaling ladder."""
+enum Status122 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node122 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity122 implements Node122 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status122
+  score: Float
+  tags: [String!]!
+  parent: Entity122
+  related(first: Int = 10, after: String, filter: Filter122): [Entity122!]!
+}
+
+input Filter122 {
+  status: Status122
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 123 — generated for the parse-scaling ladder."""
+enum Status123 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node123 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity123 implements Node123 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status123
+  score: Float
+  tags: [String!]!
+  parent: Entity123
+  related(first: Int = 10, after: String, filter: Filter123): [Entity123!]!
+}
+
+input Filter123 {
+  status: Status123
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 124 — generated for the parse-scaling ladder."""
+enum Status124 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node124 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity124 implements Node124 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status124
+  score: Float
+  tags: [String!]!
+  parent: Entity124
+  related(first: Int = 10, after: String, filter: Filter124): [Entity124!]!
+}
+
+input Filter124 {
+  status: Status124
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 125 — generated for the parse-scaling ladder."""
+enum Status125 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node125 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity125 implements Node125 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status125
+  score: Float
+  tags: [String!]!
+  parent: Entity125
+  related(first: Int = 10, after: String, filter: Filter125): [Entity125!]!
+}
+
+input Filter125 {
+  status: Status125
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 126 — generated for the parse-scaling ladder."""
+enum Status126 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node126 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity126 implements Node126 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status126
+  score: Float
+  tags: [String!]!
+  parent: Entity126
+  related(first: Int = 10, after: String, filter: Filter126): [Entity126!]!
+}
+
+input Filter126 {
+  status: Status126
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 127 — generated for the parse-scaling ladder."""
+enum Status127 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node127 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity127 implements Node127 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status127
+  score: Float
+  tags: [String!]!
+  parent: Entity127
+  related(first: Int = 10, after: String, filter: Filter127): [Entity127!]!
+}
+
+input Filter127 {
+  status: Status127
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 128 — generated for the parse-scaling ladder."""
+enum Status128 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node128 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity128 implements Node128 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status128
+  score: Float
+  tags: [String!]!
+  parent: Entity128
+  related(first: Int = 10, after: String, filter: Filter128): [Entity128!]!
+}
+
+input Filter128 {
+  status: Status128
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 129 — generated for the parse-scaling ladder."""
+enum Status129 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node129 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity129 implements Node129 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status129
+  score: Float
+  tags: [String!]!
+  parent: Entity129
+  related(first: Int = 10, after: String, filter: Filter129): [Entity129!]!
+}
+
+input Filter129 {
+  status: Status129
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 130 — generated for the parse-scaling ladder."""
+enum Status130 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node130 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity130 implements Node130 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status130
+  score: Float
+  tags: [String!]!
+  parent: Entity130
+  related(first: Int = 10, after: String, filter: Filter130): [Entity130!]!
+}
+
+input Filter130 {
+  status: Status130
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 131 — generated for the parse-scaling ladder."""
+enum Status131 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node131 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity131 implements Node131 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status131
+  score: Float
+  tags: [String!]!
+  parent: Entity131
+  related(first: Int = 10, after: String, filter: Filter131): [Entity131!]!
+}
+
+input Filter131 {
+  status: Status131
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 132 — generated for the parse-scaling ladder."""
+enum Status132 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node132 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity132 implements Node132 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status132
+  score: Float
+  tags: [String!]!
+  parent: Entity132
+  related(first: Int = 10, after: String, filter: Filter132): [Entity132!]!
+}
+
+input Filter132 {
+  status: Status132
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 133 — generated for the parse-scaling ladder."""
+enum Status133 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node133 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity133 implements Node133 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status133
+  score: Float
+  tags: [String!]!
+  parent: Entity133
+  related(first: Int = 10, after: String, filter: Filter133): [Entity133!]!
+}
+
+input Filter133 {
+  status: Status133
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 134 — generated for the parse-scaling ladder."""
+enum Status134 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node134 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity134 implements Node134 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status134
+  score: Float
+  tags: [String!]!
+  parent: Entity134
+  related(first: Int = 10, after: String, filter: Filter134): [Entity134!]!
+}
+
+input Filter134 {
+  status: Status134
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 135 — generated for the parse-scaling ladder."""
+enum Status135 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node135 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity135 implements Node135 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status135
+  score: Float
+  tags: [String!]!
+  parent: Entity135
+  related(first: Int = 10, after: String, filter: Filter135): [Entity135!]!
+}
+
+input Filter135 {
+  status: Status135
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 136 — generated for the parse-scaling ladder."""
+enum Status136 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node136 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity136 implements Node136 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status136
+  score: Float
+  tags: [String!]!
+  parent: Entity136
+  related(first: Int = 10, after: String, filter: Filter136): [Entity136!]!
+}
+
+input Filter136 {
+  status: Status136
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 137 — generated for the parse-scaling ladder."""
+enum Status137 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node137 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity137 implements Node137 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status137
+  score: Float
+  tags: [String!]!
+  parent: Entity137
+  related(first: Int = 10, after: String, filter: Filter137): [Entity137!]!
+}
+
+input Filter137 {
+  status: Status137
+  query: String
+  limit: Int = 25
+}
+
+"""Domain module 138 — generated for the parse-scaling ladder."""
+enum Status138 {
+  ACTIVE
+  PENDING
+  ARCHIVED
+}
+
+interface Node138 {
+  id: ID!
+  createdAt: String!
+}
+
+type Entity138 implements Node138 {
+  id: ID!
+  createdAt: String!
+  name: String!
+  status: Status138
+  score: Float
+  tags: [String!]!
+  parent: Entity138
+  related(first: Int = 10, after: String, filter: Filter138): [Entity138!]!
+}
+
+input Filter138 {
+  status: Status138
+  query: String
+  limit: Int = 25
+}
+
