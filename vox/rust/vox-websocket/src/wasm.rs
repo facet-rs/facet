@@ -259,18 +259,10 @@ impl LinkRx for WsLinkRx {
     type Error = WsLinkRxError;
 
     async fn recv(&mut self) -> Result<Option<Backing>, WsLinkRxError> {
-        loop {
-            match self.rx.next().await {
-                Some(WsEvent::Message(data)) => {
-                    return Ok(Some(Backing::Boxed(data.into_boxed_slice())));
-                }
-                Some(WsEvent::Close) | None => {
-                    return Ok(None);
-                }
-                Some(WsEvent::Error(e)) => {
-                    return Err(WsLinkRxError(format!("WebSocket error: {e}")));
-                }
-            }
+        match self.rx.next().await {
+            Some(WsEvent::Message(data)) => Ok(Some(Backing::Boxed(data.into_boxed_slice()))),
+            Some(WsEvent::Close) | None => Ok(None),
+            Some(WsEvent::Error(e)) => Err(WsLinkRxError(format!("WebSocket error: {e}"))),
         }
     }
 }

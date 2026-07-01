@@ -8506,8 +8506,10 @@ dependencies = [
 name = "wasm-browser-tests"
 version = "0.10.0-rc.1"
 dependencies = [
+ "futures-util",
  "spec-proto",
  "vox",
+ "vox-rt",
  "vox-types",
  "wasm-bindgen",
  "wasm-bindgen-futures",
