@@ -128,27 +128,6 @@ pub(crate) fn match_pattern_with_flags(
     match_cached_regex_leaf(pattern, flags, input, byte_position)
 }
 
-#[cfg(test)]
-pub(crate) fn match_compiled_pattern(
-    pattern: &CompiledPattern,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    if pattern.kind == CompiledPatternKind::Known {
-        return match_known_pattern_source(&pattern.source, input, byte_position);
-    }
-    match_regex_leaf(pattern.regex.as_ref()?, input, byte_position)
-}
-
-#[cfg(test)]
-pub(crate) fn match_known_pattern_source(
-    pattern: &str,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    match_known_pattern(known_pattern_for_source(pattern)?, input, byte_position)
-}
-
 pub(crate) fn match_known_pattern(
     pattern: KnownPattern,
     input: &str,
@@ -171,30 +150,6 @@ pub(crate) fn match_regex_leaf(
             let end = byte_position + match_.end();
             LexMatch::new(end, pattern_inspected_end(input, end))
         })
-}
-
-#[cfg(test)]
-pub(crate) fn match_until_markers_with_inspection<'a>(
-    markers: impl IntoIterator<Item = &'a str>,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    let haystack = input.get(byte_position..)?;
-    let markers = markers
-        .into_iter()
-        .filter(|marker| !marker.is_empty())
-        .collect::<Vec<_>>();
-    if markers.iter().any(|marker| haystack.starts_with(*marker)) {
-        return None;
-    }
-    let end_and_marker_len = markers
-        .iter()
-        .filter_map(|marker| haystack.find(*marker).map(|offset| (offset, marker.len())))
-        .min()
-        .map_or((input.len() - byte_position, 0), |pair| pair);
-    let end = byte_position + end_and_marker_len.0;
-    let inspected_end = end + end_and_marker_len.1;
-    (end > byte_position).then_some(LexMatch::new(end, inspected_end))
 }
 
 pub(crate) fn match_nested_delimiters_with_inspection(

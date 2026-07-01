@@ -4435,119 +4435,6 @@ fn compile_until_markers(markers: &[String]) -> CompiledUntilMatcher {
     crate::lex_match::compile_until_markers(markers)
 }
 
-#[cfg(test)]
-pub(crate) fn match_compiled_lex_terminal(
-    terminal: &CompiledLexTerminal,
-    input: &str,
-    byte_position: usize,
-) -> Result<Option<LexMatch>, ParserExecutionError> {
-    match &terminal.matcher {
-        CompiledTerminalMatcher::Expr(expr) => match_compiled_lex_expr(expr, input, byte_position),
-        CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => Err(
-            ParserExecutionError::new(ParserExecutionErrorKind::UnsupportedTerminal {
-                terminal: *terminal,
-                spelling: spelling.clone(),
-            }),
-        ),
-    }
-}
-
-#[cfg(test)]
-fn match_compiled_lex_expr(
-    expr: &CompiledLexExpr,
-    input: &str,
-    byte_position: usize,
-) -> Result<Option<LexMatch>, ParserExecutionError> {
-    match expr {
-        CompiledLexExpr::Blank => Ok(Some(LexMatch::new(byte_position, byte_position))),
-        CompiledLexExpr::String(value) => {
-            Ok(input[byte_position..]
-                .starts_with(value)
-                .then_some(LexMatch::new(
-                    byte_position + value.len(),
-                    byte_position + value.len(),
-                )))
-        }
-        CompiledLexExpr::Pattern(pattern) => Ok(crate::lex_match::match_compiled_pattern(
-            pattern,
-            input,
-            byte_position,
-        )),
-        CompiledLexExpr::Until(matcher) => {
-            Ok(crate::lex_match::match_until_markers_with_inspection(
-                matcher.markers.iter().map(String::as_str),
-                input,
-                byte_position,
-            ))
-        }
-        CompiledLexExpr::Nested { open, close } => {
-            Ok(crate::lex_match::match_nested_delimiters_with_inspection(
-                open,
-                close,
-                input,
-                byte_position,
-            ))
-        }
-        CompiledLexExpr::AutoClose(_) => Ok(None),
-        CompiledLexExpr::Seq(members) => {
-            let mut position = byte_position;
-            let mut inspected_end = byte_position;
-            for member in members {
-                let Some(match_) = match_compiled_lex_expr(member, input, position)? else {
-                    return Ok(None);
-                };
-                position = match_.end;
-                inspected_end = inspected_end.max(match_.inspected_end);
-            }
-            Ok(Some(LexMatch::new(position, inspected_end)))
-        }
-        CompiledLexExpr::Choice(members) => {
-            let mut best = None::<LexMatch>;
-            for member in members {
-                if let Some(match_) = match_compiled_lex_expr(member, input, byte_position)?
-                    && best.is_none_or(|best| match_.end > best.end)
-                {
-                    best = Some(match_);
-                }
-            }
-            Ok(best)
-        }
-        CompiledLexExpr::Repeat(content) => {
-            let mut position = byte_position;
-            let mut inspected_end = byte_position;
-            while let Some(match_) = match_compiled_lex_expr(content, input, position)? {
-                inspected_end = inspected_end.max(match_.inspected_end);
-                if match_.end == position {
-                    break;
-                }
-                position = match_.end;
-            }
-            Ok(Some(LexMatch::new(position, inspected_end)))
-        }
-        CompiledLexExpr::Repeat1(content) => {
-            let Some(first) = match_compiled_lex_expr(content, input, byte_position)? else {
-                return Ok(None);
-            };
-            let mut position = first.end;
-            let mut inspected_end = first.inspected_end;
-            if position == byte_position {
-                return Ok(None);
-            }
-            while let Some(match_) = match_compiled_lex_expr(content, input, position)? {
-                inspected_end = inspected_end.max(match_.inspected_end);
-                if match_.end == position {
-                    break;
-                }
-                position = match_.end;
-            }
-            Ok(Some(LexMatch::new(position, inspected_end)))
-        }
-        CompiledLexExpr::UnsupportedSymbol(expr) => Err(ParserExecutionError::new(
-            ParserExecutionErrorKind::UnsupportedLexicalSymbol { expr: *expr },
-        )),
-    }
-}
-
 pub(crate) fn compile_lex_modes(
     grammar: &ValidatedGrammar,
     parser: &ParserGrammar,
@@ -5357,7 +5244,7 @@ fn stack_version_lineage(
     lineage
 }
 
-/// Error produced by shared parser execution support.
+/// Error produced by parser input/scanner support.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParserExecutionError {
     kind: ParserExecutionErrorKind,
@@ -5377,16 +5264,6 @@ impl ParserExecutionError {
 impl fmt::Display for ParserExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            ParserExecutionErrorKind::UnsupportedTerminal { terminal, spelling } => write!(
-                f,
-                "terminal {} is not supported by parser execution support: {spelling}",
-                terminal.get()
-            ),
-            ParserExecutionErrorKind::UnsupportedLexicalSymbol { expr } => write!(
-                f,
-                "lexical expression {} contains a symbol reference unsupported by this slice",
-                expr.get()
-            ),
             ParserExecutionErrorKind::InvalidInputEdit {
                 start_byte,
                 old_end_byte,
@@ -5403,22 +5280,10 @@ impl fmt::Display for ParserExecutionError {
 
 impl Error for ParserExecutionError {}
 
-/// Shared parser execution support error kind.
+/// Parser input/scanner support error kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ParserExecutionErrorKind {
-    /// Shared lexical support cannot match this terminal.
-    UnsupportedTerminal {
-        /// Terminal id.
-        terminal: TerminalId,
-        /// Terminal spelling.
-        spelling: String,
-    },
-    /// Shared lexical support does not execute symbol references.
-    UnsupportedLexicalSymbol {
-        /// Source expression id.
-        expr: GrammarExprId,
-    },
     /// Incremental edit coordinates did not describe the old and new inputs.
     InvalidInputEdit {
         /// Shared edit start byte.
@@ -5929,7 +5794,7 @@ mod tests {
     use crate::{
         corpus::{SexpChild, SexpNode, SexpValue},
         grammar::RawGrammarJson,
-        lex_match::{match_pattern, match_pattern_with_flags, match_until_markers_with_inspection},
+        lex_match::{match_pattern, match_pattern_with_flags},
         lexical::LexicalFacts,
         validated::ValidatedGrammar,
     };
@@ -7519,8 +7384,8 @@ extras (
     }
 
     #[test]
-    fn compiled_lexer_matches_expected_terminal_matches() {
-        let (validated, parser, _table) = prepared_with_validated(
+    fn weavy_lexer_matches_expected_terminal_matches() {
+        let (validated, parser, table) = prepared_with_validated(
             r##"{
               "name": "mini",
               "rules": {
@@ -7564,6 +7429,7 @@ extras (
               }
             }"##,
         );
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let input = "=> abc ab3bz yxy q";
         let byte_positions = [0usize, 3, 7, 8, 14, 18];
 
@@ -7575,10 +7441,10 @@ extras (
                 Ok((
                     terminal.kind(),
                     terminal.spelling().to_owned(),
-                    compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
+                    weavy_terminal_ends(&plan, terminal, input, &byte_positions)?,
                 ))
             })
-            .collect::<Result<Vec<_>, ParserExecutionError>>()
+            .collect::<Result<Vec<_>, crate::lower::weavy::WeavyParseError>>()
             .unwrap();
 
         assert!(observed.contains(&(
@@ -7898,32 +7764,35 @@ extras (
         reused_byte_ranges_from_events(report.tree_events())
     }
 
-    fn compiled_terminal_end(
-        validated: &ValidatedGrammar,
+    fn weavy_terminal_end(
+        plan: &crate::lower::weavy::WeavyParsePlan,
         terminal: &TerminalSymbol,
         input: &str,
         byte_position: usize,
-    ) -> Result<Option<usize>, ParserExecutionError> {
-        let compiled = compile_lex_terminal(validated, terminal);
-        match_compiled_lex_terminal(&compiled, input, byte_position)
-            .map(|result| result.map(|match_| match_.end))
+    ) -> Result<Option<usize>, crate::lower::weavy::WeavyParseError> {
+        match plan.match_terminal_for_tests(terminal.id(), input, byte_position) {
+            Ok(result) => Ok(result.map(|match_| match_.end)),
+            Err(crate::lower::weavy::WeavyParseError::MissingTerminal { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
-    fn compiled_terminal_ends(
-        validated: &ValidatedGrammar,
+    fn weavy_terminal_ends(
+        plan: &crate::lower::weavy::WeavyParsePlan,
         terminal: &TerminalSymbol,
         input: &str,
         byte_positions: &[usize],
-    ) -> Result<Vec<Option<usize>>, ParserExecutionError> {
+    ) -> Result<Vec<Option<usize>>, crate::lower::weavy::WeavyParseError> {
         byte_positions
             .iter()
-            .map(|byte_position| compiled_terminal_end(validated, terminal, input, *byte_position))
+            .map(|byte_position| weavy_terminal_end(plan, terminal, input, *byte_position))
             .collect()
     }
 
     #[test]
-    fn compiled_lexer_preserves_regex_flags() {
-        let (validated, parser, _table) = flagged_regex_fixture();
+    fn weavy_lexer_preserves_regex_flags() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let input = "ABCXYZ";
         let byte_positions = [0usize, 3];
         let insensitive = parser
@@ -7944,11 +7813,11 @@ extras (
             .unwrap();
 
         assert_eq!(
-            compiled_terminal_ends(&validated, insensitive, input, &byte_positions).unwrap(),
+            weavy_terminal_ends(&plan, insensitive, input, &byte_positions).unwrap(),
             vec![Some(3), None]
         );
         assert_eq!(
-            compiled_terminal_ends(&validated, wrapped, input, &byte_positions).unwrap(),
+            weavy_terminal_ends(&plan, wrapped, input, &byte_positions).unwrap(),
             vec![None, Some(6)]
         );
     }
@@ -8330,29 +8199,9 @@ extras (
     }
 
     #[test]
-    fn compiled_until_marker_matcher_matches_interpreted_oracle() {
-        let markers = ["{{".to_owned(), "{#".to_owned(), "{".to_owned()];
-        let compiled = compile_until_markers(&markers);
-        let input = "alpha {{ beta {# gamma";
-        for byte_position in [0usize, 6, 9, 14] {
-            let interpreted = match_until_markers_with_inspection(
-                markers.iter().map(String::as_str),
-                input,
-                byte_position,
-            );
-            let compiled = match_compiled_lex_expr(
-                &CompiledLexExpr::Until(compiled.clone()),
-                input,
-                byte_position,
-            )
-            .unwrap();
-            assert_eq!(compiled, interpreted, "byte position {byte_position}");
-        }
-    }
-
-    #[test]
-    fn compiled_lexical_primitives_match_until_and_nested_tokens() {
-        let (validated, parser, _table) = lexical_primitives_fixture();
+    fn weavy_lexical_primitives_match_until_and_nested_tokens() {
+        let (validated, parser, table) = lexical_primitives_fixture();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let input = "hello {# outer {# inner #} done #}";
         let byte_positions = [0usize, 6, 15, 26];
 
@@ -8364,10 +8213,10 @@ extras (
                 Ok((
                     terminal.kind(),
                     terminal.spelling().to_owned(),
-                    compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
+                    weavy_terminal_ends(&plan, terminal, input, &byte_positions)?,
                 ))
             })
-            .collect::<Result<Vec<_>, ParserExecutionError>>()
+            .collect::<Result<Vec<_>, crate::lower::weavy::WeavyParseError>>()
             .unwrap();
 
         assert!(

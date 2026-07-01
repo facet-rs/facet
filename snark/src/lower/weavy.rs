@@ -1045,6 +1045,21 @@ impl WeavyParsePlan {
     pub fn lexer_stats(&self) -> WeavyLexerStats {
         self.lexer_program.stats()
     }
+
+    #[cfg(test)]
+    pub(crate) fn match_terminal_for_tests(
+        &self,
+        terminal: parser_ir::TerminalId,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
+        let terminal = self
+            .lexer_program
+            .modes()
+            .find_map(|mode| mode.terminal(terminal))
+            .ok_or(WeavyParseError::MissingTerminal { terminal })?;
+        match_weavy_terminal_matcher(&terminal.matcher, input, byte_position)
+    }
 }
 
 /// Combined analysis for one prepared Snark Weavy parse plan.
@@ -2563,6 +2578,11 @@ pub enum WeavyParseError {
         /// Missing lexical mode.
         mode: parser_ir::LexModeId,
     },
+    /// A terminal id was not present in the lowered lexer graph.
+    MissingTerminal {
+        /// Missing terminal.
+        terminal: parser_ir::TerminalId,
+    },
     /// The Weavy runner referenced a missing block.
     MissingBlock {
         /// Missing Snark block.
@@ -2704,6 +2724,13 @@ impl fmt::Display for WeavyParseError {
             ),
             Self::MissingLexMode { mode } => {
                 write!(f, "lexical mode {} is missing", mode.get())
+            }
+            Self::MissingTerminal { terminal } => {
+                write!(
+                    f,
+                    "terminal {} is missing from the Weavy lexer graph",
+                    terminal.get()
+                )
             }
             Self::MissingBlock { block } => write!(f, "Weavy block {} is missing", block.get()),
             Self::MissingDenseBlock { block } => {
@@ -5654,110 +5681,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         terminal: &WeavyLexTerminal,
         byte_position: usize,
     ) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
-        match &terminal.matcher {
-            WeavyTerminalMatcher::Expr(expr) => self.match_weavy_lex_expr(expr, byte_position),
-            WeavyTerminalMatcher::UnsupportedTerminal { terminal, spelling } => {
-                Err(WeavyParseError::UnsupportedTerminal {
-                    terminal: *terminal,
-                    spelling: spelling.clone(),
-                })
-            }
-        }
-    }
-
-    fn match_weavy_lex_expr(
-        &self,
-        expr: &WeavyLexExpr,
-        byte_position: usize,
-    ) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
-        match expr {
-            WeavyLexExpr::Blank => Ok(Some(parser_ir::LexMatch {
-                end: byte_position,
-                inspected_end: byte_position,
-            })),
-            WeavyLexExpr::String(value) => Ok(self.input[byte_position..]
-                .starts_with(value)
-                .then_some(parser_ir::LexMatch {
-                    end: byte_position + value.len(),
-                    inspected_end: byte_position + value.len(),
-                })),
-            WeavyLexExpr::Pattern(pattern) => Ok(pattern.match_input(self.input, byte_position)),
-            WeavyLexExpr::Until(matcher) => Ok(matcher.match_input(self.input, byte_position)),
-            WeavyLexExpr::Nested { open, close } => {
-                Ok(crate::lex_match::match_nested_delimiters_with_inspection(
-                    open,
-                    close,
-                    self.input,
-                    byte_position,
-                ))
-            }
-            WeavyLexExpr::AutoClose(_) => Ok(None),
-            WeavyLexExpr::Seq(members) => {
-                let mut position = byte_position;
-                let mut inspected_end = byte_position;
-                for member in members {
-                    let Some(match_) = self.match_weavy_lex_expr(member, position)? else {
-                        return Ok(None);
-                    };
-                    position = match_.end;
-                    inspected_end = inspected_end.max(match_.inspected_end);
-                }
-                Ok(Some(parser_ir::LexMatch {
-                    end: position,
-                    inspected_end,
-                }))
-            }
-            WeavyLexExpr::Choice(members) => {
-                let mut best = None::<parser_ir::LexMatch>;
-                for member in members {
-                    if let Some(match_) = self.match_weavy_lex_expr(member, byte_position)?
-                        && best.is_none_or(|best| match_.end > best.end)
-                    {
-                        best = Some(match_);
-                    }
-                }
-                Ok(best)
-            }
-            WeavyLexExpr::Repeat(content) => {
-                let mut position = byte_position;
-                let mut inspected_end = byte_position;
-                while let Some(match_) = self.match_weavy_lex_expr(content, position)? {
-                    inspected_end = inspected_end.max(match_.inspected_end);
-                    if match_.end == position {
-                        break;
-                    }
-                    position = match_.end;
-                }
-                Ok(Some(parser_ir::LexMatch {
-                    end: position,
-                    inspected_end,
-                }))
-            }
-            WeavyLexExpr::Repeat1(content) => {
-                let Some(first) = self.match_weavy_lex_expr(content, byte_position)? else {
-                    return Ok(None);
-                };
-                let mut position = first.end;
-                let mut inspected_end = first.inspected_end;
-                if position == byte_position {
-                    return Ok(None);
-                }
-                while let Some(match_) = self.match_weavy_lex_expr(content, position)? {
-                    inspected_end = inspected_end.max(match_.inspected_end);
-                    if match_.end == position {
-                        break;
-                    }
-                    position = match_.end;
-                }
-                Ok(Some(parser_ir::LexMatch {
-                    end: position,
-                    inspected_end,
-                }))
-            }
-            WeavyLexExpr::UnsupportedSymbol(expr) => {
-                Err(WeavyParseError::UnsupportedLexicalSymbol { expr: *expr })
-            }
-        }
+        match_weavy_terminal_matcher(&terminal.matcher, self.input, byte_position)
     }
 
     fn match_external(
@@ -7015,6 +6939,119 @@ fn parser_metadata(id: ProductionMetadataId) -> parser_ir::ProductionMetadataId 
 
 fn next_runtime_weavy_trace_id(events: &[parser_ir::TraceEvent]) -> parser_ir::TraceEventId {
     parser_ir::TraceEventId::from_index(events.len())
+}
+
+fn match_weavy_terminal_matcher(
+    matcher: &WeavyTerminalMatcher,
+    input: &str,
+    byte_position: usize,
+) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
+    match matcher {
+        WeavyTerminalMatcher::Expr(expr) => match_weavy_lex_expr(expr, input, byte_position),
+        WeavyTerminalMatcher::UnsupportedTerminal { terminal, spelling } => {
+            Err(WeavyParseError::UnsupportedTerminal {
+                terminal: *terminal,
+                spelling: spelling.clone(),
+            })
+        }
+    }
+}
+
+fn match_weavy_lex_expr(
+    expr: &WeavyLexExpr,
+    input: &str,
+    byte_position: usize,
+) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
+    match expr {
+        WeavyLexExpr::Blank => Ok(Some(parser_ir::LexMatch {
+            end: byte_position,
+            inspected_end: byte_position,
+        })),
+        WeavyLexExpr::String(value) => {
+            Ok(input[byte_position..]
+                .starts_with(value)
+                .then_some(parser_ir::LexMatch {
+                    end: byte_position + value.len(),
+                    inspected_end: byte_position + value.len(),
+                }))
+        }
+        WeavyLexExpr::Pattern(pattern) => Ok(pattern.match_input(input, byte_position)),
+        WeavyLexExpr::Until(matcher) => Ok(matcher.match_input(input, byte_position)),
+        WeavyLexExpr::Nested { open, close } => {
+            Ok(crate::lex_match::match_nested_delimiters_with_inspection(
+                open,
+                close,
+                input,
+                byte_position,
+            ))
+        }
+        WeavyLexExpr::AutoClose(_) => Ok(None),
+        WeavyLexExpr::Seq(members) => {
+            let mut position = byte_position;
+            let mut inspected_end = byte_position;
+            for member in members {
+                let Some(match_) = match_weavy_lex_expr(member, input, position)? else {
+                    return Ok(None);
+                };
+                position = match_.end;
+                inspected_end = inspected_end.max(match_.inspected_end);
+            }
+            Ok(Some(parser_ir::LexMatch {
+                end: position,
+                inspected_end,
+            }))
+        }
+        WeavyLexExpr::Choice(members) => {
+            let mut best = None::<parser_ir::LexMatch>;
+            for member in members {
+                if let Some(match_) = match_weavy_lex_expr(member, input, byte_position)?
+                    && best.is_none_or(|best| match_.end > best.end)
+                {
+                    best = Some(match_);
+                }
+            }
+            Ok(best)
+        }
+        WeavyLexExpr::Repeat(content) => {
+            let mut position = byte_position;
+            let mut inspected_end = byte_position;
+            while let Some(match_) = match_weavy_lex_expr(content, input, position)? {
+                inspected_end = inspected_end.max(match_.inspected_end);
+                if match_.end == position {
+                    break;
+                }
+                position = match_.end;
+            }
+            Ok(Some(parser_ir::LexMatch {
+                end: position,
+                inspected_end,
+            }))
+        }
+        WeavyLexExpr::Repeat1(content) => {
+            let Some(first) = match_weavy_lex_expr(content, input, byte_position)? else {
+                return Ok(None);
+            };
+            let mut position = first.end;
+            let mut inspected_end = first.inspected_end;
+            if position == byte_position {
+                return Ok(None);
+            }
+            while let Some(match_) = match_weavy_lex_expr(content, input, position)? {
+                inspected_end = inspected_end.max(match_.inspected_end);
+                if match_.end == position {
+                    break;
+                }
+                position = match_.end;
+            }
+            Ok(Some(parser_ir::LexMatch {
+                end: position,
+                inspected_end,
+            }))
+        }
+        WeavyLexExpr::UnsupportedSymbol(expr) => {
+            Err(WeavyParseError::UnsupportedLexicalSymbol { expr: *expr })
+        }
+    }
 }
 
 fn runtime_weavy_lookahead_parser_symbol(
