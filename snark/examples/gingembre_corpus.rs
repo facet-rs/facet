@@ -16,7 +16,7 @@ use std::{env, path::PathBuf};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{RuntimeWeavyPlan, parse_prepared_weavy_recovering_with_report_and_scanner},
+    lower::weavy::{WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner},
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
 };
@@ -49,7 +49,7 @@ fn main() {
     // Time one Weavy plan construction and one parse in isolation.
     let probe_input = "alpha";
     let t_plan = std::time::Instant::now();
-    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("runtime weavy plan");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("runtime weavy plan");
     let plan_ms = t_plan.elapsed().as_secs_f64() * 1000.0;
     let t_p = std::time::Instant::now();
     let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
@@ -62,7 +62,7 @@ fn main() {
     );
     let parse_probe_ms = t_p.elapsed().as_secs_f64() * 1000.0;
     println!(
-        "[timing] table_build={table_ms:.1}ms  RuntimeWeavyPlan::new={plan_ms:.1}ms  parse('alpha')={parse_probe_ms:.1}ms",
+        "[timing] table_build={table_ms:.1}ms  WeavyParsePlan::new={plan_ms:.1}ms  parse('alpha')={parse_probe_ms:.1}ms",
     );
 
     println!("language: {}", raw.name);

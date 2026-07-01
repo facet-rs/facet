@@ -16,16 +16,16 @@
 use std::{env, path::PathBuf};
 
 use futures::executor::block_on;
-use gingembre::{Context, VArray, VObject, VString, Value};
 use gingembre::ast::{
     BinaryExpr, BinaryOp, BlockNode, BoolLit, CallExpr, CommentNode, ElifBranch, Expr, ExtendsNode,
     FieldExpr, FilterExpr, FloatLit, ForNode, Ident, IfNode, IncludeNode, IntLit, ListLit, Literal,
     Node, PrintNode, SetNode, SetValue, StringLit, Target, Template, TextNode, span,
 };
+use gingembre::{Context, VArray, VObject, VString, Value};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{RuntimeWeavyPlan, parse_prepared_weavy_with_report},
+    lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
     parser::{ParseTable, ParserGrammar, RuntimeResolvedNode},
     validated::ValidatedGrammar,
 };
@@ -47,9 +47,15 @@ const SAMPLES: &[(&str, &str)] = &[
     ("comment", "{# c #}A{# d #}B"),
     ("if true", "{% if true %}yes{% endif %}"),
     ("if else", "{% if false %}a{% else %}b{% endif %}"),
-    ("if elif", "{% if 1 > 2 %}a{% elif 2 > 1 %}b{% else %}c{% endif %}"),
+    (
+        "if elif",
+        "{% if 1 > 2 %}a{% elif 2 > 1 %}b{% else %}c{% endif %}",
+    ),
     ("for list", "{% for x in [1, 2, 3] %}{{ x }};{% endfor %}"),
-    ("for else empty", "{% for x in [] %}a{% else %}empty{% endfor %}"),
+    (
+        "for else empty",
+        "{% for x in [] %}a{% else %}empty{% endfor %}",
+    ),
     ("set", "{% set n = 2 * 3 %}{{ n }}"),
     // Precedence + associativity stress — does snark's grammar prec ladder agree
     // with gingembre's across operator classes?
@@ -71,7 +77,10 @@ const SAMPLES: &[(&str, &str)] = &[
     // Data-driven: read `name`, `user`, `items` from a shared facet Context.
     ("var", "{{ name }}"),
     ("field", "{{ user.name }}"),
-    ("field in if", "{% if user.active %}on{% else %}off{% endif %}"),
+    (
+        "field in if",
+        "{% if user.active %}on{% else %}off{% endif %}",
+    ),
     ("for data", "{% for i in items %}{{ i }};{% endfor %}"),
     ("field concat", "{{ user.name ~ \"!\" }}"),
     ("var filter", "{{ name | upper }}"),
@@ -103,21 +112,21 @@ fn main() {
         .prepare_productions_for_items()
         .expect("prepare productions");
     let table = ParseTable::from_grammar(&parser).expect("build parse table");
-    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("weavy plan");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy plan");
 
     let ctx = build_context();
     let mut pass = 0usize;
     let mut fail = 0usize;
     for (label, src) in SAMPLES {
-        let report =
-            match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, src) {
-                Ok(report) => report,
-                Err(e) => {
-                    println!("✗ {label}: snark parse error: {e:?}");
-                    fail += 1;
-                    continue;
-                }
-            };
+        let report = match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, src)
+        {
+            Ok(report) => report,
+            Err(e) => {
+                println!("✗ {label}: snark parse error: {e:?}");
+                fail += 1;
+                continue;
+            }
+        };
         let Some(resolved) = report.accepted_resolved_tree(&parser, src) else {
             println!("✗ {label}: no accepted resolved tree");
             fail += 1;
@@ -140,18 +149,15 @@ fn main() {
 }
 
 fn repro(grammar_path: &str, input: &str) {
-    let grammar_json =
-        snark_dsl::emit_with_boa(std::path::Path::new(grammar_path)).expect("emit");
+    let grammar_json = snark_dsl::emit_with_boa(std::path::Path::new(grammar_path)).expect("emit");
     let raw = RawGrammarJson::from_tree_sitter_json_str(&grammar_json).expect("import");
     let validated = ValidatedGrammar::from_raw(&raw).expect("validate");
     let lexical = LexicalFacts::from_grammar(&validated);
     let normalized =
         ParserGrammar::normalize_from_validated(&validated, &lexical).expect("normalize");
-    let parser = normalized
-        .prepare_productions_for_items()
-        .expect("prepare");
+    let parser = normalized.prepare_productions_for_items().expect("prepare");
     let table = ParseTable::from_grammar(&parser).expect("table");
-    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("plan");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("plan");
     match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, input) {
         Ok(report) => match report.accepted_resolved_tree(&parser, input) {
             Some(tree) => dump(&tree, 0),
@@ -267,7 +273,10 @@ fn lower_for(node: &RuntimeResolvedNode) -> Option<Node> {
             span: span(0, 0),
         },
         many => Target::Tuple {
-            names: many.iter().filter_map(|i| Some((leaf_text(i)?, span(0, 0)))).collect(),
+            names: many
+                .iter()
+                .filter_map(|i| Some((leaf_text(i)?, span(0, 0))))
+                .collect(),
             span: span(0, 0),
         },
     };

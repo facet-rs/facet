@@ -13,7 +13,7 @@ use std::{
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{RuntimeWeavyPlan, parse_prepared_weavy_recovering_with_report_and_scanner},
+    lower::weavy::{WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner},
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
 };
@@ -113,7 +113,7 @@ fn check_one(def: &Path, grammar_js: &Path) -> Result<CheckOk, CheckErr> {
         .prepare_productions_for_items()
         .map_err(|e| CheckErr::Build(e.to_string()))?;
     let table = ParseTable::from_grammar(&parser).map_err(|e| CheckErr::Build(e.to_string()))?;
-    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table)
+    let plan = WeavyParsePlan::new(&validated, &parser, &table)
         .map_err(|e| CheckErr::Build(e.to_string()))?;
 
     let sample_errors = first_sample(def).and_then(|sample| {

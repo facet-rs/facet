@@ -12,7 +12,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        RuntimeWeavyPlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_with_report,
     },
     parser::{ParseTable, ParserGrammar},
@@ -71,7 +71,7 @@ fn main() {
     );
     let (t_plan, runtime) = phase!(
         "plan",
-        RuntimeWeavyPlan::new(&validated, &parser, &table).expect("Weavy runtime plan")
+        WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy runtime plan")
     );
     // Measure the entry points the playground calls: strict first, recovering
     // only when strict fails.

@@ -6704,19 +6704,19 @@ extras (
         ValidatedGrammar,
         ParserGrammar,
         ParseTable,
-        crate::lower::weavy::RuntimeWeavyPlan,
+        crate::lower::weavy::WeavyParsePlan,
     ) {
         static FIXTURE: OnceLock<(
             ValidatedGrammar,
             ParserGrammar,
             ParseTable,
-            crate::lower::weavy::RuntimeWeavyPlan,
+            crate::lower::weavy::WeavyParsePlan,
         )> = OnceLock::new();
 
         FIXTURE.get_or_init(|| {
             let (validated, parser, table) = authored_gingembre_runtime_fixture();
             let plan =
-                crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+                crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
             (validated, parser, table, plan)
         })
     }
@@ -8089,7 +8089,7 @@ extras (
     #[test]
     fn weavy_runtime_inserts_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
             &validated,
@@ -8112,7 +8112,7 @@ extras (
     #[test]
     fn weavy_runtime_inserts_node_driven_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_node_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
             &validated,
@@ -8264,7 +8264,7 @@ extras (
 
     #[cfg(feature = "weavy-lowering")]
     fn weavy_reused_byte_ranges(
-        report: &crate::lower::weavy::RuntimeWeavyReport,
+        report: &crate::lower::weavy::WeavyParseReport,
     ) -> Vec<(usize, usize)> {
         reused_byte_ranges_from_events(report.tree_events())
     }
@@ -8328,9 +8328,9 @@ extras (
     #[test]
     fn weavy_runtime_parse_session_reparse_matches_full_parse_oracle() {
         let (validated, parser, table) = flagged_regex_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         let first = session.parse("ABCXYZ").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8361,9 +8361,9 @@ extras (
     #[test]
     fn weavy_runtime_parse_session_does_not_reuse_node_that_peeked_into_edit() {
         let (validated, parser, table) = flagged_regex_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         session.parse("ABCXYZ").unwrap();
 
         let edit = RuntimeInputEdit::new(3, 6, 6);
@@ -8387,9 +8387,9 @@ extras (
     #[test]
     fn weavy_runtime_parse_session_reuses_suffix_across_edited_extra() {
         let (validated, parser, table) = extra_comment_reuse_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         let first = session.parse("a#old\nb").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8415,9 +8415,9 @@ extras (
     #[test]
     fn weavy_runtime_parse_session_reuses_node_with_attached_extra() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         let first = session.parse("a#old\nb1").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8447,9 +8447,9 @@ extras (
     #[test]
     fn weavy_runtime_parse_session_does_not_reuse_error_containing_node() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         let first = session.parse_recovering("a@\nb1").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8475,7 +8475,7 @@ extras (
     fn weavy_runtime_recovery_matches_skip_invalid_input_shape() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
         let input = "a@\nb1";
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let weavy_report =
             crate::lower::weavy::parse_prepared_weavy_recovering_with_report_and_scanner(
                 &plan, &validated, &parser, &table, input, None,
@@ -8501,9 +8501,9 @@ extras (
     #[test]
     fn weavy_runtime_parse_session_does_not_reuse_root_across_boundary_insertion() {
         let (validated, parser, table) = repeated_word_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         let first = session.parse("alpha").unwrap().clone();
         assert_eq!(first.tree().to_sexp(), "(source_file (word))");
 
@@ -8527,9 +8527,9 @@ extras (
     #[test]
     fn weavy_runtime_parse_session_rejects_mismatched_edit_context() {
         let (validated, parser, table) = flagged_regex_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         session.parse("ABCXYZ").unwrap();
 
         let error = session
@@ -8537,7 +8537,7 @@ extras (
             .unwrap_err();
         assert!(matches!(
             error,
-            crate::lower::weavy::RuntimeWeavyError::InvalidInputEdit { .. }
+            crate::lower::weavy::WeavyParseError::InvalidInputEdit { .. }
         ));
         assert_eq!(session.last_input(), Some("ABCXYZ"));
     }
@@ -8547,7 +8547,7 @@ extras (
     fn weavy_runtime_preserves_regex_flags() {
         let (validated, parser, table) = flagged_regex_fixture();
         let input = "ABCXYZ";
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &validated, &parser, &table, input,
         )
@@ -8594,7 +8594,7 @@ extras (
     fn weavy_runtime_resolves_symbol_references_inside_token() {
         let (validated, parser, table) = lexical_symbol_fixture();
         let input = "alpha:123";
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &validated, &parser, &table, input,
         )
@@ -8773,9 +8773,9 @@ extras (
     #[test]
     fn weavy_runtime_parse_session_reuses_until_text_around_interpolation_edit() {
         let (validated, parser, table) = until_reuse_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         let first = session.parse("hello {{name}} tail").unwrap().clone();
         assert_eq!(
             first.tree().to_sexp(),
@@ -8808,9 +8808,9 @@ extras (
     #[test]
     fn weavy_runtime_parse_session_reuse_metadata_survives_reparse_chains() {
         let (validated, parser, table) = until_reuse_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         session.parse("hello {{name}} tail").unwrap();
 
         let first_reparse = session
@@ -8846,9 +8846,9 @@ extras (
         );
 
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let mut session =
-            crate::lower::weavy::RuntimeWeavySession::new(&plan, &validated, &parser, &table);
+            crate::lower::weavy::WeavyParseSession::new(&plan, &validated, &parser, &table);
         session.parse("a#old\nb1").unwrap();
 
         let first_reparse = session
@@ -8882,7 +8882,7 @@ extras (
     fn lexical_primitives_parse_through_weavy_runtime() {
         let (validated, parser, table) = lexical_primitives_fixture();
         let input = "hello {# outer {# inner #} done #}";
-        let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &validated, &parser, &table, input,
         )

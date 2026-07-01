@@ -17,7 +17,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        RuntimeWeavyError, RuntimeWeavyPlan, RuntimeWeavyReport,
+        WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner,
         reparse_prepared_weavy_recovering_with_report_and_scanner,
@@ -284,10 +284,10 @@ struct PreparedGrammar {
     validated: ValidatedGrammar,
     parser: ParserGrammar,
     table: ParseTable,
-    weavy_plan: RuntimeWeavyPlan,
+    weavy_plan: WeavyParsePlan,
 }
 
-struct PlaygroundRuntimeReport(RuntimeWeavyReport);
+struct PlaygroundRuntimeReport(WeavyParseReport);
 
 impl PlaygroundRuntimeReport {
     fn accepted_tree_events(&self) -> Vec<TreeEvent> {
@@ -361,7 +361,7 @@ pub struct PlaygroundSession {
     scanner_selection: ScannerSelection,
     embedded_languages: BTreeMap<String, PreparedEmbeddedLanguage>,
     last_input: Option<String>,
-    last_report: Option<RuntimeWeavyReport>,
+    last_report: Option<WeavyParseReport>,
 }
 
 impl PlaygroundSession {
@@ -741,7 +741,7 @@ fn prepare_grammar(grammar_json: &str) -> Result<PreparedGrammar, (String, Strin
         .map_err(|error| ("prepare".to_owned(), error.to_string()))?;
     let table = ParseTable::from_grammar(&parser)
         .map_err(|error| ("table".to_owned(), error.to_string()))?;
-    let weavy_plan = RuntimeWeavyPlan::new(&validated, &parser, &table)
+    let weavy_plan = WeavyParsePlan::new(&validated, &parser, &table)
         .map_err(|error| ("weavy".to_owned(), error.to_string()))?;
     Ok(PreparedGrammar {
         raw,
@@ -1795,7 +1795,7 @@ fn parse_strict_weavy_with_optional_scanner(
     prepared: &PreparedGrammar,
     scanner: Option<&dyn RuntimeExternalScanner>,
     input: &str,
-) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
+) -> Result<WeavyParseReport, WeavyParseError> {
     parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
         &prepared.weavy_plan,
         &prepared.validated,
@@ -1810,7 +1810,7 @@ fn parse_recovering_weavy_with_optional_scanner(
     prepared: &PreparedGrammar,
     scanner: Option<&dyn RuntimeExternalScanner>,
     input: &str,
-) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
+) -> Result<WeavyParseReport, WeavyParseError> {
     parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
         &prepared.weavy_plan,
         &prepared.validated,
@@ -1825,8 +1825,8 @@ fn parse_weavy_with_optional_recovery(
     prepared: &PreparedGrammar,
     scanner: Option<&dyn RuntimeExternalScanner>,
     input: &str,
-    previous: Option<(&str, &RuntimeWeavyReport, RuntimeInputEdit)>,
-) -> Result<PlaygroundParseReport, RuntimeWeavyError> {
+    previous: Option<(&str, &WeavyParseReport, RuntimeInputEdit)>,
+) -> Result<PlaygroundParseReport, WeavyParseError> {
     let strict = if let Some((old_input, previous_report, edit)) = previous {
         reparse_prepared_weavy_with_report_and_scanner(
             &prepared.weavy_plan,
@@ -1893,20 +1893,16 @@ fn accepted_problem_span(events: &[TreeEvent], input: &str) -> Option<Diagnostic
     })
 }
 
-fn runtime_weavy_error_diagnostic(
-    stage: &str,
-    error: &RuntimeWeavyError,
-    input: &str,
-) -> Diagnostic {
+fn runtime_weavy_error_diagnostic(stage: &str, error: &WeavyParseError, input: &str) -> Diagnostic {
     let span = runtime_weavy_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
     diagnostic(stage, error.to_string(), span)
 }
 
-fn runtime_weavy_error_byte(error: &RuntimeWeavyError) -> Option<usize> {
+fn runtime_weavy_error_byte(error: &WeavyParseError) -> Option<usize> {
     match error {
-        RuntimeWeavyError::NoToken { byte_position, .. }
-        | RuntimeWeavyError::NoAction { byte_position, .. }
-        | RuntimeWeavyError::TrailingInput { byte_position } => Some(*byte_position),
+        WeavyParseError::NoToken { byte_position, .. }
+        | WeavyParseError::NoAction { byte_position, .. }
+        | WeavyParseError::TrailingInput { byte_position } => Some(*byte_position),
         _ => None,
     }
 }

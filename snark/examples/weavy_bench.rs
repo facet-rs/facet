@@ -10,7 +10,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        RuntimeWeavyPlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_with_report_and_scanner,
     },
     parser::{ParseTable, ParserGrammar},
@@ -87,14 +87,14 @@ fn main() {
     let table_build = t.elapsed();
 
     let t = Instant::now();
-    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("runtime weavy plan");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("runtime weavy plan");
     let plan_new = t.elapsed();
 
     let strict_fresh_plan_total = mode.runs_strict_fresh().then(|| {
         let t = Instant::now();
         for _ in 0..iters {
             let plan =
-                RuntimeWeavyPlan::new(&validated, &parser, &table).expect("runtime weavy plan");
+                WeavyParsePlan::new(&validated, &parser, &table).expect("runtime weavy plan");
             let _ = parse_prepared_weavy_with_report_and_scanner(
                 &plan, &validated, &parser, &table, &input, None,
             );
@@ -129,7 +129,7 @@ fn main() {
 
     println!("one-time setup:");
     println!("  ParseTable::from_grammar   {:>8.1} ms", ms(table_build));
-    println!("  RuntimeWeavyPlan::new      {:>8.1} ms", ms(plan_new));
+    println!("  WeavyParsePlan::new      {:>8.1} ms", ms(plan_new));
 
     println!("\nper-parse (avg over {iters}):");
     if let Some(total) = strict_fresh_plan_total {
