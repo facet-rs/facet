@@ -712,6 +712,14 @@ impl WeavyParsePlanReadiness {
 /// Lexer-side readiness for optimizer/JIT lowering.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WeavyLexerReadiness {
+    /// Modes with a merged literal string matcher.
+    pub merged_literal_set_count: usize,
+    /// Literal terminal rows covered by merged literal matching.
+    pub merged_literal_terminal_count: usize,
+    /// Modes with a merged direct-pattern matcher.
+    pub merged_pattern_set_count: usize,
+    /// Pattern terminal rows covered by merged direct-pattern matching.
+    pub merged_pattern_terminal_count: usize,
     /// Pattern leaves handled by named Snark matcher ops.
     pub known_pattern_count: usize,
     /// Pattern leaves still delegated to the Rust regex engine.
@@ -727,6 +735,10 @@ pub struct WeavyLexerReadiness {
 impl WeavyLexerReadiness {
     fn from_stats(stats: &WeavyLexerStats) -> Self {
         Self {
+            merged_literal_set_count: stats.direct_literal_set_count,
+            merged_literal_terminal_count: stats.direct_literal_terminal_count,
+            merged_pattern_set_count: stats.direct_pattern_set_count,
+            merged_pattern_terminal_count: stats.direct_pattern_terminal_count,
             known_pattern_count: stats.known_pattern_count,
             regex_fallback_count: stats.regex_pattern_count,
             unsupported_pattern_count: stats.unsupported_pattern_count,
@@ -5929,16 +5941,17 @@ mod tests {
         let stats = program.stats();
 
         assert_eq!(stats.mode_count, 1);
-        assert_eq!(stats.terminal_count, 2);
-        assert_eq!(stats.direct_literal_set_count, 0);
-        assert_eq!(stats.direct_literal_terminal_count, 0);
+        assert_eq!(stats.terminal_count, 4);
+        assert_eq!(stats.direct_literal_set_count, 1);
+        assert_eq!(stats.direct_literal_terminal_count, 1);
+        assert_eq!(stats.direct_pattern_set_count, 1);
         assert_eq!(stats.direct_pattern_terminal_count, 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Seq], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 2);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Choice], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::Pattern], 3);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::Pattern], 4);
         assert_eq!(stats.known_pattern_count, 1);
-        assert_eq!(stats.regex_pattern_count, 1);
+        assert_eq!(stats.regex_pattern_count, 2);
         assert_eq!(stats.unsupported_pattern_count, 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Repeat], 1);
@@ -5953,8 +5966,12 @@ mod tests {
 
         let readiness = WeavyLexerReadiness::from_stats(&stats);
 
+        assert_eq!(readiness.merged_literal_set_count, 1);
+        assert_eq!(readiness.merged_literal_terminal_count, 1);
+        assert_eq!(readiness.merged_pattern_set_count, 1);
+        assert_eq!(readiness.merged_pattern_terminal_count, 1);
         assert_eq!(readiness.known_pattern_count, 1);
-        assert_eq!(readiness.regex_fallback_count, 1);
+        assert_eq!(readiness.regex_fallback_count, 2);
         assert_eq!(readiness.unsupported_pattern_count, 1);
         assert_eq!(readiness.unsupported_terminal_count, 1);
         assert_eq!(readiness.unsupported_symbol_count, 0);
@@ -6029,7 +6046,7 @@ mod tests {
         assert_eq!(analysis.lexer.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 0);
         assert_eq!(analysis.readiness.opaque_intrinsic_count, 0);
-        assert_eq!(analysis.readiness.lexer.regex_fallback_count, 1);
+        assert_eq!(analysis.readiness.lexer.regex_fallback_count, 2);
         assert!(!analysis.readiness.is_fully_visible());
     }
 
@@ -6078,56 +6095,79 @@ mod tests {
     }
 
     fn sample_lexer_program() -> WeavyLexerProgram {
+        let mut terminals = vec![
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(0),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Seq(vec![
+                    WeavyLexExpr::String("a".to_owned()),
+                    WeavyLexExpr::Choice(vec![
+                        WeavyLexExpr::Pattern(
+                            crate::lex_match::compile_pattern("[a-z]+", None).into(),
+                        ),
+                        WeavyLexExpr::Pattern(
+                            crate::lex_match::compile_pattern("and\\b", None).into(),
+                        ),
+                        WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("[", None).into()),
+                        WeavyLexExpr::Until(crate::lex_match::compile_until_markers(&[
+                            "{{".to_owned(),
+                            "{%".to_owned(),
+                        ])),
+                    ]),
+                    WeavyLexExpr::Repeat(Box::new(WeavyLexExpr::Nested {
+                        open: "{#".to_owned(),
+                        close: "#}".to_owned(),
+                    })),
+                ])),
+                immediate: false,
+                literal: false,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(1),
+                matcher: WeavyTerminalMatcher::UnsupportedTerminal {
+                    terminal: parser_ir::TerminalId::from_index(1),
+                    spelling: "unsupported".to_owned(),
+                },
+                immediate: false,
+                literal: false,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(2),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("if".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(3),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
+                    crate::lex_match::compile_pattern("[0-9]+", None).into(),
+                )),
+                immediate: false,
+                literal: false,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: Some(0),
+            },
+        ];
+        let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
         WeavyLexerProgram {
             modes: vec![WeavyLexModeProgram {
-                terminals: vec![
-                    WeavyLexTerminal {
-                        terminal: parser_ir::TerminalId::from_index(0),
-                        matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Seq(vec![
-                            WeavyLexExpr::String("a".to_owned()),
-                            WeavyLexExpr::Choice(vec![
-                                WeavyLexExpr::Pattern(
-                                    crate::lex_match::compile_pattern("[a-z]+", None).into(),
-                                ),
-                                WeavyLexExpr::Pattern(
-                                    crate::lex_match::compile_pattern("and\\b", None).into(),
-                                ),
-                                WeavyLexExpr::Pattern(
-                                    crate::lex_match::compile_pattern("[", None).into(),
-                                ),
-                                WeavyLexExpr::Until(crate::lex_match::compile_until_markers(&[
-                                    "{{".to_owned(),
-                                    "{%".to_owned(),
-                                ])),
-                            ]),
-                            WeavyLexExpr::Repeat(Box::new(WeavyLexExpr::Nested {
-                                open: "{#".to_owned(),
-                                close: "#}".to_owned(),
-                            })),
-                        ])),
-                        immediate: false,
-                        literal: false,
-                        lexical_precedence: 0,
-                        implicit_precedence: 0,
-                        direct_literal_index: None,
-                        direct_pattern_index: Some(0),
-                    },
-                    WeavyLexTerminal {
-                        terminal: parser_ir::TerminalId::from_index(1),
-                        matcher: WeavyTerminalMatcher::UnsupportedTerminal {
-                            terminal: parser_ir::TerminalId::from_index(1),
-                            spelling: "unsupported".to_owned(),
-                        },
-                        immediate: false,
-                        literal: false,
-                        lexical_precedence: 0,
-                        implicit_precedence: 0,
-                        direct_literal_index: None,
-                        direct_pattern_index: None,
-                    },
-                ],
-                direct_literal_set: None,
-                direct_pattern_set: None,
+                terminals,
+                direct_literal_set,
+                direct_pattern_set,
             }],
         }
     }
