@@ -5376,7 +5376,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             }
             SnarkIntrinsic::DispatchActions { state, .. } => {
                 let state = parser_state(*state);
-                let token = self.lookahead.ok_or(WeavyParseError::NoToken {
+                let token = self.lookahead.ok_or_else(|| WeavyParseError::NoToken {
                     state,
                     byte_position: self.byte_position,
                     expected: Vec::new(),
@@ -5412,8 +5412,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 Ok(Control::CallBlock(block))
             }
             SnarkIntrinsic::CommitLookahead { .. } => {
-                let token = self.lookahead.ok_or(WeavyParseError::NoToken {
-                    state: self.stack.last().ok_or(WeavyParseError::EmptyStack)?.state,
+                let state = self.stack.last().ok_or(WeavyParseError::EmptyStack)?.state;
+                let token = self.lookahead.ok_or_else(|| WeavyParseError::NoToken {
+                    state,
                     byte_position: self.byte_position,
                     expected: Vec::new(),
                 })?;
@@ -5427,7 +5428,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             }
             SnarkIntrinsic::Shift { state, .. } => {
                 let state = parser_state(*state);
-                let token = self.lookahead.ok_or(WeavyParseError::NoToken {
+                let token = self.lookahead.ok_or_else(|| WeavyParseError::NoToken {
                     state,
                     byte_position: self.byte_position,
                     expected: Vec::new(),
@@ -5479,7 +5480,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             }
             SnarkIntrinsic::ShiftExtra { state, .. } => {
                 let state = parser_state(*state);
-                let token = self.lookahead.ok_or(WeavyParseError::NoToken {
+                let token = self.lookahead.ok_or_else(|| WeavyParseError::NoToken {
                     state,
                     byte_position: self.byte_position,
                     expected: Vec::new(),
@@ -5590,8 +5591,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 child_count,
                 ..
             } => {
-                let token = self.lookahead.ok_or(WeavyParseError::NoToken {
-                    state: self.stack.last().ok_or(WeavyParseError::EmptyStack)?.state,
+                let state = self.stack.last().ok_or(WeavyParseError::EmptyStack)?.state;
+                let token = self.lookahead.ok_or_else(|| WeavyParseError::NoToken {
+                    state,
                     byte_position: self.byte_position,
                     expected: Vec::new(),
                 })?;
