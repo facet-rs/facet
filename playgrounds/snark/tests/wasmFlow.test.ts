@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import test from "node:test";
 
-import { SnarkPlaygroundSession, initSync, parseBundle } from "../../../snark-wasm/pkg/snark_wasm.js";
+import { SnarkPlaygroundSession, initSync } from "../../../snark-wasm/pkg/snark_wasm.js";
 import {
   normalizeBundleFiles,
   preferredGrammarRootId,
@@ -16,6 +16,26 @@ import { emitGrammarJsonFromDsl } from "../src/treeSitterDslRuntime.ts";
 initSync({
   module: readFileSync(new URL("../../../snark-wasm/pkg/snark_wasm_bg.wasm", import.meta.url)),
 });
+
+function parseWithSession(requestJson: string): string {
+  const request = JSON.parse(requestJson) as {
+    files: DslBundleFile[];
+    input: string;
+    run_corpus: boolean;
+  };
+  const session = new SnarkPlaygroundSession(JSON.stringify({ files: request.files }));
+  try {
+    return session.parse(
+      JSON.stringify({
+        input: request.input,
+        run_corpus: request.run_corpus,
+        edit: null,
+      }),
+    );
+  } finally {
+    session.free();
+  }
+}
 
 const officialDsl = readFileSync(
   new URL("../../../snark-dsl/vendor/tree-sitter-generate-0.26.9/dsl.js", import.meta.url),
@@ -89,7 +109,7 @@ module.exports = grammar({
   );
 
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: [
           { path: "grammar.js", text: grammarJs },
@@ -179,7 +199,7 @@ module.exports = grammar({
   );
 
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: [
           { path: "grammar.js", text: grammarJs },
@@ -235,7 +255,7 @@ module.exports = grammar({
   );
 
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: [
           { path: "grammar.js", text: grammarJs },
@@ -285,7 +305,7 @@ module.exports = grammar({
 `;
 
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: [
           { path: "grammar.js", text: grammarJs },
@@ -367,7 +387,7 @@ module.exports = grammar({
     emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
   );
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: "xxalpha",
@@ -488,7 +508,7 @@ module.exports = grammar({
   );
 
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: "PRINT",
@@ -520,7 +540,7 @@ test("injects scanner-free html from gingembre text chunks", async () => {
   );
   const source = "<section><p>Hello {{ name }}<p>Again</p></section>";
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: source,
@@ -596,7 +616,7 @@ test("injects css inside scanner-free html inside gingembre text chunks", async 
   );
   const source = '<style>a:hover { color: red; }</style><p>Hello {{ name }}</p>';
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: source,
@@ -642,7 +662,7 @@ test("injects css from html style layers through Snark WASM", () => {
     "html/grammar.js",
   );
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: [
           { path: "grammar.js", text: htmlGrammarJs },
@@ -757,7 +777,7 @@ module.exports = grammar({
     emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
   );
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: "AAJSBB",
@@ -849,7 +869,7 @@ module.exports = grammar({
     emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
   );
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: "AA CCC",
@@ -932,7 +952,7 @@ module.exports = grammar({
     emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
   );
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: "demo:PRINT",
@@ -1013,7 +1033,7 @@ module.exports = grammar({
     emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
   );
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: "hbs:PRINT",
@@ -1103,7 +1123,7 @@ module.exports = grammar({
     emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
   );
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: "xxalpha",
@@ -1160,7 +1180,7 @@ module.exports = grammar({
     emitGrammarJsonFromDsl(officialDsl, bundleFiles, grammarPath),
   );
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: projected,
         input: "xxalpha",
@@ -1195,29 +1215,22 @@ module.exports = grammar({
     "grammar.js",
   );
 
-  const response = JSON.parse(
-    parseBundle(
-      JSON.stringify({
-        files: [
-          { path: "grammar.js", text: grammarJs },
-          { path: "src/grammar.json", text: grammarJson },
-          {
-            path: "src/scanner.c",
-            text: "void *tree_sitter_tiny_external_external_scanner_create(void) { return 0; }",
-          },
-        ],
-        input: "x",
-        run_corpus: false,
-      }),
-    ),
+  assert.throws(
+    () =>
+      new SnarkPlaygroundSession(
+        JSON.stringify({
+          files: [
+            { path: "grammar.js", text: grammarJs },
+            { path: "src/grammar.json", text: grammarJson },
+            {
+              path: "src/scanner.c",
+              text: "void *tree_sitter_tiny_external_external_scanner_create(void) { return 0; }",
+            },
+          ],
+        }),
+      ),
+    /external_token.*source-matched reduced CSS scanner host/,
   );
-
-  assert.equal(response.ok, false);
-  assert.equal(response.language, "tiny_external");
-  assert.equal(response.diagnostics[0].stage, "scanner");
-  assert.match(response.diagnostics[0].message, /external_token/);
-  assert.match(response.diagnostics[0].message, /source-matched reduced CSS scanner host/);
-  assert.equal(response.parse, null);
 });
 
 test("reuses a prepared Snark WASM session across inputs", () => {
@@ -1465,7 +1478,7 @@ module.exports = grammar({
   );
 
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: [
           { path: "grammar.js", text: grammarJs },
@@ -1526,7 +1539,7 @@ module.exports = grammar({
 
   const runnableFiles = await runnableFilesForBundle(files);
   const response = JSON.parse(
-    parseBundle(
+    parseWithSession(
       JSON.stringify({
         files: runnableFiles,
         input: sample?.text ?? "",
@@ -1561,7 +1574,7 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
     assert.ok(sample, `${id} should have a preferred sample`);
     const runnableFiles = await runnableFilesForBundle(files, rootId);
     const response = JSON.parse(
-      parseBundle(
+      parseWithSession(
         JSON.stringify({
           files: runnableFiles,
           input: sample.text,
@@ -1660,7 +1673,7 @@ test("runs every non-error vendored sample through generated grammar.json and Sn
 
     for (const sample of samples) {
       const response = JSON.parse(
-        parseBundle(
+        parseWithSession(
           JSON.stringify({
             files: runnableFiles,
             input: sample.text,
@@ -1704,7 +1717,7 @@ test(
     );
 
     const response = JSON.parse(
-      parseBundle(
+      parseWithSession(
         JSON.stringify({
           files: [
             { path: "grammar.js", text: grammarJs },

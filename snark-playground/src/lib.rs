@@ -33,6 +33,7 @@ use snark::{
     runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
     validated::ValidatedGrammar,
 };
+#[cfg(test)]
 #[derive(Debug, Clone, Facet)]
 struct PlaygroundRequest {
     files: Vec<BundleFile>,
@@ -348,11 +349,6 @@ struct PreparedEmbeddedLanguage {
 
 const MAX_INJECTION_LAYER_DEPTH: usize = 8;
 
-/// Parse one playground request with Snark and return a JSON response.
-pub fn parse_bundle_json(request_json: &str) -> String {
-    response_json(playground_response(request_json))
-}
-
 /// Prepared playground session that can parse many inputs for one grammar bundle.
 pub struct PlaygroundSession {
     files: Vec<BundleFile>,
@@ -532,6 +528,7 @@ fn unsupported_external_scanner_message(bundle: &BundleSummary, parser: &ParserG
     )
 }
 
+#[cfg(test)]
 fn playground_response(request_json: &str) -> PlaygroundResponse {
     let request = match facet_json::from_str::<PlaygroundRequest>(request_json) {
         Ok(request) => request,

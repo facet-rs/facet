@@ -2,7 +2,7 @@
 // heavy grammar (e.g. gingembre) takes seconds and is synchronous; doing it on the main
 // thread freezes the whole UI, which is brutal on mobile. The worker holds the prepared
 // session so the main thread only ever posts a message and renders the result.
-import init, { SnarkPlaygroundSession, parseBundle } from "@bearcove/snark-wasm";
+import init, { SnarkPlaygroundSession } from "@bearcove/snark-wasm";
 
 export type ParseWorkerRequest = {
   id: number;
@@ -43,16 +43,8 @@ self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
         session = null;
         sessionKey = null;
       }
-      try {
-        session = new SnarkPlaygroundSession(JSON.stringify({ files }));
-        sessionKey = key;
-      } catch {
-        // Prepare failed (grammar build error): fall back to a stateless parse so the UI
-        // still gets a diagnostic. Mark unprepared so the next run re-attempts prepare.
-        const response = parseBundle(JSON.stringify({ files, input, run_corpus: runCorpus }));
-        post({ id, ok: true, response, prepared: false });
-        return;
-      }
+      session = new SnarkPlaygroundSession(JSON.stringify({ files }));
+      sessionKey = key;
     }
 
     if (!session || sessionKey !== key) {
