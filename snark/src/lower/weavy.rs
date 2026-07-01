@@ -751,6 +751,12 @@ pub struct WeavyLexerStats {
     pub direct_pattern_set_count: usize,
     /// Number of terminal rows participating in merged direct-pattern sets.
     pub direct_pattern_terminal_count: usize,
+    /// Number of pattern nodes handled by Snark's known fast-path matchers.
+    pub known_pattern_count: usize,
+    /// Number of pattern nodes backed by the Rust regex engine.
+    pub regex_pattern_count: usize,
+    /// Number of pattern nodes unsupported by the current matcher compiler.
+    pub unsupported_pattern_count: usize,
     /// Recursive operation counts inside terminal matcher graphs.
     pub op_counts: BTreeMap<WeavyLexOpKind, usize>,
 }
@@ -916,7 +922,20 @@ impl WeavyLexExpr {
         match self {
             Self::Blank => stats.record(WeavyLexOpKind::Blank),
             Self::String(_) => stats.record(WeavyLexOpKind::String),
-            Self::Pattern(_) => stats.record(WeavyLexOpKind::Pattern),
+            Self::Pattern(pattern) => {
+                stats.record(WeavyLexOpKind::Pattern);
+                match pattern.kind() {
+                    crate::lex_match::CompiledPatternKind::Known => {
+                        stats.known_pattern_count += 1;
+                    }
+                    crate::lex_match::CompiledPatternKind::Regex => {
+                        stats.regex_pattern_count += 1;
+                    }
+                    crate::lex_match::CompiledPatternKind::Unsupported => {
+                        stats.unsupported_pattern_count += 1;
+                    }
+                }
+            }
             Self::Until(_) => stats.record(WeavyLexOpKind::Until),
             Self::Nested { .. } => stats.record(WeavyLexOpKind::Nested),
             Self::AutoClose(_) => stats.record(WeavyLexOpKind::AutoClose),
@@ -5593,7 +5612,10 @@ mod tests {
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Seq], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Choice], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::Pattern], 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::Pattern], 3);
+        assert_eq!(stats.known_pattern_count, 1);
+        assert_eq!(stats.regex_pattern_count, 1);
+        assert_eq!(stats.unsupported_pattern_count, 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Repeat], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Nested], 1);
@@ -5649,6 +5671,10 @@ mod tests {
                                 WeavyLexExpr::Pattern(crate::lex_match::compile_pattern(
                                     "[a-z]+", None,
                                 )),
+                                WeavyLexExpr::Pattern(crate::lex_match::compile_pattern(
+                                    "and\\b", None,
+                                )),
+                                WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("[", None)),
                                 WeavyLexExpr::Until(crate::lex_match::compile_until_markers(&[
                                     "{{".to_owned(),
                                     "{%".to_owned(),

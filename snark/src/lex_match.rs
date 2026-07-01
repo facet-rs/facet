@@ -10,6 +10,20 @@ pub(crate) struct CompiledPattern {
     pub(crate) source: String,
     pub(crate) flags: Option<String>,
     pub(crate) regex: Option<Regex>,
+    kind: CompiledPatternKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CompiledPatternKind {
+    Known,
+    Regex,
+    Unsupported,
+}
+
+impl CompiledPattern {
+    pub(crate) fn kind(&self) -> CompiledPatternKind {
+        self.kind
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -25,10 +39,20 @@ pub(crate) struct CompiledPatternSet {
 }
 
 pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPattern {
+    let flags = normalized_regex_flags(flags);
+    let regex = compile_regex_leaf(pattern, flags.as_deref());
+    let kind = if flags.is_none() && is_known_pattern_source(pattern) {
+        CompiledPatternKind::Known
+    } else if regex.is_some() {
+        CompiledPatternKind::Regex
+    } else {
+        CompiledPatternKind::Unsupported
+    };
     CompiledPattern {
         source: pattern.to_owned(),
-        flags: normalized_regex_flags(flags),
-        regex: compile_regex_leaf(pattern, flags),
+        flags,
+        regex,
+        kind,
     }
 }
 
@@ -245,6 +269,23 @@ fn match_known_pattern(pattern: &str, input: &str, byte_position: usize) -> Opti
         "or\\b" => Some(match_ascii_keyword(input, byte_position, "or")),
         _ => None,
     }
+}
+
+fn is_known_pattern_source(pattern: &str) -> bool {
+    matches!(
+        pattern,
+        "-?(\\d)*n\\s*(\\+\\s*\\d+)?"
+            | GINGEMBRE_IDENTIFIER_PATTERN
+            | "[0-9a-fA-F]{1,6}\\s?"
+            | ".*"
+            | "[^*]*\\*+([^/*][^*]*\\*+)*"
+            | "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*"
+            | "and\\b"
+            | "in\\b"
+            | "is\\b"
+            | "not\\b"
+            | "or\\b"
+    )
 }
 
 fn pattern_inspected_end(input: &str, end: usize) -> usize {
