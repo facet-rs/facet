@@ -16,3 +16,7 @@ snark = { path = "../snark", features = ["json-import"] }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }
 gingembre = { path = "../gingembre" }
 futures = "0.3"
+# Reflective typed-AST proof: parse snark's resolved tree straight into a
+# #[derive(Facet)] Rust type via facet-reflect's Partial. No facet-format.
+facet = { path = "../facet" }
+facet-reflect = { path = "../facet-reflect" }

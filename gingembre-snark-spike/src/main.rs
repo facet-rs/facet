@@ -91,6 +91,10 @@ fn main() {
     // Repro mode: `gingembre-snark-spike <grammar.js> <input>` dumps snark's
     // resolved tree for one grammar + input (for comparing against tree-sitter).
     let args: Vec<String> = env::args().collect();
+    if args.get(1).map(|s| s == "--ast").unwrap_or(false) {
+        ast_proof();
+        return;
+    }
     if args.get(1).map(|s| s == "--corpus").unwrap_or(false) {
         corpus(
             args.get(2)
@@ -217,6 +221,94 @@ fn collect_jinja(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
+}
+
+/// A grammar-generated AST type would look like this. Hand-written here only to prove the
+/// materialization; in the real thing this `#[derive(Facet)]` is emitted from the annotated
+/// grammar, and the field mapping below comes from the annotations.
+#[derive(facet::Facet, Debug, PartialEq)]
+struct BinExpr {
+    left: i64,
+    op: String,
+    right: i64,
+}
+
+/// PROOF: parse `{{ 1 + 2 }}` with snark, then materialize the `binary` resolved node
+/// straight into a `#[derive(Facet)]` Rust struct via facet-reflect's `Partial` — the
+/// reflection primitive, driven from the tree. No facet-format, no hand-rolled struct
+/// building. This is the keeper mechanism: parse into concrete typed storage by reflection.
+fn ast_proof() {
+    use facet_reflect::Partial;
+    let repo = env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .and_then(|p| p.parent().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let grammar_js = repo.join("playgrounds/snark/src/bundled/gingembre/grammar.js");
+    let grammar_json = snark_dsl::emit_with_boa(&grammar_js).expect("emit grammar");
+    let raw = RawGrammarJson::from_tree_sitter_json_str(&grammar_json).expect("import json");
+    let validated = ValidatedGrammar::from_raw(&raw).expect("validate");
+    let lexical = LexicalFacts::from_grammar(&validated);
+    let normalized =
+        ParserGrammar::normalize_from_validated(&validated, &lexical).expect("normalize");
+    let parser = normalized.prepare_productions_for_items().expect("prepare");
+    let table = ParseTable::from_grammar(&parser).expect("table");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("plan");
+
+    let src = "{{ 1 + 2 }}";
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).expect("parse");
+    let resolved = report
+        .accepted_resolved_tree(&parser, src)
+        .expect("resolved tree");
+    let binary = find_kind(&resolved, "binary").expect("no `binary` node in tree");
+
+    // Field mapping (annotation-driven in the real thing): two named operands + anon operator.
+    let named: Vec<&RuntimeResolvedNode> =
+        binary.children().iter().filter(|c| c.named()).collect();
+    let op = binary
+        .children()
+        .iter()
+        .find(|c| !c.named())
+        .and_then(|c| c.text())
+        .unwrap_or_default()
+        .to_string();
+    let left: i64 = leaf_text(named[0]).and_then(|t| t.parse().ok()).expect("left i64");
+    let right: i64 = leaf_text(named[1]).and_then(|t| t.parse().ok()).expect("right i64");
+
+    // Drive the reflection primitive: alloc -> begin_field/set/end per field -> build.
+    let value: BinExpr = Partial::alloc_owned::<BinExpr>()
+        .expect("alloc")
+        .begin_field("left")
+        .and_then(|p| p.set(left))
+        .and_then(|p| p.end())
+        .and_then(|p| p.begin_field("op"))
+        .and_then(|p| p.set(op))
+        .and_then(|p| p.end())
+        .and_then(|p| p.begin_field("right"))
+        .and_then(|p| p.set(right))
+        .and_then(|p| p.end())
+        .expect("drive partial")
+        .build()
+        .expect("build")
+        .materialize::<BinExpr>()
+        .expect("materialize");
+
+    println!("snark parsed {src:?}  ->  reflected into Rust type:  {value:?}");
+    assert_eq!(
+        value,
+        BinExpr {
+            left: 1,
+            op: "+".into(),
+            right: 2
+        }
+    );
+    println!("✓ grammar surface -> #[derive(Facet)] value via facet-reflect Partial (no facet-format)");
+}
+
+fn find_kind<'a>(node: &'a RuntimeResolvedNode, kind: &str) -> Option<&'a RuntimeResolvedNode> {
+    if node.kind() == kind {
+        return Some(node);
+    }
+    node.children().iter().find_map(|c| find_kind(c, kind))
 }
 
 fn repro(grammar_path: &str, input: &str) {
