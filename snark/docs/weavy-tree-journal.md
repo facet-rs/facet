@@ -94,10 +94,14 @@ function returns. It never enters the report.
 report holds:
 
 - `tree_events: Vec<TreeEvent>` — the materialized **accepted lineage** (no dead branches),
-- `tree_store: RuntimeWeavyTreeStore` — handle-based accepted nodes/child lists used to
-  avoid reduce-time subtree copies, and
+- `tree: SexpNode` — the corpus-normalized accepted projection, materialized once at
+  accept,
 - `reusable_nodes: Vec<RuntimeWeavyReusableNode>` — populated only when reuse collection is
   requested, each carrying the compact payload needed for incremental replay.
+
+The resolved CST view does not retain the parse tree store either: it derives node kinds
+from `TreeEvent` payloads plus `ParserGrammar` metadata when `accepted_resolved_tree` is
+requested.
 
 So nothing speculative survives a parse. **Materialization-at-accept *is* the compaction**;
 the "if it's the full pool, fix is compact-at-accept" branch above does not apply, because

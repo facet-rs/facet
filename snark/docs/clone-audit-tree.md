@@ -121,24 +121,10 @@ arrays…) this compounds badly and directly explains
 `drop_in_place<[snark::corpus::SexpChild]>` showing up hot — those vectors
 are the *duplicate* copies, not the originals.
 
-**Fix**: this needs an actual architecture change, not a one-line patch:
-`tree_store` should hold nodes by `TreeNodeId` indirection all the way through
-construction (`SexpChild`/`SexpValue::Node` referencing a `TreeNodeId` rather
-than embedding an owned `SexpNode`), and the recursive, fully-owned
-`corpus::SexpNode` should only be materialized **once**, in a single
-bottom-up flatten pass at the very end (`finish_runtime_root` /
-`WeavyParseReport` construction), where each `TreeNodeId` is visited and
-moved into its owned form exactly once (memoize by id, or just move since
-each id is the child of exactly one parent in the final accepted tree).
-A cheaper, smaller-blast-radius interim fix: wrap `tree_store`'s entries in
-`Rc<SexpNode>` internally so `into_children`'s clone becomes a refcount bump;
-still requires one real deep-clone at the very end when the report's public
-`tree: SexpNode` field is populated, but removes the O(depth) multiplier
-during construction. (Caveat: GLR branch forking may let two live branches
-reference the same `TreeNodeId` through the shared graph-structured stack, in
-which case `Rc` is actually *required* for correctness of a take/move-based
-scheme, not just an optimization — verify with the GLR-machinery agent before
-attempting a move-based rewrite.)
+**Resolution**: Weavy now stores parse trees by handle during reduction and
+materializes the owned `corpus::SexpNode` projection once at accept. Flat-repeat
+and nesting-depth ladder checks both moved back to linear scaling after that
+change.
 
 ## 3. [RESOLVED] `reusable_nodes` (incremental-reuse bookkeeping) populated unconditionally, on every reduce, even for parses that never edit
 
@@ -161,15 +147,9 @@ weavy.rs:1302). A one-shot parse of a 181KB JSON file that's never edited
 still pays a full subtree clone + full journal walk for every node in the
 document, for a feature it never uses.
 
-**Fix**: make this opt-in. Either gate it behind a flag on the parse call
-("build a reuse index" vs "just parse"), or — better — make it lazy: keep
-only `(TreeNodeId, entry_state, scanner_snapshot, byte_range)` per node during
-the parse (cheap, `Copy`), and defer materializing `tree`/`tree_events` for a
-`RuntimeWeavyReusableNode` until `RuntimeWeavyReuseIndex::from_report` is
-actually called (at which point `report.tree_store` and `report.tree_events`
-are already available to reconstruct them on demand, once, only for nodes
-that survive the edit-position filter — which is usually a small fraction of
-the tree).
+**Resolution**: reuse collection is opt-in. From-scratch report parses skip the
+subtree replay payload entirely; incremental sessions request it when they need
+to build a reuse index from the accepted report.
 
 ## 4. [MEDIUM, confirmed] Node-kind `String` allocated fresh from an already-owned `String` on every reduce
 
@@ -255,21 +235,12 @@ once per parse — not a multiplier, low priority — but it doubles peak memory
 at the exact moment the tree is largest. Once finding 3 makes
 `reusable_nodes` lazy, this clone gets much cheaper for free.
 
-## 8. [LOW] `WeavyParseReport` retains `tree_store` alongside the already-flattened `tree`
+## 8. [RESOLVED] `WeavyParseReport` retained `tree_store` alongside the already-flattened `tree`
 
-`snark/src/lower/weavy.rs:1751-1762`: `WeavyParseReport` keeps both `tree:
-SexpNode` (the final flattened, fully-recursive tree) and `tree_store:
-RuntimeWeavyTreeStore` (`Vec<SexpNode>`, one entry per node ever pushed during
-the parse, each already containing full copies of its descendants per
-finding 2). Once `tree` is materialized, `tree_store`'s entries are
-duplicate weight — same content, retained for the report's whole lifetime,
-not just transiently during parsing. `accepted_resolved_tree` (weavy.rs:1799-1809)
-is the only consumer of `tree_store` on the accepted path, and it only reads
-`.kind` per node (a `String` clone, finding-4-shaped) — it doesn't need the
-full recursive subtrees stored in `tree_store`, only flat per-id kind lookup.
-Once finding 2 is fixed (tree_store holds thin `TreeNodeId`-indexed nodes,
-not embedded duplicates), this stops being a problem on its own; flagging
-here mainly so the fix for 2 accounts for this consumer.
+`WeavyParseReport` no longer retains `RuntimeWeavyTreeStore`. The accepted
+resolved CST view derives node kinds from `TreeEvent` payloads and
+`ParserGrammar` production/public-node metadata, so the parse tree store remains
+transient and drops when the parse function returns.
 
 ## 9. [LOW, one-time, grammar prep] Not on the hot per-parse path
 
@@ -303,7 +274,7 @@ per grammar. Not worth touching unless a profile of grammar *loading itself*
 | 5 | Alias-name `String` clone per aliased step | Open linear constant-factor item |
 | 6 | Double journal+flat `Vec<TreeEvent>` storage | Open if profile asks for it |
 | 7 | One extra full-tree clone at accept | Open one-off report-shape cleanup |
-| 8 | `tree_store` retained alongside `tree` | Mostly resolved by handle-based tree storage |
+| 8 | `tree_store` retained alongside `tree` | Resolved by deriving resolved CST kinds from events |
 | 9 | Grammar-prep clones | Not hot per-parse |
 
 **Remaining order of attack**: measure before touching the linear items. If the
