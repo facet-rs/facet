@@ -69,21 +69,21 @@ fn main() {
         "table",
         ParseTable::from_grammar(&parser).expect("build parse table")
     );
-    let (t_plan, runtime) = phase!(
+    let (t_plan, plan) = phase!(
         "plan",
         WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy parse plan")
     );
-    let analysis = runtime.analysis();
+    let analysis = plan.analysis();
     // Measure the entry points the playground calls: strict first, recovering
     // only when strict fails.
     let t0 = Instant::now();
-    let strict = parse_prepared_weavy_with_report(&runtime, &parser, &table, &input);
+    let strict = parse_prepared_weavy_with_report(&plan, &parser, &table, &input);
     let t_strict = t0.elapsed().as_secs_f64() * 1000.0;
     let strict_ok = strict.is_ok();
 
     let t0 = Instant::now();
     let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
-        &runtime, &parser, &table, &input, None,
+        &plan, &parser, &table, &input, None,
     );
     let t_recovering = t0.elapsed().as_secs_f64() * 1000.0;
 
