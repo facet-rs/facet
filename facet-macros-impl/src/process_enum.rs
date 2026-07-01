@@ -428,8 +428,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         quote! {}
     };
 
-    // Container-level proxy from PEnum - generates ProxyDef with conversion functions
-    let proxy_call = {
+    // Container-level proxy from PEnum - generates ProxyDef with conversion functions.
+    // Generic and lifetime parameters are not available inside `const {}` blocks, so
+    // we define the proxy helpers in an inherent impl and reference them from SHAPE.
+    let (proxy_inherent_impl, proxy_call) = {
         if let Some(attr) = pe
             .container
             .attrs
@@ -440,42 +442,72 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             let proxy_type = &attr.args;
             let enum_type = &enum_name;
             let bgp_display = pe.container.bgp.display_without_bounds();
+            let helper_bgp = pe
+                .container
+                .bgp
+                .with_lifetime(LifetimeName(format_ident!("ʄ")));
+            let bgp_def_for_helper = helper_bgp.display_with_bounds();
 
-            quote! {
-                .proxy(&const {
-                    extern crate alloc as __alloc;
+            let proxy_where = {
+                let additional_clauses = quote! { #proxy_type: #facet_crate::Facet<'ʄ> };
+                if where_clauses.is_empty() {
+                    quote! { where #additional_clauses }
+                } else {
+                    quote! { #where_clauses, #additional_clauses }
+                }
+            };
 
-                    unsafe fn __proxy_convert_in(
+            let proxy_impl = quote! {
+                #[doc(hidden)]
+                impl #bgp_def_for_helper #enum_type #bgp_display
+                #proxy_where
+                {
+                    #[doc(hidden)]
+                    unsafe fn __facet_proxy_convert_in(
                         proxy_ptr: #facet_crate::PtrConst,
                         field_ptr: #facet_crate::PtrUninit,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
+                    ) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
+                        extern crate alloc as __alloc;
                         let proxy: #proxy_type = proxy_ptr.read();
                         match <#enum_type #bgp_display as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
-                            𝟋Ok(value) => 𝟋Ok(field_ptr.put(value)),
-                            𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
+                            #facet_crate::𝟋::𝟋Ok(value) => #facet_crate::𝟋::𝟋Ok(field_ptr.put(value)),
+                            #facet_crate::𝟋::𝟋Err(e) => #facet_crate::𝟋::𝟋Err(__alloc::string::ToString::to_string(&e)),
                         }
                     }
 
-                    unsafe fn __proxy_convert_out(
+                    #[doc(hidden)]
+                    unsafe fn __facet_proxy_convert_out(
                         field_ptr: #facet_crate::PtrConst,
                         proxy_ptr: #facet_crate::PtrUninit,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
+                    ) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
+                        extern crate alloc as __alloc;
                         let field_ref: &#enum_type #bgp_display = field_ptr.get();
                         match <#proxy_type as ::core::convert::TryFrom<&#enum_type #bgp_display>>::try_from(field_ref) {
-                            𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
-                            𝟋Err(e) => 𝟋Err(__alloc::string::ToString::to_string(&e)),
+                            #facet_crate::𝟋::𝟋Ok(proxy) => #facet_crate::𝟋::𝟋Ok(proxy_ptr.put(proxy)),
+                            #facet_crate::𝟋::𝟋Err(e) => #facet_crate::𝟋::𝟋Err(__alloc::string::ToString::to_string(&e)),
                         }
                     }
 
+                    #[doc(hidden)]
+                    const fn __facet_proxy_shape() -> &'static #facet_crate::Shape {
+                        <#proxy_type as #facet_crate::Facet>::SHAPE
+                    }
+                }
+            };
+
+            let proxy_ref = quote! {
+                .proxy(&const {
                     #facet_crate::ProxyDef {
-                        shape: <#proxy_type as #facet_crate::Facet>::SHAPE,
-                        convert_in: __proxy_convert_in,
-                        convert_out: __proxy_convert_out,
+                        shape: <Self>::__facet_proxy_shape(),
+                        convert_in: <Self>::__facet_proxy_convert_in,
+                        convert_out: <Self>::__facet_proxy_convert_out,
                     }
                 })
-            }
+            };
+
+            (proxy_impl, proxy_ref)
         } else {
-            quote! {}
+            (quote! {}, quote! {})
         }
     };
 
@@ -1401,6 +1433,9 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
 
         #static_decl
+
+        // proxy inherent impl
+        #proxy_inherent_impl
 
         // opaque adapter inherent impl
         #opaque_adapter_inherent_impl
