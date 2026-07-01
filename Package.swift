@@ -16,7 +16,7 @@ let package = Package(
         .library(name: "VoxRuntimeJIT", targets: ["VoxRuntimeJIT"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.99.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.2"),
     ],
     targets: [
         .target(
