@@ -6619,6 +6619,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "snark-ts-diff"
+version = "0.0.0"
+dependencies = [
+ "snark",
+ "snark-dsl",
+]
+
+[[package]]
 name = "snark-wasm"
 version = "0.0.1"
 dependencies = [
