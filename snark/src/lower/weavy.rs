@@ -23,7 +23,7 @@ use weavy::{
 };
 
 use crate::{
-    corpus::{SexpChild, SexpNode, SexpValue},
+    corpus::{SexpAtom, SexpChild, SexpNode, SexpValue},
     parser as parser_ir,
     parser::{RuntimeExternalScan, RuntimeExternalScanResult, RuntimeExternalScanner},
     runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
@@ -1976,7 +1976,7 @@ impl RuntimeWeavyReport {
     ) -> Option<parser_ir::RuntimeResolvedNode> {
         let accepted_tree_events = self.accepted_tree_events();
         parser_ir::resolved_tree_from_events(parser, input, &accepted_tree_events, |node| {
-            Some(self.tree_store.node(node).kind.clone())
+            Some(self.tree_store.node_kind(node).to_owned())
         })
     }
 
@@ -2948,8 +2948,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 self.stack.to_mut().push(RuntimeWeavyStackEntry {
                     state,
                     fragment: Some(RuntimeWeavyFragment::Hidden {
-                        children: Vec::new(),
-                        visible_nodes: Vec::new(),
+                        children: self.tree_store.empty_children(),
+                        visible_nodes: self.tree_store.empty_children(),
                         start_byte: start,
                         end_byte: token.end,
                         lookahead_end_byte: token.inspected_end,
@@ -3031,7 +3031,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     && start_byte < end_byte
                 {
                     self.reusable_nodes.push(RuntimeWeavyReusableNode {
-                        tree: self.tree_store.node(*node).clone(),
+                        tree: self.tree_store.materialize_node(*node),
                         source_node: *node,
                         symbol,
                         entry_state: head_state,
@@ -3380,14 +3380,16 @@ impl<'a> RuntimeWeavyStepper<'a> {
         else {
             return;
         };
-        let reduced_node = self.tree_store.node(*node);
+        let reduced_node_kind = self.tree_store.node_kind(*node);
         let stack_edit = self
             .auto_close_index
-            .node_edits(&reduced_node.kind)
+            .node_edits(reduced_node_kind)
             .iter()
             .find_map(|edit| {
                 let spec = &self.auto_close_index.specs[edit.spec];
-                if !parser_ir::auto_close_node_has_tag_name_child(reduced_node, spec) {
+                if let Some(tag_name_node) = &spec.tag_name_node
+                    && !self.tree_store.node_has_child_kind(*node, tag_name_node)
+                {
                     return None;
                 }
                 if edit.push {
@@ -3654,8 +3656,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let production_row = &self.parser.productions()[production.get() as usize];
         let metadata_row = &self.parser.production_metadata()[metadata.get() as usize];
         let mut emitted_tree_events = Vec::new();
-        let mut children = Vec::new();
-        let mut visible_nodes = Vec::new();
+        let mut children = self.tree_store.empty_children();
+        let mut visible_nodes = self.tree_store.empty_children();
         let mut trailing_extras = Vec::new();
         if !include_trailing_extras {
             while self.stack.last().is_some_and(|entry| entry.extra) {
@@ -3710,8 +3712,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut field_events = Vec::new();
         for (extra, fragment) in popped {
             let alias_range = fragment.byte_range();
-            let mut step_visible_nodes = fragment.visible_nodes().to_vec();
-            let mut field_child = fragment.single_visible_node();
+            let mut step_visible_nodes = fragment.visible_nodes(self.tree_store);
+            let mut field_child = self.tree_store.single_child_node(step_visible_nodes);
             let mut step_children = fragment.into_children(self.tree_store);
             if !extra {
                 let Some(step) = steps.next() else {
@@ -3722,26 +3724,16 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         .value()
                         .to_owned();
                     if named {
-                        if step_children.is_empty() {
-                            step_children.push(SexpChild {
-                                field: None,
-                                value: SexpValue::Node(SexpNode {
-                                    kind: alias_name.clone(),
-                                    children: Vec::new(),
-                                }),
-                            });
+                        if self.tree_store.children_is_empty(step_children) {
+                            let alias_child = self.tree_store.push_empty_node(alias_name.clone());
+                            step_children = self.tree_store.child_node(None, alias_child);
                         } else {
-                            for child in &mut step_children {
-                                if let SexpValue::Node(node) = &mut child.value {
-                                    node.kind.clone_from(&alias_name);
-                                }
-                            }
+                            step_children = self
+                                .tree_store
+                                .alias_children(step_children, alias_name.clone());
                         }
                     }
-                    let alias_node = self.tree_store.push(SexpNode {
-                        kind: alias_name,
-                        children: Vec::new(),
-                    });
+                    let alias_node = self.tree_store.push_empty_node(alias_name);
                     let (bytes, points) =
                         runtime_weavy_input_ranges(self.input_points, alias_range.0, alias_range.1);
                     self.tree_events.push(parser_ir::TreeEvent::Alias {
@@ -3764,8 +3756,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     });
                     if named {
                         field_child = Some(alias_node);
-                        step_visible_nodes.clear();
-                        step_visible_nodes.push(alias_node);
+                        step_visible_nodes = self.tree_store.child_node(None, alias_node);
                     }
                 }
                 if let Some(field) = step.field() {
@@ -3773,15 +3764,17 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 }
                 structural_index += 1;
             }
-            visible_nodes.extend(step_visible_nodes);
-            children.extend(step_children);
+            visible_nodes = self
+                .tree_store
+                .concat_children(visible_nodes, step_visible_nodes);
+            children = self.tree_store.concat_children(children, step_children);
         }
 
         if let Some(public_node) = metadata_row.public_node() {
             let kind = self.parser.public_node_kinds()[public_node.get() as usize]
                 .name()
                 .to_owned();
-            let node = self.tree_store.push(SexpNode { kind, children });
+            let node = self.tree_store.push_node(kind, children);
             let (bytes, points) =
                 runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
             self.tree_events.push(parser_ir::TreeEvent::Reduce {
@@ -3885,24 +3878,31 @@ impl<'a> RuntimeWeavyStepper<'a> {
         &mut self,
         node: parser_ir::TreeNodeId,
     ) -> Result<SexpNode, RuntimeWeavyError> {
-        let mut root = self.tree_store.node(node).clone();
-        let mut leading_children = Vec::new();
+        let mut leading_children = self.tree_store.empty_children();
         for entry in self.stack.to_mut().drain(..) {
             match (entry.extra, entry.fragment) {
                 (_, None) => {}
                 (true, Some(fragment)) => {
-                    leading_children.extend(fragment.into_children(self.tree_store));
+                    let fragment_children = fragment.into_children(self.tree_store);
+                    leading_children = self
+                        .tree_store
+                        .concat_children(leading_children, fragment_children);
                 }
                 (false, Some(_)) => {
                     return Err(RuntimeWeavyError::UnreducedStackEntry { state: entry.state });
                 }
             }
         }
-        if !leading_children.is_empty() {
-            leading_children.extend(root.children);
-            root.children = leading_children;
+        if self.tree_store.children_is_empty(leading_children) {
+            return Ok(self.tree_store.materialize_node(node));
         }
-        Ok(root)
+        let root_kind = self.tree_store.node_kind(node).to_owned();
+        let root_children = self.tree_store.node_children(node);
+        let root_children = self
+            .tree_store
+            .concat_children(leading_children, root_children);
+        let root = self.tree_store.push_node(root_kind, root_children);
+        Ok(self.tree_store.materialize_node(root))
     }
 
     fn goto_state(
@@ -4178,8 +4178,8 @@ struct RuntimeWeavyStackEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum RuntimeWeavyFragment {
     Hidden {
-        children: Vec<SexpChild>,
-        visible_nodes: Vec<parser_ir::TreeNodeId>,
+        children: RuntimeWeavyChildListId,
+        visible_nodes: RuntimeWeavyChildListId,
         start_byte: usize,
         end_byte: usize,
         lookahead_end_byte: usize,
@@ -4202,19 +4202,10 @@ struct RuntimeWeavyReduction {
 }
 
 impl RuntimeWeavyFragment {
-    fn visible_nodes(&self) -> &[parser_ir::TreeNodeId] {
+    fn visible_nodes(&self, tree_store: &mut RuntimeWeavyTreeStore) -> RuntimeWeavyChildListId {
         match self {
-            Self::Hidden { visible_nodes, .. } => visible_nodes,
-            Self::Node { node, .. } => std::slice::from_ref(node),
-        }
-    }
-
-    fn single_visible_node(&self) -> Option<parser_ir::TreeNodeId> {
-        let visible_nodes = self.visible_nodes();
-        if visible_nodes.len() == 1 {
-            Some(visible_nodes[0])
-        } else {
-            None
+            Self::Hidden { visible_nodes, .. } => *visible_nodes,
+            Self::Node { node, .. } => tree_store.child_node(None, *node),
         }
     }
 
@@ -4257,13 +4248,10 @@ impl RuntimeWeavyFragment {
         }
     }
 
-    fn into_children(self, tree_store: &RuntimeWeavyTreeStore) -> Vec<SexpChild> {
+    fn into_children(self, tree_store: &mut RuntimeWeavyTreeStore) -> RuntimeWeavyChildListId {
         match self {
             Self::Hidden { children, .. } => children,
-            Self::Node { node, .. } => vec![SexpChild {
-                field: None,
-                value: SexpValue::Node(tree_store.node(node).clone()),
-            }],
+            Self::Node { node, .. } => tree_store.child_node(None, node),
         }
     }
 }
@@ -4553,20 +4541,290 @@ const fn runtime_weavy_tree_event_node(
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RuntimeWeavyChildListId(usize);
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct RuntimeWeavyTreeStore {
-    nodes: Vec<SexpNode>,
+    nodes: Vec<RuntimeWeavyTreeNode>,
+    child_lists: Vec<RuntimeWeavyChildList>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RuntimeWeavyTreeNode {
+    kind: String,
+    children: RuntimeWeavyChildListId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RuntimeWeavyChildList {
+    kind: RuntimeWeavyChildListKind,
+    len: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RuntimeWeavyChildListKind {
+    Empty,
+    Node {
+        field: Option<String>,
+        node: parser_ir::TreeNodeId,
+        kind_override: Option<String>,
+    },
+    Atom {
+        field: Option<String>,
+        atom: SexpAtom,
+    },
+    Alias {
+        children: RuntimeWeavyChildListId,
+        kind: String,
+    },
+    Concat {
+        left: RuntimeWeavyChildListId,
+        right: RuntimeWeavyChildListId,
+    },
 }
 
 impl RuntimeWeavyTreeStore {
+    fn empty_children(&mut self) -> RuntimeWeavyChildListId {
+        if self.child_lists.is_empty() {
+            self.child_lists.push(RuntimeWeavyChildList {
+                kind: RuntimeWeavyChildListKind::Empty,
+                len: 0,
+            });
+        }
+        RuntimeWeavyChildListId::default()
+    }
+
     fn push(&mut self, node: SexpNode) -> parser_ir::TreeNodeId {
+        self.push_sexp_node(node)
+    }
+
+    fn push_empty_node(&mut self, kind: String) -> parser_ir::TreeNodeId {
+        let children = self.empty_children();
+        self.push_node(kind, children)
+    }
+
+    fn push_node(
+        &mut self,
+        kind: String,
+        children: RuntimeWeavyChildListId,
+    ) -> parser_ir::TreeNodeId {
         let id = parser_ir::TreeNodeId::from_index(self.nodes.len());
-        self.nodes.push(node);
+        self.nodes.push(RuntimeWeavyTreeNode { kind, children });
         id
     }
 
-    fn node(&self, id: parser_ir::TreeNodeId) -> &SexpNode {
-        &self.nodes[id.get() as usize]
+    fn push_sexp_node(&mut self, node: SexpNode) -> parser_ir::TreeNodeId {
+        let children = self.children_from_sexp(node.children);
+        self.push_node(node.kind, children)
+    }
+
+    fn children_from_sexp(&mut self, children: Vec<SexpChild>) -> RuntimeWeavyChildListId {
+        children
+            .into_iter()
+            .fold(self.empty_children(), |list, child| {
+                let child = match child.value {
+                    SexpValue::Node(node) => {
+                        let node = self.push_sexp_node(node);
+                        self.child_node(child.field, node)
+                    }
+                    SexpValue::Atom(atom) => self.child_atom(child.field, atom),
+                };
+                self.concat_children(list, child)
+            })
+    }
+
+    fn child_node(
+        &mut self,
+        field: Option<String>,
+        node: parser_ir::TreeNodeId,
+    ) -> RuntimeWeavyChildListId {
+        let id = RuntimeWeavyChildListId(self.child_lists.len());
+        self.child_lists.push(RuntimeWeavyChildList {
+            kind: RuntimeWeavyChildListKind::Node {
+                field,
+                node,
+                kind_override: None,
+            },
+            len: 1,
+        });
+        id
+    }
+
+    fn child_atom(&mut self, field: Option<String>, atom: SexpAtom) -> RuntimeWeavyChildListId {
+        let id = RuntimeWeavyChildListId(self.child_lists.len());
+        self.child_lists.push(RuntimeWeavyChildList {
+            kind: RuntimeWeavyChildListKind::Atom { field, atom },
+            len: 1,
+        });
+        id
+    }
+
+    fn alias_children(
+        &mut self,
+        children: RuntimeWeavyChildListId,
+        kind: String,
+    ) -> RuntimeWeavyChildListId {
+        if self.children_is_empty(children) {
+            return children;
+        }
+        let id = RuntimeWeavyChildListId(self.child_lists.len());
+        let len = self.child_lists[children.0].len;
+        self.child_lists.push(RuntimeWeavyChildList {
+            kind: RuntimeWeavyChildListKind::Alias { children, kind },
+            len,
+        });
+        id
+    }
+
+    fn concat_children(
+        &mut self,
+        left: RuntimeWeavyChildListId,
+        right: RuntimeWeavyChildListId,
+    ) -> RuntimeWeavyChildListId {
+        if self.children_is_empty(left) {
+            return right;
+        }
+        if self.children_is_empty(right) {
+            return left;
+        }
+        let id = RuntimeWeavyChildListId(self.child_lists.len());
+        let len = self.child_lists[left.0].len + self.child_lists[right.0].len;
+        self.child_lists.push(RuntimeWeavyChildList {
+            kind: RuntimeWeavyChildListKind::Concat { left, right },
+            len,
+        });
+        id
+    }
+
+    fn children_is_empty(&self, children: RuntimeWeavyChildListId) -> bool {
+        self.child_lists[children.0].len == 0
+    }
+
+    fn single_child_node(
+        &self,
+        children: RuntimeWeavyChildListId,
+    ) -> Option<parser_ir::TreeNodeId> {
+        if self.child_lists[children.0].len != 1 {
+            return None;
+        }
+        let mut id = children;
+        loop {
+            match &self.child_lists[id.0].kind {
+                RuntimeWeavyChildListKind::Node { node, .. } => return Some(*node),
+                RuntimeWeavyChildListKind::Alias { children, .. } => id = *children,
+                RuntimeWeavyChildListKind::Concat { left, right } => {
+                    id = if self.children_is_empty(*left) {
+                        *right
+                    } else {
+                        *left
+                    };
+                }
+                RuntimeWeavyChildListKind::Empty | RuntimeWeavyChildListKind::Atom { .. } => {
+                    return None;
+                }
+            }
+        }
+    }
+
+    fn node_kind(&self, id: parser_ir::TreeNodeId) -> &str {
+        &self.nodes[id.get() as usize].kind
+    }
+
+    fn node_children(&self, id: parser_ir::TreeNodeId) -> RuntimeWeavyChildListId {
+        self.nodes[id.get() as usize].children
+    }
+
+    fn materialize_node(&self, id: parser_ir::TreeNodeId) -> SexpNode {
+        self.materialize_node_with_kind(id, None)
+    }
+
+    fn materialize_node_with_kind(
+        &self,
+        id: parser_ir::TreeNodeId,
+        kind_override: Option<&str>,
+    ) -> SexpNode {
+        let node = &self.nodes[id.get() as usize];
+        SexpNode {
+            kind: kind_override.unwrap_or(&node.kind).to_owned(),
+            children: self.materialize_children(node.children),
+        }
+    }
+
+    fn materialize_children(&self, id: RuntimeWeavyChildListId) -> Vec<SexpChild> {
+        let mut children = Vec::with_capacity(self.child_lists[id.0].len);
+        let mut stack = vec![(id, None::<&str>)];
+        while let Some((id, kind_override)) = stack.pop() {
+            match &self.child_lists[id.0].kind {
+                RuntimeWeavyChildListKind::Empty => {}
+                RuntimeWeavyChildListKind::Node {
+                    field,
+                    node,
+                    kind_override: child_override,
+                } => {
+                    let override_kind = kind_override.or(child_override.as_deref());
+                    children.push(SexpChild {
+                        field: field.clone(),
+                        value: SexpValue::Node(
+                            self.materialize_node_with_kind(*node, override_kind),
+                        ),
+                    });
+                }
+                RuntimeWeavyChildListKind::Atom { field, atom } => {
+                    children.push(SexpChild {
+                        field: field.clone(),
+                        value: SexpValue::Atom(atom.clone()),
+                    });
+                }
+                RuntimeWeavyChildListKind::Alias { children, kind } => {
+                    stack.push((*children, Some(kind.as_str())));
+                }
+                RuntimeWeavyChildListKind::Concat { left, right } => {
+                    stack.push((*right, kind_override));
+                    stack.push((*left, kind_override));
+                }
+            }
+        }
+        children
+    }
+
+    fn node_has_child_kind(&self, id: parser_ir::TreeNodeId, kind: &str) -> bool {
+        self.children_have_kind(self.node_children(id), kind)
+    }
+
+    fn children_have_kind(&self, id: RuntimeWeavyChildListId, kind: &str) -> bool {
+        let mut stack = vec![id];
+        while let Some(id) = stack.pop() {
+            match &self.child_lists[id.0].kind {
+                RuntimeWeavyChildListKind::Empty | RuntimeWeavyChildListKind::Atom { .. } => {}
+                RuntimeWeavyChildListKind::Node {
+                    node,
+                    kind_override,
+                    ..
+                } => {
+                    let node_kind = kind_override
+                        .as_deref()
+                        .unwrap_or_else(|| self.node_kind(*node));
+                    if node_kind == kind || self.node_has_child_kind(*node, kind) {
+                        return true;
+                    }
+                }
+                RuntimeWeavyChildListKind::Alias {
+                    children,
+                    kind: alias,
+                } => {
+                    if alias == kind {
+                        return true;
+                    }
+                    stack.push(*children);
+                }
+                RuntimeWeavyChildListKind::Concat { left, right } => {
+                    stack.push(*right);
+                    stack.push(*left);
+                }
+            }
+        }
+        false
     }
 }
 

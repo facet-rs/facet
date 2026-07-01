@@ -17,7 +17,6 @@ use std::{
 use regex::{Regex, RegexSet};
 
 use crate::{
-    corpus::{SexpNode, SexpValue},
     lexical::{LexicalFacts, TerminalKind},
     runtime_input::{ByteRange, PointRange},
     validated::{
@@ -5445,20 +5444,6 @@ fn ascii_tag_name_end(input: &str, byte_position: usize) -> usize {
 
 fn normalize_auto_close_tag(tag: &str) -> String {
     tag.to_ascii_lowercase()
-}
-
-pub(crate) fn auto_close_node_has_tag_name_child(node: &SexpNode, spec: &AutoCloseSpec) -> bool {
-    let Some(tag_name_node) = &spec.tag_name_node else {
-        return true;
-    };
-    sexp_node_has_child_kind(node, tag_name_node)
-}
-
-fn sexp_node_has_child_kind(node: &SexpNode, kind: &str) -> bool {
-    node.children.iter().any(|child| match &child.value {
-        SexpValue::Node(child) => child.kind == kind || sexp_node_has_child_kind(child, kind),
-        SexpValue::Atom(_) => false,
-    })
 }
 
 pub(crate) fn tree_events_for_version_lineage(
