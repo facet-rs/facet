@@ -340,7 +340,7 @@ fn cached_regex(pattern: &str, flags: Option<&str>) -> Option<Regex> {
     entry.clone()
 }
 
-fn compile_regex_leaf(pattern: &str, flags: Option<&str>) -> Option<Regex> {
+pub(crate) fn compile_regex_leaf(pattern: &str, flags: Option<&str>) -> Option<Regex> {
     Regex::new(&anchored_regex_source(pattern, flags)?).ok()
 }
 

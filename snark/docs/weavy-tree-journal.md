@@ -13,7 +13,7 @@ grows with input position, this is roughly `O(forks × position)` of deep
 copying.
 
 A `stax flame` of a recovering gingembre parse (`blog-index.html`, 816 bytes, ~50 s)
-put ~85% of the time in `Vec::clone` + `RuntimeBranch::clone` + `subtree_tree_events`.
+put ~85% of the time in branch-local event-stream cloning and `subtree_tree_events`.
 The parse table build was ~4%. The blowup was *copying the growing event stream*, not
 parsing.
 

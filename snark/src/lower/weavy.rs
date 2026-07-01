@@ -1527,7 +1527,6 @@ enum WeavyPatternMatcherKind {
 impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
     fn from(value: crate::lex_match::CompiledPattern) -> Self {
         let kind = value.kind();
-        let regex_source = value.regex.as_ref().map(|regex| regex.as_str().to_owned());
         match kind {
             crate::lex_match::CompiledPatternKind::Known => {
                 let Some(pattern) = crate::lex_match::known_pattern_for_source(&value.source)
@@ -1536,15 +1535,11 @@ impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
                 };
                 Self::Known(pattern)
             }
-            crate::lex_match::CompiledPatternKind::Regex => match (value.regex, regex_source) {
-                (Some(regex), Some(regex_source)) => Self::Regex(WeavyRegexLeaf::new(
-                    value.source,
-                    value.flags,
-                    regex_source,
-                    regex,
-                )),
-                _ => Self::Unsupported,
-            },
+            crate::lex_match::CompiledPatternKind::Regex => {
+                WeavyRegexLeaf::new(value.source, value.flags)
+                    .map(Self::Regex)
+                    .unwrap_or(Self::Unsupported)
+            }
             crate::lex_match::CompiledPatternKind::Unsupported => Self::Unsupported,
         }
     }
@@ -1594,22 +1589,19 @@ struct WeavyRegexLeaf {
 }
 
 impl WeavyRegexLeaf {
-    fn new(
-        source: String,
-        flags: Option<String>,
-        regex_set_source: String,
-        rust_regex: Regex,
-    ) -> Self {
+    fn new(source: String, flags: Option<String>) -> Option<Self> {
+        let rust_regex = crate::lex_match::compile_regex_leaf(&source, flags.as_deref())?;
+        let regex_set_source = rust_regex.as_str().to_owned();
         let engine = crate::lex_match::regex_automata_leaf_source(&source, flags.as_deref())
             .and_then(|source| AutomataRegex::new(&source).ok())
             .map_or(
                 WeavyRegexEngine::RustRegexFallback(rust_regex),
                 WeavyRegexEngine::RegexAutomata,
             );
-        Self {
+        Some(Self {
             regex_set_source,
             engine,
-        }
+        })
     }
 
     fn source(&self) -> &str {
