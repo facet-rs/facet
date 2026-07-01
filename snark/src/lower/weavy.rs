@@ -408,8 +408,9 @@ impl SnarkIntrinsic {
                 EffectContract::new()
                     .read_resource(EffectResource::SideChannel("lookahead"))
                     .read_resource(EffectResource::SideChannel("parser_stack"))
-                    .write_resource(EffectResource::SideChannel("branch_cursor"))
-                    .write_resource(EffectResource::SideChannel("parser_stack")),
+                    .advance_resource(EffectResource::SideChannel("branch_cursor"))
+                    .write_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::SideChannel("scanner_state")),
             ),
             Self::Shift { .. } => (
                 SnarkIntrinsicDomain::ParserControl,
@@ -417,15 +418,20 @@ impl SnarkIntrinsic {
                 EffectContract::new()
                     .read_resource(EffectResource::SideChannel("parser_stack"))
                     .read_resource(EffectResource::SideChannel("lookahead"))
-                    .write_resource(EffectResource::SideChannel("parser_stack")),
+                    .write_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::Sink("tree_events"))
+                    .write_resource(EffectResource::Sink("parser_trace"))
+                    .may_allocate(),
             ),
             Self::ShiftExtra { .. } => (
                 SnarkIntrinsicDomain::ParserControl,
                 SnarkIntrinsicLowering::DialectOp,
                 EffectContract::new()
                     .read_resource(EffectResource::SideChannel("lookahead"))
-                    .read_resource(EffectResource::SideChannel("branch_cursor"))
-                    .write_resource(EffectResource::SideChannel("branch_cursor")),
+                    .read_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::SideChannel("parser_stack"))
+                    .write_resource(EffectResource::Sink("tree_events"))
+                    .may_allocate(),
             ),
             Self::Reduce { .. } => (
                 SnarkIntrinsicDomain::Tree,
@@ -433,7 +439,9 @@ impl SnarkIntrinsic {
                 EffectContract::new()
                     .read_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::SideChannel("parser_stack"))
-                    .write_resource(EffectResource::Sink("tree_events")),
+                    .write_resource(EffectResource::Sink("tree_events"))
+                    .write_resource(EffectResource::Sink("parser_trace"))
+                    .may_allocate(),
             ),
             Self::SplitGlr { .. } => (
                 SnarkIntrinsicDomain::GlrControl,
@@ -474,7 +482,11 @@ impl SnarkIntrinsic {
                 EffectContract::new()
                     .read_resource(EffectResource::SideChannel("parser_stack"))
                     .read_resource(EffectResource::SideChannel("branch_cursor"))
+                    .read_resource(EffectResource::SideChannel("lookahead"))
+                    .write_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::Sink("tree_events"))
+                    .write_resource(EffectResource::Sink("parser_trace"))
+                    .may_allocate()
                     .may_fail(),
             ),
             Self::EmitTrace { .. } => (
@@ -6043,10 +6055,14 @@ mod tests {
         }));
         assert!(commit_effect.resources.contains(&ResourceEffect {
             resource: EffectResource::SideChannel("branch_cursor"),
-            access: ResourceAccess::Write,
+            access: ResourceAccess::Advance,
         }));
         assert!(commit_effect.resources.contains(&ResourceEffect {
             resource: EffectResource::SideChannel("parser_stack"),
+            access: ResourceAccess::Write,
+        }));
+        assert!(commit_effect.resources.contains(&ResourceEffect {
+            resource: EffectResource::SideChannel("scanner_state"),
             access: ResourceAccess::Write,
         }));
     }
@@ -6084,6 +6100,55 @@ mod tests {
         assert!(scanner.effect.opaque);
         assert!(scanner.effect.calls_user_code);
         assert_eq!(scanner.effect.ordering, EffectOrdering::Barrier);
+    }
+
+    #[test]
+    fn tree_building_intrinsics_expose_sink_and_allocation_effects() {
+        let shift = SnarkIntrinsic::Shift {
+            version: StackVersionId(0),
+            state: ParseStateId(7),
+            lookahead: LookaheadTokenId(1),
+        }
+        .effect();
+
+        assert!(shift.resources.contains(&ResourceEffect {
+            resource: EffectResource::SideChannel("parser_stack"),
+            access: ResourceAccess::Write,
+        }));
+        assert!(shift.resources.contains(&ResourceEffect {
+            resource: EffectResource::Sink("tree_events"),
+            access: ResourceAccess::Write,
+        }));
+        assert!(shift.resources.contains(&ResourceEffect {
+            resource: EffectResource::Sink("parser_trace"),
+            access: ResourceAccess::Write,
+        }));
+        assert!(shift.may_allocate);
+
+        let reduce = SnarkIntrinsic::Reduce {
+            version: StackVersionId(0),
+            production: ProductionId(2),
+            metadata: ProductionMetadataId(3),
+            symbol: NonterminalId(4),
+            child_count: 2,
+            dynamic_precedence: 0,
+            aliases: None,
+        }
+        .effect();
+
+        assert!(reduce.resources.contains(&ResourceEffect {
+            resource: EffectResource::SideChannel("parser_stack"),
+            access: ResourceAccess::Write,
+        }));
+        assert!(reduce.resources.contains(&ResourceEffect {
+            resource: EffectResource::Sink("tree_events"),
+            access: ResourceAccess::Write,
+        }));
+        assert!(reduce.resources.contains(&ResourceEffect {
+            resource: EffectResource::Sink("parser_trace"),
+            access: ResourceAccess::Write,
+        }));
+        assert!(reduce.may_allocate);
     }
 
     #[test]
