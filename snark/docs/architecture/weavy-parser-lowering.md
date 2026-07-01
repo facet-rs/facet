@@ -259,9 +259,10 @@ machine; Snark defines and executes parser meaning.
 8. Add incremental parsing: old-tree reuse candidates, included ranges, edit
    coordinates, changed ranges, scanner-state replay, and final tree oracle
    equivalence.
-9. Only after interpreter correctness is observable, add dense block resolution
-   and optional copy-and-patch/JIT hooks for Snark intrinsics. JIT support must
-   consume the same lowered program and emit the same trace/oracle events.
+9. Only after Weavy execution correctness is observable, add dense block
+   resolution and optional copy-and-patch/JIT hooks for Snark intrinsics. JIT
+   support must consume the same lowered program and emit the same trace/oracle
+   events.
 
 Anything that skips from raw grammar DTOs to a toy parser, recursive descent, or
 generated implementation-file behavior is outside this plan.

@@ -289,8 +289,8 @@ New modules should be named for final parser concepts:
 - `parser_table`: grammar-derived LR/GLR tables.
 - `parser_gen`: construction of item sets, conflict handling, lexical modes, and
   parse tables from `ValidatedGrammar` plus `LexicalFacts`.
-- `parser_runtime`: table interpreter, stack versions, lookahead loop, and
-  recovery loop.
+- `weavy_runtime`: Snark-owned Weavy execution state for stack versions,
+  lookahead, recovery, tree sinks, scanner snapshots, and reuse.
 - `tree_plan` and `tree_sink`: tree semantics and structured events.
 - `scanner_host`: executable external scanner ABI.
 - `recovery`: error scoring and strategy data.
