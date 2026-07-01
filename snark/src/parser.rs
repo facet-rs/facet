@@ -5764,11 +5764,11 @@ pub enum ParserRuntimeErrorKind {
         /// New input byte length.
         new_input_len: usize,
     },
-    /// More than one distinct reduced tree was accepted.
+    /// More than one distinct S-expression projection was accepted.
     AmbiguousParse {
         /// Number of accepted branches.
         accepted_count: usize,
-        /// Accepted reduced S-expression projections.
+        /// Accepted corpus-normalized S-expression projections.
         accepted: Vec<String>,
     },
 }

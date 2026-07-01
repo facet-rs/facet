@@ -156,11 +156,11 @@ be explicit and observable:
   outcome, and fixture category.
 - Trace sink: every parser/scanner/tree/query event in a facet-serializable
   top-level event enum.
-- Oracle sink: reduced parse S-expression output and highlight/query assertion
+- Oracle sink: corpus-normalized S-expression output and highlight/query assertion
   output derived from the structured sinks.
 
 The sinks are not strings first. Rendered S-expressions and highlight assertion
-text are views over structured events, so reduced output can be compared with
+text are views over structured events, so S-expression output can be compared with
 `corpus::SexpNode` and `corpus::HighlightAssertion`.
 
 ## Trace And Oracle Events
@@ -249,7 +249,7 @@ machine; Snark defines and executes parser meaning.
 5. Implement the Snark `Step` runtime for the existing `SnarkIntrinsic`
    families, with explicit parser stack, GLR graph stack, scanner state, tree
    sink, query sink, trace sink, and oracle sink.
-6. Make the reduced CSS fixture lane pass against parse corpus S-expressions
+6. Make the pinned CSS fixture lane pass against parse corpus S-expressions
    and highlight assertions. The first passing lane should include at least one
    external-scanner valid-symbol-mask trace even if the chosen parse case does
    not require a complex scanner branch.
