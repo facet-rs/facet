@@ -4495,7 +4495,6 @@ fn parse_weavy_with_lexer_program(
             stats,
             trace_events,
             tree_events: first_tree_events,
-            tree_store,
             reusable_nodes,
             accepted_version: first_version,
             accepted_count,
@@ -4528,7 +4527,6 @@ pub struct WeavyParseReport {
     stats: RunStats,
     trace_events: Vec<parser_ir::TraceEvent>,
     tree_events: Vec<parser_ir::TreeEvent>,
-    tree_store: RuntimeWeavyTreeStore,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     accepted_version: parser_ir::StackVersionId,
     accepted_count: usize,
@@ -4578,9 +4576,7 @@ impl WeavyParseReport {
         input: &str,
     ) -> Option<parser_ir::ResolvedCstNode> {
         let accepted_tree_events = self.accepted_tree_events();
-        parser_ir::resolved_tree_from_events(parser, input, &accepted_tree_events, |node| {
-            Some(self.tree_store.node_kind(node).to_owned())
-        })
+        parser_ir::resolved_tree_from_events(parser, input, &accepted_tree_events)
     }
 
     /// Number of accepted runtime branches before identical-tree coalescing.

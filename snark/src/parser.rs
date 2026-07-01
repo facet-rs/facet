@@ -4903,15 +4903,11 @@ struct ResolvedCstItem {
     children: Vec<usize>,
 }
 
-pub(crate) fn resolved_tree_from_events<F>(
+pub(crate) fn resolved_tree_from_events(
     parser: &ParserGrammar,
     input: &str,
     tree_events: &[TreeEvent],
-    mut node_kind: F,
-) -> Option<ResolvedCstNode>
-where
-    F: FnMut(TreeNodeId) -> Option<String>,
-{
+) -> Option<ResolvedCstNode> {
     let field_by_child = tree_events
         .iter()
         .filter_map(|event| match event {
@@ -4955,25 +4951,17 @@ where
             }
             TreeEvent::Reduce {
                 node,
-                bytes,
-                points,
-                ..
-            }
-            | TreeEvent::CloseNode {
-                node,
-                bytes,
-                points,
-                ..
-            }
-            | TreeEvent::Error {
-                node,
+                metadata,
                 bytes,
                 points,
                 ..
             } => {
-                let is_extra = matches!(event, TreeEvent::CloseNode { .. });
+                let public_node =
+                    parser.production_metadata[metadata.get() as usize].public_node()?;
                 items.push(ResolvedCstItem {
-                    kind: node_kind(*node)?,
+                    kind: parser.public_node_kinds[public_node.get() as usize]
+                        .name()
+                        .to_owned(),
                     symbol: None,
                     field: field_by_child.get(node).cloned(),
                     node: Some(*node),
@@ -4981,7 +4969,55 @@ where
                     points: *points,
                     named: true,
                     visible: true,
-                    extra: is_extra,
+                    extra: false,
+                    text: None,
+                    order,
+                    children: Vec::new(),
+                });
+            }
+            TreeEvent::CloseNode {
+                node,
+                public_node: Some(public_node),
+                bytes,
+                points,
+                ..
+            } => {
+                items.push(ResolvedCstItem {
+                    kind: parser.public_node_kinds[public_node.get() as usize]
+                        .name()
+                        .to_owned(),
+                    symbol: None,
+                    field: field_by_child.get(node).cloned(),
+                    node: Some(*node),
+                    bytes: *bytes,
+                    points: *points,
+                    named: true,
+                    visible: true,
+                    extra: true,
+                    text: None,
+                    order,
+                    children: Vec::new(),
+                });
+            }
+            TreeEvent::CloseNode {
+                public_node: None, ..
+            } => {}
+            TreeEvent::Error {
+                node,
+                bytes,
+                points,
+                ..
+            } => {
+                items.push(ResolvedCstItem {
+                    kind: "ERROR".to_owned(),
+                    symbol: None,
+                    field: field_by_child.get(node).cloned(),
+                    node: Some(*node),
+                    bytes: *bytes,
+                    points: *points,
+                    named: true,
+                    visible: true,
+                    extra: false,
                     text: None,
                     order,
                     children: Vec::new(),
