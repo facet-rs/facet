@@ -954,6 +954,8 @@ pub struct WeavyParserProgram {
     state_block_refs: Vec<BlockRef>,
     action_blocks: Vec<Vec<Vec<WeavyParserActionBlock>>>,
     extra_node_index: RuntimeWeavyExtraNodeIndex,
+    public_node_kind_names: Vec<Arc<str>>,
+    alias_names: Vec<Arc<str>>,
 }
 
 impl WeavyParserProgram {
@@ -2739,7 +2741,7 @@ struct RuntimeWeavyExtraNodeIndex {
 }
 
 impl RuntimeWeavyExtraNodeIndex {
-    fn new(parser: &parser_ir::ParserGrammar) -> Self {
+    fn new(parser: &parser_ir::ParserGrammar, public_node_kind_names: &[Arc<str>]) -> Self {
         let Some(first) = runtime_weavy_first_sets(parser) else {
             return Self::default();
         };
@@ -2760,7 +2762,7 @@ impl RuntimeWeavyExtraNodeIndex {
                     .nodes
                     .entry(*lookahead)
                     .or_insert(RuntimeWeavyExtraNode {
-                        kind: kind.name().to_owned(),
+                        kind: Arc::clone(&public_node_kind_names[kind.id().get() as usize]),
                         public_node: kind.id(),
                     });
             }
@@ -2775,7 +2777,7 @@ impl RuntimeWeavyExtraNodeIndex {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RuntimeWeavyExtraNode {
-    kind: String,
+    kind: Arc<str>,
     public_node: parser_ir::PublicNodeKindId,
 }
 
@@ -3363,7 +3365,17 @@ fn lower_weavy_parser_program(
                 .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let extra_node_index = RuntimeWeavyExtraNodeIndex::new(parser);
+    let public_node_kind_names = parser
+        .public_node_kinds()
+        .iter()
+        .map(|kind| Arc::<str>::from(kind.name()))
+        .collect::<Vec<_>>();
+    let alias_names = parser
+        .aliases()
+        .iter()
+        .map(|alias| Arc::<str>::from(alias.value()))
+        .collect::<Vec<_>>();
+    let extra_node_index = RuntimeWeavyExtraNodeIndex::new(parser, &public_node_kind_names);
 
     Ok(WeavyParserProgram {
         lowered,
@@ -3372,6 +3384,8 @@ fn lower_weavy_parser_program(
         state_block_refs,
         action_blocks,
         extra_node_index,
+        public_node_kind_names,
+        alias_names,
     })
 }
 
@@ -6444,17 +6458,16 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 let mut field_child = self.tree_store.single_child_node(step_visible_nodes);
                 let mut step_children = fragment.into_children(self.tree_store);
                 if let (Some(alias), Some(named)) = (step.alias(), step.alias_named()) {
-                    let alias_name = self.parser.aliases()[alias.get() as usize]
-                        .value()
-                        .to_owned();
+                    let alias_name = Arc::clone(&self.plan.alias_names[alias.get() as usize]);
                     if named {
                         if self.tree_store.children_is_empty(step_children) {
-                            let alias_child = self.tree_store.push_empty_node(alias_name.clone());
+                            let alias_child =
+                                self.tree_store.push_empty_node(Arc::clone(&alias_name));
                             step_children = self.tree_store.child_node(None, alias_child);
                         } else {
                             step_children = self
                                 .tree_store
-                                .alias_children(step_children, alias_name.clone());
+                                .alias_children(step_children, Arc::clone(&alias_name));
                         }
                     }
                     let alias_node = self.tree_store.push_empty_node(alias_name);
@@ -6500,9 +6513,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         field_events.reverse();
 
         if let Some(public_node) = metadata_row.public_node() {
-            let kind = self.parser.public_node_kinds()[public_node.get() as usize]
-                .name()
-                .to_owned();
+            let kind = Arc::clone(&self.plan.public_node_kind_names[public_node.get() as usize]);
             let node = self.tree_store.push_node(kind, children);
             let (bytes, points) =
                 runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
@@ -6564,7 +6575,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
         start_scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
     ) -> Option<(RuntimeWeavyFragment, Vec<parser_ir::TreeEvent>)> {
         let extra_node = self.plan.extra_node_index.get(lookahead)?;
-        let node = self.tree_store.push_empty_node(extra_node.kind.clone());
+        let node = self
+            .tree_store
+            .push_empty_node(Arc::clone(&extra_node.kind));
         let (bytes, points) = runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
         let tree_event = parser_ir::TreeEvent::CloseNode {
             version,
@@ -6608,7 +6621,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         if self.tree_store.children_is_empty(leading_children) {
             return Ok(self.tree_store.materialize_node(node));
         }
-        let root_kind = self.tree_store.node_kind(node).to_owned();
+        let root_kind = self.tree_store.node_kind_handle(node);
         let root_children = self.tree_store.node_children(node);
         let root_children = self
             .tree_store
@@ -7341,7 +7354,7 @@ struct RuntimeWeavyTreeStore {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RuntimeWeavyTreeNode {
-    kind: String,
+    kind: Arc<str>,
     children: RuntimeWeavyChildListId,
 }
 
@@ -7357,7 +7370,7 @@ enum RuntimeWeavyChildListKind {
     Node {
         field: Option<String>,
         node: parser_ir::TreeNodeId,
-        kind_override: Option<String>,
+        kind_override: Option<Arc<str>>,
     },
     Atom {
         field: Option<String>,
@@ -7365,7 +7378,7 @@ enum RuntimeWeavyChildListKind {
     },
     Alias {
         children: RuntimeWeavyChildListId,
-        kind: String,
+        kind: Arc<str>,
     },
     Concat {
         left: RuntimeWeavyChildListId,
@@ -7388,14 +7401,14 @@ impl RuntimeWeavyTreeStore {
         self.push_sexp_node(node)
     }
 
-    fn push_empty_node(&mut self, kind: String) -> parser_ir::TreeNodeId {
+    fn push_empty_node(&mut self, kind: Arc<str>) -> parser_ir::TreeNodeId {
         let children = self.empty_children();
         self.push_node(kind, children)
     }
 
     fn push_node(
         &mut self,
-        kind: String,
+        kind: Arc<str>,
         children: RuntimeWeavyChildListId,
     ) -> parser_ir::TreeNodeId {
         let id = parser_ir::TreeNodeId::from_index(self.nodes.len());
@@ -7405,7 +7418,7 @@ impl RuntimeWeavyTreeStore {
 
     fn push_sexp_node(&mut self, node: SexpNode) -> parser_ir::TreeNodeId {
         let children = self.children_from_sexp(node.children);
-        self.push_node(node.kind, children)
+        self.push_node(Arc::<str>::from(node.kind), children)
     }
 
     fn children_from_sexp(&mut self, children: Vec<SexpChild>) -> RuntimeWeavyChildListId {
@@ -7452,7 +7465,7 @@ impl RuntimeWeavyTreeStore {
     fn alias_children(
         &mut self,
         children: RuntimeWeavyChildListId,
-        kind: String,
+        kind: Arc<str>,
     ) -> RuntimeWeavyChildListId {
         if self.children_is_empty(children) {
             return children;
@@ -7517,7 +7530,11 @@ impl RuntimeWeavyTreeStore {
     }
 
     fn node_kind(&self, id: parser_ir::TreeNodeId) -> &str {
-        &self.nodes[id.get() as usize].kind
+        self.nodes[id.get() as usize].kind.as_ref()
+    }
+
+    fn node_kind_handle(&self, id: parser_ir::TreeNodeId) -> Arc<str> {
+        Arc::clone(&self.nodes[id.get() as usize].kind)
     }
 
     fn node_children(&self, id: parser_ir::TreeNodeId) -> RuntimeWeavyChildListId {
@@ -7535,7 +7552,7 @@ impl RuntimeWeavyTreeStore {
     ) -> SexpNode {
         let node = &self.nodes[id.get() as usize];
         SexpNode {
-            kind: kind_override.unwrap_or(&node.kind).to_owned(),
+            kind: kind_override.unwrap_or(node.kind.as_ref()).to_owned(),
             children: self.materialize_children(node.children),
         }
     }
@@ -7566,7 +7583,7 @@ impl RuntimeWeavyTreeStore {
                     });
                 }
                 RuntimeWeavyChildListKind::Alias { children, kind } => {
-                    stack.push((*children, Some(kind.as_str())));
+                    stack.push((*children, Some(kind.as_ref())));
                 }
                 RuntimeWeavyChildListKind::Concat { left, right } => {
                     stack.push((*right, kind_override));
@@ -7602,7 +7619,7 @@ impl RuntimeWeavyTreeStore {
                     children,
                     kind: alias,
                 } => {
-                    if alias == kind {
+                    if alias.as_ref() == kind {
                         return true;
                     }
                     stack.push(*children);
@@ -8812,6 +8829,8 @@ mod tests {
                 state_block_refs: vec![],
                 action_blocks: vec![],
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+                public_node_kind_names: vec![],
+                alias_names: vec![],
             },
             lexer_program: sample_lexer_program(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
@@ -9034,6 +9053,8 @@ mod tests {
                 state_block_refs: vec![],
                 action_blocks: vec![],
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+                public_node_kind_names: vec![],
+                alias_names: vec![],
             },
             lexer_program: WeavyLexerProgram { modes: vec![] },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
@@ -9073,6 +9094,8 @@ mod tests {
                 state_block_refs: vec![],
                 action_blocks: vec![],
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+                public_node_kind_names: vec![],
+                alias_names: vec![],
             },
             lexer_program: WeavyLexerProgram { modes: vec![] },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
@@ -9194,6 +9217,8 @@ mod tests {
                 state_block_refs: vec![],
                 action_blocks: vec![],
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+                public_node_kind_names: vec![],
+                alias_names: vec![],
             },
             lexer_program: sample_lexer_program(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
@@ -9323,6 +9348,8 @@ mod tests {
                 state_block_refs: vec![],
                 action_blocks: vec![],
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+                public_node_kind_names: vec![],
+                alias_names: vec![],
             },
             lexer_program: WeavyLexerProgram { modes: vec![] },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
@@ -9518,6 +9545,8 @@ mod tests {
                 state_block_refs: vec![],
                 action_blocks: vec![],
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+                public_node_kind_names: vec![],
+                alias_names: vec![],
             },
             lexer_program: WeavyLexerProgram {
                 modes: vec![WeavyLexModeProgram {

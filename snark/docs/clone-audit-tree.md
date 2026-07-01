@@ -151,7 +151,7 @@ document, for a feature it never uses.
 subtree replay payload entirely; incremental sessions request it when they need
 to build a reuse index from the accepted report.
 
-## 4. [MEDIUM, confirmed] Node-kind `String` allocated fresh from an already-owned `String` on every reduce
+## 4. [RESOLVED for runtime tree store] Node-kind `String` allocated fresh from an already-owned `String` on every reduce
 
 `snark/src/parser.rs:2260-2263`: `PublicNodeKind.name: String` is built once
 at grammar-prep time and lives for the parser's lifetime. But every runtime
@@ -162,21 +162,18 @@ string:
 - `snark/src/lower/weavy.rs:3889`: same pattern in `extra_node_for_lookahead`
 - `snark/src/lower/weavy.rs:4290`: same pattern in the reuse-remap path
 
-Each of these feeds directly into a `SexpNode { kind, .. }` that then gets
-deep-cloned repeatedly per findings 2–3. This is one heap alloc+free per named
-node in the tree, purely to duplicate a string the grammar table already owns
-for the whole parser lifetime.
+Before the handle-based tree store, each of these fed directly into a
+`SexpNode { kind, .. }` that was then deep-cloned repeatedly per findings 2–3.
+After the handle-based tree-store fix, the remaining issue was the per-node
+runtime allocation needed to duplicate a string the grammar table already owns
+for the parser lifetime.
 
-**Fix**: change `PublicNodeKind.name` (and the corresponding field on the
-public-facing side, if `SexpNode.kind` changes) to an `Rc<str>` interned once
-at grammar-prep time. `.name()` returns `Rc<str>`/`&Rc<str>`; runtime code
-does `Rc::clone` (refcount bump) instead of `.to_owned()` (alloc + memcpy).
-This does touch `corpus::SexpNode::kind: String` if you want the public type
-to also stop paying for it — lower priority than 1–3 since it's `O(n)` not
-superlinear, but it's a large constant-factor multiplier on top of findings
-2–3, and it's a small, self-contained, low-risk change.
+**Resolution**: `WeavyParserProgram` now owns `Arc<str>` public-node names, and
+the transient Weavy tree store carries those handles through reduction. The
+public `corpus::SexpNode` projection still owns `String` kinds when materialized
+at accept.
 
-## 5. [MEDIUM, confirmed] Alias name `.to_owned()`/`.clone()` per aliased production step
+## 5. [RESOLVED for runtime tree store] Alias name `.to_owned()`/`.clone()` per aliased production step
 
 `snark/src/lower/weavy.rs:3530-3552`, inside `runtime_reduce_fragment`, for
 every step that carries a grammar alias (`step.alias()`):
@@ -196,11 +193,9 @@ let alias_node = self.tree_store.push(SexpNode {
 ```
 
 Same shape as finding 4: `AliasDecl.value()` is a table string owned for the
-parser's lifetime; runtime code re-allocates a copy per occurrence, plus an
-extra `.clone()` when the aliased step's children vector isn't empty (looped
-over every child). Less hot than finding 4 (aliases are grammar-specific and
-typically apply to a minority of productions — e.g. JSON likely uses few or
-none), but same fix (`Rc<str>` for `AliasDecl.value()`).
+parser's lifetime. `WeavyParserProgram` now owns `Arc<str>` alias names, and
+alias tree-store entries clone those handles rather than allocating fresh
+strings.
 
 ## 6. [LOW, confirmed but cheap] Double-storing tree events (journal + flat `Vec`)
 
@@ -270,8 +265,8 @@ per grammar. Not worth touching unless a profile of grammar *loading itself*
 | 1 | `subtree_tree_events`/`event_refs` walked the whole journal per reduce | Resolved by opt-in reuse collection |
 | 2 | `into_children` deep-cloned child subtrees per fold | Resolved by handle-based tree storage |
 | 3 | `reusable_nodes` populated unconditionally | Resolved by opt-in reuse collection |
-| 4 | Node-kind `String::to_owned()` per reduce | Open linear constant-factor item |
-| 5 | Alias-name `String` clone per aliased step | Open linear constant-factor item |
+| 4 | Node-kind `String::to_owned()` per reduce | Resolved in transient tree store; public S-expression still owns strings |
+| 5 | Alias-name `String` clone per aliased step | Resolved in transient tree store |
 | 6 | Double journal+flat `Vec<TreeEvent>` storage | Open if profile asks for it |
 | 7 | One extra full-tree clone at accept | Open one-off report-shape cleanup |
 | 8 | `tree_store` retained alongside `tree` | Resolved by deriving resolved CST kinds from events |
