@@ -5988,7 +5988,7 @@ struct RuntimeWeavyBranch {
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
 }
 
-/// Orders branches so a `BinaryHeap` pops the lowest `error_cost` first — best-first
+/// Orders branches so a `BinaryHeap` pops the lowest `error_cost` first: best-first
 /// (uniform-cost) recovery search. The cheapest repair completes first, so once a
 /// complete parse is accepted every remaining branch that costs more can be pruned
 /// instead of ground through in FIFO order (which let the live set explode).
