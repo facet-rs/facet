@@ -92,6 +92,71 @@ pub fn emit_source_with_boa(grammar_source: &str, source_name: &str) -> Result<S
     eval_to_string(&mut context, EMIT_SCRIPT, "emit.js", "emit")
 }
 
+/// Like [`emit_source_with_boa`], but also returns the AST-enrichment annotations the
+/// grammar registered via the `ast({...})` helper (JSON keyed by node kind). The grammar
+/// JSON is byte-for-byte what `emit_source_with_boa` produces — annotations ride a side
+/// registry, so tree-sitter compatibility is untouched.
+#[cfg(feature = "boa")]
+pub fn emit_source_with_annotations_boa(
+    grammar_source: &str,
+    source_name: &str,
+) -> Result<(String, String)> {
+    let mut context = Context::default();
+    eval(
+        &mut context,
+        official_tree_sitter_dsl_prelude()?,
+        "vendor/tree-sitter-generate-0.26.9/dsl.js",
+    )?;
+    eval(
+        &mut context,
+        "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;\nglobalThis.console ??= { log() {}, warn() {}, error() {} };\nglobalThis.process ??= { env: {} };",
+        "commonjs-shim.js",
+    )?;
+    eval(&mut context, SNARK_DSL_EXTENSIONS, "snark-dsl-extensions.js")?;
+    eval(&mut context, grammar_source, source_name)?;
+    let grammar_json = eval_to_string(&mut context, EMIT_SCRIPT, "emit.js", "emit")?;
+    let annotations_json = eval_to_string(
+        &mut context,
+        "JSON.stringify(globalThis.__snark_ast ?? {})",
+        "ast-emit.js",
+        "ast",
+    )?;
+    Ok((grammar_json, annotations_json))
+}
+
+#[cfg(all(test, feature = "boa"))]
+mod ast_annotation_tests {
+    use super::emit_source_with_annotations_boa;
+
+    #[test]
+    fn captures_ast_annotations_without_touching_grammar_json() {
+        let src = r#"
+module.exports = grammar({
+  name: "toy",
+  rules: {
+    source: $ => repeat($.number),
+    number: $ => /[0-9]+/,
+  },
+});
+ast({
+  number: { decode: "i64" },
+  binary: { as: "BinaryExpr", fields: { left: "Expr", right: "Expr" } },
+});
+"#;
+        let (grammar, annotations) =
+            emit_source_with_annotations_boa(src, "toy.js").expect("emit toy grammar");
+        // grammar.json is standard tree-sitter — the ast() call left no trace in it.
+        assert!(grammar.contains("\"number\""), "grammar: {grammar}");
+        assert!(
+            !grammar.contains("BinaryExpr"),
+            "annotation leaked into grammar.json: {grammar}"
+        );
+        // annotations came back keyed by node kind.
+        assert!(annotations.contains("\"decode\":\"i64\""), "annotations: {annotations}");
+        assert!(annotations.contains("\"as\":\"BinaryExpr\""), "annotations: {annotations}");
+    }
+}
+
 #[cfg(feature = "native")]
 pub fn emit_with_boa(grammar_path: &Path) -> Result<String> {
     emit_grammar_file_with_boa(grammar_path)
@@ -331,6 +396,16 @@ globalThis.auto_close = function auto_close(options) {
     closed_by_tags: options.closed_by_tags,
     rules: options.rules,
   };
+};
+
+// AST-enrichment annotations keyed by node kind (`as`/`decode`/`drop`/`enum`/`fields`).
+// This is the wrapper channel: pure metadata capture that snark's codegen reads AFTER
+// the grammar runs. It never touches `module.exports`, so `grammar.json`/`node-types.json`
+// stay 100% standard tree-sitter — the grammar remains portable while carrying AST types.
+globalThis.__snark_ast = {};
+globalThis.ast = function ast(spec) {
+  for (const kind in spec) globalThis.__snark_ast[kind] = spec[kind];
+  return spec;
 };
 "#;
 
