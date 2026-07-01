@@ -5632,6 +5632,17 @@ fn runtime_weavy_candidate_order(
     if left.extra && right.immediate && !right.extra {
         return RuntimeWeavyCandidateOrder::Less;
     }
+    if left.end == right.end && left.external && !right.external {
+        return RuntimeWeavyCandidateOrder::Greater;
+    }
+    if left.end == right.end && !left.external && right.external {
+        return RuntimeWeavyCandidateOrder::Less;
+    }
+    match left.lexical_precedence.cmp(&right.lexical_precedence) {
+        std::cmp::Ordering::Greater => return RuntimeWeavyCandidateOrder::Greater,
+        std::cmp::Ordering::Less => return RuntimeWeavyCandidateOrder::Less,
+        std::cmp::Ordering::Equal => {}
+    }
     match left.end.cmp(&right.end) {
         std::cmp::Ordering::Greater => RuntimeWeavyCandidateOrder::Greater,
         std::cmp::Ordering::Less => RuntimeWeavyCandidateOrder::Less,
@@ -5639,12 +5650,6 @@ fn runtime_weavy_candidate_order(
             RuntimeWeavyCandidateOrder::Greater
         }
         std::cmp::Ordering::Equal if !left.external && right.external => {
-            RuntimeWeavyCandidateOrder::Less
-        }
-        std::cmp::Ordering::Equal if left.lexical_precedence > right.lexical_precedence => {
-            RuntimeWeavyCandidateOrder::Greater
-        }
-        std::cmp::Ordering::Equal if left.lexical_precedence < right.lexical_precedence => {
             RuntimeWeavyCandidateOrder::Less
         }
         std::cmp::Ordering::Equal if left.implicit_precedence > right.implicit_precedence => {
@@ -6789,6 +6794,157 @@ mod tests {
             Some(parser_ir::LexMatch::new(3, 4))
         );
         assert_eq!(matcher.match_input("anderson", 0), None);
+    }
+
+    #[derive(Default)]
+    struct WeavyCandidateFlags {
+        extra: bool,
+        external: bool,
+        immediate: bool,
+        literal: bool,
+        lexical_precedence: i32,
+        implicit_precedence: i32,
+    }
+
+    fn weavy_candidate(
+        lookahead: parser_ir::LookaheadSymbol,
+        end: usize,
+        flags: WeavyCandidateFlags,
+    ) -> RuntimeWeavyTokenCandidate {
+        RuntimeWeavyTokenCandidate {
+            lookahead,
+            end,
+            inspected_end: end,
+            extra: flags.extra,
+            external: flags.external,
+            immediate: flags.immediate,
+            literal: flags.literal,
+            lexical_precedence: flags.lexical_precedence,
+            implicit_precedence: flags.implicit_precedence,
+            scanner: None,
+        }
+    }
+
+    #[test]
+    fn weavy_lexer_prefers_higher_implicit_precedence_for_equal_length_candidates() {
+        let direct_string = weavy_candidate(
+            parser_ir::LookaheadSymbol::Terminal(parser_ir::TerminalId::from_index(0)),
+            1,
+            WeavyCandidateFlags {
+                literal: true,
+                implicit_precedence: 2,
+                ..WeavyCandidateFlags::default()
+            },
+        );
+        let immediate_string = weavy_candidate(
+            parser_ir::LookaheadSymbol::Terminal(parser_ir::TerminalId::from_index(1)),
+            1,
+            WeavyCandidateFlags {
+                immediate: true,
+                implicit_precedence: 3,
+                ..WeavyCandidateFlags::default()
+            },
+        );
+
+        assert_eq!(
+            runtime_weavy_candidate_order(immediate_string, direct_string),
+            RuntimeWeavyCandidateOrder::Greater
+        );
+        assert_eq!(
+            runtime_weavy_candidate_order(direct_string, immediate_string),
+            RuntimeWeavyCandidateOrder::Less
+        );
+    }
+
+    #[test]
+    fn weavy_lexer_prefers_explicit_lexical_precedence_before_length() {
+        let structured_line = weavy_candidate(
+            parser_ir::LookaheadSymbol::Terminal(parser_ir::TerminalId::from_index(0)),
+            1,
+            WeavyCandidateFlags {
+                literal: true,
+                implicit_precedence: 2,
+                ..WeavyCandidateFlags::default()
+            },
+        );
+        let low_precedence_context = weavy_candidate(
+            parser_ir::LookaheadSymbol::Terminal(parser_ir::TerminalId::from_index(1)),
+            32,
+            WeavyCandidateFlags {
+                lexical_precedence: -1,
+                ..WeavyCandidateFlags::default()
+            },
+        );
+
+        assert_eq!(
+            runtime_weavy_candidate_order(structured_line, low_precedence_context),
+            RuntimeWeavyCandidateOrder::Greater
+        );
+        assert_eq!(
+            runtime_weavy_candidate_order(low_precedence_context, structured_line),
+            RuntimeWeavyCandidateOrder::Less
+        );
+    }
+
+    #[test]
+    fn weavy_lexer_prefers_external_candidate_before_internal_precedence() {
+        let internal_string = weavy_candidate(
+            parser_ir::LookaheadSymbol::Terminal(parser_ir::TerminalId::from_index(0)),
+            1,
+            WeavyCandidateFlags {
+                literal: true,
+                implicit_precedence: 2,
+                ..WeavyCandidateFlags::default()
+            },
+        );
+        let external_token = weavy_candidate(
+            parser_ir::LookaheadSymbol::External(parser_ir::ExternalId::from_index(0)),
+            1,
+            WeavyCandidateFlags {
+                external: true,
+                literal: true,
+                ..WeavyCandidateFlags::default()
+            },
+        );
+
+        assert_eq!(
+            runtime_weavy_candidate_order(external_token, internal_string),
+            RuntimeWeavyCandidateOrder::Greater
+        );
+        assert_eq!(
+            runtime_weavy_candidate_order(internal_string, external_token),
+            RuntimeWeavyCandidateOrder::Less
+        );
+    }
+
+    #[test]
+    fn weavy_lexer_prefers_immediate_content_over_longer_extra() {
+        let immediate_content = weavy_candidate(
+            parser_ir::LookaheadSymbol::Terminal(parser_ir::TerminalId::from_index(0)),
+            2,
+            WeavyCandidateFlags {
+                immediate: true,
+                implicit_precedence: 3,
+                ..WeavyCandidateFlags::default()
+            },
+        );
+        let comment_extra = weavy_candidate(
+            parser_ir::LookaheadSymbol::Terminal(parser_ir::TerminalId::from_index(1)),
+            8,
+            WeavyCandidateFlags {
+                extra: true,
+                ..WeavyCandidateFlags::default()
+            },
+        );
+
+        assert_eq!(
+            runtime_weavy_candidate_order(immediate_content, comment_extra),
+            RuntimeWeavyCandidateOrder::Greater
+        );
+        assert_eq!(
+            runtime_weavy_candidate_order(comment_extra, immediate_content),
+            RuntimeWeavyCandidateOrder::Less
+        );
     }
 
     #[test]
