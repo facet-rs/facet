@@ -1471,9 +1471,10 @@ fn layer_output(
     };
     // Build this language's parse table now, on first injection (cached thereafter).
     let resolved = language.resolved();
-    let (Some(prepared), Some(scanner_selection)) =
-        (resolved.prepared.as_ref(), resolved.scanner_selection.as_ref())
-    else {
+    let (Some(prepared), Some(scanner_selection)) = (
+        resolved.prepared.as_ref(),
+        resolved.scanner_selection.as_ref(),
+    ) else {
         return LayerOutput {
             language: group.language,
             combined: group.combined,
