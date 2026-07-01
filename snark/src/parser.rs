@@ -7178,7 +7178,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -7198,7 +7198,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -7218,7 +7218,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -7238,7 +7238,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -7258,7 +7258,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -7278,7 +7278,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -7298,7 +7298,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]
@@ -8105,7 +8105,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -8128,7 +8128,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     fn flagged_regex_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
@@ -8559,7 +8559,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     fn lexical_symbol_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
@@ -8603,7 +8603,7 @@ extras (
         assert_eq!(weavy_report.tree().to_sexp(), "(source_file)");
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]
@@ -8894,7 +8894,7 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]

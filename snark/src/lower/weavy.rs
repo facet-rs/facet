@@ -492,6 +492,16 @@ impl WeavyParserProgram {
             .copied()
             .ok_or(WeavyParseError::MissingDenseBlock { block })
     }
+
+    fn dense_block(&self, block: BlockRef) -> Result<&[DenseSnarkWeavyOp], WeavyParseError> {
+        self.dense
+            .blocks
+            .get(block.index())
+            .map(Vec::as_slice)
+            .ok_or(WeavyParseError::MissingDenseRuntimeBlock {
+                block: block.index(),
+            })
+    }
 }
 
 /// Prepared Weavy parse plan for repeated parses of one grammar/table pair.
@@ -2552,11 +2562,8 @@ fn run_runtime_weavy_block(
     block: BlockRef,
     stepper: &mut RuntimeWeavyStepper<'_>,
 ) -> Result<RunStats, WeavyParseError> {
-    let trampoline = [WeavyOp::Control(ControlOp::CallBlock {
-        block,
-        base_offset: 0,
-    })];
-    match weavy::run_dense_program_with_stats(&trampoline, &plan.dense.blocks, stepper) {
+    let program = plan.dense_block(block)?;
+    match weavy::run_dense_program_with_stats(program, &plan.dense.blocks, stepper) {
         Ok(stats) => Ok(stats),
         Err(RunError::MissingBlock(block)) => Err(WeavyParseError::MissingDenseRuntimeBlock {
             block: block.index(),

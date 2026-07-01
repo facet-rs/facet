@@ -1123,7 +1123,6 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -1194,7 +1193,6 @@ mod tests {
 
         assert_same!(weavy_report.tree(), &selector_cases[0].expected);
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -1301,7 +1299,6 @@ mod tests {
 
         assert_same!(weavy_report.tree(), &selector_cases[2].expected);
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -1470,7 +1467,6 @@ mod tests {
             "expected Weavy scanner calls to respect the valid-symbol mask"
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -1569,7 +1565,6 @@ mod tests {
             "expected Weavy runtime scanner traces to observe the committed stateless CSS snapshot marker"
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -1793,7 +1788,6 @@ mod tests {
             "expected Weavy scanner calls to respect the valid-symbol mask"
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -2085,7 +2079,6 @@ mod tests {
                 "expected Weavy tree reductions for `{case_name}`"
             );
             assert!(weavy_report.stats().step_count > 0);
-            assert!(weavy_report.stats().block_call_count > 0);
         }
     }
 
@@ -2149,7 +2142,6 @@ mod tests {
             "expected Weavy-carried runtime tree execution to emit reduce tree events"
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -2211,7 +2203,6 @@ mod tests {
             "expected Weavy accepted-lineage query input to retire a failed GLR branch"
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -2275,7 +2266,6 @@ mod tests {
             "expected Weavy runtime branch retirement evidence"
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -2443,7 +2433,6 @@ mod tests {
             ["\"good\""]
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -2499,7 +2488,6 @@ mod tests {
             ]
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -2577,7 +2565,6 @@ mod tests {
 
         assert_same!(weavy_report.tree(), &cases[4].expected);
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -2609,7 +2596,6 @@ mod tests {
             "(document (comment) (object (pair (string (string_content)) (number))))"
         );
         assert!(weavy_report.stats().step_count > 0);
-        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
