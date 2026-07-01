@@ -2464,6 +2464,12 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema, config: &HelpConfig) {
         out.push_str(&wrap_text("[can be repeated]", DOC_INDENT, config.width));
     }
 
+    if !arg.aliases().is_empty() {
+        out.push('\n');
+        out.push_str(DOC_INDENT);
+        out.push_str(&format!("aliases: {}", arg.aliases().join(", ")));
+    }
+
     out.push('\n');
 }
 
@@ -2481,6 +2487,11 @@ fn write_subcommand_help(out: &mut String, sub: &Subcommand, config: &HelpConfig
     if let Some(summary) = sub.docs().summary() {
         out.push('\n');
         out.push_str(&wrap_text(summary.trim(), "            ", config.width));
+    }
+
+    if !sub.aliases().is_empty() {
+        out.push_str("\n            ");
+        out.push_str(&format!("aliases: {}", sub.aliases().join(", ")));
     }
 
     out.push('\n');
@@ -3042,4 +3053,39 @@ mod tests {
             );
         }
     }
+    #[derive(Facet)]
+    struct ArgsWithAlias {
+        #[facet(args::named, args::alias = "colour")]
+        color: bool,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum CommandWithAlias {
+        #[facet(args::alias = "profiles")]
+        Profile,
+    }
+
+    #[derive(Facet)]
+    struct ArgsWithAliasedSubcommand {
+        #[facet(args::subcommand)]
+        command: Option<CommandWithAlias>,
+    }
+
+    #[test]
+    fn test_help_shows_aliases_after_canonical_name() {
+        let schema = Schema::from_shape(ArgsWithAlias::SHAPE).unwrap();
+        let help = generate_help_for_subcommand(&schema, &[], &HelpConfig::default());
+        assert!(help.contains("--[no-]color"), "help should show canonical flag: {help}");
+        assert!(help.contains("aliases: colour"), "help should show aliases: {help}");
+    }
+
+    #[test]
+    fn test_help_shows_subcommand_aliases_with_canonical_name() {
+        let schema = Schema::from_shape(ArgsWithAliasedSubcommand::SHAPE).unwrap();
+        let help = generate_help_for_subcommand(&schema, &[], &HelpConfig::default());
+        assert!(help.contains("profile"), "help should show canonical subcommand: {help}");
+        assert!(help.contains("aliases: profiles"), "help should surface compatibility aliases: {help}");
+    }
 }
+
