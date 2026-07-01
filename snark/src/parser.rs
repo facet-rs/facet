@@ -2980,7 +2980,12 @@ impl<'a> LrTableBuilder<'a> {
         let mut queue = VecDeque::new();
         let mut start_items = ItemMap::default();
         for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
-            start_items.insert(*production, 0, &[LookaheadSymbol::Eof], &self.first.interner);
+            start_items.insert(
+                *production,
+                0,
+                &[LookaheadSymbol::Eof],
+                &self.first.interner,
+            );
         }
         let start_items = self.closure(start_items.into_items(&self.first.interner));
         let start = push_item_set(&mut item_sets, &mut item_set_keys, start_items, &mut queue);
@@ -3029,8 +3034,11 @@ impl<'a> LrTableBuilder<'a> {
                 fallback.or_from(current);
             }
             scratch.clear();
-            self.first
-                .first_of_steps_into_bits(&production.steps[dot + 1..], &fallback, &mut scratch);
+            self.first.first_of_steps_into_bits(
+                &production.steps[dot + 1..],
+                &fallback,
+                &mut scratch,
+            );
             for target in &self.productions_by_lhs[nonterminal.get() as usize] {
                 if map.or_into((*target, 0), &scratch) && queued.insert((*target, 0)) {
                     worklist.push_back((*target, 0));
@@ -3301,7 +3309,10 @@ impl LookaheadBitset {
 
     /// Number of set bits.
     fn count(&self) -> usize {
-        self.words.iter().map(|word| word.count_ones() as usize).sum()
+        self.words
+            .iter()
+            .map(|word| word.count_ones() as usize)
+            .sum()
     }
 
     /// OR `other` into `self`; returns whether `self` gained any bit.
@@ -3332,7 +3343,12 @@ impl ItemMap {
     fn from_items(items: Vec<LrItem>, interner: &LookaheadInterner) -> Self {
         let mut map = Self::default();
         for item in items {
-            map.insert(item.production, item.dot, item.lookahead.symbols(), interner);
+            map.insert(
+                item.production,
+                item.dot,
+                item.lookahead.symbols(),
+                interner,
+            );
         }
         map
     }
@@ -3365,7 +3381,11 @@ impl ItemMap {
             .into_iter()
             .map(|((production, dot), bitset)| {
                 let mut symbols = Vec::with_capacity(bitset.count());
-                symbols.extend(bitset.indices().map(|index| interner.from_index[index as usize]));
+                symbols.extend(
+                    bitset
+                        .indices()
+                        .map(|index| interner.from_index[index as usize]),
+                );
                 symbols.sort();
                 LrItem {
                     production,
