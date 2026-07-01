@@ -3937,21 +3937,6 @@ const ASCII_IDENTIFIER_PATTERN: &str = "[A-Za-z_][A-Za-z0-9_]*";
 #[cfg(test)]
 const GINGEMBRE_IDENTIFIER_PATTERN: &str = crate::lex_match::GINGEMBRE_IDENTIFIER_PATTERN;
 
-#[cfg(test)]
-pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<usize> {
-    crate::lex_match::match_pattern(pattern, input, byte_position)
-}
-
-#[cfg(test)]
-pub(crate) fn match_pattern_with_flags(
-    pattern: &str,
-    flags: Option<&str>,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    crate::lex_match::match_pattern_with_flags(pattern, flags, input, byte_position)
-}
-
 fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledLexPattern {
     crate::lex_match::compile_pattern(pattern, flags)
 }
@@ -3993,20 +3978,26 @@ fn match_compiled_lex_expr(
                     byte_position + value.len(),
                 )))
         }
-        CompiledLexExpr::Pattern(pattern) => {
-            Ok(match_compiled_pattern(pattern, input, byte_position))
+        CompiledLexExpr::Pattern(pattern) => Ok(crate::lex_match::match_compiled_pattern(
+            pattern,
+            input,
+            byte_position,
+        )),
+        CompiledLexExpr::Until(matcher) => Ok(
+            crate::lex_match::match_compiled_until_markers_with_inspection(
+                matcher,
+                input,
+                byte_position,
+            ),
+        ),
+        CompiledLexExpr::Nested { open, close } => {
+            Ok(crate::lex_match::match_nested_delimiters_with_inspection(
+                open,
+                close,
+                input,
+                byte_position,
+            ))
         }
-        CompiledLexExpr::Until(matcher) => Ok(match_compiled_until_markers_with_inspection(
-            matcher,
-            input,
-            byte_position,
-        )),
-        CompiledLexExpr::Nested { open, close } => Ok(match_nested_delimiters_with_inspection(
-            open,
-            close,
-            input,
-            byte_position,
-        )),
         CompiledLexExpr::AutoClose(_) => Ok(None),
         CompiledLexExpr::Seq(members) => {
             let mut position = byte_position;
@@ -4065,15 +4056,6 @@ fn match_compiled_lex_expr(
             ParserRuntimeErrorKind::UnsupportedLexicalSymbol { expr: *expr },
         )),
     }
-}
-
-#[cfg(test)]
-pub(crate) fn match_compiled_pattern(
-    pattern: &CompiledLexPattern,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    crate::lex_match::match_compiled_pattern(pattern, input, byte_position)
 }
 
 pub(crate) fn compile_lex_modes(
@@ -4398,34 +4380,6 @@ fn lexical_expr_implicit_precedence(
         | GrammarExpr::Repeat(_)
         | GrammarExpr::Repeat1(_) => 0,
     }
-}
-
-#[cfg(test)]
-pub(crate) fn match_until_markers_with_inspection<'a>(
-    markers: impl IntoIterator<Item = &'a str>,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    crate::lex_match::match_until_markers_with_inspection(markers, input, byte_position)
-}
-
-#[cfg(test)]
-pub(crate) fn match_compiled_until_markers_with_inspection(
-    matcher: &CompiledUntilMatcher,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    crate::lex_match::match_compiled_until_markers_with_inspection(matcher, input, byte_position)
-}
-
-#[cfg(test)]
-pub(crate) fn match_nested_delimiters_with_inspection(
-    open: &str,
-    close: &str,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    crate::lex_match::match_nested_delimiters_with_inspection(open, close, input, byte_position)
 }
 
 #[cfg(test)]
@@ -5839,6 +5793,10 @@ mod tests {
     use crate::{
         corpus::{SexpChild, SexpNode, SexpValue},
         grammar::RawGrammarJson,
+        lex_match::{
+            match_compiled_until_markers_with_inspection, match_pattern, match_pattern_with_flags,
+            match_until_markers_with_inspection,
+        },
         lexical::LexicalFacts,
         validated::ValidatedGrammar,
     };
