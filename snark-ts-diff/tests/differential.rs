@@ -272,6 +272,26 @@ fn bundled_graphql_unterminated_block_string_recovers_to_error_root() {
     assert_eq!(sn, ts);
 }
 
+#[test]
+fn readiness_accepts_frozen_grammar_json() {
+    let grammar_path =
+        workspace_path("snark/tests/fixtures/packages/tree-sitter-css-reduced/src/grammar.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_snark-ts-diff"))
+        .arg("readiness")
+        .arg(&grammar_path)
+        .output()
+        .expect("run snark-ts-diff readiness");
+    assert!(
+        out.status.success(),
+        "readiness failed: stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("visibility: parser=true lexer=false full=false"));
+    assert!(stdout.contains("Lexer(ExternalScanner):"));
+}
+
 // ---------------------------------------------------------------------------
 
 fn tree_sitter_available() -> bool {
@@ -315,10 +335,13 @@ fn tree_sitter_parse_file(dir: &Path, path: &str) -> String {
 }
 
 fn bundled_path(relative: &str) -> PathBuf {
+    workspace_path(format!("playgrounds/snark/src/bundled/{relative}"))
+}
+
+fn workspace_path(relative: impl AsRef<Path>) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("snark-ts-diff lives inside the facet workspace")
-        .join("playgrounds/snark/src/bundled")
         .join(relative)
 }
 

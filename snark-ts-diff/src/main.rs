@@ -3,10 +3,13 @@
 //! Two modes:
 //!
 //!   # single input, prepare once, parse N times, report best (min) ms
-//!   cargo run --release -p snark-ts-diff -- <grammar.js> <input-file> [iters]
+//!   cargo run --release -p snark-ts-diff -- <grammar.js|grammar.json> <input-file> [iters]
 //!
 //!   # recovering parse, prepare once, parse N times, report best (min) ms
-//!   cargo run --release -p snark-ts-diff -- recover <grammar.js> <input-file> [iters]
+//!   cargo run --release -p snark-ts-diff -- recover <grammar.js|grammar.json> <input-file> [iters]
+//!
+//!   # lowering/JIT readiness for one grammar
+//!   cargo run --release -p snark-ts-diff -- readiness <grammar.js|grammar.json>
 //!
 //!   # size ladder: prepare once, sweep JSON of growing object counts, print
 //!   # a table of ms + bytes/ms + ratio-vs-previous. The `x_prev` column is the
@@ -41,8 +44,19 @@ struct Prepared {
     plan: WeavyParsePlan,
 }
 
+fn load_grammar_json(grammar_path: &str) -> String {
+    let path = Path::new(grammar_path);
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "json")
+    {
+        return fs::read_to_string(path).expect("read grammar.json");
+    }
+    snark_dsl::emit_with_boa(path).expect("emit grammar.js")
+}
+
 fn prepare(grammar_path: &str) -> Prepared {
-    let json = snark_dsl::emit_with_boa(Path::new(grammar_path)).expect("emit");
+    let json = load_grammar_json(grammar_path);
     let raw = RawGrammarJson::from_tree_sitter_json_str(&json).expect("import");
     let validated = ValidatedGrammar::from_raw(&raw).expect("validate");
     let lexical = LexicalFacts::from_grammar(&validated);
@@ -62,9 +76,9 @@ fn prepare(grammar_path: &str) -> Prepared {
 /// so a sampler (stax) can attach to the table build in isolation.
 fn run_tablebench(grammar_path: &str, iters: usize) {
     let t = Instant::now();
-    let json = snark_dsl::emit_with_boa(Path::new(grammar_path)).expect("emit");
+    let json = load_grammar_json(grammar_path);
     println!(
-        "emit_with_boa: {:.1} ms",
+        "load grammar json: {:.1} ms",
         t.elapsed().as_secs_f64() * 1000.0
     );
     let raw = RawGrammarJson::from_tree_sitter_json_str(&json).expect("import");
@@ -165,6 +179,12 @@ fn iters_for(bytes: usize) -> usize {
 /// return it, or `None` if the `tree-sitter` CLI is missing / generate fails.
 /// The reference is tree-sitter's OUTPUT/behaviour, never its generated `.c`.
 fn tree_sitter_setup(grammar_path: &str) -> Option<PathBuf> {
+    if Path::new(grammar_path)
+        .extension()
+        .is_some_and(|extension| extension != "js")
+    {
+        return None;
+    }
     let ok = Command::new("tree-sitter")
         .arg("--version")
         .output()
@@ -260,13 +280,87 @@ fn run_ladder(grammar_path: &str, max_objects: u64) {
     }
 }
 
+fn run_readiness(grammar_path: &str) {
+    let p = prepare(grammar_path);
+    let analysis = p.plan.analysis();
+    let readiness = &analysis.readiness;
+    let lexer = &readiness.lexer;
+    println!("grammar: {grammar_path}");
+    println!(
+        "parser: neutral_ops={} snark_intrinsics={} lexer_graph={} sink={} dialect={} host_barriers={} opaque={} host_calls={} stencils_needed={} native_copy_patch_jit_available={}",
+        readiness.neutral_weavy_op_count,
+        readiness.snark_intrinsic_count,
+        readiness.lexer_graph_intrinsic_count,
+        readiness.sink_op_intrinsic_count,
+        readiness.dialect_op_intrinsic_count,
+        readiness.host_call_barrier_intrinsic_count,
+        readiness.opaque_intrinsic_count,
+        readiness.host_call_intrinsic_count,
+        readiness.needs_snark_stencils(),
+        readiness.native_copy_patch_jit_available
+    );
+    println!(
+        "lexer: modes={} terminals={} literal_sets={}/{} pattern_sets={}/{} dfa_sets={}/{} leaf_rematch={} known_patterns={} regex_automata={} rust_regex_fallback={} unsupported_patterns={} unsupported_terminals={} unsupported_symbols={} external_scanners={}",
+        analysis.lexer.mode_count,
+        analysis.lexer.terminal_count,
+        lexer.merged_literal_set_count,
+        lexer.merged_literal_terminal_count,
+        lexer.merged_pattern_set_count,
+        lexer.merged_pattern_terminal_count,
+        lexer.merged_pattern_dfa_set_count,
+        lexer.merged_pattern_dfa_terminal_count,
+        lexer.merged_pattern_leaf_rematch_terminal_count,
+        lexer.known_pattern_count,
+        lexer.regex_automata_count,
+        lexer.rust_regex_fallback_count,
+        lexer.unsupported_pattern_count,
+        lexer.unsupported_terminal_count,
+        lexer.unsupported_symbol_count,
+        lexer.external_scanner_candidate_count
+    );
+    println!(
+        "visibility: parser={} lexer={} full={} neutral_only={}",
+        readiness.is_parser_fully_visible(),
+        lexer.is_fully_visible(),
+        readiness.is_fully_visible(),
+        readiness.is_neutral_weavy_only()
+    );
+    if readiness.barrier_summaries.is_empty() {
+        println!("barriers: none");
+    } else {
+        println!("barriers:");
+        for summary in &readiness.barrier_summaries {
+            println!("  {:?}: {}", summary.barrier, summary.count);
+        }
+    }
+    if readiness.snark_stencil_family_summaries.is_empty() {
+        println!("stencil_families: none");
+    } else {
+        println!("stencil_families:");
+        for summary in &readiness.snark_stencil_family_summaries {
+            println!(
+                "  {:?}/{:?}: {}",
+                summary.family, summary.execution, summary.count
+            );
+        }
+    }
+    if readiness.snark_stencil_state_summaries.is_empty() {
+        println!("stencil_state: none");
+    } else {
+        println!("stencil_state:");
+        for summary in &readiness.snark_stencil_state_summaries {
+            println!("  {:?}: {}", summary.state, summary.count);
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.get(1).map(|s| s == "recover").unwrap_or(false) {
         let grammar_path = args
             .get(2)
-            .expect("usage: recover <grammar.js> <input> [iters]");
+            .expect("usage: recover <grammar.js|grammar.json> <input> [iters]");
         let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
         let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
         let p = prepare(grammar_path);
@@ -301,8 +395,18 @@ fn main() {
         return;
     }
 
+    if args.get(1).map(|s| s == "readiness").unwrap_or(false) {
+        let grammar_path = args
+            .get(2)
+            .expect("usage: readiness <grammar.js|grammar.json>");
+        run_readiness(grammar_path);
+        return;
+    }
+
     if args.get(1).map(|s| s == "tablebench").unwrap_or(false) {
-        let grammar_path = args.get(2).expect("usage: tablebench <grammar.js> [iters]");
+        let grammar_path = args
+            .get(2)
+            .expect("usage: tablebench <grammar.js|grammar.json> [iters]");
         let iters: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(50);
         run_tablebench(grammar_path, iters);
         return;
@@ -344,13 +448,15 @@ fn main() {
     if args.get(1).map(|s| s == "ladder").unwrap_or(false) {
         let grammar_path = args
             .get(2)
-            .expect("usage: ladder <grammar.js> [max_objects]");
+            .expect("usage: ladder <grammar.js|grammar.json> [max_objects]");
         let max_objects: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(8000);
         run_ladder(grammar_path, max_objects);
         return;
     }
 
-    let grammar_path = args.get(1).expect("usage: <grammar.js> <input> [iters]");
+    let grammar_path = args
+        .get(1)
+        .expect("usage: <grammar.js|grammar.json> <input> [iters]");
     let input = fs::read_to_string(args.get(2).expect("input file")).expect("read input");
     let iters: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
 
