@@ -254,19 +254,38 @@ struct NodeAnn {
     /// Structural noise — descend to the inner named child before mapping.
     #[facet(default)]
     transparent: bool,
-    /// Struct field name -> child selector (`named:N` | `token`).
+    /// Generated struct name when the variant's payload is a struct.
+    #[facet(rename = "struct", default)]
+    struct_name: Option<String>,
+    /// Scalar Rust type when the variant's payload is a leaf (`i64` | `String`).
     #[facet(default)]
-    fields: BTreeMap<String, String>,
+    scalar: Option<String>,
+    /// Struct field name -> {child selector, Rust field type}.
+    #[facet(default)]
+    fields: BTreeMap<String, FieldAnn>,
 }
 
-/// AST enrichment for the gingembre expression nodes, written in the `ast()` DSL. This is
-/// the whole mapping the generic builder needs — no hardcoded Rust hints.
+#[derive(facet::Facet, Default, Debug)]
+struct FieldAnn {
+    /// Child selector (`named:N` | `token`).
+    from: String,
+    /// Rust field type.
+    #[facet(default)]
+    ty: String,
+}
+
+/// AST enrichment for the gingembre expression nodes, written in the `ast()` DSL. Carries
+/// everything BOTH the builder (variant/field/selector) and the codegen (struct/scalar/
+/// field types) need — no hardcoded Rust.
 const ANN_SRC: &str = r#"
 ast({
-  binary:   { as: "Binary",   fields: { left: "named:0", op: "token", right: "named:1" } },
-  variable: { as: "Variable" },
+  binary:   { as: "Binary", struct: "PBin",
+              fields: { left:  { from: "named:0", ty: "PExpr" },
+                        op:    { from: "token",   ty: "String" },
+                        right: { from: "named:1", ty: "PExpr" } } },
+  variable: { as: "Variable", scalar: "String" },
   literal:  { transparent: true },
-  number:   { as: "Number" },
+  number:   { as: "Number", scalar: "i64" },
 });
 "#;
 
@@ -296,6 +315,23 @@ fn ast_proof() {
     let ann_json = snark_dsl::annotations_from_source(ANN_SRC, "gingembre.ast.js")
         .expect("emit annotations");
     let anns: Annotations = facet_json::from_str(&ann_json).expect("decode annotations");
+
+    // Item 2: the AST types PExpr/PBin are GENERATED from the annotations, not hand-written.
+    let generated = codegen(&anns, "PExpr");
+    println!("--- codegen: #[derive(Facet)] AST from grammar annotations ---\n{generated}--- end ---");
+    for expected in [
+        "enum PExpr",
+        "Binary(Box<PBin>)",
+        "Variable(String)",
+        "Number(i64)",
+        "struct PBin",
+        "left: PExpr,",
+        "op: String,",
+        "right: PExpr,",
+    ] {
+        assert!(generated.contains(expected), "codegen missing {expected:?}");
+    }
+    println!("✓ item 2: AST types generated from annotations match the hand-written PExpr/PBin");
 
     for src in ["{{ 1 + 2 }}", "{{ 1 + 2 * 3 }}", "{{ x }}"] {
         let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).expect("parse");
@@ -384,10 +420,10 @@ fn build<'f>(
                 .get(node.kind())
                 .unwrap_or_else(|| panic!("no annotation for struct node {:?}", node.kind()));
             for field in st.fields.iter() {
-                let selector = ann.fields.get(field.name).unwrap_or_else(|| {
+                let field_ann = ann.fields.get(field.name).unwrap_or_else(|| {
                     panic!("no field mapping for {}.{}", node.kind(), field.name)
                 });
-                let child = select_child(node, selector);
+                let child = select_child(node, &field_ann.from);
                 p = p.begin_field(field.name)?;
                 p = build(p, child, anns)?;
                 p = p.end()?;
@@ -426,6 +462,51 @@ fn select_child<'a>(node: &'a RuntimeResolvedNode, selector: &str) -> &'a Runtim
     } else {
         panic!("unknown child selector {selector:?}")
     }
+}
+
+/// Item 2: emit the `#[derive(Facet)]` AST types straight from the annotations. Variants are
+/// the nodes with an `as`; a struct payload becomes `Variant(Box<Struct>)` (boxed for
+/// recursion), a scalar becomes `Variant(ty)`; each named struct is emitted from its
+/// `fields`. In the real thing node-types (derived in-snark from the grammar) supplies field
+/// cardinality → `T`/`Option<T>`/`Vec<T>`; here the annotations carry the types directly.
+fn codegen(anns: &Annotations, enum_name: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let mut structs: Vec<(&String, &NodeAnn)> = Vec::new();
+
+    writeln!(
+        out,
+        "#[derive(facet::Facet, Debug, PartialEq)]\n#[repr(u8)]\nenum {enum_name} {{"
+    )
+    .unwrap();
+    for ann in anns.values() {
+        let Some(variant) = &ann.as_variant else {
+            continue;
+        };
+        let payload = if let Some(st) = &ann.struct_name {
+            structs.push((st, ann));
+            format!("Box<{st}>")
+        } else if let Some(scalar) = &ann.scalar {
+            scalar.clone()
+        } else {
+            continue;
+        };
+        writeln!(out, "    {variant}({payload}),").unwrap();
+    }
+    writeln!(out, "}}").unwrap();
+
+    for (st_name, ann) in structs {
+        writeln!(
+            out,
+            "\n#[derive(facet::Facet, Debug, PartialEq)]\nstruct {st_name} {{"
+        )
+        .unwrap();
+        for (fname, f) in &ann.fields {
+            writeln!(out, "    {fname}: {},", f.ty).unwrap();
+        }
+        writeln!(out, "}}").unwrap();
+    }
+    out
 }
 
 /// The first named node under the interpolation (the expression).
