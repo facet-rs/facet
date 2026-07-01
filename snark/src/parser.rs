@@ -3030,7 +3030,11 @@ impl<'a> LrTableBuilder<'a> {
         let mut queue = VecDeque::new();
         let mut start_items = take_map(&mut pool, width, item_count);
         for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
-            start_items.insert(self.dense(*production, 0), &[LookaheadSymbol::Eof], interner);
+            start_items.insert(
+                self.dense(*production, 0),
+                &[LookaheadSymbol::Eof],
+                interner,
+            );
         }
         let start_items = self.closure(start_items, &mut scratch);
         let start = push_item_set(
@@ -3103,7 +3107,9 @@ impl<'a> LrTableBuilder<'a> {
             // walk. The whole loop is bitwise OR — no Vec, no interning, no sort.
             let production_index = production_id.get() as usize;
             scratch.first.clear();
-            scratch.first.or_from(&self.first.suffix_first[production_index][dot]);
+            scratch
+                .first
+                .or_from(&self.first.suffix_first[production_index][dot]);
             if self.first.suffix_nullable[production_index][dot] {
                 scratch.fallback.clear();
                 if let Some(current) = map.words_of(dense) {
@@ -3468,7 +3474,12 @@ impl ItemMap {
 
     /// Symbol-keyed insert for seeding and goto grouping (not the closure hot loop).
     /// The interner is frozen, so this is a pure lookup + bit set.
-    fn insert(&mut self, dense: u32, lookaheads: &[LookaheadSymbol], interner: &LookaheadInterner) -> bool {
+    fn insert(
+        &mut self,
+        dense: u32,
+        lookaheads: &[LookaheadSymbol],
+        interner: &LookaheadInterner,
+    ) -> bool {
         let base = self.row_base(dense);
         let mut changed = false;
         for &symbol in lookaheads {
@@ -3673,7 +3684,6 @@ impl FirstFacts {
             suffix_nullable,
         }
     }
-
 }
 
 fn productions_by_lhs(grammar: &ParserGrammar) -> Vec<Vec<ProductionId>> {
@@ -4355,7 +4365,6 @@ pub struct ExternalScanRequest<'a> {
 }
 
 impl ExternalScanRequest<'_> {
-    #[cfg(feature = "weavy-lowering")]
     pub(crate) const fn new<'a>(
         state: ParseStateId,
         external: ExternalId,
@@ -6732,8 +6741,6 @@ extras (
         assert!(texts.contains(&"+"), "resolved terminals: {texts:?}");
         assert!(texts.contains(&"*"), "resolved terminals: {texts:?}");
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn prepared_weavy_resolved_tree_preserves_anonymous_gingembre_operators() {
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
@@ -6959,8 +6966,6 @@ extras (
             "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))",
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_call_arguments_through_weavy_runtime() {
         let input = "{{ greet(user.name, suffix) }}";
@@ -6978,8 +6983,6 @@ extras (
         assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_index_postfix_through_weavy_runtime() {
         let input = "{{ items[1].name }}";
@@ -6997,8 +7000,6 @@ extras (
         assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_optional_postfix_through_weavy_runtime() {
         let input = "{{ fetch()[0]? | default(none) }}";
@@ -7016,8 +7017,6 @@ extras (
         assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_compound_primaries_through_weavy_runtime() {
         let input = r#"{{ {"name": user.name, "ok": true,} }}"#;
@@ -7035,8 +7034,6 @@ extras (
         assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_filters_and_tests_through_weavy_runtime() {
         let input = "{{ value | default(fallback) is not none }}";
@@ -7054,8 +7051,6 @@ extras (
         assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_unary_precedence_through_weavy_runtime() {
         let input = "{{ not a == b }}";
@@ -7073,8 +7068,6 @@ extras (
         assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_styx_authored_gingembre_binary_precedence_through_weavy_runtime() {
         let input = "{{ a + b * c }}";
@@ -7876,8 +7869,6 @@ extras (
             }"##,
         )
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_inserts_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_fixture();
@@ -7898,8 +7889,6 @@ extras (
         assert_eq!(weavy_report.failure_count(), 0);
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_inserts_node_driven_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_node_fixture();
@@ -8051,8 +8040,6 @@ extras (
             })
             .collect()
     }
-
-    #[cfg(feature = "weavy-lowering")]
     fn weavy_reused_byte_ranges(
         report: &crate::lower::weavy::WeavyParseReport,
     ) -> Vec<(usize, usize)> {
@@ -8113,8 +8100,6 @@ extras (
             vec![None, Some(6)]
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_reparse_matches_full_parse_oracle() {
         let (validated, parser, table) = flagged_regex_fixture();
@@ -8144,8 +8129,6 @@ extras (
         assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(3, 6)]);
         assert_eq!(session.last_input(), Some("abcXYZ"));
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_does_not_reuse_node_that_peeked_into_edit() {
         let (validated, parser, table) = flagged_regex_fixture();
@@ -8168,8 +8151,6 @@ extras (
             "Weavy must not reuse a node that inspected the edit boundary"
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_reuses_suffix_across_edited_extra() {
         let (validated, parser, table) = extra_comment_reuse_fixture();
@@ -8195,8 +8176,6 @@ extras (
         );
         assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(0, 1), (6, 7)]);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_reuses_node_with_attached_extra() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
@@ -8225,8 +8204,6 @@ extras (
         );
         assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(0, 7)]);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_does_not_reuse_error_containing_node() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
@@ -8251,8 +8228,6 @@ extras (
             "wrapper node contains ERROR and must not be reused"
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_recovery_matches_skip_invalid_input_shape() {
         let (validated, parser, table) = wrapped_extra_reuse_fixture();
@@ -8278,8 +8253,6 @@ extras (
             "recovering Weavy parse should emit an ERROR tree event"
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_does_not_reuse_root_across_boundary_insertion() {
         let (validated, parser, table) = repeated_word_fixture();
@@ -8302,8 +8275,6 @@ extras (
         assert_eq!(reparsed.tree().to_sexp(), "(source_file (word) (word))");
         assert!(weavy_reused_byte_ranges(&reparsed).is_empty());
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_rejects_mismatched_edit_context() {
         let (validated, parser, table) = flagged_regex_fixture();
@@ -8320,8 +8291,6 @@ extras (
         ));
         assert_eq!(session.last_input(), Some("ABCXYZ"));
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_preserves_regex_flags() {
         let (validated, parser, table) = flagged_regex_fixture();
@@ -8366,8 +8335,6 @@ extras (
             }"##,
         )
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_resolves_symbol_references_inside_token() {
         let (validated, parser, table) = lexical_symbol_fixture();
@@ -8562,8 +8529,6 @@ extras (
             "observed: {observed:#?}"
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_reuses_until_text_around_interpolation_edit() {
         let (validated, parser, table) = until_reuse_fixture();
@@ -8595,8 +8560,6 @@ extras (
         );
         assert_eq!(weavy_reused_byte_ranges(&reparsed), vec![(0, 6), (15, 20)]);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn weavy_runtime_parse_session_reuse_metadata_survives_reparse_chains() {
         let (validated, parser, table) = until_reuse_fixture();
@@ -8664,8 +8627,6 @@ extras (
             "(source_file (wrapper (left) (comment) (right)) (suffix))"
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn lexical_primitives_parse_through_weavy_runtime() {
         let (validated, parser, table) = lexical_primitives_fixture();

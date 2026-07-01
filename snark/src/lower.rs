@@ -9,6 +9,4 @@
 //!
 //! Raw `grammar.json` DTOs and generated Tree-sitter implementation files are
 //! not this layer.
-
-#[cfg(feature = "weavy-lowering")]
 pub mod weavy;

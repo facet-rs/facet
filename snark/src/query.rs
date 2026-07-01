@@ -1814,7 +1814,6 @@ impl QueryBundle {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "weavy-lowering")]
     use crate::{
         grammar::RawGrammarJson,
         lexical::LexicalFacts,
@@ -1827,8 +1826,6 @@ mod tests {
         QuerySource, anonymous_node_literals, capture_names, injection_patterns,
         named_node_references,
     };
-
-    #[cfg(feature = "weavy-lowering")]
     fn parse_injection_fixture_events(
         raw_json: &str,
         input: &str,
@@ -1969,8 +1966,6 @@ mod tests {
         assert_eq!(pattern.captures.len(), 1);
         assert_eq!(pattern.captures[0].capture_name, "injection.content");
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn extracts_runtime_injection_regions() {
         let (parser, tree_events) = parse_injection_fixture_events(
@@ -2010,8 +2005,6 @@ mod tests {
         assert_eq!(regions[0].bytes().start().get(), 0);
         assert_eq!(regions[0].bytes().end().get(), 5);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn pairs_dynamic_injection_languages_with_sibling_content() {
         let input = "lua:PRINT;js:RUN;";
@@ -2068,8 +2061,6 @@ mod tests {
             vec![("lua", "PRINT"), ("js", "RUN")]
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn filters_injection_patterns_with_capture_predicates() {
         let input = "pwsh:PRINT;hbs:RUN;";

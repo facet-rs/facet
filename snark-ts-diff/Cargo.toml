@@ -10,7 +10,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-snark = { path = "../snark", features = ["json-import", "weavy-lowering"] }
+snark = { path = "../snark", features = ["json-import"] }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }
 facet = { path = "../facet" }
 facet-json = { path = "../facet-json" }

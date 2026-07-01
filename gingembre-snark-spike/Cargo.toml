@@ -12,7 +12,7 @@ publish = false
 description = "SPIKE (throwaway): prove snark-as-gingembre-front-end via resolved-CST -> ast::Template, oracle'd against cst_lower."
 
 [dependencies]
-snark = { path = "../snark", features = ["json-import", "weavy-lowering"] }
+snark = { path = "../snark", features = ["json-import"] }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }
 gingembre = { path = "../gingembre" }
 futures = "0.3"

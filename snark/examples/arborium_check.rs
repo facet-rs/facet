@@ -2,7 +2,7 @@
 //! grammar.json, build the parse table, and (if a sample exists) parse it. Reports which
 //! grammars are usable in snark today, so we know what to vendor into the playground.
 //!
-//! Usage: cargo run -p snark --features json-import,weavy-lowering --example arborium_check -- [LANGS_DIR]
+//! Usage: cargo run -p snark --features json-import --example arborium_check -- [LANGS_DIR]
 //! Default LANGS_DIR = ~/oss/arborium/langs
 
 use std::{

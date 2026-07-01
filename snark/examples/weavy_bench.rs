@@ -1,7 +1,7 @@
 //! Benchmark the prepared Weavy runtime path on the same grammar + input, separating
 //! one-time setup from fresh-plan and warm-plan per-parse cost.
 //!
-//! Usage: cargo run --release -p snark --features json-import,weavy-lowering \
+//! Usage: cargo run --release -p snark --features json-import \
 //!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|strict|recovering]
 
 use std::{

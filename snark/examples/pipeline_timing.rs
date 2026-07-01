@@ -3,7 +3,7 @@
 //! -> lexical -> normalize -> prepare -> parse table -> Weavy parse plan ->
 //! parse. Compare the table-build line against everything else.
 //!
-//! Usage: cargo run --release -p snark --features json-import,weavy-lowering \
+//! Usage: cargo run --release -p snark --features json-import \
 //!          --example pipeline_timing -- [GRAMMAR_JS] [SAMPLE]
 
 use std::{env, path::PathBuf, time::Instant};

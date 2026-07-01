@@ -1062,8 +1062,6 @@ mod tests {
             ]
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn executes_pinned_css_highlight_assertions_through_weavy_runtime_query() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -1158,8 +1156,6 @@ mod tests {
             "(stylesheet (rule_set (selectors (universal_selector)) (block)))"
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_css_universal_selector_through_weavy_lowering() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -1264,8 +1260,6 @@ mod tests {
             "(stylesheet (rule_set (selectors (class_selector (class_name (identifier)))) (block)) (rule_set (selectors (class_selector (tag_name) (class_name (identifier))) (class_selector (class_selector (class_name (identifier))) (class_name (identifier)))) (block)))"
         );
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_css_class_selectors_through_weavy_lowering() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -1402,8 +1396,6 @@ mod tests {
 
         assert_same!(actual_tree, selector_cases[5].expected);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_css_pseudo_class_selectors_through_weavy_external_scanner() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -1465,8 +1457,6 @@ mod tests {
         );
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_css_pseudo_class_selectors_through_weavy_runtime_scanner_snapshots() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -1725,8 +1715,6 @@ mod tests {
 
         assert_same!(actual_tree, selector_cases[10].expected);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_css_descendant_selectors_through_weavy_external_scanner() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -2011,8 +1999,6 @@ mod tests {
 
         assert_same!(actual_tree, declaration_cases[1].expected);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_css_statements_through_weavy_runtime_stack_tree() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -2075,8 +2061,6 @@ mod tests {
             assert!(weavy_report.stats().step_count > 0);
         }
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_css_important_declarations_through_weavy_runtime_stack_tree() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -2136,8 +2120,6 @@ mod tests {
         );
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn executes_css_important_declaration_highlight_through_weavy_glr_lineage() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -2196,8 +2178,6 @@ mod tests {
         );
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_css_important_declarations_through_weavy_glr_conflict() {
         let package = TreeSitterPackageImporter::new(CSS_FIXTURE)
@@ -2357,8 +2337,6 @@ mod tests {
 
         assert_same!(actual_tree, cases[4].expected);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn executes_json_key_highlights_through_weavy_runtime_events() {
         let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
@@ -2425,8 +2403,6 @@ mod tests {
         );
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn executes_json_comment_highlights_through_weavy_runtime_events() {
         let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
@@ -2522,8 +2498,6 @@ mod tests {
 
         assert_same!(actual_tree, expected);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_pinned_json_comments_through_weavy_lowering() {
         let package = TreeSitterPackageImporter::new(JSON_FIXTURE)
@@ -2557,8 +2531,6 @@ mod tests {
         assert_same!(weavy_report.tree(), &cases[4].expected);
         assert!(weavy_report.stats().step_count > 0);
     }
-
-    #[cfg(feature = "weavy-lowering")]
     #[test]
     fn parses_json_leading_visible_extra_through_weavy_lowering() {
         let package = TreeSitterPackageImporter::new(JSON_FIXTURE)

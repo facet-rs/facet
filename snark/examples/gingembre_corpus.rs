@@ -2,7 +2,7 @@
 //! templates parse cleanly (no Error / Missing tree events).
 //!
 //! Usage:
-//!   cargo run -p snark --features json-import,weavy-lowering --example gingembre_corpus -- [GRAMMAR_JS] [CORPUS_ROOT]
+//!   cargo run -p snark --features json-import --example gingembre_corpus -- [GRAMMAR_JS] [CORPUS_ROOT]
 //!
 //! Defaults:
 //!   GRAMMAR_JS  = playgrounds/snark/src/bundled/gingembre/grammar.js (relative to repo)

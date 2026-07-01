@@ -118,8 +118,7 @@ fn main() {
     let mut pass = 0usize;
     let mut fail = 0usize;
     for (label, src) in SAMPLES {
-        let report = match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, src)
-        {
+        let report = match parse_prepared_weavy_with_report(&plan, &parser, &table, src) {
             Ok(report) => report,
             Err(e) => {
                 println!("✗ {label}: snark parse error: {e:?}");
@@ -158,7 +157,7 @@ fn repro(grammar_path: &str, input: &str) {
     let parser = normalized.prepare_productions_for_items().expect("prepare");
     let table = ParseTable::from_grammar(&parser).expect("table");
     let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("plan");
-    match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, input) {
+    match parse_prepared_weavy_with_report(&plan, &parser, &table, input) {
         Ok(report) => match report.accepted_resolved_tree(&parser, input) {
             Some(tree) => dump(&tree, 0),
             None => println!("(no resolved tree)"),
