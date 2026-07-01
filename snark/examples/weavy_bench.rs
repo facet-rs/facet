@@ -9,7 +9,10 @@ use std::{env, path::PathBuf, time::Instant};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{RuntimeWeavyPlan, parse_prepared_runtime_recovering_with_report_and_scanner},
+    lower::weavy::{
+        RuntimeWeavyPlan, parse_prepared_runtime_recovering_with_report_and_scanner,
+        parse_prepared_runtime_with_report_and_scanner,
+    },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
@@ -57,11 +60,19 @@ fn main() {
     let t = Instant::now();
     for _ in 0..iters {
         let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("runtime weavy plan");
-        let _ = parse_prepared_runtime_recovering_with_report_and_scanner(
+        let _ = parse_prepared_runtime_with_report_and_scanner(
             &plan, &validated, &parser, &table, &input, None,
         );
     }
-    let fresh_plan_total = t.elapsed();
+    let strict_fresh_plan_total = t.elapsed();
+
+    let t = Instant::now();
+    for _ in 0..iters {
+        let _ = parse_prepared_runtime_with_report_and_scanner(
+            &plan, &validated, &parser, &table, &input, None,
+        );
+    }
+    let strict_warm_plan_total = t.elapsed();
 
     let t = Instant::now();
     for _ in 0..iters {
@@ -69,7 +80,7 @@ fn main() {
             &plan, &validated, &parser, &table, &input, None,
         );
     }
-    let warm_plan_total = t.elapsed();
+    let recovering_warm_plan_total = t.elapsed();
 
     println!("grammar: {}", grammar_js.display());
     println!("input:   {} ({} bytes)", input_file.display(), input.len());
@@ -81,11 +92,15 @@ fn main() {
 
     println!("\nper-parse (avg over {iters}):");
     println!(
-        "  weavy, fresh plan          {:>8.3} ms",
-        ms(fresh_plan_total) / iters as f64
+        "  weavy strict, fresh plan   {:>8.3} ms",
+        ms(strict_fresh_plan_total) / iters as f64
     );
     println!(
-        "  weavy, warm plan           {:>8.3} ms",
-        ms(warm_plan_total) / iters as f64
+        "  weavy strict, warm plan    {:>8.3} ms",
+        ms(strict_warm_plan_total) / iters as f64
+    );
+    println!(
+        "  weavy recovering, warm     {:>8.3} ms",
+        ms(recovering_warm_plan_total) / iters as f64
     );
 }
