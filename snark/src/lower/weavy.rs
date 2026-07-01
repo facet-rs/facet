@@ -536,7 +536,7 @@ impl WeavyLexerProgram {
         Self {
             modes: modes
                 .into_iter()
-                .map(|compiled| WeavyLexModeProgram { compiled })
+                .map(WeavyLexModeProgram::from_compiled)
                 .collect(),
         }
     }
@@ -547,19 +547,55 @@ impl WeavyLexerProgram {
             .ok_or(WeavyParseError::MissingLexMode { mode })
     }
 
-    fn compiled_modes(&self) -> impl Iterator<Item = &parser_ir::CompiledLexMode> {
-        self.modes.iter().map(|mode| &mode.compiled)
+    fn modes(&self) -> impl Iterator<Item = &WeavyLexModeProgram> {
+        self.modes.iter()
     }
 }
 
 #[derive(Clone, Debug)]
 struct WeavyLexModeProgram {
-    compiled: parser_ir::CompiledLexMode,
+    terminals: Vec<parser_ir::CompiledLexTerminal>,
+    direct_pattern_set: Option<WeavyDirectPatternSet>,
 }
 
 impl WeavyLexModeProgram {
-    fn compiled(&self) -> &parser_ir::CompiledLexMode {
-        &self.compiled
+    fn from_compiled(compiled: parser_ir::CompiledLexMode) -> Self {
+        Self {
+            terminals: compiled.terminals,
+            direct_pattern_set: compiled.direct_pattern_set.map(WeavyDirectPatternSet::from),
+        }
+    }
+
+    fn terminals(&self) -> &[parser_ir::CompiledLexTerminal] {
+        &self.terminals
+    }
+
+    fn terminal(&self, terminal: parser_ir::TerminalId) -> Option<&parser_ir::CompiledLexTerminal> {
+        self.terminals.iter().find(|row| row.terminal == terminal)
+    }
+
+    fn match_direct_patterns(
+        &self,
+        input: &str,
+        byte_position: usize,
+        ends: &mut Vec<Option<parser_ir::LexMatch>>,
+    ) {
+        match_weavy_direct_pattern_set(input, self, byte_position, ends);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WeavyDirectPatternSet {
+    regex_set: regex::RegexSet,
+    terminal_indices: Vec<usize>,
+}
+
+impl From<parser_ir::CompiledLexPatternSet> for WeavyDirectPatternSet {
+    fn from(value: parser_ir::CompiledLexPatternSet) -> Self {
+        Self {
+            regex_set: value.regex_set,
+            terminal_indices: value.terminal_indices,
+        }
     }
 }
 
@@ -577,8 +613,8 @@ impl RuntimeWeavyAutoCloseIndex {
             terminal_specs: vec![None; parser.symbols().terminals().len()],
             ..Self::default()
         };
-        for mode in lexer_program.compiled_modes() {
-            for row in &mode.terminals {
+        for mode in lexer_program.modes() {
+            for row in mode.terminals() {
                 let parser_ir::CompiledTerminalMatcher::Expr(
                     parser_ir::CompiledLexExpr::AutoClose(spec),
                 ) = &row.matcher
@@ -3389,20 +3425,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 mode: state.lex_mode(),
             })?;
         let mode_program = self.lexer_program.mode(mode.id())?;
-        let compiled_mode = mode_program.compiled();
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
         {
             let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
-            match_compiled_direct_pattern_set(
-                self.input,
-                compiled_mode,
-                byte_position,
-                &mut direct_pattern_ends,
-            );
+            mode_program.match_direct_patterns(self.input, byte_position, &mut direct_pattern_ends);
         }
         let direct_pattern_ends = self.direct_pattern_ends.borrow();
-        for terminal_row in &compiled_mode.terminals {
+        for terminal_row in mode_program.terminals() {
             let Some(match_) = self.match_compiled_terminal_with_set(
                 terminal_row,
                 byte_position,
@@ -3518,16 +3548,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .ok_or(WeavyParseError::MissingLexMode {
                 mode: state.lex_mode(),
             })?;
-        let compiled_mode = self.lexer_program.mode(mode.id())?.compiled();
+        let mode_program = self.lexer_program.mode(mode.id())?;
         for terminal in mode.terminals() {
             let Some(lookahead) = self.lookahead_for_terminal(state, *terminal) else {
                 continue;
             };
-            let Some(terminal_row) = compiled_mode
-                .terminals
-                .iter()
-                .find(|row| row.terminal == *terminal)
-            else {
+            let Some(terminal_row) = mode_program.terminal(*terminal) else {
                 continue;
             };
             let parser_ir::CompiledTerminalMatcher::Expr(parser_ir::CompiledLexExpr::AutoClose(
@@ -4245,9 +4271,9 @@ fn push_runtime_weavy_candidate(
     }
 }
 
-fn match_compiled_direct_pattern_set(
+fn match_weavy_direct_pattern_set(
     input: &str,
-    mode: &parser_ir::CompiledLexMode,
+    mode: &WeavyLexModeProgram,
     byte_position: usize,
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
 ) {
