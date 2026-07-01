@@ -12,8 +12,8 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        RuntimeWeavyPlan, parse_prepared_runtime_recovering_with_report_and_scanner,
-        parse_prepared_runtime_with_report,
+        RuntimeWeavyPlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_with_report,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
@@ -76,12 +76,12 @@ fn main() {
     // Measure the entry points the playground calls: strict first, recovering
     // only when strict fails.
     let t0 = Instant::now();
-    let strict = parse_prepared_runtime_with_report(&runtime, &validated, &parser, &table, &input);
+    let strict = parse_prepared_weavy_with_report(&runtime, &validated, &parser, &table, &input);
     let t_strict = t0.elapsed().as_secs_f64() * 1000.0;
     let strict_ok = strict.is_ok();
 
     let t0 = Instant::now();
-    let _ = parse_prepared_runtime_recovering_with_report_and_scanner(
+    let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
         &runtime, &validated, &parser, &table, &input, None,
     );
     let t_recovering = t0.elapsed().as_secs_f64() * 1000.0;
@@ -116,10 +116,10 @@ fn main() {
     println!("\n---- steady state (parse, same input) ----");
     println!(
         "  {:<40} {:>11.3} ms   (strict ok? {})",
-        "parse_prepared_runtime_with_report", t_strict, strict_ok
+        "parse_prepared_weavy_with_report", t_strict, strict_ok
     );
     println!(
         "  {:<40} {:>11.3} ms",
-        "parse_prepared_runtime_recovering", t_recovering
+        "parse_prepared_weavy_recovering", t_recovering
     );
 }

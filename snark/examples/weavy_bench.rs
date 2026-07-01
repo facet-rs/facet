@@ -10,8 +10,8 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        RuntimeWeavyPlan, parse_prepared_runtime_recovering_with_report_and_scanner,
-        parse_prepared_runtime_with_report_and_scanner,
+        RuntimeWeavyPlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_with_report_and_scanner,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
@@ -95,7 +95,7 @@ fn main() {
         for _ in 0..iters {
             let plan =
                 RuntimeWeavyPlan::new(&validated, &parser, &table).expect("runtime weavy plan");
-            let _ = parse_prepared_runtime_with_report_and_scanner(
+            let _ = parse_prepared_weavy_with_report_and_scanner(
                 &plan, &validated, &parser, &table, &input, None,
             );
         }
@@ -105,7 +105,7 @@ fn main() {
     let strict_warm_plan_total = mode.runs_strict_warm().then(|| {
         let t = Instant::now();
         for _ in 0..iters {
-            let _ = parse_prepared_runtime_with_report_and_scanner(
+            let _ = parse_prepared_weavy_with_report_and_scanner(
                 &plan, &validated, &parser, &table, &input, None,
             );
         }
@@ -115,7 +115,7 @@ fn main() {
     let recovering_warm_plan_total = mode.runs_recovering_warm().then(|| {
         let t = Instant::now();
         for _ in 0..iters {
-            let _ = parse_prepared_runtime_recovering_with_report_and_scanner(
+            let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
                 &plan, &validated, &parser, &table, &input, None,
             );
         }

@@ -1820,7 +1820,7 @@ mod tests {
     use crate::{
         grammar::RawGrammarJson,
         lexical::LexicalFacts,
-        lower::weavy::{RuntimeWeavyPlan, parse_prepared_runtime_with_report},
+        lower::weavy::{RuntimeWeavyPlan, parse_prepared_weavy_with_report},
         parser::{ParseTable, ParserGrammar, TreeEvent},
         validated::ValidatedGrammar,
     };
@@ -1845,7 +1845,7 @@ mod tests {
         let table = ParseTable::from_grammar(&parser).unwrap();
         let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
         let report =
-            parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, input).unwrap();
+            parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, input).unwrap();
         (parser, report.accepted_tree_events())
     }
 

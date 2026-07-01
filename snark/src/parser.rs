@@ -6770,7 +6770,7 @@ extras (
 
     fn assert_styx_authored_gingembre_runtime(input: &str, expected_sexp: &str) {
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -6808,7 +6808,7 @@ extras (
         );
 
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let result = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let result = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         );
         assert!(result.is_err(), "snark unexpectedly accepted {input:?}");
@@ -6905,7 +6905,7 @@ extras (
     fn accepted_resolved_tree_preserves_anonymous_gingembre_delimiters() {
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{- x -}}";
-        let report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -6921,7 +6921,7 @@ extras (
     fn accepted_resolved_tree_preserves_anonymous_gingembre_operators() {
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{ 1 + 2 * 3 }}";
-        let report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -6938,7 +6938,7 @@ extras (
     fn prepared_weavy_resolved_tree_preserves_anonymous_gingembre_operators() {
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{ 1 + 2 * 3 }}";
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -7166,7 +7166,7 @@ extras (
     fn parses_styx_authored_gingembre_call_arguments_through_weavy_runtime() {
         let input = "{{ greet(user.name, suffix) }}";
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -7186,7 +7186,7 @@ extras (
     fn parses_styx_authored_gingembre_index_postfix_through_weavy_runtime() {
         let input = "{{ items[1].name }}";
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -7206,7 +7206,7 @@ extras (
     fn parses_styx_authored_gingembre_optional_postfix_through_weavy_runtime() {
         let input = "{{ fetch()[0]? | default(none) }}";
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -7226,7 +7226,7 @@ extras (
     fn parses_styx_authored_gingembre_compound_primaries_through_weavy_runtime() {
         let input = r#"{{ {"name": user.name, "ok": true,} }}"#;
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -7246,7 +7246,7 @@ extras (
     fn parses_styx_authored_gingembre_filters_and_tests_through_weavy_runtime() {
         let input = "{{ value | default(fallback) is not none }}";
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -7266,7 +7266,7 @@ extras (
     fn parses_styx_authored_gingembre_unary_precedence_through_weavy_runtime() {
         let input = "{{ not a == b }}";
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -7286,7 +7286,7 @@ extras (
     fn parses_styx_authored_gingembre_binary_precedence_through_weavy_runtime() {
         let input = "{{ a + b * c }}";
         let (validated, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             plan, validated, parser, table, input,
         )
         .unwrap();
@@ -8090,7 +8090,7 @@ extras (
     fn weavy_runtime_inserts_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_fixture();
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
             &validated,
             &parser,
@@ -8113,7 +8113,7 @@ extras (
     fn weavy_runtime_inserts_node_driven_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_node_fixture();
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
             &validated,
             &parser,
@@ -8340,7 +8340,7 @@ extras (
 
         let edit = RuntimeInputEdit::new(0, 3, 3);
         let reparsed = session.reparse(edit, "abcXYZ").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &validated, &parser, &table, "abcXYZ",
         )
         .unwrap();
@@ -8368,7 +8368,7 @@ extras (
 
         let edit = RuntimeInputEdit::new(3, 6, 6);
         let reparsed = session.reparse(edit, "ABCxyz").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &validated, &parser, &table, "ABCxyz",
         )
         .unwrap();
@@ -8398,7 +8398,7 @@ extras (
 
         let edit = RuntimeInputEdit::new(2, 5, 5);
         let reparsed = session.reparse(edit, "a#new\nb").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &validated, &parser, &table, "a#new\nb",
         )
         .unwrap();
@@ -8426,7 +8426,7 @@ extras (
 
         let edit = RuntimeInputEdit::new(7, 8, 8);
         let reparsed = session.reparse(edit, "a#old\nb2").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
             &validated,
             &parser,
@@ -8458,11 +8458,10 @@ extras (
 
         let edit = RuntimeInputEdit::new(4, 5, 5);
         let reparsed = session.reparse_recovering(edit, "a@\nb2").unwrap().clone();
-        let scratch =
-            crate::lower::weavy::parse_prepared_runtime_recovering_with_report_and_scanner(
-                &plan, &validated, &parser, &table, "a@\nb2", None,
-            )
-            .unwrap();
+        let scratch = crate::lower::weavy::parse_prepared_weavy_recovering_with_report_and_scanner(
+            &plan, &validated, &parser, &table, "a@\nb2", None,
+        )
+        .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert!(
@@ -8478,7 +8477,7 @@ extras (
         let input = "a@\nb1";
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
         let weavy_report =
-            crate::lower::weavy::parse_prepared_runtime_recovering_with_report_and_scanner(
+            crate::lower::weavy::parse_prepared_weavy_recovering_with_report_and_scanner(
                 &plan, &validated, &parser, &table, input, None,
             )
             .unwrap();
@@ -8510,7 +8509,7 @@ extras (
 
         let edit = RuntimeInputEdit::new(5, 5, 10);
         let reparsed = session.reparse(edit, "alpha beta").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
             &validated,
             &parser,
@@ -8549,7 +8548,7 @@ extras (
         let (validated, parser, table) = flagged_regex_fixture();
         let input = "ABCXYZ";
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &validated, &parser, &table, input,
         )
         .unwrap();
@@ -8596,7 +8595,7 @@ extras (
         let (validated, parser, table) = lexical_symbol_fixture();
         let input = "alpha:123";
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &validated, &parser, &table, input,
         )
         .unwrap();
@@ -8788,7 +8787,7 @@ extras (
             .reparse(edit, "hello {{title}} tail")
             .unwrap()
             .clone();
-        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
             &validated,
             &parser,
@@ -8827,7 +8826,7 @@ extras (
             .reparse(RuntimeInputEdit::new(16, 20, 19), "hello {{title}} end")
             .unwrap()
             .clone();
-        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
             &validated,
             &parser,
@@ -8862,7 +8861,7 @@ extras (
             .reparse(RuntimeInputEdit::new(2, 5, 5), "a#new\nb2")
             .unwrap()
             .clone();
-        let scratch = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
             &validated,
             &parser,
@@ -8884,7 +8883,7 @@ extras (
         let (validated, parser, table) = lexical_primitives_fixture();
         let input = "hello {# outer {# inner #} done #}";
         let plan = crate::lower::weavy::RuntimeWeavyPlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_runtime_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &validated, &parser, &table, input,
         )
         .unwrap();

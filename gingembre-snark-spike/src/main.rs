@@ -25,7 +25,7 @@ use gingembre::ast::{
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{RuntimeWeavyPlan, parse_prepared_runtime_with_report},
+    lower::weavy::{RuntimeWeavyPlan, parse_prepared_weavy_with_report},
     parser::{ParseTable, ParserGrammar, RuntimeResolvedNode},
     validated::ValidatedGrammar,
 };
@@ -110,7 +110,7 @@ fn main() {
     let mut fail = 0usize;
     for (label, src) in SAMPLES {
         let report =
-            match parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, src) {
+            match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, src) {
                 Ok(report) => report,
                 Err(e) => {
                     println!("✗ {label}: snark parse error: {e:?}");
@@ -152,7 +152,7 @@ fn repro(grammar_path: &str, input: &str) {
         .expect("prepare");
     let table = ParseTable::from_grammar(&parser).expect("table");
     let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("plan");
-    match parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, input) {
+    match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, input) {
         Ok(report) => match report.accepted_resolved_tree(&parser, input) {
             Some(tree) => dump(&tree, 0),
             None => println!("(no resolved tree)"),

@@ -4,8 +4,8 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        RuntimeWeavyPlan, parse_prepared_runtime_recovering_with_report_and_scanner,
-        parse_prepared_runtime_with_report,
+        RuntimeWeavyPlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_with_report,
     },
     parser::{ParseTable, ParserGrammar, ParserSymbol, TreeEvent},
     validated::ValidatedGrammar,
@@ -41,12 +41,11 @@ fn main() {
     let dump_errors = env::var_os("SNARK_NGINX_DUMP_ERRORS").is_some();
     if dump_errors
         && let Err(error) =
-            parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, &input)
+            parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, &input)
     {
         println!("non-recovering parse error: {error}");
     }
-    let parse_result =
-        parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, &input);
+    let parse_result = parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, &input);
     let parsed_at = Instant::now();
     println!("language: {}", raw.name);
     println!("input bytes: {}", input.len());
@@ -54,7 +53,7 @@ fn main() {
         Ok(report) => (report, false),
         Err(error) => {
             println!("parse failed: {error}");
-            match parse_prepared_runtime_recovering_with_report_and_scanner(
+            match parse_prepared_weavy_recovering_with_report_and_scanner(
                 &plan, &validated, &parser, &table, &input, None,
             ) {
                 Ok(report) => {

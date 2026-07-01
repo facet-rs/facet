@@ -85,7 +85,7 @@ profile asks for it — `stax` and a heap profile, same method that found the ti
 ## Answer (verified): the session compacts — the pool is never retained
 
 The append-only pool is **per-parse transient**. `RuntimeWeavyTreeJournal` is a *local*
-in the parse driver (`parse_prepared_runtime_*`), used to accumulate events cheaply
+in the parse driver (`parse_prepared_weavy_*`), used to accumulate events cheaply
 during GLR forking. At accept, the accepted branch's lineage is materialized into a
 `Vec<TreeEvent>` (the cactus walk, `collect`), and the pool is dropped when the parse
 function returns. It never enters the report.

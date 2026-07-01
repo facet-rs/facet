@@ -1096,19 +1096,19 @@ struct RuntimeWeavyAction {
     action: parser_ir::ParseAction,
 }
 
-/// Execute a prepared runtime stack/tree parser plan through Weavy.
-pub fn parse_prepared_runtime_with_report(
+/// Execute a prepared parser plan through Weavy.
+pub fn parse_prepared_weavy_with_report(
     plan: &RuntimeWeavyPlan,
     grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
-    parse_prepared_runtime_with_report_and_scanner(plan, grammar, parser, table, input, None)
+    parse_prepared_weavy_with_report_and_scanner(plan, grammar, parser, table, input, None)
 }
 
-/// Execute a prepared runtime stack/tree parser plan through Weavy with a scanner host.
-pub fn parse_prepared_runtime_with_report_and_scanner(
+/// Execute a prepared parser plan through Weavy with a scanner host.
+pub fn parse_prepared_weavy_with_report_and_scanner(
     plan: &RuntimeWeavyPlan,
     _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
@@ -1132,8 +1132,8 @@ pub fn parse_prepared_runtime_with_report_and_scanner(
     )
 }
 
-/// Execute a prepared runtime stack/tree parser plan and collect reusable-node metadata.
-pub fn parse_prepared_runtime_collecting_reuse_with_report_and_scanner(
+/// Execute a prepared Weavy plan and collect reusable-node metadata.
+pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     plan: &RuntimeWeavyPlan,
     _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
@@ -1157,8 +1157,8 @@ pub fn parse_prepared_runtime_collecting_reuse_with_report_and_scanner(
     )
 }
 
-/// Execute a prepared runtime stack/tree parser plan through Weavy with skip-invalid recovery.
-pub fn parse_prepared_runtime_recovering_with_report_and_scanner(
+/// Execute a prepared Weavy plan with skip-invalid recovery.
+pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
     plan: &RuntimeWeavyPlan,
     _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
@@ -1182,8 +1182,8 @@ pub fn parse_prepared_runtime_recovering_with_report_and_scanner(
     )
 }
 
-/// Execute a recovering prepared runtime plan and collect reusable-node metadata.
-pub fn parse_prepared_runtime_recovering_collecting_reuse_with_report_and_scanner(
+/// Execute a recovering prepared Weavy plan and collect reusable-node metadata.
+pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
     plan: &RuntimeWeavyPlan,
     _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
@@ -1259,7 +1259,7 @@ impl<'a> RuntimeWeavySession<'a> {
         input: impl Into<String>,
     ) -> Result<&RuntimeWeavyReport, RuntimeWeavyError> {
         let input = input.into();
-        let report = parse_prepared_runtime_collecting_reuse_with_report_and_scanner(
+        let report = parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
             self.plan,
             self.grammar,
             self.parser,
@@ -1285,7 +1285,7 @@ impl<'a> RuntimeWeavySession<'a> {
         let report = if let (Some(old_input), Some(last_report)) =
             (self.last_input.as_deref(), self.last_report.as_ref())
         {
-            reparse_prepared_runtime_with_report_and_scanner(
+            reparse_prepared_weavy_with_report_and_scanner(
                 self.plan,
                 self.grammar,
                 self.parser,
@@ -1297,7 +1297,7 @@ impl<'a> RuntimeWeavySession<'a> {
                 self.external_scanner,
             )?
         } else {
-            parse_prepared_runtime_collecting_reuse_with_report_and_scanner(
+            parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
                 self.plan,
                 self.grammar,
                 self.parser,
@@ -1320,7 +1320,7 @@ impl<'a> RuntimeWeavySession<'a> {
         input: impl Into<String>,
     ) -> Result<&RuntimeWeavyReport, RuntimeWeavyError> {
         let input = input.into();
-        let report = parse_prepared_runtime_recovering_collecting_reuse_with_report_and_scanner(
+        let report = parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
             self.plan,
             self.grammar,
             self.parser,
@@ -1346,7 +1346,7 @@ impl<'a> RuntimeWeavySession<'a> {
         let report = if let (Some(old_input), Some(last_report)) =
             (self.last_input.as_deref(), self.last_report.as_ref())
         {
-            reparse_prepared_runtime_recovering_with_report_and_scanner(
+            reparse_prepared_weavy_recovering_with_report_and_scanner(
                 self.plan,
                 self.grammar,
                 self.parser,
@@ -1358,7 +1358,7 @@ impl<'a> RuntimeWeavySession<'a> {
                 self.external_scanner,
             )?
         } else {
-            parse_prepared_runtime_recovering_collecting_reuse_with_report_and_scanner(
+            parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
                 self.plan,
                 self.grammar,
                 self.parser,
@@ -1378,7 +1378,7 @@ impl<'a> RuntimeWeavySession<'a> {
 
 /// Reparse one edited input through Weavy using reusable nodes from a previous report.
 #[allow(clippy::too_many_arguments)]
-pub fn reparse_prepared_runtime_with_report_and_scanner(
+pub fn reparse_prepared_weavy_with_report_and_scanner(
     plan: &RuntimeWeavyPlan,
     _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,
@@ -1409,7 +1409,7 @@ pub fn reparse_prepared_runtime_with_report_and_scanner(
 
 /// Reparse one edited input through Weavy with skip-invalid recovery.
 #[allow(clippy::too_many_arguments)]
-pub fn reparse_prepared_runtime_recovering_with_report_and_scanner(
+pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
     plan: &RuntimeWeavyPlan,
     _grammar: &ValidatedGrammar,
     parser: &parser_ir::ParserGrammar,

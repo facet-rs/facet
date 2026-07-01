@@ -16,7 +16,7 @@ use std::{env, path::PathBuf};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{RuntimeWeavyPlan, parse_prepared_runtime_recovering_with_report_and_scanner},
+    lower::weavy::{RuntimeWeavyPlan, parse_prepared_weavy_recovering_with_report_and_scanner},
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
 };
@@ -52,7 +52,7 @@ fn main() {
     let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("runtime weavy plan");
     let plan_ms = t_plan.elapsed().as_secs_f64() * 1000.0;
     let t_p = std::time::Instant::now();
-    let _ = parse_prepared_runtime_recovering_with_report_and_scanner(
+    let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
         &plan,
         &validated,
         &parser,
@@ -78,7 +78,7 @@ fn main() {
 
     for path in &files {
         let input = std::fs::read_to_string(path).unwrap_or_default();
-        let report = match parse_prepared_runtime_recovering_with_report_and_scanner(
+        let report = match parse_prepared_weavy_recovering_with_report_and_scanner(
             &plan, &validated, &parser, &table, &input, None,
         ) {
             Ok(report) => report,
