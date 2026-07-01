@@ -380,6 +380,9 @@ impl<'a> ValueBuilder<'a> {
                     prov,
                 );
             }
+            ConfigValue::ExplicitSome(s) => {
+                self.import_tree_recursive(&s.value, path);
+            }
         }
     }
 

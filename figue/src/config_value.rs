@@ -96,6 +96,8 @@ pub enum ConfigValue {
     Object(Sourced<ObjectMap>),
     /// An enum value (subcommand or enum field in config).
     Enum(Sourced<EnumValue>),
+    /// An explicit outer `Some(...)` marker for nested option deserialization.
+    ExplicitSome(Sourced<Box<ConfigValue>>),
 }
 
 pub trait ConfigValueVisitor {
@@ -129,6 +131,9 @@ impl ConfigValue {
                     path.pop();
                 }
             }
+            ConfigValue::ExplicitSome(sourced) => {
+                sourced.value.visit(visitor, path);
+            }
             _ => {}
         }
         visitor.exit_value(path, self);
@@ -159,6 +164,9 @@ impl ConfigValue {
                     path.pop();
                 }
             }
+            ConfigValue::ExplicitSome(sourced) => {
+                sourced.value.visit_mut(visitor, path);
+            }
             _ => {}
         }
     }
@@ -174,6 +182,7 @@ impl ConfigValue {
             ConfigValue::Array(s) => s.span,
             ConfigValue::Object(s) => s.span,
             ConfigValue::Enum(s) => s.span,
+            ConfigValue::ExplicitSome(s) => s.span,
         }
     }
 
@@ -188,6 +197,7 @@ impl ConfigValue {
             ConfigValue::Array(s) => &mut s.span,
             ConfigValue::Object(s) => &mut s.span,
             ConfigValue::Enum(s) => &mut s.span,
+            ConfigValue::ExplicitSome(s) => &mut s.span,
         }
     }
 
@@ -202,6 +212,7 @@ impl ConfigValue {
             ConfigValue::Array(s) => s.provenance.as_ref(),
             ConfigValue::Object(s) => s.provenance.as_ref(),
             ConfigValue::Enum(s) => s.provenance.as_ref(),
+            ConfigValue::ExplicitSome(s) => s.provenance.as_ref(),
         }
     }
 
@@ -284,6 +295,10 @@ impl ConfigValue {
                     };
                     value.set_file_provenance_recursive(file, &key_path);
                 }
+            }
+            ConfigValue::ExplicitSome(s) => {
+                s.set_file_provenance(file.clone(), path);
+                s.value.set_file_provenance_recursive(file, path);
             }
         }
     }

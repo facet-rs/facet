@@ -653,6 +653,9 @@ fn build_leaf_entry(
                 children,
             }
         }
+        ConfigValue::ExplicitSome(sourced) => {
+            build_leaf_entry(key, &sourced.value, is_sensitive, opts)
+        }
     }
 }
 

@@ -14,3 +14,4 @@ mod subcommand;
 mod subcommand_errors;
 mod subspans;
 mod unknown_keys;
+mod optional_value;

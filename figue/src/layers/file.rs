@@ -564,6 +564,7 @@ fn get_provenance(value: &ConfigValue) -> Option<&Provenance> {
         ConfigValue::Array(s) => s.provenance.as_ref(),
         ConfigValue::Object(s) => s.provenance.as_ref(),
         ConfigValue::Enum(s) => s.provenance.as_ref(),
+        ConfigValue::ExplicitSome(s) => s.provenance.as_ref().or_else(|| get_provenance(&s.value)),
     }
 }
 
@@ -587,6 +588,7 @@ mod tests {
             ConfigValue::Array(s) => s.provenance.as_ref(),
             ConfigValue::Object(s) => s.provenance.as_ref(),
             ConfigValue::Enum(s) => s.provenance.as_ref(),
+        ConfigValue::ExplicitSome(s) => s.provenance.as_ref().or_else(|| get_provenance(&s.value)),
         }
     }
 
