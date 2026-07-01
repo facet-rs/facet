@@ -11,6 +11,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
+    sync::Arc,
 };
 
 use weavy::{
@@ -551,15 +552,16 @@ impl RuntimeWeavyAutoCloseIndex {
     }
 
     fn index_literal_edits(&mut self, spec: &parser_ir::AutoCloseSpec) {
+        let tag = Arc::<str>::from(spec.tag.as_str());
         if let Some(close) = &spec.close {
             self.literal_edits
                 .entry(close.clone())
-                .or_insert_with(|| RuntimeWeavyAutoCloseStackEdit::Pop(spec.tag.clone()));
+                .or_insert_with(|| RuntimeWeavyAutoCloseStackEdit::Pop(Arc::clone(&tag)));
         }
         if let Some(open) = &spec.open {
             self.literal_edits
                 .entry(open.clone())
-                .or_insert_with(|| RuntimeWeavyAutoCloseStackEdit::Push(spec.tag.clone()));
+                .or_insert_with(|| RuntimeWeavyAutoCloseStackEdit::Push(Arc::clone(&tag)));
         }
     }
 
@@ -605,8 +607,8 @@ impl RuntimeWeavyAutoCloseIndex {
 
 #[derive(Clone, Debug)]
 enum RuntimeWeavyAutoCloseStackEdit {
-    Push(String),
-    Pop(String),
+    Push(Arc<str>),
+    Pop(Arc<str>),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2060,7 +2062,7 @@ struct RuntimeWeavyBranch {
     stack: Vec<RuntimeWeavyStackEntry>,
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
-    auto_close_stack: Vec<String>,
+    auto_close_stack: Vec<Arc<str>>,
     error_cost: u32,
     tree_journal: RuntimeWeavyTreeJournalHead,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
@@ -2718,7 +2720,7 @@ struct RuntimeWeavyStepper<'a> {
     stack: Cow<'a, [RuntimeWeavyStackEntry]>,
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
-    auto_close_stack: Cow<'a, [String]>,
+    auto_close_stack: Cow<'a, [Arc<str>]>,
     error_cost: u32,
     committed_start: Option<usize>,
     lookahead: Option<RuntimeWeavyToken>,
@@ -3359,7 +3361,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     if self
                         .auto_close_stack
                         .last()
-                        .is_some_and(|open| open.as_str() == tag.as_str()) =>
+                        .is_some_and(|open| open.as_ref() == tag.as_ref()) =>
                 {
                     self.auto_close_stack.to_mut().pop();
                 }
@@ -3395,7 +3397,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         *end_byte,
                         spec.start_prefix.as_deref().unwrap_or("<"),
                     )
-                    .map(RuntimeWeavyAutoCloseStackEdit::Push);
+                    .map(|tag| RuntimeWeavyAutoCloseStackEdit::Push(Arc::from(tag)));
                 }
                 parser_ir::scan_auto_close_tag_in_range(
                     self.input,
@@ -3403,7 +3405,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     *end_byte,
                     spec.end_prefix.as_deref().unwrap_or("</"),
                 )
-                .map(RuntimeWeavyAutoCloseStackEdit::Pop)
+                .map(|tag| RuntimeWeavyAutoCloseStackEdit::Pop(Arc::from(tag)))
             });
         if let Some(stack_edit) = stack_edit {
             match stack_edit {
