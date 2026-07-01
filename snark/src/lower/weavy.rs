@@ -979,13 +979,6 @@ impl WeavyParserProgram {
         dense_snark_intrinsic_semantic_stats(&self.dense)
     }
 
-    fn state_block(&self, state: parser_ir::ParseStateId) -> Result<BlockRef, WeavyParseError> {
-        self.state_block_refs
-            .get(state.get() as usize)
-            .copied()
-            .ok_or(WeavyParseError::MissingStateBlock { state })
-    }
-
     fn runtime_state_block(
         &self,
         state: parser_ir::ParseStateId,
@@ -994,29 +987,6 @@ impl WeavyParserProgram {
             .get(state.get() as usize)
             .copied()
             .ok_or(RuntimeWeavyStepError::MissingStateBlock { state })
-    }
-
-    fn action_block(
-        &self,
-        state: parser_ir::ParseStateId,
-        entry_index: usize,
-        action_index: usize,
-        action: parser_ir::ParseAction,
-    ) -> Result<BlockRef, WeavyParseError> {
-        let block = self
-            .action_blocks
-            .get(state.get() as usize)
-            .and_then(|rows| rows.get(entry_index))
-            .and_then(|blocks| blocks.get(action_index))
-            .filter(|block| block.action == action)
-            .map(|block| block.block_ref)
-            .ok_or(WeavyParseError::MissingActionBlock {
-                state,
-                entry_index,
-                action_index,
-                action,
-            })?;
-        Ok(block)
     }
 
     fn runtime_action_block(
@@ -3085,25 +3055,174 @@ impl fmt::Display for WeavyParseError {
 
 impl Error for WeavyParseError {}
 
-fn select_runtime_weavy_failure(failures: Vec<WeavyParseError>) -> WeavyParseError {
+fn select_runtime_weavy_failure(
+    input_ctx: RuntimeWeavyInput<'_>,
+    failures: Vec<RuntimeWeavyStepError>,
+    external_scanner_errors: &[String],
+) -> WeavyParseError {
     let failure_count = failures.len();
     failures
         .into_iter()
         .max_by_key(|error| {
-            runtime_weavy_failure_position(error)
+            runtime_weavy_failure_position(*error)
                 .map(|byte| (true, byte))
                 .unwrap_or((false, 0))
+        })
+        .map(|error| {
+            runtime_weavy_step_error_to_parse_error(input_ctx, error, external_scanner_errors)
         })
         .unwrap_or(WeavyParseError::NoViableBranch { failure_count })
 }
 
-fn runtime_weavy_failure_position(error: &WeavyParseError) -> Option<usize> {
+fn runtime_weavy_failure_position(error: RuntimeWeavyStepError) -> Option<usize> {
     match error {
-        WeavyParseError::NoToken { byte_position, .. }
-        | WeavyParseError::NoAction { byte_position, .. }
-        | WeavyParseError::TrailingInput { byte_position } => Some(*byte_position),
+        RuntimeWeavyStepError::NoToken { byte_position, .. }
+        | RuntimeWeavyStepError::NoAction { byte_position, .. }
+        | RuntimeWeavyStepError::TrailingInput { byte_position } => Some(byte_position),
         _ => None,
     }
+}
+
+fn runtime_weavy_step_error_to_parse_error(
+    input_ctx: RuntimeWeavyInput<'_>,
+    error: RuntimeWeavyStepError,
+    external_scanner_errors: &[String],
+) -> WeavyParseError {
+    match error {
+        RuntimeWeavyStepError::MissingState { state } => WeavyParseError::MissingState { state },
+        RuntimeWeavyStepError::MissingStateBlock { state } => {
+            WeavyParseError::MissingStateBlock { state }
+        }
+        RuntimeWeavyStepError::MissingActionBlock {
+            state,
+            entry_index,
+            action_index,
+            action,
+        } => WeavyParseError::MissingActionBlock {
+            state,
+            entry_index,
+            action_index,
+            action,
+        },
+        RuntimeWeavyStepError::MissingDenseRuntimeBlock { block } => {
+            WeavyParseError::MissingDenseRuntimeBlock { block }
+        }
+        RuntimeWeavyStepError::MissingLexMode { mode } => WeavyParseError::MissingLexMode { mode },
+        RuntimeWeavyStepError::UnsupportedConflict {
+            state,
+            lookahead,
+            action_count,
+        } => WeavyParseError::UnsupportedConflict {
+            state,
+            lookahead,
+            action_count,
+        },
+        RuntimeWeavyStepError::UnsupportedExternalScanner {
+            state,
+            external_count,
+        } => WeavyParseError::UnsupportedExternalScanner {
+            state,
+            external_count,
+        },
+        RuntimeWeavyStepError::ExternalScannerError {
+            state,
+            external,
+            message_index,
+        } => WeavyParseError::ExternalScannerError {
+            state,
+            external,
+            message: external_scanner_errors
+                .get(message_index)
+                .cloned()
+                .unwrap_or_else(|| "external scanner failed".to_owned()),
+        },
+        RuntimeWeavyStepError::UnsupportedTerminal { terminal } => {
+            WeavyParseError::UnsupportedTerminal {
+                terminal,
+                spelling: runtime_weavy_terminal_spelling(input_ctx.parser, terminal),
+            }
+        }
+        RuntimeWeavyStepError::UnsupportedLexicalSymbol { expr } => {
+            WeavyParseError::UnsupportedLexicalSymbol { expr }
+        }
+        RuntimeWeavyStepError::EmptyStack => WeavyParseError::EmptyStack,
+        RuntimeWeavyStepError::NoToken {
+            state,
+            byte_position,
+            expected,
+        } => WeavyParseError::NoToken {
+            state,
+            byte_position,
+            expected: runtime_weavy_expected_spellings(input_ctx, expected),
+        },
+        RuntimeWeavyStepError::NoAction {
+            state,
+            lookahead,
+            byte_position,
+        } => WeavyParseError::NoAction {
+            state,
+            lookahead,
+            byte_position,
+        },
+        RuntimeWeavyStepError::MissingGoto { state, nonterminal } => {
+            WeavyParseError::MissingGoto { state, nonterminal }
+        }
+        RuntimeWeavyStepError::TrailingInput { byte_position } => {
+            WeavyParseError::TrailingInput { byte_position }
+        }
+        RuntimeWeavyStepError::AcceptedHiddenRoot => WeavyParseError::AcceptedHiddenRoot,
+        RuntimeWeavyStepError::UnreducedStackEntry { state } => {
+            WeavyParseError::UnreducedStackEntry { state }
+        }
+        RuntimeWeavyStepError::UnsupportedCanonicalOp => WeavyParseError::UnsupportedCanonicalOp,
+    }
+}
+
+fn runtime_weavy_expected_spellings(
+    input_ctx: RuntimeWeavyInput<'_>,
+    expected: RuntimeWeavyExpected,
+) -> Vec<String> {
+    match expected {
+        RuntimeWeavyExpected::Empty => Vec::new(),
+        RuntimeWeavyExpected::LexMode(mode) => input_ctx
+            .table
+            .lexical_modes()
+            .get(mode.get() as usize)
+            .map_or_else(Vec::new, |mode| {
+                runtime_weavy_mode_token_spellings(input_ctx.parser, mode)
+            }),
+    }
+}
+
+fn runtime_weavy_terminal_spelling(
+    parser: &parser_ir::ParserGrammar,
+    terminal: parser_ir::TerminalId,
+) -> String {
+    parser
+        .symbols()
+        .terminals()
+        .get(terminal.get() as usize)
+        .map(|symbol| symbol.spelling().to_owned())
+        .unwrap_or_else(|| format!("terminal#{}", terminal.get()))
+}
+
+fn runtime_weavy_mode_token_spellings(
+    parser: &parser_ir::ParserGrammar,
+    mode: &parser_ir::LexMode,
+) -> Vec<String> {
+    let mut spellings = mode
+        .terminals()
+        .iter()
+        .map(|terminal| parser.symbols().terminals()[terminal.get() as usize].spelling())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    spellings.extend(mode.externals().iter().map(|external| {
+        parser.symbols().externals()[external.get() as usize]
+            .name()
+            .unwrap_or("<anonymous-external>")
+            .to_owned()
+    }));
+    spellings
 }
 
 /// Lower prepared parser tables into an executable Weavy parser program.
@@ -3302,6 +3421,7 @@ struct RuntimeWeavyOutput<'a> {
     input_points: &'a RuntimeWeavyInputPoints,
     next_lookahead_index: &'a mut usize,
     stats: &'a mut RunStats,
+    external_scanner_errors: &'a RefCell<Vec<String>>,
 }
 
 struct RuntimeWeavyStepperInput<'a> {
@@ -3312,6 +3432,7 @@ struct RuntimeWeavyStepperInput<'a> {
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     input_points: &'a RuntimeWeavyInputPoints,
+    external_scanner_errors: &'a RefCell<Vec<String>>,
 }
 
 struct RuntimeWeavyLexerScratch {
@@ -4079,6 +4200,7 @@ fn parse_weavy_with_lexer_program(
     let mut trace_events = Vec::new();
     let mut tree_events = Vec::new();
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
+    let external_scanner_errors = RefCell::new(Vec::new());
     trace_events.push(parser_ir::TraceEvent::ParseStart {
         id: parser_ir::TraceEventId::from_index(0),
         state: parser_ir::ParseStateId::from_index(0),
@@ -4119,7 +4241,7 @@ fn parse_weavy_with_lexer_program(
         Vec<parser_ir::TreeEvent>,
         Vec<RuntimeWeavyReusableNode>,
     )>::new();
-    let mut failures = Vec::<WeavyParseError>::new();
+    let mut failures = Vec::<RuntimeWeavyStepError>::new();
     let mut next_version_index = 1usize;
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
@@ -4184,6 +4306,7 @@ fn parse_weavy_with_lexer_program(
             input_points: &input_points,
             next_lookahead_index: &mut next_lookahead_index,
             stats: &mut stats,
+            external_scanner_errors: &external_scanner_errors,
         };
         for outcome in step_runtime_weavy_branch(
             input_ctx,
@@ -4238,7 +4361,12 @@ fn parse_weavy_with_lexer_program(
             id: next_runtime_weavy_trace_id(&trace_events),
             outcome: parser_ir::ParseOutcome::Failed,
         });
-        return Err(select_runtime_weavy_failure(failures));
+        let external_scanner_errors = external_scanner_errors.borrow();
+        return Err(select_runtime_weavy_failure(
+            input_ctx,
+            failures,
+            &external_scanner_errors,
+        ));
     };
     let mut best_accepted = accepted
         .into_iter()
@@ -4576,17 +4704,17 @@ fn runtime_weavy_actions(
     entry_index: usize,
     lookahead: parser_ir::LookaheadSymbol,
     byte_position: usize,
-) -> Result<&[parser_ir::ParseAction], WeavyParseError> {
+) -> Result<&[parser_ir::ParseAction], RuntimeWeavyStepError> {
     let state_row = table
         .states()
         .get(state.get() as usize)
-        .ok_or(WeavyParseError::MissingState { state })?;
+        .ok_or(RuntimeWeavyStepError::MissingState { state })?;
     state_row
         .entries()
         .get(entry_index)
         .filter(|entry| entry.lookahead() == lookahead)
         .map(parser_ir::TableEntry::actions)
-        .ok_or(WeavyParseError::NoAction {
+        .ok_or(RuntimeWeavyStepError::NoAction {
             state,
             lookahead,
             byte_position,
@@ -4605,7 +4733,7 @@ enum RuntimeWeavyStepOutcome {
     },
     Failed {
         version: parser_ir::StackVersionId,
-        error: WeavyParseError,
+        error: RuntimeWeavyStepError,
     },
 }
 
@@ -4632,7 +4760,7 @@ fn step_runtime_weavy_branch(
         None => {
             return vec![RuntimeWeavyStepOutcome::Failed {
                 version: source_version,
-                error: WeavyParseError::EmptyStack,
+                error: RuntimeWeavyStepError::EmptyStack,
             }];
         }
     };
@@ -4646,7 +4774,7 @@ fn step_runtime_weavy_branch(
         Ok(dispatch) => dispatch,
         Err(error) => {
             if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
-                if let WeavyParseError::NoAction {
+                if let RuntimeWeavyStepError::NoAction {
                     lookahead: parser_ir::LookaheadSymbol::Eof,
                     ..
                 } = error
@@ -4662,7 +4790,7 @@ fn step_runtime_weavy_branch(
                 {
                     return vec![accepted];
                 }
-                if matches!(error, WeavyParseError::NoToken { .. })
+                if matches!(error, RuntimeWeavyStepError::NoToken { .. })
                     && input_ctx.input[branch.byte_position..].starts_with(['{', '}'])
                     && let Some(branch) = recover_runtime_weavy_to_viable_stack(
                         input_ctx,
@@ -4674,7 +4802,7 @@ fn step_runtime_weavy_branch(
                 {
                     return vec![RuntimeWeavyStepOutcome::Branch(branch)];
                 }
-                if matches!(error, WeavyParseError::NoToken { .. })
+                if matches!(error, RuntimeWeavyStepError::NoToken { .. })
                     && let Some(branch) = recover_runtime_weavy_no_token(
                         branch.clone(),
                         input_ctx.input,
@@ -4687,7 +4815,7 @@ fn step_runtime_weavy_branch(
                 {
                     return vec![RuntimeWeavyStepOutcome::Branch(branch)];
                 }
-                if let WeavyParseError::NoAction { lookahead, .. } = error
+                if let RuntimeWeavyStepError::NoAction { lookahead, .. } = error
                     && let Some(branch) = recover_runtime_weavy_to_action_state(
                         input_ctx.table,
                         branch.clone(),
@@ -4715,7 +4843,7 @@ fn step_runtime_weavy_branch(
         Ok(actions) => actions,
         Err(error) => {
             if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput
-                && let WeavyParseError::NoAction {
+                && let RuntimeWeavyStepError::NoAction {
                     lookahead: parser_ir::LookaheadSymbol::Eof,
                     ..
                 } = error
@@ -4893,13 +5021,13 @@ fn run_runtime_weavy_state_probe(
     input_ctx: RuntimeWeavyInput<'_>,
     branch: &RuntimeWeavyBranch,
     output: &mut RuntimeWeavyOutput<'_>,
-) -> Result<RuntimeWeavyDispatch, WeavyParseError> {
+) -> Result<RuntimeWeavyDispatch, RuntimeWeavyStepError> {
     let state = branch
         .stack
         .last()
-        .ok_or(WeavyParseError::EmptyStack)?
+        .ok_or(RuntimeWeavyStepError::EmptyStack)?
         .state;
-    let block = input_ctx.plan.state_block(state)?;
+    let block = input_ctx.plan.runtime_state_block(state)?;
     let mut stepper = RuntimeWeavyStepper::from_branch_ref(
         RuntimeWeavyStepperInput {
             input: input_ctx,
@@ -4909,6 +5037,7 @@ fn run_runtime_weavy_state_probe(
             tree_journal: &mut *output.tree_journal,
             lexer_scratch: output.lexer_scratch,
             input_points: output.input_points,
+            external_scanner_errors: output.external_scanner_errors,
         },
         branch,
         parser_ir::LookaheadTokenId::from_index(*output.next_lookahead_index),
@@ -4918,9 +5047,9 @@ fn run_runtime_weavy_state_probe(
     if stepper.lookahead.is_some() {
         *output.next_lookahead_index += 1;
     }
-    let run_stats = run_result.map_err(|error| stepper.step_error_to_parse_error(error))?;
+    let run_stats = run_result?;
     add_run_stats(output.stats, run_stats);
-    stepper.dispatch.ok_or(WeavyParseError::NoAction {
+    stepper.dispatch.ok_or(RuntimeWeavyStepError::NoAction {
         state,
         lookahead: stepper
             .lookahead
@@ -4955,7 +5084,7 @@ fn run_runtime_weavy_action(
     reuse_collection: RuntimeWeavyReuseCollection,
     output: &mut RuntimeWeavyOutput<'_>,
 ) -> RuntimeWeavyStepOutcome {
-    let block = match input_ctx.plan.action_block(
+    let block = match input_ctx.plan.runtime_action_block(
         action_ctx.state,
         action_ctx.entry_index,
         action_ctx.action_index,
@@ -4978,6 +5107,7 @@ fn run_runtime_weavy_action(
             tree_journal: &mut *output.tree_journal,
             lexer_scratch: output.lexer_scratch,
             input_points: output.input_points,
+            external_scanner_errors: output.external_scanner_errors,
         },
         branch,
         action_ctx.lookahead,
@@ -4989,7 +5119,6 @@ fn run_runtime_weavy_action(
     match run_runtime_weavy_block(input_ctx.plan, block, &mut stepper) {
         Ok(run_stats) => add_run_stats(output.stats, run_stats),
         Err(error) => {
-            let error = stepper.step_error_to_parse_error(error);
             return RuntimeWeavyStepOutcome::Failed { version, error };
         }
     }
@@ -5241,6 +5370,7 @@ fn runtime_weavy_lex_succeeds(
     let mut trace_events = Vec::new();
     let mut tree_events = Vec::new();
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
+    let external_scanner_errors = RefCell::new(Vec::new());
     let stepper = RuntimeWeavyStepper::from_branch_ref(
         RuntimeWeavyStepperInput {
             input: RuntimeWeavyInput {
@@ -5253,6 +5383,7 @@ fn runtime_weavy_lex_succeeds(
             tree_journal: &mut tree_journal,
             lexer_scratch,
             input_points,
+            external_scanner_errors: &external_scanner_errors,
         },
         branch,
         parser_ir::LookaheadTokenId::from_index(0),
@@ -5308,6 +5439,7 @@ enum RuntimeWeavyStepError {
     ExternalScannerError {
         state: parser_ir::ParseStateId,
         external: parser_ir::ExternalId,
+        message_index: usize,
     },
     UnsupportedTerminal {
         terminal: parser_ir::TerminalId,
@@ -5369,7 +5501,7 @@ struct RuntimeWeavyStepper<'a> {
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
     tree_events: &'a mut Vec<parser_ir::TreeEvent>,
-    external_scanner_error: RefCell<Option<String>>,
+    external_scanner_errors: &'a RefCell<Vec<String>>,
 }
 
 impl<'a> RuntimeWeavyStepper<'a> {
@@ -5409,7 +5541,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             lexer_scratch: stepper_input.lexer_scratch,
             trace_events: stepper_input.trace_events,
             tree_events: stepper_input.tree_events,
-            external_scanner_error: RefCell::new(None),
+            external_scanner_errors: stepper_input.external_scanner_errors,
         }
     }
 
@@ -5448,124 +5580,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
             lexer_scratch: stepper_input.lexer_scratch,
             trace_events: stepper_input.trace_events,
             tree_events: stepper_input.tree_events,
-            external_scanner_error: RefCell::new(None),
+            external_scanner_errors: stepper_input.external_scanner_errors,
         }
-    }
-
-    fn step_error_to_parse_error(&mut self, error: RuntimeWeavyStepError) -> WeavyParseError {
-        match error {
-            RuntimeWeavyStepError::MissingState { state } => {
-                WeavyParseError::MissingState { state }
-            }
-            RuntimeWeavyStepError::MissingStateBlock { state } => {
-                WeavyParseError::MissingStateBlock { state }
-            }
-            RuntimeWeavyStepError::MissingActionBlock {
-                state,
-                entry_index,
-                action_index,
-                action,
-            } => WeavyParseError::MissingActionBlock {
-                state,
-                entry_index,
-                action_index,
-                action,
-            },
-            RuntimeWeavyStepError::MissingDenseRuntimeBlock { block } => {
-                WeavyParseError::MissingDenseRuntimeBlock { block }
-            }
-            RuntimeWeavyStepError::MissingLexMode { mode } => {
-                WeavyParseError::MissingLexMode { mode }
-            }
-            RuntimeWeavyStepError::UnsupportedConflict {
-                state,
-                lookahead,
-                action_count,
-            } => WeavyParseError::UnsupportedConflict {
-                state,
-                lookahead,
-                action_count,
-            },
-            RuntimeWeavyStepError::UnsupportedExternalScanner {
-                state,
-                external_count,
-            } => WeavyParseError::UnsupportedExternalScanner {
-                state,
-                external_count,
-            },
-            RuntimeWeavyStepError::ExternalScannerError { state, external } => {
-                WeavyParseError::ExternalScannerError {
-                    state,
-                    external,
-                    message: self
-                        .external_scanner_error
-                        .borrow_mut()
-                        .take()
-                        .unwrap_or_else(|| "external scanner failed".to_owned()),
-                }
-            }
-            RuntimeWeavyStepError::UnsupportedTerminal { terminal } => {
-                WeavyParseError::UnsupportedTerminal {
-                    terminal,
-                    spelling: self.terminal_spelling(terminal),
-                }
-            }
-            RuntimeWeavyStepError::UnsupportedLexicalSymbol { expr } => {
-                WeavyParseError::UnsupportedLexicalSymbol { expr }
-            }
-            RuntimeWeavyStepError::EmptyStack => WeavyParseError::EmptyStack,
-            RuntimeWeavyStepError::NoToken {
-                state,
-                byte_position,
-                expected,
-            } => WeavyParseError::NoToken {
-                state,
-                byte_position,
-                expected: self.expected_spellings(expected),
-            },
-            RuntimeWeavyStepError::NoAction {
-                state,
-                lookahead,
-                byte_position,
-            } => WeavyParseError::NoAction {
-                state,
-                lookahead,
-                byte_position,
-            },
-            RuntimeWeavyStepError::MissingGoto { state, nonterminal } => {
-                WeavyParseError::MissingGoto { state, nonterminal }
-            }
-            RuntimeWeavyStepError::TrailingInput { byte_position } => {
-                WeavyParseError::TrailingInput { byte_position }
-            }
-            RuntimeWeavyStepError::AcceptedHiddenRoot => WeavyParseError::AcceptedHiddenRoot,
-            RuntimeWeavyStepError::UnreducedStackEntry { state } => {
-                WeavyParseError::UnreducedStackEntry { state }
-            }
-            RuntimeWeavyStepError::UnsupportedCanonicalOp => {
-                WeavyParseError::UnsupportedCanonicalOp
-            }
-        }
-    }
-
-    fn expected_spellings(&self, expected: RuntimeWeavyExpected) -> Vec<String> {
-        match expected {
-            RuntimeWeavyExpected::Empty => Vec::new(),
-            RuntimeWeavyExpected::LexMode(mode) => self
-                .table
-                .lexical_modes()
-                .get(mode.get() as usize)
-                .map_or_else(Vec::new, |mode| self.mode_token_spellings(mode)),
-        }
-    }
-
-    fn terminal_spelling(&self, terminal: parser_ir::TerminalId) -> String {
-        self.parser
-            .symbols()
-            .terminals()
-            .get(terminal.get() as usize)
-            .map(|symbol| symbol.spelling().to_owned())
-            .unwrap_or_else(|| format!("terminal#{}", terminal.get()))
     }
 
     fn step_intrinsic<'program>(
@@ -6179,22 +6195,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
             })
     }
 
-    fn mode_token_spellings(&self, mode: &parser_ir::LexMode) -> Vec<String> {
-        let mut spellings = mode
-            .terminals()
-            .iter()
-            .map(|terminal| self.parser.symbols().terminals()[terminal.get() as usize].spelling())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        spellings.extend(mode.externals().iter().map(|external| {
-            self.parser.symbols().externals()[external.get() as usize]
-                .name()
-                .unwrap_or("<anonymous-external>")
-                .to_owned()
-        }));
-        spellings
-    }
-
     fn match_compiled_terminal_with_set(
         &self,
         terminal: &WeavyLexTerminal,
@@ -6247,10 +6247,13 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 self.scanner_snapshot,
             ))
             .map_err(|error| {
-                *self.external_scanner_error.borrow_mut() = Some(error.to_string());
+                let mut errors = self.external_scanner_errors.borrow_mut();
+                let message_index = errors.len();
+                errors.push(error.to_string());
                 RuntimeWeavyStepError::ExternalScannerError {
                     state: state.id(),
                     external,
+                    message_index,
                 }
             })
     }
