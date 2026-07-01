@@ -651,9 +651,12 @@ impl WeavyParsePlan {
     /// Parser and lexer analysis for optimizer/JIT planning.
     #[must_use]
     pub fn analysis(&self) -> WeavyParsePlanAnalysis {
+        let parser = self.program.analysis();
+        let lexer = self.lexer_stats();
         WeavyParsePlanAnalysis {
-            parser: self.program.analysis(),
-            lexer: self.lexer_stats(),
+            readiness: WeavyParsePlanReadiness::from_parts(&parser, &lexer),
+            parser,
+            lexer,
         }
     }
 
@@ -671,6 +674,73 @@ pub struct WeavyParsePlanAnalysis {
     pub parser: LoweredAnalysis,
     /// Snark-owned lexer graph shape summary.
     pub lexer: WeavyLexerStats,
+    /// Optimizer/JIT readiness derived from parser effects and lexer leaves.
+    pub readiness: WeavyParsePlanReadiness,
+}
+
+/// Lowering-readiness boundary for a prepared Snark Weavy plan.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeavyParsePlanReadiness {
+    /// Lexer-side lowering readiness.
+    pub lexer: WeavyLexerReadiness,
+    /// Opaque parser/action intrinsics that remain hard barriers.
+    pub opaque_intrinsic_count: usize,
+    /// Intrinsics that call outside code.
+    pub host_call_intrinsic_count: usize,
+}
+
+impl WeavyParsePlanReadiness {
+    fn from_parts(parser: &LoweredAnalysis, lexer: &WeavyLexerStats) -> Self {
+        Self {
+            lexer: WeavyLexerReadiness::from_stats(lexer),
+            opaque_intrinsic_count: parser.effect_stats.total.opaque_count,
+            host_call_intrinsic_count: parser.effect_stats.total.calls_user_code_count,
+        }
+    }
+
+    /// True when every parser op and lexer leaf is visible to Weavy planning.
+    #[must_use]
+    pub const fn is_fully_visible(&self) -> bool {
+        self.lexer.is_fully_visible()
+            && self.opaque_intrinsic_count == 0
+            && self.host_call_intrinsic_count == 0
+    }
+}
+
+/// Lexer-side readiness for optimizer/JIT lowering.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeavyLexerReadiness {
+    /// Pattern leaves handled by named Snark matcher ops.
+    pub known_pattern_count: usize,
+    /// Pattern leaves still delegated to the Rust regex engine.
+    pub regex_fallback_count: usize,
+    /// Pattern leaves unsupported by the current matcher compiler.
+    pub unsupported_pattern_count: usize,
+    /// Terminal roots still missing a lowered matcher.
+    pub unsupported_terminal_count: usize,
+    /// Lexical symbol references still missing a resolver.
+    pub unsupported_symbol_count: usize,
+}
+
+impl WeavyLexerReadiness {
+    fn from_stats(stats: &WeavyLexerStats) -> Self {
+        Self {
+            known_pattern_count: stats.known_pattern_count,
+            regex_fallback_count: stats.regex_pattern_count,
+            unsupported_pattern_count: stats.unsupported_pattern_count,
+            unsupported_terminal_count: stats.count(WeavyLexOpKind::UnsupportedTerminal),
+            unsupported_symbol_count: stats.count(WeavyLexOpKind::UnsupportedSymbol),
+        }
+    }
+
+    /// True when lexer leaves no longer require fallback matching.
+    #[must_use]
+    pub const fn is_fully_visible(&self) -> bool {
+        self.regex_fallback_count == 0
+            && self.unsupported_pattern_count == 0
+            && self.unsupported_terminal_count == 0
+            && self.unsupported_symbol_count == 0
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -762,6 +832,12 @@ pub struct WeavyLexerStats {
 }
 
 impl WeavyLexerStats {
+    /// Return the recursive operation count for one lowered lexer op kind.
+    #[must_use]
+    pub fn count(&self, kind: WeavyLexOpKind) -> usize {
+        self.op_counts.get(&kind).copied().unwrap_or_default()
+    }
+
     fn record(&mut self, kind: WeavyLexOpKind) {
         *self.op_counts.entry(kind).or_default() += 1;
     }
@@ -5620,6 +5696,21 @@ mod tests {
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Repeat], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Nested], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::UnsupportedTerminal], 1);
+        assert_eq!(stats.count(WeavyLexOpKind::UnsupportedSymbol), 0);
+    }
+
+    #[test]
+    fn lexer_readiness_counts_fallback_leaves() {
+        let stats = sample_lexer_program().stats();
+
+        let readiness = WeavyLexerReadiness::from_stats(&stats);
+
+        assert_eq!(readiness.known_pattern_count, 1);
+        assert_eq!(readiness.regex_fallback_count, 1);
+        assert_eq!(readiness.unsupported_pattern_count, 1);
+        assert_eq!(readiness.unsupported_terminal_count, 1);
+        assert_eq!(readiness.unsupported_symbol_count, 0);
+        assert!(!readiness.is_fully_visible());
     }
 
     #[test]
@@ -5649,6 +5740,46 @@ mod tests {
         assert_eq!(analysis.parser.intrinsic_counts[&lex.descriptor()], 1);
         assert_eq!(analysis.lexer.mode_count, 1);
         assert_eq!(analysis.lexer.op_counts[&WeavyLexOpKind::Until], 1);
+        assert_eq!(analysis.readiness.host_call_intrinsic_count, 0);
+        assert_eq!(analysis.readiness.opaque_intrinsic_count, 0);
+        assert_eq!(analysis.readiness.lexer.regex_fallback_count, 1);
+        assert!(!analysis.readiness.is_fully_visible());
+    }
+
+    #[test]
+    fn parse_plan_readiness_reports_external_scanner_barriers() {
+        let scanner = SnarkIntrinsic::CallExternalScanner {
+            version: StackVersionId(0),
+            state: ParseStateId(7),
+            valid_symbols: ValidSymbolSetId(3),
+            scanner_state: ExternalScannerStateId(2),
+            before: Some(ScannerSnapshotId(0)),
+            after: Some(ScannerSnapshotId(1)),
+            result: Some(LookaheadTokenId(4)),
+        };
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense: DenseSnarkWeavyLowered::new(
+                    vec![WeavyOp::Intrinsic(scanner.clone())],
+                    vec![],
+                ),
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+            },
+            lexer_program: WeavyLexerProgram { modes: vec![] },
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+        };
+
+        let analysis = plan.analysis();
+
+        assert_eq!(analysis.parser.intrinsic_counts[&scanner.descriptor()], 1);
+        assert_eq!(analysis.readiness.host_call_intrinsic_count, 1);
+        assert_eq!(analysis.readiness.opaque_intrinsic_count, 1);
+        assert!(analysis.readiness.lexer.is_fully_visible());
+        assert!(!analysis.readiness.is_fully_visible());
     }
 
     #[test]
