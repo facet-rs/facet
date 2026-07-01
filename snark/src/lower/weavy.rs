@@ -6,6 +6,7 @@
 //! Weavy programs.
 
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
@@ -2130,7 +2131,7 @@ fn step_runtime_weavy_branch(
     {
         return vec![RuntimeWeavyStepOutcome::Branch(branch)];
     }
-    let dispatch = match run_runtime_weavy_state_probe(input_ctx, branch.clone(), output) {
+    let dispatch = match run_runtime_weavy_state_probe(input_ctx, &branch, output) {
         Ok(dispatch) => dispatch,
         Err(error) => {
             if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
@@ -2321,7 +2322,7 @@ fn runtime_weavy_goto_state(
 
 fn run_runtime_weavy_state_probe(
     input_ctx: RuntimeWeavyInput<'_>,
-    branch: RuntimeWeavyBranch,
+    branch: &RuntimeWeavyBranch,
     output: &mut RuntimeWeavyOutput<'_>,
 ) -> Result<RuntimeWeavyDispatch, RuntimeWeavyError> {
     let state = branch
@@ -2330,7 +2331,7 @@ fn run_runtime_weavy_state_probe(
         .ok_or(RuntimeWeavyError::EmptyStack)?
         .state;
     let block = input_ctx.plan.state_block(state)?;
-    let mut stepper = RuntimeWeavyStepper::from_branch(
+    let mut stepper = RuntimeWeavyStepper::from_branch_ref(
         RuntimeWeavyStepperInput {
             input: input_ctx,
             tree_store: &mut *output.tree_store,
@@ -2408,10 +2409,10 @@ fn run_runtime_weavy_action(
     } else {
         RuntimeWeavyStepOutcome::Branch(RuntimeWeavyBranch {
             version,
-            stack: stepper.stack,
+            stack: stepper.stack.into_owned(),
             byte_position: stepper.byte_position,
             scanner_snapshot: stepper.scanner_snapshot,
-            auto_close_stack: stepper.auto_close_stack,
+            auto_close_stack: stepper.auto_close_stack.into_owned(),
             error_cost: stepper.error_cost,
             tree_journal: stepper.tree_journal_head,
             reusable_nodes: stepper.reusable_nodes,
@@ -2629,10 +2630,10 @@ struct RuntimeWeavyStepper<'a> {
     auto_close_index: &'a RuntimeWeavyAutoCloseIndex,
     input: &'a str,
     external_scanner: Option<&'a dyn RuntimeExternalScanner>,
-    stack: Vec<RuntimeWeavyStackEntry>,
+    stack: Cow<'a, [RuntimeWeavyStackEntry]>,
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
-    auto_close_stack: Vec<String>,
+    auto_close_stack: Cow<'a, [String]>,
     error_cost: u32,
     committed_start: Option<usize>,
     lookahead: Option<RuntimeWeavyToken>,
@@ -2664,10 +2665,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
             auto_close_index: stepper_input.input.auto_close_index,
             input: stepper_input.input.input,
             external_scanner: stepper_input.input.external_scanner,
-            stack: branch.stack,
+            stack: Cow::Owned(branch.stack),
             byte_position: branch.byte_position,
             scanner_snapshot: branch.scanner_snapshot,
-            auto_close_stack: branch.auto_close_stack,
+            auto_close_stack: Cow::Owned(branch.auto_close_stack),
             error_cost: branch.error_cost,
             committed_start: None,
             lookahead: None,
@@ -2680,6 +2681,41 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
             reusable_nodes: branch.reusable_nodes,
+            trace_events: stepper_input.trace_events,
+            tree_events: stepper_input.tree_events,
+        }
+    }
+
+    fn from_branch_ref(
+        stepper_input: RuntimeWeavyStepperInput<'a>,
+        branch: &'a RuntimeWeavyBranch,
+        lookahead_id: parser_ir::LookaheadTokenId,
+        mode: RuntimeWeavyMode,
+    ) -> Self {
+        Self {
+            plan: stepper_input.input.plan,
+            parser: stepper_input.input.parser,
+            table: stepper_input.input.table,
+            compiled_lex_modes: stepper_input.input.compiled_lex_modes,
+            auto_close_index: stepper_input.input.auto_close_index,
+            input: stepper_input.input.input,
+            external_scanner: stepper_input.input.external_scanner,
+            stack: Cow::Borrowed(&branch.stack),
+            byte_position: branch.byte_position,
+            scanner_snapshot: branch.scanner_snapshot,
+            auto_close_stack: Cow::Borrowed(&branch.auto_close_stack),
+            error_cost: branch.error_cost,
+            committed_start: None,
+            lookahead: None,
+            lookahead_id,
+            tree: None,
+            mode,
+            dispatch: None,
+            version: branch.version,
+            tree_store: stepper_input.tree_store,
+            tree_journal: stepper_input.tree_journal,
+            tree_journal_head: branch.tree_journal,
+            reusable_nodes: Vec::new(),
             trace_events: stepper_input.trace_events,
             tree_events: stepper_input.tree_events,
         }
@@ -2812,7 +2848,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     version: self.version,
                     state,
                 });
-                self.stack.push(RuntimeWeavyStackEntry {
+                self.stack.to_mut().push(RuntimeWeavyStackEntry {
                     state,
                     fragment: Some(RuntimeWeavyFragment::Hidden {
                         children: Vec::new(),
@@ -2848,7 +2884,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 ) {
                     self.tree_journal
                         .extend(&mut self.tree_journal_head, events);
-                    self.stack.push(RuntimeWeavyStackEntry {
+                    self.stack.to_mut().push(RuntimeWeavyStackEntry {
                         state,
                         fragment: Some(fragment),
                         extra: true,
@@ -2915,7 +2951,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         ),
                     });
                 }
-                self.stack.push(RuntimeWeavyStackEntry {
+                self.stack.to_mut().push(RuntimeWeavyStackEntry {
                     state: goto,
                     fragment: Some(reduction.fragment),
                     extra: false,
@@ -2923,7 +2959,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 });
                 for fragment in reduction.trailing_extras {
                     let (_, end_byte) = fragment.byte_range();
-                    self.stack.push(RuntimeWeavyStackEntry {
+                    self.stack.to_mut().push(RuntimeWeavyStackEntry {
                         state: goto,
                         fragment: Some(fragment),
                         extra: true,
@@ -3202,7 +3238,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 .last()
                 .is_some_and(|tag| parser_ir::auto_close_has_rule_for_tag(spec, tag))
             {
-                self.auto_close_stack.pop();
+                self.auto_close_stack.to_mut().pop();
             }
             return;
         }
@@ -3213,7 +3249,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         if let Some(stack_edit) = self.auto_close_index.literal_edit(text) {
             match stack_edit {
                 RuntimeWeavyAutoCloseStackEdit::Push(tag) => {
-                    self.auto_close_stack.push(tag.clone());
+                    self.auto_close_stack.to_mut().push(tag.clone());
                 }
                 RuntimeWeavyAutoCloseStackEdit::Pop(tag)
                     if self
@@ -3221,7 +3257,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         .last()
                         .is_some_and(|open| open.as_str() == tag.as_str()) =>
                 {
-                    self.auto_close_stack.pop();
+                    self.auto_close_stack.to_mut().pop();
                 }
                 RuntimeWeavyAutoCloseStackEdit::Pop(_) => {}
             }
@@ -3268,12 +3304,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
         if let Some(stack_edit) = stack_edit {
             match stack_edit {
                 RuntimeWeavyAutoCloseStackEdit::Push(tag) => {
-                    self.auto_close_stack.push(tag);
+                    self.auto_close_stack.to_mut().push(tag);
                 }
                 RuntimeWeavyAutoCloseStackEdit::Pop(tag)
                     if self.auto_close_stack.last() == Some(&tag) =>
                 {
-                    self.auto_close_stack.pop();
+                    self.auto_close_stack.to_mut().pop();
                 }
                 RuntimeWeavyAutoCloseStackEdit::Pop(_) => {}
             }
@@ -3538,7 +3574,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut trailing_extras = Vec::new();
         if !include_trailing_extras {
             while self.stack.last().is_some_and(|entry| entry.extra) {
-                let entry = self.stack.pop().ok_or(RuntimeWeavyError::EmptyStack)?;
+                let entry = self.stack.to_mut().pop().ok_or(RuntimeWeavyError::EmptyStack)?;
                 let Some(fragment) = entry.fragment else {
                     return Err(RuntimeWeavyError::EmptyStack);
                 };
@@ -3549,7 +3585,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut popped = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
-            let entry = self.stack.pop().ok_or(RuntimeWeavyError::EmptyStack)?;
+            let entry = self.stack.to_mut().pop().ok_or(RuntimeWeavyError::EmptyStack)?;
             let Some(fragment) = entry.fragment else {
                 return Err(RuntimeWeavyError::EmptyStack);
             };
@@ -3757,7 +3793,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
     ) -> Result<SexpNode, RuntimeWeavyError> {
         let mut root = self.tree_store.node(node).clone();
         let mut leading_children = Vec::new();
-        for entry in self.stack.drain(..) {
+        for entry in self.stack.to_mut().drain(..) {
             match (entry.extra, entry.fragment) {
                 (_, None) => {}
                 (true, Some(fragment)) => {
