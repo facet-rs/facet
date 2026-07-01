@@ -37,7 +37,7 @@ impl RawGrammarFile {
                 package_path: Some(package_path),
                 document: JsonDocumentKind::Grammar,
                 phase: "decode raw grammar JSON",
-                source,
+                source: Box::new(source),
             })?;
         Ok(source_file.map(|raw| Self { raw, grammar }))
     }
@@ -207,7 +207,7 @@ impl RawGrammarJson {
             package_path: None,
             document: JsonDocumentKind::Grammar,
             phase: "decode raw grammar JSON",
-            source,
+            source: Box::new(source),
         })
     }
 

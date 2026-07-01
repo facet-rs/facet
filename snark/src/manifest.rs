@@ -35,7 +35,7 @@ impl TreeSitterConfigJson {
                 package_path: Some(package_path),
                 document: JsonDocumentKind::TreeSitterConfig,
                 phase: "decode raw tree-sitter.json",
-                source,
+                source: Box::new(source),
             })?;
         Ok(source_file.map(|raw| Self { raw, config }))
     }
