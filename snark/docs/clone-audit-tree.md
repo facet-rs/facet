@@ -155,7 +155,7 @@ to build a reuse index from the accepted report.
 
 `snark/src/parser.rs:2260-2263`: `PublicNodeKind.name: String` is built once
 at grammar-prep time and lives for the parser's lifetime. But every runtime
-reduce that produces a public node re-allocates a fresh copy of that same
+reduce that produced a public node re-allocated a fresh copy of that same
 string:
 
 - `snark/src/lower/weavy.rs:3592`: `let kind = self.parser.public_node_kinds()[...].name().to_owned();`
@@ -199,7 +199,7 @@ strings.
 
 ## 6. [RESOLVED] Double-storing tree events (journal + flat `Vec`)
 
-Several sites push the same `TreeEvent` into both the cactus journal *and* a
+Several sites used to push the same `TreeEvent` into both the cactus journal *and* a
 flat `Vec<TreeEvent>` (`self.tree_events` / `output.tree_events`), requiring a
 `.clone()` for one of the two copies — e.g. weavy.rs:2158-2163 (reuse path,
 also cloning `replayed_events` twice), weavy.rs:2714-2717 (Shift), 2787-2788
