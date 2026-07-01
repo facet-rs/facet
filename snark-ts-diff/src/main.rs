@@ -54,6 +54,36 @@ fn prepare(grammar_path: &str) -> Prepared {
     }
 }
 
+/// Profile grammar preparation, phase by phase, then loop `ParseTable::from_grammar`
+/// so a sampler (stax) can attach to the table build in isolation.
+fn run_tablebench(grammar_path: &str, iters: usize) {
+    let t = Instant::now();
+    let json = snark_dsl::emit_with_boa(Path::new(grammar_path)).expect("emit");
+    println!("emit_with_boa: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    let raw = RawGrammarJson::from_tree_sitter_json_str(&json).expect("import");
+    let validated = ValidatedGrammar::from_raw(&raw).expect("validate");
+    let lexical = LexicalFacts::from_grammar(&validated);
+    let t = Instant::now();
+    let normalized =
+        ParserGrammar::normalize_from_validated(&validated, &lexical).expect("normalize");
+    let parser = normalized.prepare_productions_for_items().expect("prepare");
+    println!(
+        "normalize + prepare productions: {:.1} ms  ({} productions)",
+        t.elapsed().as_secs_f64() * 1000.0,
+        parser.productions().len()
+    );
+    println!("looping ParseTable::from_grammar {iters}x (attach stax now) …");
+    let mut best = f64::INFINITY;
+    for i in 0..iters.max(1) {
+        let start = Instant::now();
+        let table = ParseTable::from_grammar(&parser).expect("table");
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        best = best.min(ms);
+        std::hint::black_box(&table);
+        println!("  table build iter {i}: {ms:.1} ms (min {best:.1} ms)");
+    }
+}
+
 /// Best (min) parse time in ms over `iters` runs, after one warm-up.
 fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
     let _ = parse_prepared_weavy_with_report(&p.plan, &p.validated, &p.parser, &p.table, input);
@@ -195,6 +225,13 @@ fn run_ladder(grammar_path: &str, max_objects: u64) {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    if args.get(1).map(|s| s == "tablebench").unwrap_or(false) {
+        let grammar_path = args.get(2).expect("usage: tablebench <grammar.js> [iters]");
+        let iters: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(50);
+        run_tablebench(grammar_path, iters);
+        return;
+    }
 
     if args.get(1).map(|s| s == "gen").unwrap_or(false) {
         let n: u64 = args
