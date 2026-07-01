@@ -70,6 +70,7 @@ type PlanStencilFamilyOutput = {
   family: string;
   execution: string;
   state: string[];
+  effect: PlanStencilEffectOutput;
   count: number;
 };
 

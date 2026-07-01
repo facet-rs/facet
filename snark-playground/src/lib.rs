@@ -152,6 +152,7 @@ struct PlanStencilFamilyOutput {
     family: String,
     execution: String,
     state: Vec<String>,
+    effect: PlanStencilEffectOutput,
     count: usize,
 }
 
@@ -866,6 +867,15 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
                     .iter()
                     .map(|state| format!("{state:?}"))
                     .collect(),
+                effect: PlanStencilEffectOutput {
+                    ordering: format!("{:?}", summary.effect.ordering),
+                    resource_count: summary.effect.resources.len(),
+                    typed_memory_count: summary.effect.typed_memory.len(),
+                    may_fail: summary.effect.may_fail,
+                    may_allocate: summary.effect.may_allocate,
+                    calls_user_code: summary.effect.calls_user_code,
+                    opaque: summary.effect.opaque,
+                },
                 count: summary.count,
             })
             .collect(),
@@ -4579,6 +4589,15 @@ mod tests {
                 .iter()
                 .any(|summary| summary.family == "Lexer"
                     && summary.execution == "LexerGraph"
+                    && summary.state.iter().any(|state| state == "LexerProgram")
+                    && summary.state.iter().any(|state| state == "ScannerState")
+                    && summary.effect.ordering == "Ordered"
+                    && summary.effect.resource_count == 3
+                    && summary.effect.typed_memory_count == 0
+                    && summary.effect.may_fail
+                    && !summary.effect.may_allocate
+                    && !summary.effect.calls_user_code
+                    && !summary.effect.opaque
                     && summary.count > 0)
         );
         assert!(plan.snark_stencils.iter().any(|summary| summary.descriptor

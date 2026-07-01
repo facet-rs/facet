@@ -494,6 +494,8 @@ pub struct WeavySnarkStencilFamilySummary {
     pub execution: SnarkStencilExecution,
     /// Union of session state required by descriptors in this family.
     pub state: Vec<SnarkStencilState>,
+    /// Conservative union of effect contracts for descriptors in this family.
+    pub effect: EffectContract,
     /// Number of Snark intrinsic ops represented by this family.
     pub count: usize,
 }
@@ -1216,22 +1218,24 @@ fn snark_stencil_family_summaries(
 ) -> Vec<WeavySnarkStencilFamilySummary> {
     let mut counts = BTreeMap::<
         (SnarkStencilFamily, SnarkStencilExecution),
-        (usize, BTreeSet<SnarkStencilState>),
+        (usize, BTreeSet<SnarkStencilState>, EffectContract),
     >::new();
     for summary in summaries {
-        let (count, state) = counts
+        let (count, state, effect) = counts
             .entry((summary.stencil.family, summary.stencil.execution))
             .or_default();
         *count += summary.count;
         state.extend(summary.stencil.state.iter().copied());
+        effect.accumulate(summary.effect.clone());
     }
     let mut summaries = counts
         .into_iter()
         .map(
-            |((family, execution), (count, state))| WeavySnarkStencilFamilySummary {
+            |((family, execution), (count, state, effect))| WeavySnarkStencilFamilySummary {
                 family,
                 execution,
                 state: state.into_iter().collect(),
+                effect,
                 count,
             },
         )
@@ -8123,6 +8127,7 @@ mod tests {
                     SnarkStencilState::ScannerState,
                     SnarkStencilState::AutoCloseStack,
                 ],
+                effect: lex.effect(),
                 count: 1,
             }]
         );
@@ -8275,6 +8280,7 @@ mod tests {
                     SnarkStencilState::Lookahead,
                     SnarkStencilState::ScannerState,
                 ],
+                effect: scanner.effect(),
                 count: 1,
             }]
         );
@@ -8362,6 +8368,7 @@ mod tests {
                     SnarkStencilState::Lookahead,
                     SnarkStencilState::ScannerState,
                 ],
+                effect: scanner.effect(),
                 count: 2,
             }]
         );
@@ -8459,6 +8466,7 @@ mod tests {
                         SnarkStencilState::TraceSink,
                         SnarkStencilState::TreeEventSink,
                     ],
+                    effect: reduce.effect(),
                     count: 4,
                 },
                 WeavySnarkStencilFamilySummary {
@@ -8471,6 +8479,7 @@ mod tests {
                         SnarkStencilState::ScannerState,
                         SnarkStencilState::AutoCloseStack,
                     ],
+                    effect: commit.effect(),
                     count: 3,
                 },
                 WeavySnarkStencilFamilySummary {
@@ -8486,6 +8495,7 @@ mod tests {
                         SnarkStencilState::ScannerState,
                         SnarkStencilState::AutoCloseStack,
                     ],
+                    effect: lex.effect(),
                     count: 2,
                 },
             ]

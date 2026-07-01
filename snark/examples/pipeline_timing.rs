@@ -171,8 +171,16 @@ fn main() {
         println!("  stencil families:");
         for summary in &analysis.readiness.snark_stencil_family_summaries {
             println!(
-                "    {:?}/{:?}: {}  state={:?}",
-                summary.family, summary.execution, summary.count, summary.state
+                "    {:?}/{:?}: {}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+                summary.family,
+                summary.execution,
+                summary.count,
+                summary.state,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque
             );
         }
     }
