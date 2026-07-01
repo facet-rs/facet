@@ -883,6 +883,8 @@ pub struct WeavyLexerReadiness {
     pub unsupported_terminal_count: usize,
     /// Lexical symbol references still missing a resolver.
     pub unsupported_symbol_count: usize,
+    /// Unique lexer blocker kinds that still prevent fully-visible lowering.
+    pub barrier_kinds: Vec<WeavyLexerBarrierKind>,
 }
 
 impl WeavyLexerReadiness {
@@ -899,6 +901,7 @@ impl WeavyLexerReadiness {
             unsupported_pattern_count: stats.unsupported_pattern_count,
             unsupported_terminal_count: stats.count(WeavyLexOpKind::UnsupportedTerminal),
             unsupported_symbol_count: stats.count(WeavyLexOpKind::UnsupportedSymbol),
+            barrier_kinds: stats.barrier_kinds(),
         }
     }
 
@@ -910,6 +913,20 @@ impl WeavyLexerReadiness {
             && self.unsupported_terminal_count == 0
             && self.unsupported_symbol_count == 0
     }
+}
+
+/// Lexer-side blocker category that remains opaque or unsupported to Weavy planning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum WeavyLexerBarrierKind {
+    /// A regex pattern still executes through the Rust regex fallback.
+    RustRegexFallback,
+    /// A pattern is unsupported by the current matcher compiler.
+    UnsupportedPattern,
+    /// A terminal root is unsupported by the current matcher compiler.
+    UnsupportedTerminal,
+    /// A lexical symbol reference is not resolved in the lowered lexer graph.
+    UnsupportedSymbol,
 }
 
 #[derive(Clone, Debug)]
@@ -1013,6 +1030,25 @@ impl WeavyLexerStats {
     #[must_use]
     pub fn count(&self, kind: WeavyLexOpKind) -> usize {
         self.op_counts.get(&kind).copied().unwrap_or_default()
+    }
+
+    /// Return the unique lexer blocker kinds that remain opaque or unsupported.
+    #[must_use]
+    pub fn barrier_kinds(&self) -> Vec<WeavyLexerBarrierKind> {
+        let mut kinds = Vec::new();
+        if self.rust_regex_fallback_count > 0 {
+            kinds.push(WeavyLexerBarrierKind::RustRegexFallback);
+        }
+        if self.unsupported_pattern_count > 0 {
+            kinds.push(WeavyLexerBarrierKind::UnsupportedPattern);
+        }
+        if self.count(WeavyLexOpKind::UnsupportedTerminal) > 0 {
+            kinds.push(WeavyLexerBarrierKind::UnsupportedTerminal);
+        }
+        if self.count(WeavyLexOpKind::UnsupportedSymbol) > 0 {
+            kinds.push(WeavyLexerBarrierKind::UnsupportedSymbol);
+        }
+        kinds
     }
 
     fn record(&mut self, kind: WeavyLexOpKind) {
@@ -6316,6 +6352,13 @@ mod tests {
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Nested], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::UnsupportedTerminal], 1);
         assert_eq!(stats.count(WeavyLexOpKind::UnsupportedSymbol), 0);
+        assert_eq!(
+            stats.barrier_kinds(),
+            vec![
+                WeavyLexerBarrierKind::UnsupportedPattern,
+                WeavyLexerBarrierKind::UnsupportedTerminal,
+            ]
+        );
     }
 
     #[test]
@@ -6335,6 +6378,13 @@ mod tests {
         assert_eq!(readiness.unsupported_pattern_count, 1);
         assert_eq!(readiness.unsupported_terminal_count, 1);
         assert_eq!(readiness.unsupported_symbol_count, 0);
+        assert_eq!(
+            readiness.barrier_kinds,
+            vec![
+                WeavyLexerBarrierKind::UnsupportedPattern,
+                WeavyLexerBarrierKind::UnsupportedTerminal,
+            ]
+        );
         assert!(!readiness.is_fully_visible());
     }
 
@@ -6539,6 +6589,13 @@ mod tests {
         assert_eq!(analysis.readiness.lexer.regex_automata_count, 2);
         assert_eq!(analysis.readiness.lexer.regex_fallback_count, 0);
         assert_eq!(analysis.readiness.lexer.rust_regex_fallback_count, 0);
+        assert_eq!(
+            analysis.readiness.lexer.barrier_kinds,
+            vec![
+                WeavyLexerBarrierKind::UnsupportedPattern,
+                WeavyLexerBarrierKind::UnsupportedTerminal,
+            ]
+        );
         assert!(!analysis.readiness.is_fully_visible());
     }
 
@@ -6594,6 +6651,7 @@ mod tests {
             analysis.readiness.parser_barrier_descriptors,
             vec![scanner.descriptor()]
         );
+        assert!(analysis.readiness.lexer.barrier_kinds.is_empty());
         assert!(analysis.readiness.lexer.is_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
     }
