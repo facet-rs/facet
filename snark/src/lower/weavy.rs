@@ -2381,7 +2381,8 @@ struct RuntimeWeavyLexerScratch {
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_matches: RefCell<Option<PatternSet>>,
-    direct_set_cache: RefCell<HashMap<RuntimeWeavyLexSetCacheKey, RuntimeWeavyDirectSetMatches>>,
+    direct_set_cache:
+        RefCell<HashMap<RuntimeWeavyLexSetCacheKey, Arc<RuntimeWeavyDirectSetMatches>>>,
 }
 
 impl RuntimeWeavyLexerScratch {
@@ -2391,13 +2392,13 @@ impl RuntimeWeavyLexerScratch {
         mode: parser_ir::LexModeId,
         mode_program: &WeavyLexModeProgram,
         byte_position: usize,
-    ) -> RuntimeWeavyDirectSetMatches {
+    ) -> Arc<RuntimeWeavyDirectSetMatches> {
         let key = RuntimeWeavyLexSetCacheKey {
             mode,
             byte_position,
         };
         if let Some(matches) = self.direct_set_cache.borrow().get(&key) {
-            return matches.clone();
+            return Arc::clone(matches);
         }
         {
             let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
@@ -2413,13 +2414,13 @@ impl RuntimeWeavyLexerScratch {
                 &mut direct_pattern_matches,
             );
         }
-        let matches = RuntimeWeavyDirectSetMatches {
+        let matches = Arc::new(RuntimeWeavyDirectSetMatches {
             literal_ends: self.direct_literal_ends.borrow().clone(),
             pattern_ends: self.direct_pattern_ends.borrow().clone(),
-        };
+        });
         self.direct_set_cache
             .borrow_mut()
-            .insert(key, matches.clone());
+            .insert(key, Arc::clone(&matches));
         matches
     }
 }
@@ -6727,6 +6728,7 @@ mod tests {
         let second = scratch.direct_set_matches("zzzz", lex_mode, &mode, 0);
 
         assert_eq!(scratch.direct_set_cache.borrow().len(), 1);
+        assert!(Arc::ptr_eq(&second, &first));
         assert_eq!(
             first.literal_ends,
             vec![Some(parser_ir::LexMatch::new(2, 2))]
