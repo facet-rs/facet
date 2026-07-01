@@ -2212,6 +2212,28 @@ impl RuntimeWeavyBranchKey {
     }
 }
 
+fn runtime_weavy_actions(
+    table: &parser_ir::ParseTable,
+    state: parser_ir::ParseStateId,
+    lookahead: parser_ir::LookaheadSymbol,
+    byte_position: usize,
+) -> Result<&[parser_ir::ParseAction], WeavyParseError> {
+    let state_row = table
+        .states()
+        .get(state.get() as usize)
+        .ok_or(WeavyParseError::MissingState { state })?;
+    state_row
+        .entries()
+        .iter()
+        .find(|entry| entry.lookahead() == lookahead)
+        .map(parser_ir::TableEntry::actions)
+        .ok_or(WeavyParseError::NoAction {
+            state,
+            lookahead,
+            byte_position,
+        })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RuntimeWeavyStepOutcome {
     Branch(RuntimeWeavyBranch),
@@ -2233,7 +2255,6 @@ struct RuntimeWeavyDispatch {
     state: parser_ir::ParseStateId,
     token: RuntimeWeavyToken,
     lookahead: parser_ir::LookaheadTokenId,
-    actions: Vec<parser_ir::ParseAction>,
 }
 
 fn step_runtime_weavy_branch(
@@ -2306,27 +2327,37 @@ fn step_runtime_weavy_branch(
         }
     };
 
-    if dispatch.actions.len() > 1 {
-        let versions = (0..dispatch.actions.len())
+    let actions = match runtime_weavy_actions(
+        input_ctx.table,
+        state,
+        dispatch.token.lookahead,
+        branch.byte_position,
+    ) {
+        Ok(actions) => actions,
+        Err(error) => {
+            return vec![RuntimeWeavyStepOutcome::Failed {
+                version: source_version,
+                error,
+            }];
+        }
+    };
+
+    if actions.len() > 1 {
+        let versions = (0..actions.len())
             .map(|_| {
                 let version = parser_ir::StackVersionId::from_index(*next_version_index);
                 *next_version_index += 1;
                 version
             })
             .collect::<Vec<_>>();
-        let conflict = runtime_weavy_conflict_id(
-            input_ctx.table,
-            state,
-            dispatch.token.lookahead,
-            &dispatch.actions,
-        );
+        let conflict =
+            runtime_weavy_conflict_id(input_ctx.table, state, dispatch.token.lookahead, actions);
         output.trace_events.push(parser_ir::TraceEvent::GlrSplit {
             source: source_version,
             conflict,
             branches: versions.clone(),
         });
-        return dispatch
-            .actions
+        return actions
             .iter()
             .zip(versions)
             .map(|(action, version)| {
@@ -2348,7 +2379,7 @@ fn step_runtime_weavy_branch(
             .collect();
     }
 
-    let action = dispatch.actions[0];
+    let action = actions[0];
     vec![run_runtime_weavy_action(
         input_ctx,
         branch,
@@ -2928,7 +2959,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         state,
                         token,
                         lookahead: self.lookahead_id,
-                        actions: entry.actions().to_vec(),
                     });
                     return Ok(Control::Return);
                 }
