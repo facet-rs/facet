@@ -75,7 +75,7 @@ current work items.
 
 ## Lower priority / not worth chasing right now
 
-- `mode_token_spellings` (`weavy.rs:3241-3255`) builds a `Vec<String>` via `.to_owned()` on every terminal/external name — but it's only called on the `RuntimeWeavyError::NoToken` **error path** (`weavy.rs:3050-3054`), not the success path. Not hot for a well-formed 181KB JSON parse.
+- `mode_token_spellings` (`weavy.rs:3241-3255`) builds a `Vec<String>` via `.to_owned()` on every terminal/external name — but it's only called on the `WeavyParseError::NoToken` **error path** (`weavy.rs:3050-3054`), not the success path. Not hot for a well-formed 181KB JSON parse.
 - `auto_close_specs()` / `update_auto_close_stack` (`weavy.rs:3108-3219`) do a `flat_map` scan over all compiled lex modes' terminals per shifted token, plus occasional `spec.tag.clone()` `String` clones on stack push/pop. This only matters for grammars using `AutoClose` (XML/HTML/JSX-style tag matching) — JSON's grammar has no auto-close specs, so this is dead weight for the profiled workload specifically, but worth a look if/when an HTML-like grammar is profiled.
 - `ExternalScannerToken::from_fact` (`lexical.rs:117-125`) and everything in `lexical.rs`/`compile_lex_modes`/`compile_terminal_matcher` (`parser.rs:4123-4330`) run once per grammar compile, not per parse — not part of the per-parse hot path regardless of allocation shape.
 

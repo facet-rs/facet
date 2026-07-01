@@ -127,7 +127,7 @@ construction (`SexpChild`/`SexpValue::Node` referencing a `TreeNodeId` rather
 than embedding an owned `SexpNode`), and the recursive, fully-owned
 `corpus::SexpNode` should only be materialized **once**, in a single
 bottom-up flatten pass at the very end (`finish_runtime_root` /
-`RuntimeWeavyReport` construction), where each `TreeNodeId` is visited and
+`WeavyParseReport` construction), where each `TreeNodeId` is visited and
 moved into its owned form exactly once (memoize by id, or just move since
 each id is the child of exactly one parent in the final accepted tree).
 A cheaper, smaller-blast-radius interim fix: wrap `tree_store`'s entries in
@@ -255,9 +255,9 @@ once per parse — not a multiplier, low priority — but it doubles peak memory
 at the exact moment the tree is largest. Once finding 3 makes
 `reusable_nodes` lazy, this clone gets much cheaper for free.
 
-## 8. [LOW] `RuntimeWeavyReport` retains `tree_store` alongside the already-flattened `tree`
+## 8. [LOW] `WeavyParseReport` retains `tree_store` alongside the already-flattened `tree`
 
-`snark/src/lower/weavy.rs:1751-1762`: `RuntimeWeavyReport` keeps both `tree:
+`snark/src/lower/weavy.rs:1751-1762`: `WeavyParseReport` keeps both `tree:
 SexpNode` (the final flattened, fully-recursive tree) and `tree_store:
 RuntimeWeavyTreeStore` (`Vec<SexpNode>`, one entry per node ever pushed during
 the parse, each already containing full copies of its descendants per
