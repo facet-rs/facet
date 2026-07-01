@@ -3737,7 +3737,6 @@ impl TableConflict {
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledLexMode {
     pub(crate) terminals: Vec<CompiledLexTerminal>,
-    pub(crate) direct_pattern_set: Option<CompiledLexPatternSet>,
 }
 
 #[derive(Debug, Clone)]
@@ -3750,8 +3749,6 @@ pub(crate) struct CompiledLexTerminal {
     pub(crate) implicit_precedence: i32,
     pub(crate) direct_pattern_index: Option<usize>,
 }
-
-pub(crate) type CompiledLexPatternSet = crate::lex_match::CompiledPatternSet;
 
 #[derive(Debug, Clone)]
 pub(crate) enum CompiledTerminalMatcher {
@@ -4069,33 +4066,24 @@ pub(crate) fn compile_lex_modes(
                     compile_lex_terminal(grammar, terminal_row)
                 })
                 .collect::<Vec<_>>();
-            let direct_pattern_set = compile_direct_pattern_set(&mut terminals);
-            CompiledLexMode {
-                terminals,
-                direct_pattern_set,
-            }
+            assign_direct_pattern_indices(&mut terminals);
+            CompiledLexMode { terminals }
         })
         .collect()
 }
 
-fn compile_direct_pattern_set(
-    terminals: &mut [CompiledLexTerminal],
-) -> Option<CompiledLexPatternSet> {
-    let pattern_set =
-        crate::lex_match::compile_pattern_set(terminals.iter().enumerate().filter_map(
-            |(terminal_index, terminal)| {
-                let CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(pattern)) =
-                    &terminal.matcher
-                else {
-                    return None;
-                };
-                Some((terminal_index, pattern))
-            },
-        ))?;
-    for (set_index, terminal_index) in pattern_set.terminal_indices().iter().copied().enumerate() {
-        terminals[terminal_index].direct_pattern_index = Some(set_index);
+fn assign_direct_pattern_indices(terminals: &mut [CompiledLexTerminal]) {
+    let mut set_index = 0usize;
+    for terminal in terminals {
+        let CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(pattern)) = &terminal.matcher
+        else {
+            continue;
+        };
+        if pattern.regex.is_some() {
+            terminal.direct_pattern_index = Some(set_index);
+            set_index += 1;
+        }
     }
-    Some(pattern_set)
 }
 
 fn compile_lex_terminal(

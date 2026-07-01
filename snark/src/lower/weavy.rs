@@ -14,7 +14,7 @@ use std::{
     sync::Arc,
 };
 
-use regex::Regex;
+use regex::{Regex, RegexSet};
 use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
     ir::{
@@ -847,18 +847,20 @@ impl WeavyLexerStats {
 #[derive(Clone, Debug)]
 struct WeavyLexModeProgram {
     terminals: Vec<WeavyLexTerminal>,
-    direct_pattern_set: Option<crate::lex_match::CompiledPatternSet>,
+    direct_pattern_set: Option<WeavyDirectPatternSet>,
 }
 
 impl WeavyLexModeProgram {
     fn from_compiled(compiled: parser_ir::CompiledLexMode) -> Self {
+        let terminals = compiled
+            .terminals
+            .into_iter()
+            .map(WeavyLexTerminal::from)
+            .collect::<Vec<_>>();
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
         Self {
-            terminals: compiled
-                .terminals
-                .into_iter()
-                .map(WeavyLexTerminal::from)
-                .collect(),
-            direct_pattern_set: compiled.direct_pattern_set,
+            terminals,
+            direct_pattern_set,
         }
     }
 
@@ -1039,8 +1041,14 @@ impl WeavyLexExpr {
 
 #[derive(Clone, Debug)]
 enum WeavyPatternMatcher {
-    Known { source: String },
-    Regex { regex: Regex },
+    Known {
+        source: String,
+        regex_source: Option<String>,
+    },
+    Regex {
+        regex: Regex,
+        regex_source: String,
+    },
     Unsupported,
 }
 
@@ -1054,13 +1062,19 @@ enum WeavyPatternMatcherKind {
 impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
     fn from(value: crate::lex_match::CompiledPattern) -> Self {
         let kind = value.kind();
+        let regex_source = value.regex.as_ref().map(|regex| regex.as_str().to_owned());
         match kind {
             crate::lex_match::CompiledPatternKind::Known => Self::Known {
                 source: value.source,
+                regex_source,
             },
-            crate::lex_match::CompiledPatternKind::Regex => value
-                .regex
-                .map_or(Self::Unsupported, |regex| Self::Regex { regex }),
+            crate::lex_match::CompiledPatternKind::Regex => match (value.regex, regex_source) {
+                (Some(regex), Some(regex_source)) => Self::Regex {
+                    regex,
+                    regex_source,
+                },
+                _ => Self::Unsupported,
+            },
             crate::lex_match::CompiledPatternKind::Unsupported => Self::Unsupported,
         }
     }
@@ -1077,13 +1091,85 @@ impl WeavyPatternMatcher {
 
     fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
         match self {
-            Self::Known { source } => {
+            Self::Known { source, .. } => {
                 crate::lex_match::match_known_pattern_source(source, input, byte_position)
             }
-            Self::Regex { regex } => {
+            Self::Regex { regex, .. } => {
                 crate::lex_match::match_regex_leaf(regex, input, byte_position)
             }
             Self::Unsupported => None,
+        }
+    }
+
+    fn regex_source(&self) -> Option<&str> {
+        match self {
+            Self::Known { regex_source, .. } => regex_source.as_deref(),
+            Self::Regex { regex_source, .. } => Some(regex_source.as_str()),
+            Self::Unsupported => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WeavyDirectPatternSet {
+    regex_set: RegexSet,
+    terminal_indices: Vec<usize>,
+}
+
+impl WeavyDirectPatternSet {
+    fn from_terminals(terminals: &[WeavyLexTerminal]) -> Option<Self> {
+        let mut entries = terminals
+            .iter()
+            .enumerate()
+            .filter_map(|(terminal_index, terminal)| {
+                let direct_pattern_index = terminal.direct_pattern_index?;
+                let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher
+                else {
+                    return None;
+                };
+                let regex_source = pattern.regex_source()?;
+                Some((
+                    direct_pattern_index,
+                    terminal_index,
+                    regex_source.to_owned(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            return None;
+        }
+        entries.sort_by_key(|(direct_pattern_index, _, _)| *direct_pattern_index);
+        let regex_sources = entries
+            .iter()
+            .map(|(_, _, source)| source.as_str())
+            .collect::<Vec<_>>();
+        let regex_set = RegexSet::new(regex_sources).ok()?;
+        let terminal_indices = entries
+            .into_iter()
+            .map(|(_, terminal_index, _)| terminal_index)
+            .collect();
+        Some(Self {
+            regex_set,
+            terminal_indices,
+        })
+    }
+
+    fn len(&self) -> usize {
+        self.terminal_indices.len()
+    }
+
+    fn for_each_match(
+        &self,
+        input: &str,
+        byte_position: usize,
+        mut visit: impl FnMut(usize, usize),
+    ) {
+        let Some(haystack) = input.get(byte_position..) else {
+            return;
+        };
+        let matches = self.regex_set.matches(haystack);
+        for set_index in matches.iter() {
+            visit(set_index, self.terminal_indices[set_index]);
         }
     }
 }
