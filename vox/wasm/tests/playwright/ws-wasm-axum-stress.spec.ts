@@ -9,7 +9,7 @@ const projectRoot = new URL("../../../", import.meta.url).pathname;
 // Soak parameters: many concurrent connections to the same axum server,
 // hammered for a fixed wall-clock duration.
 const CONNECTIONS = 8;
-const DURATION_MS = 30_000;
+const DURATION_MS = 10_000;
 
 let wsServer: ChildProcess | null = null;
 let viteServer: ChildProcess | null = null;

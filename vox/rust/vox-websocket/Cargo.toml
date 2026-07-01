@@ -16,6 +16,7 @@ description = "WebSocket transport for vox — message-framed Link over tungsten
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
+features = ["axum"]
 
 [features]
 # Native-only: bridge an `axum` websocket route to a vox [`Link`].

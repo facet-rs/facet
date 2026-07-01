@@ -1,11 +1,9 @@
 //! axum HTTP peer server hosting a vox endpoint on a websocket route.
 //!
 //! Unlike `ws-peer-server` (a bare `tokio-tungstenite` accept loop), this is a
-//! real [`axum`] HTTP application: it serves a plain route at `/` and upgrades
-//! `/ws` into a vox [`Link`](vox_types::Link) via
-//! [`AxumWsLink`](vox_websocket::AxumWsLink), running the shared
-//! [`TestbedService`](subject_rust::TestbedService). Clients connect to
-//! `ws://host:port/ws`.
+//! real `axum` HTTP application: it serves a plain route at `/` and upgrades
+//! `/ws` into a vox `Link` via [`AxumWsLink`], running the shared
+//! [`TestbedService`]. Clients connect to `ws://host:port/ws`.
 
 use std::env;
 
