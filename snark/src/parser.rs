@@ -8553,7 +8553,7 @@ extras (
             .unwrap_err();
         assert!(matches!(
             error,
-            crate::lower::weavy::ReducedWeavyError::InvalidInputEdit { .. }
+            crate::lower::weavy::RuntimeWeavyError::InvalidInputEdit { .. }
         ));
         assert_eq!(session.last_input(), Some("ABCXYZ"));
     }

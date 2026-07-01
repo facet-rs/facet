@@ -2791,26 +2791,26 @@ mod tests {
     }
 
     fn unwrap_weavy_report_or_panic(
-        result: Result<RuntimeWeavyReport, crate::lower::weavy::ReducedWeavyError>,
+        result: Result<RuntimeWeavyReport, crate::lower::weavy::RuntimeWeavyError>,
         parser_grammar: &ParserGrammar,
         parse_table: &ParseTable,
     ) -> RuntimeWeavyReport {
         result.unwrap_or_else(|error| {
             let state = match error {
-                crate::lower::weavy::ReducedWeavyError::NoToken { state, .. }
-                | crate::lower::weavy::ReducedWeavyError::NoAction { state, .. }
-                | crate::lower::weavy::ReducedWeavyError::UnsupportedExternalScanner {
+                crate::lower::weavy::RuntimeWeavyError::NoToken { state, .. }
+                | crate::lower::weavy::RuntimeWeavyError::NoAction { state, .. }
+                | crate::lower::weavy::RuntimeWeavyError::UnsupportedExternalScanner {
                     state,
                     ..
                 }
-                | crate::lower::weavy::ReducedWeavyError::UnsupportedRecovery { state }
-                | crate::lower::weavy::ReducedWeavyError::MissingState { state }
-                | crate::lower::weavy::ReducedWeavyError::ExternalScannerError { state, .. }
-                | crate::lower::weavy::ReducedWeavyError::UnreducedStackEntry { state }
-                | crate::lower::weavy::ReducedWeavyError::UnsupportedConflict { state, .. } => {
+                | crate::lower::weavy::RuntimeWeavyError::UnsupportedRecovery { state }
+                | crate::lower::weavy::RuntimeWeavyError::MissingState { state }
+                | crate::lower::weavy::RuntimeWeavyError::ExternalScannerError { state, .. }
+                | crate::lower::weavy::RuntimeWeavyError::UnreducedStackEntry { state }
+                | crate::lower::weavy::RuntimeWeavyError::UnsupportedConflict { state, .. } => {
                     Some(state)
                 }
-                crate::lower::weavy::ReducedWeavyError::MissingGoto { state, .. } => Some(state),
+                crate::lower::weavy::RuntimeWeavyError::MissingGoto { state, .. } => Some(state),
                 _ => None,
             };
             let mut states = Vec::new();
