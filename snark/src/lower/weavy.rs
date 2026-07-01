@@ -3682,6 +3682,8 @@ fn step_runtime_weavy_branch(
                     && let Some(branch) = recover_runtime_weavy_to_viable_stack(
                         input_ctx,
                         branch.clone(),
+                        output.lexer_scratch,
+                        output.input_points,
                         output.trace_events,
                     )
                 {
@@ -4089,6 +4091,8 @@ fn enqueue_runtime_weavy_branch(
 fn recover_runtime_weavy_to_viable_stack(
     input_ctx: RuntimeWeavyInput<'_>,
     mut branch: RuntimeWeavyBranch,
+    lexer_scratch: &RuntimeWeavyLexerScratch,
+    input_points: &RuntimeWeavyInputPoints,
     trace_events: &mut Vec<parser_ir::TraceEvent>,
 ) -> Option<RuntimeWeavyBranch> {
     if input_ctx.external_scanner.is_some() || branch.stack.len() <= 1 {
@@ -4097,7 +4101,7 @@ fn recover_runtime_weavy_to_viable_stack(
     let original_len = branch.stack.len();
     for len in (1..original_len).rev() {
         let state = branch.stack[len - 1].state;
-        if runtime_weavy_lex_succeeds(input_ctx, &branch, state) {
+        if runtime_weavy_lex_succeeds(input_ctx, &branch, state, lexer_scratch, input_points) {
             branch.stack.truncate(len);
             branch.error_cost = branch
                 .error_cost
@@ -4242,14 +4246,14 @@ fn runtime_weavy_lex_succeeds(
     input_ctx: RuntimeWeavyInput<'_>,
     branch: &RuntimeWeavyBranch,
     state: parser_ir::ParseStateId,
+    lexer_scratch: &RuntimeWeavyLexerScratch,
+    input_points: &RuntimeWeavyInputPoints,
 ) -> bool {
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = Vec::new();
     let mut tree_events = Vec::new();
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
-    let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
-    let lexer_scratch = RuntimeWeavyLexerScratch::default();
-    let stepper = RuntimeWeavyStepper::from_branch(
+    let stepper = RuntimeWeavyStepper::from_branch_ref(
         RuntimeWeavyStepperInput {
             input: RuntimeWeavyInput {
                 external_scanner: None,
@@ -4259,13 +4263,12 @@ fn runtime_weavy_lex_succeeds(
             trace_events: &mut trace_events,
             tree_events: &mut tree_events,
             tree_journal: &mut tree_journal,
-            lexer_scratch: &lexer_scratch,
-            input_points: &input_points,
+            lexer_scratch,
+            input_points,
         },
-        branch.clone(),
+        branch,
         parser_ir::LookaheadTokenId::from_index(0),
         RuntimeWeavyMode::ProbeState,
-        RuntimeWeavyReuseCollection::Disabled,
     );
     let Ok(state_row) = stepper.parse_state(state) else {
         return false;
