@@ -3053,18 +3053,20 @@ impl<'a> LrTableBuilder<'a> {
             let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
                 continue;
             };
-            // `fallback` = the current item's lookahead, `first` = the computed FIRST
-            // set. The whole loop is bitwise OR — no Vec, no interning, no sort.
-            scratch.fallback.clear();
-            if let Some(current) = map.words_of((production_id, dot)) {
-                scratch.fallback.or_from_slice(current);
-            }
+            // `first` = FIRST(steps after the dot), extended by the item's own lookahead
+            // (`fallback`) only when that suffix is entirely nullable. Both suffix facts
+            // are precomputed, so this is a bitset copy plus at most one OR — no suffix
+            // walk. The whole loop is bitwise OR — no Vec, no interning, no sort.
+            let production_index = production_id.get() as usize;
             scratch.first.clear();
-            self.first.first_of_steps_into_bits(
-                &production.steps[dot + 1..],
-                &scratch.fallback,
-                &mut scratch.first,
-            );
+            scratch.first.or_from(&self.first.suffix_first[production_index][dot]);
+            if self.first.suffix_nullable[production_index][dot] {
+                scratch.fallback.clear();
+                if let Some(current) = map.words_of((production_id, dot)) {
+                    scratch.fallback.or_from_slice(current);
+                }
+                scratch.first.or_from(&scratch.fallback);
+            }
             for target in &self.productions_by_lhs[nonterminal.get() as usize] {
                 if map.or_into((*target, 0), &scratch.first) && scratch.queued.insert((*target, 0)) {
                     scratch.worklist.push_back((*target, 0));
@@ -3492,13 +3494,16 @@ impl ItemMap {
 
 #[derive(Debug, Clone)]
 struct FirstFacts {
-    nullable: Vec<bool>,
     first: Vec<Vec<LookaheadSymbol>>,
     /// Shared, frozen index of every possible lookahead symbol. Built once so the LR
     /// closure works entirely in bitsets (no per-symbol interning in the hot loop).
     interner: LookaheadInterner,
-    /// FIRST(nonterminal) as a bitset over `interner`.
-    first_bits: Vec<LookaheadBitset>,
+    /// Per (production, dot): FIRST(steps[dot+1..]) as a bitset, and whether that
+    /// suffix is entirely nullable (so the item's own lookahead — the "fallback" —
+    /// joins it). Both are grammar-static, so the closure hot loop just copies the
+    /// cached bitset and maybe ORs the fallback instead of re-walking the suffix.
+    suffix_first: Vec<Vec<LookaheadBitset>>,
+    suffix_nullable: Vec<Vec<bool>>,
 }
 
 impl FirstFacts {
@@ -3542,7 +3547,7 @@ impl FirstFacts {
         for symbol in all_symbols {
             interner.intern(symbol);
         }
-        let first_bits = first
+        let first_bits: Vec<LookaheadBitset> = first
             .iter()
             .map(|symbols| {
                 let mut bits = LookaheadBitset::default();
@@ -3553,44 +3558,51 @@ impl FirstFacts {
             })
             .collect();
 
+        // Precompute FIRST(steps[dot+1..]) per (production, dot) — the static part of
+        // the closure's lookahead computation — so the hot loop never re-walks a suffix.
+        let mut suffix_first = Vec::with_capacity(grammar.productions.len());
+        let mut suffix_nullable = Vec::with_capacity(grammar.productions.len());
+        for production in &grammar.productions {
+            let steps = &production.steps;
+            let mut per_dot_first = Vec::with_capacity(steps.len());
+            let mut per_dot_nullable = Vec::with_capacity(steps.len());
+            for dot in 0..steps.len() {
+                let mut bits = LookaheadBitset::default();
+                let mut all_nullable = true;
+                for step in &steps[dot + 1..] {
+                    match lookahead_for_step(step) {
+                        Some(symbol) => {
+                            bits.set(interner.index_of(symbol));
+                            all_nullable = false;
+                            break;
+                        }
+                        None => {
+                            let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
+                                unreachable!("non-lookahead parser symbol should be nonterminal");
+                            };
+                            bits.or_from(&first_bits[nonterminal.get() as usize]);
+                            if !nullable[nonterminal.get() as usize] {
+                                all_nullable = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                per_dot_first.push(bits);
+                per_dot_nullable.push(all_nullable);
+            }
+            suffix_first.push(per_dot_first);
+            suffix_nullable.push(per_dot_nullable);
+        }
+
         Self {
-            nullable,
             first,
             interner,
-            first_bits,
+            suffix_first,
+            suffix_nullable,
         }
     }
 
-    /// Append FIRST(steps)+fallback to `out` without sort/dedup — the LR closure ORs
-    /// the result into a bitset (which dedups), so no `Vec` is minted per item.
-    /// Bitset FIRST(steps), falling through to `fallback` once every step is nullable:
-    /// OR the precomputed FIRST-bitsets (and terminal lookaheads) into `out`. No Vec,
-    /// no per-symbol interning, no sort — the LR-closure hot path is pure bitwise OR.
-    fn first_of_steps_into_bits(
-        &self,
-        steps: &[ProductionStep],
-        fallback: &LookaheadBitset,
-        out: &mut LookaheadBitset,
-    ) {
-        for step in steps {
-            match lookahead_for_step(step) {
-                Some(symbol) => {
-                    out.set(self.interner.index_of(symbol));
-                    return;
-                }
-                None => {
-                    let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
-                        unreachable!("non-lookahead parser symbol should be nonterminal");
-                    };
-                    out.or_from(&self.first_bits[nonterminal.get() as usize]);
-                    if !self.nullable[nonterminal.get() as usize] {
-                        return;
-                    }
-                }
-            }
-        }
-        out.or_from(fallback);
-    }
 }
 
 fn productions_by_lhs(grammar: &ParserGrammar) -> Vec<Vec<ProductionId>> {
