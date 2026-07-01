@@ -59,22 +59,16 @@ cargo run -p gingembre-snark-spike -- <grammar.js> '<input>'   # snark
   back to the always-correct runtime split — so undecidability degrades to *perf*,
   never correctness.
 
-## Remaining work (for whoever adapts this)
+## Remaining work
 
-1. **ReducedWeavy accept** (`weavy.rs`, the other `AmbiguousParse`): same bug, but
-   its `accepted` is `Vec<SexpNode>` with no `tree_events` — needs per-branch
-   dynprec accumulation instead of the tree-event sum. It's the reduced *oracle*
-   path, not production; deferred.
-2. **RuntimeParser** (`parser.rs`): same bug, but it's being deleted in the
-   weavy-only migration — skip.
-3. **Exact-tie tie-break:** after dynprec, genuinely-tied distinct trees still
+1. **Exact-tie tie-break:** after dynprec, genuinely-tied distinct trees still
    return `AmbiguousParse`; tree-sitter deterministically picks the first. For full
    drop-in parity add a deterministic tie-break. Kept conservative (error) here to
    surface real ambiguity.
-4. **Reuse path:** a reused subtree replays its `Reduce` events into the accepted
+2. **Reuse path:** a reused subtree replays its `Reduce` events into the accepted
    branch's `tree_events`, so `tree_dynamic_precedence` should sum them correctly —
    verified on fresh parse, not yet on incremental reparse.
-5. **Static collapse** (`../static-conflict-collapse.md`): the build-time
+3. **Static collapse** (`../static-conflict-collapse.md`): the build-time
    optimization that keeps snark a tree-sitter perf drop-in.
 
 ## Files
