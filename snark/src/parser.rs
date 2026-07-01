@@ -2983,6 +2983,8 @@ impl<'a> LrTableBuilder<'a> {
         let mut item_set_keys = std::collections::HashMap::<u64, Vec<ItemSetId>>::new();
         let mut sigs: Vec<Vec<u64>> = Vec::new();
         let mut pool: Vec<ItemMap> = Vec::new();
+        let mut sig_buf: Vec<u64> = Vec::new();
+        let mut keys_buf: Vec<(ProductionId, usize)> = Vec::new();
         let mut scratch = ClosureScratch::default();
         let interner = &self.first.interner;
         let width = self.lookahead_width();
@@ -2998,6 +3000,8 @@ impl<'a> LrTableBuilder<'a> {
             &mut item_set_keys,
             &mut sigs,
             &mut pool,
+            &mut sig_buf,
+            &mut keys_buf,
             start_items,
             interner,
             &mut queue,
@@ -3013,6 +3017,8 @@ impl<'a> LrTableBuilder<'a> {
                     &mut item_set_keys,
                     &mut sigs,
                     &mut pool,
+                    &mut sig_buf,
+                    &mut keys_buf,
                     target_items,
                     interner,
                     &mut queue,
@@ -3461,15 +3467,17 @@ impl ItemMap {
             .collect()
     }
 
-    /// Dense canonical key for state dedup: the sorted (prod, dot) keys plus each
-    /// item's lookahead words, with trailing zero words trimmed so it matches
-    /// set-equality regardless of how a bitset grew. Cheap to hash and compare
-    /// versus materialized `Vec<LrItem>` symbol vecs.
-    fn signature(&self) -> Vec<u64> {
-        let mut keys: Vec<(ProductionId, usize)> = self.rows.keys().copied().collect();
+    /// Write this item set's dense canonical dedup key into `sig` (cleared first),
+    /// using `keys` as scratch: the sorted (prod, dot) keys plus each item's lookahead
+    /// words, with trailing zero words trimmed so it matches set-equality regardless
+    /// of how a bitset grew. Cheap to hash and compare versus materialized
+    /// `Vec<LrItem>` symbol vecs, and both buffers are reused across item sets.
+    fn write_signature(&self, keys: &mut Vec<(ProductionId, usize)>, sig: &mut Vec<u64>) {
+        keys.clear();
+        keys.extend(self.rows.keys().copied());
         keys.sort_unstable();
-        let mut sig = Vec::with_capacity(keys.len() * 3);
-        for key in keys {
+        sig.clear();
+        for &key in keys.iter() {
             let (production, dot) = key;
             let base = self.rows[&key] as usize * self.width;
             let words = &self.words[base..base + self.width];
@@ -3479,7 +3487,6 @@ impl ItemMap {
             sig.push(end as u64);
             sig.extend_from_slice(&words[..end]);
         }
-        sig
     }
 }
 
@@ -3674,11 +3681,14 @@ fn recycle_map(pool: &mut Vec<ItemMap>, mut map: ItemMap) {
     pool.push(map);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_item_set(
     item_sets: &mut Vec<ItemSet>,
     item_set_index: &mut std::collections::HashMap<u64, Vec<ItemSetId>>,
     sigs: &mut Vec<Vec<u64>>,
     pool: &mut Vec<ItemMap>,
+    sig: &mut Vec<u64>,
+    keys: &mut Vec<(ProductionId, usize)>,
     map: ItemMap,
     interner: &LookaheadInterner,
     queue: &mut VecDeque<ItemSetId>,
@@ -3688,12 +3698,13 @@ fn push_item_set(
     // compared word-for-word only within a bucket. Crucially we dedup *before*
     // materializing `Vec<LrItem>`: most goto targets are duplicates of existing
     // states, so building their symbol vecs was pure waste. Only a genuinely-new
-    // state pays materialization; either way the map's buffers go back to the pool.
-    let sig = map.signature();
-    let hash = hash_signature(&sig);
+    // state pays materialization (and a sig clone); either way the map's buffers go
+    // back to the pool and the sig/keys scratch is reused.
+    map.write_signature(keys, sig);
+    let hash = hash_signature(sig);
     let bucket = item_set_index.entry(hash).or_default();
     for &existing in bucket.iter() {
-        if sigs[existing.get() as usize] == sig {
+        if sigs[existing.get() as usize] == *sig {
             recycle_map(pool, map);
             return existing;
         }
@@ -3702,7 +3713,7 @@ fn push_item_set(
     bucket.push(id);
     let items = map.materialize(interner);
     item_sets.push(ItemSet { id, items });
-    sigs.push(sig);
+    sigs.push(sig.clone());
     recycle_map(pool, map);
     queue.push_back(id);
     id
