@@ -17,7 +17,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        ReducedWeavyError, RuntimeWeavyPlan, RuntimeWeavyReport,
+        RuntimeWeavyError, RuntimeWeavyPlan, RuntimeWeavyReport,
         parse_prepared_runtime_recovering_with_report_and_scanner,
         parse_prepared_runtime_with_report_and_scanner,
         reparse_prepared_runtime_recovering_with_report_and_scanner,
@@ -25,8 +25,8 @@ use snark::{
     },
     manifest::TreeSitterConfig,
     parser::{
-        ExternalId, ParseTable, ParserGrammar, ReducedExternalScan, ReducedExternalScanResult,
-        ReducedExternalScanner, ReducedParseError, RuntimeInputEdit, RuntimeResolvedNode,
+        ExternalId, ParseTable, ParserGrammar, ParserRuntimeError, RuntimeExternalScan,
+        RuntimeExternalScanResult, RuntimeExternalScanner, RuntimeInputEdit, RuntimeResolvedNode,
         ScannerSnapshotId, TreeEvent,
     },
     query::QuerySource,
@@ -398,7 +398,7 @@ impl PlaygroundSession {
         response_json(self.response(&request.input, request.run_corpus, edit))
     }
 
-    fn prepare_files(files: Vec<BundleFile>) -> Result<Self, PlaygroundResponse> {
+    fn prepare_files(files: Vec<BundleFile>) -> Result<Self, Box<PlaygroundResponse>> {
         let files = normalize_bundle_files(files);
         let mut bundle = summarize_bundle(&files);
         let Some(grammar_file) = find_file(&files, "src/grammar.json") else {
@@ -408,7 +408,7 @@ impl PlaygroundSession {
                 ),
                 None => "bundle does not contain src/grammar.json".to_owned(),
             };
-            return Err(PlaygroundResponse {
+            return Err(Box::new(PlaygroundResponse {
                 ok: false,
                 language: None,
                 diagnostics: vec![Diagnostic {
@@ -424,13 +424,13 @@ impl PlaygroundSession {
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
-            });
+            }));
         };
 
         let prepared = match prepare_grammar(&grammar_file.text) {
             Ok(prepared) => prepared,
             Err((stage, message)) => {
-                return Err(PlaygroundResponse {
+                return Err(Box::new(PlaygroundResponse {
                     ok: false,
                     language: None,
                     diagnostics: vec![diagnostic(&stage, message, None)],
@@ -442,7 +442,7 @@ impl PlaygroundSession {
                     corpus: Vec::new(),
                     highlight_tests: Vec::new(),
                     tests: TestSummary::not_requested(),
-                });
+                }));
             }
         };
 
@@ -451,7 +451,7 @@ impl PlaygroundSession {
             .active_scanner
             .clone_from(&scanner_selection.active_scanner);
         if !scanner_selection.supports_required_externals(&prepared.parser) {
-            return Err(PlaygroundResponse {
+            return Err(Box::new(PlaygroundResponse {
                 ok: false,
                 language: Some(prepared.raw.name.clone()),
                 diagnostics: vec![diagnostic(
@@ -467,7 +467,7 @@ impl PlaygroundSession {
                 corpus: Vec::new(),
                 highlight_tests: Vec::new(),
                 tests: TestSummary::not_requested(),
-            });
+            }));
         }
         let embedded_languages = prepare_embedded_languages(&files);
         Ok(Self {
@@ -546,7 +546,7 @@ fn playground_response(request_json: &str) -> PlaygroundResponse {
     let run_corpus = request.run_corpus;
     let mut session = match PlaygroundSession::prepare_files(request.files) {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     session.response(&input, run_corpus, None)
 }
@@ -648,7 +648,7 @@ fn parse_session_input(
         .scanner_selection
         .scanner
         .as_ref()
-        .map(|scanner| scanner as &dyn ReducedExternalScanner);
+        .map(|scanner| scanner as &dyn RuntimeExternalScanner);
 
     let previous_input = session.last_input.clone();
     let previous = edit.and_then(|edit| {
@@ -659,7 +659,7 @@ fn parse_session_input(
         ))
     });
     let report = parse_weavy_with_optional_recovery(&session.prepared, scanner, input, previous)
-        .map_err(|error| reduced_weavy_error_diagnostic("parse", &error, input))?;
+        .map_err(|error| runtime_weavy_error_diagnostic("parse", &error, input))?;
     session.last_input = Some(input.to_owned());
     session.last_report = Some(report.report.0.clone());
     Ok(report)
@@ -949,7 +949,7 @@ impl CssBundleExternalScanner {
             .find_map(|(candidate, ordinal)| (*candidate == external).then_some(*ordinal))
     }
 
-    fn valid_symbol_mask(&self, request: ReducedExternalScan<'_>) -> Option<Vec<bool>> {
+    fn valid_symbol_mask(&self, request: RuntimeExternalScan<'_>) -> Option<Vec<bool>> {
         let width = self
             .external_ordinals
             .iter()
@@ -989,11 +989,11 @@ impl CssBundleExternalScanner {
     }
 }
 
-impl ReducedExternalScanner for CssBundleExternalScanner {
+impl RuntimeExternalScanner for CssBundleExternalScanner {
     fn scan(
         &self,
-        request: ReducedExternalScan<'_>,
-    ) -> Result<Option<ReducedExternalScanResult>, ReducedParseError> {
+        request: RuntimeExternalScan<'_>,
+    ) -> Result<Option<RuntimeExternalScanResult>, ParserRuntimeError> {
         let Some(mask) = self.valid_symbol_mask(request) else {
             return Ok(None);
         };
@@ -1017,7 +1017,7 @@ impl ReducedExternalScanner for CssBundleExternalScanner {
         }
         let after = self.intern_snapshot(scan.serialized_state());
         Ok(Some(
-            ReducedExternalScanResult::new(scan.end_byte())
+            RuntimeExternalScanResult::new(scan.end_byte())
                 .with_snapshots(Some(before), Some(after)),
         ))
     }
@@ -1295,12 +1295,12 @@ fn layer_output(
     let scanner = scanner_selection
         .scanner
         .as_ref()
-        .map(|scanner| scanner as &dyn ReducedExternalScanner);
+        .map(|scanner| scanner as &dyn RuntimeExternalScanner);
     let report_result = parse_weavy_with_optional_recovery(prepared, scanner, &input, None);
     let report = match report_result {
         Ok(report) => report,
         Err(error) => {
-            let diagnostic = reduced_weavy_error_diagnostic("parse", &error, &input);
+            let diagnostic = runtime_weavy_error_diagnostic("parse", &error, &input);
             return LayerOutput {
                 language: group.language,
                 combined: group.combined,
@@ -1611,7 +1611,7 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
                 scanner_selection
                     .scanner
                     .as_ref()
-                    .map(|scanner| scanner as &dyn ReducedExternalScanner),
+                    .map(|scanner| scanner as &dyn RuntimeExternalScanner),
                 &case.input,
             ) {
                 Ok(report) => {
@@ -1673,7 +1673,7 @@ fn run_highlight_tests(
             scanner_selection
                 .scanner
                 .as_ref()
-                .map(|scanner| scanner as &dyn ReducedExternalScanner),
+                .map(|scanner| scanner as &dyn RuntimeExternalScanner),
             &file.text,
         ) {
             Ok(report) => report,
@@ -1793,9 +1793,9 @@ fn highlight_assertion_range(assertion: &HighlightAssertion) -> PointRange {
 
 fn parse_strict_weavy_with_optional_scanner(
     prepared: &PreparedGrammar,
-    scanner: Option<&dyn ReducedExternalScanner>,
+    scanner: Option<&dyn RuntimeExternalScanner>,
     input: &str,
-) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
     parse_prepared_runtime_with_report_and_scanner(
         &prepared.weavy_plan,
         &prepared.validated,
@@ -1808,9 +1808,9 @@ fn parse_strict_weavy_with_optional_scanner(
 
 fn parse_recovering_weavy_with_optional_scanner(
     prepared: &PreparedGrammar,
-    scanner: Option<&dyn ReducedExternalScanner>,
+    scanner: Option<&dyn RuntimeExternalScanner>,
     input: &str,
-) -> Result<RuntimeWeavyReport, ReducedWeavyError> {
+) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
     parse_prepared_runtime_recovering_with_report_and_scanner(
         &prepared.weavy_plan,
         &prepared.validated,
@@ -1823,10 +1823,10 @@ fn parse_recovering_weavy_with_optional_scanner(
 
 fn parse_weavy_with_optional_recovery(
     prepared: &PreparedGrammar,
-    scanner: Option<&dyn ReducedExternalScanner>,
+    scanner: Option<&dyn RuntimeExternalScanner>,
     input: &str,
     previous: Option<(&str, &RuntimeWeavyReport, RuntimeInputEdit)>,
-) -> Result<PlaygroundParseReport, ReducedWeavyError> {
+) -> Result<PlaygroundParseReport, RuntimeWeavyError> {
     let strict = if let Some((old_input, previous_report, edit)) = previous {
         reparse_prepared_runtime_with_report_and_scanner(
             &prepared.weavy_plan,
@@ -1864,7 +1864,7 @@ fn parse_weavy_with_optional_recovery(
         } {
             Ok(report) => Ok(PlaygroundParseReport {
                 report: PlaygroundRuntimeReport(report),
-                strict_error_byte: reduced_weavy_error_byte(&strict_error),
+                strict_error_byte: runtime_weavy_error_byte(&strict_error),
             }),
             Err(_) => Err(strict_error),
         },
@@ -1893,20 +1893,20 @@ fn accepted_problem_span(events: &[TreeEvent], input: &str) -> Option<Diagnostic
     })
 }
 
-fn reduced_weavy_error_diagnostic(
+fn runtime_weavy_error_diagnostic(
     stage: &str,
-    error: &ReducedWeavyError,
+    error: &RuntimeWeavyError,
     input: &str,
 ) -> Diagnostic {
-    let span = reduced_weavy_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
+    let span = runtime_weavy_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
     diagnostic(stage, error.to_string(), span)
 }
 
-fn reduced_weavy_error_byte(error: &ReducedWeavyError) -> Option<usize> {
+fn runtime_weavy_error_byte(error: &RuntimeWeavyError) -> Option<usize> {
     match error {
-        ReducedWeavyError::NoToken { byte_position, .. }
-        | ReducedWeavyError::NoAction { byte_position, .. }
-        | ReducedWeavyError::TrailingInput { byte_position } => Some(*byte_position),
+        RuntimeWeavyError::NoToken { byte_position, .. }
+        | RuntimeWeavyError::NoAction { byte_position, .. }
+        | RuntimeWeavyError::TrailingInput { byte_position } => Some(*byte_position),
         _ => None,
     }
 }
@@ -2089,18 +2089,18 @@ impl NormalizationContext {
 
 fn normalize_bundle_path(path: &str, context: &NormalizationContext) -> String {
     let path = normalize_path(path);
-    if let Some(relative) = arborium_def_relative(&path, context) {
-        if let Some(mapped) = normalize_arborium_def_path(relative) {
-            return mapped;
-        }
+    if let Some(relative) = arborium_def_relative(&path, context)
+        && let Some(mapped) = normalize_arborium_def_path(relative)
+    {
+        return mapped;
     }
     if is_ambiguous_arborium_def_path(&path, context) {
         return path;
     }
-    if let Some(relative) = package_root_relative(&path, context) {
-        if let Some(mapped) = normalize_package_path(relative) {
-            return mapped;
-        }
+    if let Some(relative) = package_root_relative(&path, context)
+        && let Some(mapped) = normalize_package_path(relative)
+    {
+        return mapped;
     }
     if is_ambiguous_package_path(&path, context) {
         return path;
