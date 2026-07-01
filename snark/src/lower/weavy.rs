@@ -849,12 +849,19 @@ impl WeavyParsePlanReadiness {
         }
     }
 
-    /// True when every parser op and lexer leaf is visible to Weavy planning.
+    /// True when parser/action ops no longer require opaque or host-call execution.
     #[must_use]
-    pub const fn is_fully_visible(&self) -> bool {
-        self.lexer.is_fully_visible()
+    pub fn is_parser_fully_visible(&self) -> bool {
+        self.host_call_barrier_intrinsic_count == 0
             && self.opaque_intrinsic_count == 0
             && self.host_call_intrinsic_count == 0
+            && self.parser_barrier_descriptors.is_empty()
+    }
+
+    /// True when every parser op and lexer leaf is visible to Weavy planning.
+    #[must_use]
+    pub fn is_fully_visible(&self) -> bool {
+        self.is_parser_fully_visible() && self.lexer.is_fully_visible()
     }
 }
 
@@ -907,11 +914,8 @@ impl WeavyLexerReadiness {
 
     /// True when lexer leaves no longer require fallback matching.
     #[must_use]
-    pub const fn is_fully_visible(&self) -> bool {
-        self.regex_fallback_count == 0
-            && self.unsupported_pattern_count == 0
-            && self.unsupported_terminal_count == 0
-            && self.unsupported_symbol_count == 0
+    pub fn is_fully_visible(&self) -> bool {
+        self.barrier_kinds.is_empty()
     }
 }
 
@@ -6596,6 +6600,7 @@ mod tests {
                 WeavyLexerBarrierKind::UnsupportedTerminal,
             ]
         );
+        assert!(analysis.readiness.is_parser_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
     }
 
@@ -6653,6 +6658,7 @@ mod tests {
         );
         assert!(analysis.readiness.lexer.barrier_kinds.is_empty());
         assert!(analysis.readiness.lexer.is_fully_visible());
+        assert!(!analysis.readiness.is_parser_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
     }
 
