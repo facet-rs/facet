@@ -407,6 +407,20 @@ impl SnarkIntrinsicSemanticStats {
         self.descriptor_semantics.get(&descriptor)
     }
 
+    /// Return descriptor identities whose contracts still block fully-visible lowering.
+    #[must_use]
+    pub fn barrier_descriptors(&self) -> Vec<IntrinsicDescriptor> {
+        self.descriptor_semantics
+            .values()
+            .filter(|semantics| {
+                semantics.lowering == SnarkIntrinsicLowering::HostCallBarrier
+                    || semantics.effect.opaque
+                    || semantics.effect.calls_user_code
+            })
+            .map(|semantics| semantics.descriptor)
+            .collect()
+    }
+
     /// Return the number of intrinsics with one stable dialect/name identity.
     #[must_use]
     pub fn descriptor_count(&self, descriptor: IntrinsicDescriptor) -> usize {
@@ -809,6 +823,8 @@ pub struct WeavyParsePlanReadiness {
     pub opaque_intrinsic_count: usize,
     /// Intrinsics that call outside code.
     pub host_call_intrinsic_count: usize,
+    /// Unique Snark dialect descriptors that still block fully-visible lowering.
+    pub parser_barrier_descriptors: Vec<IntrinsicDescriptor>,
 }
 
 impl WeavyParsePlanReadiness {
@@ -829,6 +845,7 @@ impl WeavyParsePlanReadiness {
                 .lowering_count(SnarkIntrinsicLowering::HostCallBarrier),
             opaque_intrinsic_count: parser.effect_stats.total.opaque_count,
             host_call_intrinsic_count: parser.effect_stats.total.calls_user_code_count,
+            parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
         }
     }
 
@@ -6355,6 +6372,7 @@ mod tests {
                 .map(|s| s.domain),
             Some(SnarkIntrinsicDomain::Trace)
         );
+        assert!(stats.barrier_descriptors().is_empty());
         assert_eq!(stats.domain_count(SnarkIntrinsicDomain::Lexing), 1);
         assert_eq!(stats.domain_count(SnarkIntrinsicDomain::Trace), 1);
         assert_eq!(stats.lowering_count(SnarkIntrinsicLowering::LexerGraph), 1);
@@ -6517,6 +6535,7 @@ mod tests {
         assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.sink_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.host_call_barrier_intrinsic_count, 0);
+        assert!(analysis.readiness.parser_barrier_descriptors.is_empty());
         assert_eq!(analysis.readiness.lexer.regex_automata_count, 2);
         assert_eq!(analysis.readiness.lexer.regex_fallback_count, 0);
         assert_eq!(analysis.readiness.lexer.rust_regex_fallback_count, 0);
@@ -6571,6 +6590,10 @@ mod tests {
         assert_eq!(analysis.readiness.lexer_graph_intrinsic_count, 0);
         assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.sink_op_intrinsic_count, 0);
+        assert_eq!(
+            analysis.readiness.parser_barrier_descriptors,
+            vec![scanner.descriptor()]
+        );
         assert!(analysis.readiness.lexer.is_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
     }
