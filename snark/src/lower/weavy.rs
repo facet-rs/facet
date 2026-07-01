@@ -436,8 +436,8 @@ pub fn empty_lowered() -> SnarkWeavyLowered {
 pub struct WeavyParserProgram {
     lowered: SnarkWeavyLowered,
     dense: DenseSnarkWeavyLowered,
-    block_refs: BTreeMap<SnarkBlockId, BlockRef>,
     state_blocks: Vec<SnarkBlockId>,
+    state_block_refs: Vec<BlockRef>,
     action_blocks: Vec<Vec<Vec<WeavyParserActionBlock>>>,
 }
 
@@ -452,18 +452,11 @@ impl WeavyParserProgram {
         &self.state_blocks
     }
 
-    fn state_block_symbol(
-        &self,
-        state: parser_ir::ParseStateId,
-    ) -> Result<SnarkBlockId, WeavyParseError> {
-        self.state_blocks
+    fn state_block(&self, state: parser_ir::ParseStateId) -> Result<BlockRef, WeavyParseError> {
+        self.state_block_refs
             .get(state.get() as usize)
             .copied()
             .ok_or(WeavyParseError::MissingStateBlock { state })
-    }
-
-    fn state_block(&self, state: parser_ir::ParseStateId) -> Result<BlockRef, WeavyParseError> {
-        self.block_ref(self.state_block_symbol(state)?)
     }
 
     fn action_block(
@@ -479,21 +472,14 @@ impl WeavyParserProgram {
             .and_then(|rows| rows.get(entry_index))
             .and_then(|blocks| blocks.get(action_index))
             .filter(|block| block.action == action)
-            .map(|block| block.block)
+            .map(|block| block.block_ref)
             .ok_or(WeavyParseError::MissingActionBlock {
                 state,
                 entry_index,
                 action_index,
                 action,
             })?;
-        self.block_ref(block)
-    }
-
-    fn block_ref(&self, block: SnarkBlockId) -> Result<BlockRef, WeavyParseError> {
-        self.block_refs
-            .get(&block)
-            .copied()
-            .ok_or(WeavyParseError::MissingDenseBlock { block })
+        Ok(block)
     }
 
     fn dense_block(&self, block: BlockRef) -> Result<&[DenseSnarkWeavyOp], WeavyParseError> {
@@ -653,6 +639,12 @@ struct RuntimeWeavyAutoCloseNodeEdit {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WeavyParserActionBlock {
+    action: parser_ir::ParseAction,
+    block_ref: BlockRef,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SymbolicWeavyParserActionBlock {
     action: parser_ir::ParseAction,
     block: SnarkBlockId,
 }
@@ -1027,7 +1019,7 @@ fn lower_weavy_parser_program(
             for action in entry.actions() {
                 let block = SnarkBlockId::from_index(next_block);
                 next_block += 1;
-                blocks.push(WeavyParserActionBlock {
+                blocks.push(SymbolicWeavyParserActionBlock {
                     action: *action,
                     block,
                 });
@@ -1045,12 +1037,43 @@ fn lower_weavy_parser_program(
         weavy::ir::ResolveError::MissingBlock(block) => WeavyParseError::MissingBlock { block },
         _ => WeavyParseError::UnsupportedCanonicalOp,
     })?;
+    let state_block_refs = state_blocks
+        .iter()
+        .map(|block| {
+            block_refs
+                .get(block)
+                .copied()
+                .ok_or(WeavyParseError::MissingDenseBlock { block: *block })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let action_blocks = action_blocks
+        .into_iter()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|blocks| {
+                    blocks
+                        .into_iter()
+                        .map(|block| {
+                            let block_ref = block_refs
+                                .get(&block.block)
+                                .copied()
+                                .ok_or(WeavyParseError::MissingDenseBlock { block: block.block })?;
+                            Ok(WeavyParserActionBlock {
+                                action: block.action,
+                                block_ref,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(WeavyParserProgram {
         lowered,
         dense,
-        block_refs,
         state_blocks,
+        state_block_refs,
         action_blocks,
     })
 }
