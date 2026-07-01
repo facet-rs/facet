@@ -1385,7 +1385,7 @@ impl WeavyLexExpr {
 #[derive(Clone, Debug)]
 enum WeavyPatternMatcher {
     Known {
-        source: String,
+        pattern: crate::lex_match::KnownPattern,
         regex_source: Option<String>,
     },
     Regex(WeavyRegexLeaf),
@@ -1404,10 +1404,16 @@ impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
         let kind = value.kind();
         let regex_source = value.regex.as_ref().map(|regex| regex.as_str().to_owned());
         match kind {
-            crate::lex_match::CompiledPatternKind::Known => Self::Known {
-                source: value.source,
-                regex_source,
-            },
+            crate::lex_match::CompiledPatternKind::Known => {
+                let Some(pattern) = crate::lex_match::known_pattern_for_source(&value.source)
+                else {
+                    return Self::Unsupported;
+                };
+                Self::Known {
+                    pattern,
+                    regex_source,
+                }
+            }
             crate::lex_match::CompiledPatternKind::Regex => match (value.regex, regex_source) {
                 (Some(regex), Some(regex_source)) => Self::Regex(WeavyRegexLeaf::new(
                     value.source,
@@ -1440,8 +1446,8 @@ impl WeavyPatternMatcher {
 
     fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
         match self {
-            Self::Known { source, .. } => {
-                crate::lex_match::match_known_pattern_source(source, input, byte_position)
+            Self::Known { pattern, .. } => {
+                crate::lex_match::match_known_pattern(*pattern, input, byte_position)
             }
             Self::Regex(leaf) => leaf.match_input(input, byte_position),
             Self::Unsupported => None,
@@ -6502,6 +6508,29 @@ mod tests {
                 WeavyLexerBarrierKind::UnsupportedTerminal,
             ]
         );
+    }
+
+    #[test]
+    fn known_patterns_lower_to_named_weavy_leaves() {
+        let matcher = WeavyPatternMatcher::from(crate::lex_match::compile_pattern("and\\b", None));
+
+        let WeavyPatternMatcher::Known {
+            pattern,
+            regex_source,
+        } = &matcher
+        else {
+            panic!("expected a known pattern leaf");
+        };
+        assert_eq!(
+            *pattern,
+            crate::lex_match::KnownPattern::AsciiKeyword("and")
+        );
+        assert_eq!(regex_source.as_deref(), Some(r"\A(?:and\b)"));
+        assert_eq!(
+            matcher.match_input("and rest", 0),
+            Some(parser_ir::LexMatch::new(3, 4))
+        );
+        assert_eq!(matcher.match_input("anderson", 0), None);
     }
 
     #[test]

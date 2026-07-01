@@ -26,6 +26,33 @@ impl CompiledPattern {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum KnownPattern {
+    CssNthFunctionalNotation,
+    GingembreIdentifier,
+    CssHexEscapeTail,
+    JsonLineCommentTail,
+    JsonBlockCommentBody,
+    CssIdentifier,
+    AsciiKeyword(&'static str),
+}
+
+impl KnownPattern {
+    fn match_end(self, input: &str, byte_position: usize) -> Option<usize> {
+        match self {
+            Self::CssNthFunctionalNotation => {
+                match_css_nth_functional_notation(input, byte_position)
+            }
+            Self::GingembreIdentifier => match_gingembre_identifier(input, byte_position),
+            Self::CssHexEscapeTail => match_css_hex_escape_tail(input, byte_position),
+            Self::JsonLineCommentTail => match_json_line_comment_tail(input, byte_position),
+            Self::JsonBlockCommentBody => match_json_block_comment_body(input, byte_position),
+            Self::CssIdentifier => match_css_identifier(input, byte_position),
+            Self::AsciiKeyword(keyword) => match_ascii_keyword(input, byte_position, keyword),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledUntilMatcher {
     pub(crate) markers: Vec<String>,
@@ -35,7 +62,7 @@ pub(crate) struct CompiledUntilMatcher {
 pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPattern {
     let flags = normalized_regex_flags(flags);
     let regex = compile_regex_leaf(pattern, flags.as_deref());
-    let kind = if flags.is_none() && is_known_pattern_source(pattern) {
+    let kind = if flags.is_none() && known_pattern_for_source(pattern).is_some() {
         CompiledPatternKind::Known
     } else if regex.is_some() {
         CompiledPatternKind::Regex
@@ -80,9 +107,9 @@ pub(crate) fn match_pattern_with_flags(
     byte_position: usize,
 ) -> Option<usize> {
     if regex_flags_are_empty(flags)
-        && let Some(result) = match_known_pattern(pattern, input, byte_position)
+        && let Some(pattern) = known_pattern_for_source(pattern)
     {
-        return result;
+        return pattern.match_end(input, byte_position);
     }
     match_cached_regex_leaf(pattern, flags, input, byte_position)
 }
@@ -99,13 +126,22 @@ pub(crate) fn match_compiled_pattern(
     match_regex_leaf(pattern.regex.as_ref()?, input, byte_position)
 }
 
+#[cfg(test)]
 pub(crate) fn match_known_pattern_source(
     pattern: &str,
     input: &str,
     byte_position: usize,
 ) -> Option<LexMatch> {
-    match_known_pattern(pattern, input, byte_position)?
-        .map(|end| LexMatch::new(end, pattern_inspected_end(input, end)))
+    match_known_pattern(known_pattern_for_source(pattern)?, input, byte_position)
+}
+
+pub(crate) fn match_known_pattern(
+    pattern: KnownPattern,
+    input: &str,
+    byte_position: usize,
+) -> Option<LexMatch> {
+    let end = pattern.match_end(input, byte_position)?;
+    Some(LexMatch::new(end, pattern_inspected_end(input, end)))
 }
 
 pub(crate) fn match_regex_leaf(
@@ -212,42 +248,21 @@ pub(crate) fn match_nested_delimiters_with_inspection(
     Some(LexMatch::new(input.len(), input.len()))
 }
 
-fn match_known_pattern(pattern: &str, input: &str, byte_position: usize) -> Option<Option<usize>> {
-    match pattern {
-        "-?(\\d)*n\\s*(\\+\\s*\\d+)?" => {
-            Some(match_css_nth_functional_notation(input, byte_position))
-        }
-        GINGEMBRE_IDENTIFIER_PATTERN => Some(match_gingembre_identifier(input, byte_position)),
-        "[0-9a-fA-F]{1,6}\\s?" => Some(match_css_hex_escape_tail(input, byte_position)),
-        ".*" => Some(match_json_line_comment_tail(input, byte_position)),
-        "[^*]*\\*+([^/*][^*]*\\*+)*" => Some(match_json_block_comment_body(input, byte_position)),
-        "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => {
-            Some(match_css_identifier(input, byte_position))
-        }
-        "and\\b" => Some(match_ascii_keyword(input, byte_position, "and")),
-        "in\\b" => Some(match_ascii_keyword(input, byte_position, "in")),
-        "is\\b" => Some(match_ascii_keyword(input, byte_position, "is")),
-        "not\\b" => Some(match_ascii_keyword(input, byte_position, "not")),
-        "or\\b" => Some(match_ascii_keyword(input, byte_position, "or")),
-        _ => None,
-    }
-}
-
-fn is_known_pattern_source(pattern: &str) -> bool {
-    matches!(
-        pattern,
-        "-?(\\d)*n\\s*(\\+\\s*\\d+)?"
-            | GINGEMBRE_IDENTIFIER_PATTERN
-            | "[0-9a-fA-F]{1,6}\\s?"
-            | ".*"
-            | "[^*]*\\*+([^/*][^*]*\\*+)*"
-            | "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*"
-            | "and\\b"
-            | "in\\b"
-            | "is\\b"
-            | "not\\b"
-            | "or\\b"
-    )
+pub(crate) fn known_pattern_for_source(pattern: &str) -> Option<KnownPattern> {
+    Some(match pattern {
+        "-?(\\d)*n\\s*(\\+\\s*\\d+)?" => KnownPattern::CssNthFunctionalNotation,
+        GINGEMBRE_IDENTIFIER_PATTERN => KnownPattern::GingembreIdentifier,
+        "[0-9a-fA-F]{1,6}\\s?" => KnownPattern::CssHexEscapeTail,
+        ".*" => KnownPattern::JsonLineCommentTail,
+        "[^*]*\\*+([^/*][^*]*\\*+)*" => KnownPattern::JsonBlockCommentBody,
+        "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*" => KnownPattern::CssIdentifier,
+        "and\\b" => KnownPattern::AsciiKeyword("and"),
+        "in\\b" => KnownPattern::AsciiKeyword("in"),
+        "is\\b" => KnownPattern::AsciiKeyword("is"),
+        "not\\b" => KnownPattern::AsciiKeyword("not"),
+        "or\\b" => KnownPattern::AsciiKeyword("or"),
+        _ => return None,
+    })
 }
 
 pub(crate) fn pattern_inspected_end(input: &str, end: usize) -> usize {
