@@ -138,10 +138,10 @@ fragments. Use `Control::CallBlockThen` from the Snark stepper when the runtime
 must resume with a Snark continuation after a child block returns. Do not encode
 grammar recursion as Rust recursion or as recursive descent in a Snark stepper.
 
-## Runtime State And Sinks
+## Weavy State And Sinks
 
-The Snark stepper is the owner of runtime parser state. Its state bundle should
-be explicit and observable:
+The Snark Weavy stepper owns parser execution state. Its state bundle should be
+explicit and observable:
 
 - Source input: bytes, byte offsets, UTF-8 point tracking, included ranges, and
   incremental edit metadata from `runtime_input`.
