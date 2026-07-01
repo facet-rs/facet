@@ -4236,6 +4236,7 @@ impl TableConflict {
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledLexMode {
     pub(crate) terminals: Vec<CompiledLexTerminal>,
+    pub(crate) external_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -4571,7 +4572,10 @@ pub(crate) fn compile_lex_modes(
                 })
                 .collect::<Vec<_>>();
             assign_direct_pattern_indices(&mut terminals);
-            CompiledLexMode { terminals }
+            CompiledLexMode {
+                terminals,
+                external_count: mode.externals().len(),
+            }
         })
         .collect()
 }

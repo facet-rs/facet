@@ -135,6 +135,9 @@ struct PlanStencilOutput {
     descriptor: String,
     domain: String,
     lowering: String,
+    family: String,
+    execution: String,
+    state: Vec<String>,
     effect: PlanStencilEffectOutput,
     count: usize,
 }
@@ -770,6 +773,14 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
                 ),
                 domain: format!("{:?}", summary.domain),
                 lowering: format!("{:?}", summary.lowering),
+                family: format!("{:?}", summary.stencil.family),
+                execution: format!("{:?}", summary.stencil.execution),
+                state: summary
+                    .stencil
+                    .state
+                    .iter()
+                    .map(|state| format!("{state:?}"))
+                    .collect(),
                 effect: PlanStencilEffectOutput {
                     ordering: format!("{:?}", summary.effect.ordering),
                     resource_count: summary.effect.resources.len(),
@@ -4442,8 +4453,12 @@ mod tests {
             == "snark.tree_sitter::lex"
             && summary.domain == "Lexing"
             && summary.lowering == "LexerGraph"
+            && summary.family == "Lexer"
+            && summary.execution == "LexerGraph"
+            && summary.state.iter().any(|state| state == "LexerProgram")
+            && summary.state.iter().any(|state| state == "ScannerState")
             && summary.effect.ordering == "Ordered"
-            && summary.effect.resource_count == 2
+            && summary.effect.resource_count == 3
             && summary.effect.typed_memory_count == 0
             && summary.effect.may_fail
             && !summary.effect.may_allocate

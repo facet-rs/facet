@@ -350,6 +350,93 @@ pub enum SnarkIntrinsicLowering {
     SinkOp,
 }
 
+/// Coarse native-stencil family for one Snark intrinsic descriptor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum SnarkStencilFamily {
+    /// Lexer graph and token selection.
+    Lexer,
+    /// External scanner ABI call.
+    ExternalScanner,
+    /// Parser action dispatch.
+    ParserDispatch,
+    /// Parser cursor/lookahead commitment.
+    ParserCursor,
+    /// Parser stack mutation.
+    ParserStack,
+    /// GLR branch scheduling and merge bookkeeping.
+    GlrScheduler,
+    /// Tree store and CST/event materialization.
+    TreeBuilder,
+    /// Trace/tree/query capture sink writes.
+    Sink,
+    /// Query execution over the resolved tree/event stream.
+    Query,
+}
+
+/// How a Snark intrinsic should become executable in a native Weavy backend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum SnarkStencilExecution {
+    /// Lowered lexer graph with Snark-owned matcher state.
+    LexerGraph,
+    /// Direct Snark parser/runtime stencil over the parse session ABI.
+    DirectStencil,
+    /// Host-call stencil boundary.
+    HostCall,
+    /// Optional sink adapter; removable when the sink is disabled.
+    SinkAdapter,
+    /// Query-plan stencil over an accepted tree/event stream.
+    QueryPlan,
+}
+
+/// Session state a Snark stencil may read or mutate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum SnarkStencilState {
+    /// Source text and byte cursor.
+    SourceInput,
+    /// LR parse table and state rows.
+    ParseTable,
+    /// Lowered lexical modes and matcher graphs.
+    LexerProgram,
+    /// Parser stack/GSS state.
+    ParserStack,
+    /// Branch-local byte cursor.
+    BranchCursor,
+    /// Branch-local lookahead token slot.
+    Lookahead,
+    /// External scanner snapshots.
+    ScannerState,
+    /// Declarative auto-close stack.
+    AutoCloseStack,
+    /// GLR live branch queue.
+    GlrWorklist,
+    /// Runtime tree store.
+    TreeStore,
+    /// Runtime tree journal.
+    TreeJournal,
+    /// Parser trace sink.
+    TraceSink,
+    /// Tree-event sink.
+    TreeEventSink,
+    /// Query plan data.
+    QueryPlan,
+    /// Query capture sink.
+    QueryCaptureSink,
+}
+
+/// ABI contract for one Snark-owned native stencil family.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnarkStencilContract {
+    /// Native stencil family.
+    pub family: SnarkStencilFamily,
+    /// Execution strategy for this family.
+    pub execution: SnarkStencilExecution,
+    /// Session state required by this stencil.
+    pub state: &'static [SnarkStencilState],
+}
+
 /// Optimizer-facing metadata for one Snark dialect intrinsic.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnarkIntrinsicSemantics {
@@ -361,6 +448,8 @@ pub struct SnarkIntrinsicSemantics {
     pub lowering: SnarkIntrinsicLowering,
     /// Conservative effect contract used for legal scheduling/fusion.
     pub effect: EffectContract,
+    /// Native stencil ABI contract for this descriptor.
+    pub stencil: SnarkStencilContract,
 }
 
 /// Semantic shape summary for Snark dialect intrinsics in one Weavy program.
@@ -389,6 +478,8 @@ pub struct WeavySnarkStencilSummary {
     pub lowering: SnarkIntrinsicLowering,
     /// Conservative effect contract that bounds legal scheduling/fusion.
     pub effect: EffectContract,
+    /// Native stencil family and ABI surface.
+    pub stencil: SnarkStencilContract,
     /// Number of ops with this descriptor in the parser/action program.
     pub count: usize,
 }
@@ -467,6 +558,7 @@ impl SnarkIntrinsicSemanticStats {
                 domain: semantics.domain,
                 lowering: semantics.lowering,
                 effect: semantics.effect.clone(),
+                stencil: semantics.stencil.clone(),
                 count: self.descriptor_count(semantics.descriptor),
             })
             .collect()
@@ -481,14 +573,29 @@ impl SnarkIntrinsic {
     #[must_use]
     pub fn semantics(&self) -> SnarkIntrinsicSemantics {
         let descriptor = self.descriptor();
-        let (domain, lowering, effect) = match self {
+        let (domain, lowering, effect, stencil) = match self {
             Self::Lex { .. } => (
                 SnarkIntrinsicDomain::Lexing,
                 SnarkIntrinsicLowering::LexerGraph,
                 EffectContract::new()
                     .read_resource(EffectResource::Input("source"))
+                    .read_resource(EffectResource::SideChannel("scanner_state"))
                     .write_resource(EffectResource::SideChannel("lookahead"))
                     .may_fail(),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::Lexer,
+                    execution: SnarkStencilExecution::LexerGraph,
+                    state: &[
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::ScannerState,
+                        SnarkStencilState::AutoCloseStack,
+                    ],
+                },
             ),
             Self::CallExternalScanner { .. } => (
                 SnarkIntrinsicDomain::ExternalScanner,
@@ -500,6 +607,17 @@ impl SnarkIntrinsic {
                     .write_resource(EffectResource::SideChannel("lookahead"))
                     .may_fail()
                     .calls_user_code(),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::ExternalScanner,
+                    execution: SnarkStencilExecution::HostCall,
+                    state: &[
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::ScannerState,
+                    ],
+                },
             ),
             Self::DispatchActions { .. } => (
                 SnarkIntrinsicDomain::ParserControl,
@@ -507,6 +625,15 @@ impl SnarkIntrinsic {
                 EffectContract::new()
                     .read_resource(EffectResource::SideChannel("parser_stack"))
                     .read_resource(EffectResource::SideChannel("lookahead")),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::ParserDispatch,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: &[
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::Lookahead,
+                    ],
+                },
             ),
             Self::CommitLookahead { .. } => (
                 SnarkIntrinsicDomain::ParserControl,
@@ -517,6 +644,17 @@ impl SnarkIntrinsic {
                     .advance_resource(EffectResource::SideChannel("branch_cursor"))
                     .write_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::SideChannel("scanner_state")),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::ParserCursor,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: &[
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::ScannerState,
+                        SnarkStencilState::AutoCloseStack,
+                    ],
+                },
             ),
             Self::Shift { .. } => (
                 SnarkIntrinsicDomain::ParserControl,
@@ -528,6 +666,19 @@ impl SnarkIntrinsic {
                     .write_resource(EffectResource::Sink("tree_events"))
                     .write_resource(EffectResource::Sink("parser_trace"))
                     .may_allocate(),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::ParserStack,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: &[
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::TreeStore,
+                        SnarkStencilState::TreeJournal,
+                        SnarkStencilState::TreeEventSink,
+                        SnarkStencilState::TraceSink,
+                    ],
+                },
             ),
             Self::ShiftExtra { .. } => (
                 SnarkIntrinsicDomain::ParserControl,
@@ -538,6 +689,17 @@ impl SnarkIntrinsic {
                     .write_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::Sink("tree_events"))
                     .may_allocate(),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::ParserStack,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: &[
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::TreeStore,
+                        SnarkStencilState::TreeJournal,
+                        SnarkStencilState::TreeEventSink,
+                    ],
+                },
             ),
             Self::Reduce { .. } => (
                 SnarkIntrinsicDomain::Tree,
@@ -548,6 +710,18 @@ impl SnarkIntrinsic {
                     .write_resource(EffectResource::Sink("tree_events"))
                     .write_resource(EffectResource::Sink("parser_trace"))
                     .may_allocate(),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::TreeBuilder,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: &[
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::TreeStore,
+                        SnarkStencilState::TreeJournal,
+                        SnarkStencilState::TreeEventSink,
+                        SnarkStencilState::TraceSink,
+                    ],
+                },
             ),
             Self::SplitGlr { .. } => (
                 SnarkIntrinsicDomain::GlrControl,
@@ -556,6 +730,14 @@ impl SnarkIntrinsic {
                     .read_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::SideChannel("glr_worklist")),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::GlrScheduler,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: &[
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::GlrWorklist,
+                    ],
+                },
             ),
             Self::MergeGlr { .. } => (
                 SnarkIntrinsicDomain::GlrControl,
@@ -564,6 +746,14 @@ impl SnarkIntrinsic {
                     .read_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::SideChannel("glr_worklist")),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::GlrScheduler,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: &[
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::GlrWorklist,
+                    ],
+                },
             ),
             Self::RetireBranch { .. } => (
                 SnarkIntrinsicDomain::GlrControl,
@@ -571,6 +761,14 @@ impl SnarkIntrinsic {
                 EffectContract::new()
                     .write_resource(EffectResource::SideChannel("parser_stack"))
                     .write_resource(EffectResource::SideChannel("glr_worklist")),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::GlrScheduler,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: &[
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::GlrWorklist,
+                    ],
+                },
             ),
             Self::Accept { .. } => (
                 SnarkIntrinsicDomain::ParserControl,
@@ -584,21 +782,50 @@ impl SnarkIntrinsic {
                     .write_resource(EffectResource::Sink("parser_trace"))
                     .may_allocate()
                     .may_fail(),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::TreeBuilder,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: &[
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::TreeStore,
+                        SnarkStencilState::TreeJournal,
+                        SnarkStencilState::TreeEventSink,
+                        SnarkStencilState::TraceSink,
+                    ],
+                },
             ),
             Self::EmitTrace { .. } => (
                 SnarkIntrinsicDomain::Trace,
                 SnarkIntrinsicLowering::SinkOp,
                 EffectContract::new().write_resource(EffectResource::Sink("parser_trace")),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::Sink,
+                    execution: SnarkStencilExecution::SinkAdapter,
+                    state: &[SnarkStencilState::TraceSink],
+                },
             ),
             Self::EmitNode { .. } | Self::EmitTreeEvent { .. } => (
                 SnarkIntrinsicDomain::Tree,
                 SnarkIntrinsicLowering::SinkOp,
                 EffectContract::new().write_resource(EffectResource::Sink("tree_events")),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::Sink,
+                    execution: SnarkStencilExecution::SinkAdapter,
+                    state: &[SnarkStencilState::TreeEventSink],
+                },
             ),
             Self::EmitCapture { .. } => (
                 SnarkIntrinsicDomain::Query,
                 SnarkIntrinsicLowering::SinkOp,
                 EffectContract::new().write_resource(EffectResource::Sink("query_captures")),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::Sink,
+                    execution: SnarkStencilExecution::SinkAdapter,
+                    state: &[SnarkStencilState::QueryCaptureSink],
+                },
             ),
             Self::RunQuery { .. } => (
                 SnarkIntrinsicDomain::Query,
@@ -607,6 +834,15 @@ impl SnarkIntrinsic {
                     .read_resource(EffectResource::Sink("tree_events"))
                     .write_resource(EffectResource::Sink("query_captures"))
                     .may_fail(),
+                SnarkStencilContract {
+                    family: SnarkStencilFamily::Query,
+                    execution: SnarkStencilExecution::QueryPlan,
+                    state: &[
+                        SnarkStencilState::QueryPlan,
+                        SnarkStencilState::TreeEventSink,
+                        SnarkStencilState::QueryCaptureSink,
+                    ],
+                },
             ),
         };
         SnarkIntrinsicSemantics {
@@ -614,6 +850,7 @@ impl SnarkIntrinsic {
             domain,
             lowering,
             effect,
+            stencil,
         }
     }
 }
@@ -1002,6 +1239,8 @@ pub struct WeavyLexerReadiness {
     pub unsupported_terminal_count: usize,
     /// Lexical symbol references still missing a resolver.
     pub unsupported_symbol_count: usize,
+    /// External scanner candidates reachable from lexical modes.
+    pub external_scanner_candidate_count: usize,
     /// Unique lexer blocker kinds that still prevent fully-visible lowering.
     pub barrier_kinds: Vec<WeavyLexerBarrierKind>,
 }
@@ -1022,6 +1261,7 @@ impl WeavyLexerReadiness {
             unsupported_pattern_count: stats.unsupported_pattern_count,
             unsupported_terminal_count: stats.count(WeavyLexOpKind::UnsupportedTerminal),
             unsupported_symbol_count: stats.count(WeavyLexOpKind::UnsupportedSymbol),
+            external_scanner_candidate_count: stats.external_scanner_candidate_count,
             barrier_kinds: stats.barrier_kinds(),
         }
     }
@@ -1060,6 +1300,12 @@ impl WeavyLexerReadiness {
                 count: self.unsupported_symbol_count,
             });
         }
+        if self.external_scanner_candidate_count > 0 {
+            summaries.push(WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::ExternalScanner),
+                count: self.external_scanner_candidate_count,
+            });
+        }
         summaries
     }
 }
@@ -1076,6 +1322,8 @@ pub enum WeavyLexerBarrierKind {
     UnsupportedTerminal,
     /// A lexical symbol reference is not resolved in the lowered lexer graph.
     UnsupportedSymbol,
+    /// A lexical mode can call a hand-written external scanner.
+    ExternalScanner,
 }
 
 #[derive(Clone, Debug)]
@@ -1234,6 +1482,8 @@ pub struct WeavyLexerStats {
     pub rust_regex_fallback_count: usize,
     /// Number of pattern nodes unsupported by the current matcher compiler.
     pub unsupported_pattern_count: usize,
+    /// Number of external scanner candidates reachable through lowered modes.
+    pub external_scanner_candidate_count: usize,
     /// Recursive operation counts inside terminal matcher graphs.
     pub op_counts: BTreeMap<WeavyLexOpKind, usize>,
 }
@@ -1261,6 +1511,9 @@ impl WeavyLexerStats {
         if self.count(WeavyLexOpKind::UnsupportedSymbol) > 0 {
             kinds.push(WeavyLexerBarrierKind::UnsupportedSymbol);
         }
+        if self.external_scanner_candidate_count > 0 {
+            kinds.push(WeavyLexerBarrierKind::ExternalScanner);
+        }
         kinds
     }
 
@@ -1272,6 +1525,7 @@ impl WeavyLexerStats {
 #[derive(Clone, Debug)]
 struct WeavyLexModeProgram {
     terminals: Vec<WeavyLexTerminal>,
+    external_count: usize,
     direct_literal_set: Option<WeavyLiteralSet>,
     direct_pattern_set: Option<WeavyDirectPatternSet>,
 }
@@ -1290,6 +1544,7 @@ impl WeavyLexModeProgram {
         let direct_pattern_set = compiler.direct_pattern_set(&terminals);
         Self {
             terminals,
+            external_count: compiled.external_count,
             direct_literal_set,
             direct_pattern_set,
         }
@@ -1326,6 +1581,7 @@ impl WeavyLexModeProgram {
 
     fn add_stats(&self, stats: &mut WeavyLexerStats) {
         stats.terminal_count += self.terminals.len();
+        stats.external_scanner_candidate_count += self.external_count;
         if self.direct_literal_set.is_some() {
             stats.direct_literal_set_count += 1;
         }
@@ -7119,6 +7375,7 @@ mod tests {
         assert_eq!(direct_literal_set.as_ref().unwrap().len(), 2);
         let mode = WeavyLexModeProgram {
             terminals,
+            external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
         };
@@ -7159,6 +7416,7 @@ mod tests {
         let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
         let mode = WeavyLexModeProgram {
             terminals,
+            external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
         };
@@ -7219,6 +7477,7 @@ mod tests {
         let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
         let mode = WeavyLexModeProgram {
             terminals,
+            external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
         };
@@ -7267,6 +7526,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             direct_pattern_set,
             terminals,
+            external_count: 0,
             direct_literal_set: None,
         };
         let mut ends = Vec::new();
@@ -7315,6 +7575,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             direct_pattern_set,
             terminals,
+            external_count: 0,
             direct_literal_set: None,
         };
         let mut ends = Vec::new();
@@ -7379,6 +7640,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             direct_pattern_set,
             terminals,
+            external_count: 0,
             direct_literal_set: None,
         };
         let mut ends = Vec::new();
@@ -7432,6 +7694,7 @@ mod tests {
         let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
         let mode = WeavyLexModeProgram {
             terminals,
+            external_count: 0,
             direct_literal_set,
             direct_pattern_set,
         };
@@ -7512,6 +7775,7 @@ mod tests {
                 domain: SnarkIntrinsicDomain::Lexing,
                 lowering: SnarkIntrinsicLowering::LexerGraph,
                 effect: lex.effect(),
+                stencil: lex.semantics().stencil,
                 count: 1,
             }]
         );
@@ -7532,6 +7796,7 @@ mod tests {
                 domain: SnarkIntrinsicDomain::Lexing,
                 lowering: SnarkIntrinsicLowering::LexerGraph,
                 effect: lex.effect(),
+                stencil: lex.semantics().stencil,
                 count: 1,
             }]
         );
@@ -7667,6 +7932,7 @@ mod tests {
                 domain: SnarkIntrinsicDomain::ExternalScanner,
                 lowering: SnarkIntrinsicLowering::HostCallBarrier,
                 effect: scanner.effect(),
+                stencil: scanner.semantics().stencil,
                 count: 1,
             }]
         );
@@ -7738,6 +8004,7 @@ mod tests {
                 domain: SnarkIntrinsicDomain::ExternalScanner,
                 lowering: SnarkIntrinsicLowering::HostCallBarrier,
                 effect: scanner.effect(),
+                stencil: scanner.semantics().stencil,
                 count: 2,
             }]
         );
@@ -7773,6 +8040,52 @@ mod tests {
         assert!(!readiness.is_fully_visible());
         assert!(!readiness.is_neutral_weavy_only());
         assert!(readiness.needs_snark_stencils());
+    }
+
+    #[test]
+    fn parse_plan_readiness_reports_lex_mode_external_scanner_barriers() {
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense: DenseSnarkWeavyLowered::new(
+                    vec![WeavyOp::Control(ControlOp::Return)],
+                    vec![],
+                ),
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+            },
+            lexer_program: WeavyLexerProgram {
+                modes: vec![WeavyLexModeProgram {
+                    terminals: vec![],
+                    external_count: 3,
+                    direct_literal_set: None,
+                    direct_pattern_set: None,
+                }],
+            },
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+        };
+
+        let readiness = plan.analysis().readiness;
+
+        assert_eq!(readiness.neutral_weavy_op_count, 1);
+        assert_eq!(readiness.snark_intrinsic_count, 0);
+        assert!(readiness.snark_stencil_summaries.is_empty());
+        assert!(readiness.is_parser_fully_visible());
+        assert!(!readiness.lexer.is_fully_visible());
+        assert!(!readiness.is_fully_visible());
+        assert_eq!(
+            readiness.lexer.barrier_kinds,
+            vec![WeavyLexerBarrierKind::ExternalScanner]
+        );
+        assert_eq!(
+            readiness.barrier_summaries,
+            vec![WeavyLoweringBarrierSummary {
+                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::ExternalScanner),
+                count: 3,
+            }]
+        );
     }
 
     #[test]
@@ -7855,6 +8168,7 @@ mod tests {
         WeavyLexerProgram {
             modes: vec![WeavyLexModeProgram {
                 terminals,
+                external_count: 0,
                 direct_literal_set,
                 direct_pattern_set,
             }],

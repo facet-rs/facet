@@ -68,6 +68,9 @@ type PlanStencilOutput = {
   descriptor: string;
   domain: string;
   lowering: string;
+  family: string;
+  execution: string;
+  state: string[];
   effect: PlanStencilEffectOutput;
   count: number;
 };
