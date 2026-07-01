@@ -1384,10 +1384,7 @@ impl WeavyLexExpr {
 
 #[derive(Clone, Debug)]
 enum WeavyPatternMatcher {
-    Known {
-        pattern: crate::lex_match::KnownPattern,
-        regex_source: Option<String>,
-    },
+    Known(crate::lex_match::KnownPattern),
     Regex(WeavyRegexLeaf),
     Unsupported,
 }
@@ -1409,10 +1406,7 @@ impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
                 else {
                     return Self::Unsupported;
                 };
-                Self::Known {
-                    pattern,
-                    regex_source,
-                }
+                Self::Known(pattern)
             }
             crate::lex_match::CompiledPatternKind::Regex => match (value.regex, regex_source) {
                 (Some(regex), Some(regex_source)) => Self::Regex(WeavyRegexLeaf::new(
@@ -1431,7 +1425,7 @@ impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
 impl WeavyPatternMatcher {
     const fn kind(&self) -> WeavyPatternMatcherKind {
         match self {
-            Self::Known { .. } => WeavyPatternMatcherKind::Known,
+            Self::Known(_) => WeavyPatternMatcherKind::Known,
             Self::Regex(_) => WeavyPatternMatcherKind::Regex,
             Self::Unsupported => WeavyPatternMatcherKind::Unsupported,
         }
@@ -1440,13 +1434,13 @@ impl WeavyPatternMatcher {
     const fn regex_lowering(&self) -> Option<WeavyRegexLowering> {
         match self {
             Self::Regex(leaf) => Some(leaf.lowering()),
-            Self::Known { .. } | Self::Unsupported => None,
+            Self::Known(_) | Self::Unsupported => None,
         }
     }
 
     fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
         match self {
-            Self::Known { pattern, .. } => {
+            Self::Known(pattern) => {
                 crate::lex_match::match_known_pattern(*pattern, input, byte_position)
             }
             Self::Regex(leaf) => leaf.match_input(input, byte_position),
@@ -1454,10 +1448,12 @@ impl WeavyPatternMatcher {
         }
     }
 
-    fn regex_source(&self) -> Option<&str> {
+    fn regex_source(&self) -> Option<Cow<'_, str>> {
         match self {
-            Self::Known { regex_source, .. } => regex_source.as_deref(),
-            Self::Regex(leaf) => Some(leaf.source()),
+            Self::Known(pattern) => {
+                crate::lex_match::regex_automata_leaf_source(pattern.source(), None).map(Cow::Owned)
+            }
+            Self::Regex(leaf) => Some(Cow::Borrowed(leaf.source())),
             Self::Unsupported => None,
         }
     }
@@ -1626,12 +1622,8 @@ impl WeavyDirectPatternSet {
                 else {
                     return None;
                 };
-                let regex_source = pattern.regex_source()?;
-                Some((
-                    direct_pattern_index,
-                    terminal_index,
-                    regex_source.to_owned(),
-                ))
+                let regex_source = pattern.regex_source()?.into_owned();
+                Some((direct_pattern_index, terminal_index, regex_source))
             })
             .collect::<Vec<_>>();
         if entries.is_empty() {
@@ -6510,18 +6502,15 @@ mod tests {
     fn known_patterns_lower_to_named_weavy_leaves() {
         let matcher = WeavyPatternMatcher::from(crate::lex_match::compile_pattern("and\\b", None));
 
-        let WeavyPatternMatcher::Known {
-            pattern,
-            regex_source,
-        } = &matcher
-        else {
+        let WeavyPatternMatcher::Known(pattern) = &matcher else {
             panic!("expected a known pattern leaf");
         };
         assert_eq!(
             *pattern,
             crate::lex_match::KnownPattern::AsciiKeyword("and")
         );
-        assert_eq!(regex_source.as_deref(), Some(r"\A(?:and\b)"));
+        let regex_source = matcher.regex_source();
+        assert_eq!(regex_source.as_deref(), Some(r"(?:and\b)"));
         assert_eq!(
             matcher.match_input("and rest", 0),
             Some(parser_ir::LexMatch::new(3, 4))

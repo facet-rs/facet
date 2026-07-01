@@ -38,6 +38,23 @@ pub(crate) enum KnownPattern {
 }
 
 impl KnownPattern {
+    pub(crate) fn source(self) -> &'static str {
+        match self {
+            Self::CssNthFunctionalNotation => "-?(\\d)*n\\s*(\\+\\s*\\d+)?",
+            Self::GingembreIdentifier => GINGEMBRE_IDENTIFIER_PATTERN,
+            Self::CssHexEscapeTail => "[0-9a-fA-F]{1,6}\\s?",
+            Self::JsonLineCommentTail => ".*",
+            Self::JsonBlockCommentBody => "[^*]*\\*+([^/*][^*]*\\*+)*",
+            Self::CssIdentifier => "(--|-?[a-zA-Z_\\xA0-\\xFF])[a-zA-Z0-9-_\\xA0-\\xFF]*",
+            Self::AsciiKeyword("and") => "and\\b",
+            Self::AsciiKeyword("in") => "in\\b",
+            Self::AsciiKeyword("is") => "is\\b",
+            Self::AsciiKeyword("not") => "not\\b",
+            Self::AsciiKeyword("or") => "or\\b",
+            Self::AsciiKeyword(keyword) => unreachable!("unknown known ASCII keyword {keyword:?}"),
+        }
+    }
+
     fn match_end(self, input: &str, byte_position: usize) -> Option<usize> {
         match self {
             Self::CssNthFunctionalNotation => {
@@ -61,8 +78,15 @@ pub(crate) struct CompiledUntilMatcher {
 
 pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPattern {
     let flags = normalized_regex_flags(flags);
-    let regex = compile_regex_leaf(pattern, flags.as_deref());
-    let kind = if flags.is_none() && known_pattern_for_source(pattern).is_some() {
+    let known = flags
+        .is_none()
+        .then(|| known_pattern_for_source(pattern))
+        .flatten();
+    let regex = known
+        .is_none()
+        .then(|| compile_regex_leaf(pattern, flags.as_deref()))
+        .flatten();
+    let kind = if known.is_some() {
         CompiledPatternKind::Known
     } else if regex.is_some() {
         CompiledPatternKind::Regex
