@@ -3001,18 +3001,28 @@ impl<'a> LrTableBuilder<'a> {
 
     fn closure(&self, items: Vec<LrItem>) -> Vec<LrItem> {
         let mut map = ItemMap::from_items(items);
+        // Reused across the whole fixpoint: the loop mints no per-iteration Vec, does
+        // no clone, and does no sort — `insert` ORs into a bitset that absorbs dups.
+        let mut source = Vec::new();
+        let mut lookaheads = Vec::new();
         loop {
-            let snapshot = map.clone().into_items();
+            // Snapshot only the keys (cheap `Copy`s). Items added this round are picked
+            // up next pass; the fixpoint is monotone so evaluation order is irrelevant.
+            let keys: Vec<(ProductionId, usize)> = map.items.keys().copied().collect();
             let mut changed = false;
-            for item in snapshot {
-                let production = &self.grammar.productions[item.production.get() as usize];
-                let Some(step) = production.steps.get(item.dot) else {
+            for (production_id, dot) in keys {
+                let production = &self.grammar.productions[production_id.get() as usize];
+                let Some(step) = production.steps.get(dot) else {
                     continue;
                 };
                 let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
                     continue;
                 };
-                let lookaheads = self.lookahead_after_dot(production, item.dot, &item.lookahead);
+                source.clear();
+                map.materialize_into((production_id, dot), &mut source);
+                lookaheads.clear();
+                self.first
+                    .first_of_steps_into(&production.steps[dot + 1..], &source, &mut lookaheads);
                 for production in &self.productions_by_lhs[nonterminal.get() as usize] {
                     changed |= map.insert(*production, 0, &lookaheads);
                 }
@@ -3021,16 +3031,6 @@ impl<'a> LrTableBuilder<'a> {
                 return map.into_items();
             }
         }
-    }
-
-    fn lookahead_after_dot(
-        &self,
-        production: &Production,
-        dot: usize,
-        current: &LookaheadSet,
-    ) -> Vec<LookaheadSymbol> {
-        self.first
-            .first_of_steps(&production.steps[dot + 1..], current.symbols())
     }
 
     fn group_goto_items(&self, item_set: &ItemSet) -> BTreeMap<ParserSymbol, Vec<LrItem>> {
@@ -3280,6 +3280,11 @@ impl LookaheadBitset {
                 .map(move |offset| base + offset)
         })
     }
+
+    /// Number of set bits.
+    fn count(&self) -> usize {
+        self.words.iter().map(|word| word.count_ones() as usize).sum()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3312,15 +3317,26 @@ impl ItemMap {
         changed
     }
 
+    /// Append this item's lookahead symbols to `out` (unsorted; the bitset dedups, and
+    /// callers that need order re-sort once at a boundary). No allocation, no clone.
+    fn materialize_into(&self, key: (ProductionId, usize), out: &mut Vec<LookaheadSymbol>) {
+        if let Some(bitset) = self.items.get(&key) {
+            out.reserve(bitset.count());
+            out.extend(
+                bitset
+                    .indices()
+                    .map(|index| self.interner.from_index[index as usize]),
+            );
+        }
+    }
+
     fn into_items(self) -> Vec<LrItem> {
         let Self { interner, items } = self;
         items
             .into_iter()
             .map(|((production, dot), bitset)| {
-                let mut symbols: Vec<LookaheadSymbol> = bitset
-                    .indices()
-                    .map(|index| interner.from_index[index as usize])
-                    .collect();
+                let mut symbols = Vec::with_capacity(bitset.count());
+                symbols.extend(bitset.indices().map(|index| interner.from_index[index as usize]));
                 symbols.sort();
                 LrItem {
                     production,
@@ -3358,12 +3374,15 @@ impl FirstFacts {
         }
     }
 
-    fn first_of_steps(
+    /// Append FIRST(steps)+fallback to `out` without sort/dedup — the LR closure ORs
+    /// the result into a bitset (which dedups), so no `Vec` is minted per item.
+    fn first_of_steps_into(
         &self,
         steps: &[ProductionStep],
         fallback: &[LookaheadSymbol],
-    ) -> Vec<LookaheadSymbol> {
-        first_of_steps_with_tables(steps, &self.nullable, &self.first, fallback)
+        out: &mut Vec<LookaheadSymbol>,
+    ) {
+        first_of_steps_with_tables_into(steps, &self.nullable, &self.first, fallback, out);
     }
 }
 
@@ -3375,13 +3394,17 @@ fn productions_by_lhs(grammar: &ParserGrammar) -> Vec<Vec<ProductionId>> {
     by_lhs
 }
 
-fn first_of_steps_with_tables(
+/// Append FIRST(`steps`) — falling through to `fallback` once every step is nullable
+/// — to `out`, WITHOUT sorting or deduping. Callers dedup either via a bitset (the LR
+/// closure) or a final `sorted_lookaheads` (the wrapper below). Allocation-free given
+/// a reused `out`, which is the whole point on the closure hot path.
+fn first_of_steps_with_tables_into(
     steps: &[ProductionStep],
     nullable: &[bool],
     first: &[Vec<LookaheadSymbol>],
     fallback: &[LookaheadSymbol],
-) -> Vec<LookaheadSymbol> {
-    let mut out = Vec::new();
+    out: &mut Vec<LookaheadSymbol>,
+) {
     for step in steps {
         match lookahead_for_step(step) {
             Some(
@@ -3392,20 +3415,30 @@ fn first_of_steps_with_tables(
                 | LookaheadSymbol::ErrorRecovery(_)),
             ) => {
                 out.push(lookahead);
-                return sorted_lookaheads(out);
+                return;
             }
             None => {
                 let ParserSymbol::Nonterminal(nonterminal) = step.symbol else {
                     unreachable!("non-lookahead parser symbol should be nonterminal");
                 };
-                extend_lookaheads(&mut out, &first[nonterminal.get() as usize]);
+                out.extend_from_slice(&first[nonterminal.get() as usize]);
                 if !nullable[nonterminal.get() as usize] {
-                    return sorted_lookaheads(out);
+                    return;
                 }
             }
         }
     }
-    extend_lookaheads(&mut out, fallback);
+    out.extend_from_slice(fallback);
+}
+
+fn first_of_steps_with_tables(
+    steps: &[ProductionStep],
+    nullable: &[bool],
+    first: &[Vec<LookaheadSymbol>],
+    fallback: &[LookaheadSymbol],
+) -> Vec<LookaheadSymbol> {
+    let mut out = Vec::new();
+    first_of_steps_with_tables_into(steps, nullable, first, fallback, &mut out);
     sorted_lookaheads(out)
 }
 
