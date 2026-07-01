@@ -1050,10 +1050,11 @@ struct WeavyLexerProgram {
 
 impl WeavyLexerProgram {
     fn from_compiled_modes(modes: Vec<parser_ir::CompiledLexMode>) -> Self {
+        let mut compiler = WeavyLexerCompiler::default();
         Self {
             modes: modes
                 .into_iter()
-                .map(WeavyLexModeProgram::from_compiled)
+                .map(|mode| WeavyLexModeProgram::from_compiled(mode, &mut compiler))
                 .collect(),
         }
     }
@@ -1078,6 +1079,66 @@ impl WeavyLexerProgram {
         }
         stats
     }
+}
+
+#[derive(Default)]
+struct WeavyLexerCompiler {
+    pattern_matchers: HashMap<WeavyPatternKey, WeavyPatternMatcher>,
+    literal_sets: HashMap<Vec<WeavyLiteralSetEntry>, WeavyLiteralSet>,
+    direct_pattern_sets: HashMap<Vec<WeavyDirectPatternSetEntry>, WeavyDirectPatternSet>,
+}
+
+impl WeavyLexerCompiler {
+    fn literal_set(&mut self, terminals: &mut [WeavyLexTerminal]) -> Option<WeavyLiteralSet> {
+        let entries = WeavyLiteralSet::entries_from_terminals(terminals);
+        if entries.is_empty() {
+            return None;
+        }
+        if let Some(set) = self.literal_sets.get(&entries) {
+            return Some(set.clone());
+        }
+        let set = WeavyLiteralSet::from_entries(&entries)?;
+        self.literal_sets.insert(entries, set.clone());
+        Some(set)
+    }
+
+    fn direct_pattern_set(
+        &mut self,
+        terminals: &[WeavyLexTerminal],
+    ) -> Option<WeavyDirectPatternSet> {
+        let entries = WeavyDirectPatternSet::entries_from_terminals(terminals);
+        if entries.is_empty() {
+            return None;
+        }
+        if let Some(set) = self.direct_pattern_sets.get(&entries) {
+            return Some(set.clone());
+        }
+        let set = WeavyDirectPatternSet::from_entries(&entries)?;
+        self.direct_pattern_sets.insert(entries, set.clone());
+        Some(set)
+    }
+
+    fn pattern_matcher(
+        &mut self,
+        pattern: crate::lex_match::CompiledPattern,
+    ) -> WeavyPatternMatcher {
+        let key = WeavyPatternKey {
+            source: pattern.source.clone(),
+            flags: pattern.flags.clone(),
+        };
+        if let Some(matcher) = self.pattern_matchers.get(&key) {
+            return matcher.clone();
+        }
+        let matcher = WeavyPatternMatcher::from(pattern);
+        self.pattern_matchers.insert(key, matcher.clone());
+        matcher
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct WeavyPatternKey {
+    source: String,
+    flags: Option<String>,
 }
 
 /// Lowered lexer operation kind visible to Snark/Weavy planning.
@@ -1181,14 +1242,17 @@ struct WeavyLexModeProgram {
 }
 
 impl WeavyLexModeProgram {
-    fn from_compiled(compiled: parser_ir::CompiledLexMode) -> Self {
+    fn from_compiled(
+        compiled: parser_ir::CompiledLexMode,
+        compiler: &mut WeavyLexerCompiler,
+    ) -> Self {
         let mut terminals = compiled
             .terminals
             .into_iter()
-            .map(WeavyLexTerminal::from)
+            .map(|terminal| WeavyLexTerminal::from_compiled(terminal, compiler))
             .collect::<Vec<_>>();
-        let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
-        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
+        let direct_literal_set = compiler.literal_set(&mut terminals);
+        let direct_pattern_set = compiler.direct_pattern_set(&terminals);
         Self {
             terminals,
             direct_literal_set,
@@ -1255,11 +1319,14 @@ struct WeavyLexTerminal {
     direct_pattern_index: Option<usize>,
 }
 
-impl From<parser_ir::CompiledLexTerminal> for WeavyLexTerminal {
-    fn from(value: parser_ir::CompiledLexTerminal) -> Self {
+impl WeavyLexTerminal {
+    fn from_compiled(
+        value: parser_ir::CompiledLexTerminal,
+        compiler: &mut WeavyLexerCompiler,
+    ) -> Self {
         Self {
             terminal: value.terminal,
-            matcher: WeavyTerminalMatcher::from(value.matcher),
+            matcher: WeavyTerminalMatcher::from_compiled(value.matcher, compiler),
             immediate: value.immediate,
             literal: value.literal,
             lexical_precedence: value.lexical_precedence,
@@ -1268,9 +1335,7 @@ impl From<parser_ir::CompiledLexTerminal> for WeavyLexTerminal {
             direct_pattern_index: value.direct_pattern_index,
         }
     }
-}
 
-impl WeavyLexTerminal {
     fn add_stats(&self, stats: &mut WeavyLexerStats) {
         if self.direct_literal_index.is_some() {
             stats.direct_literal_terminal_count += 1;
@@ -1291,18 +1356,21 @@ enum WeavyTerminalMatcher {
     },
 }
 
-impl From<parser_ir::CompiledTerminalMatcher> for WeavyTerminalMatcher {
-    fn from(value: parser_ir::CompiledTerminalMatcher) -> Self {
+impl WeavyTerminalMatcher {
+    fn from_compiled(
+        value: parser_ir::CompiledTerminalMatcher,
+        compiler: &mut WeavyLexerCompiler,
+    ) -> Self {
         match value {
-            parser_ir::CompiledTerminalMatcher::Expr(expr) => Self::Expr(WeavyLexExpr::from(expr)),
+            parser_ir::CompiledTerminalMatcher::Expr(expr) => {
+                Self::Expr(WeavyLexExpr::from_compiled(expr, compiler))
+            }
             parser_ir::CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => {
                 Self::UnsupportedTerminal { terminal, spelling }
             }
         }
     }
-}
 
-impl WeavyTerminalMatcher {
     fn add_stats(&self, stats: &mut WeavyLexerStats) {
         match self {
             Self::Expr(expr) => expr.add_stats(stats),
@@ -1326,35 +1394,39 @@ enum WeavyLexExpr {
     UnsupportedSymbol(GrammarExprId),
 }
 
-impl From<parser_ir::CompiledLexExpr> for WeavyLexExpr {
-    fn from(value: parser_ir::CompiledLexExpr) -> Self {
+impl WeavyLexExpr {
+    fn from_compiled(value: parser_ir::CompiledLexExpr, compiler: &mut WeavyLexerCompiler) -> Self {
         match value {
             parser_ir::CompiledLexExpr::Blank => Self::Blank,
             parser_ir::CompiledLexExpr::String(value) => Self::String(value),
             parser_ir::CompiledLexExpr::Pattern(pattern) => {
-                Self::Pattern(WeavyPatternMatcher::from(pattern))
+                Self::Pattern(compiler.pattern_matcher(pattern))
             }
             parser_ir::CompiledLexExpr::Until(matcher) => Self::Until(matcher),
             parser_ir::CompiledLexExpr::Nested { open, close } => Self::Nested { open, close },
             parser_ir::CompiledLexExpr::AutoClose(spec) => Self::AutoClose(spec),
-            parser_ir::CompiledLexExpr::Seq(members) => {
-                Self::Seq(members.into_iter().map(Self::from).collect())
-            }
-            parser_ir::CompiledLexExpr::Choice(members) => {
-                Self::Choice(members.into_iter().map(Self::from).collect())
-            }
+            parser_ir::CompiledLexExpr::Seq(members) => Self::Seq(
+                members
+                    .into_iter()
+                    .map(|member| Self::from_compiled(member, compiler))
+                    .collect(),
+            ),
+            parser_ir::CompiledLexExpr::Choice(members) => Self::Choice(
+                members
+                    .into_iter()
+                    .map(|member| Self::from_compiled(member, compiler))
+                    .collect(),
+            ),
             parser_ir::CompiledLexExpr::Repeat(content) => {
-                Self::Repeat(Box::new(Self::from(*content)))
+                Self::Repeat(Box::new(Self::from_compiled(*content, compiler)))
             }
             parser_ir::CompiledLexExpr::Repeat1(content) => {
-                Self::Repeat1(Box::new(Self::from(*content)))
+                Self::Repeat1(Box::new(Self::from_compiled(*content, compiler)))
             }
             parser_ir::CompiledLexExpr::UnsupportedSymbol(expr) => Self::UnsupportedSymbol(expr),
         }
     }
-}
 
-impl WeavyLexExpr {
     fn add_stats(&self, stats: &mut WeavyLexerStats) {
         match self {
             Self::Blank => stats.record(WeavyLexOpKind::Blank),
@@ -1575,10 +1647,21 @@ struct WeavyLiteralSet {
     terminal_indices: Vec<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct WeavyLiteralSetEntry {
+    terminal_index: usize,
+    literal: String,
+}
+
 impl WeavyLiteralSet {
+    #[cfg(test)]
     fn from_terminals(terminals: &mut [WeavyLexTerminal]) -> Option<Self> {
-        let mut literals = Vec::new();
-        let mut terminal_indices = Vec::new();
+        let entries = Self::entries_from_terminals(terminals);
+        Self::from_entries(&entries)
+    }
+
+    fn entries_from_terminals(terminals: &mut [WeavyLexTerminal]) -> Vec<WeavyLiteralSetEntry> {
+        let mut entries = Vec::new();
         for (terminal_index, terminal) in terminals.iter_mut().enumerate() {
             let WeavyTerminalMatcher::Expr(WeavyLexExpr::String(value)) = &terminal.matcher else {
                 continue;
@@ -1586,23 +1669,36 @@ impl WeavyLiteralSet {
             if value.is_empty() {
                 continue;
             }
-            terminal.direct_literal_index = Some(literals.len());
-            literals.push(value.clone());
-            terminal_indices.push(terminal_index);
+            terminal.direct_literal_index = Some(entries.len());
+            entries.push(WeavyLiteralSetEntry {
+                terminal_index,
+                literal: value.clone(),
+            });
         }
-        if literals.is_empty() {
+        entries
+    }
+
+    fn from_entries(entries: &[WeavyLiteralSetEntry]) -> Option<Self> {
+        if entries.is_empty() {
             return None;
         }
-        let literal_lengths = literals.iter().map(String::len).collect::<Vec<_>>();
-        let regex_sources = literals
+        let literal_lengths = entries
             .iter()
-            .map(|literal| regex::escape(literal))
+            .map(|entry| entry.literal.len())
+            .collect::<Vec<_>>();
+        let regex_sources = entries
+            .iter()
+            .map(|entry| regex::escape(&entry.literal))
             .collect::<Vec<_>>();
         let regex_source_refs = regex_sources.iter().map(String::as_str).collect::<Vec<_>>();
         let automaton = AutomataRegex::builder()
             .configure(AutomataRegex::config().match_kind(RegexMatchKind::All))
             .build_many(&regex_source_refs)
             .ok()?;
+        let terminal_indices = entries
+            .iter()
+            .map(|entry| entry.terminal_index)
+            .collect::<Vec<_>>();
         Some(Self {
             automaton,
             literal_lengths,
@@ -1651,8 +1747,21 @@ struct WeavyDirectPatternSet {
     terminal_indices: Vec<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct WeavyDirectPatternSetEntry {
+    direct_pattern_index: usize,
+    terminal_index: usize,
+    regex_source: String,
+}
+
 impl WeavyDirectPatternSet {
+    #[cfg(test)]
     fn from_terminals(terminals: &[WeavyLexTerminal]) -> Option<Self> {
+        let entries = Self::entries_from_terminals(terminals);
+        Self::from_entries(&entries)
+    }
+
+    fn entries_from_terminals(terminals: &[WeavyLexTerminal]) -> Vec<WeavyDirectPatternSetEntry> {
         let mut entries = terminals
             .iter()
             .enumerate()
@@ -1663,16 +1772,24 @@ impl WeavyDirectPatternSet {
                     return None;
                 };
                 let regex_source = pattern.regex_source()?.into_owned();
-                Some((direct_pattern_index, terminal_index, regex_source))
+                Some(WeavyDirectPatternSetEntry {
+                    direct_pattern_index,
+                    terminal_index,
+                    regex_source,
+                })
             })
             .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.direct_pattern_index);
+        entries
+    }
+
+    fn from_entries(entries: &[WeavyDirectPatternSetEntry]) -> Option<Self> {
         if entries.is_empty() {
             return None;
         }
-        entries.sort_by_key(|(direct_pattern_index, _, _)| *direct_pattern_index);
         let regex_sources = entries
             .iter()
-            .map(|(_, _, source)| source.clone())
+            .map(|entry| entry.regex_source.clone())
             .collect::<Vec<_>>();
         let regex_source_refs = regex_sources.iter().map(String::as_str).collect::<Vec<_>>();
         let automaton = AutomataRegex::builder()
@@ -1683,10 +1800,7 @@ impl WeavyDirectPatternSet {
             .configure(HybridDfa::config().match_kind(RegexMatchKind::All))
             .build_many(&regex_source_refs)
             .ok();
-        let terminal_indices = entries
-            .into_iter()
-            .map(|(_, terminal_index, _)| terminal_index)
-            .collect();
+        let terminal_indices = entries.iter().map(|entry| entry.terminal_index).collect();
         Some(Self {
             automaton,
             dfa,

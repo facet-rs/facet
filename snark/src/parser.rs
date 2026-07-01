@@ -4552,6 +4552,7 @@ pub(crate) fn compile_lex_modes(
     parser: &ParserGrammar,
     table: &ParseTable,
 ) -> Vec<CompiledLexMode> {
+    let mut terminal_cache = vec![None; parser.symbols.terminals.len()];
     table
         .lexical_modes()
         .iter()
@@ -4560,8 +4561,13 @@ pub(crate) fn compile_lex_modes(
                 .terminals()
                 .iter()
                 .map(|terminal| {
-                    let terminal_row = &parser.symbols.terminals[terminal.get() as usize];
-                    compile_lex_terminal(grammar, terminal_row)
+                    let terminal_index = terminal.get() as usize;
+                    terminal_cache[terminal_index]
+                        .get_or_insert_with(|| {
+                            let terminal_row = &parser.symbols.terminals[terminal_index];
+                            compile_lex_terminal(grammar, terminal_row)
+                        })
+                        .clone()
                 })
                 .collect::<Vec<_>>();
             assign_direct_pattern_indices(&mut terminals);
