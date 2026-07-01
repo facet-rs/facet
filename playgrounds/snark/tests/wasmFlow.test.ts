@@ -130,6 +130,16 @@ module.exports = grammar({
 
   assert.equal(response.ok, true);
   assert.equal(response.language, "tiny_playground");
+  assert.equal(response.plan.stencils_needed, true);
+  assert.ok(
+    response.plan.snark_stencils.some(
+      (summary: { descriptor: string; domain: string; lowering: string; count: number }) =>
+        summary.descriptor === "snark.tree_sitter::lex" &&
+        summary.domain === "Lexing" &&
+        summary.lowering === "LexerGraph" &&
+        summary.count > 0,
+    ),
+  );
   assert.equal(response.parse.sexp, "(document (word) (word))");
   assert.deepEqual(
     response.highlights.map((capture: { capture_name: string; text: string }) => [
