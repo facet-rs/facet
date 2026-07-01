@@ -254,8 +254,6 @@ per grammar. Not worth touching unless a profile of grammar *loading itself*
 
 ## Summary, ranked by impact
 
-| # | Finding | Asymptotic cost | Confidence |
-|---|---|---|---|
 | # | Finding | Status |
 |---|---|---|
 | 1 | `subtree_tree_events`/`event_refs` walked the whole journal per reduce | Resolved by opt-in reuse collection |
