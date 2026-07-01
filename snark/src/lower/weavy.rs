@@ -3472,11 +3472,11 @@ struct RuntimeWeavyStepperInput<'a> {
 struct RuntimeWeavyLexerScratch {
     cache_policy: RuntimeWeavyLexSetCachePolicy,
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
-    direct_literal_matches: RefCell<HashMap<parser_ir::LexModeId, PatternSet>>,
+    direct_literal_matches: RefCell<Vec<Option<PatternSet>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
-    direct_pattern_matches: RefCell<HashMap<parser_ir::LexModeId, PatternSet>>,
+    direct_pattern_matches: RefCell<Vec<Option<PatternSet>>>,
     direct_terminal_indices: RefCell<Vec<usize>>,
-    direct_pattern_dfa_caches: RefCell<HashMap<parser_ir::LexModeId, Option<HybridDfaCache>>>,
+    direct_pattern_dfa_caches: RefCell<Vec<Option<Option<HybridDfaCache>>>>,
     direct_set_cache:
         RefCell<HashMap<RuntimeWeavyLexSetCacheKey, Arc<RuntimeWeavyDirectSetMatches>>>,
 }
@@ -3586,9 +3586,9 @@ impl RuntimeWeavyLexerScratch {
             let mut direct_literal_matches = self.direct_literal_matches.borrow_mut();
             let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
             if let Some(literal_set) = &mode_program.direct_literal_set {
-                let direct_literal_matches = direct_literal_matches
-                    .entry(mode)
-                    .or_insert_with(|| PatternSet::new(literal_set.len()));
+                let direct_literal_matches =
+                    runtime_weavy_mode_slot(&mut direct_literal_matches, mode)
+                        .get_or_insert_with(|| PatternSet::new(literal_set.len()));
                 mode_program.match_direct_literals_with_set(
                     input,
                     byte_position,
@@ -3606,13 +3606,13 @@ impl RuntimeWeavyLexerScratch {
             let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
             let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
             if let Some(pattern_set) = &mode_program.direct_pattern_set {
-                let direct_pattern_dfa_cache = direct_pattern_dfa_caches
-                    .entry(mode)
-                    .or_insert_with(|| pattern_set.create_dfa_cache())
-                    .as_mut();
-                let direct_pattern_matches = direct_pattern_matches
-                    .entry(mode)
-                    .or_insert_with(|| PatternSet::new(pattern_set.pattern_len()));
+                let direct_pattern_dfa_cache =
+                    runtime_weavy_mode_slot(&mut direct_pattern_dfa_caches, mode)
+                        .get_or_insert_with(|| pattern_set.create_dfa_cache())
+                        .as_mut();
+                let direct_pattern_matches =
+                    runtime_weavy_mode_slot(&mut direct_pattern_matches, mode)
+                        .get_or_insert_with(|| PatternSet::new(pattern_set.pattern_len()));
                 mode_program.match_direct_patterns_with_set(
                     input,
                     byte_position,
@@ -3626,6 +3626,17 @@ impl RuntimeWeavyLexerScratch {
             }
         }
     }
+}
+
+fn runtime_weavy_mode_slot<T>(
+    slots: &mut Vec<Option<T>>,
+    mode: parser_ir::LexModeId,
+) -> &mut Option<T> {
+    let index = mode.get() as usize;
+    if slots.len() <= index {
+        slots.resize_with(index + 1, || None);
+    }
+    &mut slots[index]
 }
 
 impl Default for RuntimeWeavyLexerScratch {
