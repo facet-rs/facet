@@ -49,8 +49,8 @@ The current module split already points at the final shape:
   `runtime::recover`, `runtime::incremental`, and
   `runtime::sexp`.
 
-`milestone::scannerless` stays quarantined as a smoke parser. No runtime type
-should depend on it.
+No side parser module should define runtime semantics. Runtime types should
+belong to the validated grammar to Weavy execution path.
 
 ## Runtime Tables
 
@@ -401,12 +401,13 @@ The next implementation steps should keep final runtime boundaries:
    S-expressions.
 8. Add recovery with costed `ERROR`/`MISSING` construction.
 9. Add edit propagation, node reuse, and changed-ranges comparison.
-10. Only then lower the same runtime operations to Weavy.
+10. Keep these operations in the Weavy-carried execution path instead of
+    reintroducing a second native parser runtime.
 
-Each milestone should have an oracle that exercises the production path. A
-table fact test is fine for table lowering; a parser milestone should compare
-final corpus S-expressions and, for recovery/incremental work, structured tree
-metadata and changed ranges.
+Each implementation step should have an oracle that exercises the production
+path. A table fact test is fine for table lowering; parser execution work should
+compare final corpus S-expressions and, for recovery/incremental work,
+structured tree metadata and changed ranges.
 
 ## Must-Not-Violate Invariants
 

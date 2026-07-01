@@ -283,7 +283,6 @@ Existing modules should keep their boundaries:
 - `runtime_input`: source coordinates, included ranges, and edits.
 - `lower::weavy`: lowering carrier ids and Snark intrinsics after the parser
   machine exists as Snark data.
-- `milestone::scannerless`: quarantined smoke parser only.
 
 New modules should be named for final parser concepts:
 
@@ -330,7 +329,8 @@ These paths are rejected:
 - Calling generated parser code and wrapping its tree as Snark output.
 - Building a handwritten PEG, Pratt parser, recursive descent parser, or
   CSS-only recognizer.
-- Routing semantics through `milestone::scannerless`.
+- Adding side parser implementations outside the validated grammar to Weavy
+  execution path.
 - Treating grammar rule order as runtime branch order except where Tree-sitter
   lexical tie-breaking explicitly uses grammar order.
 - Lexing a whole token stream before parsing.

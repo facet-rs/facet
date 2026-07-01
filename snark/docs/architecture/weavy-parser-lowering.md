@@ -1,11 +1,11 @@
 # Snark Weavy Parser Lowering
 
 This document fixes the target architecture for Snark's parser lowering. Snark
-does not grow from the scannerless milestone parser, does not inspect generated
-Tree-sitter implementation files, and does not treat generated parser code as an
-oracle. The final parser is Snark's own Tree-sitter-compatible LR/GLR parser
-machine, built from validated `grammar.json`, scanner, query, corpus, and
-runtime-input contracts, then carried by Weavy programs.
+does not inspect generated Tree-sitter implementation files and does not treat
+generated parser code as an oracle. The parser is Snark's own
+Tree-sitter-compatible LR/GLR machine, built from validated `grammar.json`,
+scanner, query, corpus, and runtime-input contracts, then carried by Weavy
+programs.
 
 Weavy is the lowering and execution carrier. Snark owns parser semantics.
 

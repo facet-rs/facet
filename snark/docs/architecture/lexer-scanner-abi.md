@@ -1,11 +1,11 @@
 # Lexer And Scanner ABI
 
-Snark must parse Tree-sitter packages from their grammar semantics: `grammar.json`,
-scanner sources, query files, node metadata, and corpus fixtures. Generated
-`src/parser.c` is not an input. Scanner source is package input because it is
-the author-provided external-token recognizer, but parser table behavior must
-come from Snark's own validation, lexical compilation, LR/GLR construction, and
-oracle comparisons.
+Snark must parse Tree-sitter packages from their grammar semantics:
+`grammar.json`, scanner sources, query files, and corpus fixtures. Generated
+`src/parser.c` and generated `src/node-types.json` are not inputs. Scanner
+source is package input because it is the author-provided external-token
+recognizer, but parser table behavior must come from Snark's own validation,
+lexical compilation, LR/GLR construction, and oracle comparisons.
 
 The corrected CSS path is therefore:
 
@@ -17,8 +17,8 @@ The corrected CSS path is therefore:
 6. run the normal lexer and external scanner ABI from those masks;
 7. compare syntax trees and query captures against corpus/highlight oracles.
 
-No step in this path is "parse CSS by hand". A tiny recognizer can only be a
-debug probe or quarantined milestone, never the parser runtime.
+No step in this path is "parse CSS by hand". A debug probe can inspect facts,
+but it must not become a parser runtime.
 
 ## Tree-sitter Semantics To Preserve
 

@@ -450,5 +450,5 @@ normalization into explicit passes:
 6. implement default alias and inline-production maps;
 7. build LR/GLR tables from `ParserGrammar`, not from raw grammar expressions.
 
-This keeps the scannerless milestone quarantined as a smoke module. Production
-Snark parsing must be grammar normalization plus table generation.
+Production Snark parsing must be grammar normalization plus table generation
+lowered into Weavy execution.
