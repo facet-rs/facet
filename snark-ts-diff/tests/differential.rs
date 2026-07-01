@@ -182,6 +182,75 @@ fn snark_surfaces_genuine_ambiguity_tree_sitter_hides() {
     );
 }
 
+#[test]
+fn bundled_graphql_and_thrift_lex_without_notoken() {
+    if !tree_sitter_available() {
+        eprintln!("skipping: `tree-sitter` CLI not found on PATH");
+        return;
+    }
+
+    let mut failures = Vec::new();
+    for (name, grammar_path, sample_path) in [
+        (
+            "graphql",
+            bundled_path("graphql/grammar.js"),
+            bundled_path("graphql/samples/starwars_schema.graphql"),
+        ),
+        (
+            "thrift",
+            bundled_path("thrift/grammar.js"),
+            bundled_path("thrift/samples/tutorial.thrift"),
+        ),
+    ] {
+        let grammar = match fs::read_to_string(&grammar_path) {
+            Ok(grammar) => grammar,
+            Err(err) => {
+                failures.push(format!(
+                    "[{name}] could not read grammar {}: {err}",
+                    grammar_path.display()
+                ));
+                continue;
+            }
+        };
+        let input = match fs::read_to_string(&sample_path) {
+            Ok(input) => input,
+            Err(err) => {
+                failures.push(format!(
+                    "[{name}] could not read sample {}: {err}",
+                    sample_path.display()
+                ));
+                continue;
+            }
+        };
+        let dir = match generate_parser(name, &grammar) {
+            Ok(dir) => dir,
+            Err(err) => {
+                failures.push(format!("[{name}] tree-sitter generate failed: {err}"));
+                continue;
+            }
+        };
+        fs::write(dir.join("input.txt"), &input).expect("write bundled sample");
+        let ts = tree_sitter_parse_file(&dir, "input.txt");
+        if ts.trim().is_empty() || ts.contains("ERROR") {
+            failures.push(format!(
+                "[{name}] tree-sitter did not parse the bundled sample cleanly: {ts}"
+            ));
+        }
+        let sn = snark_sexp(&grammar_path, &input);
+        if sn.starts_with("PARSE-ERR:") || sn.contains("NoToken") {
+            failures.push(format!(
+                "[{name}] Snark failed to lex/parse bundled sample: {sn}"
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "bundled lexer regression(s):\n{}",
+        failures.join("\n")
+    );
+}
+
 // ---------------------------------------------------------------------------
 
 fn tree_sitter_available() -> bool {
@@ -211,13 +280,25 @@ fn generate_parser(name: &str, grammar: &str) -> Result<PathBuf, String> {
 
 fn tree_sitter_sexp(dir: &Path, input: &str) -> String {
     let _ = fs::write(dir.join("in.txt"), input);
+    tree_sitter_parse_file(dir, "in.txt")
+}
+
+fn tree_sitter_parse_file(dir: &Path, path: &str) -> String {
     let out = Command::new("tree-sitter")
         .arg("parse")
-        .arg("in.txt")
+        .arg(path)
         .current_dir(dir)
         .output()
         .expect("run tree-sitter parse");
     String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn bundled_path(relative: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("snark-ts-diff lives inside the facet workspace")
+        .join("playgrounds/snark/src/bundled")
+        .join(relative)
 }
 
 /// snark's named-node s-expression via the production (RuntimeWeavy) path.
