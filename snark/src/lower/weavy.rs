@@ -17,8 +17,8 @@ use std::{
 use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
     ir::{
-        ControlOp, EffectContract, EffectResource, IntrinsicDescriptor, IntrinsicOp, WeavyLowered,
-        WeavyOp, resolve_lowered,
+        ControlOp, EffectContract, EffectResource, IntrinsicDescriptor, IntrinsicOp,
+        LoweredAnalysis, WeavyLowered, WeavyOp, dense_lowered_analysis, resolve_lowered,
     },
 };
 
@@ -570,6 +570,12 @@ impl WeavyParserProgram {
         &self.state_blocks
     }
 
+    /// Dense Weavy IR analysis for the parser/action program.
+    #[must_use]
+    pub fn analysis(&self) -> LoweredAnalysis {
+        dense_lowered_analysis(&self.dense)
+    }
+
     fn state_block(&self, state: parser_ir::ParseStateId) -> Result<BlockRef, WeavyParseError> {
         self.state_block_refs
             .get(state.get() as usize)
@@ -642,11 +648,29 @@ impl WeavyParsePlan {
         &self.program
     }
 
+    /// Parser and lexer analysis for optimizer/JIT planning.
+    #[must_use]
+    pub fn analysis(&self) -> WeavyParsePlanAnalysis {
+        WeavyParsePlanAnalysis {
+            parser: self.program.analysis(),
+            lexer: self.lexer_stats(),
+        }
+    }
+
     /// Shape summary for the Snark-owned lexer graph carried by this plan.
     #[must_use]
     pub fn lexer_stats(&self) -> WeavyLexerStats {
         self.lexer_program.stats()
     }
+}
+
+/// Combined analysis for one prepared Snark Weavy parse plan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavyParsePlanAnalysis {
+    /// Canonical parser/action program analysis from Weavy IR.
+    pub parser: LoweredAnalysis,
+    /// Snark-owned lexer graph shape summary.
+    pub lexer: WeavyLexerStats,
 }
 
 #[derive(Clone, Debug)]
@@ -5559,7 +5583,62 @@ mod tests {
 
     #[test]
     fn lexer_stats_describe_lowered_graph_shape() {
-        let program = WeavyLexerProgram {
+        let program = sample_lexer_program();
+
+        let stats = program.stats();
+
+        assert_eq!(stats.mode_count, 1);
+        assert_eq!(stats.terminal_count, 2);
+        assert_eq!(stats.direct_pattern_terminal_count, 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::Seq], 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::Choice], 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::Pattern], 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::Until], 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::Repeat], 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::Nested], 1);
+        assert_eq!(stats.op_counts[&WeavyLexOpKind::UnsupportedTerminal], 1);
+    }
+
+    #[test]
+    fn parse_plan_analysis_combines_parser_and_lexer_shapes() {
+        let lex = SnarkIntrinsic::Lex {
+            version: StackVersionId(0),
+            mode: LexModeId(0),
+            output: LookaheadTokenId(0),
+        };
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense: DenseSnarkWeavyLowered::new(vec![WeavyOp::Intrinsic(lex.clone())], vec![]),
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+            },
+            lexer_program: sample_lexer_program(),
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+        };
+
+        let analysis = plan.analysis();
+
+        assert_eq!(analysis.parser.program_stats.root.intrinsic_op_count, 1);
+        assert_eq!(analysis.parser.effect_stats.root.input_read_count, 1);
+        assert_eq!(analysis.parser.intrinsic_counts[&lex.descriptor()], 1);
+        assert_eq!(analysis.lexer.mode_count, 1);
+        assert_eq!(analysis.lexer.op_counts[&WeavyLexOpKind::Until], 1);
+    }
+
+    #[test]
+    fn empty_lowered_has_no_program_or_blocks() {
+        let lowered = empty_lowered();
+
+        assert!(lowered.program.is_empty());
+        assert!(lowered.blocks.is_empty());
+    }
+
+    fn sample_lexer_program() -> WeavyLexerProgram {
+        WeavyLexerProgram {
             modes: vec![WeavyLexModeProgram {
                 terminals: vec![
                     WeavyLexTerminal {
@@ -5601,28 +5680,6 @@ mod tests {
                 ],
                 direct_pattern_set: None,
             }],
-        };
-
-        let stats = program.stats();
-
-        assert_eq!(stats.mode_count, 1);
-        assert_eq!(stats.terminal_count, 2);
-        assert_eq!(stats.direct_pattern_terminal_count, 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::Seq], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::Choice], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::Pattern], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::Until], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::Repeat], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::Nested], 1);
-        assert_eq!(stats.op_counts[&WeavyLexOpKind::UnsupportedTerminal], 1);
-    }
-
-    #[test]
-    fn empty_lowered_has_no_program_or_blocks() {
-        let lowered = empty_lowered();
-
-        assert!(lowered.program.is_empty());
-        assert!(lowered.blocks.is_empty());
+        }
     }
 }
