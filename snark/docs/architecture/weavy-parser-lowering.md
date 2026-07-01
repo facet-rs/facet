@@ -125,6 +125,9 @@ Required block families:
 - Scanner blocks: wrappers around external scanner invocation and scanner-state
   persistence. These are Snark blocks carrying scanner ABI semantics, not Weavy
   primitives.
+- Lexer blocks: generated lex-mode programs that merge literal and pattern
+  terminals, execute composed token expressions, and emit the same candidates as
+  the interpreter oracle. See `weavy-lexer-lowering.md`.
 - GLR worklist blocks: split, merge, deferred reduction, branch retirement, and
   deterministic winner selection.
 - Query blocks: query-pattern entry blocks and shared predicate/capture emit
@@ -244,8 +247,8 @@ machine; Snark defines and executes parser meaning.
    productions, terminals, lexical modes, precedence/conflict facts, LR actions,
    GLR conflict metadata, and tree emission plans.
 4. Lower generated tables into `SnarkWeavyLowered` blocks: root, state,
-   reduction, recovery, scanner, GLR worklist, and query blocks. This is still
-   data construction; no parser semantics move into Weavy.
+   lex-mode, reduction, recovery, scanner, GLR worklist, and query blocks. This
+   is still data construction; no parser semantics move into Weavy.
 5. Implement the Snark `Step` runtime for the existing `SnarkIntrinsic`
    families, with explicit parser stack, GLR graph stack, scanner state, tree
    sink, query sink, trace sink, and oracle sink.

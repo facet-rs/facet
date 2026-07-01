@@ -17,9 +17,11 @@ this pass. Ranked by expected impact given call frequency.
 - **Resolved:** direct-pattern matching now reuses
   `RuntimeWeavyStepper::direct_pattern_ends` instead of allocating a fresh
   `Vec<Option<LexMatch>>` per lex call.
-- **Open:** `RegexSet::matches` still returns a per-call match result. Removing
-  that allocation likely means moving this direct-pattern path to a
-  `regex-automata` API with caller-owned cache/match storage.
+- **Open:** the direct-pattern path is still an interpreter bridge. The endpoint
+  is a merged lex-mode automaton lowered into the Snark Weavy program, with the
+  current Rust matcher kept as the oracle. A caller-cache `regex-automata`
+  bridge may still be useful if profiling says the allocation matters before
+  the lowered lexer lands, but it is not the target architecture.
 
 The findings below are kept as historical provenance. Resolved entries are not
 current work items.
@@ -54,7 +56,7 @@ current work items.
   Either way the Vec's backing allocation is made once (or once per lex-mode width) and reused, not malloc'd per token.
 - **Confidence**: high — the allocation is unconditional whenever a lex mode has a direct-pattern set (which JSON's number/string-body patterns are likely to hit), and the fix is a straightforward buffer-reuse.
 
-## 3. [OPEN] `RegexSet::matches(haystack)` allocates an internal match-set buffer on every `lex()` call
+## 3. [OPEN] direct-pattern set matching is still an interpreter bridge
 
 - **File**: `snark/src/lower/weavy.rs:3299` inside the same `match_compiled_direct_pattern_set`:
   ```rust
@@ -62,7 +64,7 @@ current work items.
   ```
 - **Call frequency**: same as finding #2 — once per token per branch, whenever the current lex mode has a `direct_pattern_set` (`CompiledLexPatternSet`, `parser.rs:3760-3763`, built once at grammar-compile time in `compile_direct_pattern_set`).
 - **Why it's wasteful**: `regex::RegexSet::matches` builds and returns a fresh `SetMatches` result (an internal bitset sized to the number of patterns in the set) on every call rather than writing into a caller-provided buffer. For a grammar with a handful of direct patterns (e.g. JSON's number/whitespace/comment-ish patterns), this is a small-but-nonzero heap allocation on every single token, same frequency as finding #2.
-- **Fix**: keep a single reusable match-buffer alive across calls and use the buffer-reuse entry point of the `regex` crate (check whether `regex` 1.12's `RegexSet` still only exposes `matches()` — if the reusable-buffer API isn't available at the `RegexSet` level, this is more invasive, e.g. dropping to `regex_automata`'s meta engine which does support caller-owned `Cache`/match buffers). At minimum, this should be fixed in the same change as #2 since both live in the same function and both scale as "once per token".
+- **Fix direction**: lower each lex mode to a Snark-owned Weavy lexer graph that merges direct pattern terminals and literals before execution. A `regex-automata` caller-cache bridge can remove this one allocation in the current interpreter, but it still leaves regex execution opaque to Weavy and does not give the JIT a merged graph to specialize.
 - **Confidence**: high that the allocation exists and recurs per-token; medium on the exact reuse API without checking the installed `regex` crate's docs directly (flagged for verification before implementing, since I did not build/run anything for this audit).
 
 ## Lower priority / not worth chasing right now
@@ -77,5 +79,6 @@ current work items.
    full rescan from byte zero.
 2. **Resolved:** direct-pattern result storage uses
    `RuntimeWeavyStepper::direct_pattern_ends`, not a per-token allocation.
-3. **Open:** `RegexSet::matches()` still allocates/returns a fresh match result
-   per call; fix needs a reusable-buffer API path, likely via `regex-automata`.
+3. **Open:** direct-pattern matching still runs through the interpreter bridge;
+   the target fix is merged lex-mode automata lowered into Weavy, not merely
+   swapping the bridge to a different regex API.
