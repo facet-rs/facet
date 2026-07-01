@@ -14,6 +14,7 @@ use std::{
     sync::Arc,
 };
 
+use regex::Regex;
 use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
     ir::{
@@ -956,7 +957,7 @@ impl WeavyTerminalMatcher {
 enum WeavyLexExpr {
     Blank,
     String(String),
-    Pattern(crate::lex_match::CompiledPattern),
+    Pattern(WeavyPatternMatcher),
     Until(crate::lex_match::CompiledUntilMatcher),
     Nested { open: String, close: String },
     AutoClose(Box<parser_ir::AutoCloseSpec>),
@@ -972,7 +973,9 @@ impl From<parser_ir::CompiledLexExpr> for WeavyLexExpr {
         match value {
             parser_ir::CompiledLexExpr::Blank => Self::Blank,
             parser_ir::CompiledLexExpr::String(value) => Self::String(value),
-            parser_ir::CompiledLexExpr::Pattern(pattern) => Self::Pattern(pattern),
+            parser_ir::CompiledLexExpr::Pattern(pattern) => {
+                Self::Pattern(WeavyPatternMatcher::from(pattern))
+            }
             parser_ir::CompiledLexExpr::Until(matcher) => Self::Until(matcher),
             parser_ir::CompiledLexExpr::Nested { open, close } => Self::Nested { open, close },
             parser_ir::CompiledLexExpr::AutoClose(spec) => Self::AutoClose(spec),
@@ -1001,15 +1004,9 @@ impl WeavyLexExpr {
             Self::Pattern(pattern) => {
                 stats.record(WeavyLexOpKind::Pattern);
                 match pattern.kind() {
-                    crate::lex_match::CompiledPatternKind::Known => {
-                        stats.known_pattern_count += 1;
-                    }
-                    crate::lex_match::CompiledPatternKind::Regex => {
-                        stats.regex_pattern_count += 1;
-                    }
-                    crate::lex_match::CompiledPatternKind::Unsupported => {
-                        stats.unsupported_pattern_count += 1;
-                    }
+                    WeavyPatternMatcherKind::Known => stats.known_pattern_count += 1,
+                    WeavyPatternMatcherKind::Regex => stats.regex_pattern_count += 1,
+                    WeavyPatternMatcherKind::Unsupported => stats.unsupported_pattern_count += 1,
                 }
             }
             Self::Until(_) => stats.record(WeavyLexOpKind::Until),
@@ -1036,6 +1033,57 @@ impl WeavyLexExpr {
                 content.add_stats(stats);
             }
             Self::UnsupportedSymbol(_) => stats.record(WeavyLexOpKind::UnsupportedSymbol),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum WeavyPatternMatcher {
+    Known { source: String },
+    Regex { regex: Regex },
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WeavyPatternMatcherKind {
+    Known,
+    Regex,
+    Unsupported,
+}
+
+impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
+    fn from(value: crate::lex_match::CompiledPattern) -> Self {
+        let kind = value.kind();
+        match kind {
+            crate::lex_match::CompiledPatternKind::Known => Self::Known {
+                source: value.source,
+            },
+            crate::lex_match::CompiledPatternKind::Regex => value
+                .regex
+                .map_or(Self::Unsupported, |regex| Self::Regex { regex }),
+            crate::lex_match::CompiledPatternKind::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl WeavyPatternMatcher {
+    const fn kind(&self) -> WeavyPatternMatcherKind {
+        match self {
+            Self::Known { .. } => WeavyPatternMatcherKind::Known,
+            Self::Regex { .. } => WeavyPatternMatcherKind::Regex,
+            Self::Unsupported => WeavyPatternMatcherKind::Unsupported,
+        }
+    }
+
+    fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
+        match self {
+            Self::Known { source } => {
+                crate::lex_match::match_known_pattern_source(source, input, byte_position)
+            }
+            Self::Regex { regex } => {
+                crate::lex_match::match_regex_leaf(regex, input, byte_position)
+            }
+            Self::Unsupported => None,
         }
     }
 }
@@ -4183,11 +4231,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     end: byte_position + value.len(),
                     inspected_end: byte_position + value.len(),
                 })),
-            WeavyLexExpr::Pattern(pattern) => Ok(crate::lex_match::match_compiled_pattern(
-                pattern,
-                self.input,
-                byte_position,
-            )),
+            WeavyLexExpr::Pattern(pattern) => Ok(pattern.match_input(self.input, byte_position)),
             WeavyLexExpr::Until(matcher) => Ok(
                 crate::lex_match::match_compiled_until_markers_with_inspection(
                     matcher,
@@ -4722,7 +4766,7 @@ fn match_weavy_direct_pattern_set(
         let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher else {
             return;
         };
-        ends[set_index] = crate::lex_match::match_compiled_pattern(pattern, input, byte_position);
+        ends[set_index] = pattern.match_input(input, byte_position);
     });
 }
 
@@ -5799,13 +5843,15 @@ mod tests {
                         matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Seq(vec![
                             WeavyLexExpr::String("a".to_owned()),
                             WeavyLexExpr::Choice(vec![
-                                WeavyLexExpr::Pattern(crate::lex_match::compile_pattern(
-                                    "[a-z]+", None,
-                                )),
-                                WeavyLexExpr::Pattern(crate::lex_match::compile_pattern(
-                                    "and\\b", None,
-                                )),
-                                WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("[", None)),
+                                WeavyLexExpr::Pattern(
+                                    crate::lex_match::compile_pattern("[a-z]+", None).into(),
+                                ),
+                                WeavyLexExpr::Pattern(
+                                    crate::lex_match::compile_pattern("and\\b", None).into(),
+                                ),
+                                WeavyLexExpr::Pattern(
+                                    crate::lex_match::compile_pattern("[", None).into(),
+                                ),
                                 WeavyLexExpr::Until(crate::lex_match::compile_until_markers(&[
                                     "{{".to_owned(),
                                     "{%".to_owned(),

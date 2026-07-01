@@ -8,7 +8,6 @@ pub(crate) const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledPattern {
     pub(crate) source: String,
-    pub(crate) flags: Option<String>,
     pub(crate) regex: Option<Regex>,
     kind: CompiledPatternKind,
 }
@@ -50,7 +49,6 @@ pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPat
     };
     CompiledPattern {
         source: pattern.to_owned(),
-        flags,
         regex,
         kind,
     }
@@ -139,20 +137,34 @@ pub(crate) fn match_pattern_with_flags(
     match_cached_regex_leaf(pattern, flags, input, byte_position)
 }
 
+#[cfg(test)]
 pub(crate) fn match_compiled_pattern(
     pattern: &CompiledPattern,
     input: &str,
     byte_position: usize,
 ) -> Option<LexMatch> {
-    if pattern.flags.is_none()
-        && let Some(result) = match_known_pattern(&pattern.source, input, byte_position)
-    {
-        return result.map(|end| LexMatch::new(end, pattern_inspected_end(input, end)));
+    if pattern.kind == CompiledPatternKind::Known {
+        return match_known_pattern_source(&pattern.source, input, byte_position);
     }
+    match_regex_leaf(pattern.regex.as_ref()?, input, byte_position)
+}
+
+pub(crate) fn match_known_pattern_source(
+    pattern: &str,
+    input: &str,
+    byte_position: usize,
+) -> Option<LexMatch> {
+    match_known_pattern(pattern, input, byte_position)?
+        .map(|end| LexMatch::new(end, pattern_inspected_end(input, end)))
+}
+
+pub(crate) fn match_regex_leaf(
+    regex: &Regex,
+    input: &str,
+    byte_position: usize,
+) -> Option<LexMatch> {
     let haystack = input.get(byte_position..)?;
-    pattern
-        .regex
-        .as_ref()?
+    regex
         .find(haystack)
         .filter(|match_| match_.start() == 0)
         .map(|match_| {
