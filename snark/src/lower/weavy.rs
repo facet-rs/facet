@@ -378,6 +378,19 @@ pub struct SnarkIntrinsicSemanticStats {
     pub lowering_counts: BTreeMap<SnarkIntrinsicLowering, usize>,
 }
 
+/// One Snark dialect intrinsic descriptor still present in a Weavy parse plan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavySnarkStencilSummary {
+    /// Stable dialect/name identity for the Snark intrinsic.
+    pub descriptor: IntrinsicDescriptor,
+    /// Semantic lane used by optimizer and JIT planning.
+    pub domain: SnarkIntrinsicDomain,
+    /// How this intrinsic lowers beyond the canonical Snark dialect op.
+    pub lowering: SnarkIntrinsicLowering,
+    /// Number of ops with this descriptor in the parser/action program.
+    pub count: usize,
+}
+
 impl SnarkIntrinsicSemanticStats {
     fn record(&mut self, intrinsic: &SnarkIntrinsic) {
         let semantics = intrinsic.semantics();
@@ -439,6 +452,21 @@ impl SnarkIntrinsicSemanticStats {
             .get(&lowering)
             .copied()
             .unwrap_or_default()
+    }
+
+    /// Return every Snark intrinsic descriptor that still needs a Snark-owned
+    /// handler, JIT stencil, or further lowering into neutral Weavy ops.
+    #[must_use]
+    pub fn stencil_summaries(&self) -> Vec<WeavySnarkStencilSummary> {
+        self.descriptor_semantics
+            .values()
+            .map(|semantics| WeavySnarkStencilSummary {
+                descriptor: semantics.descriptor,
+                domain: semantics.domain,
+                lowering: semantics.lowering,
+                count: self.descriptor_count(semantics.descriptor),
+            })
+            .collect()
     }
 }
 
@@ -813,6 +841,9 @@ pub struct WeavyParsePlanReadiness {
     pub opaque_intrinsic_count: usize,
     /// Intrinsics that call outside code.
     pub host_call_intrinsic_count: usize,
+    /// Snark dialect descriptors that still need Snark-owned handlers, JIT
+    /// stencils, or further lowering into neutral Weavy ops.
+    pub snark_stencil_summaries: Vec<WeavySnarkStencilSummary>,
     /// Unique Snark dialect descriptors that still block fully-visible lowering.
     pub parser_barrier_descriptors: Vec<IntrinsicDescriptor>,
     /// Distinct parser/action and lexer blockers with their remaining counts.
@@ -845,6 +876,7 @@ impl WeavyParsePlanReadiness {
                 .lowering_count(SnarkIntrinsicLowering::HostCallBarrier),
             opaque_intrinsic_count: parser.effect_stats.total.opaque_count,
             host_call_intrinsic_count: parser.effect_stats.total.calls_user_code_count,
+            snark_stencil_summaries: parser_semantics.stencil_summaries(),
             parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
             barrier_summaries,
         }
@@ -7390,6 +7422,15 @@ mod tests {
                 .lowering_count(SnarkIntrinsicLowering::LexerGraph),
             1
         );
+        assert_eq!(
+            analysis.parser_semantics.stencil_summaries(),
+            vec![WeavySnarkStencilSummary {
+                descriptor: lex.descriptor(),
+                domain: SnarkIntrinsicDomain::Lexing,
+                lowering: SnarkIntrinsicLowering::LexerGraph,
+                count: 1,
+            }]
+        );
         assert_eq!(analysis.lexer.mode_count, 1);
         assert_eq!(analysis.lexer.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 0);
@@ -7400,6 +7441,15 @@ mod tests {
         assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.sink_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.host_call_barrier_intrinsic_count, 0);
+        assert_eq!(
+            analysis.readiness.snark_stencil_summaries,
+            vec![WeavySnarkStencilSummary {
+                descriptor: lex.descriptor(),
+                domain: SnarkIntrinsicDomain::Lexing,
+                lowering: SnarkIntrinsicLowering::LexerGraph,
+                count: 1,
+            }]
+        );
         assert!(analysis.readiness.parser_barrier_descriptors.is_empty());
         assert_eq!(analysis.readiness.lexer.regex_automata_count, 2);
         assert_eq!(
@@ -7470,6 +7520,7 @@ mod tests {
 
         assert_eq!(readiness.neutral_weavy_op_count, 1);
         assert_eq!(readiness.snark_intrinsic_count, 0);
+        assert!(readiness.snark_stencil_summaries.is_empty());
         assert!(readiness.is_neutral_weavy_only());
         assert!(!readiness.needs_snark_stencils());
     }
@@ -7524,6 +7575,15 @@ mod tests {
         assert_eq!(analysis.readiness.lexer_graph_intrinsic_count, 0);
         assert_eq!(analysis.readiness.dialect_op_intrinsic_count, 0);
         assert_eq!(analysis.readiness.sink_op_intrinsic_count, 0);
+        assert_eq!(
+            analysis.readiness.snark_stencil_summaries,
+            vec![WeavySnarkStencilSummary {
+                descriptor: scanner.descriptor(),
+                domain: SnarkIntrinsicDomain::ExternalScanner,
+                lowering: SnarkIntrinsicLowering::HostCallBarrier,
+                count: 1,
+            }]
+        );
         assert_eq!(
             analysis.readiness.parser_barrier_descriptors,
             vec![scanner.descriptor()]
@@ -7585,6 +7645,15 @@ mod tests {
         assert_eq!(readiness.barrier_instance_count(), 4);
         assert_eq!(readiness.neutral_weavy_op_count, 0);
         assert_eq!(readiness.snark_intrinsic_count, 2);
+        assert_eq!(
+            readiness.snark_stencil_summaries,
+            vec![WeavySnarkStencilSummary {
+                descriptor: scanner.descriptor(),
+                domain: SnarkIntrinsicDomain::ExternalScanner,
+                lowering: SnarkIntrinsicLowering::HostCallBarrier,
+                count: 2,
+            }]
+        );
         assert_eq!(
             readiness.barriers(),
             vec![
