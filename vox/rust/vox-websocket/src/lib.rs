@@ -5,6 +5,8 @@
 //!
 //! - **Native**: uses `tokio-tungstenite`
 //! - **WASM**: uses `web_sys::WebSocket`
+//! - **axum** (feature `axum`, native): bridges an axum websocket route to a
+//!   vox [`Link`](vox_types::Link) via [`AxumWsLink`].
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
@@ -15,3 +17,8 @@ pub use native::*;
 mod wasm;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::*;
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "axum"))]
+mod axum;
+#[cfg(all(not(target_arch = "wasm32"), feature = "axum"))]
+pub use axum::{AxumWsLink, AxumWsLinkRx, AxumWsLinkRxError, AxumWsLinkTx};

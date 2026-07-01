@@ -8,8 +8,6 @@
 #![cfg(target_arch = "wasm32")]
 
 use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, TestbedClient};
-use vox_core::initiator_on;
-use vox_websocket::WsLink;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -71,12 +69,14 @@ impl TestResults {
 pub async fn run_tests(ws_url: &str) -> TestResults {
     let mut results = Vec::new();
 
-    console_log!("Connecting to {ws_url}...");
+    console_log!("Connecting to {ws_url} via vox::connect_lane...");
 
-    let link = match WsLink::connect(ws_url).await {
-        Ok(l) => l,
+    // First-party high-level connect: parses the `ws://`/`wss://` scheme, opens
+    // a browser WebSocket, performs the vox handshake, and opens a typed lane.
+    let client: TestbedClient = match vox::connect_lane(ws_url).await {
+        Ok(client) => client,
         Err(e) => {
-            console_error!("Failed to connect: {e:?}");
+            console_error!("connect_lane failed: {e:?}");
             results.push(TestResult {
                 name: "connect".into(),
                 passed: false,
@@ -86,22 +86,7 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
         }
     };
 
-    console_log!("Connected! Performing handshake...");
-
-    let client = match initiator_on(link).establish::<TestbedClient>().await {
-        Ok(result) => result,
-        Err(e) => {
-            console_error!("Handshake failed: {e:?}");
-            results.push(TestResult {
-                name: "handshake".into(),
-                passed: false,
-                error: Some(format!("{e:?}")),
-            });
-            return TestResults { results };
-        }
-    };
-
-    console_log!("Handshake complete.");
+    console_log!("Connected and lane opened.");
 
     // Run echo tests
     run_echo_tests(&client, &mut results).await;

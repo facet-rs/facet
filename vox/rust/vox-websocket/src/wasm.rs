@@ -1,15 +1,15 @@
 //! WASM (web_sys) WebSocket transport implementing [`Link`].
 
 use std::cell::RefCell;
-use std::io::{self, ErrorKind};
+use std::io;
 
 use futures_channel::mpsc;
 use futures_util::{StreamExt, lock::Mutex};
 use js_sys::ArrayBuffer;
 use vox_types::{Backing, Link, LinkRx, LinkTx};
+use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
-use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{BinaryType, CloseEvent, DomException, ErrorEvent, MessageEvent, WebSocket};
+use web_sys::{BinaryType, CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 enum WsEvent {
     Message(Vec<u8>),
@@ -77,34 +77,11 @@ pub fn ws_link_source(url: impl Into<String>) -> WsLinkSource {
 impl vox_core::LinkSource for WsLinkSource {
     type Link = WsLink;
     async fn next_link(&mut self) -> io::Result<vox_core::Attachment<Self::Link>> {
-        let websocket = WebSocket::new(&self.url).map_err(convert_js_err)?;
-        Ok(vox_core::Attachment::initiator(WsLink::new(websocket)))
-    }
-}
-
-#[derive(Debug)]
-struct JsError(DomException);
-
-impl core::error::Error for JsError {}
-
-impl core::fmt::Display for JsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} ({}): {}",
-            self.0.name(),
-            self.0.code(),
-            self.0.message()
-        )
-    }
-}
-// see https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/WebSocket#exceptions
-fn convert_js_err(val: JsValue) -> io::Error {
-    match val.dyn_into::<DomException>() {
-        Ok(e) => io::Error::new(ErrorKind::InvalidInput, JsError(e)),
-        Err(_) => {
-            io::Error::other("exception during websocket creation but cannot cast to DomException")
-        }
+        // Wait for the socket to reach OPEN before handing it to the initiator.
+        // Otherwise the initiator's first `send` races the connection and fails
+        // with "WebSocket is still in CONNECTING state".
+        let link = WsLink::connect(&self.url).await?;
+        Ok(vox_core::Attachment::initiator(link))
     }
 }
 
