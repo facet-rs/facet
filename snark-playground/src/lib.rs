@@ -140,6 +140,7 @@ struct PlanOutput {
     lexer_fully_visible: bool,
     neutral_weavy_only: bool,
     stencils_needed: bool,
+    native_copy_patch_jit_available: bool,
     neutral_weavy_op_count: usize,
     snark_intrinsic_count: usize,
     snark_stencils: Vec<PlanStencilOutput>,
@@ -841,6 +842,7 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
         lexer_fully_visible: readiness.lexer.is_fully_visible(),
         neutral_weavy_only: readiness.is_neutral_weavy_only(),
         stencils_needed: readiness.needs_snark_stencils(),
+        native_copy_patch_jit_available: readiness.native_copy_patch_jit_available,
         neutral_weavy_op_count: readiness.neutral_weavy_op_count,
         snark_intrinsic_count: readiness.snark_intrinsic_count,
         snark_stencils: readiness

@@ -59,6 +59,7 @@ type PlanOutput = {
   lexer_fully_visible: boolean;
   neutral_weavy_only: boolean;
   stencils_needed: boolean;
+  native_copy_patch_jit_available: boolean;
   neutral_weavy_op_count: number;
   snark_intrinsic_count: number;
   snark_stencils: PlanStencilOutput[];

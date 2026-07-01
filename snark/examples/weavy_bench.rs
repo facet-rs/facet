@@ -228,6 +228,10 @@ fn main() {
         readiness.needs_snark_stencils()
     );
     println!(
+        "  native copy-patch JIT available: {}",
+        readiness.native_copy_patch_jit_available
+    );
+    println!(
         "  parser lowering: dialect {:>6}  lexer-graph {:>6}  sinks {:>6}  host barriers {:>6}",
         readiness.dialect_op_intrinsic_count,
         readiness.lexer_graph_intrinsic_count,

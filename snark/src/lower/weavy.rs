@@ -1153,6 +1153,9 @@ pub struct WeavyParsePlanReadiness {
     pub snark_stencil_execution_summaries: Vec<WeavySnarkStencilExecutionSummary>,
     /// Snark stencil obligations grouped by session state for ABI prioritization.
     pub snark_stencil_state_summaries: Vec<WeavySnarkStencilStateSummary>,
+    /// True when Snark was built with Weavy's native copy-patch JIT support and
+    /// the current target can execute those stencils.
+    pub native_copy_patch_jit_available: bool,
     /// Unique Snark dialect descriptors that still block fully-visible lowering.
     pub parser_barrier_descriptors: Vec<IntrinsicDescriptor>,
     /// Distinct parser/action and lexer blockers with their remaining counts.
@@ -1195,6 +1198,7 @@ impl WeavyParsePlanReadiness {
             snark_stencil_family_summaries,
             snark_stencil_execution_summaries,
             snark_stencil_state_summaries,
+            native_copy_patch_jit_available: native_copy_patch_jit_available(),
             parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
             barrier_summaries,
         }
@@ -1251,6 +1255,18 @@ impl WeavyParsePlanReadiness {
             .iter()
             .map(|summary| summary.count)
             .sum()
+    }
+}
+
+#[must_use]
+const fn native_copy_patch_jit_available() -> bool {
+    #[cfg(feature = "jit")]
+    {
+        weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
+    }
+    #[cfg(not(feature = "jit"))]
+    {
+        false
     }
 }
 
@@ -8467,6 +8483,21 @@ mod tests {
         assert!(!analysis.readiness.is_fully_visible());
         assert!(!analysis.readiness.is_neutral_weavy_only());
         assert!(analysis.readiness.needs_snark_stencils());
+        assert_eq!(
+            analysis.readiness.native_copy_patch_jit_available,
+            native_copy_patch_jit_available()
+        );
+    }
+
+    #[test]
+    fn native_copy_patch_jit_availability_follows_snark_feature_gate() {
+        #[cfg(feature = "jit")]
+        assert_eq!(
+            native_copy_patch_jit_available(),
+            weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
+        );
+        #[cfg(not(feature = "jit"))]
+        assert!(!native_copy_patch_jit_available());
     }
 
     #[test]

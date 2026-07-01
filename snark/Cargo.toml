@@ -23,6 +23,7 @@ include = [
 [features]
 default = ["json-import"]
 ci = ["tree-sitter-import"]
+jit = ["weavy/jit"]
 json-import = ["dep:facet-json", "facet/indexmap"]
 tree-sitter-import = ["json-import"]
 
