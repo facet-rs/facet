@@ -14,6 +14,7 @@ use std::{
     sync::Arc,
 };
 
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use regex::{Regex, RegexSet};
 use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
@@ -822,6 +823,10 @@ pub struct WeavyLexerStats {
     pub direct_pattern_set_count: usize,
     /// Number of terminal rows participating in merged direct-pattern sets.
     pub direct_pattern_terminal_count: usize,
+    /// Number of modes with a merged literal string set.
+    pub direct_literal_set_count: usize,
+    /// Number of terminal rows participating in merged literal string sets.
+    pub direct_literal_terminal_count: usize,
     /// Number of pattern nodes handled by Snark's known fast-path matchers.
     pub known_pattern_count: usize,
     /// Number of pattern nodes backed by the Rust regex engine.
@@ -847,19 +852,22 @@ impl WeavyLexerStats {
 #[derive(Clone, Debug)]
 struct WeavyLexModeProgram {
     terminals: Vec<WeavyLexTerminal>,
+    direct_literal_set: Option<WeavyLiteralSet>,
     direct_pattern_set: Option<WeavyDirectPatternSet>,
 }
 
 impl WeavyLexModeProgram {
     fn from_compiled(compiled: parser_ir::CompiledLexMode) -> Self {
-        let terminals = compiled
+        let mut terminals = compiled
             .terminals
             .into_iter()
             .map(WeavyLexTerminal::from)
             .collect::<Vec<_>>();
+        let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
         let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&terminals);
         Self {
             terminals,
+            direct_literal_set,
             direct_pattern_set,
         }
     }
@@ -881,8 +889,20 @@ impl WeavyLexModeProgram {
         match_weavy_direct_pattern_set(input, self, byte_position, ends);
     }
 
+    fn match_direct_literals(
+        &self,
+        input: &str,
+        byte_position: usize,
+        ends: &mut Vec<Option<parser_ir::LexMatch>>,
+    ) {
+        match_weavy_literal_set(input, self, byte_position, ends);
+    }
+
     fn add_stats(&self, stats: &mut WeavyLexerStats) {
         stats.terminal_count += self.terminals.len();
+        if self.direct_literal_set.is_some() {
+            stats.direct_literal_set_count += 1;
+        }
         if self.direct_pattern_set.is_some() {
             stats.direct_pattern_set_count += 1;
         }
@@ -900,6 +920,7 @@ struct WeavyLexTerminal {
     literal: bool,
     lexical_precedence: i32,
     implicit_precedence: i32,
+    direct_literal_index: Option<usize>,
     direct_pattern_index: Option<usize>,
 }
 
@@ -912,6 +933,7 @@ impl From<parser_ir::CompiledLexTerminal> for WeavyLexTerminal {
             literal: value.literal,
             lexical_precedence: value.lexical_precedence,
             implicit_precedence: value.implicit_precedence,
+            direct_literal_index: None,
             direct_pattern_index: value.direct_pattern_index,
         }
     }
@@ -919,6 +941,9 @@ impl From<parser_ir::CompiledLexTerminal> for WeavyLexTerminal {
 
 impl WeavyLexTerminal {
     fn add_stats(&self, stats: &mut WeavyLexerStats) {
+        if self.direct_literal_index.is_some() {
+            stats.direct_literal_terminal_count += 1;
+        }
         if self.direct_pattern_index.is_some() {
             stats.direct_pattern_terminal_count += 1;
         }
@@ -1106,6 +1131,67 @@ impl WeavyPatternMatcher {
             Self::Known { regex_source, .. } => regex_source.as_deref(),
             Self::Regex { regex_source, .. } => Some(regex_source.as_str()),
             Self::Unsupported => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WeavyLiteralSet {
+    automaton: AhoCorasick,
+    terminal_indices: Vec<usize>,
+}
+
+impl WeavyLiteralSet {
+    fn from_terminals(terminals: &mut [WeavyLexTerminal]) -> Option<Self> {
+        let mut literals = Vec::new();
+        let mut terminal_indices = Vec::new();
+        for (terminal_index, terminal) in terminals.iter_mut().enumerate() {
+            let WeavyTerminalMatcher::Expr(WeavyLexExpr::String(value)) = &terminal.matcher else {
+                continue;
+            };
+            if value.is_empty() {
+                continue;
+            }
+            terminal.direct_literal_index = Some(literals.len());
+            literals.push(value.clone());
+            terminal_indices.push(terminal_index);
+        }
+        if literals.is_empty() {
+            return None;
+        }
+        let automaton = AhoCorasickBuilder::new()
+            .match_kind(MatchKind::Standard)
+            .build(&literals)
+            .ok()?;
+        Some(Self {
+            automaton,
+            terminal_indices,
+        })
+    }
+
+    fn len(&self) -> usize {
+        self.terminal_indices.len()
+    }
+
+    fn for_each_match(
+        &self,
+        input: &str,
+        byte_position: usize,
+        mut visit: impl FnMut(usize, usize, usize),
+    ) {
+        let Some(haystack) = input.get(byte_position..) else {
+            return;
+        };
+        for match_ in self.automaton.find_overlapping_iter(haystack) {
+            if match_.start() > 0 {
+                break;
+            }
+            let set_index = match_.pattern().as_usize();
+            visit(
+                set_index,
+                self.terminal_indices[set_index],
+                byte_position + match_.end(),
+            );
         }
     }
 }
@@ -3580,6 +3666,7 @@ struct RuntimeWeavyStepper<'a> {
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     tree_journal_head: RuntimeWeavyTreeJournalHead,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
+    direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
     tree_events: &'a mut Vec<parser_ir::TreeEvent>,
@@ -3619,6 +3706,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
             reusable_nodes: branch.reusable_nodes,
+            direct_literal_ends: RefCell::new(Vec::new()),
             direct_pattern_ends: RefCell::new(Vec::new()),
             trace_events: stepper_input.trace_events,
             tree_events: stepper_input.tree_events,
@@ -3657,6 +3745,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
             reusable_nodes: Vec::new(),
+            direct_literal_ends: RefCell::new(Vec::new()),
             direct_pattern_ends: RefCell::new(Vec::new()),
             trace_events: stepper_input.trace_events,
             tree_events: stepper_input.tree_events,
@@ -4000,14 +4089,20 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
         {
+            let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
+            mode_program.match_direct_literals(self.input, byte_position, &mut direct_literal_ends);
+        }
+        {
             let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
             mode_program.match_direct_patterns(self.input, byte_position, &mut direct_pattern_ends);
         }
+        let direct_literal_ends = self.direct_literal_ends.borrow();
         let direct_pattern_ends = self.direct_pattern_ends.borrow();
         for terminal_row in mode_program.terminals() {
             let Some(match_) = self.match_compiled_terminal_with_set(
                 terminal_row,
                 byte_position,
+                &direct_literal_ends,
                 &direct_pattern_ends,
             )?
             else {
@@ -4277,8 +4372,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
         &self,
         terminal: &WeavyLexTerminal,
         byte_position: usize,
+        direct_literal_ends: &[Option<parser_ir::LexMatch>],
         direct_pattern_ends: &[Option<parser_ir::LexMatch>],
     ) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
+        if let Some(set_index) = terminal.direct_literal_index {
+            return Ok(direct_literal_ends.get(set_index).copied().flatten());
+        }
         if let Some(set_index) = terminal.direct_pattern_index {
             return Ok(direct_pattern_ends.get(set_index).copied().flatten());
         }
@@ -4833,6 +4932,23 @@ fn push_runtime_weavy_candidate(
                 != RuntimeWeavyCandidateOrder::Less => {}
         _ => *candidate_slot = Some(candidate),
     }
+}
+
+fn match_weavy_literal_set(
+    input: &str,
+    mode: &WeavyLexModeProgram,
+    byte_position: usize,
+    ends: &mut Vec<Option<parser_ir::LexMatch>>,
+) {
+    let Some(literal_set) = &mode.direct_literal_set else {
+        ends.clear();
+        return;
+    };
+    ends.clear();
+    ends.resize(literal_set.len(), None);
+    literal_set.for_each_match(input, byte_position, |set_index, _terminal_index, end| {
+        ends[set_index] = Some(parser_ir::LexMatch::new(end, end));
+    });
 }
 
 fn match_weavy_direct_pattern_set(
@@ -5814,6 +5930,8 @@ mod tests {
 
         assert_eq!(stats.mode_count, 1);
         assert_eq!(stats.terminal_count, 2);
+        assert_eq!(stats.direct_literal_set_count, 0);
+        assert_eq!(stats.direct_literal_terminal_count, 0);
         assert_eq!(stats.direct_pattern_terminal_count, 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Seq], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::String], 1);
@@ -5841,6 +5959,45 @@ mod tests {
         assert_eq!(readiness.unsupported_terminal_count, 1);
         assert_eq!(readiness.unsupported_symbol_count, 0);
         assert!(!readiness.is_fully_visible());
+    }
+
+    #[test]
+    fn literal_set_matches_root_string_terminals_together() {
+        let mut terminals = vec![
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(0),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("a".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(1),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("ab".to_owned())),
+                immediate: false,
+                literal: true,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: None,
+            },
+        ];
+        let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
+        let mode = WeavyLexModeProgram {
+            terminals,
+            direct_literal_set,
+            direct_pattern_set: None,
+        };
+        let mut ends = Vec::new();
+
+        match_weavy_literal_set("abc", &mode, 0, &mut ends);
+
+        assert_eq!(ends.len(), 2);
+        assert_eq!(ends[0], Some(parser_ir::LexMatch::new(1, 1)));
+        assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 2)));
     }
 
     #[test]
@@ -5952,6 +6109,7 @@ mod tests {
                         literal: false,
                         lexical_precedence: 0,
                         implicit_precedence: 0,
+                        direct_literal_index: None,
                         direct_pattern_index: Some(0),
                     },
                     WeavyLexTerminal {
@@ -5964,9 +6122,11 @@ mod tests {
                         literal: false,
                         lexical_precedence: 0,
                         implicit_precedence: 0,
+                        direct_literal_index: None,
                         direct_pattern_index: None,
                     },
                 ],
+                direct_literal_set: None,
                 direct_pattern_set: None,
             }],
         }
