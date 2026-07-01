@@ -7,6 +7,7 @@
 
 use std::{
     borrow::Cow,
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
@@ -2726,6 +2727,7 @@ struct RuntimeWeavyStepper<'a> {
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     tree_journal_head: RuntimeWeavyTreeJournalHead,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
+    direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
     tree_events: &'a mut Vec<parser_ir::TreeEvent>,
 }
@@ -2764,6 +2766,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
             reusable_nodes: branch.reusable_nodes,
+            direct_pattern_ends: RefCell::new(Vec::new()),
             trace_events: stepper_input.trace_events,
             tree_events: stepper_input.tree_events,
         }
@@ -2801,6 +2804,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
             reusable_nodes: Vec::new(),
+            direct_pattern_ends: RefCell::new(Vec::new()),
             trace_events: stepper_input.trace_events,
             tree_events: stepper_input.tree_events,
         }
@@ -3161,8 +3165,16 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .ok_or(RuntimeWeavyError::MissingLexMode { mode: mode.id() })?;
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
-        let direct_pattern_ends =
-            self.match_compiled_direct_pattern_set(compiled_mode, byte_position)?;
+        {
+            let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
+            match_compiled_direct_pattern_set(
+                self.input,
+                compiled_mode,
+                byte_position,
+                &mut direct_pattern_ends,
+            );
+        }
+        let direct_pattern_ends = self.direct_pattern_ends.borrow();
         for terminal_row in &compiled_mode.terminals {
             let Some(match_) = self.match_compiled_terminal_with_set(
                 terminal_row,
@@ -3467,27 +3479,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 })
             }
         }
-    }
-
-    fn match_compiled_direct_pattern_set(
-        &self,
-        mode: &parser_ir::CompiledLexMode,
-        byte_position: usize,
-    ) -> Result<Vec<Option<parser_ir::LexMatch>>, RuntimeWeavyError> {
-        let Some(pattern_set) = &mode.direct_pattern_set else {
-            return Ok(Vec::new());
-        };
-        let mut ends = vec![None; pattern_set.terminal_indices.len()];
-        let Some(haystack) = self.input.get(byte_position..) else {
-            return Ok(ends);
-        };
-        let matches = pattern_set.regex_set.matches(haystack);
-        for set_index in matches.iter() {
-            let terminal_index = pattern_set.terminal_indices[set_index];
-            let terminal = &mode.terminals[terminal_index];
-            ends[set_index] = self.match_compiled_terminal(terminal, byte_position)?;
-        }
-        Ok(ends)
     }
 
     fn match_compiled_lex_expr(
@@ -4033,6 +4024,34 @@ fn push_runtime_weavy_candidate(
             if runtime_weavy_candidate_order(*current, candidate)
                 != RuntimeWeavyCandidateOrder::Less => {}
         _ => *candidate_slot = Some(candidate),
+    }
+}
+
+fn match_compiled_direct_pattern_set(
+    input: &str,
+    mode: &parser_ir::CompiledLexMode,
+    byte_position: usize,
+    ends: &mut Vec<Option<parser_ir::LexMatch>>,
+) {
+    let Some(pattern_set) = &mode.direct_pattern_set else {
+        ends.clear();
+        return;
+    };
+    ends.clear();
+    ends.resize(pattern_set.terminal_indices.len(), None);
+    let Some(haystack) = input.get(byte_position..) else {
+        return;
+    };
+    let matches = pattern_set.regex_set.matches(haystack);
+    for set_index in matches.iter() {
+        let terminal_index = pattern_set.terminal_indices[set_index];
+        let terminal = &mode.terminals[terminal_index];
+        let parser_ir::CompiledTerminalMatcher::Expr(parser_ir::CompiledLexExpr::Pattern(pattern)) =
+            &terminal.matcher
+        else {
+            continue;
+        };
+        ends[set_index] = parser_ir::match_compiled_pattern(pattern, input, byte_position);
     }
 }
 
