@@ -591,7 +591,7 @@ impl WeavyLexModeProgram {
 #[derive(Clone, Debug)]
 struct WeavyLexTerminal {
     terminal: parser_ir::TerminalId,
-    matcher: parser_ir::CompiledTerminalMatcher,
+    matcher: WeavyTerminalMatcher,
     immediate: bool,
     literal: bool,
     lexical_precedence: i32,
@@ -603,12 +603,73 @@ impl From<parser_ir::CompiledLexTerminal> for WeavyLexTerminal {
     fn from(value: parser_ir::CompiledLexTerminal) -> Self {
         Self {
             terminal: value.terminal,
-            matcher: value.matcher,
+            matcher: WeavyTerminalMatcher::from(value.matcher),
             immediate: value.immediate,
             literal: value.literal,
             lexical_precedence: value.lexical_precedence,
             implicit_precedence: value.implicit_precedence,
             direct_pattern_index: value.direct_pattern_index,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum WeavyTerminalMatcher {
+    Expr(WeavyLexExpr),
+    UnsupportedTerminal {
+        terminal: parser_ir::TerminalId,
+        spelling: String,
+    },
+}
+
+impl From<parser_ir::CompiledTerminalMatcher> for WeavyTerminalMatcher {
+    fn from(value: parser_ir::CompiledTerminalMatcher) -> Self {
+        match value {
+            parser_ir::CompiledTerminalMatcher::Expr(expr) => Self::Expr(WeavyLexExpr::from(expr)),
+            parser_ir::CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => {
+                Self::UnsupportedTerminal { terminal, spelling }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum WeavyLexExpr {
+    Blank,
+    String(String),
+    Pattern(parser_ir::CompiledLexPattern),
+    Until(parser_ir::CompiledUntilMatcher),
+    Nested { open: String, close: String },
+    AutoClose(Box<parser_ir::AutoCloseSpec>),
+    Seq(Vec<WeavyLexExpr>),
+    Choice(Vec<WeavyLexExpr>),
+    Repeat(Box<WeavyLexExpr>),
+    Repeat1(Box<WeavyLexExpr>),
+    UnsupportedSymbol(GrammarExprId),
+}
+
+impl From<parser_ir::CompiledLexExpr> for WeavyLexExpr {
+    fn from(value: parser_ir::CompiledLexExpr) -> Self {
+        match value {
+            parser_ir::CompiledLexExpr::Blank => Self::Blank,
+            parser_ir::CompiledLexExpr::String(value) => Self::String(value),
+            parser_ir::CompiledLexExpr::Pattern(pattern) => Self::Pattern(pattern),
+            parser_ir::CompiledLexExpr::Until(matcher) => Self::Until(matcher),
+            parser_ir::CompiledLexExpr::Nested { open, close } => Self::Nested { open, close },
+            parser_ir::CompiledLexExpr::AutoClose(spec) => Self::AutoClose(spec),
+            parser_ir::CompiledLexExpr::Seq(members) => {
+                Self::Seq(members.into_iter().map(Self::from).collect())
+            }
+            parser_ir::CompiledLexExpr::Choice(members) => {
+                Self::Choice(members.into_iter().map(Self::from).collect())
+            }
+            parser_ir::CompiledLexExpr::Repeat(content) => {
+                Self::Repeat(Box::new(Self::from(*content)))
+            }
+            parser_ir::CompiledLexExpr::Repeat1(content) => {
+                Self::Repeat1(Box::new(Self::from(*content)))
+            }
+            parser_ir::CompiledLexExpr::UnsupportedSymbol(expr) => Self::UnsupportedSymbol(expr),
         }
     }
 }
@@ -644,10 +705,7 @@ impl RuntimeWeavyAutoCloseIndex {
         };
         for mode in lexer_program.modes() {
             for row in mode.terminals() {
-                let parser_ir::CompiledTerminalMatcher::Expr(
-                    parser_ir::CompiledLexExpr::AutoClose(spec),
-                ) = &row.matcher
-                else {
+                let WeavyTerminalMatcher::Expr(WeavyLexExpr::AutoClose(spec)) = &row.matcher else {
                     continue;
                 };
                 let spec_index = index.intern_spec(spec);
@@ -3585,9 +3643,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             let Some(terminal_row) = mode_program.terminal(*terminal) else {
                 continue;
             };
-            let parser_ir::CompiledTerminalMatcher::Expr(parser_ir::CompiledLexExpr::AutoClose(
-                spec,
-            )) = &terminal_row.matcher
+            let WeavyTerminalMatcher::Expr(WeavyLexExpr::AutoClose(spec)) = &terminal_row.matcher
             else {
                 continue;
             };
@@ -3750,10 +3806,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
         byte_position: usize,
     ) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
         match &terminal.matcher {
-            parser_ir::CompiledTerminalMatcher::Expr(expr) => {
-                self.match_compiled_lex_expr(expr, byte_position)
-            }
-            parser_ir::CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => {
+            WeavyTerminalMatcher::Expr(expr) => self.match_weavy_lex_expr(expr, byte_position),
+            WeavyTerminalMatcher::UnsupportedTerminal { terminal, spelling } => {
                 Err(WeavyParseError::UnsupportedTerminal {
                     terminal: *terminal,
                     spelling: spelling.clone(),
@@ -3762,35 +3816,35 @@ impl<'a> RuntimeWeavyStepper<'a> {
         }
     }
 
-    fn match_compiled_lex_expr(
+    fn match_weavy_lex_expr(
         &self,
-        expr: &parser_ir::CompiledLexExpr,
+        expr: &WeavyLexExpr,
         byte_position: usize,
     ) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
         match expr {
-            parser_ir::CompiledLexExpr::Blank => Ok(Some(parser_ir::LexMatch {
+            WeavyLexExpr::Blank => Ok(Some(parser_ir::LexMatch {
                 end: byte_position,
                 inspected_end: byte_position,
             })),
-            parser_ir::CompiledLexExpr::String(value) => Ok(self.input[byte_position..]
+            WeavyLexExpr::String(value) => Ok(self.input[byte_position..]
                 .starts_with(value)
                 .then_some(parser_ir::LexMatch {
                     end: byte_position + value.len(),
                     inspected_end: byte_position + value.len(),
                 })),
-            parser_ir::CompiledLexExpr::Pattern(pattern) => Ok(parser_ir::match_compiled_pattern(
+            WeavyLexExpr::Pattern(pattern) => Ok(parser_ir::match_compiled_pattern(
                 pattern,
                 self.input,
                 byte_position,
             )),
-            parser_ir::CompiledLexExpr::Until(matcher) => {
+            WeavyLexExpr::Until(matcher) => {
                 Ok(parser_ir::match_compiled_until_markers_with_inspection(
                     matcher,
                     self.input,
                     byte_position,
                 ))
             }
-            parser_ir::CompiledLexExpr::Nested { open, close } => {
+            WeavyLexExpr::Nested { open, close } => {
                 Ok(parser_ir::match_nested_delimiters_with_inspection(
                     open,
                     close,
@@ -3798,12 +3852,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     byte_position,
                 ))
             }
-            parser_ir::CompiledLexExpr::AutoClose(_) => Ok(None),
-            parser_ir::CompiledLexExpr::Seq(members) => {
+            WeavyLexExpr::AutoClose(_) => Ok(None),
+            WeavyLexExpr::Seq(members) => {
                 let mut position = byte_position;
                 let mut inspected_end = byte_position;
                 for member in members {
-                    let Some(match_) = self.match_compiled_lex_expr(member, position)? else {
+                    let Some(match_) = self.match_weavy_lex_expr(member, position)? else {
                         return Ok(None);
                     };
                     position = match_.end;
@@ -3814,10 +3868,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     inspected_end,
                 }))
             }
-            parser_ir::CompiledLexExpr::Choice(members) => {
+            WeavyLexExpr::Choice(members) => {
                 let mut best = None::<parser_ir::LexMatch>;
                 for member in members {
-                    if let Some(match_) = self.match_compiled_lex_expr(member, byte_position)?
+                    if let Some(match_) = self.match_weavy_lex_expr(member, byte_position)?
                         && best.is_none_or(|best| match_.end > best.end)
                     {
                         best = Some(match_);
@@ -3825,10 +3879,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 }
                 Ok(best)
             }
-            parser_ir::CompiledLexExpr::Repeat(content) => {
+            WeavyLexExpr::Repeat(content) => {
                 let mut position = byte_position;
                 let mut inspected_end = byte_position;
-                while let Some(match_) = self.match_compiled_lex_expr(content, position)? {
+                while let Some(match_) = self.match_weavy_lex_expr(content, position)? {
                     inspected_end = inspected_end.max(match_.inspected_end);
                     if match_.end == position {
                         break;
@@ -3840,8 +3894,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     inspected_end,
                 }))
             }
-            parser_ir::CompiledLexExpr::Repeat1(content) => {
-                let Some(first) = self.match_compiled_lex_expr(content, byte_position)? else {
+            WeavyLexExpr::Repeat1(content) => {
+                let Some(first) = self.match_weavy_lex_expr(content, byte_position)? else {
                     return Ok(None);
                 };
                 let mut position = first.end;
@@ -3849,7 +3903,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 if position == byte_position {
                     return Ok(None);
                 }
-                while let Some(match_) = self.match_compiled_lex_expr(content, position)? {
+                while let Some(match_) = self.match_weavy_lex_expr(content, position)? {
                     inspected_end = inspected_end.max(match_.inspected_end);
                     if match_.end == position {
                         break;
@@ -3861,7 +3915,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     inspected_end,
                 }))
             }
-            parser_ir::CompiledLexExpr::UnsupportedSymbol(expr) => {
+            WeavyLexExpr::UnsupportedSymbol(expr) => {
                 Err(WeavyParseError::UnsupportedLexicalSymbol { expr: *expr })
             }
         }
@@ -4319,9 +4373,7 @@ fn match_weavy_direct_pattern_set(
     for set_index in matches.iter() {
         let terminal_index = pattern_set.terminal_indices[set_index];
         let terminal = &mode.terminals[terminal_index];
-        let parser_ir::CompiledTerminalMatcher::Expr(parser_ir::CompiledLexExpr::Pattern(pattern)) =
-            &terminal.matcher
-        else {
+        let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher else {
             continue;
         };
         ends[set_index] = parser_ir::match_compiled_pattern(pattern, input, byte_position);
