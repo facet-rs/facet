@@ -20,7 +20,10 @@ use std::{env, fs};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
+    lower::weavy::{
+        WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_with_report,
+    },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
@@ -251,6 +254,26 @@ fn bundled_graphql_and_thrift_lex_without_notoken() {
     );
 }
 
+#[test]
+fn bundled_graphql_unterminated_block_string_recovers_to_error_root() {
+    if !tree_sitter_available() {
+        eprintln!("skipping: `tree-sitter` CLI not found on PATH");
+        return;
+    }
+
+    let grammar_path = bundled_path("graphql/grammar.js");
+    let grammar = fs::read_to_string(&grammar_path).expect("read bundled GraphQL grammar");
+    let dir = generate_parser("graphql_unterminated_block_string", &grammar)
+        .expect("tree-sitter generate");
+    let input = "\"\"\"broken\n";
+    let tree_sitter_output = tree_sitter_sexp(&dir, input);
+    let ts = normalize(tree_sitter_output.lines().next().unwrap_or_default());
+    assert_eq!(ts, "(ERROR)");
+
+    let sn = normalize(&snark_recovering_sexp(&grammar_path, input));
+    assert_eq!(sn, ts);
+}
+
 // ---------------------------------------------------------------------------
 
 fn tree_sitter_available() -> bool {
@@ -333,6 +356,44 @@ fn snark_sexp(grammar_path: &Path, input: &str) -> String {
         Err(e) => return format!("PLAN-ERR: {e:?}"),
     };
     match parse_prepared_weavy_with_report(&plan, &parser, &table, input) {
+        Ok(report) => report.tree().to_sexp(),
+        Err(e) => format!("PARSE-ERR: {e:?}"),
+    }
+}
+
+fn snark_recovering_sexp(grammar_path: &Path, input: &str) -> String {
+    let json = match snark_dsl::emit_with_boa(grammar_path) {
+        Ok(json) => json,
+        Err(e) => return format!("EMIT-ERR: {e}"),
+    };
+    let raw = match RawGrammarJson::from_tree_sitter_json_str(&json) {
+        Ok(raw) => raw,
+        Err(e) => return format!("IMPORT-ERR: {e:?}"),
+    };
+    let validated = match ValidatedGrammar::from_raw(&raw) {
+        Ok(v) => v,
+        Err(e) => return format!("VALIDATE-ERR: {e:?}"),
+    };
+    let lexical = LexicalFacts::from_grammar(&validated);
+    let normalized = match ParserGrammar::normalize_from_validated(&validated, &lexical) {
+        Ok(n) => n,
+        Err(e) => return format!("NORMALIZE-ERR: {e:?}"),
+    };
+    let parser = match normalized.prepare_productions_for_items() {
+        Ok(p) => p,
+        Err(e) => return format!("PREPARE-ERR: {e:?}"),
+    };
+    let table = match ParseTable::from_grammar(&parser) {
+        Ok(t) => t,
+        Err(e) => return format!("TABLE-ERR: {e:?}"),
+    };
+    let plan = match WeavyParsePlan::new(&validated, &parser, &table) {
+        Ok(p) => p,
+        Err(e) => return format!("PLAN-ERR: {e:?}"),
+    };
+    match parse_prepared_weavy_recovering_with_report_and_scanner(
+        &plan, &parser, &table, input, None,
+    ) {
         Ok(report) => report.tree().to_sexp(),
         Err(e) => format!("PARSE-ERR: {e:?}"),
     }

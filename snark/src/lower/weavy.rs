@@ -3571,6 +3571,22 @@ fn step_runtime_weavy_branch(
         Ok(dispatch) => dispatch,
         Err(error) => {
             if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
+                if let WeavyParseError::NoAction {
+                    lookahead: parser_ir::LookaheadSymbol::Eof,
+                    ..
+                } = error
+                    && let Some(accepted) = recover_runtime_weavy_eof_error_root(
+                        branch.clone(),
+                        input_ctx.input,
+                        output.input_points,
+                        output.tree_store,
+                        output.trace_events,
+                        output.tree_events,
+                        output.tree_journal,
+                    )
+                {
+                    return vec![accepted];
+                }
                 if matches!(error, WeavyParseError::NoToken { .. })
                     && input_ctx.input[branch.byte_position..].starts_with(['{', '}'])
                     && let Some(branch) = recover_runtime_weavy_to_viable_stack(
@@ -3614,13 +3630,30 @@ fn step_runtime_weavy_branch(
 
     let actions = match runtime_weavy_actions(
         input_ctx.table,
-        state,
+        dispatch.state,
         dispatch.entry_index,
         dispatch.token.lookahead,
         branch.byte_position,
     ) {
         Ok(actions) => actions,
         Err(error) => {
+            if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput
+                && let WeavyParseError::NoAction {
+                    lookahead: parser_ir::LookaheadSymbol::Eof,
+                    ..
+                } = error
+                && let Some(accepted) = recover_runtime_weavy_eof_error_root(
+                    branch,
+                    input_ctx.input,
+                    output.input_points,
+                    output.tree_store,
+                    output.trace_events,
+                    output.tree_events,
+                    output.tree_journal,
+                )
+            {
+                return vec![accepted];
+            }
             return vec![RuntimeWeavyStepOutcome::Failed {
                 version: source_version,
                 error,
@@ -3636,8 +3669,12 @@ fn step_runtime_weavy_branch(
                 version
             })
             .collect::<Vec<_>>();
-        let conflict =
-            runtime_weavy_conflict_id(input_ctx.table, state, dispatch.token.lookahead, actions);
+        let conflict = runtime_weavy_conflict_id(
+            input_ctx.table,
+            dispatch.state,
+            dispatch.token.lookahead,
+            actions,
+        );
         output.trace_events.push(parser_ir::TraceEvent::GlrSplit {
             source: source_version,
             conflict,
@@ -4015,6 +4052,51 @@ fn recover_runtime_weavy_to_action_state(
         }
     }
     None
+}
+
+fn recover_runtime_weavy_eof_error_root(
+    branch: RuntimeWeavyBranch,
+    input: &str,
+    input_points: &RuntimeWeavyInputPoints,
+    tree_store: &mut RuntimeWeavyTreeStore,
+    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    tree_events: &mut Vec<parser_ir::TreeEvent>,
+    tree_journal: &mut RuntimeWeavyTreeJournal,
+) -> Option<RuntimeWeavyStepOutcome> {
+    if branch.byte_position != input.len() {
+        return None;
+    }
+    let state = branch.stack.last().map(|entry| entry.state)?;
+    let error_cost = branch
+        .error_cost
+        .max(u32::try_from(input.len().max(1)).unwrap_or(u32::MAX));
+    let node = tree_store.push(SexpNode {
+        kind: "ERROR".to_owned(),
+        children: Vec::new(),
+    });
+    let (bytes, points) = runtime_weavy_input_ranges(input_points, 0, input.len());
+    trace_events.push(parser_ir::TraceEvent::Recover {
+        version: branch.version,
+        state,
+    });
+    let tree_event = parser_ir::TreeEvent::Error {
+        version: branch.version,
+        node,
+        bytes,
+        points,
+        error_cost,
+    };
+    let mut error_journal = RuntimeWeavyTreeJournalHead::default();
+    tree_journal.push(&mut error_journal, tree_event.clone());
+    tree_events.push(tree_event);
+    let accepted_tree_events = tree_journal.collect(error_journal);
+    Some(RuntimeWeavyStepOutcome::Accepted {
+        version: branch.version,
+        node: tree_store.materialize_node(node),
+        error_cost,
+        tree_events: accepted_tree_events,
+        reusable_nodes: Vec::new(),
+    })
 }
 
 fn recover_runtime_weavy_no_token(
