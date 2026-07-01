@@ -22,7 +22,7 @@ facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }
 facet-reflect = { path = "../facet-reflect" }
 facet-json = { path = "../facet-json" }
-weavy = { path = "../weavy" }
+weavy = { path = "../weavy", features = ["jit"] }
 
 [build-dependencies]
 snark = { path = "../snark", features = ["json-import"] }

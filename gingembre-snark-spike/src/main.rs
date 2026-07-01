@@ -358,12 +358,21 @@ fn ast_proof() {
     assert_eq!(value, expected);
     println!("✓ generic Shape-driven reflection builder: grammar surface -> nested #[derive(Facet)] AST");
 
-    // Item 3: run the SAME build ops as a Weavy program through the weavy runtime.
+    // Item 3: run the SAME build ops as a Weavy program through the weavy interpreter.
     let via_weavy: Expr = run_ops_via_weavy(&ops);
     assert_eq!(via_weavy, expected, "weavy-run ops must reproduce the reflected AST");
     println!(
-        "✓ item 3: {} build ops emitted as a Weavy program, run through weavy::run -> identical AST",
+        "✓ item 3a: {} build ops as a Weavy program, run through weavy::run (interpreter) -> identical AST",
         ops.len()
+    );
+
+    // Item 3b: JIT the SAME op program via copy-and-patch (weavy::jit) and materialize again.
+    let via_jit: Expr = run_ops_via_weavy_jit(&ops);
+    assert_eq!(via_jit, expected, "JIT-compiled ops must reproduce the reflected AST");
+    println!(
+        "✓ item 3b: same {} ops COPY-AND-PATCH JIT-compiled (native={}) -> identical AST",
+        ops.len(),
+        weavy::jit::NATIVE_COPY_PATCH_AVAILABLE,
     );
 }
 
@@ -382,6 +391,24 @@ enum BuildOp {
     End,
 }
 
+/// Apply one build op to the `Partial`. The SINGLE source of op semantics — shared by the
+/// interpreter (`AstBuilder::step`) and the copy-and-patch JIT host intrinsic, so both
+/// backends run identical logic.
+fn apply_op<'f>(
+    p: facet_reflect::Partial<'f, false>,
+    op: &BuildOp,
+) -> Result<facet_reflect::Partial<'f, false>, facet_reflect::ReflectError> {
+    match op {
+        BuildOp::SelectVariant(v) => p.select_variant_named(v),
+        BuildOp::BeginNthField(i) => p.begin_nth_field(*i),
+        BuildOp::BeginField(f) => p.begin_field(f),
+        BuildOp::BeginSmartPtr => p.begin_smart_ptr(),
+        BuildOp::SetI64(v) => p.set(*v),
+        BuildOp::SetStr(s) => p.set(s.clone()),
+        BuildOp::End => p.end(),
+    }
+}
+
 struct AstBuilder<'f> {
     partial: Option<facet_reflect::Partial<'f, false>>,
 }
@@ -394,16 +421,7 @@ impl<'p, 'f> weavy::Step<'p, u32, BuildOp> for AstBuilder<'f> {
         op: &'p BuildOp,
     ) -> Result<weavy::Control<'p, u32, BuildOp, ()>, Self::Error> {
         let p = self.partial.take().expect("partial present");
-        let p = match op {
-            BuildOp::SelectVariant(v) => p.select_variant_named(v)?,
-            BuildOp::BeginNthField(i) => p.begin_nth_field(*i)?,
-            BuildOp::BeginField(f) => p.begin_field(f)?,
-            BuildOp::BeginSmartPtr => p.begin_smart_ptr()?,
-            BuildOp::SetI64(v) => p.set(*v)?,
-            BuildOp::SetStr(s) => p.set(s.clone())?,
-            BuildOp::End => p.end()?,
-        };
-        self.partial = Some(p);
+        self.partial = Some(apply_op(p, op)?);
         Ok(weavy::Control::Continue)
     }
 }
@@ -419,6 +437,92 @@ fn run_ops_via_weavy<T: facet::Facet<'static>>(ops: &[BuildOp]) -> T {
         .partial
         .take()
         .unwrap()
+        .build()
+        .expect("build")
+        .materialize::<T>()
+        .expect("materialize")
+}
+
+/// Threaded state for the JIT chain: the moving `Partial`, plus a slot to stash a reflect
+/// error (the host intrinsic can't unwind through the copied native code, so it returns
+/// `false` and leaves the error here).
+struct JitState<'f> {
+    partial: Option<facet_reflect::Partial<'f, false>>,
+    error: Option<facet_reflect::ReflectError>,
+}
+
+/// The consumer intrinsic copied at every host-call site: take the moving `Partial`, apply
+/// this op, put it back. Returning `false` halts the copied chain (weavy's HOSTCALL ABI).
+unsafe extern "C" fn jit_apply(cx: *mut (), info: *const ()) -> bool {
+    let state = unsafe { &mut *cx.cast::<JitState>() };
+    let op = unsafe { &*info.cast::<BuildOp>() };
+    let Some(p) = state.partial.take() else {
+        return false;
+    };
+    match apply_op(p, op) {
+        Ok(p) => {
+            state.partial = Some(p);
+            true
+        }
+        Err(e) => {
+            state.error = Some(e);
+            false
+        }
+    }
+}
+
+/// Materialize `T` by COPY-AND-PATCH JIT-compiling the build-op program: each op becomes a
+/// copied `HOSTCALL` stencil in one native chain (control flow is machine code, patched
+/// site-to-site), and each site dispatches to `jit_apply`. This is the same substrate as
+/// facet-json's `from_str_weavy_jit`; here the ops build a `Partial` instead of decoding
+/// JSON. Falls back to the interpreter where native copy-and-patch isn't available.
+fn run_ops_via_weavy_jit<T: facet::Facet<'static>>(ops: &[BuildOp]) -> T {
+    use weavy::jit::{HostCallCtx, HostCallInfo, NativeProgram, StencilLayout};
+
+    if !weavy::jit::NATIVE_COPY_PATCH_AVAILABLE {
+        return run_ops_via_weavy(ops);
+    }
+
+    // Per-op host-call metadata: `info` points at the owned `BuildOp`, `call` is our
+    // intrinsic. These vectors must outlive the native run (the copied code reads them).
+    let calls: Vec<HostCallInfo> = ops
+        .iter()
+        .map(|op| HostCallInfo {
+            info: core::ptr::from_ref(op).cast(),
+            call: jit_apply,
+        })
+        .collect();
+
+    // Copy one HOSTCALL stencil per op into a single chain, then a terminal DONE; patch each
+    // site's continuation to the next site (the last one to DONE).
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    let mut sites = Vec::with_capacity(calls.len());
+    for call in &calls {
+        sites.push(layout.emit_hostcall(root, core::ptr::from_ref(call)));
+    }
+    let done = layout.emit_done();
+    for i in 0..sites.len() {
+        let target = sites.get(i + 1).copied().unwrap_or(done);
+        layout.patch_hostcall_continuation(sites[i], target);
+    }
+
+    let native = NativeProgram::new(layout, root);
+    let mut state = JitState {
+        partial: Some(facet_reflect::Partial::alloc_owned::<T>().expect("alloc")),
+        error: None,
+    };
+    let mut cx = HostCallCtx::new(native.entry_prog(), &mut state);
+    let entry = unsafe { native.entry_fn::<HostCallCtx<JitState>>() };
+    unsafe { entry(&mut cx) };
+
+    if let Some(e) = state.error {
+        panic!("jit build op failed: {e}");
+    }
+    state
+        .partial
+        .take()
+        .expect("partial present after jit chain")
         .build()
         .expect("build")
         .materialize::<T>()
