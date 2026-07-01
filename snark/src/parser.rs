@@ -8055,7 +8055,7 @@ extras (
     }
 
     #[test]
-    fn compiled_lexer_carries_precedence_inside_token_wrapper() {
+    fn lex_compiler_carries_precedence_inside_token_wrapper() {
         let (validated, parser, _table) = prepared_with_validated(
             r##"{
               "name": "mini",
@@ -8086,7 +8086,7 @@ extras (
     }
 
     #[test]
-    fn compiled_lexer_carries_implicit_precedence_through_symbol_reference() {
+    fn lex_compiler_carries_implicit_precedence_through_symbol_reference() {
         let (validated, parser, _table) = prepared_with_validated(
             r##"{
               "name": "mini",
