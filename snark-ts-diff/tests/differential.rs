@@ -20,7 +20,7 @@ use std::{env, fs};
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{RuntimeWeavyPlan, parse_prepared_runtime_with_report},
+    lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
@@ -241,11 +241,11 @@ fn snark_sexp(grammar_path: &Path, input: &str) -> String {
         Ok(t) => t,
         Err(e) => return format!("TABLE-ERR: {e:?}"),
     };
-    let plan = match RuntimeWeavyPlan::new(&validated, &parser, &table) {
+    let plan = match WeavyParsePlan::new(&validated, &parser, &table) {
         Ok(p) => p,
         Err(e) => return format!("PLAN-ERR: {e:?}"),
     };
-    match parse_prepared_runtime_with_report(&plan, &validated, &parser, &table, input) {
+    match parse_prepared_weavy_with_report(&plan, &validated, &parser, &table, input) {
         Ok(report) => report.tree().to_sexp(),
         Err(e) => format!("PARSE-ERR: {e:?}"),
     }

@@ -22,7 +22,7 @@ use facet::Facet;
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{RuntimeWeavyPlan, parse_prepared_runtime_with_report},
+    lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
@@ -33,7 +33,7 @@ struct Prepared {
     validated: ValidatedGrammar,
     parser: ParserGrammar,
     table: ParseTable,
-    plan: RuntimeWeavyPlan,
+    plan: WeavyParsePlan,
 }
 
 fn prepare(grammar_path: &str) -> Prepared {
@@ -45,7 +45,7 @@ fn prepare(grammar_path: &str) -> Prepared {
         ParserGrammar::normalize_from_validated(&validated, &lexical).expect("normalize");
     let parser = normalized.prepare_productions_for_items().expect("prepare");
     let table = ParseTable::from_grammar(&parser).expect("table");
-    let plan = RuntimeWeavyPlan::new(&validated, &parser, &table).expect("plan");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("plan");
     Prepared {
         validated,
         parser,
@@ -56,12 +56,12 @@ fn prepare(grammar_path: &str) -> Prepared {
 
 /// Best (min) parse time in ms over `iters` runs, after one warm-up.
 fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
-    let _ = parse_prepared_runtime_with_report(&p.plan, &p.validated, &p.parser, &p.table, input);
+    let _ = parse_prepared_weavy_with_report(&p.plan, &p.validated, &p.parser, &p.table, input);
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
         let _ =
-            parse_prepared_runtime_with_report(&p.plan, &p.validated, &p.parser, &p.table, input);
+            parse_prepared_weavy_with_report(&p.plan, &p.validated, &p.parser, &p.table, input);
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     best_ms
@@ -244,7 +244,7 @@ fn main() {
 
     let p = prepare(grammar_path);
     if let Err(e) =
-        parse_prepared_runtime_with_report(&p.plan, &p.validated, &p.parser, &p.table, &input)
+        parse_prepared_weavy_with_report(&p.plan, &p.validated, &p.parser, &p.table, &input)
     {
         eprintln!("parse failed: {e:?}");
         std::process::exit(1);
