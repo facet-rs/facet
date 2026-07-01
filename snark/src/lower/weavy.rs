@@ -1116,7 +1116,7 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
-    parse_runtime_with_compiled_lex_modes(
+    parse_weavy_with_compiled_lex_modes(
         RuntimeWeavyInput {
             plan: &plan.program,
             compiled_lex_modes: &plan.compiled_lex_modes,
@@ -1141,7 +1141,7 @@ pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
-    parse_runtime_with_compiled_lex_modes(
+    parse_weavy_with_compiled_lex_modes(
         RuntimeWeavyInput {
             plan: &plan.program,
             compiled_lex_modes: &plan.compiled_lex_modes,
@@ -1166,7 +1166,7 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
-    parse_runtime_with_compiled_lex_modes(
+    parse_weavy_with_compiled_lex_modes(
         RuntimeWeavyInput {
             plan: &plan.program,
             compiled_lex_modes: &plan.compiled_lex_modes,
@@ -1191,7 +1191,7 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
-    parse_runtime_with_compiled_lex_modes(
+    parse_weavy_with_compiled_lex_modes(
         RuntimeWeavyInput {
             plan: &plan.program,
             compiled_lex_modes: &plan.compiled_lex_modes,
@@ -1207,7 +1207,7 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
     )
 }
 
-/// Persistent runtime Weavy session for edited inputs.
+/// Persistent Weavy parse session for edited inputs.
 pub struct RuntimeWeavySession<'a> {
     plan: &'a RuntimeWeavyPlan,
     grammar: &'a ValidatedGrammar,
@@ -1219,7 +1219,7 @@ pub struct RuntimeWeavySession<'a> {
 }
 
 impl<'a> RuntimeWeavySession<'a> {
-    /// Build a session over one prepared runtime Weavy plan.
+    /// Build a session over one prepared Weavy plan.
     pub const fn new(
         plan: &'a RuntimeWeavyPlan,
         grammar: &'a ValidatedGrammar,
@@ -1237,7 +1237,7 @@ impl<'a> RuntimeWeavySession<'a> {
         }
     }
 
-    /// Attach a runtime external scanner host.
+    /// Attach an external scanner host.
     pub fn with_external_scanner(mut self, scanner: &'a dyn RuntimeExternalScanner) -> Self {
         self.external_scanner = Some(scanner);
         self
@@ -1391,7 +1391,7 @@ pub fn reparse_prepared_weavy_with_report_and_scanner(
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
-    parse_runtime_with_compiled_lex_modes(
+    parse_weavy_with_compiled_lex_modes(
         RuntimeWeavyInput {
             plan: &plan.program,
             compiled_lex_modes: &plan.compiled_lex_modes,
@@ -1422,7 +1422,7 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
-    parse_runtime_with_compiled_lex_modes(
+    parse_weavy_with_compiled_lex_modes(
         RuntimeWeavyInput {
             plan: &plan.program,
             compiled_lex_modes: &plan.compiled_lex_modes,
@@ -1705,7 +1705,7 @@ fn runtime_weavy_shift_tree_event_bytes(
     }
 }
 
-fn parse_runtime_with_compiled_lex_modes(
+fn parse_weavy_with_compiled_lex_modes(
     input_ctx: RuntimeWeavyInput<'_>,
     recovery: RuntimeWeavyRecoveryMode,
     reuse_index: Option<&RuntimeWeavyReuseIndex>,

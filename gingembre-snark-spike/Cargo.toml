@@ -2,7 +2,7 @@
 # "can snark be gingembre's front end?" by lowering snark's resolved CST to
 # gingembre::ast::Template and diffing the render against the native cst_lower path.
 # When the answer lands, DELETE this; the real version code-generates typed views from
-# the grammar instead of hand-lowering. Do not let it become another ReducedParser.
+# the grammar instead of hand-lowering. Do not let it become a second parser executor.
 
 [package]
 name = "gingembre-snark-spike"
