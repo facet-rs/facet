@@ -15,8 +15,8 @@ use std::{
 };
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
-use regex::{Regex, RegexSet};
-use regex_automata::{Anchored, Input, meta::Regex as AutomataRegex};
+use regex::Regex;
+use regex_automata::{Anchored, Input, PatternSet, meta::Regex as AutomataRegex};
 use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
     ir::{
@@ -1321,7 +1321,7 @@ impl WeavyLiteralSet {
 
 #[derive(Clone, Debug)]
 struct WeavyDirectPatternSet {
-    regex_set: RegexSet,
+    automaton: AutomataRegex,
     terminal_indices: Vec<usize>,
 }
 
@@ -1352,13 +1352,13 @@ impl WeavyDirectPatternSet {
             .iter()
             .map(|(_, _, source)| source.as_str())
             .collect::<Vec<_>>();
-        let regex_set = RegexSet::new(regex_sources).ok()?;
+        let automaton = AutomataRegex::new_many(&regex_sources).ok()?;
         let terminal_indices = entries
             .into_iter()
             .map(|(_, terminal_index, _)| terminal_index)
             .collect();
         Some(Self {
-            regex_set,
+            automaton,
             terminal_indices,
         })
     }
@@ -1376,8 +1376,12 @@ impl WeavyDirectPatternSet {
         let Some(haystack) = input.get(byte_position..) else {
             return;
         };
-        let matches = self.regex_set.matches(haystack);
-        for set_index in matches.iter() {
+        let search = Input::new(haystack).anchored(Anchored::Yes);
+        let mut matches = PatternSet::new(self.automaton.pattern_len());
+        self.automaton
+            .which_overlapping_matches(&search, &mut matches);
+        for pattern_id in matches.iter() {
+            let set_index = pattern_id.as_usize();
             visit(set_index, self.terminal_indices[set_index]);
         }
     }
