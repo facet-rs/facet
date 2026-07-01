@@ -908,8 +908,9 @@ impl WeavyLexModeProgram {
         input: &str,
         byte_position: usize,
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
+        matches: &mut Option<PatternSet>,
     ) {
-        match_weavy_direct_pattern_set(input, self, byte_position, ends);
+        match_weavy_direct_pattern_set(input, self, byte_position, ends, matches);
     }
 
     fn match_direct_literals(
@@ -1371,15 +1372,21 @@ impl WeavyDirectPatternSet {
         &self,
         input: &str,
         byte_position: usize,
+        matches: &mut Option<PatternSet>,
         mut visit: impl FnMut(usize, usize),
     ) {
         let Some(haystack) = input.get(byte_position..) else {
             return;
         };
         let search = Input::new(haystack).anchored(Anchored::Yes);
-        let mut matches = PatternSet::new(self.automaton.pattern_len());
-        self.automaton
-            .which_overlapping_matches(&search, &mut matches);
+        let pattern_len = self.automaton.pattern_len();
+        let matches = matches.get_or_insert_with(|| PatternSet::new(pattern_len));
+        if matches.capacity() != pattern_len {
+            *matches = PatternSet::new(pattern_len);
+        } else {
+            matches.clear();
+        }
+        self.automaton.which_overlapping_matches(&search, matches);
         for pattern_id in matches.iter() {
             let set_index = pattern_id.as_usize();
             visit(set_index, self.terminal_indices[set_index]);
@@ -2062,6 +2069,7 @@ struct RuntimeWeavyOutput<'a> {
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
     tree_events: &'a mut Vec<parser_ir::TreeEvent>,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
+    lexer_scratch: &'a RuntimeWeavyLexerScratch,
     input_points: &'a RuntimeWeavyInputPoints,
     next_lookahead_index: &'a mut usize,
     stats: &'a mut RunStats,
@@ -2073,7 +2081,15 @@ struct RuntimeWeavyStepperInput<'a> {
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
     tree_events: &'a mut Vec<parser_ir::TreeEvent>,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
+    lexer_scratch: &'a RuntimeWeavyLexerScratch,
     input_points: &'a RuntimeWeavyInputPoints,
+}
+
+#[derive(Default)]
+struct RuntimeWeavyLexerScratch {
+    direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
+    direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
+    direct_pattern_matches: RefCell<Option<PatternSet>>,
 }
 
 #[derive(Clone, Copy)]
@@ -2753,6 +2769,7 @@ fn parse_weavy_with_lexer_program(
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
+    let lexer_scratch = RuntimeWeavyLexerScratch::default();
     let step_limit = match recovery {
         RuntimeWeavyRecoveryMode::Strict => {
             runtime_weavy_step_limit(input_ctx.table, input_ctx.input)
@@ -2796,6 +2813,7 @@ fn parse_weavy_with_lexer_program(
             trace_events: &mut trace_events,
             tree_events: &mut tree_events,
             tree_journal: &mut tree_journal,
+            lexer_scratch: &lexer_scratch,
             input_points: &input_points,
             next_lookahead_index: &mut next_lookahead_index,
             stats: &mut stats,
@@ -3457,6 +3475,7 @@ fn run_runtime_weavy_state_probe(
             trace_events: &mut *output.trace_events,
             tree_events: &mut *output.tree_events,
             tree_journal: &mut *output.tree_journal,
+            lexer_scratch: output.lexer_scratch,
             input_points: output.input_points,
         },
         branch,
@@ -3525,6 +3544,7 @@ fn run_runtime_weavy_action(
             trace_events: &mut *output.trace_events,
             tree_events: &mut *output.tree_events,
             tree_journal: &mut *output.tree_journal,
+            lexer_scratch: output.lexer_scratch,
             input_points: output.input_points,
         },
         branch,
@@ -3738,6 +3758,7 @@ fn runtime_weavy_lex_succeeds(
     let mut tree_events = Vec::new();
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
+    let lexer_scratch = RuntimeWeavyLexerScratch::default();
     let stepper = RuntimeWeavyStepper::from_branch(
         RuntimeWeavyStepperInput {
             input: RuntimeWeavyInput {
@@ -3748,6 +3769,7 @@ fn runtime_weavy_lex_succeeds(
             trace_events: &mut trace_events,
             tree_events: &mut tree_events,
             tree_journal: &mut tree_journal,
+            lexer_scratch: &lexer_scratch,
             input_points: &input_points,
         },
         branch.clone(),
@@ -3793,8 +3815,7 @@ struct RuntimeWeavyStepper<'a> {
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     tree_journal_head: RuntimeWeavyTreeJournalHead,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
-    direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
-    direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
+    lexer_scratch: &'a RuntimeWeavyLexerScratch,
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
     tree_events: &'a mut Vec<parser_ir::TreeEvent>,
 }
@@ -3833,8 +3854,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
             reusable_nodes: branch.reusable_nodes,
-            direct_literal_ends: RefCell::new(Vec::new()),
-            direct_pattern_ends: RefCell::new(Vec::new()),
+            lexer_scratch: stepper_input.lexer_scratch,
             trace_events: stepper_input.trace_events,
             tree_events: stepper_input.tree_events,
         }
@@ -3872,8 +3892,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
             reusable_nodes: Vec::new(),
-            direct_literal_ends: RefCell::new(Vec::new()),
-            direct_pattern_ends: RefCell::new(Vec::new()),
+            lexer_scratch: stepper_input.lexer_scratch,
             trace_events: stepper_input.trace_events,
             tree_events: stepper_input.tree_events,
         }
@@ -4216,15 +4235,21 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
         {
-            let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
+            let mut direct_literal_ends = self.lexer_scratch.direct_literal_ends.borrow_mut();
             mode_program.match_direct_literals(self.input, byte_position, &mut direct_literal_ends);
         }
         {
-            let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
-            mode_program.match_direct_patterns(self.input, byte_position, &mut direct_pattern_ends);
+            let mut direct_pattern_ends = self.lexer_scratch.direct_pattern_ends.borrow_mut();
+            let mut direct_pattern_matches = self.lexer_scratch.direct_pattern_matches.borrow_mut();
+            mode_program.match_direct_patterns(
+                self.input,
+                byte_position,
+                &mut direct_pattern_ends,
+                &mut direct_pattern_matches,
+            );
         }
-        let direct_literal_ends = self.direct_literal_ends.borrow();
-        let direct_pattern_ends = self.direct_pattern_ends.borrow();
+        let direct_literal_ends = self.lexer_scratch.direct_literal_ends.borrow();
+        let direct_pattern_ends = self.lexer_scratch.direct_pattern_ends.borrow();
         for terminal_row in mode_program.terminals() {
             let Some(match_) = self.match_compiled_terminal_with_set(
                 terminal_row,
@@ -5083,6 +5108,7 @@ fn match_weavy_direct_pattern_set(
     mode: &WeavyLexModeProgram,
     byte_position: usize,
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
+    matches: &mut Option<PatternSet>,
 ) {
     let Some(pattern_set) = &mode.direct_pattern_set else {
         ends.clear();
@@ -5090,13 +5116,19 @@ fn match_weavy_direct_pattern_set(
     };
     ends.clear();
     ends.resize(pattern_set.len(), None);
-    pattern_set.for_each_match(input, byte_position, |set_index, terminal_index| {
-        let terminal = &mode.terminals[terminal_index];
-        let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher else {
-            return;
-        };
-        ends[set_index] = pattern.match_input(input, byte_position);
-    });
+    pattern_set.for_each_match(
+        input,
+        byte_position,
+        matches,
+        |set_index, terminal_index| {
+            let terminal = &mode.terminals[terminal_index];
+            let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher
+            else {
+                return;
+            };
+            ends[set_index] = pattern.match_input(input, byte_position);
+        },
+    );
 }
 
 fn runtime_weavy_first_sets(
