@@ -378,6 +378,7 @@ styx-tree = { path = "styx-tree", version = "5.0.0-rc.5" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json", "lang-rust"] }
 arborium-highlight = "^2.4.5"
 arborium-theme = "^2.4.5"
+aho-corasick = "1.1.4"
 autocfg = "^1.5.0"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "json"] }
 ariadne = "^0.6"

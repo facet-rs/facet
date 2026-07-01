@@ -3668,9 +3668,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 self.input,
                 byte_position,
             )),
-            parser_ir::CompiledLexExpr::Until { markers } => {
-                Ok(parser_ir::match_until_markers_with_inspection(
-                    markers.iter().map(String::as_str),
+            parser_ir::CompiledLexExpr::Until(matcher) => {
+                Ok(parser_ir::match_compiled_until_markers_with_inspection(
+                    matcher,
                     self.input,
                     byte_position,
                 ))

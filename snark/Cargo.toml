@@ -28,6 +28,7 @@ tree-sitter-import = ["json-import", "weavy-lowering"]
 weavy-lowering = ["dep:weavy"]
 
 [dependencies]
+aho-corasick.workspace = true
 facet = { workspace = true, features = ["indexmap"] }
 facet-json = { workspace = true, optional = true }
 indexmap.workspace = true

@@ -14,6 +14,7 @@ use std::{
     fmt,
 };
 
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use regex::{Regex, RegexSet};
 
 use crate::{
@@ -3775,7 +3776,7 @@ pub(crate) enum CompiledLexExpr {
     Blank,
     String(String),
     Pattern(CompiledLexPattern),
-    Until { markers: Vec<String> },
+    Until(CompiledUntilMatcher),
     Nested { open: String, close: String },
     AutoClose(Box<AutoCloseSpec>),
     Seq(Vec<CompiledLexExpr>),
@@ -3790,6 +3791,12 @@ pub(crate) struct CompiledLexPattern {
     pub(crate) source: String,
     flags: Option<String>,
     regex: Option<Regex>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompiledUntilMatcher {
+    markers: Vec<String>,
+    automaton: Option<AhoCorasick>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3990,6 +3997,23 @@ fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledLexPattern {
     }
 }
 
+fn compile_until_markers(markers: &[String]) -> CompiledUntilMatcher {
+    let markers = markers
+        .iter()
+        .filter(|marker| !marker.is_empty())
+        .cloned()
+        .collect::<Vec<_>>();
+    let automaton = if markers.is_empty() {
+        None
+    } else {
+        AhoCorasickBuilder::new()
+            .match_kind(MatchKind::LeftmostFirst)
+            .build(&markers)
+            .ok()
+    };
+    CompiledUntilMatcher { markers, automaton }
+}
+
 #[cfg(test)]
 pub(crate) fn match_compiled_lex_terminal(
     terminal: &CompiledLexTerminal,
@@ -4026,8 +4050,8 @@ fn match_compiled_lex_expr(
         CompiledLexExpr::Pattern(pattern) => {
             Ok(match_compiled_pattern(pattern, input, byte_position))
         }
-        CompiledLexExpr::Until { markers } => Ok(match_until_markers_with_inspection(
-            markers.iter().map(String::as_str),
+        CompiledLexExpr::Until(matcher) => Ok(match_compiled_until_markers_with_inspection(
+            matcher,
             input,
             byte_position,
         )),
@@ -4270,9 +4294,7 @@ fn compile_lex_expr_inner(
         GrammarExpr::PatternToken { value, flags } => {
             CompiledLexExpr::Pattern(compile_pattern(value, flags.as_deref()))
         }
-        GrammarExpr::Until { markers } => CompiledLexExpr::Until {
-            markers: markers.clone(),
-        },
+        GrammarExpr::Until { markers } => CompiledLexExpr::Until(compile_until_markers(markers)),
         GrammarExpr::Nested { open, close } => CompiledLexExpr::Nested {
             open: open.clone(),
             close: close.clone(),
@@ -4445,6 +4467,7 @@ fn lexical_expr_implicit_precedence(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn match_until_markers_with_inspection<'a>(
     markers: impl IntoIterator<Item = &'a str>,
     input: &str,
@@ -4466,6 +4489,36 @@ pub(crate) fn match_until_markers_with_inspection<'a>(
     let end = byte_position + end_and_marker_len.0;
     let inspected_end = end + end_and_marker_len.1;
     (end > byte_position).then_some(LexMatch::new(end, inspected_end))
+}
+
+pub(crate) fn match_compiled_until_markers_with_inspection(
+    matcher: &CompiledUntilMatcher,
+    input: &str,
+    byte_position: usize,
+) -> Option<LexMatch> {
+    let haystack = input.get(byte_position..)?;
+    if matcher
+        .markers
+        .iter()
+        .any(|marker| haystack.starts_with(marker.as_str()))
+    {
+        return None;
+    }
+    let Some(automaton) = &matcher.automaton else {
+        return (byte_position < input.len()).then_some(LexMatch::new(input.len(), input.len()));
+    };
+    let Some(match_) = automaton.find(haystack) else {
+        return (byte_position < input.len()).then_some(LexMatch::new(input.len(), input.len()));
+    };
+    let end = byte_position + match_.start();
+    let marker_len = matcher
+        .markers
+        .iter()
+        .filter(|marker| haystack[match_.start()..].starts_with(marker.as_str()))
+        .map(String::len)
+        .min()
+        .unwrap_or(match_.len());
+    (end > byte_position).then_some(LexMatch::new(end, end + marker_len))
 }
 
 pub(crate) fn match_nested_delimiters_with_inspection(
@@ -8731,6 +8784,23 @@ extras (
               }
             }"##,
         )
+    }
+
+    #[test]
+    fn compiled_until_marker_matcher_matches_interpreted_oracle() {
+        let markers = ["{{".to_owned(), "{#".to_owned(), "{".to_owned()];
+        let compiled = compile_until_markers(&markers);
+        let input = "alpha {{ beta {# gamma";
+        for byte_position in [0usize, 6, 9, 14] {
+            let interpreted = match_until_markers_with_inspection(
+                markers.iter().map(String::as_str),
+                input,
+                byte_position,
+            );
+            let compiled =
+                match_compiled_until_markers_with_inspection(&compiled, input, byte_position);
+            assert_eq!(compiled, interpreted, "byte position {byte_position}");
+        }
     }
 
     #[test]
