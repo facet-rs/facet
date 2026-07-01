@@ -1182,20 +1182,17 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[0].name, "Universal selectors");
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
-            &plan,
+        let weavy_report = parse_weavy_report_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
             &selector_cases[0].input,
-        )
-        .unwrap();
+        );
 
-        assert_same!(weavy_tree, selector_cases[0].expected);
-        assert!(stats.step_count > 0);
-        assert!(stats.block_call_count > 0);
+        assert_same!(weavy_report.tree(), &selector_cases[0].expected);
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -1292,20 +1289,17 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[2].name, "Class selectors");
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
-            &plan,
+        let weavy_report = parse_weavy_report_or_panic(
+            grammar,
             &validated,
             &parser_grammar,
             &parse_table,
             &selector_cases[2].input,
-        )
-        .unwrap();
+        );
 
-        assert_same!(weavy_tree, selector_cases[2].expected);
-        assert!(stats.step_count > 0);
-        assert!(stats.block_call_count > 0);
+        assert_same!(weavy_report.tree(), &selector_cases[2].expected);
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[test]
@@ -1434,19 +1428,21 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
         let scanner = RecordingCssReducedExternalScanner::new(&css_scanner);
-        let weavy_report = crate::lower::weavy::parse_reduced_with_report_and_scanner(
-            &plan,
-            &validated,
+        let weavy_report = unwrap_weavy_report_or_panic(
+            parse_prepared_runtime_with_report_and_scanner(
+                &plan,
+                &validated,
+                &parser_grammar,
+                &parse_table,
+                &selector_cases[5].input,
+                Some(&scanner),
+            ),
             &parser_grammar,
             &parse_table,
-            &selector_cases[5].input,
-            Some(&scanner),
-        )
-        .unwrap();
+        );
 
         assert_same!(weavy_report.tree(), &selector_cases[5].expected);
         assert!(
@@ -1757,19 +1753,21 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[10].name, "Descendant selectors");
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
+        let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
         let scanner = RecordingCssReducedExternalScanner::new(&css_scanner);
-        let weavy_report = crate::lower::weavy::parse_reduced_with_report_and_scanner(
-            &plan,
-            &validated,
+        let weavy_report = unwrap_weavy_report_or_panic(
+            parse_prepared_runtime_with_report_and_scanner(
+                &plan,
+                &validated,
+                &parser_grammar,
+                &parse_table,
+                &selector_cases[10].input,
+                Some(&scanner),
+            ),
             &parser_grammar,
             &parse_table,
-            &selector_cases[10].input,
-            Some(&scanner),
-        )
-        .unwrap();
+        );
 
         assert_same!(weavy_report.tree(), &selector_cases[10].expected);
         assert!(
@@ -2228,78 +2226,43 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_reduced_with_report(
-            &plan,
-            &validated,
+        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
+        let weavy_report = unwrap_weavy_report_or_panic(
+            parse_prepared_runtime_with_report_and_scanner(
+                &plan,
+                &validated,
+                &parser_grammar,
+                &parse_table,
+                &declaration_cases[7].input,
+                Some(&scanner),
+            ),
             &parser_grammar,
             &parse_table,
-            &declaration_cases[7].input,
-        )
-        .unwrap();
+        );
 
         assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
-        let important_conflict = weavy_report.conflict_steps().iter().find(|step| {
-            if step.actions.len() < 2
-                || !step
-                    .actions
-                    .iter()
-                    .all(|action| matches!(action, crate::parser::ParseAction::Reduce { .. }))
-            {
-                return false;
-            }
-
-            let mut saw_accepted_descendant = false;
-            let mut saw_failed_descendant = false;
-            for outcome in &step.outcomes {
-                let branch = match outcome.result {
-                    crate::parser::ReducedConflictActionResult::Branch(branch)
-                    | crate::parser::ReducedConflictActionResult::Accepted(branch)
-                    | crate::parser::ReducedConflictActionResult::Failed(branch) => branch,
-                };
-                for result in weavy_report.branch_descendant_results(branch) {
-                    match result.outcome {
-                        crate::parser::ReducedBranchFinalOutcome::Accepted => {
-                            saw_accepted_descendant = true;
-                        }
-                        crate::parser::ReducedBranchFinalOutcome::Failed => {
-                            saw_failed_descendant = true;
-                        }
-                    }
-                }
-            }
-
-            saw_accepted_descendant && saw_failed_descendant
-        });
-        assert!(
-            important_conflict.is_some(),
-            "expected a Weavy reduce/reduce fork with accepted and failed descendants, got conflicts {:#?} and branch results {:#?}",
-            weavy_report.conflict_steps(),
-            weavy_report.branch_results()
-        );
-        assert!(
-            important_conflict.unwrap().outcomes.len() > 1,
-            "expected more than one Weavy action outcome for the important declaration conflict"
-        );
         assert!(
             weavy_report
-                .branch_parents()
+                .trace_events()
                 .iter()
-                .any(|link| link.parent.is_some()),
-            "expected Weavy branch lineage for runtime fork"
+                .any(|event| matches!(event, crate::parser::TraceEvent::GlrSplit { .. })),
+            "expected a Weavy runtime GLR split for the important declaration conflict"
         );
         assert!(
-            !weavy_report.branch_results().is_empty(),
-            "expected terminal Weavy branch outcomes for runtime fork"
-        );
-        assert!(
-            weavy_report.max_live_branches() > 1,
-            "expected more than one live reduced Weavy branch"
+            weavy_report.max_live_versions() > 1,
+            "expected more than one live runtime Weavy version"
         );
         assert!(
             weavy_report.failure_count() > 0,
-            "expected at least one Weavy forked branch to be retired by later input"
+            "expected at least one Weavy runtime branch to be retired by later input"
+        );
+        assert!(
+            weavy_report
+                .trace_events()
+                .iter()
+                .any(|event| matches!(event, crate::parser::TraceEvent::GlrRetire { .. })),
+            "expected Weavy runtime branch retirement evidence"
         );
         assert!(weavy_report.stats().step_count > 0);
         assert!(weavy_report.stats().block_call_count > 0);
@@ -2603,20 +2566,16 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[4].name, "Comments");
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
-            &plan,
+        let weavy_report = parse_weavy_report_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
             &cases[4].input,
-        )
-        .unwrap();
+        );
 
-        assert_same!(weavy_tree, cases[4].expected);
-        assert!(stats.step_count > 0);
-        assert!(stats.block_call_count > 0);
+        assert_same!(weavy_report.tree(), &cases[4].expected);
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     #[cfg(feature = "weavy-lowering")]
@@ -2636,23 +2595,19 @@ mod tests {
             .unwrap();
         let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
         let input = "// leading\n{\"a\": 1}";
-        let plan =
-            crate::lower::weavy::lower_reduced_parser(&parser_grammar, &parse_table).unwrap();
-        let (weavy_tree, stats) = crate::lower::weavy::parse_reduced_with_plan(
-            &plan,
+        let weavy_report = parse_weavy_report_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
             input,
-        )
-        .unwrap();
+        );
 
         assert_eq!(
-            weavy_tree.to_sexp(),
+            weavy_report.tree().to_sexp(),
             "(document (comment) (object (pair (string (string_content)) (number))))"
         );
-        assert!(stats.step_count > 0);
-        assert!(stats.block_call_count > 0);
+        assert!(weavy_report.stats().step_count > 0);
+        assert!(weavy_report.stats().block_call_count > 0);
     }
 
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
@@ -2781,6 +2736,22 @@ mod tests {
         parse_table: &ParseTable,
         input: &str,
     ) -> SexpNode {
+        parse_weavy_report_without_external_scanner_or_panic(
+            validated,
+            parser_grammar,
+            parse_table,
+            input,
+        )
+        .tree()
+        .clone()
+    }
+
+    fn parse_weavy_report_without_external_scanner_or_panic(
+        validated: &ValidatedGrammar,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+        input: &str,
+    ) -> RuntimeWeavyReport {
         unwrap_weavy_report_or_panic(
             parse_prepared_runtime_with_report_and_scanner(
                 &RuntimeWeavyPlan::new(validated, parser_grammar, parse_table).unwrap(),
@@ -2793,8 +2764,6 @@ mod tests {
             parser_grammar,
             parse_table,
         )
-        .tree()
-        .clone()
     }
 
     fn parse_weavy_report_or_panic(

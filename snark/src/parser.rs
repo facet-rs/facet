@@ -6,7 +6,7 @@
 //! state. It is not a recursive recognizer and it never consumes generated
 //! Tree-sitter implementation files.
 
-#[cfg(any(test, feature = "weavy-lowering"))]
+#[cfg(test)]
 use std::sync::{Mutex, OnceLock};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
@@ -65,7 +65,6 @@ id_type!(LexModeId, "Lexical mode id derived from parser states.");
 id_type!(ConflictId, "Declared or generated conflict id.");
 id_type!(ItemSetId, "LR item-set id.");
 id_type!(StackVersionId, "GLR stack-version id.");
-id_type!(ReducedBranchId, "Reduced parser branch id.");
 id_type!(GraphStackNodeId, "GLR graph-stack node id.");
 id_type!(TreeNodeId, "Runtime tree node id.");
 id_type!(TraceEventId, "Structured parser trace event id.");
@@ -3939,72 +3938,6 @@ impl ReducedExternalScan<'_> {
     }
 }
 
-/// One multi-action table cell reached by the reduced parser.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReducedConflictStep {
-    /// Branch that reached this conflict.
-    pub branch: ReducedBranchId,
-    /// Parse state containing the conflict.
-    pub state: ParseStateId,
-    /// Input byte offset before selecting the conflicted action.
-    pub byte_position: usize,
-    /// Lookahead that selected the conflicted action cell.
-    pub lookahead: LookaheadSymbol,
-    /// Actions explored from this cell.
-    pub actions: Vec<ParseAction>,
-    /// Outcome produced by each explored action.
-    pub outcomes: Vec<ReducedConflictActionOutcome>,
-}
-
-/// Parent link for a branch created by a runtime fork.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedBranchParent {
-    /// Child branch id.
-    pub branch: ReducedBranchId,
-    /// Parent branch id. The initial branch has no parent.
-    pub parent: Option<ReducedBranchId>,
-}
-
-/// Final outcome for one reduced parser branch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedBranchResult {
-    /// Branch that reached a terminal outcome.
-    pub branch: ReducedBranchId,
-    /// Terminal branch outcome.
-    pub outcome: ReducedBranchFinalOutcome,
-}
-
-/// Terminal branch outcome in the reduced parser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ReducedBranchFinalOutcome {
-    /// Branch accepted the input and produced the report tree.
-    Accepted,
-    /// Branch failed or was retired.
-    Failed,
-}
-
-/// Outcome for one action in a conflicted action cell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedConflictActionOutcome {
-    /// Action selected from the conflicted cell.
-    pub action: ParseAction,
-    /// Immediate result of applying the action.
-    pub result: ReducedConflictActionResult,
-}
-
-/// Immediate result of applying one conflicted action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ReducedConflictActionResult {
-    /// Action produced a live branch for later input.
-    Branch(ReducedBranchId),
-    /// Action accepted immediately.
-    Accepted(ReducedBranchId),
-    /// Action failed immediately.
-    Failed(ReducedBranchId),
-}
-
 #[cfg(test)]
 const ASCII_IDENTIFIER_PATTERN: &str = "[A-Za-z_][A-Za-z0-9_]*";
 const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|endif\\b|for\\b|endfor\\b|set\\b|endset\\b|block\\b|endblock\\b|extends\\b|include\\b|import\\b|macro\\b|endmacro\\b|break\\b|continue\\b|as\\b|in\\b|is\\b|not\\b|and\\b|or\\b|true\\b|True\\b|false\\b|False\\b|none\\b|None\\b)[A-Za-z_][A-Za-z0-9_]*";
@@ -4014,7 +3947,7 @@ pub(crate) fn match_pattern(pattern: &str, input: &str, byte_position: usize) ->
     match_pattern_with_flags(pattern, None, input, byte_position)
 }
 
-#[cfg(any(test, feature = "weavy-lowering"))]
+#[cfg(test)]
 pub(crate) fn match_pattern_with_flags(
     pattern: &str,
     flags: Option<&str>,
@@ -4513,15 +4446,6 @@ fn lexical_expr_implicit_precedence(
     }
 }
 
-#[cfg(any(test, feature = "weavy-lowering"))]
-pub(crate) fn match_until_markers<'a>(
-    markers: impl IntoIterator<Item = &'a str>,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    match_until_markers_with_inspection(markers, input, byte_position).map(|match_| match_.end)
-}
-
 pub(crate) fn match_until_markers_with_inspection<'a>(
     markers: impl IntoIterator<Item = &'a str>,
     input: &str,
@@ -4543,17 +4467,6 @@ pub(crate) fn match_until_markers_with_inspection<'a>(
     let end = byte_position + end_and_marker_len.0;
     let inspected_end = end + end_and_marker_len.1;
     (end > byte_position).then_some(LexMatch::new(end, inspected_end))
-}
-
-#[cfg(any(test, feature = "weavy-lowering"))]
-pub(crate) fn match_nested_delimiters(
-    open: &str,
-    close: &str,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    match_nested_delimiters_with_inspection(open, close, input, byte_position)
-        .map(|match_| match_.end)
 }
 
 pub(crate) fn match_nested_delimiters_with_inspection(
@@ -4601,7 +4514,7 @@ fn pattern_inspected_end(input: &str, end: usize) -> usize {
         .map_or(end, |ch| end + ch.len_utf8())
 }
 
-#[cfg(any(test, feature = "weavy-lowering"))]
+#[cfg(test)]
 fn match_cached_regex_leaf(
     pattern: &str,
     flags: Option<&str>,
@@ -4616,7 +4529,7 @@ fn match_cached_regex_leaf(
         .map(|match_| byte_position + match_.end())
 }
 
-#[cfg(any(test, feature = "weavy-lowering"))]
+#[cfg(test)]
 fn cached_regex(pattern: &str, flags: Option<&str>) -> Option<Regex> {
     type RegexCache = HashMap<(String, Option<String>), Option<Regex>>;
 
@@ -4655,7 +4568,7 @@ fn normalized_regex_flags(flags: Option<&str>) -> Option<String> {
     flags.filter(|flags| !flags.is_empty()).map(str::to_owned)
 }
 
-#[cfg(any(test, feature = "weavy-lowering"))]
+#[cfg(test)]
 fn regex_flags_are_empty(flags: Option<&str>) -> bool {
     flags.is_none_or(str::is_empty)
 }
