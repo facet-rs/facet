@@ -5,6 +5,9 @@
 //!   # single input, prepare once, parse N times, report best (min) ms
 //!   cargo run --release -p snark-ts-diff -- <grammar.js> <input-file> [iters]
 //!
+//!   # recovering parse, prepare once, parse N times, report best (min) ms
+//!   cargo run --release -p snark-ts-diff -- recover <grammar.js> <input-file> [iters]
+//!
 //!   # size ladder: prepare once, sweep JSON of growing object counts, print
 //!   # a table of ms + bytes/ms + ratio-vs-previous. The `x_prev` column is the
 //!   # tell: object counts double each row, so a LINEAR parser holds ~2.0 and a
@@ -22,8 +25,11 @@ use facet::Facet;
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
-    lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
-    parser::{ParseTable, ParserGrammar},
+    lower::weavy::{
+        WeavyParseError, WeavyParsePlan, WeavyParseReport,
+        parse_prepared_weavy_recovering_with_report_and_scanner, parse_prepared_weavy_with_report,
+    },
+    parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
 };
 
@@ -95,6 +101,35 @@ fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     best_ms
+}
+
+fn recover_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_recovering_with_report_and_scanner(
+        &p.plan, &p.parser, &p.table, input, None,
+    )
+}
+
+/// Best (min) recovering parse time in ms over `iters` runs, after one warm-up.
+fn best_recover_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
+    let _ = recover_once(p, input)?;
+    let mut best_ms = f64::INFINITY;
+    for _ in 0..iters.max(1) {
+        let start = Instant::now();
+        let _ = recover_once(p, input)?;
+        best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    Ok(best_ms)
+}
+
+fn error_counts(report: &WeavyParseReport) -> (usize, usize) {
+    report
+        .tree_events()
+        .iter()
+        .fold((0, 0), |(errors, missing), event| match event {
+            TreeEvent::Error { .. } => (errors + 1, missing),
+            TreeEvent::Missing { .. } => (errors, missing + 1),
+            _ => (errors, missing),
+        })
 }
 
 #[derive(Facet)]
@@ -227,6 +262,44 @@ fn run_ladder(grammar_path: &str, max_objects: u64) {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    if args.get(1).map(|s| s == "recover").unwrap_or(false) {
+        let grammar_path = args
+            .get(2)
+            .expect("usage: recover <grammar.js> <input> [iters]");
+        let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
+        let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+        let p = prepare(grammar_path);
+        let report = match recover_once(&p, &input) {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("recovering parse failed: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let (errors, missing) = error_counts(&report);
+        let best_ms = match best_recover_ms(&p, &input, iters) {
+            Ok(best_ms) => best_ms,
+            Err(error) => {
+                eprintln!("recovering parse failed during timing: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let bytes = input.len();
+        println!(
+            "snark weavy recovering parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
+            bytes as f64 / best_ms
+        );
+        println!(
+            "accepted={} failed={} max_live={} errors={} missing={}",
+            report.accepted_count(),
+            report.failure_count(),
+            report.max_live_versions(),
+            errors,
+            missing
+        );
+        return;
+    }
 
     if args.get(1).map(|s| s == "tablebench").unwrap_or(false) {
         let grammar_path = args.get(2).expect("usage: tablebench <grammar.js> [iters]");
