@@ -2001,6 +2001,18 @@ fn parse_weavy_with_compiled_lex_modes(
         .into_iter()
         .filter(|(_, _, error_cost, _, _)| *error_cost == min_error_cost)
         .collect::<Vec<_>>();
+    // Among the lowest-error-cost parses, apply dynamic precedence: keep only the
+    // trees with the highest total dynamic precedence (tree-sitter semantics —
+    // sum each tree's per-production `dynamic_precedence`, highest wins). Only if
+    // this STILL leaves distinct trees is the parse genuinely ambiguous.
+    let max_dynamic_precedence = best_accepted
+        .iter()
+        .map(|(_, _, _, tree_events, _)| tree_dynamic_precedence(tree_events, input_ctx.parser))
+        .max()
+        .unwrap_or(0);
+    best_accepted.retain(|(_, _, _, tree_events, _)| {
+        tree_dynamic_precedence(tree_events, input_ctx.parser) == max_dynamic_precedence
+    });
     let accepted_count = best_accepted.len();
     if best_accepted.is_empty() {
         unreachable!("accepted Weavy branches have a minimum recovery cost");
@@ -2609,6 +2621,24 @@ fn run_runtime_weavy_state_probe(
             .unwrap_or(parser_ir::LookaheadSymbol::Eof),
         byte_position: stepper.byte_position,
     })
+}
+
+/// Total dynamic precedence of an accepted tree: the sum of each reduced
+/// production's `dynamic_precedence`. Used to pick among ambiguous GLR parses
+/// (tree-sitter semantics).
+fn tree_dynamic_precedence(
+    events: &[parser_ir::TreeEvent],
+    parser: &parser_ir::ParserGrammar,
+) -> i32 {
+    events
+        .iter()
+        .map(|event| match event {
+            parser_ir::TreeEvent::Reduce { production, .. } => parser.productions()
+                [production.get() as usize]
+                .dynamic_precedence(),
+            _ => 0,
+        })
+        .sum()
 }
 
 fn run_runtime_weavy_action(
