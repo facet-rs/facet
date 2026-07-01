@@ -1123,6 +1123,32 @@ pub fn parse_prepared_runtime_with_report_and_scanner(
         },
         RuntimeWeavyRecoveryMode::Strict,
         None,
+        RuntimeWeavyReuseCollection::Disabled,
+    )
+}
+
+/// Execute a prepared runtime stack/tree parser plan and collect reusable-node metadata.
+pub fn parse_prepared_runtime_collecting_reuse_with_report_and_scanner(
+    plan: &RuntimeWeavyPlan,
+    _grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn RuntimeExternalScanner>,
+) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
+    parse_runtime_with_compiled_lex_modes(
+        RuntimeWeavyInput {
+            plan: &plan.program,
+            compiled_lex_modes: &plan.compiled_lex_modes,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Enabled,
     )
 }
 
@@ -1147,6 +1173,32 @@ pub fn parse_prepared_runtime_recovering_with_report_and_scanner(
         },
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
+        RuntimeWeavyReuseCollection::Disabled,
+    )
+}
+
+/// Execute a recovering prepared runtime plan and collect reusable-node metadata.
+pub fn parse_prepared_runtime_recovering_collecting_reuse_with_report_and_scanner(
+    plan: &RuntimeWeavyPlan,
+    _grammar: &ValidatedGrammar,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn RuntimeExternalScanner>,
+) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
+    parse_runtime_with_compiled_lex_modes(
+        RuntimeWeavyInput {
+            plan: &plan.program,
+            compiled_lex_modes: &plan.compiled_lex_modes,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::SkipInvalidInput,
+        None,
+        RuntimeWeavyReuseCollection::Enabled,
     )
 }
 
@@ -1202,7 +1254,7 @@ impl<'a> RuntimeWeavySession<'a> {
         input: impl Into<String>,
     ) -> Result<&RuntimeWeavyReport, RuntimeWeavyError> {
         let input = input.into();
-        let report = parse_prepared_runtime_with_report_and_scanner(
+        let report = parse_prepared_runtime_collecting_reuse_with_report_and_scanner(
             self.plan,
             self.grammar,
             self.parser,
@@ -1240,7 +1292,7 @@ impl<'a> RuntimeWeavySession<'a> {
                 self.external_scanner,
             )?
         } else {
-            parse_prepared_runtime_with_report_and_scanner(
+            parse_prepared_runtime_collecting_reuse_with_report_and_scanner(
                 self.plan,
                 self.grammar,
                 self.parser,
@@ -1263,7 +1315,7 @@ impl<'a> RuntimeWeavySession<'a> {
         input: impl Into<String>,
     ) -> Result<&RuntimeWeavyReport, RuntimeWeavyError> {
         let input = input.into();
-        let report = parse_prepared_runtime_recovering_with_report_and_scanner(
+        let report = parse_prepared_runtime_recovering_collecting_reuse_with_report_and_scanner(
             self.plan,
             self.grammar,
             self.parser,
@@ -1301,7 +1353,7 @@ impl<'a> RuntimeWeavySession<'a> {
                 self.external_scanner,
             )?
         } else {
-            parse_prepared_runtime_recovering_with_report_and_scanner(
+            parse_prepared_runtime_recovering_collecting_reuse_with_report_and_scanner(
                 self.plan,
                 self.grammar,
                 self.parser,
@@ -1346,6 +1398,7 @@ pub fn reparse_prepared_runtime_with_report_and_scanner(
         },
         RuntimeWeavyRecoveryMode::Strict,
         Some(&reuse_index),
+        RuntimeWeavyReuseCollection::Enabled,
     )
 }
 
@@ -1376,6 +1429,7 @@ pub fn reparse_prepared_runtime_recovering_with_report_and_scanner(
         },
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         Some(&reuse_index),
+        RuntimeWeavyReuseCollection::Enabled,
     )
 }
 
@@ -1650,6 +1704,7 @@ fn parse_runtime_with_compiled_lex_modes(
     input_ctx: RuntimeWeavyInput<'_>,
     recovery: RuntimeWeavyRecoveryMode,
     reuse_index: Option<&RuntimeWeavyReuseIndex>,
+    reuse_collection: RuntimeWeavyReuseCollection,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
     if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(RuntimeWeavyError::WrongStage {
@@ -1755,6 +1810,7 @@ fn parse_runtime_with_compiled_lex_modes(
             &mut next_version_index,
             recovery,
             reuse_index,
+            reuse_collection,
         ) {
             match outcome {
                 RuntimeWeavyStepOutcome::Branch(branch) => enqueue_runtime_weavy_branch(
@@ -1982,6 +2038,12 @@ enum RuntimeWeavyRecoveryMode {
     SkipInvalidInput,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeWeavyReuseCollection {
+    Disabled,
+    Enabled,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeWeavyBranch {
     version: parser_ir::StackVersionId,
@@ -2114,6 +2176,7 @@ fn step_runtime_weavy_branch(
     next_version_index: &mut usize,
     recovery: RuntimeWeavyRecoveryMode,
     reuse_index: Option<&RuntimeWeavyReuseIndex>,
+    reuse_collection: RuntimeWeavyReuseCollection,
 ) -> Vec<RuntimeWeavyStepOutcome> {
     let source_version = branch.version;
     let state = match branch.stack.last() {
@@ -2210,6 +2273,7 @@ fn step_runtime_weavy_branch(
                         state,
                         action: *action,
                     },
+                    reuse_collection,
                     output,
                 )
             })
@@ -2226,6 +2290,7 @@ fn step_runtime_weavy_branch(
             state,
             action,
         },
+        reuse_collection,
         output,
     )]
 }
@@ -2363,6 +2428,7 @@ fn run_runtime_weavy_action(
     input_ctx: RuntimeWeavyInput<'_>,
     branch: RuntimeWeavyBranch,
     action_ctx: RuntimeWeavyAction,
+    reuse_collection: RuntimeWeavyReuseCollection,
     output: &mut RuntimeWeavyOutput<'_>,
 ) -> RuntimeWeavyStepOutcome {
     let block = match input_ctx.plan.action_block(
@@ -2389,6 +2455,7 @@ fn run_runtime_weavy_action(
         branch,
         action_ctx.lookahead,
         RuntimeWeavyMode::ApplyAction,
+        reuse_collection,
     );
     stepper.lookahead = Some(action_ctx.token);
     let version = stepper.version;
@@ -2609,6 +2676,7 @@ fn runtime_weavy_lex_succeeds(
         branch.clone(),
         parser_ir::LookaheadTokenId::from_index(0),
         RuntimeWeavyMode::ProbeState,
+        RuntimeWeavyReuseCollection::Disabled,
     );
     let Ok(state_row) = stepper.parse_state(state) else {
         return false;
@@ -2640,6 +2708,7 @@ struct RuntimeWeavyStepper<'a> {
     lookahead_id: parser_ir::LookaheadTokenId,
     tree: Option<SexpNode>,
     mode: RuntimeWeavyMode,
+    reuse_collection: RuntimeWeavyReuseCollection,
     dispatch: Option<RuntimeWeavyDispatch>,
     version: parser_ir::StackVersionId,
     tree_store: &'a mut RuntimeWeavyTreeStore,
@@ -2656,6 +2725,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         branch: RuntimeWeavyBranch,
         lookahead_id: parser_ir::LookaheadTokenId,
         mode: RuntimeWeavyMode,
+        reuse_collection: RuntimeWeavyReuseCollection,
     ) -> Self {
         Self {
             plan: stepper_input.input.plan,
@@ -2675,6 +2745,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             lookahead_id,
             tree: None,
             mode,
+            reuse_collection,
             dispatch: None,
             version: branch.version,
             tree_store: stepper_input.tree_store,
@@ -2710,6 +2781,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             lookahead_id,
             tree: None,
             mode,
+            reuse_collection: RuntimeWeavyReuseCollection::Disabled,
             dispatch: None,
             version: branch.version,
             tree_store: stepper_input.tree_store,
@@ -2930,6 +3002,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     lookahead_end_byte,
                     start_scanner_snapshot,
                 } = &reduction.fragment
+                    && self.reuse_collection == RuntimeWeavyReuseCollection::Enabled
                     && start_byte < end_byte
                 {
                     self.reusable_nodes.push(RuntimeWeavyReusableNode {
