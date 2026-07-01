@@ -456,7 +456,7 @@ mod tests {
         },
         parser::{
             LookaheadSymbol, ParseStateId, ParseTable, ParserGenerationStage, ParserGrammar,
-            ReducedExternalScan, ReducedExternalScanResult, ReducedExternalScanner,
+            RuntimeExternalScan, RuntimeExternalScanResult, RuntimeExternalScanner,
             ScannerSnapshotId,
         },
         query::{HighlightCapture, WellKnownQuery},
@@ -1088,7 +1088,7 @@ mod tests {
             .find(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
             .unwrap();
         let assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
-        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
         let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_runtime_with_report_and_scanner(
@@ -1431,8 +1431,8 @@ mod tests {
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
         let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
-        let css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let scanner = RecordingCssReducedExternalScanner::new(&css_scanner);
+        let css_scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
+        let scanner = RecordingCssRuntimeExternalScanner::new(&css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_runtime_with_report_and_scanner(
                 &plan,
@@ -1496,8 +1496,8 @@ mod tests {
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
         let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
-        let weavy_css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let weavy_scanner = RecordingCssReducedExternalScanner::new(&weavy_css_scanner);
+        let weavy_css_scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
+        let weavy_scanner = RecordingCssRuntimeExternalScanner::new(&weavy_css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_runtime_with_report_and_scanner(
                 &plan,
@@ -1758,8 +1758,8 @@ mod tests {
 
         assert_eq!(selector_cases[10].name, "Descendant selectors");
         let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
-        let css_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
-        let scanner = RecordingCssReducedExternalScanner::new(&css_scanner);
+        let css_scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
+        let scanner = RecordingCssRuntimeExternalScanner::new(&css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_runtime_with_report_and_scanner(
                 &plan,
@@ -2057,7 +2057,7 @@ mod tests {
         ] {
             let case = &statement_cases[case_index];
             assert_eq!(case.name, case_name);
-            let weavy_scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+            let weavy_scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
             let weavy_report = unwrap_weavy_report_or_panic(
                 parse_prepared_runtime_with_report_and_scanner(
                     &plan,
@@ -2111,7 +2111,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
         let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_runtime_with_report_and_scanner(
@@ -2178,7 +2178,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
         let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_runtime_with_report_and_scanner(
@@ -2236,7 +2236,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let scanner = CssReducedExternalScanner::new(grammar, &parser_grammar);
+        let scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
         let plan = RuntimeWeavyPlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_runtime_with_report_and_scanner(
@@ -2775,7 +2775,7 @@ mod tests {
         parse_table: &ParseTable,
         input: &str,
     ) -> RuntimeWeavyReport {
-        let scanner = CssReducedExternalScanner::new(grammar, parser_grammar);
+        let scanner = CssRuntimeExternalScanner::new(grammar, parser_grammar);
         unwrap_weavy_report_or_panic(
             parse_prepared_runtime_with_report_and_scanner(
                 &RuntimeWeavyPlan::new(validated, parser_grammar, parse_table).unwrap(),
@@ -2826,13 +2826,13 @@ mod tests {
         })
     }
 
-    struct CssReducedExternalScanner {
+    struct CssRuntimeExternalScanner {
         scanner: RefCell<snark_scanner_host::CssScanner>,
         external_ordinals: Vec<(crate::parser::ExternalId, usize)>,
         snapshots: RefCell<Vec<Vec<u8>>>,
     }
 
-    impl CssReducedExternalScanner {
+    impl CssRuntimeExternalScanner {
         fn new(grammar: &ImportedGrammar, parser_grammar: &ParserGrammar) -> Self {
             let scanner = grammar
                 .scanners
@@ -2882,7 +2882,7 @@ mod tests {
                 .find_map(|(candidate, ordinal)| (*candidate == external).then_some(*ordinal))
         }
 
-        fn valid_symbol_mask(&self, request: ReducedExternalScan<'_>) -> Option<Vec<bool>> {
+        fn valid_symbol_mask(&self, request: RuntimeExternalScan<'_>) -> Option<Vec<bool>> {
             let width = self
                 .external_ordinals
                 .iter()
@@ -2922,11 +2922,11 @@ mod tests {
         }
     }
 
-    impl ReducedExternalScanner for CssReducedExternalScanner {
+    impl RuntimeExternalScanner for CssRuntimeExternalScanner {
         fn scan(
             &self,
-            request: ReducedExternalScan<'_>,
-        ) -> Result<Option<ReducedExternalScanResult>, crate::parser::ReducedParseError> {
+            request: RuntimeExternalScan<'_>,
+        ) -> Result<Option<RuntimeExternalScanResult>, crate::parser::ReducedParseError> {
             let Some(mask) = self.valid_symbol_mask(request) else {
                 return Ok(None);
             };
@@ -2950,14 +2950,14 @@ mod tests {
             }
             let after = self.intern_snapshot(scan.serialized_state());
             Ok(Some(
-                ReducedExternalScanResult::new(scan.end_byte())
+                RuntimeExternalScanResult::new(scan.end_byte())
                     .with_snapshots(Some(before), Some(after)),
             ))
         }
     }
 
-    struct RecordingCssReducedExternalScanner<'a> {
-        inner: &'a dyn ReducedExternalScanner,
+    struct RecordingCssRuntimeExternalScanner<'a> {
+        inner: &'a dyn RuntimeExternalScanner,
         calls: Cell<usize>,
         accepted: Cell<usize>,
         accepted_pseudo_class_selector_colon: Cell<usize>,
@@ -2967,8 +2967,8 @@ mod tests {
         invalid_symbol_requests: Cell<usize>,
     }
 
-    impl<'a> RecordingCssReducedExternalScanner<'a> {
-        fn new(inner: &'a dyn ReducedExternalScanner) -> Self {
+    impl<'a> RecordingCssRuntimeExternalScanner<'a> {
+        fn new(inner: &'a dyn RuntimeExternalScanner) -> Self {
             Self {
                 inner,
                 calls: Cell::new(0),
@@ -2982,11 +2982,11 @@ mod tests {
         }
     }
 
-    impl ReducedExternalScanner for RecordingCssReducedExternalScanner<'_> {
+    impl RuntimeExternalScanner for RecordingCssRuntimeExternalScanner<'_> {
         fn scan(
             &self,
-            request: ReducedExternalScan<'_>,
-        ) -> Result<Option<ReducedExternalScanResult>, crate::parser::ReducedParseError> {
+            request: RuntimeExternalScan<'_>,
+        ) -> Result<Option<RuntimeExternalScanResult>, crate::parser::ReducedParseError> {
             self.calls.set(self.calls.get() + 1);
             if request.scanner_snapshot().is_some() {
                 self.requests_with_snapshot

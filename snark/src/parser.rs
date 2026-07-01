@@ -3814,24 +3814,24 @@ pub(crate) struct AutoCloseRuleSpec {
     pub(crate) closed_by_tags: Vec<String>,
 }
 
-/// External scanner host used by the reduced parser oracle.
-pub trait ReducedExternalScanner {
+/// External scanner host used by the parser runtime.
+pub trait RuntimeExternalScanner {
     /// Try to scan one external token for a branch-local parser state.
     fn scan(
         &self,
-        request: ReducedExternalScan<'_>,
-    ) -> Result<Option<ReducedExternalScanResult>, ReducedParseError>;
+        request: RuntimeExternalScan<'_>,
+    ) -> Result<Option<RuntimeExternalScanResult>, ReducedParseError>;
 }
 
-/// Result of one reduced external scanner call.
+/// Result of one runtime external scanner call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedExternalScanResult {
+pub struct RuntimeExternalScanResult {
     end_byte: usize,
     before: Option<ScannerSnapshotId>,
     after: Option<ScannerSnapshotId>,
 }
 
-impl ReducedExternalScanResult {
+impl RuntimeExternalScanResult {
     /// Build a scanner result for a token ending at `end_byte`.
     pub const fn new(end_byte: usize) -> Self {
         Self {
@@ -3870,7 +3870,7 @@ impl ReducedExternalScanResult {
 
 /// Branch-local external scanner request.
 #[derive(Debug, Clone, Copy)]
-pub struct ReducedExternalScan<'a> {
+pub struct RuntimeExternalScan<'a> {
     state: ParseStateId,
     external: ExternalId,
     external_symbol: &'a ExternalSymbol,
@@ -3880,7 +3880,7 @@ pub struct ReducedExternalScan<'a> {
     scanner_snapshot: Option<ScannerSnapshotId>,
 }
 
-impl ReducedExternalScan<'_> {
+impl RuntimeExternalScan<'_> {
     #[cfg(feature = "weavy-lowering")]
     pub(crate) const fn new<'a>(
         state: ParseStateId,
@@ -3890,8 +3890,8 @@ impl ReducedExternalScan<'_> {
         input: &'a str,
         byte_position: usize,
         scanner_snapshot: Option<ScannerSnapshotId>,
-    ) -> ReducedExternalScan<'a> {
-        ReducedExternalScan {
+    ) -> RuntimeExternalScan<'a> {
+        RuntimeExternalScan {
             state,
             external,
             external_symbol,
@@ -4857,7 +4857,7 @@ struct ReducedTokenCandidate {
     literal: bool,
     lexical_precedence: i32,
     implicit_precedence: i32,
-    scanner: Option<ReducedExternalScanResult>,
+    scanner: Option<RuntimeExternalScanResult>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

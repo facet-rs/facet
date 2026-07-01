@@ -22,7 +22,7 @@ use weavy::{
 use crate::{
     corpus::{SexpChild, SexpNode, SexpValue},
     parser as parser_ir,
-    parser::{ReducedExternalScan, ReducedExternalScanResult, ReducedExternalScanner},
+    parser::{RuntimeExternalScan, RuntimeExternalScanResult, RuntimeExternalScanner},
     runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
     validated::{GrammarExprId, ValidatedGrammar},
 };
@@ -948,7 +948,7 @@ struct RuntimeWeavyInput<'a> {
     parser: &'a parser_ir::ParserGrammar,
     table: &'a parser_ir::ParseTable,
     input: &'a str,
-    external_scanner: Option<&'a dyn ReducedExternalScanner>,
+    external_scanner: Option<&'a dyn RuntimeExternalScanner>,
 }
 
 struct RuntimeWeavyOutput<'a> {
@@ -994,7 +994,7 @@ pub fn parse_prepared_runtime_with_report_and_scanner(
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
     parse_runtime_with_compiled_lex_modes(
         RuntimeWeavyInput {
@@ -1017,7 +1017,7 @@ pub fn parse_prepared_runtime_recovering_with_report_and_scanner(
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
     parse_runtime_with_compiled_lex_modes(
         RuntimeWeavyInput {
@@ -1039,7 +1039,7 @@ pub struct RuntimeWeavySession<'a> {
     grammar: &'a ValidatedGrammar,
     parser: &'a parser_ir::ParserGrammar,
     table: &'a parser_ir::ParseTable,
-    external_scanner: Option<&'a dyn ReducedExternalScanner>,
+    external_scanner: Option<&'a dyn RuntimeExternalScanner>,
     last_input: Option<String>,
     last_report: Option<RuntimeWeavyReport>,
 }
@@ -1063,8 +1063,8 @@ impl<'a> RuntimeWeavySession<'a> {
         }
     }
 
-    /// Attach a reduced external scanner host.
-    pub fn with_external_scanner(mut self, scanner: &'a dyn ReducedExternalScanner) -> Self {
+    /// Attach a runtime external scanner host.
+    pub fn with_external_scanner(mut self, scanner: &'a dyn RuntimeExternalScanner) -> Self {
         self.external_scanner = Some(scanner);
         self
     }
@@ -1213,7 +1213,7 @@ pub fn reparse_prepared_runtime_with_report_and_scanner(
     previous_report: &RuntimeWeavyReport,
     edit: parser_ir::RuntimeInputEdit,
     new_input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
@@ -1242,7 +1242,7 @@ pub fn reparse_prepared_runtime_recovering_with_report_and_scanner(
     previous_report: &RuntimeWeavyReport,
     edit: parser_ir::RuntimeInputEdit,
     new_input: &str,
-    external_scanner: Option<&dyn ReducedExternalScanner>,
+    external_scanner: Option<&dyn RuntimeExternalScanner>,
 ) -> Result<RuntimeWeavyReport, RuntimeWeavyError> {
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
@@ -2509,7 +2509,7 @@ struct RuntimeWeavyStepper<'a> {
     table: &'a parser_ir::ParseTable,
     compiled_lex_modes: &'a [parser_ir::CompiledLexMode],
     input: &'a str,
-    external_scanner: Option<&'a dyn ReducedExternalScanner>,
+    external_scanner: Option<&'a dyn RuntimeExternalScanner>,
     stack: Vec<RuntimeWeavyStackEntry>,
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
@@ -3383,7 +3383,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         mode: &parser_ir::LexMode,
         external: parser_ir::ExternalId,
         byte_position: usize,
-    ) -> Result<Option<ReducedExternalScanResult>, RuntimeWeavyError> {
+    ) -> Result<Option<RuntimeExternalScanResult>, RuntimeWeavyError> {
         let Some(scanner) = self.external_scanner else {
             return Err(RuntimeWeavyError::UnsupportedExternalScanner {
                 state: state.id(),
@@ -3395,7 +3395,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .valid_symbols()
             .map(|valid_symbols| &self.table.valid_symbol_sets()[valid_symbols.get() as usize]);
         scanner
-            .scan(ReducedExternalScan::new(
+            .scan(RuntimeExternalScan::new(
                 state.id(),
                 external,
                 external_row,
@@ -3732,7 +3732,7 @@ struct RuntimeWeavyToken {
     lookahead: parser_ir::LookaheadSymbol,
     end: usize,
     inspected_end: usize,
-    scanner: Option<ReducedExternalScanResult>,
+    scanner: Option<RuntimeExternalScanResult>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3746,7 +3746,7 @@ struct RuntimeWeavyTokenCandidate {
     literal: bool,
     lexical_precedence: i32,
     implicit_precedence: i32,
-    scanner: Option<ReducedExternalScanResult>,
+    scanner: Option<RuntimeExternalScanResult>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
