@@ -197,7 +197,7 @@ parser's lifetime. `WeavyParserProgram` now owns `Arc<str>` alias names, and
 alias tree-store entries clone those handles rather than allocating fresh
 strings.
 
-## 6. [LOW, confirmed but cheap] Double-storing tree events (journal + flat `Vec`)
+## 6. [RESOLVED] Double-storing tree events (journal + flat `Vec`)
 
 Several sites push the same `TreeEvent` into both the cactus journal *and* a
 flat `Vec<TreeEvent>` (`self.tree_events` / `output.tree_events`), requiring a
@@ -208,13 +208,13 @@ Since `TreeEvent` is entirely `Copy`-able scalar fields (ids, byte/point
 ranges, bools — see `snark/src/parser.rs:5954+`), each individual clone is
 cheap; the cost here is the double `Vec` allocation/storage, not deep-copy
 cost. This matches the "known minor redundancy" already flagged in
-`snark/docs/weavy-tree-journal.md`. Worth collapsing (keep only the journal,
-derive the flat `Vec` via `collect()` once at the end, the same way
-`accepted_tree_events()` already does) but it's additive/linear, not a
-multiplier — fix only after 1–3 land, since 1–3 will change these call sites
-anyway.
+`snark/docs/weavy-tree-journal.md`.
 
-## 7. [LOW] One extra full clone of the final tree at parse-accept time
+**Resolution**: the hot parser path now keeps only the branch journal. Accepted
+reports materialize their `Vec<TreeEvent>` with `RuntimeWeavyTreeJournal::collect`
+at accept.
+
+## 7. [RESOLVED] One extra full clone of the final tree at parse-accept time
 
 `snark/src/lower/weavy.rs:1703-1707`:
 
@@ -223,12 +223,8 @@ let Some((first_version, first_node, _, first_tree_events, first_reusable_nodes)
     best_accepted.first().map(|accepted| (**accepted).clone())
 ```
 
-Clones the accepted branch's entire `SexpNode` tree, `Vec<TreeEvent>`, and
-`Vec<RuntimeWeavyReusableNode>` (which themselves each own a tree + tree_events
-per finding 3) once, to pull an owned value out of a shared reference. `O(n)`
-once per parse — not a multiplier, low priority — but it doubles peak memory
-at the exact moment the tree is largest. Once finding 3 makes
-`reusable_nodes` lazy, this clone gets much cheaper for free.
+The current accept path owns the accepted branch vector and moves the first
+winning tree/events/reuse payload into `WeavyParseReport` with `remove(0)`.
 
 ## 8. [RESOLVED] `WeavyParseReport` retained `tree_store` alongside the already-flattened `tree`
 
@@ -267,13 +263,11 @@ per grammar. Not worth touching unless a profile of grammar *loading itself*
 | 3 | `reusable_nodes` populated unconditionally | Resolved by opt-in reuse collection |
 | 4 | Node-kind `String::to_owned()` per reduce | Resolved in transient tree store; public S-expression still owns strings |
 | 5 | Alias-name `String` clone per aliased step | Resolved in transient tree store |
-| 6 | Double journal+flat `Vec<TreeEvent>` storage | Open if profile asks for it |
-| 7 | One extra full-tree clone at accept | Open one-off report-shape cleanup |
+| 6 | Double journal+flat `Vec<TreeEvent>` storage | Resolved by collecting accepted events from the branch journal |
+| 7 | One extra full-tree clone at accept | Resolved by moving the accepted payload |
 | 8 | `tree_store` retained alongside `tree` | Resolved by deriving resolved CST kinds from events |
 | 9 | Grammar-prep clones | Not hot per-parse |
 
-**Remaining order of attack**: measure before touching the linear items. If the
-next profile still points at tree/report materialization, start with node/alias
-name interning (#4/#5). If event storage shows up instead, collapse the
-journal-plus-flat event duplication (#6). The algorithmic width/depth scaling
-issues from #1–#3 are no longer current work items.
+**Remaining order of attack**: measure before touching the remaining linear
+items. The algorithmic width/depth scaling issues from #1–#3 are no longer
+current work items.

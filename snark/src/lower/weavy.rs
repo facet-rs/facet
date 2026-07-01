@@ -3463,7 +3463,6 @@ struct RuntimeWeavyInput<'a> {
 struct RuntimeWeavyOutput<'a> {
     tree_store: &'a mut RuntimeWeavyTreeStore,
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
-    tree_events: &'a mut Vec<parser_ir::TreeEvent>,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     input_points: &'a RuntimeWeavyInputPoints,
@@ -3476,7 +3475,6 @@ struct RuntimeWeavyStepperInput<'a> {
     input: RuntimeWeavyInput<'a>,
     tree_store: &'a mut RuntimeWeavyTreeStore,
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
-    tree_events: &'a mut Vec<parser_ir::TreeEvent>,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     input_points: &'a RuntimeWeavyInputPoints,
@@ -4292,7 +4290,6 @@ fn parse_weavy_with_lexer_program(
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = Vec::new();
-    let mut tree_events = Vec::new();
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
     let external_scanner_errors = RefCell::new(Vec::new());
     trace_events.push(parser_ir::TraceEvent::ParseStart {
@@ -4395,7 +4392,6 @@ fn parse_weavy_with_lexer_program(
         let mut output = RuntimeWeavyOutput {
             tree_store: &mut tree_store,
             trace_events: &mut trace_events,
-            tree_events: &mut tree_events,
             tree_journal: &mut tree_journal,
             lexer_scratch: &lexer_scratch,
             input_points: &input_points,
@@ -4890,7 +4886,6 @@ fn step_runtime_weavy_branch(
                         output.input_points,
                         output.tree_store,
                         output.trace_events,
-                        output.tree_events,
                         output.tree_journal,
                     )
                 {
@@ -4917,7 +4912,6 @@ fn step_runtime_weavy_branch(
                         output.input_points,
                         output.tree_store,
                         output.trace_events,
-                        output.tree_events,
                         output.tree_journal,
                     )
                 {
@@ -4964,7 +4958,6 @@ fn step_runtime_weavy_branch(
                     output.input_points,
                     output.tree_store,
                     output.trace_events,
-                    output.tree_events,
                     output.tree_journal,
                 )
             {
@@ -5098,8 +5091,6 @@ fn try_reuse_runtime_weavy_node(
     output
         .tree_journal
         .extend(&mut branch.tree_journal, replayed_events.clone());
-    output.tree_events.push(tree_event.clone());
-    output.tree_events.extend(replayed_events.clone());
     output
         .trace_events
         .push(parser_ir::TraceEvent::Tree(tree_event));
@@ -5171,7 +5162,6 @@ fn run_runtime_weavy_state_probe(
             input: input_ctx,
             tree_store: &mut *output.tree_store,
             trace_events: &mut *output.trace_events,
-            tree_events: &mut *output.tree_events,
             tree_journal: &mut *output.tree_journal,
             lexer_scratch: output.lexer_scratch,
             input_points: output.input_points,
@@ -5227,7 +5217,6 @@ fn run_runtime_weavy_action(
             input: input_ctx,
             tree_store: &mut *output.tree_store,
             trace_events: &mut *output.trace_events,
-            tree_events: &mut *output.tree_events,
             tree_journal: &mut *output.tree_journal,
             lexer_scratch: output.lexer_scratch,
             input_points: output.input_points,
@@ -5395,7 +5384,6 @@ fn recover_runtime_weavy_eof_error_root(
     input_points: &RuntimeWeavyInputPoints,
     tree_store: &mut RuntimeWeavyTreeStore,
     trace_events: &mut Vec<parser_ir::TraceEvent>,
-    tree_events: &mut Vec<parser_ir::TreeEvent>,
     tree_journal: &mut RuntimeWeavyTreeJournal,
 ) -> Option<RuntimeWeavyStepOutcome> {
     if branch.byte_position != input.len() {
@@ -5422,8 +5410,7 @@ fn recover_runtime_weavy_eof_error_root(
         error_cost,
     };
     let mut error_journal = RuntimeWeavyTreeJournalHead::default();
-    tree_journal.push(&mut error_journal, tree_event.clone());
-    tree_events.push(tree_event);
+    tree_journal.push(&mut error_journal, tree_event);
     let accepted_tree_events = tree_journal.collect(error_journal);
     Some(RuntimeWeavyStepOutcome::Accepted {
         version: branch.version,
@@ -5440,7 +5427,6 @@ fn recover_runtime_weavy_no_token(
     input_points: &RuntimeWeavyInputPoints,
     tree_store: &mut RuntimeWeavyTreeStore,
     trace_events: &mut Vec<parser_ir::TraceEvent>,
-    tree_events: &mut Vec<parser_ir::TreeEvent>,
     tree_journal: &mut RuntimeWeavyTreeJournal,
 ) -> Option<RuntimeWeavyBranch> {
     let state = branch.stack.last().map(|entry| entry.state)?;
@@ -5462,8 +5448,7 @@ fn recover_runtime_weavy_no_token(
         points,
         error_cost: u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX),
     };
-    tree_journal.push(&mut branch.tree_journal, tree_event.clone());
-    tree_events.push(tree_event);
+    tree_journal.push(&mut branch.tree_journal, tree_event);
     branch.error_cost = branch
         .error_cost
         .saturating_add(u32::try_from(end_byte - start_byte).unwrap_or(u32::MAX));
@@ -5492,7 +5477,6 @@ fn runtime_weavy_lex_succeeds(
 ) -> bool {
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = Vec::new();
-    let mut tree_events = Vec::new();
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
     let external_scanner_errors = RefCell::new(Vec::new());
     let stepper = RuntimeWeavyStepper::from_branch_ref(
@@ -5503,7 +5487,6 @@ fn runtime_weavy_lex_succeeds(
             },
             tree_store: &mut tree_store,
             trace_events: &mut trace_events,
-            tree_events: &mut tree_events,
             tree_journal: &mut tree_journal,
             lexer_scratch,
             input_points,
@@ -5624,7 +5607,6 @@ struct RuntimeWeavyStepper<'a> {
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     trace_events: &'a mut Vec<parser_ir::TraceEvent>,
-    tree_events: &'a mut Vec<parser_ir::TreeEvent>,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
 
@@ -5664,7 +5646,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
             reusable_nodes: branch.reusable_nodes,
             lexer_scratch: stepper_input.lexer_scratch,
             trace_events: stepper_input.trace_events,
-            tree_events: stepper_input.tree_events,
             external_scanner_errors: stepper_input.external_scanner_errors,
         }
     }
@@ -5703,7 +5684,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
             reusable_nodes: Vec::new(),
             lexer_scratch: stepper_input.lexer_scratch,
             trace_events: stepper_input.trace_events,
-            tree_events: stepper_input.tree_events,
             external_scanner_errors: stepper_input.external_scanner_errors,
         }
     }
@@ -5828,7 +5808,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 };
                 self.tree_journal
                     .push(&mut self.tree_journal_head, event.clone());
-                self.tree_events.push(event.clone());
                 self.trace_events.push(parser_ir::TraceEvent::Tree(event));
                 self.trace_events.push(parser_ir::TraceEvent::Shift {
                     version: self.version,
@@ -6560,9 +6539,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
     }
 
     fn emit_runtime_tree_event(&mut self, event: parser_ir::TreeEvent) {
-        self.tree_journal
-            .push(&mut self.tree_journal_head, event.clone());
-        self.tree_events.push(event);
+        self.tree_journal.push(&mut self.tree_journal_head, event);
     }
 
     fn runtime_extra_fragment(
@@ -6586,7 +6563,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
             bytes,
             points,
         };
-        self.tree_events.push(tree_event.clone());
         Some((
             RuntimeWeavyFragment::Node {
                 node,
