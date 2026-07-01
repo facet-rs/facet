@@ -1916,6 +1916,7 @@ impl WeavyLexerStats {
 #[derive(Clone, Debug)]
 struct WeavyLexModeProgram {
     terminals: Vec<WeavyLexTerminal>,
+    non_direct_terminal_indices: Vec<usize>,
     external_count: usize,
     direct_literal_set: Option<WeavyLiteralSet>,
     direct_pattern_set: Option<WeavyDirectPatternSet>,
@@ -1933,8 +1934,17 @@ impl WeavyLexModeProgram {
             .collect::<Vec<_>>();
         let direct_literal_set = compiler.literal_set(&mut terminals);
         let direct_pattern_set = compiler.direct_pattern_set(&mut terminals);
+        let non_direct_terminal_indices = terminals
+            .iter()
+            .enumerate()
+            .filter_map(|(index, terminal)| {
+                (terminal.direct_literal_index.is_none() && terminal.direct_pattern_index.is_none())
+                    .then_some(index)
+            })
+            .collect();
         Self {
             terminals,
+            non_direct_terminal_indices,
             external_count: compiled.external_count,
             direct_literal_set,
             direct_pattern_set,
@@ -1956,8 +1966,17 @@ impl WeavyLexModeProgram {
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
         matches: &mut Option<PatternSet>,
         dfa_cache: Option<&mut HybridDfaCache>,
+        terminal_indices: &mut Vec<usize>,
     ) {
-        match_weavy_direct_pattern_set(input, self, byte_position, ends, matches, dfa_cache);
+        match_weavy_direct_pattern_set(
+            input,
+            self,
+            byte_position,
+            ends,
+            matches,
+            dfa_cache,
+            terminal_indices,
+        );
     }
 
     fn match_direct_literals(
@@ -1966,8 +1985,9 @@ impl WeavyLexModeProgram {
         byte_position: usize,
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
         matches: &mut Option<PatternSet>,
+        terminal_indices: &mut Vec<usize>,
     ) {
-        match_weavy_literal_set(input, self, byte_position, ends, matches);
+        match_weavy_literal_set(input, self, byte_position, ends, matches, terminal_indices);
     }
 
     fn add_stats(&self, stats: &mut WeavyLexerStats) {
@@ -3442,6 +3462,7 @@ struct RuntimeWeavyLexerScratch {
     direct_literal_matches: RefCell<Option<PatternSet>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_matches: RefCell<Option<PatternSet>>,
+    direct_terminal_indices: RefCell<Vec<usize>>,
     direct_pattern_dfa_caches: RefCell<HashMap<parser_ir::LexModeId, Option<HybridDfaCache>>>,
     direct_set_cache:
         RefCell<HashMap<RuntimeWeavyLexSetCacheKey, Arc<RuntimeWeavyDirectSetMatches>>>,
@@ -3455,6 +3476,7 @@ impl RuntimeWeavyLexerScratch {
             direct_literal_matches: RefCell::default(),
             direct_pattern_ends: RefCell::default(),
             direct_pattern_matches: RefCell::default(),
+            direct_terminal_indices: RefCell::default(),
             direct_pattern_dfa_caches: RefCell::default(),
             direct_set_cache: RefCell::default(),
         }
@@ -3466,7 +3488,11 @@ impl RuntimeWeavyLexerScratch {
         mode: parser_ir::LexModeId,
         mode_program: &WeavyLexModeProgram,
         byte_position: usize,
-        visit: impl FnOnce(&[Option<parser_ir::LexMatch>], &[Option<parser_ir::LexMatch>]) -> R,
+        visit: impl FnOnce(
+            &[Option<parser_ir::LexMatch>],
+            &[Option<parser_ir::LexMatch>],
+            &[usize],
+        ) -> R,
     ) -> R {
         let key = RuntimeWeavyLexSetCacheKey {
             mode,
@@ -3475,22 +3501,36 @@ impl RuntimeWeavyLexerScratch {
         if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled
             && let Some(matches) = self.direct_set_cache.borrow().get(&key)
         {
-            return visit(&matches.literal_ends, &matches.pattern_ends);
+            return visit(
+                &matches.literal_ends,
+                &matches.pattern_ends,
+                &matches.terminal_indices,
+            );
         }
         self.compute_direct_set_matches(input, mode, mode_program, byte_position);
         if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled {
             let matches = Arc::new(RuntimeWeavyDirectSetMatches {
                 literal_ends: self.direct_literal_ends.borrow().clone(),
                 pattern_ends: self.direct_pattern_ends.borrow().clone(),
+                terminal_indices: self.direct_terminal_indices.borrow().clone(),
             });
             self.direct_set_cache
                 .borrow_mut()
                 .insert(key, Arc::clone(&matches));
-            return visit(&matches.literal_ends, &matches.pattern_ends);
+            return visit(
+                &matches.literal_ends,
+                &matches.pattern_ends,
+                &matches.terminal_indices,
+            );
         }
         let direct_literal_ends = self.direct_literal_ends.borrow();
         let direct_pattern_ends = self.direct_pattern_ends.borrow();
-        visit(&direct_literal_ends, &direct_pattern_ends)
+        let direct_terminal_indices = self.direct_terminal_indices.borrow();
+        visit(
+            &direct_literal_ends,
+            &direct_pattern_ends,
+            &direct_terminal_indices,
+        )
     }
 
     #[cfg(test)]
@@ -3512,6 +3552,7 @@ impl RuntimeWeavyLexerScratch {
         let matches = Arc::new(RuntimeWeavyDirectSetMatches {
             literal_ends: self.direct_literal_ends.borrow().clone(),
             pattern_ends: self.direct_pattern_ends.borrow().clone(),
+            terminal_indices: self.direct_terminal_indices.borrow().clone(),
         });
         self.direct_set_cache
             .borrow_mut()
@@ -3526,19 +3567,23 @@ impl RuntimeWeavyLexerScratch {
         mode_program: &WeavyLexModeProgram,
         byte_position: usize,
     ) {
+        self.direct_terminal_indices.borrow_mut().clear();
         {
             let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
             let mut direct_literal_matches = self.direct_literal_matches.borrow_mut();
+            let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
             mode_program.match_direct_literals(
                 input,
                 byte_position,
                 &mut direct_literal_ends,
                 &mut direct_literal_matches,
+                &mut direct_terminal_indices,
             );
         }
         {
             let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
             let mut direct_pattern_matches = self.direct_pattern_matches.borrow_mut();
+            let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
             let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
             let direct_pattern_dfa_cache =
                 mode_program.direct_pattern_set.as_ref().and_then(|set| {
@@ -3553,6 +3598,7 @@ impl RuntimeWeavyLexerScratch {
                 &mut direct_pattern_ends,
                 &mut direct_pattern_matches,
                 direct_pattern_dfa_cache,
+                &mut direct_terminal_indices,
             );
         }
     }
@@ -3580,6 +3626,7 @@ struct RuntimeWeavyLexSetCacheKey {
 struct RuntimeWeavyDirectSetMatches {
     literal_ends: Vec<Option<parser_ir::LexMatch>>,
     pattern_ends: Vec<Option<parser_ir::LexMatch>>,
+    terminal_indices: Vec<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -5975,8 +6022,16 @@ impl<'a> RuntimeWeavyStepper<'a> {
             mode.id(),
             mode_program,
             byte_position,
-            |direct_literal_ends, direct_pattern_ends| -> Result<(), RuntimeWeavyStepError> {
-                for terminal_row in mode_program.terminals() {
+            |direct_literal_ends,
+             direct_pattern_ends,
+             direct_terminal_indices|
+             -> Result<(), RuntimeWeavyStepError> {
+                for terminal_index in direct_terminal_indices
+                    .iter()
+                    .copied()
+                    .chain(mode_program.non_direct_terminal_indices.iter().copied())
+                {
+                    let terminal_row = &mode_program.terminals()[terminal_index];
                     let Some(match_) = self.match_compiled_terminal_with_set(
                         terminal_row,
                         byte_position,
@@ -6681,6 +6736,7 @@ fn match_weavy_literal_set(
     byte_position: usize,
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
     matches: &mut Option<PatternSet>,
+    terminal_indices: &mut Vec<usize>,
 ) {
     let Some(literal_set) = &mode.direct_literal_set else {
         ends.clear();
@@ -6692,7 +6748,10 @@ fn match_weavy_literal_set(
         input,
         byte_position,
         matches,
-        |set_index, _terminal_index, end| {
+        |set_index, terminal_index, end| {
+            if ends[set_index].is_none() {
+                terminal_indices.push(terminal_index);
+            }
             ends[set_index] = Some(parser_ir::LexMatch::new(end, end));
         },
     );
@@ -6705,6 +6764,7 @@ fn match_weavy_direct_pattern_set(
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
     matches: &mut Option<PatternSet>,
     dfa_cache: Option<&mut HybridDfaCache>,
+    terminal_indices: &mut Vec<usize>,
 ) {
     let Some(pattern_set) = &mode.direct_pattern_set else {
         ends.clear();
@@ -6719,6 +6779,9 @@ fn match_weavy_direct_pattern_set(
         dfa_cache,
         |set_index, terminal_index, dfa_match| {
             if let Some(match_) = dfa_match {
+                if ends[set_index].is_none() {
+                    terminal_indices.push(terminal_index);
+                }
                 ends[set_index] = Some(match_);
                 return;
             }
@@ -6727,7 +6790,11 @@ fn match_weavy_direct_pattern_set(
             else {
                 return;
             };
-            ends[set_index] = pattern.match_input(input, byte_position);
+            let match_ = pattern.match_input(input, byte_position);
+            if match_.is_some() && ends[set_index].is_none() {
+                terminal_indices.push(terminal_index);
+            }
+            ends[set_index] = match_;
         },
     );
 }
@@ -8193,6 +8260,7 @@ mod tests {
         assert_eq!(direct_literal_set.as_ref().unwrap().len(), 2);
         let mode = WeavyLexModeProgram {
             terminals,
+            non_direct_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
@@ -8200,11 +8268,20 @@ mod tests {
         let mut ends = Vec::new();
         let mut matches = None;
 
-        match_weavy_literal_set("abc", &mode, 0, &mut ends, &mut matches);
+        let mut terminal_indices = Vec::new();
+        match_weavy_literal_set(
+            "abc",
+            &mode,
+            0,
+            &mut ends,
+            &mut matches,
+            &mut terminal_indices,
+        );
 
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(1, 1)));
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 2)));
+        assert_eq!(terminal_indices, vec![0, 1]);
     }
 
     #[test]
@@ -8234,14 +8311,23 @@ mod tests {
         let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
         let mode = WeavyLexModeProgram {
             terminals,
+            non_direct_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
         };
         let mut ends = Vec::new();
         let mut matches = None;
+        let mut terminal_indices = Vec::new();
 
-        match_weavy_literal_set("\"\"\"x", &mode, 0, &mut ends, &mut matches);
+        match_weavy_literal_set(
+            "\"\"\"x",
+            &mode,
+            0,
+            &mut ends,
+            &mut matches,
+            &mut terminal_indices,
+        );
 
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(1, 1)));
@@ -8295,20 +8381,39 @@ mod tests {
         let direct_literal_set = WeavyLiteralSet::from_terminals(&mut terminals);
         let mode = WeavyLexModeProgram {
             terminals,
+            non_direct_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
         };
         let mut ends = Vec::new();
         let mut matches = None;
+        let mut terminal_indices = Vec::new();
 
-        match_weavy_literal_set("netstd tutorial", &mode, 0, &mut ends, &mut matches);
+        match_weavy_literal_set(
+            "netstd tutorial",
+            &mode,
+            0,
+            &mut ends,
+            &mut matches,
+            &mut terminal_indices,
+        );
         assert_eq!(ends[0], None);
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(6, 6)));
+        assert_eq!(terminal_indices, vec![1]);
 
-        match_weavy_literal_set("java.swift tutorial", &mode, 0, &mut ends, &mut matches);
+        terminal_indices.clear();
+        match_weavy_literal_set(
+            "java.swift tutorial",
+            &mode,
+            0,
+            &mut ends,
+            &mut matches,
+            &mut terminal_indices,
+        );
         assert_eq!(ends[2], Some(parser_ir::LexMatch::new(4, 4)));
         assert_eq!(ends[3], Some(parser_ir::LexMatch::new(10, 10)));
+        assert_eq!(terminal_indices, vec![2, 3]);
     }
 
     #[test]
@@ -8344,6 +8449,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             direct_pattern_set,
             terminals,
+            non_direct_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set: None,
         };
@@ -8353,6 +8459,7 @@ mod tests {
             .direct_pattern_set
             .as_ref()
             .and_then(WeavyDirectPatternSet::create_dfa_cache);
+        let mut terminal_indices = Vec::new();
 
         match_weavy_direct_pattern_set(
             "abcd",
@@ -8361,11 +8468,13 @@ mod tests {
             &mut ends,
             &mut matches,
             dfa_cache.as_mut(),
+            &mut terminal_indices,
         );
 
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 3)));
+        assert_eq!(terminal_indices, vec![0, 1]);
     }
 
     #[test]
@@ -8393,6 +8502,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             direct_pattern_set,
             terminals,
+            non_direct_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set: None,
         };
@@ -8402,6 +8512,7 @@ mod tests {
             .direct_pattern_set
             .as_ref()
             .and_then(WeavyDirectPatternSet::create_dfa_cache);
+        let mut terminal_indices = Vec::new();
 
         match_weavy_direct_pattern_set(
             "\"\"\"text\"\"\"",
@@ -8410,10 +8521,13 @@ mod tests {
             &mut ends,
             &mut matches,
             dfa_cache.as_mut(),
+            &mut terminal_indices,
         );
 
         assert_eq!(ends, vec![Some(parser_ir::LexMatch::new(7, 8))]);
+        assert_eq!(terminal_indices, vec![0]);
 
+        terminal_indices.clear();
         match_weavy_direct_pattern_set(
             "\"\"\"\"\"\"",
             &mode,
@@ -8421,9 +8535,11 @@ mod tests {
             &mut ends,
             &mut matches,
             dfa_cache.as_mut(),
+            &mut terminal_indices,
         );
 
         assert_eq!(ends, vec![Some(parser_ir::LexMatch::new(3, 4))]);
+        assert_eq!(terminal_indices, vec![0]);
     }
 
     #[test]
@@ -8458,6 +8574,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             direct_pattern_set,
             terminals,
+            non_direct_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set: None,
         };
@@ -8467,6 +8584,7 @@ mod tests {
             .direct_pattern_set
             .as_ref()
             .and_then(WeavyDirectPatternSet::create_dfa_cache);
+        let mut terminal_indices = Vec::new();
 
         match_weavy_direct_pattern_set(
             "abcd",
@@ -8475,11 +8593,13 @@ mod tests {
             &mut ends,
             &mut matches,
             dfa_cache.as_mut(),
+            &mut terminal_indices,
         );
 
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
         assert_eq!(ends[1], None);
+        assert_eq!(terminal_indices, vec![0]);
     }
 
     #[test]
@@ -8512,6 +8632,7 @@ mod tests {
         let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&mut terminals);
         let mode = WeavyLexModeProgram {
             terminals,
+            non_direct_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set,
@@ -8534,6 +8655,7 @@ mod tests {
             first.pattern_ends,
             vec![Some(parser_ir::LexMatch::new(4, 4))]
         );
+        assert_eq!(first.terminal_indices, vec![0, 1]);
         assert_eq!(second, first);
     }
 
@@ -8567,6 +8689,7 @@ mod tests {
         let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&mut terminals);
         let mode = WeavyLexModeProgram {
             terminals,
+            non_direct_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set,
@@ -8574,20 +8697,28 @@ mod tests {
         let scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
         let lex_mode = parser_ir::LexModeId::from_index(0);
 
-        let first =
-            scratch.with_direct_set_matches("abcd", lex_mode, &mode, 0, |literal, pattern| {
-                (literal.to_vec(), pattern.to_vec())
-            });
-        let second =
-            scratch.with_direct_set_matches("zzzz", lex_mode, &mode, 0, |literal, pattern| {
-                (literal.to_vec(), pattern.to_vec())
-            });
+        let first = scratch.with_direct_set_matches(
+            "abcd",
+            lex_mode,
+            &mode,
+            0,
+            |literal, pattern, terminals| (literal.to_vec(), pattern.to_vec(), terminals.to_vec()),
+        );
+        let second = scratch.with_direct_set_matches(
+            "zzzz",
+            lex_mode,
+            &mode,
+            0,
+            |literal, pattern, terminals| (literal.to_vec(), pattern.to_vec(), terminals.to_vec()),
+        );
 
         assert!(scratch.direct_set_cache.borrow().is_empty());
         assert_eq!(first.0, vec![Some(parser_ir::LexMatch::new(2, 2))]);
         assert_eq!(first.1, vec![Some(parser_ir::LexMatch::new(4, 4))]);
+        assert_eq!(first.2, vec![0, 1]);
         assert_eq!(second.0, vec![None]);
         assert_eq!(second.1, vec![Some(parser_ir::LexMatch::new(4, 4))]);
+        assert_eq!(second.2, vec![1]);
     }
 
     #[test]
@@ -9315,6 +9446,7 @@ mod tests {
             lexer_program: WeavyLexerProgram {
                 modes: vec![WeavyLexModeProgram {
                     terminals: vec![],
+                    non_direct_terminal_indices: vec![],
                     external_count: 3,
                     direct_literal_set: None,
                     direct_pattern_set: None,
@@ -9427,6 +9559,7 @@ mod tests {
         WeavyLexerProgram {
             modes: vec![WeavyLexModeProgram {
                 terminals,
+                non_direct_terminal_indices: vec![],
                 external_count: 0,
                 direct_literal_set,
                 direct_pattern_set,
