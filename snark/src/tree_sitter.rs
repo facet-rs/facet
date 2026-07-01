@@ -455,9 +455,8 @@ mod tests {
             WeavyParsePlan, WeavyParseReport, parse_prepared_weavy_with_report_and_scanner,
         },
         parser::{
-            LookaheadSymbol, ParseStateId, ParseTable, ParserGenerationStage, ParserGrammar,
-            RuntimeExternalScan, RuntimeExternalScanResult, RuntimeExternalScanner,
-            ScannerSnapshotId,
+            ExternalScanRequest, ExternalScanResult, ExternalScannerHost, LookaheadSymbol,
+            ParseStateId, ParseTable, ParserGenerationStage, ParserGrammar, ScannerSnapshotId,
         },
         query::{HighlightCapture, WellKnownQuery},
         runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
@@ -1088,7 +1087,7 @@ mod tests {
             .find(|fixture| fixture.source.path.as_str() == "test/highlight/test_css.css")
             .unwrap();
         let assertions = highlight_fixture.parse_css_highlight_assertions().unwrap();
-        let scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
+        let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
@@ -1428,8 +1427,8 @@ mod tests {
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
-        let css_scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
-        let scanner = RecordingCssRuntimeExternalScanner::new(&css_scanner);
+        let css_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
+        let scanner = RecordingCssExternalScannerHost::new(&css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
@@ -1492,8 +1491,8 @@ mod tests {
 
         assert_eq!(selector_cases[5].name, "Pseudo-class selectors");
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
-        let weavy_css_scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
-        let weavy_scanner = RecordingCssRuntimeExternalScanner::new(&weavy_css_scanner);
+        let weavy_css_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
+        let weavy_scanner = RecordingCssExternalScannerHost::new(&weavy_css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
@@ -1753,8 +1752,8 @@ mod tests {
 
         assert_eq!(selector_cases[10].name, "Descendant selectors");
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
-        let css_scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
-        let scanner = RecordingCssRuntimeExternalScanner::new(&css_scanner);
+        let css_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
+        let scanner = RecordingCssExternalScannerHost::new(&css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &plan,
@@ -2051,7 +2050,7 @@ mod tests {
         ] {
             let case = &statement_cases[case_index];
             assert_eq!(case.name, case_name);
-            let weavy_scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
+            let weavy_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
             let weavy_report = unwrap_weavy_report_or_panic(
                 parse_prepared_weavy_with_report_and_scanner(
                     &plan,
@@ -2104,7 +2103,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
+        let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
@@ -2170,7 +2169,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
+        let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
@@ -2227,7 +2226,7 @@ mod tests {
         let declaration_cases = declaration_fixture.parse_cases().unwrap();
 
         assert_eq!(declaration_cases[7].name, "Important declarations");
-        let scanner = CssRuntimeExternalScanner::new(grammar, &parser_grammar);
+        let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
@@ -2761,7 +2760,7 @@ mod tests {
         parse_table: &ParseTable,
         input: &str,
     ) -> WeavyParseReport {
-        let scanner = CssRuntimeExternalScanner::new(grammar, parser_grammar);
+        let scanner = CssExternalScannerHost::new(grammar, parser_grammar);
         unwrap_weavy_report_or_panic(
             parse_prepared_weavy_with_report_and_scanner(
                 &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
@@ -2811,13 +2810,13 @@ mod tests {
         })
     }
 
-    struct CssRuntimeExternalScanner {
+    struct CssExternalScannerHost {
         scanner: RefCell<snark_scanner_host::CssScanner>,
         external_ordinals: Vec<(crate::parser::ExternalId, usize)>,
         snapshots: RefCell<Vec<Vec<u8>>>,
     }
 
-    impl CssRuntimeExternalScanner {
+    impl CssExternalScannerHost {
         fn new(grammar: &ImportedGrammar, parser_grammar: &ParserGrammar) -> Self {
             let scanner = grammar
                 .scanners
@@ -2867,7 +2866,7 @@ mod tests {
                 .find_map(|(candidate, ordinal)| (*candidate == external).then_some(*ordinal))
         }
 
-        fn valid_symbol_mask(&self, request: RuntimeExternalScan<'_>) -> Option<Vec<bool>> {
+        fn valid_symbol_mask(&self, request: ExternalScanRequest<'_>) -> Option<Vec<bool>> {
             let width = self
                 .external_ordinals
                 .iter()
@@ -2907,11 +2906,11 @@ mod tests {
         }
     }
 
-    impl RuntimeExternalScanner for CssRuntimeExternalScanner {
+    impl ExternalScannerHost for CssExternalScannerHost {
         fn scan(
             &self,
-            request: RuntimeExternalScan<'_>,
-        ) -> Result<Option<RuntimeExternalScanResult>, crate::parser::ParserRuntimeError> {
+            request: ExternalScanRequest<'_>,
+        ) -> Result<Option<ExternalScanResult>, crate::parser::ParserExecutionError> {
             let Some(mask) = self.valid_symbol_mask(request) else {
                 return Ok(None);
             };
@@ -2935,14 +2934,13 @@ mod tests {
             }
             let after = self.intern_snapshot(scan.serialized_state());
             Ok(Some(
-                RuntimeExternalScanResult::new(scan.end_byte())
-                    .with_snapshots(Some(before), Some(after)),
+                ExternalScanResult::new(scan.end_byte()).with_snapshots(Some(before), Some(after)),
             ))
         }
     }
 
-    struct RecordingCssRuntimeExternalScanner<'a> {
-        inner: &'a dyn RuntimeExternalScanner,
+    struct RecordingCssExternalScannerHost<'a> {
+        inner: &'a dyn ExternalScannerHost,
         calls: Cell<usize>,
         accepted: Cell<usize>,
         accepted_pseudo_class_selector_colon: Cell<usize>,
@@ -2952,8 +2950,8 @@ mod tests {
         invalid_symbol_requests: Cell<usize>,
     }
 
-    impl<'a> RecordingCssRuntimeExternalScanner<'a> {
-        fn new(inner: &'a dyn RuntimeExternalScanner) -> Self {
+    impl<'a> RecordingCssExternalScannerHost<'a> {
+        fn new(inner: &'a dyn ExternalScannerHost) -> Self {
             Self {
                 inner,
                 calls: Cell::new(0),
@@ -2967,11 +2965,11 @@ mod tests {
         }
     }
 
-    impl RuntimeExternalScanner for RecordingCssRuntimeExternalScanner<'_> {
+    impl ExternalScannerHost for RecordingCssExternalScannerHost<'_> {
         fn scan(
             &self,
-            request: RuntimeExternalScan<'_>,
-        ) -> Result<Option<RuntimeExternalScanResult>, crate::parser::ParserRuntimeError> {
+            request: ExternalScanRequest<'_>,
+        ) -> Result<Option<ExternalScanResult>, crate::parser::ParserExecutionError> {
             self.calls.set(self.calls.get() + 1);
             if request.scanner_snapshot().is_some() {
                 self.requests_with_snapshot

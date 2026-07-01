@@ -3799,24 +3799,24 @@ pub(crate) struct AutoCloseRuleSpec {
     pub(crate) closed_by_tags: Vec<String>,
 }
 
-/// External scanner host used by the parser runtime.
-pub trait RuntimeExternalScanner {
+/// External scanner host used by Weavy parser execution.
+pub trait ExternalScannerHost {
     /// Try to scan one external token for a branch-local parser state.
     fn scan(
         &self,
-        request: RuntimeExternalScan<'_>,
-    ) -> Result<Option<RuntimeExternalScanResult>, ParserRuntimeError>;
+        request: ExternalScanRequest<'_>,
+    ) -> Result<Option<ExternalScanResult>, ParserExecutionError>;
 }
 
-/// Result of one runtime external scanner call.
+/// Result of one external scanner host call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RuntimeExternalScanResult {
+pub struct ExternalScanResult {
     end_byte: usize,
     before: Option<ScannerSnapshotId>,
     after: Option<ScannerSnapshotId>,
 }
 
-impl RuntimeExternalScanResult {
+impl ExternalScanResult {
     /// Build a scanner result for a token ending at `end_byte`.
     pub const fn new(end_byte: usize) -> Self {
         Self {
@@ -3855,7 +3855,7 @@ impl RuntimeExternalScanResult {
 
 /// Branch-local external scanner request.
 #[derive(Debug, Clone, Copy)]
-pub struct RuntimeExternalScan<'a> {
+pub struct ExternalScanRequest<'a> {
     state: ParseStateId,
     external: ExternalId,
     external_symbol: &'a ExternalSymbol,
@@ -3865,7 +3865,7 @@ pub struct RuntimeExternalScan<'a> {
     scanner_snapshot: Option<ScannerSnapshotId>,
 }
 
-impl RuntimeExternalScan<'_> {
+impl ExternalScanRequest<'_> {
     #[cfg(feature = "weavy-lowering")]
     pub(crate) const fn new<'a>(
         state: ParseStateId,
@@ -3875,8 +3875,8 @@ impl RuntimeExternalScan<'_> {
         input: &'a str,
         byte_position: usize,
         scanner_snapshot: Option<ScannerSnapshotId>,
-    ) -> RuntimeExternalScan<'a> {
-        RuntimeExternalScan {
+    ) -> ExternalScanRequest<'a> {
+        ExternalScanRequest {
             state,
             external,
             external_symbol,
@@ -3941,11 +3941,11 @@ pub(crate) fn match_compiled_lex_terminal(
     terminal: &CompiledLexTerminal,
     input: &str,
     byte_position: usize,
-) -> Result<Option<LexMatch>, ParserRuntimeError> {
+) -> Result<Option<LexMatch>, ParserExecutionError> {
     match &terminal.matcher {
         CompiledTerminalMatcher::Expr(expr) => match_compiled_lex_expr(expr, input, byte_position),
         CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => Err(
-            ParserRuntimeError::new(ParserRuntimeErrorKind::UnsupportedTerminal {
+            ParserExecutionError::new(ParserExecutionErrorKind::UnsupportedTerminal {
                 terminal: *terminal,
                 spelling: spelling.clone(),
             }),
@@ -3958,7 +3958,7 @@ fn match_compiled_lex_expr(
     expr: &CompiledLexExpr,
     input: &str,
     byte_position: usize,
-) -> Result<Option<LexMatch>, ParserRuntimeError> {
+) -> Result<Option<LexMatch>, ParserExecutionError> {
     match expr {
         CompiledLexExpr::Blank => Ok(Some(LexMatch::new(byte_position, byte_position))),
         CompiledLexExpr::String(value) => {
@@ -4043,8 +4043,8 @@ fn match_compiled_lex_expr(
             }
             Ok(Some(LexMatch::new(position, inspected_end)))
         }
-        CompiledLexExpr::UnsupportedSymbol(expr) => Err(ParserRuntimeError::new(
-            ParserRuntimeErrorKind::UnsupportedLexicalSymbol { expr: *expr },
+        CompiledLexExpr::UnsupportedSymbol(expr) => Err(ParserExecutionError::new(
+            ParserExecutionErrorKind::UnsupportedLexicalSymbol { expr: *expr },
         )),
     }
 }
@@ -4367,7 +4367,7 @@ struct RuntimeTokenCandidate {
     literal: bool,
     lexical_precedence: i32,
     implicit_precedence: i32,
-    scanner: Option<RuntimeExternalScanResult>,
+    scanner: Option<ExternalScanResult>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4476,7 +4476,7 @@ impl RuntimeInputEdit {
         &self,
         old_input: &str,
         new_input: &str,
-    ) -> Result<(), ParserRuntimeError> {
+    ) -> Result<(), ParserExecutionError> {
         let valid_order =
             self.start_byte <= self.old_end_byte && self.start_byte <= self.new_end_byte;
         let valid_bounds =
@@ -4493,8 +4493,8 @@ impl RuntimeInputEdit {
         if valid_context {
             Ok(())
         } else {
-            Err(ParserRuntimeError::new(
-                ParserRuntimeErrorKind::InvalidInputEdit {
+            Err(ParserExecutionError::new(
+                ParserExecutionErrorKind::InvalidInputEdit {
                     start_byte: self.start_byte,
                     old_end_byte: self.old_end_byte,
                     new_end_byte: self.new_end_byte,
@@ -4992,138 +4992,37 @@ fn stack_version_lineage(
     lineage
 }
 
-/// Error produced by shared parser runtime support.
+/// Error produced by shared parser execution support.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParserRuntimeError {
-    kind: ParserRuntimeErrorKind,
-    trace: Vec<ParserRuntimeTraceStep>,
+pub struct ParserExecutionError {
+    kind: ParserExecutionErrorKind,
 }
 
-impl ParserRuntimeError {
-    fn new(kind: ParserRuntimeErrorKind) -> Self {
-        Self {
-            kind,
-            trace: Vec::new(),
-        }
+impl ParserExecutionError {
+    fn new(kind: ParserExecutionErrorKind) -> Self {
+        Self { kind }
     }
 
     /// Error kind.
-    pub const fn kind(&self) -> &ParserRuntimeErrorKind {
+    pub const fn kind(&self) -> &ParserExecutionErrorKind {
         &self.kind
     }
-
-    /// Parser runtime trace collected before the failure.
-    pub fn trace(&self) -> &[ParserRuntimeTraceStep] {
-        &self.trace
-    }
 }
 
-/// One selected action in a parser runtime trace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ParserRuntimeTraceStep {
-    /// Parse state before selecting the action.
-    pub state: ParseStateId,
-    /// Input byte offset before selecting the action.
-    pub byte_position: usize,
-    /// Lookahead selected by the lexical mode.
-    pub lookahead: LookaheadSymbol,
-    /// Action explored by the parser runtime branch.
-    pub action: ParseAction,
-}
-
-impl fmt::Display for ParserRuntimeError {
+impl fmt::Display for ParserExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            ParserRuntimeErrorKind::WrongStage { stage } => {
-                write!(f, "parser grammar is at stage {stage:?}, not Productions")
-            }
-            ParserRuntimeErrorKind::EmptyStack => write!(f, "parser runtime stack was empty"),
-            ParserRuntimeErrorKind::MissingState { state } => {
-                write!(f, "parse state {} is missing", state.get())
-            }
-            ParserRuntimeErrorKind::MissingLexMode { mode } => {
-                write!(f, "lexical mode {} is missing", mode.get())
-            }
-            ParserRuntimeErrorKind::NoToken {
-                state,
-                byte_position,
-                expected,
-            } => write!(
+            ParserExecutionErrorKind::UnsupportedTerminal { terminal, spelling } => write!(
                 f,
-                "state {} could not lex a token at byte {}; expected one of {:?}",
-                state.get(),
-                byte_position,
-                expected
-            ),
-            ParserRuntimeErrorKind::NoAction {
-                state,
-                lookahead,
-                byte_position,
-            } => write!(
-                f,
-                "state {} has no action for {lookahead:?} at byte {}",
-                state.get(),
-                byte_position
-            ),
-            ParserRuntimeErrorKind::AmbiguousAction {
-                state,
-                lookahead,
-                action_count,
-            } => write!(
-                f,
-                "state {} has {} actions for {lookahead:?}",
-                state.get(),
-                action_count
-            ),
-            ParserRuntimeErrorKind::UnsupportedExternalScanner {
-                state,
-                external_count,
-            } => write!(
-                f,
-                "state {} requires {} external scanner candidates",
-                state.get(),
-                external_count
-            ),
-            ParserRuntimeErrorKind::UnsupportedTerminal { terminal, spelling } => write!(
-                f,
-                "terminal {} is not supported by the parser runtime: {spelling}",
+                "terminal {} is not supported by parser execution support: {spelling}",
                 terminal.get()
             ),
-            ParserRuntimeErrorKind::UnsupportedLexicalSymbol { expr } => write!(
+            ParserExecutionErrorKind::UnsupportedLexicalSymbol { expr } => write!(
                 f,
                 "lexical expression {} contains a symbol reference unsupported by this slice",
                 expr.get()
             ),
-            ParserRuntimeErrorKind::MissingGoto { state, nonterminal } => write!(
-                f,
-                "state {} has no goto for nonterminal {}",
-                state.get(),
-                nonterminal.get()
-            ),
-            ParserRuntimeErrorKind::TrailingInput { byte_position } => {
-                write!(f, "input remains after byte {byte_position}")
-            }
-            ParserRuntimeErrorKind::AcceptedHiddenRoot => {
-                write!(f, "accepted parse did not produce a visible root node")
-            }
-            ParserRuntimeErrorKind::UnreducedStackEntry { state } => write!(
-                f,
-                "accepted parse left an unreduced stack entry in state {}",
-                state.get()
-            ),
-            ParserRuntimeErrorKind::UnsupportedRecovery { state } => {
-                write!(f, "state {} requires recovery", state.get())
-            }
-            ParserRuntimeErrorKind::NoViableBranch { failure_count } => {
-                write!(
-                    f,
-                    "all parser runtime branches failed ({failure_count} failures)"
-                )
-            }
-            ParserRuntimeErrorKind::BranchStepLimit { limit } => {
-                write!(f, "parser runtime exceeded branch step limit {limit}")
-            }
-            ParserRuntimeErrorKind::InvalidInputEdit {
+            ParserExecutionErrorKind::InvalidInputEdit {
                 start_byte,
                 old_end_byte,
                 new_end_byte,
@@ -5133,119 +5032,27 @@ impl fmt::Display for ParserRuntimeError {
                 f,
                 "invalid input edit start={start_byte} old_end={old_end_byte} new_end={new_end_byte} for old input length {old_input_len} and new input length {new_input_len}"
             ),
-            ParserRuntimeErrorKind::AmbiguousParse {
-                accepted_count,
-                accepted,
-            } => write!(
-                f,
-                "parser runtime accepted {accepted_count} different runtime trees: {accepted:?}"
-            ),
         }
     }
 }
 
-impl Error for ParserRuntimeError {}
+impl Error for ParserExecutionError {}
 
-/// Shared parser runtime error kind.
+/// Shared parser execution support error kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ParserRuntimeErrorKind {
-    /// Parser grammar is not in the required stage.
-    WrongStage {
-        /// Current stage.
-        stage: ParserGenerationStage,
-    },
-    /// Runtime stack became empty.
-    EmptyStack,
-    /// Parse state id was missing.
-    MissingState {
-        /// Missing state.
-        state: ParseStateId,
-    },
-    /// Lexical mode id was missing.
-    MissingLexMode {
-        /// Missing lexical mode.
-        mode: LexModeId,
-    },
-    /// No token candidate matched the input.
-    NoToken {
-        /// Current state.
-        state: ParseStateId,
-        /// Current byte offset.
-        byte_position: usize,
-        /// Terminal spellings accepted by the state's lexical mode.
-        expected: Vec<String>,
-    },
-    /// No parse action existed for a lookahead.
-    NoAction {
-        /// Current state.
-        state: ParseStateId,
-        /// Lookahead.
-        lookahead: LookaheadSymbol,
-        /// Current byte offset.
-        byte_position: usize,
-    },
-    /// The action cell requires GLR/conflict support.
-    AmbiguousAction {
-        /// Current state.
-        state: ParseStateId,
-        /// Lookahead.
-        lookahead: LookaheadSymbol,
-        /// Number of actions in the cell.
-        action_count: usize,
-    },
-    /// The current state needs external scanner execution.
-    UnsupportedExternalScanner {
-        /// Current state.
-        state: ParseStateId,
-        /// External scanner candidates in the state.
-        external_count: usize,
-    },
-    /// The parser runtime cannot match this terminal.
+pub enum ParserExecutionErrorKind {
+    /// Shared lexical support cannot match this terminal.
     UnsupportedTerminal {
         /// Terminal id.
         terminal: TerminalId,
         /// Terminal spelling.
         spelling: String,
     },
-    /// The parser runtime lexical evaluator does not execute symbol references.
+    /// Shared lexical support does not execute symbol references.
     UnsupportedLexicalSymbol {
         /// Source expression id.
         expr: GrammarExprId,
-    },
-    /// No goto entry existed for a reduction.
-    MissingGoto {
-        /// State after popping runtime children.
-        state: ParseStateId,
-        /// Runtime nonterminal.
-        nonterminal: NonterminalId,
-    },
-    /// Accept was reached before all bytes were consumed.
-    TrailingInput {
-        /// Remaining byte offset.
-        byte_position: usize,
-    },
-    /// Accept did not produce a visible root.
-    AcceptedHiddenRoot,
-    /// Accept left a non-extra stack entry outside the accepted root.
-    UnreducedStackEntry {
-        /// State carried by the leftover stack entry.
-        state: ParseStateId,
-    },
-    /// Recovery is outside this parser runtime slice.
-    UnsupportedRecovery {
-        /// Current state.
-        state: ParseStateId,
-    },
-    /// No branch accepted the input.
-    NoViableBranch {
-        /// Number of branch failures observed.
-        failure_count: usize,
-    },
-    /// Runtime branch execution exceeded its guard.
-    BranchStepLimit {
-        /// Step limit that was exceeded.
-        limit: usize,
     },
     /// Incremental edit coordinates did not describe the old and new inputs.
     InvalidInputEdit {
@@ -5259,13 +5066,6 @@ pub enum ParserRuntimeErrorKind {
         old_input_len: usize,
         /// New input byte length.
         new_input_len: usize,
-    },
-    /// More than one distinct S-expression projection was accepted.
-    AmbiguousParse {
-        /// Number of accepted branches.
-        accepted_count: usize,
-        /// Accepted corpus-normalized S-expression projections.
-        accepted: Vec<String>,
     },
 }
 
@@ -7458,7 +7258,7 @@ extras (
                     compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
                 ))
             })
-            .collect::<Result<Vec<_>, ParserRuntimeError>>()
+            .collect::<Result<Vec<_>, ParserExecutionError>>()
             .unwrap();
 
         assert!(observed.contains(&(
@@ -7791,7 +7591,7 @@ extras (
         terminal: &TerminalSymbol,
         input: &str,
         byte_position: usize,
-    ) -> Result<Option<usize>, ParserRuntimeError> {
+    ) -> Result<Option<usize>, ParserExecutionError> {
         let compiled = compile_lex_terminal(validated, terminal);
         match_compiled_lex_terminal(&compiled, input, byte_position)
             .map(|result| result.map(|match_| match_.end))
@@ -7802,7 +7602,7 @@ extras (
         terminal: &TerminalSymbol,
         input: &str,
         byte_positions: &[usize],
-    ) -> Result<Vec<Option<usize>>, ParserRuntimeError> {
+    ) -> Result<Vec<Option<usize>>, ParserExecutionError> {
         byte_positions
             .iter()
             .map(|byte_position| compiled_terminal_end(validated, terminal, input, *byte_position))
@@ -8284,7 +8084,7 @@ extras (
                     compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
                 ))
             })
-            .collect::<Result<Vec<_>, ParserRuntimeError>>()
+            .collect::<Result<Vec<_>, ParserExecutionError>>()
             .unwrap();
 
         assert!(

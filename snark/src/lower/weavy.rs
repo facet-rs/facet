@@ -30,7 +30,7 @@ use weavy::{
 use crate::{
     corpus::{SexpAtom, SexpChild, SexpNode, SexpValue},
     parser as parser_ir,
-    parser::{RuntimeExternalScan, RuntimeExternalScanResult, RuntimeExternalScanner},
+    parser::{ExternalScanRequest, ExternalScanResult, ExternalScannerHost},
     runtime_input::{ByteOffset, ByteRange, PointBytes, PointRange, Row, Utf8ColumnBytes},
     validated::{GrammarExprId, ValidatedGrammar},
 };
@@ -164,7 +164,7 @@ pub enum SnarkIntrinsic {
         state: ParseStateId,
         /// Valid-symbol mask offered to the scanner.
         valid_symbols: ValidSymbolSetId,
-        /// Scanner state selected by Snark's parser runtime.
+        /// Scanner state selected by Snark's Weavy parser execution.
         scanner_state: ExternalScannerStateId,
         /// Serialized scanner snapshot before the call.
         before: Option<ScannerSnapshotId>,
@@ -612,7 +612,7 @@ pub struct WeavyParserProgram {
 }
 
 impl WeavyParserProgram {
-    /// Canonical Weavy program generated for the parser runtime lane.
+    /// Canonical Weavy program generated for Snark parser execution.
     pub const fn lowered(&self) -> &SnarkWeavyLowered {
         &self.lowered
     }
@@ -1668,7 +1668,7 @@ struct SymbolicWeavyParserActionBlock {
     block: SnarkBlockId,
 }
 
-/// Error returned while lowering or executing a Weavy parser runtime plan.
+/// Error returned while lowering or executing a Weavy parser plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum WeavyParseError {
@@ -1823,7 +1823,7 @@ pub enum WeavyParseError {
         /// Validation failure text.
         message: String,
     },
-    /// A non-Snark canonical Weavy op appeared in the parser runtime plan.
+    /// A non-Snark canonical Weavy op appeared in the parser plan.
     UnsupportedCanonicalOp,
 }
 
@@ -2170,7 +2170,7 @@ struct RuntimeWeavyInput<'a> {
     parser: &'a parser_ir::ParserGrammar,
     table: &'a parser_ir::ParseTable,
     input: &'a str,
-    external_scanner: Option<&'a dyn RuntimeExternalScanner>,
+    external_scanner: Option<&'a dyn ExternalScannerHost>,
 }
 
 struct RuntimeWeavyOutput<'a> {
@@ -2229,7 +2229,7 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
-    external_scanner: Option<&dyn RuntimeExternalScanner>,
+    external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
@@ -2254,7 +2254,7 @@ pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
-    external_scanner: Option<&dyn RuntimeExternalScanner>,
+    external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
@@ -2279,7 +2279,7 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
-    external_scanner: Option<&dyn RuntimeExternalScanner>,
+    external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
@@ -2304,7 +2304,7 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
-    external_scanner: Option<&dyn RuntimeExternalScanner>,
+    external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
@@ -2328,7 +2328,7 @@ pub struct WeavyParseSession<'a> {
     grammar: &'a ValidatedGrammar,
     parser: &'a parser_ir::ParserGrammar,
     table: &'a parser_ir::ParseTable,
-    external_scanner: Option<&'a dyn RuntimeExternalScanner>,
+    external_scanner: Option<&'a dyn ExternalScannerHost>,
     last_input: Option<String>,
     last_report: Option<WeavyParseReport>,
 }
@@ -2353,7 +2353,7 @@ impl<'a> WeavyParseSession<'a> {
     }
 
     /// Attach an external scanner host.
-    pub fn with_external_scanner(mut self, scanner: &'a dyn RuntimeExternalScanner) -> Self {
+    pub fn with_external_scanner(mut self, scanner: &'a dyn ExternalScannerHost) -> Self {
         self.external_scanner = Some(scanner);
         self
     }
@@ -2502,7 +2502,7 @@ pub fn reparse_prepared_weavy_with_report_and_scanner(
     previous_report: &WeavyParseReport,
     edit: parser_ir::RuntimeInputEdit,
     new_input: &str,
-    external_scanner: Option<&dyn RuntimeExternalScanner>,
+    external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
@@ -2533,7 +2533,7 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
     previous_report: &WeavyParseReport,
     edit: parser_ir::RuntimeInputEdit,
     new_input: &str,
-    external_scanner: Option<&dyn RuntimeExternalScanner>,
+    external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     validate_weavy_edit(edit, old_input, new_input)?;
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
@@ -3906,7 +3906,7 @@ struct RuntimeWeavyStepper<'a> {
     auto_close_index: &'a RuntimeWeavyAutoCloseIndex,
     input: &'a str,
     input_points: &'a RuntimeWeavyInputPoints,
-    external_scanner: Option<&'a dyn RuntimeExternalScanner>,
+    external_scanner: Option<&'a dyn ExternalScannerHost>,
     stack: Cow<'a, [RuntimeWeavyStackEntry]>,
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
@@ -4768,7 +4768,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         mode: &parser_ir::LexMode,
         external: parser_ir::ExternalId,
         byte_position: usize,
-    ) -> Result<Option<RuntimeExternalScanResult>, WeavyParseError> {
+    ) -> Result<Option<ExternalScanResult>, WeavyParseError> {
         let Some(scanner) = self.external_scanner else {
             return Err(WeavyParseError::UnsupportedExternalScanner {
                 state: state.id(),
@@ -4780,7 +4780,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .valid_symbols()
             .map(|valid_symbols| &self.table.valid_symbol_sets()[valid_symbols.get() as usize]);
         scanner
-            .scan(RuntimeExternalScan::new(
+            .scan(ExternalScanRequest::new(
                 state.id(),
                 external,
                 external_row,
@@ -5118,7 +5118,7 @@ struct RuntimeWeavyToken {
     lookahead: parser_ir::LookaheadSymbol,
     end: usize,
     inspected_end: usize,
-    scanner: Option<RuntimeExternalScanResult>,
+    scanner: Option<ExternalScanResult>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5132,7 +5132,7 @@ struct RuntimeWeavyTokenCandidate {
     literal: bool,
     lexical_precedence: i32,
     implicit_precedence: i32,
-    scanner: Option<RuntimeExternalScanResult>,
+    scanner: Option<ExternalScanResult>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

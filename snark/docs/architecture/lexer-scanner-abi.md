@@ -18,7 +18,7 @@ The corrected CSS path is therefore:
 7. compare syntax trees and query captures against corpus/highlight oracles.
 
 No step in this path is "parse CSS by hand". A debug probe can inspect facts,
-but it must not become a parser runtime.
+but it must not become parser execution.
 
 ## Tree-sitter Semantics To Preserve
 
@@ -314,7 +314,7 @@ executing scanner code or a scanner translation.
 
 ## Current Hardening Needed
 
-Before claiming parser runtime support, harden these areas:
+Before claiming parser execution support, harden these areas:
 
 - `validated.rs`: validate terminal-only constraints for `token(...)` and
   `token.immediate(...)`, including whether symbol references inside token
@@ -333,9 +333,9 @@ Before claiming parser runtime support, harden these areas:
   structured diagnostics.
 - `lexical.rs`: add scanner ABI capability coverage for `get_column` and
   included-range starts, or diagnose scanners that need them.
-- scanner runtime: carry serialized scanner state per parse stack branch and
+- scanner execution: carry serialized scanner state per parse stack branch and
   define replay/restore behavior before GLR or incremental parsing.
-- parser runtime: derive external valid-symbol masks from action tables and
+- parser execution: derive external valid-symbol masks from action tables and
   `ValidatedGrammar::externals()` ordinals, not from scanner source enums.
 - oracle lane: parse corpus fixtures into structured expected trees, then
   compare Snark output and query captures against those fixtures.
