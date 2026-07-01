@@ -223,23 +223,19 @@ fn collect_jinja(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-// A grammar-generated AST. Hand-written here only to prove the materialization; the real
-// thing emits these `#[derive(Facet)]` types from the annotated grammar. Recursive, to
-// prove nesting + precedence (`1 + 2 * 3` -> Binary(1, +, Binary(2, *, 3))).
-#[derive(facet::Facet, Debug, PartialEq)]
-#[repr(u8)]
-enum PExpr {
-    Number(i64),
-    Variable(String),
-    Binary(Box<PBin>),
+// The gingembre expression AST — FULLY GENERATED from the grammar + `ast()` annotations by
+// build.rs, written to `$OUT_DIR/gingembre_ast.rs`, and included here. Nobody hand-writes
+// these: `enum Expr { Binary(Box<Binary>), Number(i64), Variable(String) }` and
+// `struct Binary { left: Expr, op: String, right: Expr }` come out of the grammar rules
+// (2 `_expr` operands + an operator token) with names/decodes from the annotation file.
+/// The generated AST lives in its own module so its `Expr` doesn't collide with
+/// `gingembre::ast::Expr` (which the hand-lowering oracle path still uses).
+pub mod gen_ast {
+    include!(concat!(env!("OUT_DIR"), "/gingembre_ast.rs"));
 }
 
-#[derive(facet::Facet, Debug, PartialEq)]
-struct PBin {
-    left: PExpr,
-    op: String,
-    right: PExpr,
-}
+/// The generated AST source, for showing what came out of the grammar.
+const GENERATED_AST_SRC: &str = include_str!(concat!(env!("OUT_DIR"), "/gingembre_ast.rs"));
 
 /// The grammar's AST annotations — what the `ast({...})` DSL helper records, keyed by node
 /// kind. In the real thing these live inline in grammar.js; here they're loaded through the
@@ -251,6 +247,9 @@ struct NodeAnn {
     /// Enum variant this node maps to (`as` in the DSL).
     #[facet(rename = "as", default)]
     as_variant: Option<String>,
+    /// The generated enum name (only on the `_expr` supertype entry).
+    #[facet(rename = "enum", default)]
+    enum_name: Option<String>,
     /// Structural noise — descend to the inner named child before mapping.
     #[facet(default)]
     transparent: bool,
@@ -260,7 +259,7 @@ struct NodeAnn {
     /// Scalar Rust type when the variant's payload is a leaf (`i64` | `String`).
     #[facet(default)]
     scalar: Option<String>,
-    /// Struct field name -> {child selector, Rust field type}.
+    /// Struct field name -> child selector. The field TYPE is grammar-derived, not here.
     #[facet(default)]
     fields: BTreeMap<String, FieldAnn>,
 }
@@ -269,25 +268,12 @@ struct NodeAnn {
 struct FieldAnn {
     /// Child selector (`named:N` | `token`).
     from: String,
-    /// Rust field type.
-    #[facet(default)]
-    ty: String,
 }
 
-/// AST enrichment for the gingembre expression nodes, written in the `ast()` DSL. Carries
-/// everything BOTH the builder (variant/field/selector) and the codegen (struct/scalar/
-/// field types) need — no hardcoded Rust.
-const ANN_SRC: &str = r#"
-ast({
-  binary:   { as: "Binary", struct: "PBin",
-              fields: { left:  { from: "named:0", ty: "PExpr" },
-                        op:    { from: "token",   ty: "String" },
-                        right: { from: "named:1", ty: "PExpr" } } },
-  variable: { as: "Variable", scalar: "String" },
-  literal:  { transparent: true },
-  number:   { as: "Number", scalar: "i64" },
-});
-"#;
+/// AST enrichment for the gingembre expression nodes, in the `ast()` DSL — the SAME file
+/// build.rs consumes to codegen the AST. Loaded through the DSL channel here to drive the
+/// reflection/Weavy builder, keeping one source of truth.
+const ANN_SRC: &str = include_str!("../gingembre_ast.snark.js");
 
 /// PROOF: ONE generic reflection builder dispatching on the target facet `Shape`, driven
 /// from snark's resolved tree — enum→variant, struct→fields, scalar→set. No facet-format.
@@ -295,6 +281,9 @@ ast({
 /// `hint_*` (the stand-in for grammar annotations) — which is the whole point: annotations
 /// are load-bearing, not sugar.
 fn ast_proof() {
+    // The generated AST types (shadow `gingembre::ast::Expr` within this fn only).
+    use gen_ast::{Binary, Expr};
+
     let repo = env::var_os("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .and_then(|p| p.parent().map(PathBuf::from))
@@ -316,22 +305,13 @@ fn ast_proof() {
         .expect("emit annotations");
     let anns: Annotations = facet_json::from_str(&ann_json).expect("decode annotations");
 
-    // Item 2: the AST types PExpr/PBin are GENERATED from the annotations, not hand-written.
-    let generated = codegen(&anns, "PExpr");
-    println!("--- codegen: #[derive(Facet)] AST from grammar annotations ---\n{generated}--- end ---");
-    for expected in [
-        "enum PExpr",
-        "Binary(Box<PBin>)",
-        "Variable(String)",
-        "Number(i64)",
-        "struct PBin",
-        "left: PExpr,",
-        "op: String,",
-        "right: PExpr,",
-    ] {
-        assert!(generated.contains(expected), "codegen missing {expected:?}");
-    }
-    println!("✓ item 2: AST types generated from annotations match the hand-written PExpr/PBin");
+    // Item 2: the AST types Expr/Binary are GENERATED by build.rs from the grammar + the same
+    // annotation file, written to $OUT_DIR/gingembre_ast.rs, and `include!`d above — this is
+    // that file's contents (nobody hand-wrote them, nobody copied stdout into a .rs).
+    println!("--- $OUT_DIR/gingembre_ast.rs (generated by build.rs from the grammar) ---");
+    print!("{GENERATED_AST_SRC}");
+    println!("--- end ---");
+    let _ = &anns; // annotations drive the builder below
 
     for src in ["{{ 1 + 2 }}", "{{ 1 + 2 * 3 }}", "{{ x }}"] {
         let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).expect("parse");
@@ -340,13 +320,13 @@ fn ast_proof() {
             .expect("resolved tree");
         let expr_node = find_expr(&resolved).expect("no expr under interpolation");
 
-        let partial = facet_reflect::Partial::alloc_owned::<PExpr>().expect("alloc");
+        let partial = facet_reflect::Partial::alloc_owned::<Expr>().expect("alloc");
         let mut ops = Vec::new();
-        let value: PExpr = build(partial, expr_node, &anns, &mut ops)
+        let value: Expr = build(partial, expr_node, &anns, &mut ops)
             .expect("build via reflection")
             .build()
             .expect("finalize")
-            .materialize::<PExpr>()
+            .materialize::<Expr>()
             .expect("materialize");
         println!("snark {src:<16?} -> {value:?}");
     }
@@ -355,8 +335,8 @@ fn ast_proof() {
     let report = parse_prepared_weavy_with_report(&plan, &parser, &table, "{{ 1 + 2 * 3 }}").unwrap();
     let resolved = report.accepted_resolved_tree(&parser, "{{ 1 + 2 * 3 }}").unwrap();
     let mut ops = Vec::new();
-    let value: PExpr = build(
-        facet_reflect::Partial::alloc_owned::<PExpr>().unwrap(),
+    let value: Expr = build(
+        facet_reflect::Partial::alloc_owned::<Expr>().unwrap(),
         find_expr(&resolved).unwrap(),
         &anns,
         &mut ops,
@@ -364,22 +344,22 @@ fn ast_proof() {
     .unwrap()
     .build()
     .unwrap()
-    .materialize::<PExpr>()
+    .materialize::<Expr>()
     .unwrap();
-    let expected = PExpr::Binary(Box::new(PBin {
-        left: PExpr::Number(1),
+    let expected = Expr::Binary(Box::new(Binary {
+        left: Expr::Number(1),
         op: "+".into(),
-        right: PExpr::Binary(Box::new(PBin {
-            left: PExpr::Number(2),
+        right: Expr::Binary(Box::new(Binary {
+            left: Expr::Number(2),
             op: "*".into(),
-            right: PExpr::Number(3),
+            right: Expr::Number(3),
         })),
     }));
     assert_eq!(value, expected);
     println!("✓ generic Shape-driven reflection builder: grammar surface -> nested #[derive(Facet)] AST");
 
     // Item 3: run the SAME build ops as a Weavy program through the weavy runtime.
-    let via_weavy: PExpr = run_ops_via_weavy(&ops);
+    let via_weavy: Expr = run_ops_via_weavy(&ops);
     assert_eq!(via_weavy, expected, "weavy-run ops must reproduce the reflected AST");
     println!(
         "✓ item 3: {} build ops emitted as a Weavy program, run through weavy::run -> identical AST",
@@ -543,50 +523,8 @@ fn select_child<'a>(node: &'a RuntimeResolvedNode, selector: &str) -> &'a Runtim
     }
 }
 
-/// Item 2: emit the `#[derive(Facet)]` AST types straight from the annotations. Variants are
-/// the nodes with an `as`; a struct payload becomes `Variant(Box<Struct>)` (boxed for
-/// recursion), a scalar becomes `Variant(ty)`; each named struct is emitted from its
-/// `fields`. In the real thing node-types (derived in-snark from the grammar) supplies field
-/// cardinality → `T`/`Option<T>`/`Vec<T>`; here the annotations carry the types directly.
-fn codegen(anns: &Annotations, enum_name: &str) -> String {
-    use std::fmt::Write;
-    let mut out = String::new();
-    let mut structs: Vec<(&String, &NodeAnn)> = Vec::new();
-
-    writeln!(
-        out,
-        "#[derive(facet::Facet, Debug, PartialEq)]\n#[repr(u8)]\nenum {enum_name} {{"
-    )
-    .unwrap();
-    for ann in anns.values() {
-        let Some(variant) = &ann.as_variant else {
-            continue;
-        };
-        let payload = if let Some(st) = &ann.struct_name {
-            structs.push((st, ann));
-            format!("Box<{st}>")
-        } else if let Some(scalar) = &ann.scalar {
-            scalar.clone()
-        } else {
-            continue;
-        };
-        writeln!(out, "    {variant}({payload}),").unwrap();
-    }
-    writeln!(out, "}}").unwrap();
-
-    for (st_name, ann) in structs {
-        writeln!(
-            out,
-            "\n#[derive(facet::Facet, Debug, PartialEq)]\nstruct {st_name} {{"
-        )
-        .unwrap();
-        for (fname, f) in &ann.fields {
-            writeln!(out, "    {fname}: {},", f.ty).unwrap();
-        }
-        writeln!(out, "}}").unwrap();
-    }
-    out
-}
+// (The AST codegen lives in build.rs now — it writes $OUT_DIR/gingembre_ast.rs from the
+// grammar + gingembre_ast.snark.js. Nothing hand-writes or copies the types anymore.)
 
 /// The first named node under the interpolation (the expression).
 fn find_expr(node: &RuntimeResolvedNode) -> Option<&RuntimeResolvedNode> {
