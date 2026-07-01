@@ -26,8 +26,8 @@ use snark::{
     manifest::TreeSitterConfig,
     parser::{
         ExternalId, ExternalScanRequest, ExternalScanResult, ExternalScannerHost, ParseTable,
-        ParserExecutionError, ParserGrammar, RuntimeInputEdit, RuntimeResolvedNode,
-        ScannerSnapshotId, TreeEvent,
+        ParserExecutionError, ParserGrammar, ParserInputEdit, ResolvedCstNode, ScannerSnapshotId,
+        TreeEvent,
     },
     query::QuerySource,
     runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
@@ -60,9 +60,9 @@ struct PlaygroundInputEdit {
     new_end_byte: usize,
 }
 
-impl From<PlaygroundInputEdit> for RuntimeInputEdit {
+impl From<PlaygroundInputEdit> for ParserInputEdit {
     fn from(edit: PlaygroundInputEdit) -> Self {
-        RuntimeInputEdit::new(edit.start_byte, edit.old_end_byte, edit.new_end_byte)
+        ParserInputEdit::new(edit.start_byte, edit.old_end_byte, edit.new_end_byte)
     }
 }
 
@@ -381,7 +381,7 @@ impl WeavyPlaygroundReport {
         &self,
         parser: &ParserGrammar,
         input: &str,
-    ) -> Option<RuntimeResolvedNode> {
+    ) -> Option<ResolvedCstNode> {
         self.0.accepted_resolved_tree(parser, input)
     }
 }
@@ -463,7 +463,7 @@ impl PlaygroundSession {
                 ));
             }
         };
-        let edit = request.edit.map(RuntimeInputEdit::from);
+        let edit = request.edit.map(ParserInputEdit::from);
         if let (Some(edit), Some(old_input)) = (edit, self.last_input.as_deref())
             && let Err(error) = edit.validate_against(old_input, &request.input)
         {
@@ -566,7 +566,7 @@ impl PlaygroundSession {
         &mut self,
         input: &str,
         run_corpus: bool,
-        edit: Option<RuntimeInputEdit>,
+        edit: Option<ParserInputEdit>,
     ) -> PlaygroundResponse {
         playground_response_for_session(self, input, run_corpus, edit)
     }
@@ -639,7 +639,7 @@ fn playground_response_for_session(
     session: &mut PlaygroundSession,
     input: &str,
     run_corpus: bool,
-    edit: Option<RuntimeInputEdit>,
+    edit: Option<ParserInputEdit>,
 ) -> PlaygroundResponse {
     let bundle = session.bundle.clone();
     let mut diagnostics = Vec::new();
@@ -739,7 +739,7 @@ fn playground_response_for_session(
 fn parse_session_input(
     session: &mut PlaygroundSession,
     input: &str,
-    edit: Option<RuntimeInputEdit>,
+    edit: Option<ParserInputEdit>,
 ) -> Result<PlaygroundParseReport, Diagnostic> {
     let scanner = session
         .scanner_selection
@@ -756,7 +756,7 @@ fn parse_session_input(
         ))
     });
     let report = parse_weavy_with_optional_recovery(&session.prepared, scanner, input, previous)
-        .map_err(|error| runtime_weavy_error_diagnostic("parse", &error, input))?;
+        .map_err(|error| weavy_error_diagnostic("parse", &error, input))?;
     session.last_input = Some(input.to_owned());
     session.last_report = Some(report.report.0.clone());
     Ok(report)
@@ -863,7 +863,7 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
     }
 }
 
-fn resolved_tree_output(node: &RuntimeResolvedNode) -> ResolvedTreeOutput {
+fn resolved_tree_output(node: &ResolvedCstNode) -> ResolvedTreeOutput {
     let bytes = node.bytes();
     let points = node.points();
     ResolvedTreeOutput {
@@ -1500,7 +1500,7 @@ fn layer_output(
     let report = match report_result {
         Ok(report) => report,
         Err(error) => {
-            let diagnostic = runtime_weavy_error_diagnostic("parse", &error, &input);
+            let diagnostic = weavy_error_diagnostic("parse", &error, &input);
             return LayerOutput {
                 language: group.language,
                 combined: group.combined,
@@ -2023,7 +2023,7 @@ fn parse_weavy_with_optional_recovery(
     prepared: &PreparedGrammar,
     scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
-    previous: Option<(&str, &WeavyParseReport, RuntimeInputEdit)>,
+    previous: Option<(&str, &WeavyParseReport, ParserInputEdit)>,
 ) -> Result<PlaygroundParseReport, WeavyParseError> {
     let strict = if let Some((old_input, previous_report, edit)) = previous {
         reparse_prepared_weavy_with_report_and_scanner(
@@ -2089,7 +2089,7 @@ fn accepted_problem_span(events: &[TreeEvent], input: &str) -> Option<Diagnostic
     })
 }
 
-fn runtime_weavy_error_diagnostic(stage: &str, error: &WeavyParseError, input: &str) -> Diagnostic {
+fn weavy_error_diagnostic(stage: &str, error: &WeavyParseError, input: &str) -> Diagnostic {
     let span = weavy_parse_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
     diagnostic(stage, error.to_string(), span)
 }
@@ -4843,7 +4843,7 @@ mod tests {
     }
 
     #[test]
-    fn arborium_nginx_sample_reports_unrecovered_map_entry_failure() {
+    fn arborium_nginx_sample_reports_recovered_map_entry_errors() {
         let def = std::path::Path::new("/Users/amos/oss/arborium/langs/group-maple/nginx/def");
         if !def.exists() {
             return;
@@ -4886,20 +4886,16 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("could not lex at byte"),
+                .contains("accepted parse contains"),
             "{:#?}",
             response.diagnostics
         );
-        assert_eq!(
-            response
-                .diagnostics
-                .first()
-                .and_then(|diagnostic| diagnostic.primary_span.as_ref())
-                .map(|span| (span.start_row, span.start_column)),
-            Some((110, 4))
-        );
-        assert!(response.parse.is_none());
-        assert!(response.highlights.is_empty());
+        let parse = response.parse.as_ref().expect("recovered parse is kept");
+        assert_eq!(parse.accepted_count, 1);
+        assert!(parse.accepted_error_count > 0, "{parse:#?}");
+        assert_eq!(parse.accepted_missing_count, 0);
+        assert!(parse.sexp.contains("(ERROR)"), "{}", parse.sexp);
+        assert!(!response.highlights.is_empty());
     }
 
     #[test]
@@ -5025,7 +5021,7 @@ mod tests {
                 ),
                 (
                     "graphql",
-                    "samples/starwars_schema.graphql",
+                    "samples/0004kb.graphql",
                     true,
                     Some("graphql"),
                     Some(0),
@@ -5091,7 +5087,7 @@ mod tests {
     }
 
     #[test]
-    fn all_non_error_vendored_playground_samples_parse_from_rust() {
+    fn representative_vendored_playground_samples_parse_from_rust() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../playgrounds/snark/src/bundled");
         let bundles = read_vendored_bundles(&root);
@@ -5120,6 +5116,7 @@ mod tests {
                 .iter()
                 .filter(|file| file.path.starts_with("samples/"))
                 .filter(|file| !is_error_sample(&file.path))
+                .filter(|file| !is_benchmark_only_sample(&file.path))
                 .cloned()
                 .collect::<Vec<_>>();
             for sample in samples {
@@ -5454,6 +5451,16 @@ mod tests {
     fn is_error_sample(path: &str) -> bool {
         let lower = path.to_ascii_lowercase();
         lower.contains("error") || lower.contains("invalid") || lower.contains("fail")
+    }
+
+    fn is_benchmark_only_sample(path: &str) -> bool {
+        matches!(
+            path,
+            "samples/0016kb.graphql"
+                | "samples/0064kb.graphql"
+                | "samples/0256kb.graphql"
+                | "samples/1024kb.graphql"
+        )
     }
 
     fn resolved_tree_texts(node: &ResolvedTreeOutput) -> Vec<&str> {

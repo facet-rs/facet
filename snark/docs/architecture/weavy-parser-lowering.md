@@ -127,7 +127,7 @@ Required block families:
   primitives.
 - Lexer blocks: generated lex-mode programs that merge literal and pattern
   terminals, execute composed token expressions, and emit the same candidates as
-  the interpreter oracle. See `weavy-lexer-lowering.md`.
+  the lexical matcher oracle. See `weavy-lexer-lowering.md`.
 - GLR worklist blocks: split, merge, deferred reduction, branch retirement, and
   deterministic winner selection.
 - Query blocks: query-pattern entry blocks and shared predicate/capture emit

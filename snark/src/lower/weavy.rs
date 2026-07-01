@@ -3129,7 +3129,7 @@ impl<'a> WeavyParseSession<'a> {
     /// Reparse after an edit and make the new input the session baseline.
     pub fn reparse(
         &mut self,
-        edit: parser_ir::RuntimeInputEdit,
+        edit: parser_ir::ParserInputEdit,
         new_input: impl Into<String>,
     ) -> Result<&WeavyParseReport, WeavyParseError> {
         let new_input = new_input.into();
@@ -3187,7 +3187,7 @@ impl<'a> WeavyParseSession<'a> {
     /// Reparse after an edit with skip-invalid recovery and make it the new baseline.
     pub fn reparse_recovering(
         &mut self,
-        edit: parser_ir::RuntimeInputEdit,
+        edit: parser_ir::ParserInputEdit,
         new_input: impl Into<String>,
     ) -> Result<&WeavyParseReport, WeavyParseError> {
         let new_input = new_input.into();
@@ -3230,7 +3230,7 @@ pub fn reparse_prepared_weavy_with_report_and_scanner(
     table: &parser_ir::ParseTable,
     old_input: &str,
     previous_report: &WeavyParseReport,
-    edit: parser_ir::RuntimeInputEdit,
+    edit: parser_ir::ParserInputEdit,
     new_input: &str,
     external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
@@ -3260,7 +3260,7 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
     table: &parser_ir::ParseTable,
     old_input: &str,
     previous_report: &WeavyParseReport,
-    edit: parser_ir::RuntimeInputEdit,
+    edit: parser_ir::ParserInputEdit,
     new_input: &str,
     external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
@@ -3283,7 +3283,7 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
 }
 
 fn validate_weavy_edit(
-    edit: parser_ir::RuntimeInputEdit,
+    edit: parser_ir::ParserInputEdit,
     old_input: &str,
     new_input: &str,
 ) -> Result<(), WeavyParseError> {
@@ -3321,7 +3321,7 @@ struct RuntimeWeavyReuseIndex {
 }
 
 impl RuntimeWeavyReuseIndex {
-    fn from_report(report: &WeavyParseReport, edit: parser_ir::RuntimeInputEdit) -> Self {
+    fn from_report(report: &WeavyParseReport, edit: parser_ir::ParserInputEdit) -> Self {
         let delta = edit.new_end_byte() as isize - edit.old_end_byte() as isize;
         let mut nodes = HashMap::<RuntimeWeavyReuseKey, RuntimeWeavyReusableNode>::new();
         for node in report.reusable_nodes.iter().filter(|node| {
@@ -3389,7 +3389,7 @@ impl RuntimeWeavyReuseIndex {
 }
 
 fn runtime_weavy_reuse_position(
-    edit: parser_ir::RuntimeInputEdit,
+    edit: parser_ir::ParserInputEdit,
     start_byte: usize,
     end_byte: usize,
 ) -> Option<(usize, usize)> {
@@ -3439,7 +3439,7 @@ fn runtime_weavy_shift_byte_range(
 
 fn runtime_weavy_shift_tree_event_bytes(
     event: parser_ir::TreeEvent,
-    edit: parser_ir::RuntimeInputEdit,
+    edit: parser_ir::ParserInputEdit,
     delta: isize,
 ) -> parser_ir::TreeEvent {
     let shift = |bytes| runtime_weavy_shift_byte_range(bytes, edit.old_end_byte(), delta);
@@ -3842,7 +3842,7 @@ impl WeavyParseReport {
         &self,
         parser: &parser_ir::ParserGrammar,
         input: &str,
-    ) -> Option<parser_ir::RuntimeResolvedNode> {
+    ) -> Option<parser_ir::ResolvedCstNode> {
         let accepted_tree_events = self.accepted_tree_events();
         parser_ir::resolved_tree_from_events(parser, input, &accepted_tree_events, |node| {
             Some(self.tree_store.node_kind(node).to_owned())

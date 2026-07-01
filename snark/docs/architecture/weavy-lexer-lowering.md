@@ -1,9 +1,9 @@
 # Weavy Lexer Lowering
 
 Snark's lexer endpoint is not a loop over Rust regex calls. The current
-`CompiledLexMode` path is a correctness-preserving interpreter and an oracle
-for the lowered form, but the lowered executor should carry a lexer program
-owned by Snark and executed by Weavy.
+`CompiledLexMode` matcher path is a correctness-preserving oracle for the
+lowered form, but the lowered executor should carry a lexer program owned by
+Snark and executed by Weavy.
 
 ## Boundary
 
@@ -42,7 +42,7 @@ The generator should lower each lex mode into one lexer graph:
 - external scanners remain explicit Snark host calls with scanner snapshots.
 
 Executing a lex mode is then one pass through the graph at the current byte
-position. The result is the same candidate set the interpreter would have found:
+position. The result is the same candidate set the matcher oracle would have found:
 terminal id, accepted end byte, inspected end byte, lexical precedence, literal
 flag, immediate flag, and scanner snapshot effect.
 
@@ -50,12 +50,12 @@ The parser state still filters valid terminals and externals. This preserves the
 important Tree-sitter property that JavaScript-style ambiguities such as
 regex-vs-divide are lexer-mode/lookahead questions, not global regex questions.
 
-## Interpreter Oracle
+## Matcher Oracle
 
 The current Rust matcher stays useful as the differential oracle:
 
 - for each generated lex mode and test byte position, run the interpreted
-  matcher;
+  matcher oracle;
 - run the lowered Weavy lexer graph;
 - compare candidate terminal ids, end bytes, inspected end bytes, precedence
   fields, and selected winner;

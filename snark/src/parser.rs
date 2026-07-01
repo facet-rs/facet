@@ -1,8 +1,8 @@
-//! Tree-sitter-style parser generator and LR/GLR runtime scaffolding.
+//! Tree-sitter-style parser generator and LR/GLR execution scaffolding.
 //!
 //! This module is the final-shape parser lane. It is deliberately table- and
-//! runtime-oriented: validated grammar facts become normalized productions,
-//! lexical modes, LR actions, GLR metadata, tree plans, and traceable runtime
+//! execution-oriented: validated grammar facts become normalized productions,
+//! lexical modes, LR actions, GLR metadata, tree plans, and traceable execution
 //! state. It is not a recursive recognizer and it never consumes generated
 //! Tree-sitter implementation files.
 
@@ -90,8 +90,8 @@ pub enum ParserGenerationStage {
     Productions,
     /// LR item sets and action/goto tables have been generated.
     Tables,
-    /// Runtime tree, scanner, recovery, and query plans have been attached.
-    RuntimePlans,
+    /// Tree, scanner, recovery, and query plans have been attached.
+    ExecutionPlans,
 }
 
 /// Parser-generator input after validated grammar facts enter the parser lane.
@@ -127,7 +127,7 @@ impl ParserGrammar {
     ///
     /// This is not production lowering. The next parser-generator phase must
     /// flatten `ValidatedGrammar` expressions into [`Production`] rows before
-    /// item sets or runtime execution are valid.
+    /// item sets or parser execution are valid.
     pub fn seed_from_validated(grammar: &ValidatedGrammar, lexical: &LexicalFacts) -> Self {
         Self::seed(grammar, lexical)
     }
@@ -4880,13 +4880,13 @@ impl LexMatch {
 /// `start_byte..old_end_byte` names the replaced range in the previous input.
 /// `start_byte..new_end_byte` names the replacement range in the new input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RuntimeInputEdit {
+pub struct ParserInputEdit {
     start_byte: usize,
     old_end_byte: usize,
     new_end_byte: usize,
 }
 
-impl RuntimeInputEdit {
+impl ParserInputEdit {
     /// Build a byte edit descriptor.
     pub const fn new(start_byte: usize, old_end_byte: usize, new_end_byte: usize) -> Self {
         Self {
@@ -4946,9 +4946,9 @@ impl RuntimeInputEdit {
     }
 }
 
-/// Lossless-enough runtime tree projection for CST/AST consumers.
+/// Lossless-enough parse tree projection for CST/AST consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeResolvedNode {
+pub struct ResolvedCstNode {
     kind: String,
     symbol: Option<ParserSymbol>,
     field: Option<String>,
@@ -4962,7 +4962,7 @@ pub struct RuntimeResolvedNode {
     children: Vec<Self>,
 }
 
-impl RuntimeResolvedNode {
+impl ResolvedCstNode {
     /// Node or terminal kind.
     pub fn kind(&self) -> &str {
         &self.kind
@@ -4978,7 +4978,7 @@ impl RuntimeResolvedNode {
         self.field.as_deref()
     }
 
-    /// Runtime tree node id, when this item materialized a tree node.
+    /// Parse tree node id, when this item materialized a tree node.
     pub const fn node(&self) -> Option<TreeNodeId> {
         self.node
     }
@@ -5020,7 +5020,7 @@ impl RuntimeResolvedNode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeResolvedItem {
+struct ResolvedCstItem {
     kind: String,
     symbol: Option<ParserSymbol>,
     field: Option<String>,
@@ -5040,7 +5040,7 @@ pub(crate) fn resolved_tree_from_events<F>(
     input: &str,
     tree_events: &[TreeEvent],
     mut node_kind: F,
-) -> Option<RuntimeResolvedNode>
+) -> Option<ResolvedCstNode>
 where
     F: FnMut(TreeNodeId) -> Option<String>,
 {
@@ -5058,7 +5058,7 @@ where
             _ => None,
         })
         .collect::<HashMap<_, _>>();
-    let mut items = Vec::<RuntimeResolvedItem>::new();
+    let mut items = Vec::<ResolvedCstItem>::new();
     for (order, event) in tree_events.iter().enumerate() {
         match event {
             TreeEvent::Token {
@@ -5070,7 +5070,7 @@ where
                 ..
             } => {
                 let text = source_slice(input, *bytes).map(str::to_owned);
-                items.push(RuntimeResolvedItem {
+                items.push(ResolvedCstItem {
                     kind: parser_symbol_kind(parser, *symbol, text.as_deref()),
                     symbol: Some(*symbol),
                     field: None,
@@ -5104,7 +5104,7 @@ where
                 ..
             } => {
                 let is_extra = matches!(event, TreeEvent::CloseNode { .. });
-                items.push(RuntimeResolvedItem {
+                items.push(ResolvedCstItem {
                     kind: node_kind(*node)?,
                     symbol: None,
                     field: field_by_child.get(node).cloned(),
@@ -5125,7 +5125,7 @@ where
                 points,
                 ..
             } => {
-                items.push(RuntimeResolvedItem {
+                items.push(ResolvedCstItem {
                     kind: parser_symbol_kind(parser, *symbol, None),
                     symbol: Some(*symbol),
                     field: None,
@@ -5149,7 +5149,7 @@ where
                 ..
             } => {
                 let kind = parser.aliases[alias.get() as usize].value().to_owned();
-                items.push(RuntimeResolvedItem {
+                items.push(ResolvedCstItem {
                     kind,
                     symbol: None,
                     field: field_by_child.get(node).cloned(),
@@ -5215,7 +5215,7 @@ where
     let last = roots[roots.len() - 1];
     let bytes = ByteRange::new(items[first].bytes.start(), items[last].bytes.end()).ok()?;
     let points = PointRange::new(items[first].points.start(), items[last].points.end()).ok()?;
-    Some(RuntimeResolvedNode {
+    Some(ResolvedCstNode {
         kind: "ROOT".to_owned(),
         symbol: None,
         field: None,
@@ -5233,21 +5233,21 @@ where
     })
 }
 
-fn resolved_item_contains(parent: &RuntimeResolvedItem, child: &RuntimeResolvedItem) -> bool {
+fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> bool {
     parent.order > child.order
         && parent.bytes.start() <= child.bytes.start()
         && child.bytes.end() <= parent.bytes.end()
 }
 
-fn resolved_item_len(item: &RuntimeResolvedItem) -> usize {
+fn resolved_item_len(item: &ResolvedCstItem) -> usize {
     item.bytes.end().get() as usize - item.bytes.start().get() as usize
 }
 
-fn build_resolved_node(index: usize, items: &[RuntimeResolvedItem]) -> RuntimeResolvedNode {
+fn build_resolved_node(index: usize, items: &[ResolvedCstItem]) -> ResolvedCstNode {
     let item = &items[index];
     let mut children = item.children.clone();
     sort_resolved_children(&mut children, items);
-    RuntimeResolvedNode {
+    ResolvedCstNode {
         kind: item.kind.clone(),
         symbol: item.symbol,
         field: item.field.clone(),
@@ -5265,7 +5265,7 @@ fn build_resolved_node(index: usize, items: &[RuntimeResolvedItem]) -> RuntimeRe
     }
 }
 
-fn sort_resolved_children(children: &mut [usize], items: &[RuntimeResolvedItem]) {
+fn sort_resolved_children(children: &mut [usize], items: &[ResolvedCstItem]) {
     children.sort_by_key(|child| {
         let item = &items[*child];
         (item.bytes.start().get(), item.bytes.end().get(), item.order)
@@ -6536,10 +6536,7 @@ extras (
         assert_eq!(report.failure_count(), 0);
     }
 
-    fn collect_resolved_terminal_texts<'a>(
-        node: &'a RuntimeResolvedNode,
-        texts: &mut Vec<&'a str>,
-    ) {
+    fn collect_resolved_terminal_texts<'a>(node: &'a ResolvedCstNode, texts: &mut Vec<&'a str>) {
         if let Some(text) = node.text() {
             texts.push(text);
         }
@@ -6548,7 +6545,7 @@ extras (
         }
     }
 
-    fn resolved_terminal_texts(node: &RuntimeResolvedNode) -> Vec<&str> {
+    fn resolved_terminal_texts(node: &ResolvedCstNode) -> Vec<&str> {
         let mut texts = Vec::new();
         collect_resolved_terminal_texts(node, &mut texts);
         texts
@@ -8054,7 +8051,7 @@ extras (
         );
         assert_eq!(session.last_input(), Some("ABCXYZ"));
 
-        let edit = RuntimeInputEdit::new(0, 3, 3);
+        let edit = ParserInputEdit::new(0, 3, 3);
         let reparsed = session.reparse(edit, "abcXYZ").unwrap().clone();
         let scratch =
             crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, "abcXYZ")
@@ -8078,7 +8075,7 @@ extras (
         let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         session.parse("ABCXYZ").unwrap();
 
-        let edit = RuntimeInputEdit::new(3, 6, 6);
+        let edit = ParserInputEdit::new(3, 6, 6);
         let reparsed = session.reparse(edit, "ABCxyz").unwrap().clone();
         let scratch =
             crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, "ABCxyz")
@@ -8104,7 +8101,7 @@ extras (
             "(source_file (left) (comment) (right))"
         );
 
-        let edit = RuntimeInputEdit::new(2, 5, 5);
+        let edit = ParserInputEdit::new(2, 5, 5);
         let reparsed = session.reparse(edit, "a#new\nb").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &parser, &table, "a#new\nb",
@@ -8129,7 +8126,7 @@ extras (
             "(source_file (wrapper (left) (comment) (right)) (suffix))"
         );
 
-        let edit = RuntimeInputEdit::new(7, 8, 8);
+        let edit = ParserInputEdit::new(7, 8, 8);
         let reparsed = session.reparse(edit, "a#old\nb2").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
@@ -8157,7 +8154,7 @@ extras (
             "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
         );
 
-        let edit = RuntimeInputEdit::new(4, 5, 5);
+        let edit = ParserInputEdit::new(4, 5, 5);
         let reparsed = session.reparse_recovering(edit, "a@\nb2").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_recovering_with_report_and_scanner(
             &plan, &parser, &table, "a@\nb2", None,
@@ -8203,7 +8200,7 @@ extras (
         let first = session.parse("alpha").unwrap().clone();
         assert_eq!(first.tree().to_sexp(), "(source_file (word))");
 
-        let edit = RuntimeInputEdit::new(5, 5, 10);
+        let edit = ParserInputEdit::new(5, 5, 10);
         let reparsed = session.reparse(edit, "alpha beta").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
@@ -8225,7 +8222,7 @@ extras (
         session.parse("ABCXYZ").unwrap();
 
         let error = session
-            .reparse(RuntimeInputEdit::new(0, 3, 3), "abcXYZZ")
+            .reparse(ParserInputEdit::new(0, 3, 3), "abcXYZZ")
             .unwrap_err();
         assert!(matches!(
             error,
@@ -8482,7 +8479,7 @@ extras (
             "(source_file (text) (interpolation (word)) (text))"
         );
 
-        let edit = RuntimeInputEdit::new(8, 12, 13);
+        let edit = ParserInputEdit::new(8, 12, 13);
         let reparsed = session
             .reparse(edit, "hello {{title}} tail")
             .unwrap()
@@ -8510,7 +8507,7 @@ extras (
         session.parse("hello {{name}} tail").unwrap();
 
         let first_reparse = session
-            .reparse(RuntimeInputEdit::new(8, 12, 13), "hello {{title}} tail")
+            .reparse(ParserInputEdit::new(8, 12, 13), "hello {{title}} tail")
             .unwrap()
             .clone();
         assert_eq!(
@@ -8519,7 +8516,7 @@ extras (
         );
 
         let second_reparse = session
-            .reparse(RuntimeInputEdit::new(16, 20, 19), "hello {{title}} end")
+            .reparse(ParserInputEdit::new(16, 20, 19), "hello {{title}} end")
             .unwrap()
             .clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
@@ -8546,13 +8543,13 @@ extras (
         session.parse("a#old\nb1").unwrap();
 
         let first_reparse = session
-            .reparse(RuntimeInputEdit::new(7, 8, 8), "a#old\nb2")
+            .reparse(ParserInputEdit::new(7, 8, 8), "a#old\nb2")
             .unwrap()
             .clone();
         assert_eq!(weavy_reused_byte_ranges(&first_reparse), vec![(0, 7)]);
 
         let second_reparse = session
-            .reparse(RuntimeInputEdit::new(2, 5, 5), "a#new\nb2")
+            .reparse(ParserInputEdit::new(2, 5, 5), "a#new\nb2")
             .unwrap()
             .clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
