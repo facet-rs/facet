@@ -14,9 +14,11 @@ use std::{
     sync::Arc,
 };
 
-use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind as AhoMatchKind};
 use regex::Regex;
-use regex_automata::{Anchored, Input, PatternSet, meta::Regex as AutomataRegex};
+use regex_automata::{
+    Anchored, Input, MatchKind as RegexMatchKind, PatternSet, meta::Regex as AutomataRegex,
+};
 use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
     ir::{
@@ -1284,7 +1286,7 @@ impl WeavyLiteralSet {
             return None;
         }
         let automaton = AhoCorasickBuilder::new()
-            .match_kind(MatchKind::Standard)
+            .match_kind(AhoMatchKind::Standard)
             .build(&literals)
             .ok()?;
         Some(Self {
@@ -1353,7 +1355,10 @@ impl WeavyDirectPatternSet {
             .iter()
             .map(|(_, _, source)| source.as_str())
             .collect::<Vec<_>>();
-        let automaton = AutomataRegex::new_many(&regex_sources).ok()?;
+        let automaton = AutomataRegex::builder()
+            .configure(AutomataRegex::config().match_kind(RegexMatchKind::All))
+            .build_many(&regex_sources)
+            .ok()?;
         let terminal_indices = entries
             .into_iter()
             .map(|(_, terminal_index, _)| terminal_index)
@@ -6166,6 +6171,49 @@ mod tests {
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(1, 1)));
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 2)));
+    }
+
+    #[test]
+    fn direct_pattern_set_reports_all_overlapping_root_matches() {
+        let terminals = vec![
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(0),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
+                    crate::lex_match::compile_pattern("[a-z]+", None).into(),
+                )),
+                immediate: false,
+                literal: false,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: Some(0),
+            },
+            WeavyLexTerminal {
+                terminal: parser_ir::TerminalId::from_index(1),
+                matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
+                    crate::lex_match::compile_pattern("[a-z]{2}", None).into(),
+                )),
+                immediate: false,
+                literal: false,
+                lexical_precedence: 0,
+                implicit_precedence: 0,
+                direct_literal_index: None,
+                direct_pattern_index: Some(1),
+            },
+        ];
+        let mode = WeavyLexModeProgram {
+            direct_pattern_set: WeavyDirectPatternSet::from_terminals(&terminals),
+            terminals,
+            direct_literal_set: None,
+        };
+        let mut ends = Vec::new();
+        let mut matches = None;
+
+        match_weavy_direct_pattern_set("abcd", &mode, 0, &mut ends, &mut matches);
+
+        assert_eq!(ends.len(), 2);
+        assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
+        assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 3)));
     }
 
     #[test]
