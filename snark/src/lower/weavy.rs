@@ -863,6 +863,39 @@ impl WeavyParsePlanReadiness {
     pub fn is_fully_visible(&self) -> bool {
         self.is_parser_fully_visible() && self.lexer.is_fully_visible()
     }
+
+    /// Return every parser/action and lexer blocker that still prevents fully-visible lowering.
+    #[must_use]
+    pub fn barriers(&self) -> Vec<WeavyLoweringBarrier> {
+        self.parser_barrier_descriptors
+            .iter()
+            .copied()
+            .map(WeavyLoweringBarrier::ParserIntrinsic)
+            .chain(
+                self.lexer
+                    .barrier_kinds
+                    .iter()
+                    .copied()
+                    .map(WeavyLoweringBarrier::Lexer),
+            )
+            .collect()
+    }
+
+    /// Return the number of distinct parser/action and lexer blockers.
+    #[must_use]
+    pub fn barrier_count(&self) -> usize {
+        self.parser_barrier_descriptors.len() + self.lexer.barrier_kinds.len()
+    }
+}
+
+/// One remaining blocker that prevents Snark's Weavy plan from being fully visible to lowering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum WeavyLoweringBarrier {
+    /// A Snark parser/action intrinsic still executes as an opaque or host-call barrier.
+    ParserIntrinsic(IntrinsicDescriptor),
+    /// A Snark lexer graph leaf still executes through fallback or unsupported matching.
+    Lexer(WeavyLexerBarrierKind),
 }
 
 /// Lexer-side readiness for optimizer/JIT lowering.
@@ -6600,6 +6633,14 @@ mod tests {
                 WeavyLexerBarrierKind::UnsupportedTerminal,
             ]
         );
+        assert_eq!(analysis.readiness.barrier_count(), 2);
+        assert_eq!(
+            analysis.readiness.barriers(),
+            vec![
+                WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedTerminal),
+            ]
+        );
         assert!(analysis.readiness.is_parser_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
     }
@@ -6657,9 +6698,57 @@ mod tests {
             vec![scanner.descriptor()]
         );
         assert!(analysis.readiness.lexer.barrier_kinds.is_empty());
+        assert_eq!(analysis.readiness.barrier_count(), 1);
+        assert_eq!(
+            analysis.readiness.barriers(),
+            vec![WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor())]
+        );
         assert!(analysis.readiness.lexer.is_fully_visible());
         assert!(!analysis.readiness.is_parser_fully_visible());
         assert!(!analysis.readiness.is_fully_visible());
+    }
+
+    #[test]
+    fn parse_plan_readiness_combines_parser_and_lexer_barriers() {
+        let scanner = SnarkIntrinsic::CallExternalScanner {
+            version: StackVersionId(0),
+            state: ParseStateId(7),
+            valid_symbols: ValidSymbolSetId(3),
+            scanner_state: ExternalScannerStateId(2),
+            before: Some(ScannerSnapshotId(0)),
+            after: Some(ScannerSnapshotId(1)),
+            result: Some(LookaheadTokenId(4)),
+        };
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense: DenseSnarkWeavyLowered::new(
+                    vec![WeavyOp::Intrinsic(scanner.clone())],
+                    vec![],
+                ),
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+            },
+            lexer_program: sample_lexer_program(),
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+        };
+
+        let readiness = plan.analysis().readiness;
+
+        assert_eq!(readiness.barrier_count(), 3);
+        assert_eq!(
+            readiness.barriers(),
+            vec![
+                WeavyLoweringBarrier::ParserIntrinsic(scanner.descriptor()),
+                WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
+                WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedTerminal),
+            ]
+        );
+        assert!(!readiness.is_parser_fully_visible());
+        assert!(!readiness.lexer.is_fully_visible());
+        assert!(!readiness.is_fully_visible());
     }
 
     #[test]
