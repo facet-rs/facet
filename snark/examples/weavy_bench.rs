@@ -4,18 +4,24 @@
 //! Usage: cargo run --release -p snark --features json-import,weavy-lowering \
 //!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|strict|recovering]
 
-use std::{env, path::PathBuf, time::Instant};
+use std::{
+    env,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        WeavyParseError, WeavyParsePlan, WeavyParseReport,
+        parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_with_report_and_scanner,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
+use weavy::{RunStats, ir::lowered_analysis};
 
 fn ms(d: std::time::Duration) -> f64 {
     d.as_secs_f64() * 1000.0
@@ -51,6 +57,71 @@ impl BenchMode {
     const fn runs_recovering_warm(self) -> bool {
         matches!(self, Self::All | Self::Recovering)
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct BenchTotals {
+    duration: Duration,
+    stats: RunStats,
+    successes: usize,
+    failures: usize,
+}
+
+fn add_run_stats(total: &mut RunStats, next: RunStats) {
+    total.step_count += next.step_count;
+    total.inline_call_count += next.inline_call_count;
+    total.block_call_count += next.block_call_count;
+    total.return_count += next.return_count;
+    total.continuation_resume_count += next.continuation_resume_count;
+    total.max_frame_depth = total.max_frame_depth.max(next.max_frame_depth);
+}
+
+fn bench_parse<F>(iters: usize, mut parse: F) -> BenchTotals
+where
+    F: FnMut() -> Result<WeavyParseReport, WeavyParseError>,
+{
+    let t = Instant::now();
+    let mut totals = BenchTotals::default();
+    for _ in 0..iters {
+        match parse() {
+            Ok(report) => {
+                totals.successes += 1;
+                add_run_stats(&mut totals.stats, report.stats());
+            }
+            Err(_) => {
+                totals.failures += 1;
+            }
+        }
+    }
+    totals.duration = t.elapsed();
+    totals
+}
+
+fn average_count(total: usize, divisor: usize) -> f64 {
+    if divisor == 0 {
+        0.0
+    } else {
+        total as f64 / divisor as f64
+    }
+}
+
+fn print_bench_totals(label: &str, totals: &BenchTotals, iters: usize) {
+    println!(
+        "  {label:<28} {:>8.3} ms  ok {:>4}  fail {:>4}",
+        ms(totals.duration) / iters as f64,
+        totals.successes,
+        totals.failures
+    );
+    if totals.successes == 0 {
+        return;
+    }
+    println!(
+        "      avg runner: steps {:>9.1}  block calls {:>9.1}  returns {:>9.1}  max depth {:>4}",
+        average_count(totals.stats.step_count, totals.successes),
+        average_count(totals.stats.block_call_count, totals.successes),
+        average_count(totals.stats.return_count, totals.successes),
+        totals.stats.max_frame_depth
+    );
 }
 
 fn main() {
@@ -89,36 +160,31 @@ fn main() {
     let t = Instant::now();
     let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
     let plan_new = t.elapsed();
+    let analysis = lowered_analysis(plan.program().lowered());
 
     let strict_fresh_plan_total = mode.runs_strict_fresh().then(|| {
-        let t = Instant::now();
-        for _ in 0..iters {
+        bench_parse(iters, || {
             let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
-            let _ = parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_with_report_and_scanner(
                 &plan, &validated, &parser, &table, &input, None,
-            );
-        }
-        t.elapsed()
+            )
+        })
     });
 
     let strict_warm_plan_total = mode.runs_strict_warm().then(|| {
-        let t = Instant::now();
-        for _ in 0..iters {
-            let _ = parse_prepared_weavy_with_report_and_scanner(
+        bench_parse(iters, || {
+            parse_prepared_weavy_with_report_and_scanner(
                 &plan, &validated, &parser, &table, &input, None,
-            );
-        }
-        t.elapsed()
+            )
+        })
     });
 
     let recovering_warm_plan_total = mode.runs_recovering_warm().then(|| {
-        let t = Instant::now();
-        for _ in 0..iters {
-            let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
+        bench_parse(iters, || {
+            parse_prepared_weavy_recovering_with_report_and_scanner(
                 &plan, &validated, &parser, &table, &input, None,
-            );
-        }
-        t.elapsed()
+            )
+        })
     });
 
     println!("grammar: {}", grammar_js.display());
@@ -130,23 +196,43 @@ fn main() {
     println!("  ParseTable::from_grammar   {:>8.1} ms", ms(table_build));
     println!("  WeavyParsePlan::new      {:>8.1} ms", ms(plan_new));
 
+    let shape = analysis.program_stats;
+    println!("\nlowered program:");
+    println!(
+        "  blocks {:>6}  ops total/root/blocks {:>6}/{:>4}/{:>6}",
+        shape.block_count, shape.total.op_count, shape.root.op_count, shape.blocks.op_count
+    );
+    println!(
+        "  op mix: control {:>6}  intrinsic {:>6}  memory {:>6}  aggregate {:>6}",
+        shape.total.control_op_count,
+        shape.total.intrinsic_op_count,
+        shape.total.memory_op_count,
+        shape.total.aggregate_op_count
+    );
+    println!(
+        "  effects: ordered {:>6}  barriers {:>6}  may-fail {:>6}  side {:>6}",
+        analysis.effect_stats.total.ordered_count,
+        analysis.effect_stats.total.barrier_count,
+        analysis.effect_stats.total.may_fail_count,
+        analysis.effect_stats.total.side_channel_count
+    );
+    println!("  intrinsics:");
+    for (intrinsic, count) in &analysis.intrinsic_counts {
+        println!(
+            "    {:<20} {:>6}",
+            format!("{}::{}", intrinsic.dialect, intrinsic.name),
+            count
+        );
+    }
+
     println!("\nper-parse (avg over {iters}):");
-    if let Some(total) = strict_fresh_plan_total {
-        println!(
-            "  weavy strict, fresh plan   {:>8.3} ms",
-            ms(total) / iters as f64
-        );
+    if let Some(totals) = strict_fresh_plan_total {
+        print_bench_totals("weavy strict, fresh plan", &totals, iters);
     }
-    if let Some(total) = strict_warm_plan_total {
-        println!(
-            "  weavy strict, warm plan    {:>8.3} ms",
-            ms(total) / iters as f64
-        );
+    if let Some(totals) = strict_warm_plan_total {
+        print_bench_totals("weavy strict, warm plan", &totals, iters);
     }
-    if let Some(total) = recovering_warm_plan_total {
-        println!(
-            "  weavy recovering, warm     {:>8.3} ms",
-            ms(total) / iters as f64
-        );
+    if let Some(totals) = recovering_warm_plan_total {
+        print_bench_totals("weavy recovering, warm", &totals, iters);
     }
 }
