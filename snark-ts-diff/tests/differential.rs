@@ -146,6 +146,36 @@ fn snark_parse_matches_tree_sitter() {
     );
 }
 
+/// snark DELIBERATELY diverges from tree-sitter on a genuine dynamic-precedence
+/// tie: tree-sitter silently picks one parse, snark surfaces `AmbiguousParse` so
+/// the grammar author learns their grammar is ambiguous. This is intentional and
+/// preferred — do NOT "fix" it to match tree-sitter's coin flip.
+#[test]
+fn snark_surfaces_genuine_ambiguity_tree_sitter_hides() {
+    if !tree_sitter_available() {
+        eprintln!("skipping: `tree-sitter` CLI not found on PATH");
+        return;
+    }
+    let grammar = CORPUS
+        .iter()
+        .find(|(name, ..)| *name == "maximal_pairing")
+        .map(|(_, grammar, _)| *grammar)
+        .expect("maximal_pairing grammar");
+    let dir = generate_parser("maximal_pairing_tie", grammar).expect("tree-sitter generate");
+
+    // `x x x`: `pair single` and `single pair`, both dynamic precedence +1.
+    let ts = normalize(&tree_sitter_sexp(&dir, "x x x"));
+    assert!(
+        !ts.is_empty() && !ts.contains("ERROR"),
+        "tree-sitter should silently produce one tree: {ts}"
+    );
+    let sn = snark_sexp(&dir.join("grammar.js"), "x x x");
+    assert!(
+        sn.contains("AmbiguousParse"),
+        "snark should surface the ambiguity, not pick one silently; got: {sn}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 
 fn tree_sitter_available() -> bool {
