@@ -63,6 +63,7 @@ type PlanOutput = {
   snark_intrinsic_count: number;
   snark_stencils: PlanStencilOutput[];
   snark_stencil_families: PlanStencilFamilyOutput[];
+  snark_stencil_states: PlanStencilStateOutput[];
   lowering_barriers: PlanBarrierOutput[];
 };
 
@@ -71,6 +72,11 @@ type PlanStencilFamilyOutput = {
   execution: string;
   state: string[];
   effect: PlanStencilEffectOutput;
+  count: number;
+};
+
+type PlanStencilStateOutput = {
+  state: string;
   count: number;
 };
 

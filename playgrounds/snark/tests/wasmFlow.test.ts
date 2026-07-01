@@ -138,6 +138,18 @@ module.exports = grammar({
     ),
   );
   assert.ok(
+    response.plan.snark_stencil_states.some(
+      (summary: { state: string; count: number }) =>
+        summary.state === "LexerProgram" && summary.count > 0,
+    ),
+  );
+  assert.ok(
+    response.plan.snark_stencil_states.some(
+      (summary: { state: string; count: number }) =>
+        summary.state === "ScannerState" && summary.count > 0,
+    ),
+  );
+  assert.ok(
     response.plan.snark_stencils.some(
       (summary: {
         descriptor: string;

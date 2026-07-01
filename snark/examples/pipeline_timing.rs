@@ -184,4 +184,11 @@ fn main() {
             );
         }
     }
+
+    if !analysis.readiness.snark_stencil_state_summaries.is_empty() {
+        println!("  stencil state surfaces:");
+        for summary in &analysis.readiness.snark_stencil_state_summaries {
+            println!("    {:?}: {}", summary.state, summary.count);
+        }
+    }
 }

@@ -500,6 +500,15 @@ pub struct WeavySnarkStencilFamilySummary {
     pub count: usize,
 }
 
+/// Snark stencil obligations grouped by required session state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavySnarkStencilStateSummary {
+    /// Session state required by one or more Snark stencil descriptors.
+    pub state: SnarkStencilState,
+    /// Number of Snark intrinsic ops whose stencil contract mentions this state.
+    pub count: usize,
+}
+
 impl SnarkIntrinsicSemanticStats {
     fn record(&mut self, intrinsic: &SnarkIntrinsic) {
         let semantics = intrinsic.semantics();
@@ -1125,6 +1134,8 @@ pub struct WeavyParsePlanReadiness {
     pub snark_stencil_summaries: Vec<WeavySnarkStencilSummary>,
     /// Snark stencil obligations grouped by family for backend/JIT prioritization.
     pub snark_stencil_family_summaries: Vec<WeavySnarkStencilFamilySummary>,
+    /// Snark stencil obligations grouped by session state for ABI prioritization.
+    pub snark_stencil_state_summaries: Vec<WeavySnarkStencilStateSummary>,
     /// Unique Snark dialect descriptors that still block fully-visible lowering.
     pub parser_barrier_descriptors: Vec<IntrinsicDescriptor>,
     /// Distinct parser/action and lexer blockers with their remaining counts.
@@ -1142,6 +1153,7 @@ impl WeavyParsePlanReadiness {
         let snark_stencil_summaries = parser_semantics.stencil_summaries();
         let snark_stencil_family_summaries =
             snark_stencil_family_summaries(&snark_stencil_summaries);
+        let snark_stencil_state_summaries = snark_stencil_state_summaries(&snark_stencil_summaries);
         Self {
             lexer: lexer_readiness,
             neutral_weavy_op_count: parser
@@ -1162,6 +1174,7 @@ impl WeavyParsePlanReadiness {
             host_call_intrinsic_count: parser.effect_stats.total.calls_user_code_count,
             snark_stencil_summaries,
             snark_stencil_family_summaries,
+            snark_stencil_state_summaries,
             parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
             barrier_summaries,
         }
@@ -1254,6 +1267,28 @@ fn snark_stencil_family_summaries(
             .cmp(&left.count)
             .then_with(|| left.family.cmp(&right.family))
             .then_with(|| left.execution.cmp(&right.execution))
+    });
+    summaries
+}
+
+fn snark_stencil_state_summaries(
+    summaries: &[WeavySnarkStencilSummary],
+) -> Vec<WeavySnarkStencilStateSummary> {
+    let mut counts = BTreeMap::<SnarkStencilState, usize>::new();
+    for summary in summaries {
+        for state in summary.stencil.state {
+            *counts.entry(*state).or_default() += summary.count;
+        }
+    }
+    let mut summaries = counts
+        .into_iter()
+        .map(|(state, count)| WeavySnarkStencilStateSummary { state, count })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.state.cmp(&right.state))
     });
     summaries
 }
@@ -8139,6 +8174,43 @@ mod tests {
                 count: 1,
             }]
         );
+        assert_eq!(
+            analysis.readiness.snark_stencil_state_summaries,
+            vec![
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::SourceInput,
+                    count: 1,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::ParseTable,
+                    count: 1,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::LexerProgram,
+                    count: 1,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::ParserStack,
+                    count: 1,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::BranchCursor,
+                    count: 1,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::Lookahead,
+                    count: 1,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::ScannerState,
+                    count: 1,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::AutoCloseStack,
+                    count: 1,
+                },
+            ]
+        );
         assert!(analysis.readiness.parser_barrier_descriptors.is_empty());
         assert_eq!(analysis.readiness.lexer.regex_automata_count, 2);
         assert_eq!(
@@ -8211,6 +8283,7 @@ mod tests {
         assert_eq!(readiness.snark_intrinsic_count, 0);
         assert!(readiness.snark_stencil_summaries.is_empty());
         assert!(readiness.snark_stencil_family_summaries.is_empty());
+        assert!(readiness.snark_stencil_state_summaries.is_empty());
         assert!(readiness.is_neutral_weavy_only());
         assert!(!readiness.needs_snark_stencils());
     }
@@ -8538,6 +8611,59 @@ mod tests {
                 },
             ]
         );
+        assert_eq!(
+            readiness.snark_stencil_state_summaries,
+            vec![
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::ParserStack,
+                    count: 9,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::ParseTable,
+                    count: 6,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::BranchCursor,
+                    count: 5,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::Lookahead,
+                    count: 5,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::ScannerState,
+                    count: 5,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::AutoCloseStack,
+                    count: 5,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::TreeStore,
+                    count: 4,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::TreeJournal,
+                    count: 4,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::TraceSink,
+                    count: 4,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::TreeEventSink,
+                    count: 4,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::SourceInput,
+                    count: 2,
+                },
+                WeavySnarkStencilStateSummary {
+                    state: SnarkStencilState::LexerProgram,
+                    count: 2,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -8570,6 +8696,7 @@ mod tests {
         assert_eq!(readiness.neutral_weavy_op_count, 1);
         assert_eq!(readiness.snark_intrinsic_count, 0);
         assert!(readiness.snark_stencil_summaries.is_empty());
+        assert!(readiness.snark_stencil_state_summaries.is_empty());
         assert!(readiness.is_parser_fully_visible());
         assert!(!readiness.lexer.is_fully_visible());
         assert!(!readiness.is_fully_visible());

@@ -144,6 +144,7 @@ struct PlanOutput {
     snark_intrinsic_count: usize,
     snark_stencils: Vec<PlanStencilOutput>,
     snark_stencil_families: Vec<PlanStencilFamilyOutput>,
+    snark_stencil_states: Vec<PlanStencilStateOutput>,
     lowering_barriers: Vec<PlanBarrierOutput>,
 }
 
@@ -153,6 +154,12 @@ struct PlanStencilFamilyOutput {
     execution: String,
     state: Vec<String>,
     effect: PlanStencilEffectOutput,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilStateOutput {
+    state: String,
     count: usize,
 }
 
@@ -876,6 +883,14 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
                     calls_user_code: summary.effect.calls_user_code,
                     opaque: summary.effect.opaque,
                 },
+                count: summary.count,
+            })
+            .collect(),
+        snark_stencil_states: readiness
+            .snark_stencil_state_summaries
+            .iter()
+            .map(|summary| PlanStencilStateOutput {
+                state: format!("{:?}", summary.state),
                 count: summary.count,
             })
             .collect(),
@@ -4599,6 +4614,16 @@ mod tests {
                     && !summary.effect.calls_user_code
                     && !summary.effect.opaque
                     && summary.count > 0)
+        );
+        assert!(
+            plan.snark_stencil_states
+                .iter()
+                .any(|summary| summary.state == "LexerProgram" && summary.count > 0)
+        );
+        assert!(
+            plan.snark_stencil_states
+                .iter()
+                .any(|summary| summary.state == "ScannerState" && summary.count > 0)
         );
         assert!(plan.snark_stencils.iter().any(|summary| summary.descriptor
             == "snark.tree_sitter::lex"
