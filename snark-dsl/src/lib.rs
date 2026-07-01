@@ -124,6 +124,32 @@ pub fn emit_source_with_annotations_boa(
     Ok((grammar_json, annotations_json))
 }
 
+/// Run standalone `ast({...})` annotation source (with the tree-sitter DSL + snark
+/// extensions available) and return the captured registry JSON. Useful when the grammar
+/// is emitted separately and only the AST enrichment is needed.
+#[cfg(feature = "boa")]
+pub fn annotations_from_source(source: &str, source_name: &str) -> Result<String> {
+    let mut context = Context::default();
+    eval(
+        &mut context,
+        official_tree_sitter_dsl_prelude()?,
+        "vendor/tree-sitter-generate-0.26.9/dsl.js",
+    )?;
+    eval(
+        &mut context,
+        "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;\nglobalThis.console ??= { log() {}, warn() {}, error() {} };\nglobalThis.process ??= { env: {} };",
+        "commonjs-shim.js",
+    )?;
+    eval(&mut context, SNARK_DSL_EXTENSIONS, "snark-dsl-extensions.js")?;
+    eval(&mut context, source, source_name)?;
+    eval_to_string(
+        &mut context,
+        "JSON.stringify(globalThis.__snark_ast ?? {})",
+        "ast-emit.js",
+        "ast",
+    )
+}
+
 #[cfg(all(test, feature = "boa"))]
 mod ast_annotation_tests {
     use super::emit_source_with_annotations_boa;

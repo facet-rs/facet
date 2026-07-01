@@ -13,7 +13,7 @@
 //! typed views from the grammar; the keeper here is the ANSWER and this oracle
 //! harness. When the answer lands, delete the crate.
 
-use std::{env, path::PathBuf};
+use std::{collections::BTreeMap, env, path::PathBuf};
 
 use futures::executor::block_on;
 use gingembre::ast::{
@@ -241,6 +241,35 @@ struct PBin {
     right: PExpr,
 }
 
+/// The grammar's AST annotations — what the `ast({...})` DSL helper records, keyed by node
+/// kind. In the real thing these live inline in grammar.js; here they're loaded through the
+/// same DSL channel (`snark_dsl::annotations_from_source`) and decoded with facet-json.
+type Annotations = BTreeMap<String, NodeAnn>;
+
+#[derive(facet::Facet, Default, Debug)]
+struct NodeAnn {
+    /// Enum variant this node maps to (`as` in the DSL).
+    #[facet(rename = "as", default)]
+    as_variant: Option<String>,
+    /// Structural noise — descend to the inner named child before mapping.
+    #[facet(default)]
+    transparent: bool,
+    /// Struct field name -> child selector (`named:N` | `token`).
+    #[facet(default)]
+    fields: BTreeMap<String, String>,
+}
+
+/// AST enrichment for the gingembre expression nodes, written in the `ast()` DSL. This is
+/// the whole mapping the generic builder needs — no hardcoded Rust hints.
+const ANN_SRC: &str = r#"
+ast({
+  binary:   { as: "Binary",   fields: { left: "named:0", op: "token", right: "named:1" } },
+  variable: { as: "Variable" },
+  literal:  { transparent: true },
+  number:   { as: "Number" },
+});
+"#;
+
 /// PROOF: ONE generic reflection builder dispatching on the target facet `Shape`, driven
 /// from snark's resolved tree — enum→variant, struct→fields, scalar→set. No facet-format.
 /// The gingembre grammar has NO field labels, so the field/variant mapping comes from
@@ -262,6 +291,12 @@ fn ast_proof() {
     let table = ParseTable::from_grammar(&parser).expect("table");
     let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("plan");
 
+    // Load the grammar's AST annotations through the DSL channel, then decode them into a
+    // Facet type via the WEAVY deserializer (dogfooding — no facet-format).
+    let ann_json = snark_dsl::annotations_from_source(ANN_SRC, "gingembre.ast.js")
+        .expect("emit annotations");
+    let anns: Annotations = facet_json::from_str(&ann_json).expect("decode annotations");
+
     for src in ["{{ 1 + 2 }}", "{{ 1 + 2 * 3 }}", "{{ x }}"] {
         let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).expect("parse");
         let resolved = report
@@ -270,7 +305,7 @@ fn ast_proof() {
         let expr_node = find_expr(&resolved).expect("no expr under interpolation");
 
         let partial = facet_reflect::Partial::alloc_owned::<PExpr>().expect("alloc");
-        let value: PExpr = build(partial, expr_node)
+        let value: PExpr = build(partial, expr_node, &anns)
             .expect("build via reflection")
             .build()
             .expect("finalize")
@@ -285,6 +320,7 @@ fn ast_proof() {
     let value: PExpr = build(
         facet_reflect::Partial::alloc_owned::<PExpr>().unwrap(),
         find_expr(&resolved).unwrap(),
+        &anns,
     )
     .unwrap()
     .build()
@@ -306,33 +342,54 @@ fn ast_proof() {
     println!("✓ generic Shape-driven reflection builder: grammar surface -> nested #[derive(Facet)] AST");
 }
 
-/// The one generic builder. Dispatches on the target facet Shape; the tree supplies data,
-/// the Shape supplies structure, `hint_*` supplies the gingembre mapping (→ annotations).
+/// The one generic builder. Dispatches on the target facet Shape (the type supplies
+/// structure); the tree supplies data; the grammar `Annotations` supply the mapping —
+/// which variant a node is, which child feeds a field. Nothing hardcoded per node kind.
 fn build<'f>(
     mut p: facet_reflect::Partial<'f, false>,
     node: &RuntimeResolvedNode,
+    anns: &Annotations,
 ) -> Result<facet_reflect::Partial<'f, false>, facet_reflect::ReflectError> {
     use facet_core::{Def, Type, UserType};
+
+    // `transparent` nodes (annotation) are structural noise — descend to the inner named child.
+    let mut node = node;
+    while anns.get(node.kind()).is_some_and(|a| a.transparent) {
+        node = node
+            .children()
+            .iter()
+            .find(|c| c.named())
+            .expect("transparent node has no inner named child");
+    }
 
     // Smart pointer (Box<...>): step through it, build the pointee, pop back.
     if matches!(p.shape().def, Def::Pointer(_)) {
         p = p.begin_smart_ptr()?;
-        p = build(p, node)?;
+        p = build(p, node, anns)?;
         return p.end();
     }
     match p.shape().ty {
         Type::User(UserType::Enum(_)) => {
-            let (variant, payload) = hint_variant(node);
+            let variant = anns
+                .get(node.kind())
+                .and_then(|a| a.as_variant.as_deref())
+                .unwrap_or_else(|| panic!("no `as` variant annotation for node {:?}", node.kind()));
             p = p.select_variant_named(variant)?;
-            p = p.begin_nth_field(0)?; // newtype variants
-            p = build(p, payload)?;
+            p = p.begin_nth_field(0)?; // newtype variant payload
+            p = build(p, node, anns)?;
             p = p.end()?;
         }
         Type::User(UserType::Struct(st)) => {
+            let ann = anns
+                .get(node.kind())
+                .unwrap_or_else(|| panic!("no annotation for struct node {:?}", node.kind()));
             for field in st.fields.iter() {
-                let child = hint_child(node, field.name);
+                let selector = ann.fields.get(field.name).unwrap_or_else(|| {
+                    panic!("no field mapping for {}.{}", node.kind(), field.name)
+                });
+                let child = select_child(node, selector);
                 p = p.begin_field(field.name)?;
-                p = build(p, child)?;
+                p = build(p, child, anns)?;
                 p = p.end()?;
             }
         }
@@ -351,31 +408,23 @@ fn build<'f>(
     Ok(p)
 }
 
-// --- hints: stand-in for the grammar annotations (gingembre has no field labels) ---
-
-/// For an `Expr` enum position: which variant this node is, and which node carries the payload.
-fn hint_variant(node: &RuntimeResolvedNode) -> (&'static str, &RuntimeResolvedNode) {
-    match node.kind() {
-        "binary" => ("Binary", node),
-        "variable" => ("Variable", node),
-        // `literal` wraps `number`/`string`/`boolean`; number -> Number(i64).
-        "literal" => {
-            let inner = node.children().iter().find(|c| c.named()).unwrap_or(node);
-            ("Number", inner)
-        }
-        other => panic!("no variant hint for node kind {other:?}"),
-    }
-}
-
-/// For a `PBin` struct field: which child of `node` feeds it.
-fn hint_child<'a>(node: &'a RuntimeResolvedNode, field: &str) -> &'a RuntimeResolvedNode {
-    let named: Vec<&RuntimeResolvedNode> = node.children().iter().filter(|c| c.named()).collect();
-    match field {
-        "left" => named[0],
-        "right" => named[1],
-        // operator is the anonymous token between the operands.
-        "op" => node.children().iter().find(|c| !c.named()).unwrap(),
-        other => panic!("no child hint for field {other:?}"),
+/// Resolve an annotation child selector against a node: `named:N` = the Nth named child,
+/// `token` = the (first) anonymous token child.
+fn select_child<'a>(node: &'a RuntimeResolvedNode, selector: &str) -> &'a RuntimeResolvedNode {
+    if let Some(idx) = selector.strip_prefix("named:") {
+        let idx: usize = idx.parse().expect("bad named index");
+        node.children()
+            .iter()
+            .filter(|c| c.named())
+            .nth(idx)
+            .unwrap_or_else(|| panic!("no named child {idx} on {:?}", node.kind()))
+    } else if selector == "token" {
+        node.children()
+            .iter()
+            .find(|c| !c.named())
+            .unwrap_or_else(|| panic!("no token child on {:?}", node.kind()))
+    } else {
+        panic!("unknown child selector {selector:?}")
     }
 }
 
