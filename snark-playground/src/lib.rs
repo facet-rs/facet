@@ -143,7 +143,15 @@ struct PlanOutput {
     neutral_weavy_op_count: usize,
     snark_intrinsic_count: usize,
     snark_stencils: Vec<PlanStencilOutput>,
+    snark_stencil_families: Vec<PlanStencilFamilyOutput>,
     lowering_barriers: Vec<PlanBarrierOutput>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilFamilyOutput {
+    family: String,
+    execution: String,
+    count: usize,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -843,6 +851,15 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
                     calls_user_code: summary.effect.calls_user_code,
                     opaque: summary.effect.opaque,
                 },
+                count: summary.count,
+            })
+            .collect(),
+        snark_stencil_families: readiness
+            .snark_stencil_family_summaries
+            .iter()
+            .map(|summary| PlanStencilFamilyOutput {
+                family: format!("{:?}", summary.family),
+                execution: format!("{:?}", summary.execution),
                 count: summary.count,
             })
             .collect(),

@@ -249,6 +249,15 @@ fn main() {
             );
         }
     }
+    if !readiness.snark_stencil_family_summaries.is_empty() {
+        println!("  snark stencil families:");
+        for summary in &readiness.snark_stencil_family_summaries {
+            println!(
+                "    {:<18?} {:<16?} x{}",
+                summary.family, summary.execution, summary.count
+            );
+        }
+    }
     println!(
         "  lexer lowering: literal sets {:>4}/{:<4}  pattern sets {:>4}/{:<4}  rematch {:>4}  known {:>4}  regex-auto {:>4}  fallback {:>4}  unsupported {:>4}",
         readiness.lexer.merged_literal_set_count,

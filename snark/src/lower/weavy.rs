@@ -485,6 +485,17 @@ pub struct WeavySnarkStencilSummary {
     pub count: usize,
 }
 
+/// Snark stencil obligations grouped by native stencil family and execution mode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavySnarkStencilFamilySummary {
+    /// Native stencil family.
+    pub family: SnarkStencilFamily,
+    /// Execution strategy for this family.
+    pub execution: SnarkStencilExecution,
+    /// Number of Snark intrinsic ops represented by this family.
+    pub count: usize,
+}
+
 impl SnarkIntrinsicSemanticStats {
     fn record(&mut self, intrinsic: &SnarkIntrinsic) {
         let semantics = intrinsic.semantics();
@@ -1100,6 +1111,8 @@ pub struct WeavyParsePlanReadiness {
     /// Snark dialect descriptors that still need Snark-owned handlers, JIT
     /// stencils, or further lowering into neutral Weavy ops.
     pub snark_stencil_summaries: Vec<WeavySnarkStencilSummary>,
+    /// Snark stencil obligations grouped by family for backend/JIT prioritization.
+    pub snark_stencil_family_summaries: Vec<WeavySnarkStencilFamilySummary>,
     /// Unique Snark dialect descriptors that still block fully-visible lowering.
     pub parser_barrier_descriptors: Vec<IntrinsicDescriptor>,
     /// Distinct parser/action and lexer blockers with their remaining counts.
@@ -1114,6 +1127,9 @@ impl WeavyParsePlanReadiness {
     ) -> Self {
         let lexer_readiness = WeavyLexerReadiness::from_stats(lexer);
         let barrier_summaries = lowering_barrier_summaries(parser_semantics, &lexer_readiness);
+        let snark_stencil_summaries = parser_semantics.stencil_summaries();
+        let snark_stencil_family_summaries =
+            snark_stencil_family_summaries(&snark_stencil_summaries);
         Self {
             lexer: lexer_readiness,
             neutral_weavy_op_count: parser
@@ -1132,7 +1148,8 @@ impl WeavyParsePlanReadiness {
                 .lowering_count(SnarkIntrinsicLowering::HostCallBarrier),
             opaque_intrinsic_count: parser.effect_stats.total.opaque_count,
             host_call_intrinsic_count: parser.effect_stats.total.calls_user_code_count,
-            snark_stencil_summaries: parser_semantics.stencil_summaries(),
+            snark_stencil_summaries,
+            snark_stencil_family_summaries,
             parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
             barrier_summaries,
         }
@@ -1190,6 +1207,27 @@ impl WeavyParsePlanReadiness {
             .map(|summary| summary.count)
             .sum()
     }
+}
+
+fn snark_stencil_family_summaries(
+    summaries: &[WeavySnarkStencilSummary],
+) -> Vec<WeavySnarkStencilFamilySummary> {
+    let mut counts = BTreeMap::<(SnarkStencilFamily, SnarkStencilExecution), usize>::new();
+    for summary in summaries {
+        *counts
+            .entry((summary.stencil.family, summary.stencil.execution))
+            .or_default() += summary.count;
+    }
+    counts
+        .into_iter()
+        .map(
+            |((family, execution), count)| WeavySnarkStencilFamilySummary {
+                family,
+                execution,
+                count,
+            },
+        )
+        .collect()
 }
 
 fn lowering_barrier_summaries(
@@ -8054,6 +8092,14 @@ mod tests {
                 count: 1,
             }]
         );
+        assert_eq!(
+            analysis.readiness.snark_stencil_family_summaries,
+            vec![WeavySnarkStencilFamilySummary {
+                family: SnarkStencilFamily::Lexer,
+                execution: SnarkStencilExecution::LexerGraph,
+                count: 1,
+            }]
+        );
         assert!(analysis.readiness.parser_barrier_descriptors.is_empty());
         assert_eq!(analysis.readiness.lexer.regex_automata_count, 2);
         assert_eq!(
@@ -8125,6 +8171,7 @@ mod tests {
         assert_eq!(readiness.neutral_weavy_op_count, 1);
         assert_eq!(readiness.snark_intrinsic_count, 0);
         assert!(readiness.snark_stencil_summaries.is_empty());
+        assert!(readiness.snark_stencil_family_summaries.is_empty());
         assert!(readiness.is_neutral_weavy_only());
         assert!(!readiness.needs_snark_stencils());
     }
@@ -8187,6 +8234,14 @@ mod tests {
                 lowering: SnarkIntrinsicLowering::HostCallBarrier,
                 effect: scanner.effect(),
                 stencil: scanner.semantics().stencil,
+                count: 1,
+            }]
+        );
+        assert_eq!(
+            analysis.readiness.snark_stencil_family_summaries,
+            vec![WeavySnarkStencilFamilySummary {
+                family: SnarkStencilFamily::ExternalScanner,
+                execution: SnarkStencilExecution::HostCall,
                 count: 1,
             }]
         );
@@ -8259,6 +8314,14 @@ mod tests {
                 lowering: SnarkIntrinsicLowering::HostCallBarrier,
                 effect: scanner.effect(),
                 stencil: scanner.semantics().stencil,
+                count: 2,
+            }]
+        );
+        assert_eq!(
+            readiness.snark_stencil_family_summaries,
+            vec![WeavySnarkStencilFamilySummary {
+                family: SnarkStencilFamily::ExternalScanner,
+                execution: SnarkStencilExecution::HostCall,
                 count: 2,
             }]
         );

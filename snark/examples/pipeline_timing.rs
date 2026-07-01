@@ -6,14 +6,14 @@
 //! Usage: cargo run --release -p snark --features json-import \
 //!          --example pipeline_timing -- [GRAMMAR_JS] [SAMPLE]
 
-use std::{collections::BTreeMap, env, path::PathBuf, time::Instant};
+use std::{env, path::PathBuf, time::Instant};
 
 use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        SnarkStencilExecution, SnarkStencilFamily, WeavyParsePlan,
-        parse_prepared_weavy_recovering_with_report_and_scanner, parse_prepared_weavy_with_report,
+        WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_with_report,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
@@ -167,17 +167,13 @@ fn main() {
         }
     }
 
-    let mut stencil_families =
-        BTreeMap::<(SnarkStencilFamily, SnarkStencilExecution), usize>::new();
-    for summary in &analysis.readiness.snark_stencil_summaries {
-        *stencil_families
-            .entry((summary.stencil.family, summary.stencil.execution))
-            .or_default() += summary.count;
-    }
-    if !stencil_families.is_empty() {
+    if !analysis.readiness.snark_stencil_family_summaries.is_empty() {
         println!("  stencil families:");
-        for ((family, execution), count) in stencil_families {
-            println!("    {:?}/{:?}: {}", family, execution, count);
+        for summary in &analysis.readiness.snark_stencil_family_summaries {
+            println!(
+                "    {:?}/{:?}: {}",
+                summary.family, summary.execution, summary.count
+            );
         }
     }
 }
