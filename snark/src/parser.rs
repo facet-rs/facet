@@ -12,8 +12,6 @@ use std::{
     fmt,
 };
 
-use regex::RegexSet;
-
 use crate::{
     lexical::{LexicalFacts, TerminalKind},
     runtime_input::{ByteRange, PointRange},
@@ -3753,11 +3751,7 @@ pub(crate) struct CompiledLexTerminal {
     pub(crate) direct_pattern_index: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct CompiledLexPatternSet {
-    pub(crate) regex_set: RegexSet,
-    pub(crate) terminal_indices: Vec<usize>,
-}
+pub(crate) type CompiledLexPatternSet = crate::lex_match::CompiledPatternSet;
 
 #[derive(Debug, Clone)]
 pub(crate) enum CompiledTerminalMatcher {
@@ -4087,30 +4081,21 @@ pub(crate) fn compile_lex_modes(
 fn compile_direct_pattern_set(
     terminals: &mut [CompiledLexTerminal],
 ) -> Option<CompiledLexPatternSet> {
-    let mut regex_sources = Vec::new();
-    let mut terminal_indices = Vec::new();
-    for (terminal_index, terminal) in terminals.iter().enumerate() {
-        let CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(pattern)) = &terminal.matcher
-        else {
-            continue;
-        };
-        let Some(regex) = &pattern.regex else {
-            continue;
-        };
-        regex_sources.push(regex.as_str().to_owned());
-        terminal_indices.push(terminal_index);
-    }
-    if regex_sources.is_empty() {
-        return None;
-    }
-    let regex_set = RegexSet::new(&regex_sources).ok()?;
-    for (set_index, terminal_index) in terminal_indices.iter().copied().enumerate() {
+    let pattern_set =
+        crate::lex_match::compile_pattern_set(terminals.iter().enumerate().filter_map(
+            |(terminal_index, terminal)| {
+                let CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(pattern)) =
+                    &terminal.matcher
+                else {
+                    return None;
+                };
+                Some((terminal_index, pattern))
+            },
+        ))?;
+    for (set_index, terminal_index) in pattern_set.terminal_indices().iter().copied().enumerate() {
         terminals[terminal_index].direct_pattern_index = Some(set_index);
     }
-    Some(CompiledLexPatternSet {
-        regex_set,
-        terminal_indices,
-    })
+    Some(pattern_set)
 }
 
 fn compile_lex_terminal(

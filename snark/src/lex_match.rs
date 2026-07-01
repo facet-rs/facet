@@ -1,5 +1,5 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
-use regex::Regex;
+use regex::{Regex, RegexSet};
 
 use crate::parser::LexMatch;
 
@@ -16,6 +16,12 @@ pub(crate) struct CompiledPattern {
 pub(crate) struct CompiledUntilMatcher {
     pub(crate) markers: Vec<String>,
     automaton: Option<AhoCorasick>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompiledPatternSet {
+    regex_set: RegexSet,
+    terminal_indices: Vec<usize>,
 }
 
 pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPattern {
@@ -41,6 +47,52 @@ pub(crate) fn compile_until_markers(markers: &[String]) -> CompiledUntilMatcher 
             .ok()
     };
     CompiledUntilMatcher { markers, automaton }
+}
+
+pub(crate) fn compile_pattern_set<'a>(
+    patterns: impl IntoIterator<Item = (usize, &'a CompiledPattern)>,
+) -> Option<CompiledPatternSet> {
+    let mut regex_sources = Vec::new();
+    let mut terminal_indices = Vec::new();
+    for (terminal_index, pattern) in patterns {
+        let Some(regex) = &pattern.regex else {
+            continue;
+        };
+        regex_sources.push(regex.as_str().to_owned());
+        terminal_indices.push(terminal_index);
+    }
+    if regex_sources.is_empty() {
+        return None;
+    }
+    Some(CompiledPatternSet {
+        regex_set: RegexSet::new(&regex_sources).ok()?,
+        terminal_indices,
+    })
+}
+
+impl CompiledPatternSet {
+    pub(crate) fn terminal_indices(&self) -> &[usize] {
+        &self.terminal_indices
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.terminal_indices.len()
+    }
+
+    pub(crate) fn for_each_match(
+        &self,
+        input: &str,
+        byte_position: usize,
+        mut visit: impl FnMut(usize, usize),
+    ) {
+        let Some(haystack) = input.get(byte_position..) else {
+            return;
+        };
+        let matches = self.regex_set.matches(haystack);
+        for set_index in matches.iter() {
+            visit(set_index, self.terminal_indices[set_index]);
+        }
+    }
 }
 
 #[cfg(test)]

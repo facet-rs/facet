@@ -555,7 +555,7 @@ impl WeavyLexerProgram {
 #[derive(Clone, Debug)]
 struct WeavyLexModeProgram {
     terminals: Vec<WeavyLexTerminal>,
-    direct_pattern_set: Option<WeavyDirectPatternSet>,
+    direct_pattern_set: Option<crate::lex_match::CompiledPatternSet>,
 }
 
 impl WeavyLexModeProgram {
@@ -566,7 +566,7 @@ impl WeavyLexModeProgram {
                 .into_iter()
                 .map(WeavyLexTerminal::from)
                 .collect(),
-            direct_pattern_set: compiled.direct_pattern_set.map(WeavyDirectPatternSet::from),
+            direct_pattern_set: compiled.direct_pattern_set,
         }
     }
 
@@ -670,21 +670,6 @@ impl From<parser_ir::CompiledLexExpr> for WeavyLexExpr {
                 Self::Repeat1(Box::new(Self::from(*content)))
             }
             parser_ir::CompiledLexExpr::UnsupportedSymbol(expr) => Self::UnsupportedSymbol(expr),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct WeavyDirectPatternSet {
-    regex_set: regex::RegexSet,
-    terminal_indices: Vec<usize>,
-}
-
-impl From<parser_ir::CompiledLexPatternSet> for WeavyDirectPatternSet {
-    fn from(value: parser_ir::CompiledLexPatternSet) -> Self {
-        Self {
-            regex_set: value.regex_set,
-            terminal_indices: value.terminal_indices,
         }
     }
 }
@@ -4365,19 +4350,14 @@ fn match_weavy_direct_pattern_set(
         return;
     };
     ends.clear();
-    ends.resize(pattern_set.terminal_indices.len(), None);
-    let Some(haystack) = input.get(byte_position..) else {
-        return;
-    };
-    let matches = pattern_set.regex_set.matches(haystack);
-    for set_index in matches.iter() {
-        let terminal_index = pattern_set.terminal_indices[set_index];
+    ends.resize(pattern_set.len(), None);
+    pattern_set.for_each_match(input, byte_position, |set_index, terminal_index| {
         let terminal = &mode.terminals[terminal_index];
         let WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(pattern)) = &terminal.matcher else {
-            continue;
+            return;
         };
         ends[set_index] = crate::lex_match::match_compiled_pattern(pattern, input, byte_position);
-    }
+    });
 }
 
 fn runtime_weavy_first_sets(
