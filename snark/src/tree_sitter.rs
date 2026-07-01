@@ -1449,11 +1449,11 @@ mod tests {
         assert_same!(weavy_report.tree(), &selector_cases[5].expected);
         assert!(
             scanner.calls.get() > 0,
-            "expected Weavy to invoke the reduced external scanner"
+            "expected Weavy to invoke the runtime external scanner"
         );
         assert!(
             scanner.accepted.get() > 0,
-            "expected Weavy to accept at least one reduced external token"
+            "expected Weavy to accept at least one external token"
         );
         assert!(
             scanner.accepted_pseudo_class_selector_colon.get() > 0,
@@ -1776,7 +1776,7 @@ mod tests {
         assert_same!(weavy_report.tree(), &selector_cases[10].expected);
         assert!(
             scanner.calls.get() > 0,
-            "expected Weavy to invoke the reduced external scanner"
+            "expected Weavy to invoke the runtime external scanner"
         );
         assert!(
             scanner.accepted_descendant_operator.get() > 0,
