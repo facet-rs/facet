@@ -109,10 +109,10 @@ fn enum_variants(raw: &RawGrammarJson, anns: &Annotations) -> Vec<(String, Strin
 fn resolve_transparent_kind(raw: &RawGrammarJson, anns: &Annotations, kind: &str) -> String {
     if anns.get(kind).is_some_and(|a| a.transparent) {
         // A transparent node is a CHOICE; take its first member as the representative.
-        if let Some(RawRuleJson::Choice { members }) = rule(raw, kind) {
-            if let Some(RawRuleJson::Symbol { name }) = members.first().map(unwrap_transparent) {
-                return resolve_transparent_kind(raw, anns, name);
-            }
+        if let Some(RawRuleJson::Choice { members }) = rule(raw, kind)
+            && let Some(RawRuleJson::Symbol { name }) = members.first().map(unwrap_transparent)
+        {
+            return resolve_transparent_kind(raw, anns, name);
         }
     }
     kind.to_string()
@@ -121,7 +121,7 @@ fn resolve_transparent_kind(raw: &RawGrammarJson, anns: &Annotations, kind: &str
 /// Derive a struct node's ordered child slots (Expr / Token) from its grammar rule.
 fn derive_slots(raw: &RawGrammarJson, kind: &str) -> Vec<Slot> {
     // Find a representative SEQ (binary is CHOICE[PREC_LEFT[SEQ[...]]] over prec levels).
-    fn find_seq<'a>(r: &'a RawRuleJson) -> Option<&'a [RawRuleJson]> {
+    fn find_seq(r: &RawRuleJson) -> Option<&[RawRuleJson]> {
         match r {
             RawRuleJson::Seq { members } => Some(members),
             RawRuleJson::Choice { members } => members.iter().find_map(|m| find_seq(unwrap_transparent(m))),
