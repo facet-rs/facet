@@ -1861,18 +1861,19 @@ fn parse_runtime_with_compiled_lex_modes(
         });
         return Err(select_runtime_weavy_failure(failures));
     };
-    let best_accepted = accepted
-        .iter()
+    let mut best_accepted = accepted
+        .into_iter()
         .filter(|(_, _, error_cost, _, _)| *error_cost == min_error_cost)
         .collect::<Vec<_>>();
-    let Some((first_version, first_node, _, first_tree_events, first_reusable_nodes)) =
-        best_accepted.first().map(|accepted| (**accepted).clone())
-    else {
+    let accepted_count = best_accepted.len();
+    if best_accepted.is_empty() {
         unreachable!("accepted Weavy branches have a minimum recovery cost");
-    };
+    }
+    let (first_version, first_node, _, first_tree_events, first_reusable_nodes) =
+        best_accepted.remove(0);
     if best_accepted
         .iter()
-        .all(|(_, node, _, _, _)| *node == first_node)
+        .all(|(_, node, _, _, _)| node == &first_node)
     {
         let reusable_nodes =
             mark_runtime_weavy_reusable_nodes_with_errors(first_reusable_nodes, &first_tree_events);
@@ -1892,7 +1893,7 @@ fn parse_runtime_with_compiled_lex_modes(
             tree_store,
             reusable_nodes,
             accepted_version: first_version,
-            accepted_count: best_accepted.len(),
+            accepted_count,
             failure_count: failures.len(),
             max_live_versions,
         });
@@ -1902,12 +1903,16 @@ fn parse_runtime_with_compiled_lex_modes(
         id: next_runtime_weavy_trace_id(&trace_events),
         outcome: parser_ir::ParseOutcome::Failed,
     });
-    Err(RuntimeWeavyError::AmbiguousParse {
-        accepted_count: best_accepted.len(),
-        accepted: best_accepted
+    let mut accepted_sexps = Vec::with_capacity(accepted_count);
+    accepted_sexps.push(first_node.to_sexp());
+    accepted_sexps.extend(
+        best_accepted
             .iter()
-            .map(|(_, node, _, _, _)| node.to_sexp())
-            .collect(),
+            .map(|(_, node, _, _, _)| node.to_sexp()),
+    );
+    Err(RuntimeWeavyError::AmbiguousParse {
+        accepted_count,
+        accepted: accepted_sexps,
     })
 }
 
