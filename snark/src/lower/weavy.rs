@@ -319,7 +319,7 @@ pub enum BranchRetireReason {
 }
 
 /// Broad semantic lane for one Snark dialect intrinsic.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum SnarkIntrinsicDomain {
     /// Lexical matching against the source input.
@@ -341,7 +341,7 @@ pub enum SnarkIntrinsicDomain {
 }
 
 /// How a Snark intrinsic is expected to become executable by Weavy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum SnarkIntrinsicLowering {
     /// Native Snark dialect operation with effects visible to Weavy passes.
@@ -365,6 +365,41 @@ pub struct SnarkIntrinsicSemantics {
     pub lowering: SnarkIntrinsicLowering,
     /// Conservative effect contract used for legal scheduling/fusion.
     pub effect: EffectContract,
+}
+
+/// Semantic shape summary for Snark dialect intrinsics in one Weavy program.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SnarkIntrinsicSemanticStats {
+    /// Total Snark dialect intrinsic ops.
+    pub intrinsic_count: usize,
+    /// Intrinsic counts grouped by semantic domain.
+    pub domain_counts: BTreeMap<SnarkIntrinsicDomain, usize>,
+    /// Intrinsic counts grouped by lowering strategy.
+    pub lowering_counts: BTreeMap<SnarkIntrinsicLowering, usize>,
+}
+
+impl SnarkIntrinsicSemanticStats {
+    fn record(&mut self, intrinsic: &SnarkIntrinsic) {
+        let semantics = intrinsic.semantics();
+        self.intrinsic_count += 1;
+        *self.domain_counts.entry(semantics.domain).or_default() += 1;
+        *self.lowering_counts.entry(semantics.lowering).or_default() += 1;
+    }
+
+    /// Return the number of intrinsics in one semantic domain.
+    #[must_use]
+    pub fn domain_count(&self, domain: SnarkIntrinsicDomain) -> usize {
+        self.domain_counts.get(&domain).copied().unwrap_or_default()
+    }
+
+    /// Return the number of intrinsics using one lowering strategy.
+    #[must_use]
+    pub fn lowering_count(&self, lowering: SnarkIntrinsicLowering) -> usize {
+        self.lowering_counts
+            .get(&lowering)
+            .copied()
+            .unwrap_or_default()
+    }
 }
 
 impl SnarkIntrinsic {
@@ -593,6 +628,12 @@ impl WeavyParserProgram {
         dense_lowered_analysis(&self.dense)
     }
 
+    /// Semantic shape summary for Snark dialect intrinsics in the parser/action program.
+    #[must_use]
+    pub fn semantic_stats(&self) -> SnarkIntrinsicSemanticStats {
+        dense_snark_intrinsic_semantic_stats(&self.dense)
+    }
+
     fn state_block(&self, state: parser_ir::ParseStateId) -> Result<BlockRef, WeavyParseError> {
         self.state_block_refs
             .get(state.get() as usize)
@@ -634,6 +675,28 @@ impl WeavyParserProgram {
     }
 }
 
+fn dense_snark_intrinsic_semantic_stats(
+    lowered: &DenseSnarkWeavyLowered,
+) -> SnarkIntrinsicSemanticStats {
+    let mut stats = SnarkIntrinsicSemanticStats::default();
+    add_snark_intrinsic_semantic_stats(&lowered.program, &mut stats);
+    for block in &lowered.blocks {
+        add_snark_intrinsic_semantic_stats(block, &mut stats);
+    }
+    stats
+}
+
+fn add_snark_intrinsic_semantic_stats(
+    program: &[DenseSnarkWeavyOp],
+    stats: &mut SnarkIntrinsicSemanticStats,
+) {
+    for op in program {
+        if let WeavyOp::Intrinsic(intrinsic) = op {
+            stats.record(intrinsic);
+        }
+    }
+}
+
 /// Prepared Weavy parse plan for repeated parses of one grammar/table pair.
 #[derive(Clone, Debug)]
 pub struct WeavyParsePlan {
@@ -669,10 +732,12 @@ impl WeavyParsePlan {
     #[must_use]
     pub fn analysis(&self) -> WeavyParsePlanAnalysis {
         let parser = self.program.analysis();
+        let parser_semantics = self.program.semantic_stats();
         let lexer = self.lexer_stats();
         WeavyParsePlanAnalysis {
             readiness: WeavyParsePlanReadiness::from_parts(&parser, &lexer),
             parser,
+            parser_semantics,
             lexer,
         }
     }
@@ -689,6 +754,8 @@ impl WeavyParsePlan {
 pub struct WeavyParsePlanAnalysis {
     /// Canonical parser/action program analysis from Weavy IR.
     pub parser: LoweredAnalysis,
+    /// Semantic grouping of Snark parser/action intrinsics.
+    pub parser_semantics: SnarkIntrinsicSemanticStats,
     /// Snark-owned lexer graph shape summary.
     pub lexer: WeavyLexerStats,
     /// Optimizer/JIT readiness derived from parser effects and lexer leaves.
@@ -6200,6 +6267,30 @@ mod tests {
     }
 
     #[test]
+    fn parser_semantic_stats_count_root_and_block_intrinsics() {
+        let lex = SnarkIntrinsic::Lex {
+            version: StackVersionId(0),
+            mode: LexModeId(0),
+            output: LookaheadTokenId(0),
+        };
+        let trace = SnarkIntrinsic::EmitTrace {
+            event: TraceEventId(0),
+        };
+        let dense = DenseSnarkWeavyLowered::new(
+            vec![WeavyOp::Intrinsic(lex)],
+            vec![vec![WeavyOp::Intrinsic(trace)]],
+        );
+
+        let stats = dense_snark_intrinsic_semantic_stats(&dense);
+
+        assert_eq!(stats.intrinsic_count, 2);
+        assert_eq!(stats.domain_count(SnarkIntrinsicDomain::Lexing), 1);
+        assert_eq!(stats.domain_count(SnarkIntrinsicDomain::Trace), 1);
+        assert_eq!(stats.lowering_count(SnarkIntrinsicLowering::LexerGraph), 1);
+        assert_eq!(stats.lowering_count(SnarkIntrinsicLowering::SinkOp), 1);
+    }
+
+    #[test]
     fn literal_set_matches_root_string_terminals_together() {
         let mut terminals = vec![
             WeavyLexTerminal {
@@ -6306,6 +6397,19 @@ mod tests {
         assert_eq!(analysis.parser.program_stats.root.intrinsic_op_count, 1);
         assert_eq!(analysis.parser.effect_stats.root.input_read_count, 1);
         assert_eq!(analysis.parser.intrinsic_counts[&lex.descriptor()], 1);
+        assert_eq!(analysis.parser_semantics.intrinsic_count, 1);
+        assert_eq!(
+            analysis
+                .parser_semantics
+                .domain_count(SnarkIntrinsicDomain::Lexing),
+            1
+        );
+        assert_eq!(
+            analysis
+                .parser_semantics
+                .lowering_count(SnarkIntrinsicLowering::LexerGraph),
+            1
+        );
         assert_eq!(analysis.lexer.mode_count, 1);
         assert_eq!(analysis.lexer.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 0);
@@ -6346,6 +6450,18 @@ mod tests {
         let analysis = plan.analysis();
 
         assert_eq!(analysis.parser.intrinsic_counts[&scanner.descriptor()], 1);
+        assert_eq!(
+            analysis
+                .parser_semantics
+                .domain_count(SnarkIntrinsicDomain::ExternalScanner),
+            1
+        );
+        assert_eq!(
+            analysis
+                .parser_semantics
+                .lowering_count(SnarkIntrinsicLowering::HostCallBarrier),
+            1
+        );
         assert_eq!(analysis.readiness.host_call_intrinsic_count, 1);
         assert_eq!(analysis.readiness.opaque_intrinsic_count, 1);
         assert!(analysis.readiness.lexer.is_fully_visible());
