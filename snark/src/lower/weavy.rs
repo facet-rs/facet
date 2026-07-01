@@ -554,23 +554,27 @@ impl WeavyLexerProgram {
 
 #[derive(Clone, Debug)]
 struct WeavyLexModeProgram {
-    terminals: Vec<parser_ir::CompiledLexTerminal>,
+    terminals: Vec<WeavyLexTerminal>,
     direct_pattern_set: Option<WeavyDirectPatternSet>,
 }
 
 impl WeavyLexModeProgram {
     fn from_compiled(compiled: parser_ir::CompiledLexMode) -> Self {
         Self {
-            terminals: compiled.terminals,
+            terminals: compiled
+                .terminals
+                .into_iter()
+                .map(WeavyLexTerminal::from)
+                .collect(),
             direct_pattern_set: compiled.direct_pattern_set.map(WeavyDirectPatternSet::from),
         }
     }
 
-    fn terminals(&self) -> &[parser_ir::CompiledLexTerminal] {
+    fn terminals(&self) -> &[WeavyLexTerminal] {
         &self.terminals
     }
 
-    fn terminal(&self, terminal: parser_ir::TerminalId) -> Option<&parser_ir::CompiledLexTerminal> {
+    fn terminal(&self, terminal: parser_ir::TerminalId) -> Option<&WeavyLexTerminal> {
         self.terminals.iter().find(|row| row.terminal == terminal)
     }
 
@@ -581,6 +585,31 @@ impl WeavyLexModeProgram {
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
     ) {
         match_weavy_direct_pattern_set(input, self, byte_position, ends);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WeavyLexTerminal {
+    terminal: parser_ir::TerminalId,
+    matcher: parser_ir::CompiledTerminalMatcher,
+    immediate: bool,
+    literal: bool,
+    lexical_precedence: i32,
+    implicit_precedence: i32,
+    direct_pattern_index: Option<usize>,
+}
+
+impl From<parser_ir::CompiledLexTerminal> for WeavyLexTerminal {
+    fn from(value: parser_ir::CompiledLexTerminal) -> Self {
+        Self {
+            terminal: value.terminal,
+            matcher: value.matcher,
+            immediate: value.immediate,
+            literal: value.literal,
+            lexical_precedence: value.lexical_precedence,
+            implicit_precedence: value.implicit_precedence,
+            direct_pattern_index: value.direct_pattern_index,
+        }
     }
 }
 
@@ -3705,7 +3734,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
 
     fn match_compiled_terminal_with_set(
         &self,
-        terminal: &parser_ir::CompiledLexTerminal,
+        terminal: &WeavyLexTerminal,
         byte_position: usize,
         direct_pattern_ends: &[Option<parser_ir::LexMatch>],
     ) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
@@ -3717,7 +3746,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
 
     fn match_compiled_terminal(
         &self,
-        terminal: &parser_ir::CompiledLexTerminal,
+        terminal: &WeavyLexTerminal,
         byte_position: usize,
     ) -> Result<Option<parser_ir::LexMatch>, WeavyParseError> {
         match &terminal.matcher {
