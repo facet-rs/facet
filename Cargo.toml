@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "gingembre-snark-spike",
+  "snark-ts-diff",
   # core
   "facet-core",
   "facet",
