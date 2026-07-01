@@ -2973,6 +2973,11 @@ impl<'a> LrTableBuilder<'a> {
         })
     }
 
+    /// Words per lookahead bitset: the frozen lookahead universe rounded up to u64s.
+    fn lookahead_width(&self) -> usize {
+        self.first.interner.from_index.len().div_ceil(64).max(1)
+    }
+
     fn item_sets(&self) -> (Vec<ItemSet>, Vec<ItemTransition>) {
         let mut item_sets = Vec::new();
         let mut item_set_keys = std::collections::HashMap::<u64, Vec<ItemSetId>>::new();
@@ -2980,7 +2985,7 @@ impl<'a> LrTableBuilder<'a> {
         let interner = &self.first.interner;
         let mut transitions = Vec::new();
         let mut queue = VecDeque::new();
-        let mut start_items = ItemMap::default();
+        let mut start_items = ItemMap::new(self.lookahead_width());
         for production in &self.productions_by_lhs[self.grammar.start.get() as usize] {
             start_items.insert(*production, 0, &[LookaheadSymbol::Eof], interner);
         }
@@ -3016,7 +3021,7 @@ impl<'a> LrTableBuilder<'a> {
         // pass — ~1.5s of BTreeMap churn on gingembre). Inserts only ever target
         // (production, 0), so only those items can grow and get re-queued. Two reused
         // scratch buffers keep the loop allocation-free.
-        let mut queued: FxHashSet<(ProductionId, usize)> = map.items.keys().copied().collect();
+        let mut queued: FxHashSet<(ProductionId, usize)> = map.rows.keys().copied().collect();
         let mut worklist: VecDeque<(ProductionId, usize)> = queued.iter().copied().collect();
         // Reused bitsets: `fallback` = the current item's lookahead, `scratch` = the
         // computed FIRST set. The whole loop is bitwise OR — no Vec, no interning, no sort.
@@ -3032,8 +3037,8 @@ impl<'a> LrTableBuilder<'a> {
                 continue;
             };
             fallback.clear();
-            if let Some(current) = map.items.get(&(production_id, dot)) {
-                fallback.or_from(current);
+            if let Some(current) = map.words_of((production_id, dot)) {
+                fallback.or_from_slice(current);
             }
             scratch.clear();
             self.first
@@ -3048,18 +3053,22 @@ impl<'a> LrTableBuilder<'a> {
     }
 
     fn group_goto_items(&self, item_set: &ItemSet) -> BTreeMap<ParserSymbol, ItemMap> {
+        let width = self.lookahead_width();
         let mut grouped = BTreeMap::<ParserSymbol, ItemMap>::new();
         for item in &item_set.items {
             let production = &self.grammar.productions[item.production.get() as usize];
             let Some(step) = production.steps.get(item.dot) else {
                 continue;
             };
-            grouped.entry(step.symbol).or_default().insert(
-                item.production,
-                item.dot + 1,
-                item.lookahead.symbols(),
-                &self.first.interner,
-            );
+            grouped
+                .entry(step.symbol)
+                .or_insert_with(|| ItemMap::new(width))
+                .insert(
+                    item.production,
+                    item.dot + 1,
+                    item.lookahead.symbols(),
+                    &self.first.interner,
+                );
         }
         grouped
     }
@@ -3291,28 +3300,18 @@ impl LookaheadBitset {
         newly
     }
 
-    /// Interned indices whose bit is set, ascending by index.
-    fn indices(&self) -> impl Iterator<Item = u32> + '_ {
-        self.words.iter().enumerate().flat_map(|(word, &bits)| {
-            let base = (word as u32) * 64;
-            (0..64u32)
-                .filter(move |offset| bits & (1u64 << offset) != 0)
-                .map(move |offset| base + offset)
-        })
-    }
-
-    /// Number of set bits.
-    fn count(&self) -> usize {
-        self.words.iter().map(|word| word.count_ones() as usize).sum()
-    }
-
     /// OR `other` into `self`; returns whether `self` gained any bit.
     fn or_from(&mut self, other: &LookaheadBitset) -> bool {
-        if other.words.len() > self.words.len() {
-            self.words.resize(other.words.len(), 0);
+        self.or_from_slice(&other.words)
+    }
+
+    /// OR raw words (e.g. an arena row) into `self`; returns whether `self` grew.
+    fn or_from_slice(&mut self, other: &[u64]) -> bool {
+        if other.len() > self.words.len() {
+            self.words.resize(other.len(), 0);
         }
         let mut grew = false;
-        for (word, &incoming) in self.words.iter_mut().zip(&other.words) {
+        for (word, &incoming) in self.words.iter_mut().zip(other) {
             grew |= incoming & !*word != 0;
             *word |= incoming;
         }
@@ -3325,14 +3324,48 @@ impl LookaheadBitset {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+/// One LR item set under construction. Every lookahead set is exactly `width` u64
+/// words (the lookahead universe is frozen), so all rows live in a single flat
+/// arena — item `(prod, dot)` at `rows[&key] * width`. No per-item bitset heap
+/// allocation and no rehash-driven realloc in the closure hot loop.
+#[derive(Debug, Clone)]
 struct ItemMap {
-    items: FxHashMap<(ProductionId, usize), LookaheadBitset>,
+    width: usize,
+    rows: FxHashMap<(ProductionId, usize), u32>,
+    words: Vec<u64>,
 }
 
 impl ItemMap {
+    fn new(width: usize) -> Self {
+        Self {
+            width: width.max(1),
+            rows: FxHashMap::default(),
+            words: Vec::new(),
+        }
+    }
+
+    /// Byte offset of `key`'s row, appending a zeroed row to the arena if new.
+    fn row_base(&mut self, key: (ProductionId, usize)) -> usize {
+        if let Some(&row) = self.rows.get(&key) {
+            return row as usize * self.width;
+        }
+        let base = self.words.len();
+        let row = (base / self.width) as u32;
+        self.words.resize(base + self.width, 0);
+        self.rows.insert(key, row);
+        base
+    }
+
+    /// The row words for `key`, if present.
+    fn words_of(&self, key: (ProductionId, usize)) -> Option<&[u64]> {
+        self.rows.get(&key).map(|&row| {
+            let base = row as usize * self.width;
+            &self.words[base..base + self.width]
+        })
+    }
+
     /// Symbol-keyed insert for seeding and goto grouping (not the closure hot loop).
-    /// The interner is frozen, so this is a pure lookup + bitset OR.
+    /// The interner is frozen, so this is a pure lookup + bit set.
     fn insert(
         &mut self,
         production: ProductionId,
@@ -3340,32 +3373,53 @@ impl ItemMap {
         lookaheads: &[LookaheadSymbol],
         interner: &LookaheadInterner,
     ) -> bool {
-        let bitset = self.items.entry((production, dot)).or_default();
+        let base = self.row_base((production, dot));
         let mut changed = false;
         for &symbol in lookaheads {
-            changed |= bitset.set(interner.index_of(symbol));
+            let index = interner.index_of(symbol) as usize;
+            let word = base + index / 64;
+            let bit = 1u64 << (index % 64);
+            changed |= self.words[word] & bit == 0;
+            self.words[word] |= bit;
         }
         changed
     }
 
-    /// Bitset OR into an item's lookahead set — the LR-closure hot path. Returns
-    /// whether the set grew.
+    /// Bitset OR into an item's lookahead set — the LR-closure hot path. `bits` holds
+    /// at most `width` words (indices are interned `< universe`). Returns whether the
+    /// set grew.
     fn or_into(&mut self, key: (ProductionId, usize), bits: &LookaheadBitset) -> bool {
-        self.items.entry(key).or_default().or_from(bits)
+        let base = self.row_base(key);
+        let mut grew = false;
+        for (offset, &incoming) in bits.words.iter().enumerate() {
+            let word = base + offset;
+            grew |= incoming & !self.words[word] != 0;
+            self.words[word] |= incoming;
+        }
+        grew
     }
 
     fn into_items(self, interner: &LookaheadInterner) -> Vec<LrItem> {
-        // The map is hash-ordered; sort by (prod, dot) for a canonical, reproducible
+        // Arena is hash-ordered; sort by (prod, dot) for a canonical, reproducible
         // item vec. Only genuinely-new states reach here.
-        let mut entries: Vec<_> = self.items.into_iter().collect();
+        let mut entries: Vec<_> = self.rows.iter().map(|(&key, &row)| (key, row)).collect();
         entries.sort_unstable_by_key(|(key, _)| *key);
         entries
             .into_iter()
-            .map(|((production, dot), bitset)| {
-                // Already in symbol order: the interner is built sorted, so ascending
-                // bitset indices materialize a symbol-sorted lookahead set — no sort.
-                let mut symbols = Vec::with_capacity(bitset.count());
-                symbols.extend(bitset.indices().map(|index| interner.from_index[index as usize]));
+            .map(|((production, dot), row)| {
+                let base = row as usize * self.width;
+                let words = &self.words[base..base + self.width];
+                // Ascending bit index = symbol order (the interner is built sorted),
+                // so the lookahead set materializes already sorted with no sort.
+                let mut symbols = Vec::new();
+                for (word_index, &word) in words.iter().enumerate() {
+                    let mut bits = word;
+                    while bits != 0 {
+                        let index = word_index * 64 + bits.trailing_zeros() as usize;
+                        symbols.push(interner.from_index[index]);
+                        bits &= bits - 1;
+                    }
+                }
                 LrItem {
                     production,
                     dot,
@@ -3380,18 +3434,18 @@ impl ItemMap {
     /// set-equality regardless of how a bitset grew. Cheap to hash and compare
     /// versus materialized `Vec<LrItem>` symbol vecs.
     fn signature(&self) -> Vec<u64> {
-        let mut keys: Vec<(ProductionId, usize)> = self.items.keys().copied().collect();
+        let mut keys: Vec<(ProductionId, usize)> = self.rows.keys().copied().collect();
         keys.sort_unstable();
         let mut sig = Vec::with_capacity(keys.len() * 3);
         for key in keys {
             let (production, dot) = key;
-            let bitset = &self.items[&key];
-            let end = bitset.words.iter().rposition(|&w| w != 0).map_or(0, |i| i + 1);
-            let words = &bitset.words[..end];
+            let base = self.rows[&key] as usize * self.width;
+            let words = &self.words[base..base + self.width];
+            let end = words.iter().rposition(|&w| w != 0).map_or(0, |i| i + 1);
             sig.push(u64::from(production.get()));
             sig.push(dot as u64);
-            sig.push(words.len() as u64);
-            sig.extend_from_slice(words);
+            sig.push(end as u64);
+            sig.extend_from_slice(&words[..end]);
         }
         sig
     }
