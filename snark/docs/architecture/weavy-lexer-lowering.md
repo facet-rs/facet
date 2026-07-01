@@ -69,10 +69,12 @@ to composed token expressions and declarative scanner primitives.
 ## Current Bridge
 
 Direct pattern sets currently use `regex-automata` with caller-provided match
-scratch, so the old per-token `regex::RegexSet::matches` allocation is gone.
-This is still a bridge, not the architecture endpoint. The direction above
-remains: merged lex-mode automata lowered into Snark's Weavy program, with the
-Rust matcher kept as the oracle.
+scratch, and the common path uses a hybrid DFA to report match end offsets
+directly. That removes both the old per-token `regex::RegexSet::matches`
+allocation and the follow-up leaf rematch for direct pattern terminals when the
+hybrid DFA can be built. This is still a bridge, not the architecture endpoint:
+the direction above remains merged lex-mode automata lowered into Snark's Weavy
+program, with the Rust matcher kept as the oracle.
 
 ## JIT Path
 
