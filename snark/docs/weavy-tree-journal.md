@@ -6,10 +6,10 @@ implementation's incidental costs for fundamental ones.
 
 ## The problem it solves
 
-GLR parsing forks a branch at every parse conflict. The native runtime
-(`RuntimeParser`) gave each `RuntimeBranch` its own `Vec<TreeEvent>` holding the
-**entire event history so far**, and cloned that vector on every fork. Because the
-history grows with input position, this is roughly `O(forks × position)` of deep
+GLR parsing forks a branch at every parse conflict. The older branch-local
+event model gave each branch its own `Vec<TreeEvent>` holding the **entire event
+history so far**, and cloned that vector on every fork. Because the history
+grows with input position, this is roughly `O(forks × position)` of deep
 copying.
 
 A `stax flame` of a recovering gingembre parse (`blog-index.html`, 816 bytes, ~50 s)
@@ -42,8 +42,8 @@ previous one, so the entries form a tree. A branch is just a `Copy` index (its t
   = walk parent-pointers tip→root, reverse. Done on demand, not maintained.
 
 This is the same trick GLR already uses for the *parse stack* (the Graph-Structured
-Stack); the journal applies it to the event *output*, which is the part the native
-runtime hadn't.
+Stack); the journal applies it to the event *output*, which is where the older
+branch-local model paid the clone cost.
 
 ## The memory tradeoff (and what is NOT fundamental)
 
@@ -106,7 +106,7 @@ input size — not the speculative garbage. There is no slow session leak.
 
 Reusable nodes store *copied* `tree_events` per node, so the accepted events are
 materialized in ~2 places (`report.tree_events` + per-node `reusable_nodes[*].tree_events`),
-and reuse clones+shifts them. This matches the native approach and is bounded per edit.
+and reuse clones+shifts them. This is bounded per edit.
 The flagged future optimization is to store a journal slice/range (or regenerate from
 `RuntimeTreeStore`) instead of copying per-node event vectors — worth doing only if a
 heap profile of a long editing session asks for it.
