@@ -163,6 +163,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+dependencies = [
+ "derive_arbitrary",
+]
+
+[[package]]
 name = "arborium"
 version = "2.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1726,6 +1735,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2974,6 +2994,7 @@ dependencies = [
 name = "figue"
 version = "5.0.0-rc.5"
 dependencies = [
+ "arbitrary",
  "ariadne",
  "camino",
  "facet",
@@ -2990,6 +3011,8 @@ dependencies = [
  "indexmap 2.14.0",
  "insta",
  "owo-colors",
+ "rand 0.9.4",
+ "rand_chacha 0.9.0",
  "strip-ansi-escapes",
  "strsim",
  "supports-color 3.0.2",
