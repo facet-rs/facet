@@ -3820,7 +3820,7 @@ pub trait RuntimeExternalScanner {
     fn scan(
         &self,
         request: RuntimeExternalScan<'_>,
-    ) -> Result<Option<RuntimeExternalScanResult>, ReducedParseError>;
+    ) -> Result<Option<RuntimeExternalScanResult>, ParserRuntimeError>;
 }
 
 /// Result of one runtime external scanner call.
@@ -3996,11 +3996,11 @@ pub(crate) fn match_compiled_lex_terminal(
     terminal: &CompiledLexTerminal,
     input: &str,
     byte_position: usize,
-) -> Result<Option<LexMatch>, ReducedParseError> {
+) -> Result<Option<LexMatch>, ParserRuntimeError> {
     match &terminal.matcher {
         CompiledTerminalMatcher::Expr(expr) => match_compiled_lex_expr(expr, input, byte_position),
         CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => Err(
-            ReducedParseError::new(ReducedParseErrorKind::UnsupportedTerminal {
+            ParserRuntimeError::new(ParserRuntimeErrorKind::UnsupportedTerminal {
                 terminal: *terminal,
                 spelling: spelling.clone(),
             }),
@@ -4013,7 +4013,7 @@ fn match_compiled_lex_expr(
     expr: &CompiledLexExpr,
     input: &str,
     byte_position: usize,
-) -> Result<Option<LexMatch>, ReducedParseError> {
+) -> Result<Option<LexMatch>, ParserRuntimeError> {
     match expr {
         CompiledLexExpr::Blank => Ok(Some(LexMatch::new(byte_position, byte_position))),
         CompiledLexExpr::String(value) => {
@@ -4092,8 +4092,8 @@ fn match_compiled_lex_expr(
             }
             Ok(Some(LexMatch::new(position, inspected_end)))
         }
-        CompiledLexExpr::UnsupportedSymbol(expr) => Err(ReducedParseError::new(
-            ReducedParseErrorKind::UnsupportedLexicalSymbol { expr: *expr },
+        CompiledLexExpr::UnsupportedSymbol(expr) => Err(ParserRuntimeError::new(
+            ParserRuntimeErrorKind::UnsupportedLexicalSymbol { expr: *expr },
         )),
     }
 }
@@ -4847,7 +4847,7 @@ fn skip_pattern_whitespace(input: &str, byte_position: usize) -> usize {
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ReducedTokenCandidate {
+struct RuntimeTokenCandidate {
     lookahead: LookaheadSymbol,
     end: usize,
     inspected_end: usize,
@@ -4874,54 +4874,54 @@ impl LexMatch {
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReducedCandidateOrder {
+enum RuntimeCandidateOrder {
     Less,
     Equal,
     Greater,
 }
 
 #[cfg(test)]
-fn reduced_candidate_order(
-    left: ReducedTokenCandidate,
-    right: ReducedTokenCandidate,
-) -> ReducedCandidateOrder {
+fn runtime_candidate_order(
+    left: RuntimeTokenCandidate,
+    right: RuntimeTokenCandidate,
+) -> RuntimeCandidateOrder {
     if left.immediate && !left.extra && right.extra {
-        return ReducedCandidateOrder::Greater;
+        return RuntimeCandidateOrder::Greater;
     }
     if left.extra && right.immediate && !right.extra {
-        return ReducedCandidateOrder::Less;
+        return RuntimeCandidateOrder::Less;
     }
     if left.end == right.end && left.external && !right.external {
-        return ReducedCandidateOrder::Greater;
+        return RuntimeCandidateOrder::Greater;
     }
     if left.end == right.end && !left.external && right.external {
-        return ReducedCandidateOrder::Less;
+        return RuntimeCandidateOrder::Less;
     }
     match left.lexical_precedence.cmp(&right.lexical_precedence) {
-        std::cmp::Ordering::Greater => return ReducedCandidateOrder::Greater,
-        std::cmp::Ordering::Less => return ReducedCandidateOrder::Less,
+        std::cmp::Ordering::Greater => return RuntimeCandidateOrder::Greater,
+        std::cmp::Ordering::Less => return RuntimeCandidateOrder::Less,
         std::cmp::Ordering::Equal => {}
     }
     match left.end.cmp(&right.end) {
-        std::cmp::Ordering::Greater => ReducedCandidateOrder::Greater,
-        std::cmp::Ordering::Less => ReducedCandidateOrder::Less,
+        std::cmp::Ordering::Greater => RuntimeCandidateOrder::Greater,
+        std::cmp::Ordering::Less => RuntimeCandidateOrder::Less,
         std::cmp::Ordering::Equal if left.external && !right.external => {
-            ReducedCandidateOrder::Greater
+            RuntimeCandidateOrder::Greater
         }
         std::cmp::Ordering::Equal if !left.external && right.external => {
-            ReducedCandidateOrder::Less
+            RuntimeCandidateOrder::Less
         }
         std::cmp::Ordering::Equal if left.implicit_precedence > right.implicit_precedence => {
-            ReducedCandidateOrder::Greater
+            RuntimeCandidateOrder::Greater
         }
         std::cmp::Ordering::Equal if left.implicit_precedence < right.implicit_precedence => {
-            ReducedCandidateOrder::Less
+            RuntimeCandidateOrder::Less
         }
         std::cmp::Ordering::Equal if left.literal && !right.literal => {
-            ReducedCandidateOrder::Greater
+            RuntimeCandidateOrder::Greater
         }
-        std::cmp::Ordering::Equal if !left.literal && right.literal => ReducedCandidateOrder::Less,
-        std::cmp::Ordering::Equal => ReducedCandidateOrder::Equal,
+        std::cmp::Ordering::Equal if !left.literal && right.literal => RuntimeCandidateOrder::Less,
+        std::cmp::Ordering::Equal => RuntimeCandidateOrder::Equal,
     }
 }
 
@@ -4966,7 +4966,7 @@ impl RuntimeInputEdit {
         &self,
         old_input: &str,
         new_input: &str,
-    ) -> Result<(), ReducedParseError> {
+    ) -> Result<(), ParserRuntimeError> {
         let valid_order =
             self.start_byte <= self.old_end_byte && self.start_byte <= self.new_end_byte;
         let valid_bounds =
@@ -4983,8 +4983,8 @@ impl RuntimeInputEdit {
         if valid_context {
             Ok(())
         } else {
-            Err(ReducedParseError::new(
-                ReducedParseErrorKind::InvalidInputEdit {
+            Err(ParserRuntimeError::new(
+                ParserRuntimeErrorKind::InvalidInputEdit {
                     start_byte: self.start_byte,
                     old_end_byte: self.old_end_byte,
                     new_end_byte: self.new_end_byte,
@@ -5496,15 +5496,15 @@ fn stack_version_lineage(
     lineage
 }
 
-/// Error produced by the reduced parser slice.
+/// Error produced by shared parser runtime support.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReducedParseError {
-    kind: ReducedParseErrorKind,
-    trace: Vec<ReducedTraceStep>,
+pub struct ParserRuntimeError {
+    kind: ParserRuntimeErrorKind,
+    trace: Vec<ParserRuntimeTraceStep>,
 }
 
-impl ReducedParseError {
-    fn new(kind: ReducedParseErrorKind) -> Self {
+impl ParserRuntimeError {
+    fn new(kind: ParserRuntimeErrorKind) -> Self {
         Self {
             kind,
             trace: Vec::new(),
@@ -5512,43 +5512,43 @@ impl ReducedParseError {
     }
 
     /// Error kind.
-    pub const fn kind(&self) -> &ReducedParseErrorKind {
+    pub const fn kind(&self) -> &ParserRuntimeErrorKind {
         &self.kind
     }
 
-    /// Reduced parser trace collected before the failure.
-    pub fn trace(&self) -> &[ReducedTraceStep] {
+    /// Parser runtime trace collected before the failure.
+    pub fn trace(&self) -> &[ParserRuntimeTraceStep] {
         &self.trace
     }
 }
 
-/// One selected action in the reduced parser trace.
+/// One selected action in a parser runtime trace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReducedTraceStep {
+pub struct ParserRuntimeTraceStep {
     /// Parse state before selecting the action.
     pub state: ParseStateId,
     /// Input byte offset before selecting the action.
     pub byte_position: usize,
     /// Lookahead selected by the lexical mode.
     pub lookahead: LookaheadSymbol,
-    /// Action explored by the reduced parser branch.
+    /// Action explored by the parser runtime branch.
     pub action: ParseAction,
 }
 
-impl fmt::Display for ReducedParseError {
+impl fmt::Display for ParserRuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            ReducedParseErrorKind::WrongStage { stage } => {
+            ParserRuntimeErrorKind::WrongStage { stage } => {
                 write!(f, "parser grammar is at stage {stage:?}, not Productions")
             }
-            ReducedParseErrorKind::EmptyStack => write!(f, "reduced parser stack was empty"),
-            ReducedParseErrorKind::MissingState { state } => {
+            ParserRuntimeErrorKind::EmptyStack => write!(f, "parser runtime stack was empty"),
+            ParserRuntimeErrorKind::MissingState { state } => {
                 write!(f, "parse state {} is missing", state.get())
             }
-            ReducedParseErrorKind::MissingLexMode { mode } => {
+            ParserRuntimeErrorKind::MissingLexMode { mode } => {
                 write!(f, "lexical mode {} is missing", mode.get())
             }
-            ReducedParseErrorKind::NoToken {
+            ParserRuntimeErrorKind::NoToken {
                 state,
                 byte_position,
                 expected,
@@ -5559,7 +5559,7 @@ impl fmt::Display for ReducedParseError {
                 byte_position,
                 expected
             ),
-            ReducedParseErrorKind::NoAction {
+            ParserRuntimeErrorKind::NoAction {
                 state,
                 lookahead,
                 byte_position,
@@ -5569,7 +5569,7 @@ impl fmt::Display for ReducedParseError {
                 state.get(),
                 byte_position
             ),
-            ReducedParseErrorKind::AmbiguousAction {
+            ParserRuntimeErrorKind::AmbiguousAction {
                 state,
                 lookahead,
                 action_count,
@@ -5579,7 +5579,7 @@ impl fmt::Display for ReducedParseError {
                 state.get(),
                 action_count
             ),
-            ReducedParseErrorKind::UnsupportedExternalScanner {
+            ParserRuntimeErrorKind::UnsupportedExternalScanner {
                 state,
                 external_count,
             } => write!(
@@ -5588,46 +5588,46 @@ impl fmt::Display for ReducedParseError {
                 state.get(),
                 external_count
             ),
-            ReducedParseErrorKind::UnsupportedTerminal { terminal, spelling } => write!(
+            ParserRuntimeErrorKind::UnsupportedTerminal { terminal, spelling } => write!(
                 f,
-                "terminal {} is not supported by the reduced parser: {spelling}",
+                "terminal {} is not supported by the parser runtime: {spelling}",
                 terminal.get()
             ),
-            ReducedParseErrorKind::UnsupportedLexicalSymbol { expr } => write!(
+            ParserRuntimeErrorKind::UnsupportedLexicalSymbol { expr } => write!(
                 f,
                 "lexical expression {} contains a symbol reference unsupported by this slice",
                 expr.get()
             ),
-            ReducedParseErrorKind::MissingGoto { state, nonterminal } => write!(
+            ParserRuntimeErrorKind::MissingGoto { state, nonterminal } => write!(
                 f,
                 "state {} has no goto for nonterminal {}",
                 state.get(),
                 nonterminal.get()
             ),
-            ReducedParseErrorKind::TrailingInput { byte_position } => {
+            ParserRuntimeErrorKind::TrailingInput { byte_position } => {
                 write!(f, "input remains after byte {byte_position}")
             }
-            ReducedParseErrorKind::AcceptedHiddenRoot => {
+            ParserRuntimeErrorKind::AcceptedHiddenRoot => {
                 write!(f, "accepted parse did not produce a visible root node")
             }
-            ReducedParseErrorKind::UnreducedStackEntry { state } => write!(
+            ParserRuntimeErrorKind::UnreducedStackEntry { state } => write!(
                 f,
                 "accepted parse left an unreduced stack entry in state {}",
                 state.get()
             ),
-            ReducedParseErrorKind::UnsupportedRecovery { state } => {
+            ParserRuntimeErrorKind::UnsupportedRecovery { state } => {
                 write!(f, "state {} requires recovery", state.get())
             }
-            ReducedParseErrorKind::NoViableBranch { failure_count } => {
+            ParserRuntimeErrorKind::NoViableBranch { failure_count } => {
                 write!(
                     f,
-                    "all reduced parser branches failed ({failure_count} failures)"
+                    "all parser runtime branches failed ({failure_count} failures)"
                 )
             }
-            ReducedParseErrorKind::BranchStepLimit { limit } => {
-                write!(f, "reduced parser exceeded branch step limit {limit}")
+            ParserRuntimeErrorKind::BranchStepLimit { limit } => {
+                write!(f, "parser runtime exceeded branch step limit {limit}")
             }
-            ReducedParseErrorKind::InvalidInputEdit {
+            ParserRuntimeErrorKind::InvalidInputEdit {
                 start_byte,
                 old_end_byte,
                 new_end_byte,
@@ -5637,23 +5637,23 @@ impl fmt::Display for ReducedParseError {
                 f,
                 "invalid input edit start={start_byte} old_end={old_end_byte} new_end={new_end_byte} for old input length {old_input_len} and new input length {new_input_len}"
             ),
-            ReducedParseErrorKind::AmbiguousParse {
+            ParserRuntimeErrorKind::AmbiguousParse {
                 accepted_count,
                 accepted,
             } => write!(
                 f,
-                "reduced parser accepted {accepted_count} different reduced trees: {accepted:?}"
+                "parser runtime accepted {accepted_count} different runtime trees: {accepted:?}"
             ),
         }
     }
 }
 
-impl Error for ReducedParseError {}
+impl Error for ParserRuntimeError {}
 
-/// Reduced parser error kind.
+/// Shared parser runtime error kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ReducedParseErrorKind {
+pub enum ParserRuntimeErrorKind {
     /// Parser grammar is not in the required stage.
     WrongStage {
         /// Current stage.
@@ -5705,23 +5705,23 @@ pub enum ReducedParseErrorKind {
         /// External scanner candidates in the state.
         external_count: usize,
     },
-    /// The reduced parser cannot match this terminal.
+    /// The parser runtime cannot match this terminal.
     UnsupportedTerminal {
         /// Terminal id.
         terminal: TerminalId,
         /// Terminal spelling.
         spelling: String,
     },
-    /// The reduced lexical evaluator does not execute symbol references.
+    /// The parser runtime lexical evaluator does not execute symbol references.
     UnsupportedLexicalSymbol {
         /// Source expression id.
         expr: GrammarExprId,
     },
     /// No goto entry existed for a reduction.
     MissingGoto {
-        /// State after popping reduced children.
+        /// State after popping runtime children.
         state: ParseStateId,
-        /// Reduced nonterminal.
+        /// Runtime nonterminal.
         nonterminal: NonterminalId,
     },
     /// Accept was reached before all bytes were consumed.
@@ -5736,7 +5736,7 @@ pub enum ReducedParseErrorKind {
         /// State carried by the leftover stack entry.
         state: ParseStateId,
     },
-    /// Recovery is outside this reduced parser slice.
+    /// Recovery is outside this parser runtime slice.
     UnsupportedRecovery {
         /// Current state.
         state: ParseStateId,
@@ -5746,7 +5746,7 @@ pub enum ReducedParseErrorKind {
         /// Number of branch failures observed.
         failure_count: usize,
     },
-    /// Reduced branch execution exceeded its guard.
+    /// Runtime branch execution exceeded its guard.
     BranchStepLimit {
         /// Step limit that was exceeded.
         limit: usize,
@@ -7956,7 +7956,7 @@ extras (
                     compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
                 ))
             })
-            .collect::<Result<Vec<_>, ReducedParseError>>()
+            .collect::<Result<Vec<_>, ParserRuntimeError>>()
             .unwrap();
 
         assert!(observed.contains(&(
@@ -8289,7 +8289,7 @@ extras (
         terminal: &TerminalSymbol,
         input: &str,
         byte_position: usize,
-    ) -> Result<Option<usize>, ReducedParseError> {
+    ) -> Result<Option<usize>, ParserRuntimeError> {
         let compiled = compile_lex_terminal(validated, terminal);
         match_compiled_lex_terminal(&compiled, input, byte_position)
             .map(|result| result.map(|match_| match_.end))
@@ -8300,7 +8300,7 @@ extras (
         terminal: &TerminalSymbol,
         input: &str,
         byte_positions: &[usize],
-    ) -> Result<Vec<Option<usize>>, ReducedParseError> {
+    ) -> Result<Vec<Option<usize>>, ParserRuntimeError> {
         byte_positions
             .iter()
             .map(|byte_position| compiled_terminal_end(validated, terminal, input, *byte_position))
@@ -8766,7 +8766,7 @@ extras (
                     compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
                 ))
             })
-            .collect::<Result<Vec<_>, ReducedParseError>>()
+            .collect::<Result<Vec<_>, ParserRuntimeError>>()
             .unwrap();
 
         assert!(
@@ -9164,8 +9164,8 @@ extras (
     }
 
     #[test]
-    fn reduced_lexer_prefers_higher_implicit_precedence_for_equal_length_candidates() {
-        let direct_string = ReducedTokenCandidate {
+    fn runtime_lexer_prefers_higher_implicit_precedence_for_equal_length_candidates() {
+        let direct_string = RuntimeTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 1,
             inspected_end: 1,
@@ -9177,7 +9177,7 @@ extras (
             implicit_precedence: 2,
             scanner: None,
         };
-        let immediate_string = ReducedTokenCandidate {
+        let immediate_string = RuntimeTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
             end: 1,
             inspected_end: 1,
@@ -9191,18 +9191,18 @@ extras (
         };
 
         assert_eq!(
-            reduced_candidate_order(immediate_string, direct_string),
-            ReducedCandidateOrder::Greater
+            runtime_candidate_order(immediate_string, direct_string),
+            RuntimeCandidateOrder::Greater
         );
         assert_eq!(
-            reduced_candidate_order(direct_string, immediate_string),
-            ReducedCandidateOrder::Less
+            runtime_candidate_order(direct_string, immediate_string),
+            RuntimeCandidateOrder::Less
         );
     }
 
     #[test]
-    fn reduced_lexer_prefers_explicit_lexical_precedence_before_length() {
-        let structured_line = ReducedTokenCandidate {
+    fn runtime_lexer_prefers_explicit_lexical_precedence_before_length() {
+        let structured_line = RuntimeTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 1,
             inspected_end: 1,
@@ -9214,7 +9214,7 @@ extras (
             implicit_precedence: 2,
             scanner: None,
         };
-        let low_precedence_context = ReducedTokenCandidate {
+        let low_precedence_context = RuntimeTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
             end: 32,
             inspected_end: 32,
@@ -9228,18 +9228,18 @@ extras (
         };
 
         assert_eq!(
-            reduced_candidate_order(structured_line, low_precedence_context),
-            ReducedCandidateOrder::Greater
+            runtime_candidate_order(structured_line, low_precedence_context),
+            RuntimeCandidateOrder::Greater
         );
         assert_eq!(
-            reduced_candidate_order(low_precedence_context, structured_line),
-            ReducedCandidateOrder::Less
+            runtime_candidate_order(low_precedence_context, structured_line),
+            RuntimeCandidateOrder::Less
         );
     }
 
     #[test]
-    fn reduced_lexer_prefers_external_candidate_before_internal_precedence() {
-        let internal_string = ReducedTokenCandidate {
+    fn runtime_lexer_prefers_external_candidate_before_internal_precedence() {
+        let internal_string = RuntimeTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 1,
             inspected_end: 1,
@@ -9251,7 +9251,7 @@ extras (
             implicit_precedence: 2,
             scanner: None,
         };
-        let external_token = ReducedTokenCandidate {
+        let external_token = RuntimeTokenCandidate {
             lookahead: LookaheadSymbol::External(ExternalId::from_index(0)),
             end: 1,
             inspected_end: 1,
@@ -9265,18 +9265,18 @@ extras (
         };
 
         assert_eq!(
-            reduced_candidate_order(external_token, internal_string),
-            ReducedCandidateOrder::Greater
+            runtime_candidate_order(external_token, internal_string),
+            RuntimeCandidateOrder::Greater
         );
         assert_eq!(
-            reduced_candidate_order(internal_string, external_token),
-            ReducedCandidateOrder::Less
+            runtime_candidate_order(internal_string, external_token),
+            RuntimeCandidateOrder::Less
         );
     }
 
     #[test]
-    fn reduced_lexer_prefers_immediate_content_over_longer_extra() {
-        let immediate_content = ReducedTokenCandidate {
+    fn runtime_lexer_prefers_immediate_content_over_longer_extra() {
+        let immediate_content = RuntimeTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(0)),
             end: 2,
             inspected_end: 2,
@@ -9288,7 +9288,7 @@ extras (
             implicit_precedence: 3,
             scanner: None,
         };
-        let comment_extra = ReducedTokenCandidate {
+        let comment_extra = RuntimeTokenCandidate {
             lookahead: LookaheadSymbol::Terminal(TerminalId::from_index(1)),
             end: 8,
             inspected_end: 8,
@@ -9302,12 +9302,12 @@ extras (
         };
 
         assert_eq!(
-            reduced_candidate_order(immediate_content, comment_extra),
-            ReducedCandidateOrder::Greater
+            runtime_candidate_order(immediate_content, comment_extra),
+            RuntimeCandidateOrder::Greater
         );
         assert_eq!(
-            reduced_candidate_order(comment_extra, immediate_content),
-            ReducedCandidateOrder::Less
+            runtime_candidate_order(comment_extra, immediate_content),
+            RuntimeCandidateOrder::Less
         );
     }
 

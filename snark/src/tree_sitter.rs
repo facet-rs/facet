@@ -2926,7 +2926,7 @@ mod tests {
         fn scan(
             &self,
             request: RuntimeExternalScan<'_>,
-        ) -> Result<Option<RuntimeExternalScanResult>, crate::parser::ReducedParseError> {
+        ) -> Result<Option<RuntimeExternalScanResult>, crate::parser::ParserRuntimeError> {
             let Some(mask) = self.valid_symbol_mask(request) else {
                 return Ok(None);
             };
@@ -2986,7 +2986,7 @@ mod tests {
         fn scan(
             &self,
             request: RuntimeExternalScan<'_>,
-        ) -> Result<Option<RuntimeExternalScanResult>, crate::parser::ReducedParseError> {
+        ) -> Result<Option<RuntimeExternalScanResult>, crate::parser::ParserRuntimeError> {
             self.calls.set(self.calls.get() + 1);
             if request.scanner_snapshot().is_some() {
                 self.requests_with_snapshot
