@@ -2683,13 +2683,6 @@ impl LookaheadSet {
     pub fn symbols(&self) -> &[LookaheadSymbol] {
         &self.symbols
     }
-
-    fn merge(&mut self, symbols: &[LookaheadSymbol]) -> bool {
-        let old_len = self.symbols.len();
-        self.symbols.extend_from_slice(symbols);
-        self.symbols = sorted_lookaheads(std::mem::take(&mut self.symbols));
-        self.symbols.len() != old_len
-    }
 }
 
 /// One LR item set.
@@ -3236,9 +3229,63 @@ impl<'a> LrTableBuilder<'a> {
 
 type ItemSetKey = Vec<(ProductionId, usize, Vec<LookaheadSymbol>)>;
 
+/// Builder-local dense index of the lookahead symbols seen while closing one item
+/// set. Lets `ItemMap` store lookahead sets as bitsets keyed by index, so a merge is
+/// a bitwise OR instead of re-sorting a `Vec` on every insert — which was ~90% of
+/// `ParseTable::from_grammar` on heavy grammars (`LookaheadSet::merge` re-sorted the
+/// whole set on each of the many LR-closure merges).
+#[derive(Debug, Clone, Default)]
+struct LookaheadInterner {
+    to_index: BTreeMap<LookaheadSymbol, u32>,
+    from_index: Vec<LookaheadSymbol>,
+}
+
+impl LookaheadInterner {
+    fn intern(&mut self, symbol: LookaheadSymbol) -> u32 {
+        if let Some(&index) = self.to_index.get(&symbol) {
+            return index;
+        }
+        let index = self.from_index.len() as u32;
+        self.from_index.push(symbol);
+        self.to_index.insert(symbol, index);
+        index
+    }
+}
+
+/// Growable bitset over interned lookahead indices.
+#[derive(Debug, Clone, Default)]
+struct LookaheadBitset {
+    words: Vec<u64>,
+}
+
+impl LookaheadBitset {
+    /// Set the bit for `index`; returns whether it was newly set (i.e. the set grew).
+    fn set(&mut self, index: u32) -> bool {
+        let word = index as usize / 64;
+        let bit = 1u64 << (index % 64);
+        if word >= self.words.len() {
+            self.words.resize(word + 1, 0);
+        }
+        let newly = self.words[word] & bit == 0;
+        self.words[word] |= bit;
+        newly
+    }
+
+    /// Interned indices whose bit is set, ascending by index.
+    fn indices(&self) -> impl Iterator<Item = u32> + '_ {
+        self.words.iter().enumerate().flat_map(|(word, &bits)| {
+            let base = (word as u32) * 64;
+            (0..64u32)
+                .filter(move |offset| bits & (1u64 << offset) != 0)
+                .map(move |offset| base + offset)
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct ItemMap {
-    items: BTreeMap<(ProductionId, usize), LookaheadSet>,
+    interner: LookaheadInterner,
+    items: BTreeMap<(ProductionId, usize), LookaheadBitset>,
 }
 
 impl ItemMap {
@@ -3256,19 +3303,30 @@ impl ItemMap {
         dot: usize,
         lookaheads: &[LookaheadSymbol],
     ) -> bool {
-        self.items
-            .entry((production, dot))
-            .or_default()
-            .merge(lookaheads)
+        let Self { interner, items } = self;
+        let bitset = items.entry((production, dot)).or_default();
+        let mut changed = false;
+        for &symbol in lookaheads {
+            changed |= bitset.set(interner.intern(symbol));
+        }
+        changed
     }
 
     fn into_items(self) -> Vec<LrItem> {
-        self.items
+        let Self { interner, items } = self;
+        items
             .into_iter()
-            .map(|((production, dot), lookahead)| LrItem {
-                production,
-                dot,
-                lookahead,
+            .map(|((production, dot), bitset)| {
+                let mut symbols: Vec<LookaheadSymbol> = bitset
+                    .indices()
+                    .map(|index| interner.from_index[index as usize])
+                    .collect();
+                symbols.sort();
+                LrItem {
+                    production,
+                    dot,
+                    lookahead: LookaheadSet { symbols },
+                }
             })
             .collect()
     }
