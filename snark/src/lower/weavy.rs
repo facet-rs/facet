@@ -492,6 +492,8 @@ pub struct WeavySnarkStencilFamilySummary {
     pub family: SnarkStencilFamily,
     /// Execution strategy for this family.
     pub execution: SnarkStencilExecution,
+    /// Union of session state required by descriptors in this family.
+    pub state: Vec<SnarkStencilState>,
     /// Number of Snark intrinsic ops represented by this family.
     pub count: usize,
 }
@@ -1212,18 +1214,24 @@ impl WeavyParsePlanReadiness {
 fn snark_stencil_family_summaries(
     summaries: &[WeavySnarkStencilSummary],
 ) -> Vec<WeavySnarkStencilFamilySummary> {
-    let mut counts = BTreeMap::<(SnarkStencilFamily, SnarkStencilExecution), usize>::new();
+    let mut counts = BTreeMap::<
+        (SnarkStencilFamily, SnarkStencilExecution),
+        (usize, BTreeSet<SnarkStencilState>),
+    >::new();
     for summary in summaries {
-        *counts
+        let (count, state) = counts
             .entry((summary.stencil.family, summary.stencil.execution))
-            .or_default() += summary.count;
+            .or_default();
+        *count += summary.count;
+        state.extend(summary.stencil.state.iter().copied());
     }
     let mut summaries = counts
         .into_iter()
         .map(
-            |((family, execution), count)| WeavySnarkStencilFamilySummary {
+            |((family, execution), (count, state))| WeavySnarkStencilFamilySummary {
                 family,
                 execution,
+                state: state.into_iter().collect(),
                 count,
             },
         )
@@ -8105,6 +8113,16 @@ mod tests {
             vec![WeavySnarkStencilFamilySummary {
                 family: SnarkStencilFamily::Lexer,
                 execution: SnarkStencilExecution::LexerGraph,
+                state: vec![
+                    SnarkStencilState::SourceInput,
+                    SnarkStencilState::ParseTable,
+                    SnarkStencilState::LexerProgram,
+                    SnarkStencilState::ParserStack,
+                    SnarkStencilState::BranchCursor,
+                    SnarkStencilState::Lookahead,
+                    SnarkStencilState::ScannerState,
+                    SnarkStencilState::AutoCloseStack,
+                ],
                 count: 1,
             }]
         );
@@ -8250,6 +8268,13 @@ mod tests {
             vec![WeavySnarkStencilFamilySummary {
                 family: SnarkStencilFamily::ExternalScanner,
                 execution: SnarkStencilExecution::HostCall,
+                state: vec![
+                    SnarkStencilState::SourceInput,
+                    SnarkStencilState::ParseTable,
+                    SnarkStencilState::BranchCursor,
+                    SnarkStencilState::Lookahead,
+                    SnarkStencilState::ScannerState,
+                ],
                 count: 1,
             }]
         );
@@ -8330,6 +8355,13 @@ mod tests {
             vec![WeavySnarkStencilFamilySummary {
                 family: SnarkStencilFamily::ExternalScanner,
                 execution: SnarkStencilExecution::HostCall,
+                state: vec![
+                    SnarkStencilState::SourceInput,
+                    SnarkStencilState::ParseTable,
+                    SnarkStencilState::BranchCursor,
+                    SnarkStencilState::Lookahead,
+                    SnarkStencilState::ScannerState,
+                ],
                 count: 2,
             }]
         );
@@ -8419,16 +8451,41 @@ mod tests {
                 WeavySnarkStencilFamilySummary {
                     family: SnarkStencilFamily::TreeBuilder,
                     execution: SnarkStencilExecution::DirectStencil,
+                    state: vec![
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::TreeStore,
+                        SnarkStencilState::TreeJournal,
+                        SnarkStencilState::TraceSink,
+                        SnarkStencilState::TreeEventSink,
+                    ],
                     count: 4,
                 },
                 WeavySnarkStencilFamilySummary {
                     family: SnarkStencilFamily::ParserCursor,
                     execution: SnarkStencilExecution::DirectStencil,
+                    state: vec![
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::ScannerState,
+                        SnarkStencilState::AutoCloseStack,
+                    ],
                     count: 3,
                 },
                 WeavySnarkStencilFamilySummary {
                     family: SnarkStencilFamily::Lexer,
                     execution: SnarkStencilExecution::LexerGraph,
+                    state: vec![
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::ScannerState,
+                        SnarkStencilState::AutoCloseStack,
+                    ],
                     count: 2,
                 },
             ]

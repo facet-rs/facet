@@ -171,8 +171,8 @@ fn main() {
         println!("  stencil families:");
         for summary in &analysis.readiness.snark_stencil_family_summaries {
             println!(
-                "    {:?}/{:?}: {}",
-                summary.family, summary.execution, summary.count
+                "    {:?}/{:?}: {}  state={:?}",
+                summary.family, summary.execution, summary.count, summary.state
             );
         }
     }

@@ -69,6 +69,7 @@ type PlanOutput = {
 type PlanStencilFamilyOutput = {
   family: string;
   execution: string;
+  state: string[];
   count: number;
 };
 

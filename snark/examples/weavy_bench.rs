@@ -253,8 +253,8 @@ fn main() {
         println!("  snark stencil families:");
         for summary in &readiness.snark_stencil_family_summaries {
             println!(
-                "    {:<18?} {:<16?} x{}",
-                summary.family, summary.execution, summary.count
+                "    {:<18?} {:<16?} x{}  state={:?}",
+                summary.family, summary.execution, summary.count, summary.state
             );
         }
     }

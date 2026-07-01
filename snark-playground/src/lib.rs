@@ -151,6 +151,7 @@ struct PlanOutput {
 struct PlanStencilFamilyOutput {
     family: String,
     execution: String,
+    state: Vec<String>,
     count: usize,
 }
 
@@ -860,6 +861,11 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
             .map(|summary| PlanStencilFamilyOutput {
                 family: format!("{:?}", summary.family),
                 execution: format!("{:?}", summary.execution),
+                state: summary
+                    .state
+                    .iter()
+                    .map(|state| format!("{state:?}"))
+                    .collect(),
                 count: summary.count,
             })
             .collect(),
