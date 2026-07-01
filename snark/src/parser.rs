@@ -2690,6 +2690,12 @@ impl LookaheadSet {
 pub struct ItemSet {
     id: ItemSetId,
     items: Vec<LrItem>,
+    /// Each item's lookahead set as `width` interned bitwords, packed in `items`
+    /// order. Lets goto grouping OR lookaheads straight into the successor arena
+    /// instead of re-interning `items[..].lookahead.symbols()` — the symbols were
+    /// themselves just materialized from these bits.
+    width: usize,
+    lookahead_words: Vec<u64>,
 }
 
 impl ItemSet {
@@ -3124,16 +3130,20 @@ impl<'a> LrTableBuilder<'a> {
         let width = self.lookahead_width();
         let item_count = self.item_count;
         let mut grouped = BTreeMap::<ParserSymbol, ItemMap>::new();
-        for item in &item_set.items {
+        for (index, item) in item_set.items.iter().enumerate() {
             let production = &self.grammar.productions[item.production.get() as usize];
             let Some(step) = production.steps.get(item.dot) else {
                 continue;
             };
             let dense = self.dense(item.production, item.dot + 1);
+            // The item's lookahead is already interned in `item_set.lookahead_words`
+            // (packed in `items` order) — OR those bits straight in, no re-interning.
+            let base = index * item_set.width;
+            let words = &item_set.lookahead_words[base..base + item_set.width];
             grouped
                 .entry(step.symbol)
                 .or_insert_with(|| take_map(pool, width, item_count))
-                .insert(dense, item.lookahead.symbols(), &self.first.interner);
+                .or_into_words(dense, words);
         }
         grouped
     }
@@ -3477,9 +3487,14 @@ impl ItemMap {
     /// at most `width` words (indices are interned `< universe`). Returns whether the
     /// set grew.
     fn or_into(&mut self, dense: u32, bits: &LookaheadBitset) -> bool {
+        self.or_into_words(dense, &bits.words)
+    }
+
+    /// OR packed lookahead words (e.g. a stored `ItemSet`'s row) into item `dense`.
+    fn or_into_words(&mut self, dense: u32, words: &[u64]) -> bool {
         let base = self.row_base(dense);
         let mut grew = false;
-        for (offset, &incoming) in bits.words.iter().enumerate() {
+        for (offset, &incoming) in words.iter().enumerate() {
             let word = base + offset;
             grew |= incoming & !self.words[word] != 0;
             self.words[word] |= incoming;
@@ -3495,38 +3510,41 @@ impl ItemMap {
         order.sort_unstable();
     }
 
+    /// Materialize this item set into canonical `Vec<LrItem>` (symbols) plus the same
+    /// lookaheads packed as `width` bitwords per item, in the same order. Only
+    /// genuinely-new states reach here (borrows so the map can be recycled).
     fn materialize(
         &self,
         item_key: &[(ProductionId, usize)],
         interner: &LookaheadInterner,
-    ) -> Vec<LrItem> {
-        // Only genuinely-new states reach here (borrows so the map can be recycled).
+    ) -> (Vec<LrItem>, Vec<u64>) {
         let mut order = Vec::with_capacity(self.present.len());
         self.sorted_present(&mut order);
-        order
-            .into_iter()
-            .map(|dense| {
-                let (production, dot) = item_key[dense as usize];
-                let base = (self.row_of[dense as usize] as usize - 1) * self.width;
-                let words = &self.words[base..base + self.width];
-                // Ascending bit index = symbol order (the interner is built sorted),
-                // so the lookahead set materializes already sorted with no sort.
-                let mut symbols = Vec::new();
-                for (word_index, &word) in words.iter().enumerate() {
-                    let mut bits = word;
-                    while bits != 0 {
-                        let index = word_index * 64 + bits.trailing_zeros() as usize;
-                        symbols.push(interner.from_index[index]);
-                        bits &= bits - 1;
-                    }
+        let mut items = Vec::with_capacity(order.len());
+        let mut packed = Vec::with_capacity(order.len() * self.width);
+        for &dense in &order {
+            let (production, dot) = item_key[dense as usize];
+            let base = (self.row_of[dense as usize] as usize - 1) * self.width;
+            let words = &self.words[base..base + self.width];
+            packed.extend_from_slice(words);
+            // Ascending bit index = symbol order (the interner is built sorted),
+            // so the lookahead set materializes already sorted with no sort.
+            let mut symbols = Vec::new();
+            for (word_index, &word) in words.iter().enumerate() {
+                let mut bits = word;
+                while bits != 0 {
+                    let index = word_index * 64 + bits.trailing_zeros() as usize;
+                    symbols.push(interner.from_index[index]);
+                    bits &= bits - 1;
                 }
-                LrItem {
-                    production,
-                    dot,
-                    lookahead: LookaheadSet { symbols },
-                }
-            })
-            .collect()
+            }
+            items.push(LrItem {
+                production,
+                dot,
+                lookahead: LookaheadSet { symbols },
+            });
+        }
+        (items, packed)
     }
 
     /// Write this item set's dense canonical dedup key into `sig` (cleared first),
@@ -3778,8 +3796,14 @@ fn push_item_set(
     }
     let id = ItemSetId::from_index(item_sets.len());
     bucket.push(id);
-    let items = map.materialize(item_key, interner);
-    item_sets.push(ItemSet { id, items });
+    let width = map.width;
+    let (items, lookahead_words) = map.materialize(item_key, interner);
+    item_sets.push(ItemSet {
+        id,
+        items,
+        width,
+        lookahead_words,
+    });
     sigs.push(sig.clone());
     recycle_map(pool, map);
     queue.push_back(id);
