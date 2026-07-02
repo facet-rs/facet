@@ -19,11 +19,8 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         SnarkStencilProfile, WeavyLexerExecutionStats, WeavyLoweringBarrier, WeavyParseError,
-        WeavyParseExecutionLane, WeavyParsePlan, WeavyParseReport, WeavySnarkExecutionStats,
-        parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
-        parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner,
-        reparse_prepared_weavy_recovering_with_report_and_scanner,
-        reparse_prepared_weavy_with_report_and_scanner,
+        WeavyParseExecutionLane, WeavyParsePlan, WeavyParseReport, WeavyParseWorkspace,
+        WeavySnarkExecutionStats,
     },
     manifest::TreeSitterConfig,
     parser::{
@@ -234,6 +231,7 @@ struct ParseOutput {
     failure_count: usize,
     max_live_versions: usize,
     lexer_call_count: usize,
+    lexer_direct_set_uncached: usize,
     lexer_direct_set_cache_hits: usize,
     lexer_direct_set_cache_misses: usize,
     lexer_stencil_executions: Vec<ParseLexerStencilExecutionOutput>,
@@ -495,6 +493,7 @@ struct PreparedEmbeddedLanguage {
 struct ResolvedEmbeddedLanguage {
     prepared: Option<PreparedGrammar>,
     scanner_selection: Option<ScannerSelection>,
+    parse_workspace: WeavyParseWorkspace,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -516,6 +515,7 @@ pub struct PlaygroundSession {
     prepared: PreparedGrammar,
     scanner_selection: ScannerSelection,
     embedded_languages: BTreeMap<String, PreparedEmbeddedLanguage>,
+    parse_workspace: WeavyParseWorkspace,
     last_input: Option<String>,
     last_report: Option<Arc<WeavyParseReport>>,
     /// Per-phase timings from `prepare_grammar`, echoed with every parse response
@@ -641,6 +641,7 @@ impl PlaygroundSession {
             prepared,
             scanner_selection,
             embedded_languages,
+            parse_workspace: WeavyParseWorkspace::new(),
             last_input: None,
             last_report: None,
             prepare_timings,
@@ -845,8 +846,14 @@ fn parse_session_input(
             edit,
         ))
     });
-    let report = parse_weavy_with_optional_recovery(&session.prepared, scanner, input, previous)
-        .map_err(|error| weavy_error_diagnostic("parse", &error, &session.prepared, input))?;
+    let report = parse_weavy_with_optional_recovery(
+        &session.parse_workspace,
+        &session.prepared,
+        scanner,
+        input,
+        previous,
+    )
+    .map_err(|error| weavy_error_diagnostic("parse", &error, &session.prepared, input))?;
     session.last_input = Some(input.to_owned());
     session.last_report = Some(Arc::clone(&report.report.0));
     Ok(report)
@@ -890,6 +897,7 @@ fn parse_output(
         failure_count: report.failure_count(),
         max_live_versions: report.max_live_versions(),
         lexer_call_count: lexer_stats.lex_call_count,
+        lexer_direct_set_uncached: lexer_stats.direct_set_uncached_count,
         lexer_direct_set_cache_hits: lexer_stats.direct_set_cache_hit_count,
         lexer_direct_set_cache_misses: lexer_stats.direct_set_cache_miss_count,
         lexer_stencil_executions: lexer_stats
@@ -1209,6 +1217,7 @@ fn resolve_embedded_language(files: &[BundleFile]) -> ResolvedEmbeddedLanguage {
         return ResolvedEmbeddedLanguage {
             prepared: None,
             scanner_selection: None,
+            parse_workspace: WeavyParseWorkspace::new(),
             diagnostics: Vec::new(),
         };
     };
@@ -1218,6 +1227,7 @@ fn resolve_embedded_language(files: &[BundleFile]) -> ResolvedEmbeddedLanguage {
             return ResolvedEmbeddedLanguage {
                 prepared: None,
                 scanner_selection: None,
+                parse_workspace: WeavyParseWorkspace::new(),
                 diagnostics: vec![diagnostic(&stage, message, None)],
             };
         }
@@ -1228,6 +1238,7 @@ fn resolve_embedded_language(files: &[BundleFile]) -> ResolvedEmbeddedLanguage {
         return ResolvedEmbeddedLanguage {
             prepared: None,
             scanner_selection: None,
+            parse_workspace: WeavyParseWorkspace::new(),
             diagnostics: vec![diagnostic(
                 "scanner",
                 unsupported_external_scanner_message(&bundle, &prepared.parser),
@@ -1238,6 +1249,7 @@ fn resolve_embedded_language(files: &[BundleFile]) -> ResolvedEmbeddedLanguage {
     ResolvedEmbeddedLanguage {
         prepared: Some(prepared),
         scanner_selection: Some(scanner_selection),
+        parse_workspace: WeavyParseWorkspace::new(),
         diagnostics: Vec::new(),
     }
 }
@@ -1716,7 +1728,13 @@ fn layer_output(
         .scanner
         .as_ref()
         .map(|scanner| scanner as &dyn ExternalScannerHost);
-    let report_result = parse_weavy_with_optional_recovery(prepared, scanner, &input, None);
+    let report_result = parse_weavy_with_optional_recovery(
+        &resolved.parse_workspace,
+        prepared,
+        scanner,
+        &input,
+        None,
+    );
     let report = match report_result {
         Ok(report) => report,
         Err(error) => {
@@ -2009,6 +2027,7 @@ fn injection_diagnostic_span(region: &InjectionOutput) -> DiagnosticSpan {
 
 fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<CorpusOutput> {
     let mut results = Vec::new();
+    let workspace = WeavyParseWorkspace::new();
     let scanner_selection = scanner_selection(files, &prepared.parser);
     for file in files
         .iter()
@@ -2032,6 +2051,7 @@ fn run_corpus_cases(files: &[BundleFile], prepared: &PreparedGrammar) -> Vec<Cor
         };
         for case in cases {
             match parse_strict_weavy_with_optional_scanner(
+                &workspace,
                 prepared,
                 scanner_selection
                     .scanner
@@ -2072,6 +2092,7 @@ fn run_highlight_tests(
     prepared: &PreparedGrammar,
 ) -> Vec<HighlightTestOutput> {
     let mut results = Vec::new();
+    let workspace = WeavyParseWorkspace::new();
     let scanner_selection = scanner_selection(files, &prepared.parser);
     let query = query_source_for_kind(files, &prepared.raw.name, PlaygroundQueryKind::Highlights);
 
@@ -2094,6 +2115,7 @@ fn run_highlight_tests(
             }
         };
         let report = match parse_strict_weavy_with_optional_scanner(
+            &workspace,
             prepared,
             scanner_selection
                 .scanner
@@ -2217,11 +2239,12 @@ fn highlight_assertion_range(assertion: &HighlightAssertion) -> PointRange {
 }
 
 fn parse_strict_weavy_with_optional_scanner(
+    workspace: &WeavyParseWorkspace,
     prepared: &PreparedGrammar,
     scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
+    workspace.parse_collecting_reuse_with_report_and_scanner(
         &prepared.weavy_plan,
         &prepared.parser,
         &prepared.table,
@@ -2231,11 +2254,12 @@ fn parse_strict_weavy_with_optional_scanner(
 }
 
 fn parse_recovering_weavy_with_optional_scanner(
+    workspace: &WeavyParseWorkspace,
     prepared: &PreparedGrammar,
     scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
+    workspace.parse_recovering_collecting_reuse_with_report_and_scanner(
         &prepared.weavy_plan,
         &prepared.parser,
         &prepared.table,
@@ -2245,13 +2269,14 @@ fn parse_recovering_weavy_with_optional_scanner(
 }
 
 fn parse_weavy_with_optional_recovery(
+    workspace: &WeavyParseWorkspace,
     prepared: &PreparedGrammar,
     scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
     previous: Option<(&str, &WeavyParseReport, ParserInputEdit)>,
 ) -> Result<PlaygroundParseReport, WeavyParseError> {
     let strict = if let Some((old_input, previous_report, edit)) = previous {
-        reparse_prepared_weavy_with_report_and_scanner(
+        workspace.reparse_with_report_and_scanner(
             &prepared.weavy_plan,
             &prepared.parser,
             &prepared.table,
@@ -2262,7 +2287,7 @@ fn parse_weavy_with_optional_recovery(
             scanner,
         )
     } else {
-        parse_strict_weavy_with_optional_scanner(prepared, scanner, input)
+        parse_strict_weavy_with_optional_scanner(workspace, prepared, scanner, input)
     };
     match strict {
         Ok(report) => Ok(PlaygroundParseReport {
@@ -2270,7 +2295,7 @@ fn parse_weavy_with_optional_recovery(
             strict_error_byte: None,
         }),
         Err(strict_error) => match if let Some((old_input, previous_report, edit)) = previous {
-            reparse_prepared_weavy_recovering_with_report_and_scanner(
+            workspace.reparse_recovering_with_report_and_scanner(
                 &prepared.weavy_plan,
                 &prepared.parser,
                 &prepared.table,
@@ -2281,7 +2306,7 @@ fn parse_weavy_with_optional_recovery(
                 scanner,
             )
         } else {
-            parse_recovering_weavy_with_optional_scanner(prepared, scanner, input)
+            parse_recovering_weavy_with_optional_scanner(workspace, prepared, scanner, input)
         } {
             Ok(report) => Ok(PlaygroundParseReport {
                 report: WeavyPlaygroundReport(Arc::new(report)),
@@ -5069,7 +5094,8 @@ mod tests {
         assert_eq!(parse.accepted_error_count, 0);
         assert_eq!(parse.accepted_missing_count, 0);
         assert!(parse.lexer_call_count > 0);
-        assert!(parse.lexer_direct_set_cache_misses > 0);
+        assert!(parse.lexer_direct_set_uncached > 0);
+        assert_eq!(parse.lexer_direct_set_cache_misses, 0);
         assert_eq!(parse.lexer_direct_set_cache_hits, 0);
         assert_eq!(parse.execution_lane, "Direct");
         assert!(

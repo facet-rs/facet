@@ -41,10 +41,8 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         SnarkStencilProfile, WeavyLexerStencilSummary, WeavyParseError, WeavyParsePlan,
-        WeavyParseReport, WeavySnarkProfileStencilReadiness,
-        parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
-        parse_prepared_weavy_recovering_with_report_and_scanner,
-        parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
+        WeavyParseReport, WeavyParseWorkspace, WeavySnarkProfileStencilReadiness,
+        parse_prepared_weavy_resolved_tree,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
@@ -67,6 +65,7 @@ struct Prepared {
     parser: ParserGrammar,
     table: ParseTable,
     plan: WeavyParsePlan,
+    workspace: WeavyParseWorkspace,
 }
 
 fn load_grammar_json(grammar_path: &str) -> String {
@@ -90,10 +89,12 @@ fn prepare(grammar_path: &str) -> Prepared {
     let parser = normalized.prepare_productions_for_items().expect("prepare");
     let table = ParseTable::from_grammar(&parser).expect("table");
     let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("plan");
+    let workspace = WeavyParseWorkspace::new();
     Prepared {
         parser,
         table,
         plan,
+        workspace,
     }
 }
 
@@ -132,11 +133,11 @@ fn run_tablebench(grammar_path: &str, iters: usize) {
 
 /// Best (min) parse time in ms over `iters` runs, after one warm-up.
 fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
-    let _ = parse_prepared_weavy_tree(&p.plan, &p.parser, &p.table, input);
+    let _ = p.workspace.parse_tree(&p.plan, &p.parser, &p.table, input);
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        let _ = parse_prepared_weavy_tree(&p.plan, &p.parser, &p.table, input);
+        let _ = p.workspace.parse_tree(&p.plan, &p.parser, &p.table, input);
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     best_ms
@@ -284,15 +285,15 @@ fn best_resolved_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, Weav
 }
 
 fn recover_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_recovering_with_report_and_scanner(
-        &p.plan, &p.parser, &p.table, input, None,
-    )
+    p.workspace
+        .parse_recovering_collecting_reuse_with_report_and_scanner(
+            &p.plan, &p.parser, &p.table, input, None,
+        )
 }
 
 fn collect_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
-        &p.plan, &p.parser, &p.table, input, None,
-    )
+    p.workspace
+        .parse_collecting_reuse_with_report_and_scanner(&p.plan, &p.parser, &p.table, input, None)
 }
 
 #[cfg(all(
@@ -974,7 +975,7 @@ fn main() {
     let iters: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
 
     let p = prepare(grammar_path);
-    if let Err(e) = parse_prepared_weavy_tree(&p.plan, &p.parser, &p.table, &input) {
+    if let Err(e) = p.workspace.parse_tree(&p.plan, &p.parser, &p.table, &input) {
         eprintln!("parse failed: {e:?}");
         std::process::exit(1);
     }

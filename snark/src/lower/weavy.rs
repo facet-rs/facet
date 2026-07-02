@@ -7,7 +7,7 @@
 
 use std::{
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap},
     error::Error,
     fmt,
@@ -2044,6 +2044,195 @@ impl WeavyParsePlan {
             &lexer_scratch,
         )
         .map_err(runtime_weavy_match_error_to_parse_error)
+    }
+}
+
+/// Mutable parse workspace for repeated executions of a prepared Weavy plan.
+///
+/// The plan owns immutable grammar/table lowering. This workspace owns reusable
+/// lexer scratch such as hybrid-DFA caches and match buffers, so callers that
+/// parse repeatedly can avoid rebuilding those caches on every input.
+#[derive(Default)]
+pub struct WeavyParseWorkspace {
+    lexer_scratch: RuntimeWeavyLexerScratch,
+}
+
+impl WeavyParseWorkspace {
+    /// Create an empty parse workspace.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Execute a prepared parser plan through the direct Weavy runtime and return only the tree.
+    pub fn parse_tree(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+    ) -> Result<SexpNode, WeavyParseError> {
+        self.parse_tree_and_scanner(plan, parser, table, input, None)
+    }
+
+    /// Execute a prepared parser plan with a scanner host and return only the tree.
+    pub fn parse_tree_and_scanner(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+        external_scanner: Option<&dyn ExternalScannerHost>,
+    ) -> Result<SexpNode, WeavyParseError> {
+        let input_ctx = RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        };
+        if let Some(tree) = parse_weavy_deterministic_with_execution_and_scratch::<
+            RuntimeWeavyDeterministicTreeSink,
+        >(
+            input_ctx,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )? {
+            return Ok(tree);
+        }
+        parse_weavy_with_lexer_program_and_scratch(
+            input_ctx,
+            RuntimeWeavyRecoveryMode::Strict,
+            None,
+            RuntimeWeavyReuseCollection::Disabled,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )
+        .map(|report| report.tree)
+    }
+
+    /// Execute a prepared Weavy plan and collect reusable-node metadata.
+    pub fn parse_collecting_reuse_with_report_and_scanner(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+        external_scanner: Option<&dyn ExternalScannerHost>,
+    ) -> Result<WeavyParseReport, WeavyParseError> {
+        parse_weavy_with_lexer_program_and_scratch(
+            RuntimeWeavyInput {
+                plan,
+                lexer_program: &plan.lexer_program,
+                auto_close_index: &plan.auto_close_index,
+                parser,
+                table,
+                input,
+                external_scanner,
+            },
+            RuntimeWeavyRecoveryMode::Strict,
+            None,
+            RuntimeWeavyReuseCollection::Enabled,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )
+    }
+
+    /// Execute a recovering prepared Weavy plan and collect reusable-node metadata.
+    pub fn parse_recovering_collecting_reuse_with_report_and_scanner(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+        external_scanner: Option<&dyn ExternalScannerHost>,
+    ) -> Result<WeavyParseReport, WeavyParseError> {
+        parse_weavy_with_lexer_program_and_scratch(
+            RuntimeWeavyInput {
+                plan,
+                lexer_program: &plan.lexer_program,
+                auto_close_index: &plan.auto_close_index,
+                parser,
+                table,
+                input,
+                external_scanner,
+            },
+            RuntimeWeavyRecoveryMode::SkipInvalidInput,
+            None,
+            RuntimeWeavyReuseCollection::Enabled,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )
+    }
+
+    /// Reparse one edited input through the direct Weavy runtime using reusable
+    /// nodes from a previous report.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reparse_with_report_and_scanner(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        old_input: &str,
+        previous_report: &WeavyParseReport,
+        edit: parser_ir::ParserInputEdit,
+        new_input: &str,
+        external_scanner: Option<&dyn ExternalScannerHost>,
+    ) -> Result<WeavyParseReport, WeavyParseError> {
+        validate_weavy_edit(edit, old_input, new_input)?;
+        let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
+        parse_weavy_with_lexer_program_and_scratch(
+            RuntimeWeavyInput {
+                plan,
+                lexer_program: &plan.lexer_program,
+                auto_close_index: &plan.auto_close_index,
+                parser,
+                table,
+                input: new_input,
+                external_scanner,
+            },
+            RuntimeWeavyRecoveryMode::Strict,
+            Some(&reuse_index),
+            RuntimeWeavyReuseCollection::Enabled,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )
+    }
+
+    /// Reparse one edited input through the direct Weavy runtime with skip-invalid
+    /// recovery.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reparse_recovering_with_report_and_scanner(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        old_input: &str,
+        previous_report: &WeavyParseReport,
+        edit: parser_ir::ParserInputEdit,
+        new_input: &str,
+        external_scanner: Option<&dyn ExternalScannerHost>,
+    ) -> Result<WeavyParseReport, WeavyParseError> {
+        validate_weavy_edit(edit, old_input, new_input)?;
+        let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
+        parse_weavy_with_lexer_program_and_scratch(
+            RuntimeWeavyInput {
+                plan,
+                lexer_program: &plan.lexer_program,
+                auto_close_index: &plan.auto_close_index,
+                parser,
+                table,
+                input: new_input,
+                external_scanner,
+            },
+            RuntimeWeavyRecoveryMode::SkipInvalidInput,
+            Some(&reuse_index),
+            RuntimeWeavyReuseCollection::Enabled,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )
     }
 }
 
@@ -5236,7 +5425,7 @@ macro_rules! trace_push {
 }
 
 struct RuntimeWeavyLexerScratch {
-    cache_policy: RuntimeWeavyLexSetCachePolicy,
+    cache_policy: Cell<RuntimeWeavyLexSetCachePolicy>,
     execution_stats: RefCell<RuntimeWeavyLexerExecutionStats>,
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
@@ -5252,7 +5441,7 @@ struct RuntimeWeavyLexerScratch {
 impl RuntimeWeavyLexerScratch {
     fn new(cache_policy: RuntimeWeavyLexSetCachePolicy) -> Self {
         Self {
-            cache_policy,
+            cache_policy: Cell::new(cache_policy),
             execution_stats: RefCell::default(),
             direct_literal_ends: RefCell::default(),
             direct_pattern_ends: RefCell::default(),
@@ -5263,6 +5452,15 @@ impl RuntimeWeavyLexerScratch {
             choice_dfa_caches: RefCell::default(),
             direct_set_cache: RefCell::default(),
         }
+    }
+
+    fn reset_for_parse(&self, cache_policy: RuntimeWeavyLexSetCachePolicy) {
+        self.cache_policy.set(cache_policy);
+        *self.execution_stats.borrow_mut() = RuntimeWeavyLexerExecutionStats::default();
+        self.direct_literal_ends.borrow_mut().clear();
+        self.direct_pattern_ends.borrow_mut().clear();
+        self.direct_terminal_indices.borrow_mut().clear();
+        self.direct_set_cache.borrow_mut().clear();
     }
 
     fn execution_stats(&self) -> WeavyLexerExecutionStats {
@@ -5335,7 +5533,7 @@ impl RuntimeWeavyLexerScratch {
             slot: cache_slot,
             byte_position,
         };
-        if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled
+        if self.cache_policy.get() == RuntimeWeavyLexSetCachePolicy::Enabled
             && let Some(matches) = self.direct_set_cache.borrow().get(&key)
         {
             self.record_direct_set_cache_hit();
@@ -5345,13 +5543,13 @@ impl RuntimeWeavyLexerScratch {
                 &matches.terminal_indices,
             );
         }
-        if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled {
+        if self.cache_policy.get() == RuntimeWeavyLexSetCachePolicy::Enabled {
             self.record_direct_set_cache_miss();
         } else {
             self.record_direct_set_uncached();
         }
         self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
-        if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled {
+        if self.cache_policy.get() == RuntimeWeavyLexSetCachePolicy::Enabled {
             let matches = Arc::new(RuntimeWeavyDirectSetMatches {
                 literal_ends: self.direct_literal_ends.borrow().clone(),
                 pattern_ends: self.direct_pattern_ends.borrow().clone(),
@@ -6238,16 +6436,32 @@ fn parse_weavy_deterministic_with_execution<S>(
 where
     S: RuntimeWeavyDeterministicSink,
 {
+    let lexer_scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
+    parse_weavy_deterministic_with_execution_and_scratch::<S>(
+        input_ctx,
+        block_execution,
+        &lexer_scratch,
+    )
+}
+
+fn parse_weavy_deterministic_with_execution_and_scratch<S>(
+    input_ctx: RuntimeWeavyInput<'_>,
+    block_execution: RuntimeWeavyBlockExecution,
+    lexer_scratch: &RuntimeWeavyLexerScratch,
+) -> Result<Option<S::Output>, WeavyParseError>
+where
+    S: RuntimeWeavyDeterministicSink,
+{
     if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(WeavyParseError::WrongStage {
             stage: input_ctx.parser.stage(),
         });
     }
+    lexer_scratch.reset_for_parse(RuntimeWeavyLexSetCachePolicy::Disabled);
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(false);
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
-    let lexer_scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let external_scanner_errors = RefCell::new(Vec::new());
     let mut stats = RunStats::default();
@@ -6284,7 +6498,7 @@ where
                 trace_events: &mut trace_events,
                 tree_journal: &mut tree_journal,
                 tree_event_collection: S::TREE_EVENT_COLLECTION,
-                lexer_scratch: &lexer_scratch,
+                lexer_scratch,
                 input_points: &input_points,
                 next_lookahead_index: &mut next_lookahead_index,
                 stats: &mut stats,
@@ -6699,11 +6913,43 @@ fn parse_weavy_with_lexer_program(
     reuse_collection: RuntimeWeavyReuseCollection,
     block_execution: RuntimeWeavyBlockExecution,
 ) -> Result<WeavyParseReport, WeavyParseError> {
+    let lexer_scratch =
+        RuntimeWeavyLexerScratch::new(runtime_weavy_lex_set_cache_policy(recovery, reuse_index));
+    parse_weavy_with_lexer_program_and_scratch(
+        input_ctx,
+        recovery,
+        reuse_index,
+        reuse_collection,
+        block_execution,
+        &lexer_scratch,
+    )
+}
+
+fn runtime_weavy_lex_set_cache_policy(
+    recovery: RuntimeWeavyRecoveryMode,
+    reuse_index: Option<&RuntimeWeavyReuseIndex<'_>>,
+) -> RuntimeWeavyLexSetCachePolicy {
+    if recovery == RuntimeWeavyRecoveryMode::Strict && reuse_index.is_none() {
+        RuntimeWeavyLexSetCachePolicy::Disabled
+    } else {
+        RuntimeWeavyLexSetCachePolicy::Enabled
+    }
+}
+
+fn parse_weavy_with_lexer_program_and_scratch(
+    input_ctx: RuntimeWeavyInput<'_>,
+    recovery: RuntimeWeavyRecoveryMode,
+    reuse_index: Option<&RuntimeWeavyReuseIndex<'_>>,
+    reuse_collection: RuntimeWeavyReuseCollection,
+    block_execution: RuntimeWeavyBlockExecution,
+    lexer_scratch: &RuntimeWeavyLexerScratch,
+) -> Result<WeavyParseReport, WeavyParseError> {
     if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(WeavyParseError::WrongStage {
             stage: input_ctx.parser.stage(),
         });
     }
+    lexer_scratch.reset_for_parse(runtime_weavy_lex_set_cache_policy(recovery, reuse_index));
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(block_execution.collects_traces());
@@ -6761,13 +7007,6 @@ fn parse_weavy_with_lexer_program(
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
-    let lexer_scratch = RuntimeWeavyLexerScratch::new(
-        if recovery == RuntimeWeavyRecoveryMode::Strict && reuse_index.is_none() {
-            RuntimeWeavyLexSetCachePolicy::Disabled
-        } else {
-            RuntimeWeavyLexSetCachePolicy::Enabled
-        },
-    );
     let step_limit = match recovery {
         RuntimeWeavyRecoveryMode::Strict => {
             runtime_weavy_step_limit(input_ctx.table, input_ctx.input)
@@ -6828,7 +7067,7 @@ fn parse_weavy_with_lexer_program(
             trace_events: &mut trace_events,
             tree_journal: &mut tree_journal,
             tree_event_collection: RuntimeWeavyTreeEventCollection::Enabled,
-            lexer_scratch: &lexer_scratch,
+            lexer_scratch,
             input_points: &input_points,
             next_lookahead_index: &mut next_lookahead_index,
             stats: &mut stats,
@@ -7904,6 +8143,15 @@ fn run_runtime_weavy_block(
     block_execution: RuntimeWeavyBlockExecution,
     hostcall_stats: &mut WeavyHostCallExecutionStats,
 ) -> Result<RunStats, RuntimeWeavyStepError> {
+    #[cfg(not(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    )))]
+    let _ = hostcall_stats;
+
     let parser_program = &plan.program;
     let program = parser_program.runtime_dense_block(block)?;
     let result = match block_execution {
