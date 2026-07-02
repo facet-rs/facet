@@ -383,10 +383,11 @@ fn print_lexer_execution_stats(report: &WeavyParseReport) {
             .join(",")
     };
     println!(
-        "lexer_execution: calls={} direct_set_cache_hits={} direct_set_cache_misses={} stencils={}",
+        "lexer_execution: calls={} direct_set_cache_hits={} direct_set_cache_misses={} direct_set_uncached={} stencils={}",
         stats.lex_call_count,
         stats.direct_set_cache_hit_count,
         stats.direct_set_cache_miss_count,
+        stats.direct_set_uncached_count,
         stencils
     );
     if let Some(summary) = stats.dominant_stencil_execution() {

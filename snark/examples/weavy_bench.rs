@@ -156,6 +156,7 @@ fn add_lexer_execution_stats(
     total.lex_call_count += next.lex_call_count;
     total.direct_set_cache_hit_count += next.direct_set_cache_hit_count;
     total.direct_set_cache_miss_count += next.direct_set_cache_miss_count;
+    total.direct_set_uncached_count += next.direct_set_uncached_count;
     for (kind, count) in &next.stencil_executions {
         *total.stencil_executions.entry(*kind).or_default() += count;
     }
@@ -285,7 +286,7 @@ fn print_bench_totals(label: &str, totals: &BenchTotals, iters: usize) {
     let lexer_summaries = totals.lexer_stats.stencil_execution_summaries();
     if let Some(summary) = lexer_summaries.first() {
         println!(
-            "      avg lexer: calls {:>9.1}  cache hit/miss {:>9.1}/{:<9.1}  dominant {:?} {:>9.1}",
+            "      avg lexer: calls {:>9.1}  cache hit/miss/uncached {:>9.1}/{:>9.1}/{:<9.1}  dominant {:?} {:>9.1}",
             average_count(totals.lexer_stats.lex_call_count, totals.runner_samples),
             average_count(
                 totals.lexer_stats.direct_set_cache_hit_count,
@@ -293,6 +294,10 @@ fn print_bench_totals(label: &str, totals: &BenchTotals, iters: usize) {
             ),
             average_count(
                 totals.lexer_stats.direct_set_cache_miss_count,
+                totals.runner_samples
+            ),
+            average_count(
+                totals.lexer_stats.direct_set_uncached_count,
                 totals.runner_samples
             ),
             summary.kind,

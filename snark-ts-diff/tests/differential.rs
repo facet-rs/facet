@@ -338,6 +338,7 @@ fn hostcalls_print_execution_lanes() {
     assert!(stdout.contains("hostcall_execution: attempted_blocks="));
     assert!(stdout.contains("errored_blocks="));
     assert!(stdout.contains("lexer_execution: calls="));
+    assert!(stdout.contains("direct_set_uncached="));
     assert!(stdout.contains("lexer_dominant_execution:"));
 }
 

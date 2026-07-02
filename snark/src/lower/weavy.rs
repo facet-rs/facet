@@ -705,6 +705,8 @@ pub struct WeavyLexerExecutionStats {
     pub direct_set_cache_hit_count: usize,
     /// Fresh direct-set matcher evaluations keyed by lexical mode/state and byte.
     pub direct_set_cache_miss_count: usize,
+    /// Direct-set matcher evaluations run without consulting the direct-set cache.
+    pub direct_set_uncached_count: usize,
     /// Executed lexer graph matcher families.
     pub stencil_executions: BTreeMap<WeavyLexerStencilKind, usize>,
 }
@@ -4905,6 +4907,10 @@ impl RuntimeWeavyLexerScratch {
             .direct_set_cache_miss_count += 1;
     }
 
+    fn record_direct_set_uncached(&self) {
+        self.execution_stats.borrow_mut().direct_set_uncached_count += 1;
+    }
+
     fn record_stencil_execution(&self, kind: WeavyLexerStencilKind) {
         self.execution_stats.borrow_mut().record_stencil(kind);
     }
@@ -4947,7 +4953,11 @@ impl RuntimeWeavyLexerScratch {
                 &matches.terminal_indices,
             );
         }
-        self.record_direct_set_cache_miss();
+        if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled {
+            self.record_direct_set_cache_miss();
+        } else {
+            self.record_direct_set_uncached();
+        }
         self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
         if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled {
             let matches = Arc::new(RuntimeWeavyDirectSetMatches {
@@ -11484,6 +11494,10 @@ mod tests {
         assert_eq!(second.0, vec![None]);
         assert_eq!(second.1, vec![Some(parser_ir::LexMatch::new(4, 4))]);
         assert_eq!(second.2, vec![1]);
+        let stats = scratch.execution_stats();
+        assert_eq!(stats.direct_set_cache_hit_count, 0);
+        assert_eq!(stats.direct_set_cache_miss_count, 0);
+        assert_eq!(stats.direct_set_uncached_count, 2);
     }
 
     #[test]
@@ -12416,8 +12430,9 @@ mod tests {
         );
         let lexer_stats = default_direct.lexer_stats();
         assert!(lexer_stats.lex_call_count > 0);
-        assert!(lexer_stats.direct_set_cache_miss_count > 0);
+        assert_eq!(lexer_stats.direct_set_cache_miss_count, 0);
         assert_eq!(lexer_stats.direct_set_cache_hit_count, 0);
+        assert!(lexer_stats.direct_set_uncached_count > 0);
         assert!(lexer_stats.stencil_execution_count(WeavyLexerStencilKind::LiteralSet) > 0);
         assert_eq!(
             lexer_stats.stencil_execution_count(WeavyLexerStencilKind::PatternDfaSet),
