@@ -26,7 +26,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
-    parser::{ParseTable, ParserGrammar, ResolvedCstNode},
+    parser::{ParseNode, ParseTable, ParserGrammar, ResolvedCstNode},
     validated::ValidatedGrammar,
 };
 
@@ -2847,39 +2847,10 @@ fn run_ops_via_weavy_jit<T: facet::Facet<'static>>(ops: &[BuildOp]) -> T {
 /// structure); the tree supplies data; the grammar `Annotations` supply the mapping. It
 /// records a flat `BuildOp` program as it goes — that program IS the Weavy IR for the
 /// materialization (see `run_ops_via_weavy`).
-/// The MINIMAL node interface the AST materializer needs: kind, named-ness, leaf text, ordered
-/// children. `ResolvedCstNode` (the rich parse's resolved tree) implements it, and so does
-/// the lightweight `LeanNode` a lean parse->AST driver would emit — proving materialization is
-/// decoupled from snark's rich tree machinery. THIS is the interface PL core's lean driver
-/// implements: build LeanNode-shaped nodes on reduce (no sexp/tree_store/trace/tree events),
-/// feed this same materializer.
-trait ParseNode: Sized {
-    fn kind(&self) -> &str;
-    fn named(&self) -> bool;
-    fn text(&self) -> Option<&str>;
-    fn children(&self) -> &[Self];
-    /// Half-open source byte range `[start, end)` — for source-mapped diagnostics/JIT profiling.
-    fn byte_range(&self) -> (usize, usize);
-}
-
-impl ParseNode for ResolvedCstNode {
-    fn kind(&self) -> &str {
-        ResolvedCstNode::kind(self)
-    }
-    fn named(&self) -> bool {
-        ResolvedCstNode::named(self)
-    }
-    fn text(&self) -> Option<&str> {
-        ResolvedCstNode::text(self)
-    }
-    fn children(&self) -> &[Self] {
-        ResolvedCstNode::children(self)
-    }
-    fn byte_range(&self) -> (usize, usize) {
-        let b = ResolvedCstNode::bytes(self);
-        (b.start().get() as usize, b.end().get() as usize)
-    }
-}
+/// `ParseNode` is the minimal node interface the AST materializer needs: kind, named-ness,
+/// leaf text, ordered children, and range. `ResolvedCstNode` implements it in snark, and so
+/// does the lightweight `LeanNode` a lean parse->AST driver would emit — proving
+/// materialization is decoupled from snark's rich tree machinery.
 
 /// A lightweight parse node — kind + text + ordered children, nothing else. What a lean
 /// deterministic parse->AST driver emits per reduce. Built here FROM a `ResolvedCstNode`

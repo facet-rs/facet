@@ -4920,6 +4920,47 @@ impl ResolvedCstNode {
     }
 }
 
+/// Minimal recursive node view needed by typed AST/lowering materializers.
+pub trait ParseNode: Sized {
+    /// Node or terminal kind.
+    fn kind(&self) -> &str;
+
+    /// Whether this item is named in public traversal.
+    fn named(&self) -> bool;
+
+    /// Source text for terminal leaves.
+    fn text(&self) -> Option<&str>;
+
+    /// Ordered child items.
+    fn children(&self) -> &[Self];
+
+    /// Half-open source byte range `[start, end)`.
+    fn byte_range(&self) -> (usize, usize);
+}
+
+impl ParseNode for ResolvedCstNode {
+    fn kind(&self) -> &str {
+        self.kind()
+    }
+
+    fn named(&self) -> bool {
+        self.named()
+    }
+
+    fn text(&self) -> Option<&str> {
+        self.text()
+    }
+
+    fn children(&self) -> &[Self] {
+        self.children()
+    }
+
+    fn byte_range(&self) -> (usize, usize) {
+        let bytes = self.bytes();
+        (bytes.start().get() as usize, bytes.end().get() as usize)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedCstItem {
     kind: Arc<str>,
