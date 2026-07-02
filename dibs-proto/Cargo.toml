@@ -1,6 +1,6 @@
 [package]
 name = "dibs-proto"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 edition = "2024"
 rust-version.workspace = true
 authors = ["Amos Wenger <amos@bearcove.eu>"]

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-rc.6](https://github.com/facet-rs/facet/compare/dibs-jsonb-v0.2.0-rc.5...dibs-jsonb-v0.2.0-rc.6) - 2026-07-02
+
+### Other
+
+- updated the following local packages: facet
+
 ## [0.2.0-rc.5](https://github.com/facet-rs/facet/compare/dibs-jsonb-v0.2.0-rc.4...dibs-jsonb-v0.2.0-rc.5) - 2026-06-28
 
 ### Other

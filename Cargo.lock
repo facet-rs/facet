@@ -383,9 +383,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.17.0"
+version = "1.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ec2f1fc3ec205783a5da9a7e6c1509cc69dedf09a1949e412c1e18469326d00"
+checksum = "4342d8937fc7e5dd9b1c60292261c0670c882a2cd1719cfc11b1af41731e32ad"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -393,14 +393,15 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.41.0"
+version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a2f9779ce85b93ab6170dd940ad0169b5766ff848247aff13bb788b832fe3f4"
+checksum = "6d9ceb1da931507a12f4fccea479dccd00da1943e1b4ae72d8e502d707361444"
 dependencies = [
  "cc",
  "cmake",
  "dunce",
  "fs_extra",
+ "pkg-config",
 ]
 
 [[package]]
@@ -1324,9 +1325,9 @@ dependencies = [
 
 [[package]]
 name = "console"
-version = "0.16.3"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
+checksum = "4fe5f465a4f6fee88fad41b85d990f84c835335e85b5d9e6e63e0d06d28cba7c"
 dependencies = [
  "encode_unicode",
  "libc",
@@ -1368,7 +1369,7 @@ checksum = "980c2afde4af43d6a05c5be738f9eae595cff86dce1f38f88b95058a98c027f3"
 
 [[package]]
 name = "copypatch"
-version = "0.2.0-rc.4"
+version = "0.2.0-rc.5"
 dependencies = [
  "libc",
  "object 0.39.1",
@@ -1752,7 +1753,7 @@ dependencies = [
 
 [[package]]
 name = "dibs"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "blake3",
  "bytes",
@@ -1781,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-cli"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "arborium",
  "arborium-highlight",
@@ -1825,14 +1826,14 @@ dependencies = [
 
 [[package]]
 name = "dibs-config"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "dibs-db-schema"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "chrono",
  "dibs-jsonb",
@@ -1848,14 +1849,14 @@ dependencies = [
 
 [[package]]
 name = "dibs-jsonb"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "dibs-macros"
-version = "0.2.0-rc.4"
+version = "0.2.0-rc.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1864,7 +1865,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-proto"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "facet",
  "vox",
@@ -1872,7 +1873,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-qgen"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "ariadne",
  "camino",
@@ -1892,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-query-schema"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "dibs-sql",
  "facet",
@@ -1904,7 +1905,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-runtime"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "dibs-jsonb",
  "facet",
@@ -1919,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "dibs-sql"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "blake3",
  "facet",
@@ -2207,7 +2208,7 @@ dependencies = [
 
 [[package]]
 name = "fable"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cstree",
  "facet",
@@ -2217,7 +2218,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -2235,7 +2236,7 @@ dependencies = [
 
 [[package]]
 name = "facet-asn1"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -2248,7 +2249,7 @@ dependencies = [
 
 [[package]]
 name = "facet-atom"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-testhelpers",
@@ -2259,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "facet-axum"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "axum",
  "facet",
@@ -2276,7 +2277,7 @@ dependencies = [
 
 [[package]]
 name = "facet-cargo-toml"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "camino",
  "datatest-stable",
@@ -2289,7 +2290,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "autocfg",
  "bytes",
@@ -2324,7 +2325,7 @@ dependencies = [
 
 [[package]]
 name = "facet-csv"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -2336,14 +2337,14 @@ dependencies = [
 
 [[package]]
 name = "facet-default"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-dessert"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -2351,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "facet-dom"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet-core",
  "facet-dessert",
@@ -2364,14 +2365,14 @@ dependencies = [
 
 [[package]]
 name = "facet-error"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-format"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "ariadne",
  "facet-core",
@@ -2414,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "facet-hash"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "codspeed-divan-compat",
  "copypatch",
@@ -2426,7 +2427,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "axum-core",
  "codspeed-divan-compat",
@@ -2467,7 +2468,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json-schema"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -2477,7 +2478,7 @@ dependencies = [
 
 [[package]]
 name = "facet-lua"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -2490,7 +2491,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -2499,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2508,14 +2509,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -2527,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "facet-msgpack"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "axum-core",
  "codspeed-divan-compat",
@@ -2547,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -2557,7 +2558,7 @@ dependencies = [
 
 [[package]]
 name = "facet-postcard"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "axum-core",
  "bytestring",
@@ -2590,7 +2591,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "camino",
  "facet",
@@ -2605,7 +2606,7 @@ dependencies = [
 
 [[package]]
 name = "facet-python"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "chrono",
  "facet",
@@ -2615,7 +2616,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "eyre",
  "facet",
@@ -2643,7 +2644,7 @@ dependencies = [
 
 [[package]]
 name = "facet-singularize"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "codspeed-divan-compat",
  "facet",
@@ -2657,7 +2658,7 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "codspeed-divan-compat",
  "facet",
@@ -2671,7 +2672,7 @@ dependencies = [
 
 [[package]]
 name = "facet-styx"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "ariadne",
  "facet",
@@ -2697,7 +2698,7 @@ dependencies = [
 
 [[package]]
 name = "facet-svg"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "datatest-stable",
  "facet",
@@ -2716,7 +2717,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -2727,7 +2728,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "quote",
  "unsynn",
@@ -2735,7 +2736,7 @@ dependencies = [
 
 [[package]]
 name = "facet-tokio-postgres"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "chrono",
  "dibs-jsonb",
@@ -2756,7 +2757,7 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "axum-core",
  "codspeed-divan-compat",
@@ -2782,7 +2783,7 @@ dependencies = [
 
 [[package]]
 name = "facet-typescript"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "chrono",
  "facet",
@@ -2792,7 +2793,7 @@ dependencies = [
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "axum-core",
  "facet",
@@ -2807,7 +2808,7 @@ dependencies = [
 
 [[package]]
 name = "facet-validate"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -2816,7 +2817,7 @@ dependencies = [
 
 [[package]]
 name = "facet-value"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "bolero",
  "codspeed-divan-compat",
@@ -2832,7 +2833,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xdr"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -2843,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xml"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "axum-core",
  "facet",
@@ -2859,7 +2860,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xml-node"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -2871,7 +2872,7 @@ dependencies = [
 
 [[package]]
 name = "facet-yaml"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "axum-core",
  "codspeed-divan-compat",
@@ -2897,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "facet-zod"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -2969,13 +2970,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee93edf3c501f0035bbeffeccfed0b79e14c311f12195ec0e661e114a0f60da4"
 dependencies = [
  "portable-atomic",
- "rand 0.10.1",
+ "rand 0.10.2",
  "web-time",
 ]
 
 [[package]]
 name = "figue"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "ariadne",
  "camino",
@@ -3003,7 +3004,7 @@ dependencies = [
 
 [[package]]
 name = "figue-attrs"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "facet",
 ]
@@ -3289,7 +3290,7 @@ checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
 name = "gingembre"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "ariadne",
  "camino",
@@ -3321,7 +3322,7 @@ dependencies = [
 
 [[package]]
 name = "gingembre-syntax"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "cstree",
 ]
@@ -3904,9 +3905,9 @@ dependencies = [
 
 [[package]]
 name = "inotify-sys"
-version = "0.1.5"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e05c02b5e89bff3b946cedeca278abc628fe811e604f027c45a8aa3cf793d0eb"
+checksum = "9ea94e891b3606826e9c998be69ddca42247dad8ad50b1649a5cb7e1c9ae06fd"
 dependencies = [
  "libc",
 ]
@@ -3994,9 +3995,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jiff"
-version = "0.2.29"
+version = "0.2.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34f877a98676d2fb664698d74cc6a51ce6c484ce8c770f05d0108ec9090aeb46"
+checksum = "ccfe6121cbe750cf81efa362d85c0bde7ea298ec43092d3a193baca59cdbd634"
 dependencies = [
  "defmt",
  "jiff-static",
@@ -4010,9 +4011,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-static"
-version = "0.2.29"
+version = "0.2.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0666b5ab5ecaca213fc2a85b8c0083d9004e84ee2d5f9a7e0017aaf50986f25f"
+checksum = "e165e897f662d428f3cd3828a919dbe067c2d42bb1031eede74ef9d27ecdedd2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4158,9 +4159,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libredox"
-version = "0.1.17"
+version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f02ab6bace2054fb888a3c16f990117b579d14a3088e472d63c6011fa185c9d3"
+checksum = "c943259e342f1e06ff2da7a83eabdfe7f92ce10262688dbf1895ff0b3e6e4652"
 dependencies = [
  "libc",
 ]
@@ -4292,7 +4293,7 @@ dependencies = [
 
 [[package]]
 name = "margin"
-version = "0.10.0-rc.1"
+version = "0.10.0-rc.2"
 dependencies = [
  "facet",
  "unicode-width",
@@ -4300,7 +4301,7 @@ dependencies = [
 
 [[package]]
 name = "margin-term"
-version = "0.10.0-rc.1"
+version = "0.10.0-rc.2"
 dependencies = [
  "arborium-theme",
  "margin",
@@ -5030,7 +5031,7 @@ dependencies = [
 
 [[package]]
 name = "phon"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "facet",
  "facet-value",
@@ -5042,7 +5043,7 @@ dependencies = [
 
 [[package]]
 name = "phon-codegen"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "facet",
  "phon",
@@ -5051,7 +5052,7 @@ dependencies = [
 
 [[package]]
 name = "phon-conformance"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "facet",
  "facet-json",
@@ -5064,7 +5065,7 @@ dependencies = [
 
 [[package]]
 name = "phon-engine"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "facet-value",
  "phon-ir",
@@ -5075,7 +5076,7 @@ dependencies = [
 
 [[package]]
 name = "phon-ir"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "phon-schema",
  "weavy",
@@ -5083,7 +5084,7 @@ dependencies = [
 
 [[package]]
 name = "phon-jit"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "copypatch",
  "phon-ir",
@@ -5093,7 +5094,7 @@ dependencies = [
 
 [[package]]
 name = "phon-schema"
-version = "0.2.0-rc.5"
+version = "0.2.0-rc.6"
 dependencies = [
  "blake3",
  "facet-value",
@@ -5101,7 +5102,7 @@ dependencies = [
 
 [[package]]
 name = "picante"
-version = "3.0.0-rc.5"
+version = "3.0.0-rc.6"
 dependencies = [
  "codspeed-divan-compat",
  "dashmap 6.2.1",
@@ -5222,7 +5223,7 @@ dependencies = [
  "hmac",
  "md-5",
  "memchr",
- "rand 0.10.1",
+ "rand 0.10.2",
  "sha2 0.11.0",
  "stringprep",
 ]
@@ -5433,7 +5434,7 @@ checksum = "95c589f335db0f6aaa168a7cd27b1fc6920f5e1470c804f814d9cd6e62a0f70b"
 dependencies = [
  "env_logger",
  "log",
- "rand 0.10.1",
+ "rand 0.10.2",
 ]
 
 [[package]]
@@ -5497,9 +5498,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
+checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
@@ -5710,7 +5711,7 @@ dependencies = [
 
 [[package]]
 name = "rediff"
-version = "0.50.0-rc.5"
+version = "0.50.0-rc.6"
 dependencies = [
  "confusables",
  "facet",
@@ -5930,7 +5931,7 @@ dependencies = [
 
 [[package]]
 name = "rusqlite-facet"
-version = "2.0.0-rc.5"
+version = "2.0.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -5940,7 +5941,7 @@ dependencies = [
 
 [[package]]
 name = "rust-examples"
-version = "0.10.0-rc.1"
+version = "0.10.0-rc.2"
 dependencies = [
  "eyre",
  "tempfile",
@@ -6068,9 +6069,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.14.1"
+version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30a7197ae7eb376e574fe940d068c30fe0462554a3ddbe4eca7838e049c937a9"
+checksum = "764899a24af3980067ee14bc143654f297b22eaebfe3c7b6b211920a5a59b046"
 dependencies = [
  "zeroize",
 ]
@@ -6361,7 +6362,7 @@ dependencies = [
 
 [[package]]
 name = "serde_styx"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "serde",
  "styx-format",
@@ -6585,7 +6586,7 @@ checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 
 [[package]]
 name = "snark"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "aho-corasick",
  "facet",
@@ -6736,7 +6737,7 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "strid"
-version = "11.0.0-rc.5"
+version = "11.0.0-rc.6"
 dependencies = [
  "bytestring",
  "compact_str",
@@ -6752,7 +6753,7 @@ dependencies = [
 
 [[package]]
 name = "strid-examples"
-version = "11.0.0-rc.5"
+version = "11.0.0-rc.6"
 dependencies = [
  "bytestring",
  "compact_str",
@@ -6764,7 +6765,7 @@ dependencies = [
 
 [[package]]
 name = "strid-macros"
-version = "11.0.0-rc.4"
+version = "11.0.0-rc.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6875,7 +6876,7 @@ dependencies = [
 
 [[package]]
 name = "styx-cli"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "facet",
  "facet-styx",
@@ -6905,7 +6906,7 @@ dependencies = [
 
 [[package]]
 name = "styx-cst"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "rowan",
  "styx-testhelpers",
@@ -6914,7 +6915,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "blake3",
  "goblin",
@@ -6925,7 +6926,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed-macros"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "blake3",
  "lz4_flex",
@@ -6936,7 +6937,7 @@ dependencies = [
 
 [[package]]
 name = "styx-ffi"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "cbindgen",
  "styx-tree",
@@ -6944,7 +6945,7 @@ dependencies = [
 
 [[package]]
 name = "styx-format"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "insta",
  "proptest",
@@ -6955,14 +6956,14 @@ dependencies = [
 
 [[package]]
 name = "styx-gen-go"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "facet-styx",
 ]
 
 [[package]]
 name = "styx-lsp"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "dirs",
  "eyre",
@@ -6991,7 +6992,7 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-ext"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "facet",
  "styx-tree",
@@ -7000,14 +7001,14 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-test-schema"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "styx-parse"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "ariadne",
  "facet",
@@ -7020,14 +7021,14 @@ dependencies = [
 
 [[package]]
 name = "styx-testhelpers"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "ariadne",
 ]
 
 [[package]]
 name = "styx-tokenizer"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "facet",
  "facet-testhelpers",
@@ -7036,7 +7037,7 @@ dependencies = [
 
 [[package]]
 name = "styx-tree"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "ariadne",
  "facet",
@@ -7050,7 +7051,7 @@ dependencies = [
 
 [[package]]
 name = "styx-wasm"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
@@ -7220,9 +7221,9 @@ dependencies = [
 
 [[package]]
 name = "terminal-light"
-version = "1.8.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6f76be906d875a0ce764c52a055858c24847cb7dc674d3a5ad8cf7e3dd4ee9f"
+checksum = "79307346b35bf24ed47c895c71f24653fab51c37576c7df7b5efdb8d519aee6d"
 dependencies = [
  "coolor",
  "crossterm",
@@ -7417,9 +7418,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.51"
+version = "0.3.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85c17d80feb7334b40c484e45ed1a5273dfd8bfda537c3be2e74a06a6686f327"
+checksum = "18dfaaeddcb932337b5e7866ee7d0ce9b76d2fd092997146f187ec09b4558a50"
 dependencies = [
  "deranged",
  "libc",
@@ -7439,9 +7440,9 @@ checksum = "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
 
 [[package]]
 name = "time-macros"
-version = "0.2.30"
+version = "0.2.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcef1a61bdb119096e153208ec5cbec23944ce8bca13be5c7f60c634f7403935"
+checksum = "c431b87111666e491a90baa837f914fb45cd5dc3c268591b0220ff5057f2085f"
 dependencies = [
  "num-conv",
  "time-core",
@@ -7520,7 +7521,7 @@ dependencies = [
  "pin-project-lite",
  "postgres-protocol",
  "postgres-types",
- "rand 0.10.1",
+ "rand 0.10.2",
  "socket2",
  "tokio",
  "tokio-util",
@@ -7862,7 +7863,7 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
 name = "tree-sitter-styx"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 dependencies = [
  "arborium-tree-sitter",
  "cc",
@@ -7870,9 +7871,9 @@ dependencies = [
 
 [[package]]
 name = "triomphe"
-version = "0.1.15"
+version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd69c5aa8f924c7519d6372789a74eac5b94fb0f8fcf0d4a97eb0bfc3e785f39"
+checksum = "b40688ea6389c8171614b25491f71d4a27946e0c7ce2da1c6de27e25abf1a0ae"
 dependencies = [
  "stable_deref_trait",
 ]
@@ -8144,7 +8145,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vox"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "facet",
  "facet-pretty",
@@ -8168,7 +8169,7 @@ dependencies = [
 
 [[package]]
 name = "vox-codegen"
-version = "0.10.0-rc.6"
+version = "0.10.0-rc.7"
 dependencies = [
  "base64 0.21.7",
  "facet",
@@ -8187,7 +8188,7 @@ dependencies = [
 
 [[package]]
 name = "vox-core"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "facet",
  "facet-core",
@@ -8205,7 +8206,7 @@ dependencies = [
 
 [[package]]
 name = "vox-fdpass"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "libc",
  "passfd",
@@ -8215,7 +8216,7 @@ dependencies = [
 
 [[package]]
 name = "vox-ffi"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "tracing",
  "vox-types",
@@ -8223,7 +8224,7 @@ dependencies = [
 
 [[package]]
 name = "vox-inprocess"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -8234,7 +8235,7 @@ dependencies = [
 
 [[package]]
 name = "vox-local"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "tokio",
  "vox-stream",
@@ -8242,7 +8243,7 @@ dependencies = [
 
 [[package]]
 name = "vox-macros-core"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "heck 0.5.0",
  "insta",
@@ -8253,7 +8254,7 @@ dependencies = [
 
 [[package]]
 name = "vox-macros-parse"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "proc-macro2",
  "unsynn",
@@ -8261,7 +8262,7 @@ dependencies = [
 
 [[package]]
 name = "vox-phon"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "facet",
  "phon",
@@ -8276,7 +8277,7 @@ dependencies = [
 
 [[package]]
 name = "vox-rt"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -8291,11 +8292,11 @@ dependencies = [
 
 [[package]]
 name = "vox-rt-macros"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 
 [[package]]
 name = "vox-schema"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "blake3",
  "facet",
@@ -8304,7 +8305,7 @@ dependencies = [
 
 [[package]]
 name = "vox-service-macros"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "proc-macro2",
  "vox-macros-core",
@@ -8312,7 +8313,7 @@ dependencies = [
 
 [[package]]
 name = "vox-stream"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "libc",
  "tempfile",
@@ -8327,7 +8328,7 @@ dependencies = [
 
 [[package]]
 name = "vox-types"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "blake3",
  "facet",
@@ -8345,7 +8346,7 @@ dependencies = [
 
 [[package]]
 name = "vox-websocket"
-version = "0.10.0-rc.5"
+version = "0.10.0-rc.6"
 dependencies = [
  "axum",
  "futures-channel",
@@ -8512,7 +8513,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-browser-tests"
-version = "0.10.0-rc.1"
+version = "0.10.0-rc.2"
 dependencies = [
  "futures-util",
  "spec-proto",
@@ -8525,7 +8526,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-inprocess-tests"
-version = "0.10.0-rc.1"
+version = "0.10.0-rc.2"
 dependencies = [
  "js-sys",
  "spec-proto",
@@ -8548,7 +8549,7 @@ dependencies = [
 
 [[package]]
 name = "weavy"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "copypatch",
 ]
@@ -9062,12 +9063,13 @@ checksum = "7008a9d8ba97a7e47d9b2df63fcdb8dade303010c5a7cd5bf2469d4da6eba673"
 
 [[package]]
 name = "xterm-query"
-version = "0.5.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "292c33df434fde4ecd87a7afecdfa1681a3d29567fc69c774a0d83d32c095331"
+checksum = "e468ba3129b3d5acd2655410cf12adccd818746e2b8d7fd4b2d22a6e3515ec98"
 dependencies = [
- "nix 0.29.0",
+ "nix 0.31.3",
  "thiserror 1.0.69",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
