@@ -187,6 +187,20 @@ fn write_stencil_profile(
         &profile.lexer_summaries,
     )?;
 
+    let backend_execution = profile.backend_execution_summaries();
+    if backend_execution.is_empty() {
+        writeln!(out, "{label}_backend_execution: none")?;
+    } else {
+        writeln!(out, "{label}_backend_execution:")?;
+        for summary in backend_execution {
+            writeln!(
+                out,
+                "  {:?}: parser={} lexer={} total={}",
+                summary.execution, summary.parser_count, summary.lexer_count, summary.total_count
+            )?;
+        }
+    }
+
     if profile.family_summaries.is_empty() {
         writeln!(out, "{label}_stencil_families: none")?;
     } else {

@@ -515,6 +515,19 @@ pub struct WeavySnarkProfileStencilReadiness {
     pub state_summaries: Vec<WeavySnarkStencilStateSummary>,
 }
 
+/// Backend stencil obligations grouped by execution lane for one runtime profile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavySnarkProfileBackendExecutionSummary {
+    /// Execution strategy a backend/JIT must provide.
+    pub execution: SnarkStencilExecution,
+    /// Parser/action Snark intrinsic stencil ops in this lane.
+    pub parser_count: usize,
+    /// Lexer-graph matcher stencil ops in this lane.
+    pub lexer_count: usize,
+    /// Total backend stencil ops in this lane.
+    pub total_count: usize,
+}
+
 impl WeavySnarkProfileStencilReadiness {
     /// Count parser/action Snark intrinsic stencil obligations in this profile.
     #[must_use]
@@ -556,6 +569,36 @@ impl WeavySnarkProfileStencilReadiness {
     #[must_use]
     pub fn needs_backend_stencils(&self) -> bool {
         self.needs_parser_stencils() || self.needs_lexer_stencils()
+    }
+
+    /// Count backend stencil obligations by execution lane, including lexer matcher ops.
+    #[must_use]
+    pub fn backend_execution_summaries(&self) -> Vec<WeavySnarkProfileBackendExecutionSummary> {
+        let mut counts = BTreeMap::<SnarkStencilExecution, (usize, usize)>::new();
+        for summary in &self.execution_summaries {
+            counts.entry(summary.execution).or_default().0 += summary.count;
+        }
+        for summary in &self.lexer_summaries {
+            counts.entry(summary.execution).or_default().1 += summary.count;
+        }
+        let mut summaries = counts
+            .into_iter()
+            .map(|(execution, (parser_count, lexer_count))| {
+                WeavySnarkProfileBackendExecutionSummary {
+                    execution,
+                    parser_count,
+                    lexer_count,
+                    total_count: parser_count + lexer_count,
+                }
+            })
+            .collect::<Vec<_>>();
+        summaries.sort_by(|left, right| {
+            right
+                .total_count
+                .cmp(&left.total_count)
+                .then_with(|| left.execution.cmp(&right.execution))
+        });
+        summaries
     }
 }
 
@@ -11206,6 +11249,15 @@ mod tests {
             direct_no_trace_profile.backend_stencil_count(),
             1 + lexer_stencil_count
         );
+        assert_eq!(
+            direct_no_trace_profile.backend_execution_summaries(),
+            vec![WeavySnarkProfileBackendExecutionSummary {
+                execution: SnarkStencilExecution::LexerGraph,
+                parser_count: 1,
+                lexer_count: lexer_stencil_count,
+                total_count: 1 + lexer_stencil_count,
+            }]
+        );
         assert!(direct_no_trace_profile.needs_parser_stencils());
         assert!(direct_no_trace_profile.needs_lexer_stencils());
         assert!(direct_no_trace_profile.needs_backend_stencils());
@@ -11333,6 +11385,7 @@ mod tests {
         assert_eq!(direct_profile.parser_stencil_count(), 0);
         assert_eq!(direct_profile.lexer_stencil_count(), 0);
         assert_eq!(direct_profile.backend_stencil_count(), 0);
+        assert!(direct_profile.backend_execution_summaries().is_empty());
         assert!(!direct_profile.needs_parser_stencils());
         assert!(!direct_profile.needs_lexer_stencils());
         assert!(!direct_profile.needs_backend_stencils());
