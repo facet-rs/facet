@@ -271,10 +271,11 @@ fn main() {
         readiness.is_neutral_weavy_only()
     );
     println!(
-        "  weavy op ownership: neutral {:>6}  snark intrinsics {:>6}  stencils needed {:<5}",
+        "  weavy op ownership: neutral {:>6}  snark intrinsics {:>6}  parser stencils {:<5}  lexer stencils {:<5}",
         readiness.neutral_weavy_op_count,
         readiness.snark_intrinsic_count,
-        readiness.needs_snark_stencils()
+        readiness.needs_snark_stencils(),
+        readiness.needs_lexer_stencils()
     );
     println!(
         "  native copy-patch JIT available: {}",
@@ -316,6 +317,15 @@ fn main() {
                 summary.effect.may_allocate,
                 summary.effect.calls_user_code,
                 summary.effect.opaque
+            );
+        }
+    }
+    if !readiness.lexer_stencil_summaries.is_empty() {
+        println!("  lexer graph stencils:");
+        for summary in &readiness.lexer_stencil_summaries {
+            println!(
+                "    {:<18?} {:<16?} x{}  state={:?}",
+                summary.kind, summary.execution, summary.count, summary.state
             );
         }
     }

@@ -172,11 +172,12 @@ fn main() {
         analysis.readiness.lexer.merged_pattern_terminal_count
     );
     println!(
-        "  fully visible? parser={} all={} neutral-weavy-only={} needs-snark-stencils={}",
+        "  fully visible? parser={} all={} neutral-weavy-only={} needs-snark-stencils={} needs-lexer-stencils={}",
         analysis.readiness.is_parser_fully_visible(),
         analysis.readiness.is_fully_visible(),
         analysis.readiness.is_neutral_weavy_only(),
-        analysis.readiness.needs_snark_stencils()
+        analysis.readiness.needs_snark_stencils(),
+        analysis.readiness.needs_lexer_stencils()
     );
     if analysis.readiness.barrier_summaries.is_empty() {
         println!("  blockers: none");
@@ -201,6 +202,16 @@ fn main() {
                 summary.effect.may_allocate,
                 summary.effect.calls_user_code,
                 summary.effect.opaque
+            );
+        }
+    }
+
+    if !analysis.readiness.lexer_stencil_summaries.is_empty() {
+        println!("  lexer graph stencils:");
+        for summary in &analysis.readiness.lexer_stencil_summaries {
+            println!(
+                "    {:?}/{:?}: {}  state={:?}",
+                summary.kind, summary.execution, summary.count, summary.state
             );
         }
     }
