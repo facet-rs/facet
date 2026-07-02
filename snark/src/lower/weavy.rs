@@ -6492,7 +6492,11 @@ where
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(false);
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
-    let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
+    let input_points = if S::TREE_EVENT_COLLECTION == RuntimeWeavyTreeEventCollection::Enabled {
+        RuntimeWeavyInputPoints::new(input_ctx.input)
+    } else {
+        RuntimeWeavyInputPoints::disabled(input_ctx.input)
+    };
     let external_scanner_errors = RefCell::new(Vec::new());
     let mut stats = RunStats::default();
     let mut snark_stats = if S::SNARK_STAT_COLLECTION {
@@ -11388,6 +11392,7 @@ fn match_weavy_lex_expr_for_tests(
 #[derive(Clone, Debug)]
 struct RuntimeWeavyInputPoints {
     input_len: usize,
+    enabled: bool,
     line_starts: Vec<usize>,
     cached_line_index: Cell<usize>,
 }
@@ -11402,12 +11407,23 @@ impl RuntimeWeavyInputPoints {
         }
         Self {
             input_len: input.len(),
+            enabled: true,
             line_starts,
             cached_line_index: Cell::new(0),
         }
     }
 
+    fn disabled(input: &str) -> Self {
+        Self {
+            input_len: input.len(),
+            enabled: false,
+            line_starts: vec![0],
+            cached_line_index: Cell::new(0),
+        }
+    }
+
     fn point_at(&self, byte: usize) -> PointBytes {
+        debug_assert!(self.enabled, "point lookup used disabled input points");
         let byte = byte.min(self.input_len);
         let mut line_index = self
             .cached_line_index
