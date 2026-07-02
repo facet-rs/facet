@@ -103,6 +103,14 @@ fn main() {
         );
         return;
     }
+    if args.get(1).map(|s| s == "--perf").unwrap_or(false) {
+        perf();
+        return;
+    }
+    if args.get(1).map(|s| s == "--diag").unwrap_or(false) {
+        diag();
+        return;
+    }
     if let (Some(grammar), Some(input)) = (args.get(1), args.get(2)) {
         repro(grammar, input);
         return;
@@ -416,6 +424,192 @@ fn ast_proof() {
         println!("✓ item 4 {src:<20} -> {via_generated:?} (== gingembre native)");
     }
     println!("✓ item 4: gingembre semantics implemented on the FULLY GENERATED AST (oracle-matched)");
+}
+
+/// Build the snark parse plan once (shared by perf/diag).
+fn build_plan() -> (ParserGrammar, ParseTable, WeavyParsePlan, Annotations) {
+    let repo = env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .and_then(|p| p.parent().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let grammar_js = repo.join("playgrounds/snark/src/bundled/gingembre/grammar.js");
+    let grammar_json = snark_dsl::emit_with_boa(&grammar_js).expect("emit grammar");
+    let raw = RawGrammarJson::from_tree_sitter_json_str(&grammar_json).expect("import json");
+    let validated = ValidatedGrammar::from_raw(&raw).expect("validate");
+    let lexical = LexicalFacts::from_grammar(&validated);
+    let normalized =
+        ParserGrammar::normalize_from_validated(&validated, &lexical).expect("normalize");
+    let parser = normalized.prepare_productions_for_items().expect("prepare");
+    let table = ParseTable::from_grammar(&parser).expect("table");
+    let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("plan");
+    let ann_json = snark_dsl::annotations_from_source(ANN_SRC, "gingembre.ast.js").expect("ann");
+    let anns: Annotations = facet_json::from_str(&ann_json).expect("decode ann");
+    (parser, table, plan, anns)
+}
+
+/// PERF: front-end parse (snark-CST vs gingembre native) and materialize (reflection vs
+/// weavy-interp vs weavy-JIT). Coarse wall-clock — the real profile is stax; this is a
+/// first honest sense of magnitude.
+fn perf() {
+    use std::time::Instant;
+
+    let setup = Instant::now();
+    let (parser, table, plan, anns) = build_plan();
+    let setup_us = setup.elapsed().as_micros();
+    println!("snark plan setup (one-time): {setup_us} us\n");
+
+    // ---- parse throughput: snark resolved CST vs gingembre native AST ----
+    let cases = ["{{ 1 + 2 * 3 }}", "{% if user.active %}on{% endif %}", "{{ x | upper }}"];
+    let n = 20_000u32;
+    println!("parse (avg over {n} iters):        snark-CST      gingembre-native");
+    for src in cases {
+        let t = Instant::now();
+        for _ in 0..n {
+            let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).unwrap();
+            std::hint::black_box(report.accepted_resolved_tree(&parser, src));
+        }
+        let snark_ns = t.elapsed().as_nanos() / n as u128;
+        let t = Instant::now();
+        for _ in 0..n {
+            std::hint::black_box(gingembre::parse_template_recovered(src));
+        }
+        let ging_ns = t.elapsed().as_nanos() / n as u128;
+        println!("  {src:<34} {snark_ns:>7} ns   {ging_ns:>7} ns");
+    }
+
+    // ---- materialize `1 + 2 * 3` into the generated AST, three ways ----
+    let src = "{{ 1 + 2 * 3 }}";
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).unwrap();
+    let resolved = report.accepted_resolved_tree(&parser, src).unwrap();
+    let node = find_expr(&resolved).unwrap();
+    let mut ops = Vec::new();
+    let _ = build(
+        facet_reflect::Partial::alloc_owned::<gen_ast::Expr>().unwrap(),
+        node,
+        &anns,
+        &mut ops,
+    )
+    .unwrap();
+
+    let m = 200_000u32;
+    // (a) reflection straight into Partial (no ops).
+    let t = Instant::now();
+    for _ in 0..m {
+        let mut o = Vec::new();
+        let v: gen_ast::Expr = build(
+            facet_reflect::Partial::alloc_owned::<gen_ast::Expr>().unwrap(),
+            node,
+            &anns,
+            &mut o,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+        .materialize()
+        .unwrap();
+        std::hint::black_box(v);
+    }
+    let refl_ns = t.elapsed().as_nanos() / m as u128;
+
+    // (b) weavy interpreter over recorded ops.
+    let t = Instant::now();
+    for _ in 0..m {
+        std::hint::black_box(run_ops_via_weavy::<gen_ast::Expr>(&ops));
+    }
+    let interp_ns = t.elapsed().as_nanos() / m as u128;
+
+    // (c) weavy JIT: compile + run each call (what run_ops_via_weavy_jit does).
+    let t = Instant::now();
+    for _ in 0..m {
+        std::hint::black_box(run_ops_via_weavy_jit::<gen_ast::Expr>(&ops));
+    }
+    let jit_ns = t.elapsed().as_nanos() / m as u128;
+
+    // (c') weavy JIT compiled ONCE, run many — isolates run cost from compile cost.
+    use weavy::jit::{HostCallCtx, HostCallInfo, NativeProgram, StencilLayout};
+    let calls: Vec<HostCallInfo> = ops
+        .iter()
+        .map(|op| HostCallInfo {
+            info: core::ptr::from_ref(op).cast(),
+            call: jit_apply,
+        })
+        .collect();
+    let compile = Instant::now();
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    let mut sites = Vec::with_capacity(calls.len());
+    for call in &calls {
+        sites.push(layout.emit_hostcall(root, core::ptr::from_ref(call)));
+    }
+    let done = layout.emit_done();
+    for i in 0..sites.len() {
+        layout.patch_hostcall_continuation(sites[i], sites.get(i + 1).copied().unwrap_or(done));
+    }
+    let native = NativeProgram::new(layout, root);
+    let compile_ns = compile.elapsed().as_nanos();
+    let entry = unsafe { native.entry_fn::<HostCallCtx<JitState>>() };
+    let t = Instant::now();
+    for _ in 0..m {
+        let mut state = JitState {
+            partial: Some(facet_reflect::Partial::alloc_owned::<gen_ast::Expr>().unwrap()),
+            error: None,
+        };
+        let mut cx = HostCallCtx::new(native.entry_prog(), &mut state);
+        unsafe { entry(&mut cx) };
+        let v: gen_ast::Expr = state.partial.take().unwrap().build().unwrap().materialize().unwrap();
+        std::hint::black_box(v);
+    }
+    let jit_run_ns = t.elapsed().as_nanos() / m as u128;
+
+    println!("\nmaterialize `1 + 2 * 3` -> gen_ast::Expr (avg over {m} iters):");
+    println!("  (a) reflection direct into Partial : {refl_ns:>6} ns");
+    println!("  (b) weavy interpreter over ops     : {interp_ns:>6} ns");
+    println!("  (c) weavy JIT (compile + run)      : {jit_ns:>6} ns");
+    println!("  (c') weavy JIT (compiled once, run): {jit_run_ns:>6} ns  (compile once = {compile_ns} ns)");
+    println!(
+        "\nNote: (c) recompiles the op stream every call. The ops encode DATA (SetI64(1))\n\
+         as well as structure, so the native program is not reused across inputs — the real\n\
+         win needs structure compiled once per grammar-shape with data in prog-stream slots\n\
+         (facet-json's per-TYPE plan model). That separation is the next perf step."
+    );
+}
+
+/// DIAG: feed malformed templates to both front ends and show what each reports. snark either
+/// recovers (ERROR/MISSING nodes) or hard-errors with the exact expected-terminal set + byte
+/// position; gingembre emits a construct-aware human message. Different shapes — see takeaway.
+fn diag() {
+    let (parser, table, plan, _anns) = build_plan();
+    let bad = ["{{ 1 + }}", "{% if x %}no end", "{{ 1 +* 2 }}"];
+    for src in bad {
+        println!("\n=== input: {src:?} ===");
+
+        // gingembre: a structured TemplateError (rendered by ariadne for humans).
+        match gingembre::parse_template("diag", src) {
+            Ok(_) => println!("gingembre: parsed OK (no error)"),
+            Err(e) => println!("gingembre: {e}"),
+        }
+
+        // snark: recovered tree with ERROR/MISSING nodes + failure count.
+        match parse_prepared_weavy_with_report(&plan, &parser, &table, src) {
+            Ok(report) => {
+                println!("snark: parsed with recovery (see tree; ERROR/MISSING mark the gap)");
+                if let Some(tree) = report.accepted_resolved_tree(&parser, src) {
+                    dump(&tree, 3);
+                } else {
+                    println!("   (no accepted tree)");
+                }
+            }
+            Err(e) => println!("snark: hard parse error: {e:?}"),
+        }
+    }
+    println!(
+        "\nTakeaway: snark's error carries the EXACT expected-terminal set + byte position\n\
+         (richer raw material than gingembre's), but unshaped: raw regexes not friendly names,\n\
+         byte offset not line:col, no construct context (gingembre hand-writes 'unclosed if,\n\
+         expected endif'). gingembre's are human-tuned but coarser ('expected an expression')\n\
+         and here even slightly wrong. snark has the better DATA, gingembre the better PROSE.\n\
+         Not reconciled yet."
+    );
 }
 
 /// Item 3: the reflection ops as a flat Weavy program. Emitting these (instead of driving
