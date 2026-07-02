@@ -892,7 +892,7 @@ mod tests {
     #[test]
     fn register_jit_source_accepts_unsorted_symbols_and_unregisters_on_drop() {
         // A stand-in "code buffer" — registration never executes it.
-        let code = vec![0u8; 24];
+        let code = [0u8; 24];
         // Deliberately UNSORTED by offset: the facade must sort before building .debug_line
         // (which requires strictly increasing offsets).
         let symbols = vec![
