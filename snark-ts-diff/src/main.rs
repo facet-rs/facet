@@ -57,7 +57,7 @@ use snark::{
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-use snark::lower::weavy::parse_prepared_weavy_native_hostcalls_tree;
+use snark::lower::weavy::parse_prepared_weavy_hostcalls_tree;
 
 /// One prepared grammar: everything the parse entrypoint needs, built once so
 /// the timed loop measures only parsing, never grammar preparation.
@@ -291,7 +291,7 @@ fn collect_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyPars
     )
 ))]
 fn hostcalls_once(p: &Prepared, input: &str) -> Result<(), WeavyParseError> {
-    parse_prepared_weavy_native_hostcalls_tree(&p.plan, &p.parser, &p.table, input).map(|_| ())
+    parse_prepared_weavy_hostcalls_tree(&p.plan, &p.parser, &p.table, input).map(|_| ())
 }
 
 /// Best (min) recovering parse time in ms over `iters` runs, after one warm-up.
@@ -486,7 +486,7 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
     let analysis = p.plan.analysis();
     let readiness = &analysis.readiness;
     let lexer = &readiness.lexer;
-    let hostcall_blocks = &analysis.native_hostcall_blocks;
+    let hostcall_blocks = &analysis.hostcall_blocks;
     let mut out = io::stdout().lock();
     writeln!(out, "grammar: {grammar_path}")?;
     writeln!(
@@ -790,7 +790,7 @@ fn main() {
         )))]
         {
             eprintln!(
-                "Weavy hostcall parse requires `--features jit` on a supported native target"
+                "Weavy hostcall parse requires `--features jit` on a supported copy-patch target"
             );
             std::process::exit(1);
         }

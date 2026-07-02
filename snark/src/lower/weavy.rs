@@ -681,12 +681,12 @@ pub struct WeavyLexerStencilSummary {
     pub count: usize,
 }
 
-/// Why a dense parser block cannot be represented by the current native
-/// host-call chain scaffold.
+/// Why a dense parser block cannot be represented by the current host-call
+/// chain scaffold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
-pub enum WeavyNativeHostCallBlockBarrier {
-    /// The block enters another block; the first native scaffold is block-local.
+pub enum WeavyHostCallBlockBarrier {
+    /// The block enters another block; the first host-call scaffold is block-local.
     CallsBlock,
     /// A return appears before the block tail, so later ops would be unreachable.
     NonTailReturn,
@@ -697,10 +697,10 @@ pub enum WeavyNativeHostCallBlockBarrier {
 
 /// Block compatibility summary for the first Snark-owned copy-and-patch lane.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct WeavyNativeHostCallBlockReadiness {
+pub struct WeavyHostCallBlockReadiness {
     /// Dense parser/action blocks in the prepared plan.
     pub total_blocks: usize,
-    /// Blocks the current scaffold can lower to a linear native host-call chain.
+    /// Blocks the current scaffold can lower to a linear host-call chain.
     pub compatible_blocks: usize,
     /// Blocks that require runner/control lowering before they can be copied.
     pub incompatible_blocks: usize,
@@ -709,14 +709,14 @@ pub struct WeavyNativeHostCallBlockReadiness {
     /// Intrinsic ops inside incompatible blocks.
     pub incompatible_intrinsic_ops: usize,
     /// Distinct incompatibility reasons and their block counts.
-    pub barrier_summaries: Vec<WeavyNativeHostCallBlockBarrierSummary>,
+    pub barrier_summaries: Vec<WeavyHostCallBlockBarrierSummary>,
 }
 
-/// Count of dense blocks blocked by one native host-call compatibility reason.
+/// Count of dense blocks blocked by one host-call compatibility reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WeavyNativeHostCallBlockBarrierSummary {
+pub struct WeavyHostCallBlockBarrierSummary {
     /// Incompatibility reason.
-    pub barrier: WeavyNativeHostCallBlockBarrier,
+    pub barrier: WeavyHostCallBlockBarrier,
     /// Number of blocks with this reason.
     pub count: usize,
 }
@@ -1150,10 +1150,10 @@ impl WeavyParserProgram {
         dense_snark_intrinsic_semantic_stats(&self.dense)
     }
 
-    /// Dense-block coverage for the first native host-call scaffold.
+    /// Dense-block coverage for the first host-call chain scaffold.
     #[must_use]
-    pub fn native_hostcall_block_readiness(&self) -> WeavyNativeHostCallBlockReadiness {
-        native_hostcall_block_readiness(&self.dense.blocks)
+    pub fn hostcall_block_readiness(&self) -> WeavyHostCallBlockReadiness {
+        hostcall_block_readiness(&self.dense.blocks)
     }
 
     fn runtime_state_block(
@@ -1233,20 +1233,18 @@ fn dense_snark_intrinsic_semantic_stats(
     stats
 }
 
-fn native_hostcall_block_readiness(
-    blocks: &[Vec<DenseSnarkWeavyOp>],
-) -> WeavyNativeHostCallBlockReadiness {
-    let mut readiness = WeavyNativeHostCallBlockReadiness {
+fn hostcall_block_readiness(blocks: &[Vec<DenseSnarkWeavyOp>]) -> WeavyHostCallBlockReadiness {
+    let mut readiness = WeavyHostCallBlockReadiness {
         total_blocks: blocks.len(),
-        ..WeavyNativeHostCallBlockReadiness::default()
+        ..WeavyHostCallBlockReadiness::default()
     };
-    let mut barrier_counts = BTreeMap::<WeavyNativeHostCallBlockBarrier, usize>::new();
+    let mut barrier_counts = BTreeMap::<WeavyHostCallBlockBarrier, usize>::new();
     for block in blocks {
         let intrinsic_count = block
             .iter()
             .filter(|op| matches!(op, WeavyOp::Intrinsic(_)))
             .count();
-        match native_hostcall_block_barrier(block) {
+        match hostcall_block_barrier(block) {
             Some(barrier) => {
                 readiness.incompatible_blocks += 1;
                 readiness.incompatible_intrinsic_ops += intrinsic_count;
@@ -1260,28 +1258,26 @@ fn native_hostcall_block_readiness(
     }
     readiness.barrier_summaries = barrier_counts
         .into_iter()
-        .map(|(barrier, count)| WeavyNativeHostCallBlockBarrierSummary { barrier, count })
+        .map(|(barrier, count)| WeavyHostCallBlockBarrierSummary { barrier, count })
         .collect();
     readiness
 }
 
-fn native_hostcall_block_barrier(
-    block: &[DenseSnarkWeavyOp],
-) -> Option<WeavyNativeHostCallBlockBarrier> {
+fn hostcall_block_barrier(block: &[DenseSnarkWeavyOp]) -> Option<WeavyHostCallBlockBarrier> {
     for (index, op) in block.iter().enumerate() {
         match op {
             WeavyOp::Intrinsic(_) => {}
             WeavyOp::Control(ControlOp::Return) if index + 1 == block.len() => {}
             WeavyOp::Control(ControlOp::Return) => {
-                return Some(WeavyNativeHostCallBlockBarrier::NonTailReturn);
+                return Some(WeavyHostCallBlockBarrier::NonTailReturn);
             }
             WeavyOp::Control(ControlOp::CallBlock { .. } | ControlOp::CallBlockThen { .. }) => {
-                return Some(WeavyNativeHostCallBlockBarrier::CallsBlock);
+                return Some(WeavyHostCallBlockBarrier::CallsBlock);
             }
             WeavyOp::Memory(_) | WeavyOp::Init(_) | WeavyOp::Aggregate(_) => {
-                return Some(WeavyNativeHostCallBlockBarrier::UnsupportedCanonicalOp);
+                return Some(WeavyHostCallBlockBarrier::UnsupportedCanonicalOp);
             }
-            _ => return Some(WeavyNativeHostCallBlockBarrier::UnsupportedCanonicalOp),
+            _ => return Some(WeavyHostCallBlockBarrier::UnsupportedCanonicalOp),
         }
     }
     None
@@ -1295,8 +1291,8 @@ fn native_hostcall_block_barrier(
     )
 ))]
 #[derive(Default)]
-struct RuntimeWeavyNativeBlockCache {
-    blocks: Vec<OnceLock<Option<Mutex<weavy::jit::HostCallChain<RuntimeWeavyNativeHostInfo>>>>>,
+struct RuntimeWeavyHostCallBlockCache {
+    blocks: Vec<OnceLock<Option<Mutex<weavy::jit::HostCallChain<RuntimeWeavyHostCallInfo>>>>>,
 }
 
 #[cfg(all(
@@ -1306,9 +1302,9 @@ struct RuntimeWeavyNativeBlockCache {
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-impl fmt::Debug for RuntimeWeavyNativeBlockCache {
+impl fmt::Debug for RuntimeWeavyHostCallBlockCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RuntimeWeavyNativeBlockCache")
+        f.debug_struct("RuntimeWeavyHostCallBlockCache")
             .field("blocks", &self.blocks.len())
             .finish()
     }
@@ -1321,7 +1317,7 @@ impl fmt::Debug for RuntimeWeavyNativeBlockCache {
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-impl RuntimeWeavyNativeBlockCache {
+impl RuntimeWeavyHostCallBlockCache {
     fn new(program: &WeavyParserProgram) -> Self {
         let blocks = program
             .dense
@@ -1334,14 +1330,14 @@ impl RuntimeWeavyNativeBlockCache {
 
     fn build_block(
         block: &[DenseSnarkWeavyOp],
-    ) -> Option<Mutex<weavy::jit::HostCallChain<RuntimeWeavyNativeHostInfo>>> {
-        if native_hostcall_block_barrier(block).is_some() {
+    ) -> Option<Mutex<weavy::jit::HostCallChain<RuntimeWeavyHostCallInfo>>> {
+        if hostcall_block_barrier(block).is_some() {
             return None;
         }
         let infos = block
             .iter()
             .filter_map(|op| match op {
-                WeavyOp::Intrinsic(_) => Some(RuntimeWeavyNativeHostInfo { op: op.clone() }),
+                WeavyOp::Intrinsic(_) => Some(RuntimeWeavyHostCallInfo { op: op.clone() }),
                 WeavyOp::Control(ControlOp::Return) => None,
                 _ => None,
             })
@@ -1365,7 +1361,7 @@ impl RuntimeWeavyNativeBlockCache {
         let mut chain = chain
             .lock()
             .map_err(|_| RuntimeWeavyStepError::UnsupportedCanonicalOp)?;
-        let mut state = RuntimeWeavyNativeBlockState {
+        let mut state = RuntimeWeavyHostCallBlockState {
             stepper,
             error: None,
         };
@@ -1384,7 +1380,7 @@ impl RuntimeWeavyNativeBlockCache {
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-struct RuntimeWeavyNativeHostInfo {
+struct RuntimeWeavyHostCallInfo {
     op: DenseSnarkWeavyOp,
 }
 
@@ -1395,7 +1391,7 @@ struct RuntimeWeavyNativeHostInfo {
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-struct RuntimeWeavyNativeBlockState<'a, 'stepper> {
+struct RuntimeWeavyHostCallBlockState<'a, 'stepper> {
     stepper: &'a mut RuntimeWeavyStepper<'stepper>,
     error: Option<RuntimeWeavyStepError>,
 }
@@ -1407,10 +1403,10 @@ struct RuntimeWeavyNativeBlockState<'a, 'stepper> {
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-impl<'a, 'stepper> weavy::jit::HostCall<RuntimeWeavyNativeBlockState<'a, 'stepper>>
-    for RuntimeWeavyNativeHostInfo
+impl<'a, 'stepper> weavy::jit::HostCall<RuntimeWeavyHostCallBlockState<'a, 'stepper>>
+    for RuntimeWeavyHostCallInfo
 {
-    fn call(&self, cx: &mut RuntimeWeavyNativeBlockState<'a, 'stepper>) -> bool {
+    fn call(&self, cx: &mut RuntimeWeavyHostCallBlockState<'a, 'stepper>) -> bool {
         match cx.stepper.step(&self.op) {
             Ok(Control::Continue) => true,
             Ok(Control::Return) => false,
@@ -1455,7 +1451,7 @@ pub struct WeavyParsePlan {
             all(target_os = "linux", target_arch = "x86_64")
         )
     ))]
-    native_blocks: Arc<RuntimeWeavyNativeBlockCache>,
+    hostcall_blocks: Arc<RuntimeWeavyHostCallBlockCache>,
 }
 
 impl WeavyParsePlan {
@@ -1476,7 +1472,7 @@ impl WeavyParsePlan {
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        let native_blocks = Arc::new(RuntimeWeavyNativeBlockCache::new(&program));
+        let hostcall_blocks = Arc::new(RuntimeWeavyHostCallBlockCache::new(&program));
         Ok(Self {
             program,
             lexer_program,
@@ -1488,7 +1484,7 @@ impl WeavyParsePlan {
                     all(target_os = "linux", target_arch = "x86_64")
                 )
             ))]
-            native_blocks,
+            hostcall_blocks,
         })
     }
 
@@ -1503,13 +1499,13 @@ impl WeavyParsePlan {
         let parser = self.program.analysis();
         let parser_semantics = self.program.semantic_stats();
         let lexer = self.lexer_stats();
-        let native_hostcall_blocks = self.program.native_hostcall_block_readiness();
+        let hostcall_blocks = self.program.hostcall_block_readiness();
         WeavyParsePlanAnalysis {
             readiness: WeavyParsePlanReadiness::from_parts(&parser, &parser_semantics, &lexer),
             parser,
             parser_semantics,
             lexer,
-            native_hostcall_blocks,
+            hostcall_blocks,
         }
     }
 
@@ -1575,8 +1571,8 @@ pub struct WeavyParsePlanAnalysis {
     pub parser_semantics: SnarkIntrinsicSemanticStats,
     /// Snark-owned lexer graph shape summary.
     pub lexer: WeavyLexerStats,
-    /// Native host-call block compatibility for the first copy-and-patch lane.
-    pub native_hostcall_blocks: WeavyNativeHostCallBlockReadiness,
+    /// Host-call block compatibility for the first copy-and-patch lane.
+    pub hostcall_blocks: WeavyHostCallBlockReadiness,
     /// Optimizer/JIT readiness derived from parser effects and lexer leaves.
     pub readiness: WeavyParsePlanReadiness,
 }
@@ -5059,7 +5055,7 @@ pub fn parse_prepared_weavy_metered_with_report_and_scanner(
     )
 }
 
-/// Execute a prepared Weavy plan through native host-call blocks.
+/// Execute a prepared Weavy plan through host-call blocks.
 #[cfg(all(
     feature = "jit",
     any(
@@ -5067,16 +5063,16 @@ pub fn parse_prepared_weavy_metered_with_report_and_scanner(
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-pub fn parse_prepared_weavy_native_hostcalls_with_report(
+pub fn parse_prepared_weavy_hostcalls_with_report(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_native_hostcalls_with_report_and_scanner(plan, parser, table, input, None)
+    parse_prepared_weavy_hostcalls_with_report_and_scanner(plan, parser, table, input, None)
 }
 
-/// Execute a prepared Weavy plan through native host-call blocks with a scanner host.
+/// Execute a prepared Weavy plan through host-call blocks with a scanner host.
 #[cfg(all(
     feature = "jit",
     any(
@@ -5084,7 +5080,7 @@ pub fn parse_prepared_weavy_native_hostcalls_with_report(
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-pub fn parse_prepared_weavy_native_hostcalls_with_report_and_scanner(
+pub fn parse_prepared_weavy_hostcalls_with_report_and_scanner(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
@@ -5104,11 +5100,11 @@ pub fn parse_prepared_weavy_native_hostcalls_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Disabled,
-        RuntimeWeavyBlockExecution::NativeHostCalls,
+        RuntimeWeavyBlockExecution::HostCalls,
     )
 }
 
-/// Execute a prepared Weavy plan through native host-call blocks and return only the tree.
+/// Execute a prepared Weavy plan through host-call blocks and return only the tree.
 #[cfg(all(
     feature = "jit",
     any(
@@ -5116,16 +5112,16 @@ pub fn parse_prepared_weavy_native_hostcalls_with_report_and_scanner(
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-pub fn parse_prepared_weavy_native_hostcalls_tree(
+pub fn parse_prepared_weavy_hostcalls_tree(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
 ) -> Result<SexpNode, WeavyParseError> {
-    parse_prepared_weavy_native_hostcalls_tree_and_scanner(plan, parser, table, input, None)
+    parse_prepared_weavy_hostcalls_tree_and_scanner(plan, parser, table, input, None)
 }
 
-/// Execute a prepared Weavy plan through native host-call blocks with a scanner host and return
+/// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
 /// only the tree.
 #[cfg(all(
     feature = "jit",
@@ -5134,7 +5130,7 @@ pub fn parse_prepared_weavy_native_hostcalls_tree(
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-pub fn parse_prepared_weavy_native_hostcalls_tree_and_scanner(
+pub fn parse_prepared_weavy_hostcalls_tree_and_scanner(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
@@ -5152,7 +5148,7 @@ pub fn parse_prepared_weavy_native_hostcalls_tree_and_scanner(
     };
     if let Some(tree) = parse_weavy_deterministic_tree_with_execution(
         input_ctx,
-        RuntimeWeavyBlockExecution::NativeHostCalls,
+        RuntimeWeavyBlockExecution::HostCalls,
     )? {
         return Ok(tree);
     }
@@ -5161,12 +5157,12 @@ pub fn parse_prepared_weavy_native_hostcalls_tree_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Disabled,
-        RuntimeWeavyBlockExecution::NativeHostCalls,
+        RuntimeWeavyBlockExecution::HostCalls,
     )
     .map(|report| report.tree)
 }
 
-/// Execute a prepared Weavy plan through native host-call blocks and return the ranged CST.
+/// Execute a prepared Weavy plan through host-call blocks and return the ranged CST.
 #[cfg(all(
     feature = "jit",
     any(
@@ -5174,18 +5170,16 @@ pub fn parse_prepared_weavy_native_hostcalls_tree_and_scanner(
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-pub fn parse_prepared_weavy_native_hostcalls_resolved_tree(
+pub fn parse_prepared_weavy_hostcalls_resolved_tree(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
     input: &str,
 ) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
-    parse_prepared_weavy_native_hostcalls_resolved_tree_and_scanner(
-        plan, parser, table, input, None,
-    )
+    parse_prepared_weavy_hostcalls_resolved_tree_and_scanner(plan, parser, table, input, None)
 }
 
-/// Execute a prepared Weavy plan through native host-call blocks with a scanner host and return
+/// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
 /// the ranged CST.
 #[cfg(all(
     feature = "jit",
@@ -5194,7 +5188,7 @@ pub fn parse_prepared_weavy_native_hostcalls_resolved_tree(
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-pub fn parse_prepared_weavy_native_hostcalls_resolved_tree_and_scanner(
+pub fn parse_prepared_weavy_hostcalls_resolved_tree_and_scanner(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
@@ -5212,7 +5206,7 @@ pub fn parse_prepared_weavy_native_hostcalls_resolved_tree_and_scanner(
     };
     if let Some(tree) = parse_weavy_deterministic_resolved_tree_with_execution(
         input_ctx,
-        RuntimeWeavyBlockExecution::NativeHostCalls,
+        RuntimeWeavyBlockExecution::HostCalls,
     )? {
         return Ok(tree);
     }
@@ -5221,7 +5215,7 @@ pub fn parse_prepared_weavy_native_hostcalls_resolved_tree_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Disabled,
-        RuntimeWeavyBlockExecution::NativeHostCalls,
+        RuntimeWeavyBlockExecution::HostCalls,
     )
     .and_then(|report| {
         report
@@ -6504,7 +6498,7 @@ enum RuntimeWeavyBlockExecution {
             all(target_os = "linux", target_arch = "x86_64")
         )
     ))]
-    NativeHostCalls,
+    HostCalls,
 }
 
 impl RuntimeWeavyBlockExecution {
@@ -7173,9 +7167,9 @@ fn run_runtime_weavy_block(
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        RuntimeWeavyBlockExecution::NativeHostCalls => {
+        RuntimeWeavyBlockExecution::HostCalls => {
             if plan
-                .native_blocks
+                .hostcall_blocks
                 .run_block(parser_program, block, stepper)?
             {
                 return Ok(RunStats::default());
@@ -11073,7 +11067,7 @@ mod tests {
                     all(target_os = "linux", target_arch = "x86_64")
                 )
             ))]
-            native_blocks: Default::default(),
+            hostcall_blocks: Default::default(),
         };
 
         let analysis = plan.analysis();
@@ -11370,7 +11364,7 @@ mod tests {
                     all(target_os = "linux", target_arch = "x86_64")
                 )
             ))]
-            native_blocks: Default::default(),
+            hostcall_blocks: Default::default(),
         };
 
         let readiness = plan.analysis().readiness;
@@ -11431,7 +11425,7 @@ mod tests {
                     all(target_os = "linux", target_arch = "x86_64")
                 )
             ))]
-            native_blocks: Default::default(),
+            hostcall_blocks: Default::default(),
         };
 
         let analysis = plan.analysis();
@@ -11563,7 +11557,7 @@ mod tests {
                     all(target_os = "linux", target_arch = "x86_64")
                 )
             ))]
-            native_blocks: Default::default(),
+            hostcall_blocks: Default::default(),
         };
 
         let readiness = plan.analysis().readiness;
@@ -11650,7 +11644,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_plan_analysis_reports_native_hostcall_block_readiness() {
+    fn parse_plan_analysis_reports_hostcall_block_readiness() {
         let lex = SnarkIntrinsic::Lex {
             version: StackVersionId(0),
             mode: LexModeId(0),
@@ -11706,30 +11700,30 @@ mod tests {
                     all(target_os = "linux", target_arch = "x86_64")
                 )
             ))]
-            native_blocks: Default::default(),
+            hostcall_blocks: Default::default(),
         };
 
-        let readiness = plan.analysis().native_hostcall_blocks;
+        let readiness = plan.analysis().hostcall_blocks;
 
         assert_eq!(
             readiness,
-            WeavyNativeHostCallBlockReadiness {
+            WeavyHostCallBlockReadiness {
                 total_blocks: 4,
                 compatible_blocks: 1,
                 incompatible_blocks: 3,
                 compatible_intrinsic_ops: 2,
                 incompatible_intrinsic_ops: 1,
                 barrier_summaries: vec![
-                    WeavyNativeHostCallBlockBarrierSummary {
-                        barrier: WeavyNativeHostCallBlockBarrier::CallsBlock,
+                    WeavyHostCallBlockBarrierSummary {
+                        barrier: WeavyHostCallBlockBarrier::CallsBlock,
                         count: 1,
                     },
-                    WeavyNativeHostCallBlockBarrierSummary {
-                        barrier: WeavyNativeHostCallBlockBarrier::NonTailReturn,
+                    WeavyHostCallBlockBarrierSummary {
+                        barrier: WeavyHostCallBlockBarrier::NonTailReturn,
                         count: 1,
                     },
-                    WeavyNativeHostCallBlockBarrierSummary {
-                        barrier: WeavyNativeHostCallBlockBarrier::UnsupportedCanonicalOp,
+                    WeavyHostCallBlockBarrierSummary {
+                        barrier: WeavyHostCallBlockBarrier::UnsupportedCanonicalOp,
                         count: 1,
                     },
                 ],
@@ -11840,9 +11834,8 @@ mod tests {
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        let native_hostcalls =
-            parse_prepared_weavy_native_hostcalls_with_report(&plan, &parser, &table, "ab")
-                .unwrap();
+        let hostcalls =
+            parse_prepared_weavy_hostcalls_with_report(&plan, &parser, &table, "ab").unwrap();
         #[cfg(all(
             feature = "jit",
             any(
@@ -11850,8 +11843,8 @@ mod tests {
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        let native_hostcalls_tree =
-            parse_prepared_weavy_native_hostcalls_tree(&plan, &parser, &table, "ab").unwrap();
+        let hostcalls_tree =
+            parse_prepared_weavy_hostcalls_tree(&plan, &parser, &table, "ab").unwrap();
         #[cfg(all(
             feature = "jit",
             any(
@@ -11859,9 +11852,8 @@ mod tests {
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        let native_hostcalls_resolved_tree =
-            parse_prepared_weavy_native_hostcalls_resolved_tree(&plan, &parser, &table, "ab")
-                .unwrap();
+        let hostcalls_resolved_tree =
+            parse_prepared_weavy_hostcalls_resolved_tree(&plan, &parser, &table, "ab").unwrap();
 
         assert_eq!(metered.tree(), default_direct.tree());
         assert_eq!(deterministic_direct.tree(), default_direct.tree());
@@ -11879,7 +11871,7 @@ mod tests {
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        assert_eq!(native_hostcalls_resolved_tree, report_resolved);
+        assert_eq!(hostcalls_resolved_tree, report_resolved);
         assert_eq!(
             deterministic_direct.accepted_tree_events(),
             default_direct.accepted_tree_events()
@@ -11912,7 +11904,7 @@ mod tests {
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        assert_eq!(metered.tree(), native_hostcalls.tree());
+        assert_eq!(metered.tree(), hostcalls.tree());
         #[cfg(all(
             feature = "jit",
             any(
@@ -11920,7 +11912,7 @@ mod tests {
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        assert_eq!(&native_hostcalls_tree, default_direct.tree());
+        assert_eq!(&hostcalls_tree, default_direct.tree());
         #[cfg(all(
             feature = "jit",
             any(
@@ -11929,16 +11921,12 @@ mod tests {
             )
         ))]
         {
-            assert!(native_hostcalls.trace_events().is_empty());
+            assert!(hostcalls.trace_events().is_empty());
             assert_eq!(
                 metered.accepted_tree_events(),
-                native_hostcalls.accepted_tree_events()
+                hostcalls.accepted_tree_events()
             );
-            assert!(
-                native_hostcalls
-                    .accepted_resolved_tree(&parser, "ab")
-                    .is_some()
-            );
+            assert!(hostcalls.accepted_resolved_tree(&parser, "ab").is_some());
         }
         assert_eq!(default_direct.tree().to_sexp(), "(source_file)");
         assert_eq!(default_direct.accepted_count(), 1);
@@ -11952,9 +11940,9 @@ mod tests {
             )
         ))]
         {
-            assert_eq!(native_hostcalls.accepted_count(), 1);
-            assert_eq!(native_hostcalls.failure_count(), 0);
-            assert_eq!(native_hostcalls.stats().step_count, 0);
+            assert_eq!(hostcalls.accepted_count(), 1);
+            assert_eq!(hostcalls.failure_count(), 0);
+            assert_eq!(hostcalls.stats().step_count, 0);
         }
     }
 
@@ -12063,7 +12051,7 @@ mod tests {
                     all(target_os = "linux", target_arch = "x86_64")
                 )
             ))]
-            native_blocks: Default::default(),
+            hostcall_blocks: Default::default(),
         };
         let readiness = plan.analysis().readiness;
 
@@ -12486,7 +12474,7 @@ mod tests {
                     all(target_os = "linux", target_arch = "x86_64")
                 )
             ))]
-            native_blocks: Default::default(),
+            hostcall_blocks: Default::default(),
         };
 
         let readiness = plan.analysis().readiness;
