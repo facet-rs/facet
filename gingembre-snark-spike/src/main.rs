@@ -119,6 +119,10 @@ fn main() {
         specialize();
         return;
     }
+    if args.get(1).map(|s| s == "--speculate").unwrap_or(false) {
+        speculate();
+        return;
+    }
     if args.get(1).map(|s| s == "--profile").unwrap_or(false) {
         profile();
         return;
@@ -981,6 +985,206 @@ fn run_intop_native(native: &weavy::jit::NativeProgram, stack: &mut [i64]) -> i6
     let entry = unsafe { native.entry_fn::<IntCtx>() };
     unsafe { entry(&mut ctx) };
     unsafe { *ctx.sp.sub(1) }
+}
+
+// --- Type SPECULATION + deopt: a guarded fast path, falling back to the real evaluator. ------
+
+/// A speculative op: like `IntOp` but variables become `Guard`s that bet the var is an integer.
+#[derive(Clone, Debug)]
+enum SpecOp {
+    Guard(usize), // speculate variable #idx is i64: push it (fast) or deopt (slow)
+    Push(i64),
+    Add,
+    Sub,
+    Mul,
+}
+
+/// Lower the generated AST into a speculative program, collecting variable names in first-seen
+/// order (each `Variable` becomes a `Guard` on its slot).
+fn lower_spec(e: &gen_ast::Expr, vars: &mut Vec<String>, out: &mut Vec<SpecOp>) {
+    match e {
+        gen_ast::Expr::Number(n) => out.push(SpecOp::Push(*n)),
+        gen_ast::Expr::Variable(v) => {
+            let idx = vars.iter().position(|x| x == v).unwrap_or_else(|| {
+                vars.push(v.clone());
+                vars.len() - 1
+            });
+            out.push(SpecOp::Guard(idx));
+        }
+        gen_ast::Expr::Binary(b) => {
+            lower_spec(&b.left, vars, out);
+            lower_spec(&b.right, vars, out);
+            out.push(match b.op.as_str() {
+                "+" => SpecOp::Add,
+                "-" => SpecOp::Sub,
+                "*" => SpecOp::Mul,
+                other => unreachable!("non-int op {other:?} in speculative lane"),
+            });
+        }
+    }
+}
+
+/// A resolved variable slot — MUST match `VarSlot` in stencils/guard.rs.
+#[repr(C)]
+struct SpecVarSlot {
+    is_int: i64,
+    value: i64,
+}
+
+/// Threaded state — MUST match `Ctx` in stencils/guard.rs (prog/sp share layout with IntCtx).
+#[repr(C)]
+struct SpecCtx {
+    prog: *const u64,
+    sp: *mut i64,
+    vars: *const SpecVarSlot,
+    deopt: *mut u64,
+}
+
+/// Assemble a speculative program: guard stencils (two successors: fast chain / deopt exit)
+/// mixed with the unboxed IntOp stencils. Every guard's deopt hole and the final op both patch
+/// to `DONE`; the fast holes chain linearly.
+fn build_spec_native(ops: &[SpecOp]) -> Option<weavy::jit::NativeProgram> {
+    use weavy::jit::StencilLayout;
+    if intop_stencils::GUARD.is_empty() || !weavy::jit::NATIVE_COPY_PATCH_AVAILABLE {
+        return None;
+    }
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    // (start, fast/next cont relocs, optional deopt cont relocs)
+    let mut sites: Vec<(usize, &'static [usize], Option<&'static [usize]>)> =
+        Vec::with_capacity(ops.len());
+    for op in ops {
+        match op {
+            SpecOp::Guard(idx) => {
+                layout.push_prog_word(root.prog_index, *idx as u64);
+                let start = layout.emit_stencil(intop_stencils::GUARD);
+                sites.push((start, intop_stencils::GUARD_FAST_CONT, Some(intop_stencils::GUARD_DEOPT_CONT)));
+            }
+            SpecOp::Push(n) => {
+                layout.push_prog_word(root.prog_index, *n as u64);
+                let start = layout.emit_stencil(intop_stencils::PUSH);
+                sites.push((start, intop_stencils::PUSH_CONT, None));
+            }
+            SpecOp::Add => sites.push((layout.emit_stencil(intop_stencils::ADD), intop_stencils::ADD_CONT, None)),
+            SpecOp::Sub => sites.push((layout.emit_stencil(intop_stencils::SUB), intop_stencils::SUB_CONT, None)),
+            SpecOp::Mul => sites.push((layout.emit_stencil(intop_stencils::MUL), intop_stencils::MUL_CONT, None)),
+        }
+    }
+    let done = layout.emit_stencil(intop_stencils::DONE);
+    for i in 0..sites.len() {
+        let (start, fast, deopt) = sites[i];
+        let next = sites.get(i + 1).map(|(s, _, _)| *s).unwrap_or(done);
+        for &rel in fast {
+            layout.patch_continuation(start + rel, next);
+        }
+        if let Some(deopt_relocs) = deopt {
+            for &rel in deopt_relocs {
+                layout.patch_continuation(start + rel, done);
+            }
+        }
+    }
+    Some(weavy::jit::NativeProgram::new(layout, root))
+}
+
+/// Run a speculative program. Returns `Some(result)` if every guard's bet held (fast path), or
+/// `None` if any guard deopted — the caller then falls back to the full evaluator.
+fn run_spec_native(
+    native: &weavy::jit::NativeProgram,
+    vars: &[SpecVarSlot],
+    stack: &mut [i64],
+) -> Option<i64> {
+    let mut deopt = 0u64;
+    let mut ctx = SpecCtx {
+        prog: native.entry_prog(),
+        sp: stack.as_mut_ptr(),
+        vars: vars.as_ptr(),
+        deopt: &mut deopt,
+    };
+    let entry = unsafe { native.entry_fn::<SpecCtx>() };
+    unsafe { entry(&mut ctx) };
+    if deopt != 0 {
+        None
+    } else {
+        Some(unsafe { *ctx.sp.sub(1) })
+    }
+}
+
+/// PROOF + MEASUREMENT: type speculation with deopt. The generated AST -> a guarded copy-and-
+/// patch program that BETS every variable is an integer. When the bet holds it runs the unboxed
+/// fast path; when it misses, a guard branches to the deopt exit and we fall back to gingembre's
+/// evaluator. Oracle: both paths match gingembre.
+fn speculate() {
+    use std::time::Instant;
+    let (parser, table, plan, anns) = build_plan();
+
+    let expr = "x * 3 + 1";
+    let src = format!("{{{{ {expr} }}}}");
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).unwrap();
+    let resolved = report.accepted_resolved_tree(&parser, &src).unwrap();
+    let ast = expr_via_jit(find_expr(&resolved).unwrap(), &anns);
+
+    let mut vars = Vec::new();
+    let mut ops = Vec::new();
+    lower_spec(&ast, &mut vars, &mut ops);
+    let native = build_spec_native(&ops).expect("guard stencils available");
+    println!("expr: {expr}   speculative program: {ops:?}   vars: {vars:?}\n");
+
+    // Resolve each variable to a guard slot (is_int + unboxed value) from a gingembre value.
+    let slots_for = |x: &Value| -> Vec<SpecVarSlot> {
+        vars.iter()
+            .map(|_| match x.as_number().and_then(|n| n.to_i64()) {
+                Some(v) => SpecVarSlot { is_int: 1, value: v },
+                None => SpecVarSlot { is_int: 0, value: 0 },
+            })
+            .collect()
+    };
+
+    for (label, x) in [("x = 10 (int)", Value::from(10i64)), ("x = 2.5 (float)", Value::from(2.5f64))] {
+        let mut gctx = Context::new();
+        gctx.set("x", x.clone());
+        let gingembre = block_on(gingembre::eval_expression(expr, &gctx)).unwrap();
+
+        let slots = slots_for(&x);
+        let mut stack = vec![0i64; 64];
+        match run_spec_native(&native, &slots, &mut stack) {
+            Some(fast) => {
+                assert_eq!(Some(fast), gingembre.as_number().and_then(|n| n.to_i64()));
+                println!("{label:<16} -> guard HELD  -> fast JIT path = {fast}  (== gingembre {gingembre:?})");
+            }
+            None => {
+                // Deopt: the bet missed; fall back to the real evaluator.
+                println!("{label:<16} -> guard MISSED -> DEOPT -> gingembre = {gingembre:?}");
+            }
+        }
+    }
+
+    // Measure the win when the bet holds: fast JIT path vs the deopt (full evaluator) path.
+    let x_int = Value::from(10i64);
+    let slots = slots_for(&x_int);
+    let mut gctx = Context::new();
+    gctx.set("x", x_int);
+    let m = 200_000u32;
+    let mut stack = vec![0i64; 64];
+    let t = Instant::now();
+    for _ in 0..m {
+        std::hint::black_box(run_spec_native(&native, &slots, &mut stack));
+    }
+    let fast_ns = t.elapsed().as_nanos() / m as u128;
+    let t = Instant::now();
+    for _ in 0..m {
+        std::hint::black_box(block_on(gingembre::eval_expression(expr, &gctx)).unwrap());
+    }
+    let deopt_ns = t.elapsed().as_nanos() / m as u128;
+    println!(
+        "\nfast JIT path (guard held): {fast_ns} ns   deopt/full evaluator: {deopt_ns} ns   ({:.0}x)",
+        deopt_ns as f64 / fast_ns.max(1) as f64
+    );
+    println!(
+        "\nThis is speculation + deopt: the guard stencil is a real conditional branch (cbz on\n\
+         the type tag) with TWO patched continuations — fast chain vs deopt exit. Bet holds ->\n\
+         unboxed native path; bet misses -> fall back to gingembre. Inline-cache feedback would\n\
+         pick which guard to bet on; here we always speculate i64."
+    );
 }
 
 /// PROOF + MEASUREMENT: type-specialized unboxed i64 path vs the boxed `Value` path, for a

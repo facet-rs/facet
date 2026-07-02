@@ -88,10 +88,14 @@ fn build_intop_stencils(manifest: &std::path::Path) {
     );
     if !native {
         // Empty stencils -> the runtime lane falls back to the interpreter.
-        let empty = ["PUSH", "ADD", "SUB", "MUL", "DONE"]
+        let mut empty = ["PUSH", "ADD", "SUB", "MUL", "DONE"]
             .iter()
             .map(|n| format!("pub const {n}: &[u8] = &[];\npub const {n}_CONT: &[usize] = &[];\n"))
             .collect::<String>();
+        empty.push_str(
+            "pub const GUARD: &[u8] = &[];\npub const GUARD_FAST_CONT: &[usize] = &[];\n\
+             pub const GUARD_DEOPT_CONT: &[usize] = &[];\n",
+        );
         fs::write(&generated, empty).expect("write empty stencils");
         return;
     }
@@ -143,6 +147,29 @@ fn build_intop_stencils(manifest: &std::path::Path) {
             writeln!(s, "pub const {name}_CONT: &[usize] = &{:?};", st.cont_relocs).unwrap();
         }
     }
+
+    // The two-successor speculation guard: extract BOTH continuation holes (fast/deopt).
+    let guard_src = manifest.join("stencils/guard.rs");
+    println!("cargo:rerun-if-changed={}", guard_src.display());
+    let guard_obj = out.join("guard_stencils.o");
+    let tail = copypatch::extract::compile_object(&rustc, &[], &guard_src, &guard_obj, &target, true);
+    if !tail {
+        assert!(
+            copypatch::extract::compile_object(&rustc, &[], &guard_src, &guard_obj, &target, false),
+            "rustc failed to compile guard stencil"
+        );
+    }
+    let guard_bytes = fs::read(&guard_obj).expect("read guard object");
+    let guard = copypatch::extract::extract_stencil_n(
+        &guard_bytes,
+        &["weavy_guard_i64"],
+        "weavy_guard_i64",
+        &["weavy_cont", "weavy_deopt"],
+    );
+    writeln!(s, "pub const GUARD: &[u8] = &{:?};", guard.bytes).unwrap();
+    writeln!(s, "pub const GUARD_FAST_CONT: &[usize] = &{:?};", guard.cont_relocs[0]).unwrap();
+    writeln!(s, "pub const GUARD_DEOPT_CONT: &[usize] = &{:?};", guard.cont_relocs[1]).unwrap();
+
     fs::write(&generated, s).expect("write intop stencils");
 }
 
