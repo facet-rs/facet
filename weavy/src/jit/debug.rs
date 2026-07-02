@@ -231,7 +231,11 @@ pub fn register_jit_source(
 ) -> Result<JitRegistration, super::dwarf::DwarfPrepError> {
     let entries: Vec<JitSymbolEntry> = symbols
         .iter()
-        .map(|s| JitSymbolEntry { name: s.name.clone(), offset: s.offset, size: s.size })
+        .map(|s| JitSymbolEntry {
+            name: s.name.clone(),
+            offset: s.offset,
+            size: s.size,
+        })
         .collect();
     // `build_jit_dwarf_sections` maps (offset, line_index) -> line = line_index + 1.
     let source_map: Vec<(u32, u32)> = symbols
@@ -245,7 +249,12 @@ pub fn register_jit_source(
         file_name,
         directory,
     )?;
-    Ok(register_jit_code_with_dwarf(code_ptr, code_len, &entries, Some(&dwarf)))
+    Ok(register_jit_code_with_dwarf(
+        code_ptr,
+        code_len,
+        &entries,
+        Some(&dwarf),
+    ))
 }
 
 /// Write a perf **jitdump** (`/tmp/jit-<pid>.dump`) so `perf`/stax symbolicate + annotate JIT'd
@@ -256,7 +265,11 @@ pub fn register_jit_source(
 /// Every symbol's `code_ptr + offset .. + offset + size` range must be valid readable memory
 /// (normally guaranteed by pointing at a live [`super::NativeProgram`]'s code buffer with
 /// offsets/sizes from its layout).
-pub unsafe fn write_jitdump(path: &str, code_ptr: *const u8, symbols: &[JitSourceSymbol]) -> std::io::Result<()> {
+pub unsafe fn write_jitdump(
+    path: &str,
+    code_ptr: *const u8,
+    symbols: &[JitSourceSymbol],
+) -> std::io::Result<()> {
     let pid = std::process::id();
     let ts = || {
         std::time::SystemTime::now()
@@ -815,7 +828,7 @@ mod tests {
 
     #[test]
     fn elf_with_dwarf_sections_contains_debug_line() {
-        let dwarf = super::dwarf::build_jit_dwarf_sections(
+        let dwarf = super::super::dwarf::build_jit_dwarf_sections(
             0x2000,
             16,
             &[(0, 0), (4, 1)],
