@@ -657,6 +657,33 @@ struct ArgsWithSubcommandAliasAliasConflict {
     command: SubcommandAliasAliasConflict,
 }
 
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandWithCasedAlias {
+    #[facet(args::alias = "Profiles")]
+    UserProfiles,
+}
+
+#[derive(Facet)]
+struct ArgsWithCasedSubcommandAlias {
+    #[facet(args::subcommand)]
+    command: SubcommandWithCasedAlias,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandAliasCaseConflict {
+    Profiles,
+    #[facet(args::alias = "Profiles")]
+    User,
+}
+
+#[derive(Facet)]
+struct ArgsWithSubcommandAliasCaseConflict {
+    #[facet(args::subcommand)]
+    command: SubcommandAliasCaseConflict,
+}
+
 #[test]
 fn test_schema_aliases_are_stored() {
     let schema = Schema::from_shape(ArgsWithAlias::SHAPE).expect("schema should build");
@@ -721,3 +748,32 @@ fn test_subcommand_alias_conflict_with_other_alias_detected() {
     let err = result.unwrap_err().to_string();
     assert!(err.contains("duplicate subcommand name `profiles`"), "unexpected error: {err}");
 }
+
+#[test]
+fn test_subcommand_aliases_are_normalized_to_kebab_case() {
+    let schema = Schema::from_shape(ArgsWithCasedSubcommandAlias::SHAPE)
+        .expect("schema should build");
+    let subcommand = schema
+        .args()
+        .subcommands()
+        .values()
+        .next()
+        .expect("subcommand should be present");
+
+    assert_eq!(subcommand.aliases(), &["profiles".to_string()]);
+}
+
+#[test]
+fn test_subcommand_alias_conflict_after_case_normalization_detected() {
+    let result = Schema::from_shape(ArgsWithSubcommandAliasCaseConflict::SHAPE);
+    assert!(
+        result.is_err(),
+        "should detect alias/canonical conflict after kebab-case normalization"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("duplicate subcommand name `profiles`"),
+        "unexpected error: {err}"
+    );
+}
+

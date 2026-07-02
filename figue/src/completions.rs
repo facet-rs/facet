@@ -333,21 +333,41 @@ fn generate_zsh_function(
             ""
         };
 
-        for long_name in std::iter::once(&flag.long).chain(flag.aliases.iter()) {
-            if let Some(short) = flag.short {
-                // Short and long are mutually exclusive in completion
+        let long_names: Vec<&str> = std::iter::once(flag.long.as_str())
+            .chain(flag.aliases.iter().map(|alias| alias.as_str()))
+            .collect();
+        let synonymous = flag
+            .short
+            .into_iter()
+            .map(|short| format!("-{short}"))
+            .chain(long_names.iter().map(|long_name| format!("--{long_name}")))
+            .collect::<Vec<_>>();
+        let exclusion_group = if synonymous.len() > 1 {
+            Some(format!("'({})'", synonymous.join(" ")))
+        } else {
+            None
+        };
+
+        if let Some(short) = flag.short {
+            if let Some(exclusion_group) = exclusion_group.as_deref() {
                 out.push_str(&format!(
-                    "        '(-{short} --{long})'-{short}'[{escaped_desc}]{value_spec}'\n",
-                    long = long_name,
-                ));
-                out.push_str(&format!(
-                    "        '(-{short} --{long})'--{long}'[{escaped_desc}]{value_spec}'\n",
-                    long = long_name,
+                    "        {exclusion_group}-{short}'[{escaped_desc}]{value_spec}'\n",
                 ));
             } else {
                 out.push_str(&format!(
-                    "        '--{long}[{escaped_desc}]{value_spec}'\n",
-                    long = long_name,
+                    "        '-{short}[{escaped_desc}]{value_spec}'\n",
+                ));
+            }
+        }
+
+        for long_name in long_names {
+            if let Some(exclusion_group) = exclusion_group.as_deref() {
+                out.push_str(&format!(
+                    "        {exclusion_group}--{long_name}'[{escaped_desc}]{value_spec}'\n",
+                ));
+            } else {
+                out.push_str(&format!(
+                    "        '--{long_name}[{escaped_desc}]{value_spec}'\n",
                 ));
             }
         }
@@ -978,6 +998,12 @@ mod tests {
     }
 
     #[derive(Facet)]
+    struct ArgsWithShortAlias {
+        #[facet(args::named, args::short = 'c', args::alias = "colour")]
+        color: bool,
+    }
+
+    #[derive(Facet)]
     #[repr(u8)]
     enum CommandWithAlias {
         #[facet(args::alias = "profiles")]
@@ -1005,6 +1031,26 @@ mod tests {
     }
 
     #[test]
+    fn test_aliases_share_one_zsh_exclusion_group() {
+        let schema = Schema::from_shape(ArgsWithShortAlias::SHAPE).unwrap();
+        let completions = generate_completions_for_schema(&schema, Shell::Zsh, "myapp");
+        let group = "'(-c --color --colour)'";
+
+        assert!(
+            completions.contains(&format!("{group}-c")),
+            "expected short flag to use shared exclusion group: {completions}"
+        );
+        assert!(
+            completions.contains(&format!("{group}--color")),
+            "expected canonical long flag to use shared exclusion group: {completions}"
+        );
+        assert!(
+            completions.contains(&format!("{group}--colour")),
+            "expected alias long flag to use shared exclusion group: {completions}"
+        );
+    }
+
+    #[test]
     fn test_subcommand_aliases_appear_in_completions() {
         let schema = Schema::from_shape(ArgsWithAliasedSubcommand::SHAPE).unwrap();
         let bash = generate_completions_for_schema(&schema, Shell::Bash, "myapp");
@@ -1013,4 +1059,9 @@ mod tests {
         assert!(fish.contains("profiles"), "expected subcommand alias in fish completions: {fish}");
     }
 }
+
+
+
+
+
 

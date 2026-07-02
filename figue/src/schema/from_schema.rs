@@ -363,12 +363,12 @@ fn extract_variant_aliases(variant: &Variant) -> Vec<String> {
             if let Some(parsed) = variant_attr.get_as::<Attr>()
                 && let Attr::Alias(alias) = parsed
             {
-                aliases.push(alias.to_string());
+                aliases.push(alias.to_kebab_case());
                 continue;
             }
 
             if let Some(alias) = variant_attr.get_as::<&str>() {
-                aliases.push(alias.to_string());
+                aliases.push(alias.to_kebab_case());
             }
         }
     }
@@ -1366,4 +1366,5 @@ const fn is_supported_counted_type(shape: &'static facet_core::Shape) -> bool {
 fn is_config_field(field: &facet_core::Field) -> bool {
     field.has_attr(Some("args"), "config")
 }
+
 

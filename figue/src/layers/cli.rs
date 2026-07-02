@@ -1161,9 +1161,10 @@ impl<'a> ParseContext<'a> {
     /// plus any parent levels that can accept bubbled-up flags.
     fn visible_long_flag_names(&self, level: &ArgLevelSchema) -> Vec<String> {
         let mut flags = Vec::new();
+        let mut seen = std::collections::HashSet::new();
 
         let mut push_unique = |name: String| {
-            if !flags.iter().any(|existing| existing == &name) {
+            if seen.insert(name.clone()) {
                 flags.push(name);
             }
         };
@@ -3350,4 +3351,5 @@ mod tests {
         );
     }
 }
+
 
