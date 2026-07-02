@@ -848,11 +848,19 @@ fn diagnose(
     let gutter = line.to_string().len();
     let pad = " ".repeat(gutter);
     // Caret padding from the ACTUAL line prefix: tabs preserved (so the caret follows however
-    // the terminal renders them), every other char becomes one space — chars, not bytes, so a
-    // multi-byte prefix doesn't shift the caret.
+    // the terminal renders them), every other char becomes as many spaces as its DISPLAY width
+    // — wide glyphs (CJK/emoji) take two cells, combining marks take zero, so the caret stays
+    // aligned regardless of what precedes the error.
+    use unicode_width::UnicodeWidthChar;
     let caret_pad: String = line_text[..(byte_col - 1).min(line_text.len())]
         .chars()
-        .map(|c| if c == '\t' { '\t' } else { ' ' })
+        .flat_map(|c| {
+            if c == '\t' {
+                vec!['\t']
+            } else {
+                vec![' '; c.width().unwrap_or(0)]
+            }
+        })
         .collect();
 
     let mut out = String::new();
@@ -876,9 +884,15 @@ fn diagnose(
 /// names, line:col + caret, the full expected set, and construct context — for every rule.
 fn diag() {
     let (parser, table, plan, _anns) = build_plan();
-    // The last case has a MULTI-BYTE prefix (héllo wörld) on line 2: the caret must align by
-    // chars (not bytes) and the reported column must be the char column.
-    let bad = ["{{ 1 + }}", "{% if x %}no end", "{{ 1 +* 2 }}", "{# c #}\nhéllo wörld {{ 1 + }}"];
+    // The last case stresses caret alignment on line 2: multi-byte (é), WIDE glyphs (世界 = two
+    // cells each), and a combining mark (e + U+0301 = zero-width) all precede the error — the
+    // caret must land by DISPLAY width, and the header column is the char column.
+    let bad = [
+        "{{ 1 + }}",
+        "{% if x %}no end",
+        "{{ 1 +* 2 }}",
+        "{# c #}\nhéllo 世界 cafe\u{301} {{ 1 + }}",
+    ];
     for src in bad {
         println!("\n=== input: {src:?} ===");
 

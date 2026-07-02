@@ -24,6 +24,8 @@ facet-reflect = { path = "../facet-reflect" }
 facet-json = { path = "../facet-json" }
 weavy = { path = "../weavy", features = ["jit"] }
 phon = { path = "../phon/rust/phon" }
+# Diagnostic caret alignment under wide glyphs (CJK/emoji) + zero-width combining marks.
+unicode-width = { workspace = true }
 
 [build-dependencies]
 snark = { path = "../snark", features = ["json-import"] }
