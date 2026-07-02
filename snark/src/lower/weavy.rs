@@ -6698,8 +6698,10 @@ where
                 return Ok(None);
             }
 
-            stepper.lookahead = None;
-            stepper.lookahead_id = parser_ir::LookaheadTokenId::from_index(next_lookahead_index);
+            if stepper.lookahead.is_none() {
+                stepper.lookahead_id =
+                    parser_ir::LookaheadTokenId::from_index(next_lookahead_index);
+            }
             let version = stepper.version;
             let state = match stepper.stack.last() {
                 Some(entry) => entry.state,
@@ -6709,7 +6711,7 @@ where
                 Ok(dispatch) => dispatch,
                 Err(_) => return Ok(None),
             };
-            if stepper.lookahead.is_some() {
+            if dispatch.lexed {
                 next_lookahead_index += 1;
             }
             let Some(action) = dispatch.first_action.filter(|_| dispatch.action_count == 1) else {
@@ -7909,6 +7911,7 @@ struct RuntimeWeavyDispatch {
     state: parser_ir::ParseStateId,
     token: RuntimeWeavyToken,
     lookahead: parser_ir::LookaheadTokenId,
+    lexed: bool,
     entry_index: usize,
     action_count: usize,
     first_action: Option<parser_ir::ParseAction>,
@@ -8961,14 +8964,16 @@ impl<'a> RuntimeWeavyStepper<'a> {
         state: parser_ir::ParseStateId,
     ) -> Result<RuntimeWeavyDispatch, RuntimeWeavyStepError> {
         let mode_id = self.parse_state(state)?.lex_mode();
-        self.snark_stats.record_intrinsic(&SnarkIntrinsic::Lex {
-            version: StackVersionId::from_index(self.version.get() as usize),
-            mode: LexModeId::from_index(mode_id.get() as usize),
-            output: LookaheadTokenId::from_index(self.lookahead_id.get() as usize),
-        });
-        let token = {
+        let (token, lexed) = if let Some(token) = self.lookahead {
+            (token, false)
+        } else {
+            self.snark_stats.record_intrinsic(&SnarkIntrinsic::Lex {
+                version: StackVersionId::from_index(self.version.get() as usize),
+                mode: LexModeId::from_index(mode_id.get() as usize),
+                output: LookaheadTokenId::from_index(self.lookahead_id.get() as usize),
+            });
             let state_row = self.parse_state(state)?;
-            self.lex(state_row, self.byte_position)?
+            (self.lex(state_row, self.byte_position)?, true)
         };
         let valid_symbols = if let parser_ir::LookaheadSymbol::External(_) = token.lookahead {
             self.table.lexical_modes()[mode_id.get() as usize].valid_symbols()
@@ -9024,6 +9029,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             state,
             token,
             lookahead: self.lookahead_id,
+            lexed,
             entry_index,
             action_count,
             first_action,
@@ -9049,6 +9055,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 self.commit_lookahead_direct()?;
                 self.snark_stats.record_intrinsic(&shift);
                 self.shift_direct(state)?;
+                self.lookahead = None;
             }
             parser_ir::ParseAction::ShiftExtra => {
                 let state = self
@@ -9066,6 +9073,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 self.commit_lookahead_direct()?;
                 self.snark_stats.record_intrinsic(&shift_extra);
                 self.shift_extra_direct(state)?;
+                self.lookahead = None;
             }
             parser_ir::ParseAction::Reduce {
                 production,
@@ -9393,6 +9401,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         state,
                         token,
                         lookahead: self.lookahead_id,
+                        lexed: true,
                         entry_index,
                         action_count: entry.actions().len(),
                         first_action: entry.actions().first().copied(),
