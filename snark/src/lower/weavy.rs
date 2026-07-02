@@ -515,6 +515,50 @@ pub struct WeavySnarkProfileStencilReadiness {
     pub state_summaries: Vec<WeavySnarkStencilStateSummary>,
 }
 
+impl WeavySnarkProfileStencilReadiness {
+    /// Count parser/action Snark intrinsic stencil obligations in this profile.
+    #[must_use]
+    pub fn parser_stencil_count(&self) -> usize {
+        self.descriptor_summaries
+            .iter()
+            .map(|summary| summary.count)
+            .sum()
+    }
+
+    /// Count lexer-graph matcher stencil obligations in this profile.
+    #[must_use]
+    pub fn lexer_stencil_count(&self) -> usize {
+        self.lexer_summaries
+            .iter()
+            .map(|summary| summary.count)
+            .sum()
+    }
+
+    /// Count all backend stencil obligations in this profile.
+    #[must_use]
+    pub fn backend_stencil_count(&self) -> usize {
+        self.parser_stencil_count() + self.lexer_stencil_count()
+    }
+
+    /// True when this profile still contains parser/action Snark intrinsic stencils.
+    #[must_use]
+    pub fn needs_parser_stencils(&self) -> bool {
+        !self.descriptor_summaries.is_empty()
+    }
+
+    /// True when this profile still contains lexer-graph matcher stencils.
+    #[must_use]
+    pub fn needs_lexer_stencils(&self) -> bool {
+        !self.lexer_summaries.is_empty()
+    }
+
+    /// True when this profile still has any backend-specific stencil work.
+    #[must_use]
+    pub fn needs_backend_stencils(&self) -> bool {
+        self.needs_parser_stencils() || self.needs_lexer_stencils()
+    }
+}
+
 /// Snark stencil obligations grouped by native stencil family and execution mode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeavySnarkStencilFamilySummary {
@@ -11144,11 +11188,29 @@ mod tests {
             analysis.readiness.lexer_stencil_summaries,
             analysis.lexer.stencil_summaries()
         );
+        let lexer_stencil_count = analysis
+            .readiness
+            .lexer_stencil_summaries
+            .iter()
+            .map(|summary| summary.count)
+            .sum::<usize>();
+        let direct_no_trace_profile = analysis
+            .readiness
+            .snark_stencil_profile(SnarkStencilProfile::DirectNoTrace);
+        assert_eq!(direct_no_trace_profile.parser_stencil_count(), 1);
         assert_eq!(
-            analysis
-                .readiness
-                .snark_stencil_profile(SnarkStencilProfile::DirectNoTrace)
-                .lexer_summaries,
+            direct_no_trace_profile.lexer_stencil_count(),
+            lexer_stencil_count
+        );
+        assert_eq!(
+            direct_no_trace_profile.backend_stencil_count(),
+            1 + lexer_stencil_count
+        );
+        assert!(direct_no_trace_profile.needs_parser_stencils());
+        assert!(direct_no_trace_profile.needs_lexer_stencils());
+        assert!(direct_no_trace_profile.needs_backend_stencils());
+        assert_eq!(
+            direct_no_trace_profile.lexer_summaries,
             analysis.readiness.lexer_stencil_summaries
         );
         assert_eq!(
@@ -11267,6 +11329,13 @@ mod tests {
         assert!(readiness.snark_stencil_family_summaries.is_empty());
         assert!(readiness.snark_stencil_execution_summaries.is_empty());
         assert!(readiness.snark_stencil_state_summaries.is_empty());
+        let direct_profile = readiness.snark_stencil_profile(SnarkStencilProfile::DirectNoTrace);
+        assert_eq!(direct_profile.parser_stencil_count(), 0);
+        assert_eq!(direct_profile.lexer_stencil_count(), 0);
+        assert_eq!(direct_profile.backend_stencil_count(), 0);
+        assert!(!direct_profile.needs_parser_stencils());
+        assert!(!direct_profile.needs_lexer_stencils());
+        assert!(!direct_profile.needs_backend_stencils());
         assert!(readiness.is_neutral_weavy_only());
         assert!(!readiness.needs_snark_stencils());
     }

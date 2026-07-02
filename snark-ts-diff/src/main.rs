@@ -145,6 +145,15 @@ fn write_stencil_profile(
     label: &str,
     profile: &WeavySnarkProfileStencilReadiness,
 ) -> io::Result<()> {
+    writeln!(
+        out,
+        "{label}: parser_stencils={} lexer_stencils={} backend_stencils={} needs_backend_stencils={}",
+        profile.parser_stencil_count(),
+        profile.lexer_stencil_count(),
+        profile.backend_stencil_count(),
+        profile.needs_backend_stencils(),
+    )?;
+
     if profile.descriptor_summaries.is_empty() {
         writeln!(out, "{label}_stencil_descriptors: none")?;
     } else {
