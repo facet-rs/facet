@@ -9,6 +9,9 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[features]
+jit = ["snark/jit"]
+
 [dependencies]
 snark = { path = "../snark", features = ["json-import"] }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }
