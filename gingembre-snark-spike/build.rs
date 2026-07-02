@@ -99,10 +99,24 @@ fn build_intop_stencils(manifest: &std::path::Path) {
     let target = env::var("TARGET").expect("TARGET set by cargo");
     let obj = out.join("intop_stencils.o");
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
-    assert!(
-        copypatch::extract::compile_object(&rustc, &[], &src, &obj, &target, false),
-        "rustc failed to compile intop stencils"
+
+    // Prefer guaranteed tail calls (`become`) so a stencil that can't tail-call fails loud.
+    // RUSTC_BOOTSTRAP=1 unlocks `explicit_tail_calls` on the STABLE toolchain (no nightly
+    // install); it only affects the stencil rustc we spawn here, never downstream crates.
+    // At -O the shipped bytes are identical to the stable call (LLVM already TCOs) — this is
+    // a correctness guard. Fall back to a plain stable compile if `become` won't build.
+    unsafe { env::set_var("RUSTC_BOOTSTRAP", "1") };
+    let tailcall = copypatch::extract::compile_object(&rustc, &[], &src, &obj, &target, true);
+    println!(
+        "cargo:warning=intop stencils compiled with {}",
+        if tailcall { "become (guaranteed tail calls)" } else { "stable call (-O TCO)" }
     );
+    if !tailcall {
+        assert!(
+            copypatch::extract::compile_object(&rustc, &[], &src, &obj, &target, false),
+            "rustc failed to compile intop stencils"
+        );
+    }
     let bytes = fs::read(&obj).expect("read stencil object");
     let symbols = [
         "weavy_intop_push",

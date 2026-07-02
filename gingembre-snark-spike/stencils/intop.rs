@@ -8,8 +8,31 @@
 //!
 //! This is real copy-and-patch: no host-call, no indirect dispatch, no interpreter loop — the
 //! add is a native add.
+//!
+//! Under `--cfg tailcall` (enabled on stable via `RUSTC_BOOTSTRAP=1`, no nightly toolchain
+//! needed), the continuation is a GUARANTEED tail call (`become`) — a compile error if it
+//! can't be, so a future stencil that grows a destructor can't silently regress to a `bl`
+//! call chain. At `-O` LLVM already TCOs the plain call to the same `b`, so the shipped bytes
+//! are identical; `become` is the guard, not a speedup.
 
+#![cfg_attr(tailcall, feature(explicit_tail_calls))]
 #![allow(clippy::missing_safety_doc)]
+#![allow(incomplete_features)]
+
+/// Tail-call the continuation: guaranteed `become` under `--cfg tailcall`, else a plain call
+/// that `-O` tail-call-optimizes to the same branch.
+macro_rules! cont {
+    ($f:ident, $cx:ident) => {{
+        #[cfg(tailcall)]
+        {
+            become $f($cx);
+        }
+        #[cfg(not(tailcall))]
+        {
+            $f($cx);
+        }
+    }};
+}
 
 /// Threaded state: the immediate stream and the i64 operand stack pointer (next free slot).
 #[repr(C)]
@@ -32,7 +55,7 @@ pub unsafe extern "C" fn weavy_intop_push(cx: *mut Ctx) {
     c.prog = c.prog.add(1);
     *c.sp = v;
     c.sp = c.sp.add(1);
-    weavy_cont(cx);
+    cont!(weavy_cont, cx);
 }
 
 /// `a + b` (native add, wrapping — no panic path under `panic=abort`).
@@ -43,7 +66,7 @@ pub unsafe extern "C" fn weavy_intop_add(cx: *mut Ctx) {
     let a = *c.sp.sub(2);
     *c.sp.sub(2) = a.wrapping_add(b);
     c.sp = c.sp.sub(1);
-    weavy_cont(cx);
+    cont!(weavy_cont, cx);
 }
 
 /// `a - b`.
@@ -54,7 +77,7 @@ pub unsafe extern "C" fn weavy_intop_sub(cx: *mut Ctx) {
     let a = *c.sp.sub(2);
     *c.sp.sub(2) = a.wrapping_sub(b);
     c.sp = c.sp.sub(1);
-    weavy_cont(cx);
+    cont!(weavy_cont, cx);
 }
 
 /// `a * b`.
@@ -65,7 +88,7 @@ pub unsafe extern "C" fn weavy_intop_mul(cx: *mut Ctx) {
     let a = *c.sp.sub(2);
     *c.sp.sub(2) = a.wrapping_mul(b);
     c.sp = c.sp.sub(1);
-    weavy_cont(cx);
+    cont!(weavy_cont, cx);
 }
 
 /// Terminal: a lone `ret`.
