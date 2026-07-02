@@ -19,4 +19,10 @@ facts, and provenance maps, then executes those facts through Weavy programs.
 Correctness is checked against Tree-sitter's observable corpus S-expressions and
 query/highlight assertions.
 
+Weavy is Snark's only parser executor. The old native parser interpreters were
+spike/oracle machinery and are retired; new parser behavior belongs in the
+Weavy lowering/runtime path. Native copy-and-patch, host-call chains, and JIT
+support are execution strategies inside Weavy, not a second Snark parser
+runtime or parity target.
+
 See `docs/methodology.md` for the fixture and oracle policy.
