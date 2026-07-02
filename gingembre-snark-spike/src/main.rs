@@ -123,6 +123,10 @@ fn main() {
         speculate();
         return;
     }
+    if args.get(1).map(|s| s == "--fuse").unwrap_or(false) {
+        fuse();
+        return;
+    }
     if args.get(1).map(|s| s == "--profile").unwrap_or(false) {
         profile();
         return;
@@ -1288,6 +1292,48 @@ fn specialize() {
     );
 }
 
+/// FUSE: prove the AST materializer is decoupled from snark's rich tree — it needs only the
+/// `ParseNode` interface (kind/named/text/children). Build the generated AST over BOTH the rich
+/// `RuntimeResolvedNode` and a lightweight `LeanNode` (what a lean parse->AST driver emits) and
+/// show they're identical. This is the concrete interface + proof for PL core's lean driver.
+fn fuse() {
+    let (parser, table, plan, anns) = build_plan();
+    for expr in ["1 + 2 * 3", "x + 1", "10 - 2 - 3", "2 * 3 > 5"] {
+        let src = format!("{{{{ {expr} }}}}");
+        let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).unwrap();
+        let resolved = report.accepted_resolved_tree(&parser, &src).unwrap();
+        let rich = find_expr(&resolved).expect("no expr");
+
+        // Materialize over the RICH resolved tree, then over a LEAN projection of it.
+        let via_rich = expr_via_jit(rich, &anns);
+        let lean = to_lean(rich);
+        let via_lean = expr_via_jit(&lean, &anns);
+
+        assert_eq!(via_rich, via_lean, "lean-node materialization must match rich for {expr:?}");
+        let (rich_nodes, lean_bytes) = (count_nodes(rich), lean_footprint(&lean));
+        println!("✓ {expr:<12} rich == lean -> {via_rich:?}   (lean node: {rich_nodes} nodes, ~{lean_bytes}B)");
+    }
+    println!(
+        "\n✓ materialization needs ONLY kind/named/text/children (the ParseNode trait).\n\
+         RuntimeResolvedNode and the lightweight LeanNode yield the IDENTICAL generated AST.\n\
+         A lean parse->AST driver builds LeanNode-shaped nodes directly on each reduce — no\n\
+         sexp, no tree_store, no trace/tree events — and feeds this same Shape-driven build().\n\
+         See notes/gingembre-snark-lean-parse.md for the full driver design + handoff."
+    );
+}
+
+fn count_nodes<N: ParseNode>(n: &N) -> usize {
+    1 + n.children().iter().map(count_nodes).sum::<usize>()
+}
+
+/// Rough heap footprint of a LeanNode subtree (illustrative — kind strings + child vecs).
+fn lean_footprint(n: &LeanNode) -> usize {
+    let self_bytes = std::mem::size_of::<LeanNode>()
+        + n.kind.len()
+        + n.text.as_ref().map(String::len).unwrap_or(0);
+    self_bytes + n.children.iter().map(lean_footprint).sum::<usize>()
+}
+
 /// PROFILE: quantify what the rich parse collects, and split parse (report) vs resolved-tree
 /// materialization. Tests the hypothesis that the parse is slow because it collects observ-
 /// ability data (trace_events/tree_events/sexp) instead of building the AST efficiently.
@@ -1503,9 +1549,73 @@ fn run_ops_via_weavy_jit<T: facet::Facet<'static>>(ops: &[BuildOp]) -> T {
 /// structure); the tree supplies data; the grammar `Annotations` supply the mapping. It
 /// records a flat `BuildOp` program as it goes — that program IS the Weavy IR for the
 /// materialization (see `run_ops_via_weavy`).
-fn build<'f>(
+/// The MINIMAL node interface the AST materializer needs: kind, named-ness, leaf text, ordered
+/// children. `RuntimeResolvedNode` (the rich parse's resolved tree) implements it, and so does
+/// the lightweight `LeanNode` a lean parse->AST driver would emit — proving materialization is
+/// decoupled from snark's rich tree machinery. THIS is the interface PL core's lean driver
+/// implements: build LeanNode-shaped nodes on reduce (no sexp/tree_store/trace/tree events),
+/// feed this same materializer.
+trait ParseNode: Sized {
+    fn kind(&self) -> &str;
+    fn named(&self) -> bool;
+    fn text(&self) -> Option<&str>;
+    fn children(&self) -> &[Self];
+}
+
+impl ParseNode for RuntimeResolvedNode {
+    fn kind(&self) -> &str {
+        RuntimeResolvedNode::kind(self)
+    }
+    fn named(&self) -> bool {
+        RuntimeResolvedNode::named(self)
+    }
+    fn text(&self) -> Option<&str> {
+        RuntimeResolvedNode::text(self)
+    }
+    fn children(&self) -> &[Self] {
+        RuntimeResolvedNode::children(self)
+    }
+}
+
+/// A lightweight parse node — kind + text + ordered children, nothing else. What a lean
+/// deterministic parse->AST driver emits per reduce. Built here FROM a `RuntimeResolvedNode`
+/// only to prove the materializer is byte-identical over it; the real driver builds it directly.
+#[derive(Debug, Clone)]
+struct LeanNode {
+    kind: String,
+    named: bool,
+    text: Option<String>,
+    children: Vec<LeanNode>,
+}
+
+impl ParseNode for LeanNode {
+    fn kind(&self) -> &str {
+        &self.kind
+    }
+    fn named(&self) -> bool {
+        self.named
+    }
+    fn text(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+    fn children(&self) -> &[Self] {
+        &self.children
+    }
+}
+
+/// Project any `ParseNode` into a `LeanNode` (simulates what a lean driver would emit directly).
+fn to_lean<N: ParseNode>(node: &N) -> LeanNode {
+    LeanNode {
+        kind: node.kind().to_string(),
+        named: node.named(),
+        text: node.text().map(str::to_string),
+        children: node.children().iter().map(to_lean).collect(),
+    }
+}
+
+fn build<'f, N: ParseNode>(
     mut p: facet_reflect::Partial<'f, false>,
-    node: &RuntimeResolvedNode,
+    node: &N,
     anns: &Annotations,
     ops: &mut Vec<BuildOp>,
 ) -> Result<facet_reflect::Partial<'f, false>, facet_reflect::ReflectError> {
@@ -1579,7 +1689,7 @@ fn build<'f>(
 
 /// Resolve an annotation child selector against a node: `named:N` = the Nth named child,
 /// `token` = the (first) anonymous token child.
-fn select_child<'a>(node: &'a RuntimeResolvedNode, selector: &str) -> &'a RuntimeResolvedNode {
+fn select_child<'a, N: ParseNode>(node: &'a N, selector: &str) -> &'a N {
     if let Some(idx) = selector.strip_prefix("named:") {
         let idx: usize = idx.parse().expect("bad named index");
         node.children()
@@ -1601,12 +1711,12 @@ fn select_child<'a>(node: &'a RuntimeResolvedNode, selector: &str) -> &'a Runtim
 // grammar + gingembre_ast.snark.js. Nothing hand-writes or copies the types anymore.)
 
 /// The first named node under the interpolation (the expression).
-fn find_expr(node: &RuntimeResolvedNode) -> Option<&RuntimeResolvedNode> {
+fn find_expr<N: ParseNode>(node: &N) -> Option<&N> {
     let interp = find_kind(node, "interpolation")?;
     interp.children().iter().find(|c| c.named())
 }
 
-fn find_kind<'a>(node: &'a RuntimeResolvedNode, kind: &str) -> Option<&'a RuntimeResolvedNode> {
+fn find_kind<'a, N: ParseNode>(node: &'a N, kind: &str) -> Option<&'a N> {
     if node.kind() == kind {
         return Some(node);
     }
@@ -1734,13 +1844,13 @@ fn lower_for(node: &RuntimeResolvedNode) -> Option<Node> {
         .collect();
     let target = match idents.as_slice() {
         [one] => Target::Single {
-            name: leaf_text(one)?,
+            name: leaf_text(*one)?,
             span: span(0, 0),
         },
         many => Target::Tuple {
             names: many
                 .iter()
-                .filter_map(|i| Some((leaf_text(i)?, span(0, 0))))
+                .filter_map(|i| Some((leaf_text(*i)?, span(0, 0))))
                 .collect(),
             span: span(0, 0),
         },
@@ -1978,7 +2088,7 @@ fn gen_expr_to_gingembre(e: &gen_ast::Expr) -> Expr {
 
 /// Materialize a `gen_ast::Expr` from a resolved expression node by JIT-compiling the build
 /// ops (the whole pipeline: grammar surface -> reflection ops -> hostcall-chain JIT -> AST).
-fn expr_via_jit(node: &RuntimeResolvedNode, anns: &Annotations) -> gen_ast::Expr {
+fn expr_via_jit<N: ParseNode>(node: &N, anns: &Annotations) -> gen_ast::Expr {
     let mut ops = Vec::new();
     let p = facet_reflect::Partial::alloc_owned::<gen_ast::Expr>().expect("alloc");
     // Drive a throwaway reflective build to RECORD the op program, then JIT the same ops.
@@ -1995,7 +2105,7 @@ fn full_text(node: &RuntimeResolvedNode) -> String {
 }
 
 /// First terminal text under this node (for single-token leaves).
-fn leaf_text(node: &RuntimeResolvedNode) -> Option<String> {
+fn leaf_text<N: ParseNode>(node: &N) -> Option<String> {
     if let Some(text) = node.text() {
         return Some(text.to_string());
     }
