@@ -420,6 +420,7 @@ fn print_snark_execution_stats(report: &WeavyParseReport) {
         "snark_execution: intrinsics={} families={}",
         stats.intrinsic_count, families
     );
+    println!("parse_execution_lane: {:?}", report.execution_lane());
     if let Some(summary) = stats.dominant_family_execution() {
         println!(
             "snark_dominant_execution: {:?}/{:?} count={}",

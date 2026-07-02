@@ -4677,6 +4677,7 @@ trait RuntimeWeavyDeterministicSink {
         stats: RunStats,
         lexer_stats: WeavyLexerExecutionStats,
         snark_stats: WeavySnarkExecutionStats,
+        execution_lane: WeavyParseExecutionLane,
         version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
         error_cost: u32,
@@ -4701,6 +4702,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicTreeSink {
         _stats: RunStats,
         _lexer_stats: WeavyLexerExecutionStats,
         _snark_stats: WeavySnarkExecutionStats,
+        _execution_lane: WeavyParseExecutionLane,
         _version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
         _error_cost: u32,
@@ -4727,6 +4729,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
         _stats: RunStats,
         _lexer_stats: WeavyLexerExecutionStats,
         _snark_stats: WeavySnarkExecutionStats,
+        _execution_lane: WeavyParseExecutionLane,
         _version: parser_ir::StackVersionId,
         _root: parser_ir::TreeNodeId,
         _error_cost: u32,
@@ -4755,6 +4758,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
         stats: RunStats,
         lexer_stats: WeavyLexerExecutionStats,
         snark_stats: WeavySnarkExecutionStats,
+        execution_lane: WeavyParseExecutionLane,
         version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
         error_cost: u32,
@@ -4770,6 +4774,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
             stats,
             lexer_stats,
             snark_stats,
+            execution_lane,
             trace_events: trace_events.into_events(),
             tree_events,
             tree_store,
@@ -5894,6 +5899,7 @@ where
                     stats,
                     lexer_scratch.execution_stats(),
                     snark_stats,
+                    block_execution.parse_execution_lane(),
                     version,
                     root,
                     error_cost,
@@ -6509,6 +6515,7 @@ fn parse_weavy_with_lexer_program(
             stats,
             lexer_stats: lexer_scratch.execution_stats(),
             snark_stats,
+            execution_lane: block_execution.parse_execution_lane(),
             trace_events: trace_events.into_events(),
             tree_events: first_tree_events,
             tree_store,
@@ -6547,6 +6554,7 @@ pub struct WeavyParseReport {
     stats: RunStats,
     lexer_stats: WeavyLexerExecutionStats,
     snark_stats: WeavySnarkExecutionStats,
+    execution_lane: WeavyParseExecutionLane,
     trace_events: Vec<parser_ir::TraceEvent>,
     tree_events: Vec<parser_ir::TreeEvent>,
     tree_store: RuntimeWeavyTreeStore,
@@ -6555,6 +6563,25 @@ pub struct WeavyParseReport {
     accepted_count: usize,
     failure_count: usize,
     max_live_versions: usize,
+}
+
+/// Runtime execution lane used to produce a Weavy parse report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum WeavyParseExecutionLane {
+    /// Direct Weavy block interpreter with trace collection disabled.
+    Direct,
+    /// Direct Weavy block interpreter with debug trace collection enabled.
+    Metered,
+    /// Copy-and-patch host-call block runner.
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    HostCalls,
 }
 
 /// Consumer for accepted Weavy tree events.
@@ -6591,6 +6618,11 @@ impl WeavyParseReport {
     /// Runtime Snark parser/action intrinsic counters accumulated while producing this report.
     pub const fn snark_stats(&self) -> &WeavySnarkExecutionStats {
         &self.snark_stats
+    }
+
+    /// Runtime execution lane used to produce this report.
+    pub const fn execution_lane(&self) -> WeavyParseExecutionLane {
+        self.execution_lane
     }
 
     /// Structured parser trace events emitted during runtime execution.
@@ -6738,6 +6770,21 @@ enum RuntimeWeavyBlockExecution {
 impl RuntimeWeavyBlockExecution {
     const fn collects_traces(self) -> bool {
         matches!(self, Self::Metered)
+    }
+
+    const fn parse_execution_lane(self) -> WeavyParseExecutionLane {
+        match self {
+            Self::Direct => WeavyParseExecutionLane::Direct,
+            Self::Metered => WeavyParseExecutionLane::Metered,
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            Self::HostCalls => WeavyParseExecutionLane::HostCalls,
+        }
     }
 }
 
@@ -12217,6 +12264,19 @@ mod tests {
             parse_prepared_weavy_hostcalls_resolved_tree(&plan, &parser, &table, "ab").unwrap();
 
         assert_eq!(metered.tree(), default_direct.tree());
+        assert_eq!(metered.execution_lane(), WeavyParseExecutionLane::Metered);
+        assert_eq!(
+            deterministic_direct.execution_lane(),
+            WeavyParseExecutionLane::Direct
+        );
+        assert_eq!(
+            default_direct.execution_lane(),
+            WeavyParseExecutionLane::Direct
+        );
+        assert_eq!(
+            recovering_direct.execution_lane(),
+            WeavyParseExecutionLane::Direct
+        );
         assert_eq!(deterministic_direct.tree(), default_direct.tree());
         assert_eq!(&deterministic_tree_only, default_direct.tree());
         assert_eq!(&tree_only, default_direct.tree());
@@ -12265,7 +12325,13 @@ mod tests {
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        assert_eq!(metered.tree(), hostcalls.tree());
+        {
+            assert_eq!(metered.tree(), hostcalls.tree());
+            assert_eq!(
+                hostcalls.execution_lane(),
+                WeavyParseExecutionLane::HostCalls
+            );
+        }
         #[cfg(all(
             feature = "jit",
             any(

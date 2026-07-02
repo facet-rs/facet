@@ -333,6 +333,7 @@ fn hostcalls_print_execution_lanes() {
     assert!(stdout.contains("snark weavy hostcall parse:"));
     assert!(stdout.contains("accepted=1 failed=0 max_live=1"));
     assert!(stdout.contains("snark_execution: intrinsics="));
+    assert!(stdout.contains("parse_execution_lane: HostCalls"));
     assert!(stdout.contains("snark_dominant_execution:"));
     assert!(stdout.contains("lexer_execution: calls="));
     assert!(stdout.contains("lexer_dominant_execution:"));

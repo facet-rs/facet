@@ -50,6 +50,7 @@ type ParseOutput = {
   lexer_direct_set_cache_misses: number;
   lexer_stencil_executions: ParseLexerStencilExecutionOutput[];
   dominant_lexer_stencil_execution: ParseLexerStencilExecutionOutput | null;
+  execution_lane: string;
   snark_intrinsic_count: number;
   snark_stencil_executions: ParseSnarkStencilExecutionOutput[];
   dominant_snark_stencil_execution: ParseSnarkStencilExecutionOutput | null;
@@ -1068,7 +1069,8 @@ function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | nul
           <span>Runtime parser hot lane</span>
           <strong>{dominantSnarkExecution.family}</strong>
           <code>
-            {dominantSnarkExecution.execution} · {dominantSnarkExecution.count} executions ·{" "}
+            {parse?.execution_lane ?? "Unknown"} · {dominantSnarkExecution.execution} ·{" "}
+            {dominantSnarkExecution.count} executions ·{" "}
             {parse?.snark_intrinsic_count ?? 0} intrinsics
           </code>
         </div>

@@ -19,7 +19,7 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         SnarkStencilProfile, WeavyLexerExecutionStats, WeavyLoweringBarrier, WeavyParseError,
-        WeavyParsePlan, WeavyParseReport, WeavySnarkExecutionStats,
+        WeavyParseExecutionLane, WeavyParsePlan, WeavyParseReport, WeavySnarkExecutionStats,
         parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner,
         reparse_prepared_weavy_recovering_with_report_and_scanner,
@@ -238,6 +238,7 @@ struct ParseOutput {
     lexer_direct_set_cache_misses: usize,
     lexer_stencil_executions: Vec<ParseLexerStencilExecutionOutput>,
     dominant_lexer_stencil_execution: Option<ParseLexerStencilExecutionOutput>,
+    execution_lane: String,
     snark_intrinsic_count: usize,
     snark_stencil_executions: Vec<ParseSnarkStencilExecutionOutput>,
     dominant_snark_stencil_execution: Option<ParseSnarkStencilExecutionOutput>,
@@ -455,6 +456,10 @@ impl WeavyPlaygroundReport {
 
     fn snark_stats(&self) -> &WeavySnarkExecutionStats {
         self.0.snark_stats()
+    }
+
+    fn execution_lane(&self) -> WeavyParseExecutionLane {
+        self.0.execution_lane()
     }
 
     fn accepted_resolved_tree(
@@ -901,6 +906,7 @@ fn parse_output(
                 count: summary.count,
             }
         }),
+        execution_lane: format!("{:?}", report.execution_lane()),
         snark_intrinsic_count: snark_stats.intrinsic_count,
         snark_stencil_executions: snark_stats
             .family_execution_summaries()
@@ -5065,6 +5071,7 @@ mod tests {
         assert!(parse.lexer_call_count > 0);
         assert!(parse.lexer_direct_set_cache_misses > 0);
         assert_eq!(parse.lexer_direct_set_cache_hits, 0);
+        assert_eq!(parse.execution_lane, "Direct");
         assert!(
             parse
                 .lexer_stencil_executions
