@@ -112,7 +112,11 @@ pub fn emit_source_with_annotations_boa(
         "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;\nglobalThis.console ??= { log() {}, warn() {}, error() {} };\nglobalThis.process ??= { env: {} };",
         "commonjs-shim.js",
     )?;
-    eval(&mut context, SNARK_DSL_EXTENSIONS, "snark-dsl-extensions.js")?;
+    eval(
+        &mut context,
+        SNARK_DSL_EXTENSIONS,
+        "snark-dsl-extensions.js",
+    )?;
     eval(&mut context, grammar_source, source_name)?;
     let grammar_json = eval_to_string(&mut context, EMIT_SCRIPT, "emit.js", "emit")?;
     let annotations_json = eval_to_string(
@@ -140,7 +144,11 @@ pub fn annotations_from_source(source: &str, source_name: &str) -> Result<String
         "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;\nglobalThis.console ??= { log() {}, warn() {}, error() {} };\nglobalThis.process ??= { env: {} };",
         "commonjs-shim.js",
     )?;
-    eval(&mut context, SNARK_DSL_EXTENSIONS, "snark-dsl-extensions.js")?;
+    eval(
+        &mut context,
+        SNARK_DSL_EXTENSIONS,
+        "snark-dsl-extensions.js",
+    )?;
     eval(&mut context, source, source_name)?;
     eval_to_string(
         &mut context,
@@ -178,8 +186,14 @@ ast({
             "annotation leaked into grammar.json: {grammar}"
         );
         // annotations came back keyed by node kind.
-        assert!(annotations.contains("\"decode\":\"i64\""), "annotations: {annotations}");
-        assert!(annotations.contains("\"as\":\"BinaryExpr\""), "annotations: {annotations}");
+        assert!(
+            annotations.contains("\"decode\":\"i64\""),
+            "annotations: {annotations}"
+        );
+        assert!(
+            annotations.contains("\"as\":\"BinaryExpr\""),
+            "annotations: {annotations}"
+        );
     }
 }
 

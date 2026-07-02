@@ -59,8 +59,10 @@ fn main() {
 
     let ann_src = fs::read_to_string(&ann_js).expect("read annotation source");
     let grammar_json = snark_dsl::emit_with_boa(&grammar_js).expect("emit grammar.json");
-    let ann_json = snark_dsl::annotations_from_source(&ann_src, "gingembre_ast.snark.js").expect("annotations");
-    let raw = RawGrammarJson::from_tree_sitter_json_str(&grammar_json).expect("import grammar json");
+    let ann_json = snark_dsl::annotations_from_source(&ann_src, "gingembre_ast.snark.js")
+        .expect("annotations");
+    let raw =
+        RawGrammarJson::from_tree_sitter_json_str(&grammar_json).expect("import grammar json");
     let anns: Annotations = facet_json::from_str(&ann_json).expect("decode annotations");
 
     let generated = generate(&raw, &anns);
@@ -115,7 +117,11 @@ fn build_intop_stencils(manifest: &std::path::Path) {
     let tailcall = copypatch::extract::compile_object(&rustc, &[], &src, &obj, &target, true);
     println!(
         "cargo:warning=intop stencils compiled with {}",
-        if tailcall { "become (guaranteed tail calls)" } else { "stable call (-O TCO)" }
+        if tailcall {
+            "become (guaranteed tail calls)"
+        } else {
+            "stable call (-O TCO)"
+        }
     );
     if !tailcall {
         assert!(
@@ -152,7 +158,12 @@ fn build_intop_stencils(manifest: &std::path::Path) {
         writeln!(s, "pub const {name}: &[u8] = &{:?};", st.bytes).unwrap();
         // DONE is a lone `ret` with no continuation; only emit CONT relocs for chaining ops.
         if name != "DONE" {
-            writeln!(s, "pub const {name}_CONT: &[usize] = &{:?};", st.cont_relocs).unwrap();
+            writeln!(
+                s,
+                "pub const {name}_CONT: &[usize] = &{:?};",
+                st.cont_relocs
+            )
+            .unwrap();
         }
     }
 
@@ -160,7 +171,8 @@ fn build_intop_stencils(manifest: &std::path::Path) {
     let guard_src = manifest.join("stencils/guard.rs");
     println!("cargo:rerun-if-changed={}", guard_src.display());
     let guard_obj = out.join("guard_stencils.o");
-    let tail = copypatch::extract::compile_object(&rustc, &[], &guard_src, &guard_obj, &target, true);
+    let tail =
+        copypatch::extract::compile_object(&rustc, &[], &guard_src, &guard_obj, &target, true);
     if !tail {
         assert!(
             copypatch::extract::compile_object(&rustc, &[], &guard_src, &guard_obj, &target, false),
@@ -169,7 +181,10 @@ fn build_intop_stencils(manifest: &std::path::Path) {
     }
     let guard_bytes = fs::read(&guard_obj).expect("read guard object");
     let guard_syms = ["weavy_guard_i64", "weavy_guard_f64"];
-    for (name, sym) in [("GUARD", "weavy_guard_i64"), ("GUARD_F64", "weavy_guard_f64")] {
+    for (name, sym) in [
+        ("GUARD", "weavy_guard_i64"),
+        ("GUARD_F64", "weavy_guard_f64"),
+    ] {
         let g = copypatch::extract::extract_stencil_n(
             &guard_bytes,
             &guard_syms,
@@ -177,8 +192,18 @@ fn build_intop_stencils(manifest: &std::path::Path) {
             &["weavy_cont", "weavy_deopt"],
         );
         writeln!(s, "pub const {name}: &[u8] = &{:?};", g.bytes).unwrap();
-        writeln!(s, "pub const {name}_FAST_CONT: &[usize] = &{:?};", g.cont_relocs[0]).unwrap();
-        writeln!(s, "pub const {name}_DEOPT_CONT: &[usize] = &{:?};", g.cont_relocs[1]).unwrap();
+        writeln!(
+            s,
+            "pub const {name}_FAST_CONT: &[usize] = &{:?};",
+            g.cont_relocs[0]
+        )
+        .unwrap();
+        writeln!(
+            s,
+            "pub const {name}_DEOPT_CONT: &[usize] = &{:?};",
+            g.cont_relocs[1]
+        )
+        .unwrap();
     }
 
     fs::write(&generated, s).expect("write intop stencils");
@@ -240,7 +265,9 @@ fn derive_slots(raw: &RawGrammarJson, kind: &str) -> Vec<Slot> {
     fn find_seq(r: &RawRuleJson) -> Option<&[RawRuleJson]> {
         match r {
             RawRuleJson::Seq { members } => Some(members),
-            RawRuleJson::Choice { members } => members.iter().find_map(|m| find_seq(unwrap_transparent(m))),
+            RawRuleJson::Choice { members } => {
+                members.iter().find_map(|m| find_seq(unwrap_transparent(m)))
+            }
             RawRuleJson::Prec { content, .. }
             | RawRuleJson::PrecLeft { content, .. }
             | RawRuleJson::PrecRight { content, .. }
@@ -257,7 +284,9 @@ fn derive_slots(raw: &RawGrammarJson, kind: &str) -> Vec<Slot> {
     seq.iter()
         .filter_map(|m| match unwrap_transparent(m) {
             // A reference into the expression grammar -> an Expr child.
-            RawRuleJson::Symbol { name } if name == "_expr" || name.ends_with("expr") => Some(Slot::Expr),
+            RawRuleJson::Symbol { name } if name == "_expr" || name.ends_with("expr") => {
+                Some(Slot::Expr)
+            }
             // A literal operator/keyword -> a token slot.
             RawRuleJson::String { .. } | RawRuleJson::Choice { .. } => Some(Slot::Token),
             _ => None,
@@ -269,13 +298,22 @@ fn generate(raw: &RawGrammarJson, anns: &Annotations) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     out.push_str("// @generated from the gingembre grammar + ast() annotations by build.rs.\n");
-    out.push_str("// Structure derived from the grammar rules; names/decodes from annotations.\n\n");
+    out.push_str(
+        "// Structure derived from the grammar rules; names/decodes from annotations.\n\n",
+    );
 
     let variants = enum_variants(raw, anns);
-    let enum_name = anns.get("_expr").and_then(|a| a.enum_name.clone()).unwrap_or_else(|| "Expr".into());
+    let enum_name = anns
+        .get("_expr")
+        .and_then(|a| a.enum_name.clone())
+        .unwrap_or_else(|| "Expr".into());
 
     // The enum.
-    writeln!(out, "#[derive(facet::Facet, Debug, Clone, PartialEq)]\n#[repr(u8)]\npub enum {enum_name} {{").unwrap();
+    writeln!(
+        out,
+        "#[derive(facet::Facet, Debug, Clone, PartialEq)]\n#[repr(u8)]\npub enum {enum_name} {{"
+    )
+    .unwrap();
     let mut structs: Vec<(String, String)> = Vec::new(); // (struct name, source node kind)
     for (variant, kind) in &variants {
         let ann = &anns[kind];
@@ -296,7 +334,11 @@ fn generate(raw: &RawGrammarJson, anns: &Annotations) -> String {
     for (st_name, kind) in structs {
         let ann = &anns[&kind];
         let slots = derive_slots(raw, &kind);
-        writeln!(out, "#[derive(facet::Facet, Debug, Clone, PartialEq)]\npub struct {st_name} {{").unwrap();
+        writeln!(
+            out,
+            "#[derive(facet::Facet, Debug, Clone, PartialEq)]\npub struct {st_name} {{"
+        )
+        .unwrap();
         // Map each annotated field to its selector -> slot -> Rust type derived from the grammar.
         for (fname, field) in &ann.fields {
             let ty = field_type(&enum_name, &slots, &field.from);
