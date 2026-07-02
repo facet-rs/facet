@@ -340,21 +340,6 @@ pub(crate) fn generate_help_for_subcommand_with_config_formats(
 /// recursively listing all reachable leaf commands.
 /// In [`HelpListMode::Full`], this returns concatenated help output for each
 /// reachable leaf subcommand under the current command path.
-pub(crate) fn generate_help_list_for_subcommand(
-    schema: &Schema,
-    subcommand_path: &[String],
-    config: &HelpConfig,
-    mode: HelpListMode,
-) -> String {
-    generate_help_list_for_subcommand_with_config_formats(
-        schema,
-        subcommand_path,
-        config,
-        mode,
-        DEFAULT_CONFIG_FILE_EXTENSIONS,
-    )
-}
-
 pub(crate) fn generate_help_list_for_subcommand_with_config_formats(
     schema: &Schema,
     subcommand_path: &[String],
@@ -3220,7 +3205,7 @@ mod tests {
     #[test]
     fn test_help_list_short_is_recursive_with_full_command_paths() {
         let schema = Schema::from_shape(NestedRootArgs::SHAPE).unwrap();
-        let output = generate_help_list_for_subcommand(
+        let output = generate_help_list_for_subcommand_with_config_formats(
             &schema,
             &[],
             &HelpConfig {
@@ -3228,6 +3213,7 @@ mod tests {
                 ..HelpConfig::default()
             },
             HelpListMode::Short,
+            DEFAULT_CONFIG_FILE_EXTENSIONS,
         );
 
         let lines: Vec<&str> = output.lines().collect();
@@ -3245,7 +3231,7 @@ mod tests {
     #[test]
     fn test_help_list_full_is_recursive_for_leaf_subcommands() {
         let schema = Schema::from_shape(NestedRootArgs::SHAPE).unwrap();
-        let output = generate_help_list_for_subcommand(
+        let output = generate_help_list_for_subcommand_with_config_formats(
             &schema,
             &[],
             &HelpConfig {
@@ -3253,6 +3239,7 @@ mod tests {
                 ..HelpConfig::default()
             },
             HelpListMode::Full,
+            DEFAULT_CONFIG_FILE_EXTENSIONS,
         );
 
         assert!(output.contains("myapp home open"));
