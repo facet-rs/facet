@@ -173,7 +173,7 @@ pub fn register_jit_code_with_dwarf(
     buf_base: *const u8,
     buf_len: usize,
     symbols: &[JitSymbolEntry],
-    dwarf: Option<&crate::jit_dwarf::JitDwarfSections>,
+    dwarf: Option<&super::dwarf::JitDwarfSections>,
 ) -> JitRegistration {
     let elf = build_elf(buf_base as u64, buf_len, symbols, dwarf);
     maybe_dump_jit_elf(&elf, symbols);
@@ -203,6 +203,105 @@ pub fn register_jit_code_with_dwarf(
 
     JitRegistration { entry, _elf: elf }
 }
+
+// ---------------------------------------------------------------------------
+// High-level facade: one call to make JIT'd code debuggable + profilable
+// ---------------------------------------------------------------------------
+
+/// A JIT'd code region for the debugger/profiler: symbol `name`, byte `offset`+`size` in the code
+/// buffer, and 1-based source `line` in the listing file. This is all a weavy JIT consumer needs
+/// to supply for lldb/gdb source-stepping + perf/stax symbolication.
+pub struct JitSourceSymbol {
+    pub name: String,
+    pub offset: usize,
+    pub size: usize,
+    pub line: u32,
+}
+
+/// Register JIT'd code with the debugger (GDB/LLDB JIT interface) with per-symbol source lines, so
+/// a debugger resolves JIT'd PCs to `file_name:line` and can source-step. `file_name`+`directory`
+/// must point at a real listing file for source display. Also writes `/tmp/perf-<pid>.map`. Keep
+/// the returned [`JitRegistration`] alive while the code can run.
+pub fn register_jit_source(
+    code_ptr: *const u8,
+    code_len: usize,
+    file_name: &str,
+    directory: Option<&str>,
+    symbols: &[JitSourceSymbol],
+) -> Result<JitRegistration, super::dwarf::DwarfPrepError> {
+    let entries: Vec<JitSymbolEntry> = symbols
+        .iter()
+        .map(|s| JitSymbolEntry { name: s.name.clone(), offset: s.offset, size: s.size })
+        .collect();
+    // `build_jit_dwarf_sections` maps (offset, line_index) -> line = line_index + 1.
+    let source_map: Vec<(u32, u32)> = symbols
+        .iter()
+        .map(|s| (s.offset as u32, s.line.saturating_sub(1)))
+        .collect();
+    let dwarf = super::dwarf::build_jit_dwarf_sections(
+        code_ptr as u64,
+        code_len as u64,
+        &source_map,
+        file_name,
+        directory,
+    )?;
+    Ok(register_jit_code_with_dwarf(code_ptr, code_len, &entries, Some(&dwarf)))
+}
+
+/// Write a perf **jitdump** (`/tmp/jit-<pid>.dump`) so `perf`/stax symbolicate + annotate JIT'd
+/// code. One `JIT_CODE_LOAD` per symbol: `name` + the symbol's actual runtime bytes read from
+/// `code_ptr + offset`. (perf jitdump format: 40-byte header magic `0x4A695444`, then records.)
+///
+/// # Safety
+/// Every symbol's `code_ptr + offset .. + offset + size` range must be valid readable memory
+/// (normally guaranteed by pointing at a live [`super::NativeProgram`]'s code buffer with
+/// offsets/sizes from its layout).
+pub unsafe fn write_jitdump(path: &str, code_ptr: *const u8, symbols: &[JitSourceSymbol]) -> std::io::Result<()> {
+    let pid = std::process::id();
+    let ts = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
+    };
+    let mut out = Vec::new();
+    // Header (40 bytes): magic, version, header_size, elf_mach, pad, pid, ts, flags.
+    out.extend_from_slice(&0x4A69_5444u32.to_le_bytes());
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&40u32.to_le_bytes());
+    out.extend_from_slice(&ELF_MACHINE_JITDUMP.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&pid.to_le_bytes());
+    out.extend_from_slice(&ts().to_le_bytes());
+    out.extend_from_slice(&0u64.to_le_bytes());
+    for (i, s) in symbols.iter().enumerate() {
+        let addr = code_ptr as u64 + s.offset as u64;
+        let code = unsafe { std::slice::from_raw_parts(code_ptr.add(s.offset), s.size) };
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&pid.to_le_bytes());
+        payload.extend_from_slice(&pid.to_le_bytes());
+        payload.extend_from_slice(&addr.to_le_bytes()); // vma (stax uses this)
+        payload.extend_from_slice(&addr.to_le_bytes()); // code_addr
+        payload.extend_from_slice(&(s.size as u64).to_le_bytes());
+        payload.extend_from_slice(&(i as u64).to_le_bytes());
+        payload.extend_from_slice(s.name.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(code);
+        let total = 16 + payload.len();
+        out.extend_from_slice(&0u32.to_le_bytes()); // id = JIT_CODE_LOAD
+        out.extend_from_slice(&(total as u32).to_le_bytes());
+        out.extend_from_slice(&ts().to_le_bytes());
+        out.extend_from_slice(&payload);
+    }
+    std::fs::write(path, &out)
+}
+
+#[cfg(target_arch = "aarch64")]
+const ELF_MACHINE_JITDUMP: u32 = 183; // EM_AARCH64
+#[cfg(target_arch = "x86_64")]
+const ELF_MACHINE_JITDUMP: u32 = 62; // EM_X86_64
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+const ELF_MACHINE_JITDUMP: u32 = 0;
 
 fn maybe_dump_jit_elf(elf: &[u8], symbols: &[JitSymbolEntry]) {
     let Ok(dir) = std::env::var("KAJIT_DEBUG_DUMP_ELF_DIR") else {
@@ -302,7 +401,7 @@ fn build_elf(
     text_addr: u64,
     text_len: usize,
     symbols: &[JitSymbolEntry],
-    dwarf: Option<&crate::jit_dwarf::JitDwarfSections>,
+    dwarf: Option<&super::dwarf::JitDwarfSections>,
 ) -> Vec<u8> {
     let entry_addr = symbols
         .iter()
@@ -716,7 +815,7 @@ mod tests {
 
     #[test]
     fn elf_with_dwarf_sections_contains_debug_line() {
-        let dwarf = crate::jit_dwarf::build_jit_dwarf_sections(
+        let dwarf = super::dwarf::build_jit_dwarf_sections(
             0x2000,
             16,
             &[(0, 0), (4, 1)],

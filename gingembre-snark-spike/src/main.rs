@@ -30,10 +30,6 @@ use snark::{
     validated::ValidatedGrammar,
 };
 
-// Salvaged from bearcove/kajit (scrapped): real DWARF + GDB/LLDB JIT interface for our JIT.
-mod jit_debug;
-mod jit_dwarf;
-
 /// First slice: context-free templates (text + interpolation + numeric/bool
 /// literals + binary ops), so the render oracle doesn't depend on a data model.
 const SAMPLES: &[(&str, &str)] = &[
@@ -1677,46 +1673,37 @@ fn debug_jit() {
     }
     std::fs::write(dir.join(&file_name), &listing).expect("write listing");
 
-    // Per-op symbols (for .symtab) + source map (code offset -> listing line index).
-    let symbols: Vec<jit_debug::JitSymbolEntry> = rows
+    // One weavy call: per-op symbols + source lines -> ELF + DWARF -> register with the debugger.
+    let symbols: Vec<weavy::jit::debug::JitSourceSymbol> = rows
         .iter()
         .enumerate()
         .map(|(i, r)| {
             let end = rows.get(i + 1).map(|n| n.start).unwrap_or(done);
-            jit_debug::JitSymbolEntry {
+            weavy::jit::debug::JitSourceSymbol {
                 name: format!("jit::{}", r.label),
                 offset: r.start,
                 size: end - r.start,
+                line: (i + 1) as u32,
             }
         })
         .collect();
-    let source_map: Vec<(u32, u32)> = rows.iter().enumerate().map(|(i, r)| (r.start as u32, i as u32)).collect();
 
-    let dwarf = jit_dwarf::build_jit_dwarf_sections(
-        base,
-        code_len as u64,
-        &source_map,
-        &file_name,
-        dir.to_str(),
-    )
-    .expect("build DWARF");
-
-    // Self-validate the .debug_line: parse its rows back and confirm addr -> line.
-    let rows_back = parse_debug_line_addr_line(&dwarf.debug_line);
     println!("template: {src:?}   ({} ops, {code_len}B native @ {base:#x})", rows.len());
     println!("listing:  {}\n", dir.join(&file_name).display());
-    println!(".debug_line rows (addr -> source line), parsed back from our DWARF:");
-    for (i, (addr, line)) in rows_back.iter().take(rows.len()).enumerate() {
-        println!("  {addr:#x}  line {line:>2}  = op{i} {:?}", &src[rows[i].span.0..rows[i].span.1]);
+    println!("op -> listing line -> template source:");
+    for (i, r) in rows.iter().enumerate() {
+        println!("  line {:>2}  op{i} {:<8} {:?}", i + 1, r.label, &src[r.span.0..r.span.1]);
     }
 
-    // Register with the debugger (keep the registration alive while we run).
-    let _reg = jit_debug::register_jit_code_with_dwarf(
+    // Register with the debugger via the graduated weavy::jit::debug facade.
+    let _reg = weavy::jit::debug::register_jit_source(
         native.code_ptr(),
         code_len,
+        &file_name,
+        dir.to_str(),
         &symbols,
-        Some(&dwarf),
-    );
+    )
+    .expect("register JIT source");
     println!(
         "\nRegistered with the GDB/LLDB JIT interface (in-memory ELF + .symtab + .debug_line).\n\
          Source-level debug the JIT'd code (VERIFIED in lldb — stops in the stencil for `2 * 3`):\n\
@@ -1731,74 +1718,6 @@ fn debug_jit() {
     let mut stack = vec![0i64; 64];
     println!("(run check: {expr} = {})", run_intop_native(&native, &mut stack));
     drop(_reg);
-}
-
-/// Minimal DWARF v4 `.debug_line` reader: return (address, line) for each COPY row — enough to
-/// self-verify our emitted line program maps JIT PCs to listing lines.
-fn parse_debug_line_addr_line(section: &[u8]) -> Vec<(u64, u64)> {
-    // Header: unit_length(4) version(2) header_length(4) then the header_body; program follows.
-    if section.len() < 10 {
-        return Vec::new();
-    }
-    let header_length = u32::from_le_bytes(section[6..10].try_into().unwrap()) as usize;
-    let mut i = 10 + header_length; // start of the line-number program
-    let (mut addr, mut line) = (0u64, 1i64);
-    let mut out = Vec::new();
-    while i < section.len() {
-        let op = section[i];
-        i += 1;
-        match op {
-            0 => {
-                // extended opcode: len uleb, sub-opcode
-                let len = uleb(section, &mut i) as usize;
-                if len == 0 {
-                    break;
-                }
-                let sub = section[i];
-                if sub == 0x02 {
-                    // DW_LNE_set_address
-                    addr = u64::from_le_bytes(section[i + 1..i + 9].try_into().unwrap());
-                }
-                i += len; // includes the sub-opcode byte
-            }
-            0x01 => out.push((addr, line as u64)), // DW_LNS_copy
-            0x02 => addr += uleb(section, &mut i), // DW_LNS_advance_pc
-            0x03 => line += sleb(section, &mut i), // DW_LNS_advance_line
-            _ => {}
-        }
-    }
-    out
-}
-
-fn uleb(b: &[u8], i: &mut usize) -> u64 {
-    let (mut r, mut s) = (0u64, 0);
-    loop {
-        let byte = b[*i];
-        *i += 1;
-        r |= u64::from(byte & 0x7f) << s;
-        if byte & 0x80 == 0 {
-            break;
-        }
-        s += 7;
-    }
-    r
-}
-
-fn sleb(b: &[u8], i: &mut usize) -> i64 {
-    let (mut r, mut s) = (0i64, 0);
-    loop {
-        let byte = b[*i];
-        *i += 1;
-        r |= i64::from(byte & 0x7f) << s;
-        s += 7;
-        if byte & 0x80 == 0 {
-            if s < 64 && byte & 0x40 != 0 {
-                r |= -(1i64 << s);
-            }
-            break;
-        }
-    }
-    r
 }
 
 /// SERIALIZE: cache a compiled template with phon. Bytecode vs native: we serialize the PORTABLE,
@@ -1867,47 +1786,8 @@ fn serialize() {
     );
 }
 
-/// Write a perf jitdump (`/tmp/jit-<pid>.dump`) that stax's jitdump tailer consumes to
-/// symbolicate + annotate JIT'd code. One `JIT_CODE_LOAD` per op: name = source snippet, bytes =
-/// the op's actual (patched) runtime code at its address. Format: 40-byte header (magic 0x4A695444)
-/// then records `id(u32) total_size(u32) timestamp(u64)` + payload.
-fn write_jitdump(path: &str, records: &[(u64, u64, String, Vec<u8>)]) -> std::io::Result<()> {
-    let pid = std::process::id();
-    let ts = || {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64
-    };
-    let mut out = Vec::new();
-    // Header (40 bytes): magic, version, header_size, elf_mach(EM_AARCH64=183), pad, pid, ts, flags.
-    out.extend_from_slice(&0x4A69_5444u32.to_le_bytes());
-    out.extend_from_slice(&1u32.to_le_bytes());
-    out.extend_from_slice(&40u32.to_le_bytes());
-    out.extend_from_slice(&183u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&pid.to_le_bytes());
-    out.extend_from_slice(&ts().to_le_bytes());
-    out.extend_from_slice(&0u64.to_le_bytes());
-    for (i, (addr, size, name, code)) in records.iter().enumerate() {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&pid.to_le_bytes()); // pid
-        payload.extend_from_slice(&pid.to_le_bytes()); // tid
-        payload.extend_from_slice(&addr.to_le_bytes()); // vma (stax uses this)
-        payload.extend_from_slice(&addr.to_le_bytes()); // code_addr
-        payload.extend_from_slice(&size.to_le_bytes()); // code_size
-        payload.extend_from_slice(&(i as u64).to_le_bytes()); // code_index
-        payload.extend_from_slice(name.as_bytes());
-        payload.push(0);
-        payload.extend_from_slice(code);
-        let total = 16 + payload.len();
-        out.extend_from_slice(&0u32.to_le_bytes()); // id = JIT_CODE_LOAD
-        out.extend_from_slice(&(total as u32).to_le_bytes());
-        out.extend_from_slice(&ts().to_le_bytes());
-        out.extend_from_slice(&payload);
-    }
-    std::fs::write(path, &out)
-}
+// (The jitdump writer graduated into `weavy::jit::debug::write_jitdump`; the validator below
+// stays here as an INDEPENDENT oracle — it mirrors stax's parse_code_load, not weavy's writer.)
 
 /// Re-parse a jitdump (mirroring stax's `parse_code_load`) to self-verify it's well-formed.
 fn validate_jitdump(bytes: &[u8]) -> Vec<(u64, u64, String)> {
@@ -1975,23 +1855,31 @@ fn hot(secs: u64) {
     let native = NativeProgram::new(layout, root);
     let base = native.code_ptr() as usize;
 
-    // Build jitdump records from the ACTUAL patched runtime bytes at each op's address.
-    let mut records: Vec<(u64, u64, String, Vec<u8>)> = Vec::new();
-    for i in 0..rows.len() {
-        let r = &rows[i];
-        let end = rows.get(i + 1).map(|n| n.start).unwrap_or(done);
-        let size = end - r.start;
-        let code = unsafe { std::slice::from_raw_parts(native.code_ptr().add(r.start), size) }.to_vec();
-        let name = format!("jit::{} [{}]", r.label, &src[r.span.0..r.span.1]);
-        records.push(((base + r.start) as u64, size as u64, name, code));
-    }
+    // Emit the jitdump via the graduated weavy facade (names carry the template source; weavy
+    // reads each op's ACTUAL patched runtime bytes from the code buffer).
+    let symbols: Vec<weavy::jit::debug::JitSourceSymbol> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let end = rows.get(i + 1).map(|n| n.start).unwrap_or(done);
+            weavy::jit::debug::JitSourceSymbol {
+                name: format!("jit::{} [{}]", r.label, &src[r.span.0..r.span.1]),
+                offset: r.start,
+                size: end - r.start,
+                line: (i + 1) as u32,
+            }
+        })
+        .collect();
     let pid = std::process::id();
     let path = format!("/tmp/jit-{pid}.dump");
-    write_jitdump(&path, &records).expect("write jitdump");
+    // SAFETY: offsets/sizes come from this program's layout; `native` outlives the call.
+    unsafe { weavy::jit::debug::write_jitdump(&path, native.code_ptr(), &symbols) }
+        .expect("write jitdump");
 
-    // Self-verify: re-parse the dump the way stax does.
+    // Self-verify with the INDEPENDENT stax-format parser (mirrors stax's parse_code_load).
     let parsed = validate_jitdump(&std::fs::read(&path).unwrap());
-    assert_eq!(parsed.len(), records.len(), "jitdump round-trip record count");
+    assert_eq!(parsed.len(), symbols.len(), "jitdump round-trip record count");
+    assert_eq!(parsed[0].0, base as u64, "first record vma");
     println!(
         "wrote {path}: {} JIT_CODE_LOAD records, self-validated (stax-format).\n\
          first: {:#x} size {:#x} {:?}\n",

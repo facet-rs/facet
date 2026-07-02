@@ -21,6 +21,12 @@ pub mod stencils {
     include!(concat!(env!("OUT_DIR"), "/weavy_stencils.rs"));
 }
 
+/// DWARF v4 emission (`.debug_line`/abbrev/info) for JIT'd code. Salvaged from bearcove/kajit.
+pub mod dwarf;
+/// GDB/LLDB JIT interface + in-memory ELF builder + jitdump/perf-map emission, so debuggers and
+/// profilers (lldb, gdb, perf, stax) resolve JIT'd PCs to source. Salvaged from bearcove/kajit.
+pub mod debug;
+
 /// Whether this build can allocate and run native copy-and-patch code.
 pub const NATIVE_COPY_PATCH_AVAILABLE: bool = cfg!(any(
     all(target_os = "macos", target_arch = "aarch64"),
