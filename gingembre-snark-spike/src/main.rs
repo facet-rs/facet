@@ -4,7 +4,7 @@
 //! Goal: answer "can snark be gingembre's front end?" Nothing more.
 //!
 //! It parses gingembre with snark's Weavy runtime, hand-lowers the resolved CST
-//! (`RuntimeResolvedNode`) into `gingembre::ast::Template`, renders it through
+//! (`ResolvedCstNode`) into `gingembre::ast::Template`, renders it through
 //! gingembre's REAL evaluator, and diffs the output against the native
 //! `cst_lower` path (`gingembre::parse_template_recovered`). Byte-identical
 //! render = the surface carries the semantics.
@@ -26,7 +26,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
-    parser::{ParseTable, ParserGrammar, RuntimeResolvedNode},
+    parser::{ParseTable, ParserGrammar, ResolvedCstNode},
     validated::ValidatedGrammar,
 };
 
@@ -186,10 +186,10 @@ fn build_context() -> Context {
 }
 
 // ---------------------------------------------------------------------------
-// Hand-lowering: RuntimeResolvedNode -> gingembre::ast (THROWAWAY).
+// Hand-lowering: ResolvedCstNode -> gingembre::ast (THROWAWAY).
 // ---------------------------------------------------------------------------
 
-fn lower_template(node: &RuntimeResolvedNode) -> Template {
+fn lower_template(node: &ResolvedCstNode) -> Template {
     let body = node.children().iter().filter_map(lower_node).collect();
     Template {
         body,
@@ -197,7 +197,7 @@ fn lower_template(node: &RuntimeResolvedNode) -> Template {
     }
 }
 
-fn lower_node(node: &RuntimeResolvedNode) -> Option<Node> {
+fn lower_node(node: &ResolvedCstNode) -> Option<Node> {
     match node.kind() {
         "text" => Some(Node::Text(TextNode {
             text: full_text(node),
@@ -236,7 +236,7 @@ fn lower_node(node: &RuntimeResolvedNode) -> Option<Node> {
     }
 }
 
-fn lower_if(node: &RuntimeResolvedNode) -> Option<Node> {
+fn lower_if(node: &ResolvedCstNode) -> Option<Node> {
     let condition = node.children().iter().find_map(lower_expr)?;
     let mut elif_branches = Vec::new();
     let mut else_body = None;
@@ -260,8 +260,8 @@ fn lower_if(node: &RuntimeResolvedNode) -> Option<Node> {
     }))
 }
 
-fn lower_for(node: &RuntimeResolvedNode) -> Option<Node> {
-    let idents: Vec<&RuntimeResolvedNode> = node
+fn lower_for(node: &ResolvedCstNode) -> Option<Node> {
+    let idents: Vec<&ResolvedCstNode> = node
         .children()
         .iter()
         .filter(|c| c.kind() == "identifier")
@@ -299,7 +299,7 @@ fn lower_for(node: &RuntimeResolvedNode) -> Option<Node> {
     }))
 }
 
-fn lower_expr(node: &RuntimeResolvedNode) -> Option<Expr> {
+fn lower_expr(node: &ResolvedCstNode) -> Option<Expr> {
     match node.kind() {
         "literal" => lower_literal(node).map(Expr::Literal),
         "list" => Some(Expr::Literal(Literal::List(ListLit {
@@ -361,7 +361,7 @@ fn lower_expr(node: &RuntimeResolvedNode) -> Option<Expr> {
 }
 
 /// Extract `(positional args, kwargs)` from the `arg_list` child of `node`.
-fn lower_args(node: &RuntimeResolvedNode) -> (Vec<Expr>, Vec<(Ident, Expr)>) {
+fn lower_args(node: &ResolvedCstNode) -> (Vec<Expr>, Vec<(Ident, Expr)>) {
     let mut args = Vec::new();
     let mut kwargs = Vec::new();
     let Some(arg_list) = named_child(node, "arg_list") else {
@@ -388,18 +388,18 @@ fn lower_args(node: &RuntimeResolvedNode) -> (Vec<Expr>, Vec<(Ident, Expr)>) {
     (args, kwargs)
 }
 
-fn named_child<'a>(node: &'a RuntimeResolvedNode, kind: &str) -> Option<&'a RuntimeResolvedNode> {
+fn named_child<'a>(node: &'a ResolvedCstNode, kind: &str) -> Option<&'a ResolvedCstNode> {
     node.children().iter().find(|c| c.kind() == kind)
 }
 
-fn ident(node: &RuntimeResolvedNode) -> Option<Ident> {
+fn ident(node: &ResolvedCstNode) -> Option<Ident> {
     Some(Ident {
         name: leaf_text(node)?,
         span: span(0, 0),
     })
 }
 
-fn string_value(node: &RuntimeResolvedNode) -> Option<StringLit> {
+fn string_value(node: &ResolvedCstNode) -> Option<StringLit> {
     Some(StringLit {
         value: full_text(node)
             .trim_matches(|c| c == '"' || c == '\'')
@@ -408,7 +408,7 @@ fn string_value(node: &RuntimeResolvedNode) -> Option<StringLit> {
     })
 }
 
-fn find_body(node: &RuntimeResolvedNode) -> Vec<Node> {
+fn find_body(node: &ResolvedCstNode) -> Vec<Node> {
     node.children()
         .iter()
         .find(|c| c.kind() == "body")
@@ -416,7 +416,7 @@ fn find_body(node: &RuntimeResolvedNode) -> Vec<Node> {
         .unwrap_or_default()
 }
 
-fn lower_literal(node: &RuntimeResolvedNode) -> Option<Literal> {
+fn lower_literal(node: &ResolvedCstNode) -> Option<Literal> {
     let inner = node.children().iter().find(|c| c.named())?;
     match inner.kind() {
         "number" => {
@@ -447,7 +447,7 @@ fn lower_literal(node: &RuntimeResolvedNode) -> Option<Literal> {
     }
 }
 
-fn lower_binary(node: &RuntimeResolvedNode) -> Option<Expr> {
+fn lower_binary(node: &ResolvedCstNode) -> Option<Expr> {
     let op_text = node
         .children()
         .iter()
@@ -488,7 +488,7 @@ fn binary_op(text: &str) -> Option<BinaryOp> {
 }
 
 /// Concatenate every terminal's source text under this node.
-fn full_text(node: &RuntimeResolvedNode) -> String {
+fn full_text(node: &ResolvedCstNode) -> String {
     if let Some(text) = node.text() {
         return text.to_string();
     }
@@ -496,7 +496,7 @@ fn full_text(node: &RuntimeResolvedNode) -> String {
 }
 
 /// First terminal text under this node (for single-token leaves).
-fn leaf_text(node: &RuntimeResolvedNode) -> Option<String> {
+fn leaf_text(node: &ResolvedCstNode) -> Option<String> {
     if let Some(text) = node.text() {
         return Some(text.to_string());
     }
@@ -504,7 +504,7 @@ fn leaf_text(node: &RuntimeResolvedNode) -> Option<String> {
 }
 
 /// Debug dump of the resolved tree (only printed on an oracle mismatch).
-fn dump(node: &RuntimeResolvedNode, depth: usize) {
+fn dump(node: &ResolvedCstNode, depth: usize) {
     let indent = "  ".repeat(depth);
     let field = node.field().map(|f| format!("{f}: ")).unwrap_or_default();
     let anon = if node.named() { "" } else { " (anon)" };

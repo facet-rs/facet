@@ -4196,7 +4196,11 @@ struct RuntimeWeavyAction {
     block: BlockRef,
 }
 
-/// Execute a prepared parser plan through Weavy.
+/// Execute a prepared parser plan through the direct Weavy runtime.
+///
+/// This is the production path: it builds tree output but skips debug trace
+/// collection and runner counters. Use [`parse_prepared_weavy_metered_with_report`]
+/// when trace events or runner stats are part of the requested output.
 pub fn parse_prepared_weavy_with_report(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
@@ -4206,8 +4210,35 @@ pub fn parse_prepared_weavy_with_report(
     parse_prepared_weavy_with_report_and_scanner(plan, parser, table, input, None)
 }
 
-/// Execute a prepared parser plan through Weavy with a scanner host.
+/// Execute a prepared parser plan through the direct Weavy runtime with a scanner host.
 pub fn parse_prepared_weavy_with_report_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_unmetered_with_report_and_scanner(
+        plan,
+        parser,
+        table,
+        input,
+        external_scanner,
+    )
+}
+
+/// Execute a prepared Weavy plan with debug trace collection enabled.
+pub fn parse_prepared_weavy_metered_with_report(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_metered_with_report_and_scanner(plan, parser, table, input, None)
+}
+
+/// Execute a prepared Weavy plan with a scanner host and debug trace collection enabled.
+pub fn parse_prepared_weavy_metered_with_report_and_scanner(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
@@ -10445,7 +10476,10 @@ mod tests {
         let table = parser_ir::ParseTable::from_grammar(&parser).unwrap();
         let plan = WeavyParsePlan::new(&validated, &parser, &table).unwrap();
 
-        let metered = parse_prepared_weavy_with_report(&plan, &parser, &table, "ab").unwrap();
+        let metered =
+            parse_prepared_weavy_metered_with_report(&plan, &parser, &table, "ab").unwrap();
+        let default_direct =
+            parse_prepared_weavy_with_report(&plan, &parser, &table, "ab").unwrap();
         let unmetered =
             parse_prepared_weavy_unmetered_with_report(&plan, &parser, &table, "ab").unwrap();
         let recovering_unmetered =
@@ -10466,6 +10500,8 @@ mod tests {
 
         assert_eq!(metered.tree(), unmetered.tree());
         assert!(!metered.trace_events().is_empty());
+        assert_eq!(metered.tree(), default_direct.tree());
+        assert!(default_direct.trace_events().is_empty());
         assert!(unmetered.trace_events().is_empty());
         assert!(recovering_unmetered.trace_events().is_empty());
         assert_eq!(

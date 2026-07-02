@@ -6325,9 +6325,10 @@ extras (
 
     fn assert_styx_authored_gingembre_parse(input: &str, expected_sexp: &str) {
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
         let expected = gingembre_named_projection(input);
 
         rediff::assert_same!(report.tree(), &expected);
@@ -6359,8 +6360,9 @@ extras (
         );
 
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let result =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input);
+        let result = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        );
         assert!(result.is_err(), "snark unexpectedly accepted {input:?}");
     }
 
@@ -6455,9 +6457,10 @@ extras (
     fn accepted_resolved_tree_preserves_anonymous_gingembre_delimiters() {
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{- x -}}";
-        let report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
         let tree = report.accepted_resolved_tree(parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
@@ -6470,9 +6473,10 @@ extras (
     fn accepted_resolved_tree_preserves_anonymous_gingembre_operators() {
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{ 1 + 2 * 3 }}";
-        let report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
         let tree = report.accepted_resolved_tree(parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
@@ -6484,9 +6488,10 @@ extras (
     fn prepared_weavy_resolved_tree_preserves_anonymous_gingembre_operators() {
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
         let input = "{{ 1 + 2 * 3 }}";
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
         let tree = weavy_report.accepted_resolved_tree(parser, input).unwrap();
         let texts = resolved_terminal_texts(&tree);
 
@@ -6700,9 +6705,10 @@ extras (
     fn parses_styx_authored_gingembre_call_arguments_through_weavy_runtime() {
         let input = "{{ greet(user.name, suffix) }}";
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -6717,9 +6723,10 @@ extras (
     fn parses_styx_authored_gingembre_index_postfix_through_weavy_runtime() {
         let input = "{{ items[1].name }}";
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -6734,9 +6741,10 @@ extras (
     fn parses_styx_authored_gingembre_optional_postfix_through_weavy_runtime() {
         let input = "{{ fetch()[0]? | default(none) }}";
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -6751,9 +6759,10 @@ extras (
     fn parses_styx_authored_gingembre_compound_primaries_through_weavy_runtime() {
         let input = r#"{{ {"name": user.name, "ok": true,} }}"#;
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -6768,9 +6777,10 @@ extras (
     fn parses_styx_authored_gingembre_filters_and_tests_through_weavy_runtime() {
         let input = "{{ value | default(fallback) is not none }}";
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -6785,9 +6795,10 @@ extras (
     fn parses_styx_authored_gingembre_unary_precedence_through_weavy_runtime() {
         let input = "{{ not a == b }}";
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -6802,9 +6813,10 @@ extras (
     fn parses_styx_authored_gingembre_binary_precedence_through_weavy_runtime() {
         let input = "{{ a + b * c }}";
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
 
         rediff::assert_same!(weavy_report.tree(), &gingembre_named_projection(input));
         assert_eq!(
@@ -7604,7 +7616,7 @@ extras (
     fn weavy_runtime_inserts_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
             &plan,
             &parser,
             &table,
@@ -7624,7 +7636,7 @@ extras (
     fn weavy_runtime_inserts_node_driven_declarative_auto_close_tokens() {
         let (validated, parser, table) = auto_close_node_fixture();
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report = crate::lower::weavy::parse_prepared_weavy_with_report(
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
             &plan,
             &parser,
             &table,
@@ -7849,9 +7861,10 @@ extras (
 
         let edit = ParserInputEdit::new(0, 3, 3);
         let reparsed = session.reparse(edit, "abcXYZ").unwrap().clone();
-        let scratch =
-            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, "abcXYZ")
-                .unwrap();
+        let scratch = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            &plan, &parser, &table, "abcXYZ",
+        )
+        .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert!(reparsed.trace_events().is_empty());
@@ -7874,9 +7887,10 @@ extras (
 
         let edit = ParserInputEdit::new(3, 6, 6);
         let reparsed = session.reparse(edit, "ABCxyz").unwrap().clone();
-        let scratch =
-            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, "ABCxyz")
-                .unwrap();
+        let scratch = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            &plan, &parser, &table, "ABCxyz",
+        )
+        .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
         assert!(
@@ -7900,7 +7914,7 @@ extras (
 
         let edit = ParserInputEdit::new(2, 5, 5);
         let reparsed = session.reparse(edit, "a#new\nb").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
             &plan, &parser, &table, "a#new\nb",
         )
         .unwrap();
@@ -7925,7 +7939,7 @@ extras (
 
         let edit = ParserInputEdit::new(7, 8, 8);
         let reparsed = session.reparse(edit, "a#old\nb2").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
             &plan,
             &parser,
             &table,
@@ -7999,7 +8013,7 @@ extras (
 
         let edit = ParserInputEdit::new(5, 5, 10);
         let reparsed = session.reparse(edit, "alpha beta").unwrap().clone();
-        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
             &plan,
             &parser,
             &table,
@@ -8032,9 +8046,10 @@ extras (
         let (validated, parser, table) = flagged_regex_fixture();
         let input = "ABCXYZ";
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            &plan, &parser, &table, input,
+        )
+        .unwrap();
 
         assert_eq!(
             weavy_report.tree().to_sexp(),
@@ -8076,9 +8091,10 @@ extras (
         let (validated, parser, table) = lexical_symbol_fixture();
         let input = "alpha:123";
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            &plan, &parser, &table, input,
+        )
+        .unwrap();
 
         assert_eq!(weavy_report.tree().to_sexp(), "(source_file)");
         assert_eq!(weavy_report.accepted_count(), 1);
@@ -8265,7 +8281,7 @@ extras (
             .reparse(edit, "hello {{title}} tail")
             .unwrap()
             .clone();
-        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
             &plan,
             &parser,
             &table,
@@ -8300,7 +8316,7 @@ extras (
             .reparse(ParserInputEdit::new(16, 20, 19), "hello {{title}} end")
             .unwrap()
             .clone();
-        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
             &plan,
             &parser,
             &table,
@@ -8333,7 +8349,7 @@ extras (
             .reparse(ParserInputEdit::new(2, 5, 5), "a#new\nb2")
             .unwrap()
             .clone();
-        let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
+        let scratch = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
             &plan,
             &parser,
             &table,
@@ -8352,9 +8368,10 @@ extras (
         let (validated, parser, table) = lexical_primitives_fixture();
         let input = "hello {# outer {# inner #} done #}";
         let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
-        let weavy_report =
-            crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, input)
-                .unwrap();
+        let weavy_report = crate::lower::weavy::parse_prepared_weavy_metered_with_report(
+            &plan, &parser, &table, input,
+        )
+        .unwrap();
 
         assert_eq!(
             weavy_report.tree().to_sexp(),
