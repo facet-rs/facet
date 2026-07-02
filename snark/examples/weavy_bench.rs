@@ -15,7 +15,7 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParseReport,
-        parse_prepared_weavy_recovering_with_report_and_scanner,
+        WeavySnarkProfileStencilReadiness, parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree_and_scanner, parse_prepared_weavy_tree_and_scanner,
         parse_prepared_weavy_with_report_and_scanner,
     },
@@ -352,13 +352,15 @@ fn main() {
             println!("    {:<18?} x{}", summary.state, summary.count);
         }
     }
-    let direct_no_trace_states =
-        readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
-    if direct_no_trace_states != readiness.snark_stencil_state_summaries {
-        println!("  direct no-trace state surfaces:");
-        for summary in &direct_no_trace_states {
-            println!("    {:<18?} x{}", summary.state, summary.count);
-        }
+    let direct_no_trace_profile =
+        readiness.snark_stencil_profile(SnarkStencilProfile::DirectNoTrace);
+    if direct_no_trace_profile.state_summaries != readiness.snark_stencil_state_summaries {
+        print_profile_stencil_readiness("direct no-trace", &direct_no_trace_profile);
+    }
+    let direct_tree_only_profile =
+        readiness.snark_stencil_profile(SnarkStencilProfile::DirectTreeOnly);
+    if direct_tree_only_profile.state_summaries != readiness.snark_stencil_state_summaries {
+        print_profile_stencil_readiness("direct tree-only", &direct_tree_only_profile);
     }
     println!(
         "  lexer lowering: literal sets {:>4}/{:<4}  pattern sets {:>4}/{:<4}  rematch {:>4}  known {:>4}  regex-auto {:>4}  unsupported {:>4}",
@@ -403,5 +405,45 @@ fn main() {
     }
     if let Some(totals) = recovering_warm_plan_total {
         print_bench_totals("weavy recovering, warm", &totals, iters);
+    }
+}
+
+fn print_profile_stencil_readiness(label: &str, profile: &WeavySnarkProfileStencilReadiness) {
+    if profile.descriptor_summaries.is_empty() {
+        return;
+    }
+    println!("  {label} stencil families:");
+    for summary in &profile.family_summaries {
+        println!(
+            "    {:<18?} {:<16?} x{}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+            summary.family,
+            summary.execution,
+            summary.count,
+            summary.state,
+            summary.effect.ordering,
+            summary.effect.may_fail,
+            summary.effect.may_allocate,
+            summary.effect.calls_user_code,
+            summary.effect.opaque
+        );
+    }
+    println!("  {label} stencil execution lanes:");
+    for summary in &profile.execution_summaries {
+        println!(
+            "    {:<16?} x{}  families={:?}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+            summary.execution,
+            summary.count,
+            summary.families,
+            summary.state,
+            summary.effect.ordering,
+            summary.effect.may_fail,
+            summary.effect.may_allocate,
+            summary.effect.calls_user_code,
+            summary.effect.opaque
+        );
+    }
+    println!("  {label} stencil state surfaces:");
+    for summary in &profile.state_summaries {
+        println!("    {:<18?} x{}", summary.state, summary.count);
     }
 }

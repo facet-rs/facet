@@ -12,7 +12,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        SnarkStencilProfile, WeavyParsePlan,
+        SnarkStencilProfile, WeavyParsePlan, WeavySnarkProfileStencilReadiness,
         parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
         parse_prepared_weavy_with_report,
@@ -20,6 +20,46 @@ use snark::{
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
 };
+
+fn print_profile_stencil_readiness(label: &str, profile: &WeavySnarkProfileStencilReadiness) {
+    if profile.descriptor_summaries.is_empty() {
+        return;
+    }
+    println!("  {label} stencil families:");
+    for summary in &profile.family_summaries {
+        println!(
+            "    {:?}/{:?}: {}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+            summary.family,
+            summary.execution,
+            summary.count,
+            summary.state,
+            summary.effect.ordering,
+            summary.effect.may_fail,
+            summary.effect.may_allocate,
+            summary.effect.calls_user_code,
+            summary.effect.opaque
+        );
+    }
+    println!("  {label} stencil execution lanes:");
+    for summary in &profile.execution_summaries {
+        println!(
+            "    {:?}: {}  families={:?}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+            summary.execution,
+            summary.count,
+            summary.families,
+            summary.state,
+            summary.effect.ordering,
+            summary.effect.may_fail,
+            summary.effect.may_allocate,
+            summary.effect.calls_user_code,
+            summary.effect.opaque
+        );
+    }
+    println!("  {label} stencil state surfaces:");
+    for summary in &profile.state_summaries {
+        println!("    {:?}: {}", summary.state, summary.count);
+    }
+}
 
 fn main() {
     let repo = env::var_os("CARGO_MANIFEST_DIR")
@@ -244,13 +284,17 @@ fn main() {
             println!("    {:?}: {}", summary.state, summary.count);
         }
     }
-    let direct_no_trace_states = analysis
+    let direct_no_trace_profile = analysis
         .readiness
-        .snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
-    if direct_no_trace_states != analysis.readiness.snark_stencil_state_summaries {
-        println!("  direct no-trace state surfaces:");
-        for summary in &direct_no_trace_states {
-            println!("    {:?}: {}", summary.state, summary.count);
-        }
+        .snark_stencil_profile(SnarkStencilProfile::DirectNoTrace);
+    if direct_no_trace_profile.state_summaries != analysis.readiness.snark_stencil_state_summaries {
+        print_profile_stencil_readiness("direct no-trace", &direct_no_trace_profile);
+    }
+    let direct_tree_only_profile = analysis
+        .readiness
+        .snark_stencil_profile(SnarkStencilProfile::DirectTreeOnly);
+    if direct_tree_only_profile.state_summaries != analysis.readiness.snark_stencil_state_summaries
+    {
+        print_profile_stencil_readiness("direct tree-only", &direct_tree_only_profile);
     }
 }

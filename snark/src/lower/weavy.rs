@@ -498,6 +498,21 @@ pub struct WeavySnarkProfileStencilSummary {
     pub count: usize,
 }
 
+/// Snark stencil obligations projected for one runtime profile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavySnarkProfileStencilReadiness {
+    /// Runtime profile used to remove disabled sink surfaces.
+    pub profile: SnarkStencilProfile,
+    /// Profile-specific Snark stencil obligations by descriptor.
+    pub descriptor_summaries: Vec<WeavySnarkProfileStencilSummary>,
+    /// Profile-specific Snark stencil obligations by family.
+    pub family_summaries: Vec<WeavySnarkStencilFamilySummary>,
+    /// Profile-specific Snark stencil obligations by execution lane.
+    pub execution_summaries: Vec<WeavySnarkStencilExecutionSummary>,
+    /// Profile-specific Snark stencil obligations by session state.
+    pub state_summaries: Vec<WeavySnarkStencilStateSummary>,
+}
+
 /// Snark stencil obligations grouped by native stencil family and execution mode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeavySnarkStencilFamilySummary {
@@ -1631,6 +1646,21 @@ impl WeavyParsePlanReadiness {
         profile: SnarkStencilProfile,
     ) -> Vec<WeavySnarkProfileStencilSummary> {
         snark_stencil_summaries_for_profile(&self.snark_stencil_summaries, profile)
+    }
+
+    /// Snark stencil obligations projected together for one runtime profile.
+    #[must_use]
+    pub fn snark_stencil_profile(
+        &self,
+        profile: SnarkStencilProfile,
+    ) -> WeavySnarkProfileStencilReadiness {
+        WeavySnarkProfileStencilReadiness {
+            profile,
+            descriptor_summaries: self.snark_stencil_summaries_for_profile(profile),
+            family_summaries: self.snark_stencil_family_summaries_for_profile(profile),
+            execution_summaries: self.snark_stencil_execution_summaries_for_profile(profile),
+            state_summaries: self.snark_stencil_state_summaries_for_profile(profile),
+        }
     }
 
     /// Snark stencil obligations grouped by family for one runtime profile.
@@ -12074,6 +12104,29 @@ mod tests {
         );
         let direct_no_trace_family = readiness
             .snark_stencil_family_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+        let direct_no_trace_profile =
+            readiness.snark_stencil_profile(SnarkStencilProfile::DirectNoTrace);
+        assert_eq!(
+            direct_no_trace_profile.profile,
+            SnarkStencilProfile::DirectNoTrace
+        );
+        assert_eq!(
+            direct_no_trace_profile.descriptor_summaries,
+            readiness.snark_stencil_summaries_for_profile(SnarkStencilProfile::DirectNoTrace)
+        );
+        assert_eq!(
+            direct_no_trace_profile.family_summaries,
+            direct_no_trace_family
+        );
+        assert_eq!(
+            direct_no_trace_profile.execution_summaries,
+            readiness
+                .snark_stencil_execution_summaries_for_profile(SnarkStencilProfile::DirectNoTrace)
+        );
+        assert_eq!(
+            direct_no_trace_profile.state_summaries,
+            readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace)
+        );
         let mut expected_direct_no_trace_tree_effect = reduce.effect();
         expected_direct_no_trace_tree_effect
             .resources
@@ -12151,6 +12204,16 @@ mod tests {
         );
         let tree_only_descriptors =
             readiness.snark_stencil_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
+        let tree_only_profile =
+            readiness.snark_stencil_profile(SnarkStencilProfile::DirectTreeOnly);
+        assert_eq!(
+            tree_only_profile.profile,
+            SnarkStencilProfile::DirectTreeOnly
+        );
+        assert_eq!(
+            tree_only_profile.descriptor_summaries,
+            tree_only_descriptors
+        );
         let tree_only_reduce = tree_only_descriptors
             .iter()
             .find(|summary| summary.descriptor == reduce.descriptor())
@@ -12186,6 +12249,7 @@ mod tests {
         }));
         let tree_only_family = readiness
             .snark_stencil_family_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
+        assert_eq!(tree_only_profile.family_summaries, tree_only_family);
         let tree_only_tree_builder = tree_only_family
             .iter()
             .find(|summary| summary.family == SnarkStencilFamily::TreeBuilder)
@@ -12222,6 +12286,7 @@ mod tests {
         );
         let tree_only_execution = readiness
             .snark_stencil_execution_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
+        assert_eq!(tree_only_profile.execution_summaries, tree_only_execution);
         assert!(tree_only_execution.iter().all(|summary| {
             !summary.state.contains(&SnarkStencilState::TraceSink)
                 && !summary.state.contains(&SnarkStencilState::TreeJournal)
@@ -12233,6 +12298,7 @@ mod tests {
         }));
         let tree_only_state = readiness
             .snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
+        assert_eq!(tree_only_profile.state_summaries, tree_only_state);
         assert!(!tree_only_state.iter().any(|summary| matches!(
             summary.state,
             SnarkStencilState::TraceSink
