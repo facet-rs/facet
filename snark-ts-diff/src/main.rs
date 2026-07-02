@@ -36,7 +36,8 @@ use snark::{
     lower::weavy::{
         WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
-        parse_prepared_weavy_recovering_with_report_and_scanner, parse_prepared_weavy_with_report,
+        parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_unmetered_with_report, parse_prepared_weavy_with_report,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
@@ -113,11 +114,11 @@ fn run_tablebench(grammar_path: &str, iters: usize) {
 
 /// Best (min) parse time in ms over `iters` runs, after one warm-up.
 fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
-    let _ = parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, input);
+    let _ = parse_prepared_weavy_unmetered_with_report(&p.plan, &p.parser, &p.table, input);
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        let _ = parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, input);
+        let _ = parse_prepared_weavy_unmetered_with_report(&p.plan, &p.parser, &p.table, input);
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     best_ms

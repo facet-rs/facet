@@ -3884,6 +3884,41 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
     )
 }
 
+/// Execute a prepared Weavy plan and skip Weavy runner counters.
+pub fn parse_prepared_weavy_unmetered_with_report(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_unmetered_with_report_and_scanner(plan, parser, table, input, None)
+}
+
+/// Execute a prepared Weavy plan with a scanner host and skip Weavy runner counters.
+pub fn parse_prepared_weavy_unmetered_with_report_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_weavy_with_lexer_program(
+        RuntimeWeavyInput {
+            plan: &plan.program,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyStatsCollection::Disabled,
+    )
+}
+
 /// Execute a prepared Weavy plan and collect reusable-node metadata.
 pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     plan: &WeavyParsePlan,
