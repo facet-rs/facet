@@ -694,13 +694,16 @@ impl TermNames {
     }
 }
 
-/// 1-based (line, column, line text) for a byte offset.
-fn line_col(src: &str, byte: usize) -> (usize, usize, &str) {
+/// 1-based (line, byte column, char column, line text) for a byte offset. The char column is
+/// what humans (and the caret) see; the byte column is what the offset arithmetic uses.
+fn line_col(src: &str, byte: usize) -> (usize, usize, usize, &str) {
     let byte = byte.min(src.len());
     let line_start = src[..byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let line_no = src[..byte].matches('\n').count() + 1;
     let line_end = src[line_start..].find('\n').map(|i| line_start + i).unwrap_or(src.len());
-    (line_no, byte - line_start + 1, &src[line_start..line_end])
+    let byte_col = byte - line_start + 1;
+    let char_col = src[line_start..byte].chars().count() + 1;
+    (line_no, byte_col, char_col, &src[line_start..line_end])
 }
 
 /// Dedupe + tidy an expected list: case-insensitive dedupe (folds `true`/`True`), keep order.
@@ -829,7 +832,7 @@ fn diagnose(
     };
 
     let expected = tidy_expected(expected);
-    let (line, col, line_text) = line_col(src, byte);
+    let (line, byte_col, char_col, line_text) = line_col(src, byte);
     let (expecting_nts, in_progress) = state_context(parser, table, state);
 
     // Headline: prefer the derived nonterminal ("expected expr") over a raw terminal list.
@@ -841,18 +844,29 @@ fn diagnose(
         format!("one of {}", expected[..3].join(", "))
     };
 
+    // Gutter margin sized to the line number (fixed "   |" would misalign at line >= 100).
+    let gutter = line.to_string().len();
+    let pad = " ".repeat(gutter);
+    // Caret padding from the ACTUAL line prefix: tabs preserved (so the caret follows however
+    // the terminal renders them), every other char becomes one space — chars, not bytes, so a
+    // multi-byte prefix doesn't shift the caret.
+    let caret_pad: String = line_text[..(byte_col - 1).min(line_text.len())]
+        .chars()
+        .map(|c| if c == '\t' { '\t' } else { ' ' })
+        .collect();
+
     let mut out = String::new();
     use std::fmt::Write;
     writeln!(out, "error: expected {what}, found {found}").unwrap();
-    writeln!(out, "  --> {name}:{line}:{col}").unwrap();
-    writeln!(out, "   |").unwrap();
-    writeln!(out, "{line:>2} | {line_text}").unwrap();
-    writeln!(out, "   | {}^", " ".repeat(col.saturating_sub(1))).unwrap();
+    writeln!(out, "{pad}--> {name}:{line}:{char_col}").unwrap();
+    writeln!(out, "{pad} |").unwrap();
+    writeln!(out, "{line} | {line_text}").unwrap();
+    writeln!(out, "{pad} | {caret_pad}^").unwrap();
     if !expected.is_empty() {
-        writeln!(out, "   = expected: {}", expected.join(", ")).unwrap();
+        writeln!(out, "{pad} = expected: {}", expected.join(", ")).unwrap();
     }
     if !in_progress.is_empty() {
-        writeln!(out, "   = while parsing: {}", in_progress.join(", ")).unwrap();
+        writeln!(out, "{pad} = while parsing: {}", in_progress.join(", ")).unwrap();
     }
     out
 }
@@ -862,7 +876,9 @@ fn diagnose(
 /// names, line:col + caret, the full expected set, and construct context — for every rule.
 fn diag() {
     let (parser, table, plan, _anns) = build_plan();
-    let bad = ["{{ 1 + }}", "{% if x %}no end", "{{ 1 +* 2 }}"];
+    // The last case has a MULTI-BYTE prefix (héllo wörld) on line 2: the caret must align by
+    // chars (not bytes) and the reported column must be the char column.
+    let bad = ["{{ 1 + }}", "{% if x %}no end", "{{ 1 +* 2 }}", "{# c #}\nhéllo wörld {{ 1 + }}"];
     for src in bad {
         println!("\n=== input: {src:?} ===");
 
