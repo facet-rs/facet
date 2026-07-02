@@ -429,6 +429,15 @@ fn print_snark_execution_stats(report: &WeavyParseReport) {
     } else {
         println!("snark_dominant_execution: none");
     }
+    let hostcalls = report.hostcall_stats();
+    println!(
+        "hostcall_execution: attempted_blocks={} executed_blocks={} fallback_blocks={} sites={} stencils={}",
+        hostcalls.attempted_blocks,
+        hostcalls.executed_blocks,
+        hostcalls.fallback_blocks,
+        hostcalls.executed_hostcall_sites,
+        hostcalls.executed_hostcall_stencils
+    );
 }
 
 #[derive(Facet)]

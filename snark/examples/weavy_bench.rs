@@ -15,9 +15,9 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        SnarkStencilProfile, WeavyLexerExecutionStats, WeavyParseError, WeavyParsePlan,
-        WeavyParseReport, WeavySnarkExecutionStats, WeavySnarkProfileStencilReadiness,
-        parse_prepared_weavy_recovering_with_report_and_scanner,
+        SnarkStencilProfile, WeavyHostCallExecutionStats, WeavyLexerExecutionStats,
+        WeavyParseError, WeavyParsePlan, WeavyParseReport, WeavySnarkExecutionStats,
+        WeavySnarkProfileStencilReadiness, parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree_and_scanner, parse_prepared_weavy_tree_and_scanner,
         parse_prepared_weavy_with_report_and_scanner,
     },
@@ -133,6 +133,7 @@ struct BenchTotals {
     stats: RunStats,
     lexer_stats: WeavyLexerExecutionStats,
     snark_stats: WeavySnarkExecutionStats,
+    hostcall_stats: WeavyHostCallExecutionStats,
     execution_lanes: BTreeMap<String, usize>,
     successes: usize,
     failures: usize,
@@ -176,6 +177,17 @@ fn add_snark_execution_stats(
     }
 }
 
+fn add_hostcall_execution_stats(
+    total: &mut WeavyHostCallExecutionStats,
+    next: &WeavyHostCallExecutionStats,
+) {
+    total.attempted_blocks += next.attempted_blocks;
+    total.executed_blocks += next.executed_blocks;
+    total.fallback_blocks += next.fallback_blocks;
+    total.executed_hostcall_sites += next.executed_hostcall_sites;
+    total.executed_hostcall_stencils += next.executed_hostcall_stencils;
+}
+
 fn bench_parse<F>(iters: usize, mut parse: F) -> BenchTotals
 where
     F: FnMut() -> Result<WeavyParseReport, WeavyParseError>,
@@ -190,6 +202,7 @@ where
                 add_run_stats(&mut totals.stats, report.stats());
                 add_lexer_execution_stats(&mut totals.lexer_stats, report.lexer_stats());
                 add_snark_execution_stats(&mut totals.snark_stats, report.snark_stats());
+                add_hostcall_execution_stats(&mut totals.hostcall_stats, report.hostcall_stats());
                 *totals
                     .execution_lanes
                     .entry(format!("{:?}", report.execution_lane()))
@@ -283,6 +296,25 @@ fn print_bench_totals(label: &str, totals: &BenchTotals, iters: usize) {
             ),
             summary.kind,
             average_count(summary.count, totals.runner_samples)
+        );
+    }
+    if totals.hostcall_stats.attempted_blocks > 0 {
+        println!(
+            "      avg hostcalls: attempted {:>9.1}  executed {:>9.1}  fallback {:>9.1}  sites/stencils {:>9.1}/{:<9.1}",
+            average_count(
+                totals.hostcall_stats.attempted_blocks,
+                totals.runner_samples
+            ),
+            average_count(totals.hostcall_stats.executed_blocks, totals.runner_samples),
+            average_count(totals.hostcall_stats.fallback_blocks, totals.runner_samples),
+            average_count(
+                totals.hostcall_stats.executed_hostcall_sites,
+                totals.runner_samples
+            ),
+            average_count(
+                totals.hostcall_stats.executed_hostcall_stencils,
+                totals.runner_samples
+            )
         );
     }
 }

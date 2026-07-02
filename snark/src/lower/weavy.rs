@@ -774,6 +774,21 @@ pub struct WeavySnarkExecutionStats {
     pub family_executions: BTreeMap<(SnarkStencilFamily, SnarkStencilExecution), usize>,
 }
 
+/// Runtime counters for Snark's copy-and-patch host-call block lane.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeavyHostCallExecutionStats {
+    /// Dense parser/action blocks offered to the host-call lane.
+    pub attempted_blocks: usize,
+    /// Blocks executed through a copied host-call chain.
+    pub executed_blocks: usize,
+    /// Blocks rejected by the current host-call scaffold and run by the direct interpreter.
+    pub fallback_blocks: usize,
+    /// Host-call sites executed inside copied chains.
+    pub executed_hostcall_sites: usize,
+    /// Copied stencils represented by executed chains, including terminal done stencils.
+    pub executed_hostcall_stencils: usize,
+}
+
 impl WeavySnarkExecutionStats {
     fn record_intrinsic(&mut self, intrinsic: &SnarkIntrinsic) {
         let semantics = intrinsic.semantics();
@@ -1521,7 +1536,9 @@ impl RuntimeWeavyHostCallBlockCache {
         program: &WeavyParserProgram,
         block: BlockRef,
         stepper: &mut RuntimeWeavyStepper<'_>,
+        stats: &mut WeavyHostCallExecutionStats,
     ) -> Result<bool, RuntimeWeavyStepError> {
+        stats.attempted_blocks += 1;
         let Some(slot) = self.blocks.get(block.index()) else {
             return Ok(false);
         };
@@ -1536,10 +1553,15 @@ impl RuntimeWeavyHostCallBlockCache {
             stepper,
             error: None,
         };
+        let hostcall_sites = chain.hostcall_site_count();
+        let hostcall_stencils = chain.stencil_count();
         chain.run(&mut state);
         if let Some(error) = state.error {
             return Err(error);
         }
+        stats.executed_blocks += 1;
+        stats.executed_hostcall_sites += hostcall_sites;
+        stats.executed_hostcall_stencils += hostcall_stencils;
         Ok(true)
     }
 }
@@ -4641,6 +4663,7 @@ struct RuntimeWeavyOutput<'a> {
     next_lookahead_index: &'a mut usize,
     stats: &'a mut RunStats,
     snark_stats: &'a mut WeavySnarkExecutionStats,
+    hostcall_stats: &'a mut WeavyHostCallExecutionStats,
     block_execution: RuntimeWeavyBlockExecution,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
@@ -4677,6 +4700,7 @@ trait RuntimeWeavyDeterministicSink {
         stats: RunStats,
         lexer_stats: WeavyLexerExecutionStats,
         snark_stats: WeavySnarkExecutionStats,
+        hostcall_stats: WeavyHostCallExecutionStats,
         execution_lane: WeavyParseExecutionLane,
         version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
@@ -4702,6 +4726,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicTreeSink {
         _stats: RunStats,
         _lexer_stats: WeavyLexerExecutionStats,
         _snark_stats: WeavySnarkExecutionStats,
+        _hostcall_stats: WeavyHostCallExecutionStats,
         _execution_lane: WeavyParseExecutionLane,
         _version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
@@ -4729,6 +4754,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
         _stats: RunStats,
         _lexer_stats: WeavyLexerExecutionStats,
         _snark_stats: WeavySnarkExecutionStats,
+        _hostcall_stats: WeavyHostCallExecutionStats,
         _execution_lane: WeavyParseExecutionLane,
         _version: parser_ir::StackVersionId,
         _root: parser_ir::TreeNodeId,
@@ -4758,6 +4784,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
         stats: RunStats,
         lexer_stats: WeavyLexerExecutionStats,
         snark_stats: WeavySnarkExecutionStats,
+        hostcall_stats: WeavyHostCallExecutionStats,
         execution_lane: WeavyParseExecutionLane,
         version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
@@ -4774,6 +4801,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
             stats,
             lexer_stats,
             snark_stats,
+            hostcall_stats,
             execution_lane,
             trace_events: trace_events.into_events(),
             tree_events,
@@ -5805,6 +5833,7 @@ where
     let external_scanner_errors = RefCell::new(Vec::new());
     let mut stats = RunStats::default();
     let mut snark_stats = WeavySnarkExecutionStats::default();
+    let mut hostcall_stats = WeavyHostCallExecutionStats::default();
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
     let step_limit = runtime_weavy_step_limit(input_ctx.table, input_ctx.input);
@@ -5841,6 +5870,7 @@ where
                 next_lookahead_index: &mut next_lookahead_index,
                 stats: &mut stats,
                 snark_stats: &mut snark_stats,
+                hostcall_stats: &mut hostcall_stats,
                 block_execution,
                 external_scanner_errors: &external_scanner_errors,
             };
@@ -5899,6 +5929,7 @@ where
                     stats,
                     lexer_scratch.execution_stats(),
                     snark_stats,
+                    hostcall_stats,
                     block_execution.parse_execution_lane(),
                     version,
                     root,
@@ -6338,6 +6369,7 @@ fn parse_weavy_with_lexer_program(
     };
     let mut max_live_versions = branches.len();
     let mut stats = RunStats::default();
+    let mut hostcall_stats = WeavyHostCallExecutionStats::default();
     let mut branch_outcomes = Vec::new();
 
     while let Some(CostOrderedBranch(branch)) = branches.pop() {
@@ -6392,6 +6424,7 @@ fn parse_weavy_with_lexer_program(
             next_lookahead_index: &mut next_lookahead_index,
             stats: &mut stats,
             snark_stats: &mut snark_stats,
+            hostcall_stats: &mut hostcall_stats,
             block_execution,
             external_scanner_errors: &external_scanner_errors,
         };
@@ -6515,6 +6548,7 @@ fn parse_weavy_with_lexer_program(
             stats,
             lexer_stats: lexer_scratch.execution_stats(),
             snark_stats,
+            hostcall_stats,
             execution_lane: block_execution.parse_execution_lane(),
             trace_events: trace_events.into_events(),
             tree_events: first_tree_events,
@@ -6554,6 +6588,7 @@ pub struct WeavyParseReport {
     stats: RunStats,
     lexer_stats: WeavyLexerExecutionStats,
     snark_stats: WeavySnarkExecutionStats,
+    hostcall_stats: WeavyHostCallExecutionStats,
     execution_lane: WeavyParseExecutionLane,
     trace_events: Vec<parser_ir::TraceEvent>,
     tree_events: Vec<parser_ir::TreeEvent>,
@@ -6618,6 +6653,11 @@ impl WeavyParseReport {
     /// Runtime Snark parser/action intrinsic counters accumulated while producing this report.
     pub const fn snark_stats(&self) -> &WeavySnarkExecutionStats {
         &self.snark_stats
+    }
+
+    /// Runtime host-call block counters accumulated while producing this report.
+    pub const fn hostcall_stats(&self) -> &WeavyHostCallExecutionStats {
+        &self.hostcall_stats
     }
 
     /// Runtime execution lane used to produce this report.
@@ -7330,8 +7370,13 @@ fn run_runtime_weavy_state_probe(
         parser_ir::LookaheadTokenId::from_index(*output.next_lookahead_index),
         RuntimeWeavyMode::ProbeState,
     );
-    let run_result =
-        run_runtime_weavy_block(input_ctx.plan, block, &mut stepper, output.block_execution);
+    let run_result = run_runtime_weavy_block(
+        input_ctx.plan,
+        block,
+        &mut stepper,
+        output.block_execution,
+        output.hostcall_stats,
+    );
     if stepper.lookahead.is_some() {
         *output.next_lookahead_index += 1;
     }
@@ -7396,6 +7441,7 @@ fn run_runtime_weavy_action(
         action_ctx.block,
         &mut stepper,
         output.block_execution,
+        output.hostcall_stats,
     ) {
         Ok(run_stats) => add_run_stats(output.stats, run_stats),
         Err(error) => {
@@ -7433,6 +7479,7 @@ fn run_runtime_weavy_block(
     block: BlockRef,
     stepper: &mut RuntimeWeavyStepper<'_>,
     block_execution: RuntimeWeavyBlockExecution,
+    hostcall_stats: &mut WeavyHostCallExecutionStats,
 ) -> Result<RunStats, RuntimeWeavyStepError> {
     let parser_program = &plan.program;
     let program = parser_program.runtime_dense_block(block)?;
@@ -7454,10 +7501,11 @@ fn run_runtime_weavy_block(
         RuntimeWeavyBlockExecution::HostCalls => {
             if plan
                 .hostcall_blocks
-                .run_block(parser_program, block, stepper)?
+                .run_block(parser_program, block, stepper, hostcall_stats)?
             {
                 return Ok(RunStats::default());
             }
+            hostcall_stats.fallback_blocks += 1;
             weavy::run_dense_program(program, &parser_program.dense.blocks, stepper)
                 .map(|()| RunStats::default())
         }
@@ -12359,6 +12407,10 @@ mod tests {
         assert_eq!(default_direct.accepted_count(), 1);
         assert_eq!(default_direct.failure_count(), 0);
         assert_eq!(default_direct.stats().step_count, 0);
+        assert_eq!(
+            default_direct.hostcall_stats(),
+            &WeavyHostCallExecutionStats::default()
+        );
         let lexer_stats = default_direct.lexer_stats();
         assert!(lexer_stats.lex_call_count > 0);
         assert!(lexer_stats.direct_set_cache_miss_count > 0);
@@ -12402,6 +12454,15 @@ mod tests {
             assert_eq!(hostcalls.accepted_count(), 1);
             assert_eq!(hostcalls.failure_count(), 0);
             assert_eq!(hostcalls.stats().step_count, 0);
+            let hostcall_stats = hostcalls.hostcall_stats();
+            assert!(hostcall_stats.attempted_blocks > 0);
+            assert!(hostcall_stats.executed_blocks > 0);
+            assert_eq!(
+                hostcall_stats.attempted_blocks,
+                hostcall_stats.executed_blocks + hostcall_stats.fallback_blocks
+            );
+            assert!(hostcall_stats.executed_hostcall_sites >= hostcall_stats.executed_blocks);
+            assert!(hostcall_stats.executed_hostcall_stencils >= hostcall_stats.executed_blocks);
             let hostcall_snark_stats = hostcalls.snark_stats();
             assert!(hostcall_snark_stats.intrinsic_count > 0);
             assert_eq!(hostcall_snark_stats, snark_stats);
