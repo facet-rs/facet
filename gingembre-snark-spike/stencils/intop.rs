@@ -1,0 +1,73 @@
+//! Copy-and-patch stencils for the unboxed integer eval lane, in Rust.
+//!
+//! `build.rs` compiles this with `rustc --emit=obj` and extracts each stencil's machine code
+//! plus its `weavy_cont` relocation (the continuation hole) by symbol — exactly how weavy's own
+//! `hostcall.rs` and phon-jit's `stencils.rs` work. Each op's BODY is compiled native code; the
+//! only external reference is the tail call to `weavy_cont`, whose `BRANCH26` reloc is patched
+//! at assembly time to chain the copied stencils. Immediates ride in `Ctx.prog`.
+//!
+//! This is real copy-and-patch: no host-call, no indirect dispatch, no interpreter loop — the
+//! add is a native add.
+
+#![allow(clippy::missing_safety_doc)]
+
+/// Threaded state: the immediate stream and the i64 operand stack pointer (next free slot).
+#[repr(C)]
+pub struct Ctx {
+    pub prog: *const u64,
+    pub sp: *mut i64,
+}
+
+extern "C" {
+    /// The continuation hole. Tail-calling it emits the `BRANCH26` relocation build.rs extracts
+    /// and the runtime patches to the next stencil (or `done`).
+    fn weavy_cont(cx: *mut Ctx);
+}
+
+/// Push one immediate (read from `prog`) onto the stack.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_intop_push(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let v = *(c.prog as *const i64);
+    c.prog = c.prog.add(1);
+    *c.sp = v;
+    c.sp = c.sp.add(1);
+    weavy_cont(cx);
+}
+
+/// `a + b` (native add, wrapping — no panic path under `panic=abort`).
+#[no_mangle]
+pub unsafe extern "C" fn weavy_intop_add(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let b = *c.sp.sub(1);
+    let a = *c.sp.sub(2);
+    *c.sp.sub(2) = a.wrapping_add(b);
+    c.sp = c.sp.sub(1);
+    weavy_cont(cx);
+}
+
+/// `a - b`.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_intop_sub(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let b = *c.sp.sub(1);
+    let a = *c.sp.sub(2);
+    *c.sp.sub(2) = a.wrapping_sub(b);
+    c.sp = c.sp.sub(1);
+    weavy_cont(cx);
+}
+
+/// `a * b`.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_intop_mul(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let b = *c.sp.sub(1);
+    let a = *c.sp.sub(2);
+    *c.sp.sub(2) = a.wrapping_mul(b);
+    c.sp = c.sp.sub(1);
+    weavy_cont(cx);
+}
+
+/// Terminal: a lone `ret`.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_intop_done(_cx: *mut Ctx) {}
