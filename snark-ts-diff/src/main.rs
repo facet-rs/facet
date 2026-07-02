@@ -499,6 +499,16 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
             writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
         }
     }
+    let direct_tree_only_state =
+        readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
+    if direct_tree_only_state.is_empty() {
+        writeln!(out, "direct_tree_only_stencil_state: none")?;
+    } else {
+        writeln!(out, "direct_tree_only_stencil_state:")?;
+        for summary in &direct_tree_only_state {
+            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
+        }
+    }
     Ok(())
 }
 

@@ -415,6 +415,8 @@ pub enum SnarkStencilProfile {
     Full,
     /// Direct production parse surface: parser trace is disabled and trace-only ops are removable.
     DirectNoTrace,
+    /// Direct tree-only parse surface: parser trace and replayable tree events are disabled.
+    DirectTreeOnly,
 }
 
 /// ABI contract for one Snark-owned native stencil family.
@@ -1736,7 +1738,9 @@ fn snark_stencil_summary_active_in_profile(
 ) -> bool {
     match profile {
         SnarkStencilProfile::Full => true,
-        SnarkStencilProfile::DirectNoTrace => summary.domain != SnarkIntrinsicDomain::Trace,
+        SnarkStencilProfile::DirectNoTrace | SnarkStencilProfile::DirectTreeOnly => {
+            summary.domain != SnarkIntrinsicDomain::Trace
+        }
     }
 }
 
@@ -1745,7 +1749,22 @@ fn snark_stencil_states_for_profile(
     profile: SnarkStencilProfile,
 ) -> impl Iterator<Item = SnarkStencilState> + 'static {
     states.iter().copied().filter(move |state| {
-        profile == SnarkStencilProfile::Full || *state != SnarkStencilState::TraceSink
+        !matches!(
+            (profile, state),
+            (
+                SnarkStencilProfile::DirectNoTrace,
+                SnarkStencilState::TraceSink
+            ) | (
+                SnarkStencilProfile::DirectTreeOnly,
+                SnarkStencilState::TraceSink
+            ) | (
+                SnarkStencilProfile::DirectTreeOnly,
+                SnarkStencilState::TreeJournal
+            ) | (
+                SnarkStencilProfile::DirectTreeOnly,
+                SnarkStencilState::TreeEventSink
+            )
+        )
     })
 }
 
@@ -1753,10 +1772,18 @@ fn snark_stencil_effect_for_profile(
     mut effect: EffectContract,
     profile: SnarkStencilProfile,
 ) -> EffectContract {
-    if profile == SnarkStencilProfile::DirectNoTrace {
+    if matches!(
+        profile,
+        SnarkStencilProfile::DirectNoTrace | SnarkStencilProfile::DirectTreeOnly
+    ) {
         effect
             .resources
             .retain(|resource| resource.resource != EffectResource::Sink("parser_trace"));
+    }
+    if profile == SnarkStencilProfile::DirectTreeOnly {
+        effect
+            .resources
+            .retain(|resource| resource.resource != EffectResource::Sink("tree_events"));
     }
     effect
 }
@@ -11573,6 +11600,66 @@ mod tests {
             direct_no_trace_state
                 .iter()
                 .any(|summary| summary.state == SnarkStencilState::TreeEventSink)
+        );
+        let tree_only_family = readiness
+            .snark_stencil_family_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
+        let tree_only_tree_builder = tree_only_family
+            .iter()
+            .find(|summary| summary.family == SnarkStencilFamily::TreeBuilder)
+            .expect("tree-only profile should retain tree builder work");
+        assert!(
+            tree_only_tree_builder
+                .state
+                .contains(&SnarkStencilState::TreeStore)
+        );
+        assert!(
+            !tree_only_tree_builder
+                .state
+                .contains(&SnarkStencilState::TraceSink)
+        );
+        assert!(
+            !tree_only_tree_builder
+                .state
+                .contains(&SnarkStencilState::TreeJournal)
+        );
+        assert!(
+            !tree_only_tree_builder
+                .state
+                .contains(&SnarkStencilState::TreeEventSink)
+        );
+        assert!(
+            tree_only_tree_builder
+                .effect
+                .resources
+                .iter()
+                .all(
+                    |resource| resource.resource != EffectResource::Sink("parser_trace")
+                        && resource.resource != EffectResource::Sink("tree_events")
+                )
+        );
+        let tree_only_execution = readiness
+            .snark_stencil_execution_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
+        assert!(tree_only_execution.iter().all(|summary| {
+            !summary.state.contains(&SnarkStencilState::TraceSink)
+                && !summary.state.contains(&SnarkStencilState::TreeJournal)
+                && !summary.state.contains(&SnarkStencilState::TreeEventSink)
+        }));
+        assert!(tree_only_execution.iter().any(|summary| {
+            summary.execution == SnarkStencilExecution::DirectStencil
+                && summary.state.contains(&SnarkStencilState::TreeStore)
+        }));
+        let tree_only_state = readiness
+            .snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
+        assert!(!tree_only_state.iter().any(|summary| matches!(
+            summary.state,
+            SnarkStencilState::TraceSink
+                | SnarkStencilState::TreeJournal
+                | SnarkStencilState::TreeEventSink
+        )));
+        assert!(
+            tree_only_state
+                .iter()
+                .any(|summary| summary.state == SnarkStencilState::TreeStore)
         );
     }
 
