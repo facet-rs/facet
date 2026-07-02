@@ -145,6 +145,34 @@ fn write_stencil_profile(
     label: &str,
     profile: SnarkStencilProfile,
 ) -> io::Result<()> {
+    let descriptors = readiness.snark_stencil_summaries_for_profile(profile);
+    if descriptors.is_empty() {
+        writeln!(out, "{label}_stencil_descriptors: none")?;
+    } else {
+        writeln!(out, "{label}_stencil_descriptors:")?;
+        for summary in &descriptors {
+            writeln!(
+                out,
+                "  {}.{} domain={:?} lowering={:?} family={:?} execution={:?} effect_order={:?} may_fail={} may_allocate={} calls_user_code={} opaque={} resources={:?} typed_memory={:?} state={:?} count={}",
+                summary.descriptor.dialect,
+                summary.descriptor.name,
+                summary.domain,
+                summary.lowering,
+                summary.family,
+                summary.execution,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque,
+                summary.effect.resources,
+                summary.effect.typed_memory,
+                summary.state,
+                summary.count
+            )?;
+        }
+    }
+
     let families = readiness.snark_stencil_family_summaries_for_profile(profile);
     if families.is_empty() {
         writeln!(out, "{label}_stencil_families: none")?;

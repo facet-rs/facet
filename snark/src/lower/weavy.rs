@@ -477,6 +477,27 @@ pub struct WeavySnarkStencilSummary {
     pub count: usize,
 }
 
+/// One Snark dialect intrinsic descriptor projected through a runtime profile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavySnarkProfileStencilSummary {
+    /// Stable dialect/name identity for the Snark intrinsic.
+    pub descriptor: IntrinsicDescriptor,
+    /// Semantic lane used by optimizer and JIT planning.
+    pub domain: SnarkIntrinsicDomain,
+    /// How this intrinsic lowers beyond the canonical Snark dialect op.
+    pub lowering: SnarkIntrinsicLowering,
+    /// Conservative effect contract after profile-only sinks are removed.
+    pub effect: EffectContract,
+    /// Native stencil family.
+    pub family: SnarkStencilFamily,
+    /// Execution strategy for this family.
+    pub execution: SnarkStencilExecution,
+    /// Session state required by this descriptor in the selected profile.
+    pub state: Vec<SnarkStencilState>,
+    /// Number of ops with this descriptor in the parser/action program.
+    pub count: usize,
+}
+
 /// Snark stencil obligations grouped by native stencil family and execution mode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeavySnarkStencilFamilySummary {
@@ -1551,6 +1572,15 @@ impl WeavyParsePlanReadiness {
             .sum()
     }
 
+    /// Snark stencil obligations by descriptor for one runtime profile.
+    #[must_use]
+    pub fn snark_stencil_summaries_for_profile(
+        &self,
+        profile: SnarkStencilProfile,
+    ) -> Vec<WeavySnarkProfileStencilSummary> {
+        snark_stencil_summaries_for_profile(&self.snark_stencil_summaries, profile)
+    }
+
     /// Snark stencil obligations grouped by family for one runtime profile.
     #[must_use]
     pub fn snark_stencil_family_summaries_for_profile(
@@ -1595,6 +1625,33 @@ fn snark_stencil_family_summaries(
     summaries: &[WeavySnarkStencilSummary],
 ) -> Vec<WeavySnarkStencilFamilySummary> {
     snark_stencil_family_summaries_for_profile(summaries, SnarkStencilProfile::Full)
+}
+
+fn snark_stencil_summaries_for_profile(
+    summaries: &[WeavySnarkStencilSummary],
+    profile: SnarkStencilProfile,
+) -> Vec<WeavySnarkProfileStencilSummary> {
+    let mut summaries = summaries
+        .iter()
+        .filter(|summary| snark_stencil_summary_active_in_profile(summary, profile))
+        .map(|summary| WeavySnarkProfileStencilSummary {
+            descriptor: summary.descriptor,
+            domain: summary.domain,
+            lowering: summary.lowering,
+            effect: snark_stencil_effect_for_profile(summary.effect.clone(), profile),
+            family: summary.stencil.family,
+            execution: summary.stencil.execution,
+            state: snark_stencil_states_for_profile(summary.stencil.state, profile).collect(),
+            count: summary.count,
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.descriptor.cmp(&right.descriptor))
+    });
+    summaries
 }
 
 fn snark_stencil_family_summaries_for_profile(
@@ -11664,6 +11721,41 @@ mod tests {
                 .iter()
                 .any(|summary| summary.state == SnarkStencilState::TreeEventSink)
         );
+        let tree_only_descriptors =
+            readiness.snark_stencil_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
+        let tree_only_reduce = tree_only_descriptors
+            .iter()
+            .find(|summary| summary.descriptor == reduce.descriptor())
+            .expect("tree-only profile should retain reduce descriptor work");
+        assert_eq!(tree_only_reduce.family, SnarkStencilFamily::TreeBuilder);
+        assert_eq!(
+            tree_only_reduce.execution,
+            SnarkStencilExecution::DirectStencil
+        );
+        assert!(
+            tree_only_reduce
+                .state
+                .contains(&SnarkStencilState::TreeStore)
+        );
+        assert!(
+            !tree_only_reduce
+                .state
+                .contains(&SnarkStencilState::TraceSink)
+        );
+        assert!(
+            !tree_only_reduce
+                .state
+                .contains(&SnarkStencilState::TreeJournal)
+        );
+        assert!(
+            !tree_only_reduce
+                .state
+                .contains(&SnarkStencilState::TreeEventSink)
+        );
+        assert!(tree_only_reduce.effect.resources.iter().all(|resource| {
+            resource.resource != EffectResource::Sink("parser_trace")
+                && resource.resource != EffectResource::Sink("tree_events")
+        }));
         let tree_only_family = readiness
             .snark_stencil_family_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
         let tree_only_tree_builder = tree_only_family
