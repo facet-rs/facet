@@ -66,7 +66,15 @@ type PlanOutput = {
   snark_stencil_families: PlanStencilFamilyOutput[];
   snark_stencil_executions: PlanStencilExecutionOutput[];
   snark_stencil_states: PlanStencilStateOutput[];
+  dominant_backend_execution: PlanBackendExecutionOutput | null;
   lowering_barriers: PlanBarrierOutput[];
+};
+
+type PlanBackendExecutionOutput = {
+  execution: string;
+  parser_count: number;
+  lexer_count: number;
+  total_count: number;
 };
 
 type PlanStencilFamilyOutput = {

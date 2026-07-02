@@ -18,8 +18,8 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyLoweringBarrier, WeavyParseError, WeavyParsePlan, WeavyParseReport,
-        parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
+        SnarkStencilProfile, WeavyLoweringBarrier, WeavyParseError, WeavyParsePlan,
+        WeavyParseReport, parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner,
         reparse_prepared_weavy_recovering_with_report_and_scanner,
         reparse_prepared_weavy_with_report_and_scanner,
@@ -151,7 +151,16 @@ struct PlanOutput {
     snark_stencil_families: Vec<PlanStencilFamilyOutput>,
     snark_stencil_executions: Vec<PlanStencilExecutionOutput>,
     snark_stencil_states: Vec<PlanStencilStateOutput>,
+    dominant_backend_execution: Option<PlanBackendExecutionOutput>,
     lowering_barriers: Vec<PlanBarrierOutput>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanBackendExecutionOutput {
+    execution: String,
+    parser_count: usize,
+    lexer_count: usize,
+    total_count: usize,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -853,6 +862,7 @@ fn parse_output(
 
 fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
     let readiness = plan.analysis().readiness;
+    let direct_profile = readiness.snark_stencil_profile(SnarkStencilProfile::DirectNoTrace);
     PlanOutput {
         fully_visible: readiness.is_fully_visible(),
         parser_fully_visible: readiness.is_parser_fully_visible(),
@@ -965,6 +975,14 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
                 count: summary.count,
             })
             .collect(),
+        dominant_backend_execution: direct_profile.dominant_backend_execution().map(|summary| {
+            PlanBackendExecutionOutput {
+                execution: format!("{:?}", summary.execution),
+                parser_count: summary.parser_count,
+                lexer_count: summary.lexer_count,
+                total_count: summary.total_count,
+            }
+        }),
         lowering_barriers: readiness
             .barrier_summaries
             .iter()
@@ -5017,6 +5035,16 @@ mod tests {
                     && !summary.effect.calls_user_code
                     && !summary.effect.opaque
                     && summary.count > 0)
+        );
+        let dominant = plan
+            .dominant_backend_execution
+            .as_ref()
+            .expect("dominant backend execution");
+        assert_eq!(dominant.execution, "DirectStencil");
+        assert!(dominant.parser_count > 0);
+        assert_eq!(
+            dominant.total_count,
+            dominant.parser_count + dominant.lexer_count
         );
         assert!(
             plan.snark_stencil_states
