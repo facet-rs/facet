@@ -11,6 +11,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
+    sync::Arc,
 };
 
 use crate::{
@@ -4818,16 +4819,16 @@ impl ParserInputEdit {
 /// Lossless-enough parse tree projection for CST/AST consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedCstNode {
-    kind: String,
+    kind: Arc<str>,
     symbol: Option<ParserSymbol>,
-    field: Option<String>,
+    field: Option<Arc<str>>,
     node: Option<TreeNodeId>,
     bytes: ByteRange,
     points: PointRange,
     named: bool,
     visible: bool,
     extra: bool,
-    text: Option<String>,
+    text: Option<Arc<str>>,
     children: Vec<Self>,
 }
 
@@ -4890,16 +4891,16 @@ impl ResolvedCstNode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedCstItem {
-    kind: String,
+    kind: Arc<str>,
     symbol: Option<ParserSymbol>,
-    field: Option<String>,
+    field: Option<Arc<str>>,
     node: Option<TreeNodeId>,
     bytes: ByteRange,
     points: PointRange,
     named: bool,
     visible: bool,
     extra: bool,
-    text: Option<String>,
+    text: Option<Arc<str>>,
     order: usize,
     children: Vec<usize>,
 }
@@ -4907,7 +4908,7 @@ struct ResolvedCstItem {
 pub(crate) struct ResolvedCstBuilder<'a> {
     parser: &'a ParserGrammar,
     input: &'a str,
-    field_by_child: HashMap<TreeNodeId, String>,
+    field_by_child: HashMap<TreeNodeId, Arc<str>>,
     item_indices_by_node: HashMap<TreeNodeId, Vec<usize>>,
     items: Vec<ResolvedCstItem>,
 }
@@ -4939,7 +4940,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     .parser
                     .fields
                     .get(field.get() as usize)
-                    .map(|decl| decl.name().to_owned())
+                    .map(|decl| Arc::<str>::from(decl.name()))
                 {
                     self.attach_field(*child, name);
                 }
@@ -4952,7 +4953,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 named,
                 ..
             } => {
-                let text = source_slice(self.input, *bytes).map(str::to_owned);
+                let text = source_slice(self.input, *bytes).map(Arc::<str>::from);
                 self.push_item(ResolvedCstItem {
                     kind: parser_symbol_kind(self.parser, *symbol, text.as_deref()),
                     symbol: Some(*symbol),
@@ -4981,7 +4982,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     self.push_item(ResolvedCstItem {
                         kind: self.parser.public_node_kinds[public_node.get() as usize]
                             .name()
-                            .to_owned(),
+                            .into(),
                         symbol: None,
                         field: self.field_by_child.get(node).cloned(),
                         node: Some(*node),
@@ -5006,7 +5007,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 self.push_item(ResolvedCstItem {
                     kind: self.parser.public_node_kinds[public_node.get() as usize]
                         .name()
-                        .to_owned(),
+                        .into(),
                     symbol: None,
                     field: self.field_by_child.get(node).cloned(),
                     node: Some(*node),
@@ -5027,7 +5028,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 ..
             } => {
                 self.push_item(ResolvedCstItem {
-                    kind: "ERROR".to_owned(),
+                    kind: "ERROR".into(),
                     symbol: None,
                     field: self.field_by_child.get(node).cloned(),
                     node: Some(*node),
@@ -5070,7 +5071,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 points,
                 ..
             } => {
-                let kind = self.parser.aliases[alias.get() as usize].value().to_owned();
+                let kind = Arc::<str>::from(self.parser.aliases[alias.get() as usize].value());
                 self.push_item(ResolvedCstItem {
                     kind,
                     symbol: None,
@@ -5133,7 +5134,7 @@ impl<'a> ResolvedCstBuilder<'a> {
         )
         .ok()?;
         Some(ResolvedCstNode {
-            kind: "ROOT".to_owned(),
+            kind: "ROOT".into(),
             symbol: None,
             field: None,
             node: None,
@@ -5150,7 +5151,7 @@ impl<'a> ResolvedCstBuilder<'a> {
         })
     }
 
-    fn attach_field(&mut self, node: TreeNodeId, name: String) {
+    fn attach_field(&mut self, node: TreeNodeId, name: Arc<str>) {
         self.field_by_child.insert(node, name.clone());
         if let Some(indices) = self.item_indices_by_node.get(&node) {
             for index in indices {
@@ -5283,37 +5284,38 @@ fn parser_symbol_kind(
     parser: &ParserGrammar,
     symbol: ParserSymbol,
     token_text: Option<&str>,
-) -> String {
+) -> Arc<str> {
     match symbol {
         ParserSymbol::Terminal(terminal) => {
             let terminal = &parser.symbols.terminals[terminal.get() as usize];
             match terminal.kind() {
                 ParserTerminalKind::String | ParserTerminalKind::AutoClose => {
-                    terminal.spelling().to_owned()
+                    terminal.spelling().into()
                 }
                 ParserTerminalKind::Pattern
                 | ParserTerminalKind::Token
                 | ParserTerminalKind::ImmediateToken => terminal
                     .public_names()
                     .first()
-                    .cloned()
-                    .unwrap_or_else(|| terminal.spelling().to_owned()),
+                    .map(String::as_str)
+                    .unwrap_or_else(|| terminal.spelling())
+                    .into(),
             }
         }
         ParserSymbol::Nonterminal(nonterminal) => parser.symbols.nonterminals
             [nonterminal.get() as usize]
             .name()
-            .to_owned(),
+            .into(),
         ParserSymbol::External(external) => parser.symbols.externals[external.get() as usize]
             .name()
-            .map(str::to_owned)
-            .unwrap_or_else(|| token_text.unwrap_or("<external>").to_owned()),
-        ParserSymbol::Eof => "EOF".to_owned(),
+            .unwrap_or_else(|| token_text.unwrap_or("<external>"))
+            .into(),
+        ParserSymbol::Eof => "EOF".into(),
         ParserSymbol::Internal(internal) => {
             match parser.symbols.internal[internal.get() as usize].kind() {
-                InternalSymbolKind::Error => "ERROR".to_owned(),
-                InternalSymbolKind::Missing => "MISSING".to_owned(),
-                InternalSymbolKind::Recovery => "RECOVERY".to_owned(),
+                InternalSymbolKind::Error => "ERROR".into(),
+                InternalSymbolKind::Missing => "MISSING".into(),
+                InternalSymbolKind::Recovery => "RECOVERY".into(),
             }
         }
     }
