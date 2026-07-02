@@ -5905,17 +5905,7 @@ where
                 Ok(dispatch) => dispatch,
                 Err(_) => return Ok(None),
             };
-            let actions = match runtime_weavy_actions(
-                input_ctx.table,
-                dispatch.state,
-                dispatch.entry_index,
-                dispatch.token.lookahead,
-                branch.byte_position,
-            ) {
-                Ok(actions) => actions,
-                Err(_) => return Ok(None),
-            };
-            let [action] = actions else {
+            let Some(action) = dispatch.first_action.filter(|_| dispatch.action_count == 1) else {
                 return Ok(None);
             };
             let Some(action_block) = input_ctx
@@ -5923,7 +5913,7 @@ where
                 .program
                 .runtime_action_block_row(dispatch.state, dispatch.entry_index)
                 .and_then(|blocks| blocks.first())
-                .filter(|block| block.action == *action)
+                .filter(|block| block.action == action)
             else {
                 return Ok(None);
             };
@@ -7045,6 +7035,8 @@ struct RuntimeWeavyDispatch {
     token: RuntimeWeavyToken,
     lookahead: parser_ir::LookaheadTokenId,
     entry_index: usize,
+    action_count: usize,
+    first_action: Option<parser_ir::ParseAction>,
 }
 
 fn step_runtime_weavy_branch(
@@ -7136,41 +7128,40 @@ fn step_runtime_weavy_branch(
         }
     };
 
-    let actions = match runtime_weavy_actions(
-        input_ctx.table,
-        dispatch.state,
-        dispatch.entry_index,
-        dispatch.token.lookahead,
-        branch.byte_position,
-    ) {
-        Ok(actions) => actions,
-        Err(error) => {
-            if step.recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput
-                && let RuntimeWeavyStepError::NoAction {
-                    lookahead: parser_ir::LookaheadSymbol::Eof,
-                    ..
-                } = error
-                && let Some(accepted) = recover_runtime_weavy_eof_error_root(
-                    branch,
-                    input_ctx.input,
-                    output.input_points,
-                    output.tree_store,
-                    output.trace_events,
-                    output.tree_journal,
-                )
-            {
-                step.outcomes.push(accepted);
+    if dispatch.action_count > 1 {
+        let actions = match runtime_weavy_actions(
+            input_ctx.table,
+            dispatch.state,
+            dispatch.entry_index,
+            dispatch.token.lookahead,
+            branch.byte_position,
+        ) {
+            Ok(actions) => actions,
+            Err(error) => {
+                if step.recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput
+                    && let RuntimeWeavyStepError::NoAction {
+                        lookahead: parser_ir::LookaheadSymbol::Eof,
+                        ..
+                    } = error
+                    && let Some(accepted) = recover_runtime_weavy_eof_error_root(
+                        branch,
+                        input_ctx.input,
+                        output.input_points,
+                        output.tree_store,
+                        output.trace_events,
+                        output.tree_journal,
+                    )
+                {
+                    step.outcomes.push(accepted);
+                    return;
+                }
+                step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
+                    version: source_version,
+                    failure: runtime_weavy_failure(error, branch_state_stack),
+                });
                 return;
             }
-            step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
-                version: source_version,
-                failure: runtime_weavy_failure(error, branch_state_stack),
-            });
-            return;
-        }
-    };
-
-    if actions.len() > 1 {
+        };
         let versions = (0..actions.len())
             .map(|_| {
                 let version = parser_ir::StackVersionId::from_index(*step.next_version_index);
@@ -7232,7 +7223,20 @@ fn step_runtime_weavy_branch(
         return;
     }
 
-    let action = actions[0];
+    let Some(action) = dispatch.first_action else {
+        step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
+            version: source_version,
+            failure: runtime_weavy_failure(
+                RuntimeWeavyStepError::NoAction {
+                    state: dispatch.state,
+                    lookahead: dispatch.token.lookahead,
+                    byte_position: branch.byte_position,
+                },
+                branch_state_stack,
+            ),
+        });
+        return;
+    };
     let Some(action_block) = input_ctx
         .plan
         .program
@@ -8063,6 +8067,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         token,
                         lookahead: self.lookahead_id,
                         entry_index,
+                        action_count: entry.actions().len(),
+                        first_action: entry.actions().first().copied(),
                     });
                     return Ok(Control::Return);
                 }
