@@ -7813,6 +7813,12 @@ impl RuntimeWeavyTreeJournal {
         head: RuntimeWeavyTreeJournalHead,
         mut visitor: impl FnMut(&parser_ir::TreeEvent),
     ) {
+        if self.head_is_linear(head) {
+            for entry in &self.entries {
+                visitor(&entry.event);
+            }
+            return;
+        }
         let mut indices = Vec::with_capacity(head.len);
         let mut cursor = head.index;
         while let Some(index) = cursor {
@@ -7822,6 +7828,15 @@ impl RuntimeWeavyTreeJournal {
         for index in indices.into_iter().rev() {
             visitor(&self.entries[index].event);
         }
+    }
+
+    fn head_is_linear(&self, head: RuntimeWeavyTreeJournalHead) -> bool {
+        head.len == self.entries.len()
+            && head.index == self.entries.len().checked_sub(1)
+            && self
+                .entries
+                .last()
+                .is_none_or(|entry| entry.parent.len + 1 == head.len)
     }
 }
 
