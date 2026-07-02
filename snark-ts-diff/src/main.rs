@@ -431,10 +431,11 @@ fn print_snark_execution_stats(report: &WeavyParseReport) {
     }
     let hostcalls = report.hostcall_stats();
     println!(
-        "hostcall_execution: attempted_blocks={} executed_blocks={} fallback_blocks={} sites={} stencils={}",
+        "hostcall_execution: attempted_blocks={} executed_blocks={} fallback_blocks={} errored_blocks={} sites={} stencils={}",
         hostcalls.attempted_blocks,
         hostcalls.executed_blocks,
         hostcalls.fallback_blocks,
+        hostcalls.errored_blocks,
         hostcalls.executed_hostcall_sites,
         hostcalls.executed_hostcall_stencils
     );

@@ -184,6 +184,7 @@ fn add_hostcall_execution_stats(
     total.attempted_blocks += next.attempted_blocks;
     total.executed_blocks += next.executed_blocks;
     total.fallback_blocks += next.fallback_blocks;
+    total.errored_blocks += next.errored_blocks;
     total.executed_hostcall_sites += next.executed_hostcall_sites;
     total.executed_hostcall_stencils += next.executed_hostcall_stencils;
 }
@@ -300,13 +301,14 @@ fn print_bench_totals(label: &str, totals: &BenchTotals, iters: usize) {
     }
     if totals.hostcall_stats.attempted_blocks > 0 {
         println!(
-            "      avg hostcalls: attempted {:>9.1}  executed {:>9.1}  fallback {:>9.1}  sites/stencils {:>9.1}/{:<9.1}",
+            "      avg hostcalls: attempted {:>9.1}  executed {:>9.1}  fallback {:>9.1}  errored {:>9.1}  sites/stencils {:>9.1}/{:<9.1}",
             average_count(
                 totals.hostcall_stats.attempted_blocks,
                 totals.runner_samples
             ),
             average_count(totals.hostcall_stats.executed_blocks, totals.runner_samples),
             average_count(totals.hostcall_stats.fallback_blocks, totals.runner_samples),
+            average_count(totals.hostcall_stats.errored_blocks, totals.runner_samples),
             average_count(
                 totals.hostcall_stats.executed_hostcall_sites,
                 totals.runner_samples

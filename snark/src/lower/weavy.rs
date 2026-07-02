@@ -783,6 +783,8 @@ pub struct WeavyHostCallExecutionStats {
     pub executed_blocks: usize,
     /// Blocks rejected by the current host-call scaffold and run by the direct interpreter.
     pub fallback_blocks: usize,
+    /// Blocks that ran through a copied host-call chain and produced a parser branch error.
+    pub errored_blocks: usize,
     /// Host-call sites executed inside copied chains.
     pub executed_hostcall_sites: usize,
     /// Copied stencils represented by executed chains, including terminal done stencils.
@@ -1557,6 +1559,7 @@ impl RuntimeWeavyHostCallBlockCache {
         let hostcall_stencils = chain.stencil_count();
         chain.run(&mut state);
         if let Some(error) = state.error {
+            stats.errored_blocks += 1;
             return Err(error);
         }
         stats.executed_blocks += 1;
@@ -12459,7 +12462,9 @@ mod tests {
             assert!(hostcall_stats.executed_blocks > 0);
             assert_eq!(
                 hostcall_stats.attempted_blocks,
-                hostcall_stats.executed_blocks + hostcall_stats.fallback_blocks
+                hostcall_stats.executed_blocks
+                    + hostcall_stats.fallback_blocks
+                    + hostcall_stats.errored_blocks
             );
             assert!(hostcall_stats.executed_hostcall_sites >= hostcall_stats.executed_blocks);
             assert!(hostcall_stats.executed_hostcall_stencils >= hostcall_stats.executed_blocks);

@@ -336,6 +336,7 @@ fn hostcalls_print_execution_lanes() {
     assert!(stdout.contains("parse_execution_lane: HostCalls"));
     assert!(stdout.contains("snark_dominant_execution:"));
     assert!(stdout.contains("hostcall_execution: attempted_blocks="));
+    assert!(stdout.contains("errored_blocks="));
     assert!(stdout.contains("lexer_execution: calls="));
     assert!(stdout.contains("lexer_dominant_execution:"));
 }
