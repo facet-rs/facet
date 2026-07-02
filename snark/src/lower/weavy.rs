@@ -1365,6 +1365,30 @@ impl WeavyParsePlan {
     }
 }
 
+/// One token selected by the prepared Weavy lexer for a concrete parser state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeavyLexToken {
+    /// Lookahead symbol the parse table would dispatch on.
+    pub lookahead: parser_ir::LookaheadSymbol,
+    /// Accepted token end byte.
+    pub end: usize,
+    /// Furthest byte the lexer inspected while deciding this token.
+    pub inspected_end: usize,
+    /// External scanner result and snapshots, when this token came from a scanner.
+    pub scanner: Option<ExternalScanResult>,
+}
+
+impl WeavyLexToken {
+    fn from_runtime(token: RuntimeWeavyToken) -> Self {
+        Self {
+            lookahead: token.lookahead,
+            end: token.end,
+            inspected_end: token.inspected_end,
+            scanner: token.scanner,
+        }
+    }
+}
+
 /// Combined analysis for one prepared Snark Weavy parse plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeavyParsePlanAnalysis {
@@ -4247,6 +4271,44 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
     )
 }
 
+/// Lex one token through a prepared Weavy plan at a concrete parse state.
+///
+/// Lexing is parse-state driven: the state's lexical mode selects the compiled
+/// terminal set, and the state's parse-table entries decide which matched
+/// terminals are valid lookaheads.
+pub fn lex_one(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    byte_position: usize,
+    state: parser_ir::ParseStateId,
+) -> Result<WeavyLexToken, WeavyParseError> {
+    lex_one_with_scanner(plan, parser, table, input, byte_position, state, None)
+}
+
+/// Lex one token through a prepared Weavy plan with an external scanner host.
+pub fn lex_one_with_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    byte_position: usize,
+    state: parser_ir::ParseStateId,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyLexToken, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    runtime_weavy_lex_one(input_ctx, byte_position, state).map(WeavyLexToken::from_runtime)
+}
+
 /// Execute a prepared Weavy plan with debug trace collection enabled.
 pub fn parse_prepared_weavy_metered_with_report(
     plan: &WeavyParsePlan,
@@ -4628,6 +4690,66 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
         RuntimeWeavyReuseCollection::Enabled,
         RuntimeWeavyBlockExecution::Direct,
     )
+}
+
+fn runtime_weavy_lex_one(
+    input_ctx: RuntimeWeavyInput<'_>,
+    byte_position: usize,
+    state: parser_ir::ParseStateId,
+) -> Result<RuntimeWeavyToken, WeavyParseError> {
+    if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
+        return Err(WeavyParseError::WrongStage {
+            stage: input_ctx.parser.stage(),
+        });
+    }
+
+    let mut tree_store = RuntimeWeavyTreeStore::default();
+    let mut trace_events = RuntimeWeavyTraceSink::new(false);
+    let mut tree_journal = RuntimeWeavyTreeJournal::default();
+    let lexer_scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
+    let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
+    let external_scanner_errors = RefCell::new(Vec::new());
+    let branch = RuntimeWeavyBranch {
+        version: parser_ir::StackVersionId::from_index(0),
+        stack: vec![RuntimeWeavyStackEntry {
+            state,
+            fragment: None,
+            extra: false,
+            end_byte: byte_position,
+        }],
+        byte_position,
+        scanner_snapshot: None,
+        auto_close_stack: Vec::new(),
+        error_cost: 0,
+        tree_journal: RuntimeWeavyTreeJournalHead::default(),
+        reusable_nodes: Vec::new(),
+    };
+    let stepper = RuntimeWeavyStepper::from_branch_ref(
+        RuntimeWeavyStepperInput {
+            input: input_ctx,
+            tree_store: &mut tree_store,
+            trace_events: &mut trace_events,
+            tree_journal: &mut tree_journal,
+            lexer_scratch: &lexer_scratch,
+            input_points: &input_points,
+            external_scanner_errors: &external_scanner_errors,
+        },
+        &branch,
+        parser_ir::LookaheadTokenId::from_index(0),
+        RuntimeWeavyMode::ProbeState,
+    );
+    let parse_error = |error| {
+        runtime_weavy_step_error_to_parse_error(input_ctx, error, &external_scanner_errors.borrow())
+    };
+    let state_row = stepper.parse_state(state).map_err(parse_error)?;
+    if byte_position > input_ctx.input.len() || !input_ctx.input.is_char_boundary(byte_position) {
+        return Err(parse_error(RuntimeWeavyStepError::NoToken {
+            state,
+            byte_position,
+            expected: RuntimeWeavyExpected::LexMode(state_row.lex_mode()),
+        }));
+    }
+    stepper.lex(state_row, byte_position).map_err(parse_error)
 }
 
 fn validate_weavy_edit(
@@ -10403,6 +10525,22 @@ mod tests {
             .unwrap();
         let table = parser_ir::ParseTable::from_grammar(&parser).unwrap();
         let plan = WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let start_state = parser_ir::ParseStateId::from_index(0);
+        let first_token = lex_one(&plan, &parser, &table, "ab", 0, start_state).unwrap();
+        assert_eq!(first_token.end, 1);
+        assert_eq!(first_token.inspected_end, 1);
+        assert_eq!(first_token.scanner, None);
+        assert!(
+            table.states()[0]
+                .entries()
+                .iter()
+                .any(|entry| entry.lookahead() == first_token.lookahead)
+        );
+        let eof_token = lex_one(&plan, &parser, &table, "ab", 2, start_state).unwrap();
+        assert_eq!(eof_token.lookahead, parser_ir::LookaheadSymbol::Eof);
+        assert_eq!(eof_token.end, 2);
+        let missing = lex_one(&plan, &parser, &table, "xb", 0, start_state).unwrap_err();
+        assert!(matches!(missing, WeavyParseError::NoToken { .. }));
 
         let metered =
             parse_prepared_weavy_metered_with_report(&plan, &parser, &table, "ab").unwrap();
