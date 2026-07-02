@@ -2,9 +2,10 @@
 //! one-time setup from fresh-plan and warm-plan per-parse cost.
 //!
 //! Usage: cargo run --release -p snark --features json-import \
-//!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|tree|resolved|report|recovering]
+//!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|tree|resolved|report|recovering|hostcalls]
 
 use std::{
+    collections::BTreeMap,
     env,
     path::PathBuf,
     time::{Duration, Instant},
@@ -14,8 +15,9 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParseReport,
-        WeavySnarkProfileStencilReadiness, parse_prepared_weavy_recovering_with_report_and_scanner,
+        SnarkStencilProfile, WeavyLexerExecutionStats, WeavyParseError, WeavyParsePlan,
+        WeavyParseReport, WeavySnarkExecutionStats, WeavySnarkProfileStencilReadiness,
+        parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree_and_scanner, parse_prepared_weavy_tree_and_scanner,
         parse_prepared_weavy_with_report_and_scanner,
     },
@@ -23,6 +25,15 @@ use snark::{
     validated::ValidatedGrammar,
 };
 use weavy::{RunStats, ir::lowered_analysis};
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+use snark::lower::weavy::parse_prepared_weavy_hostcalls_with_report_and_scanner;
 
 fn ms(d: std::time::Duration) -> f64 {
     d.as_secs_f64() * 1000.0
@@ -35,6 +46,14 @@ enum BenchMode {
     StrictResolvedTree,
     StrictReport,
     Recovering,
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    HostCallsReport,
 }
 
 impl BenchMode {
@@ -45,12 +64,35 @@ impl BenchMode {
             Some("resolved" | "resolved-tree") => Self::StrictResolvedTree,
             Some("report" | "strict-report") => Self::StrictReport,
             Some("recovering") => Self::Recovering,
+            Some("hostcalls" | "hostcalls-report") => Self::hostcalls_report_mode(),
             Some(other) => {
                 panic!(
-                    "unknown benchmark mode {other:?}; expected all|tree|resolved|report|recovering"
+                    "unknown benchmark mode {other:?}; expected all|tree|resolved|report|recovering|hostcalls"
                 )
             }
         }
+    }
+
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    const fn hostcalls_report_mode() -> Self {
+        Self::HostCallsReport
+    }
+
+    #[cfg(not(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    )))]
+    fn hostcalls_report_mode() -> Self {
+        panic!("hostcalls benchmark mode requires the snark jit feature on a supported target")
     }
 
     const fn runs_strict_tree_fresh(self) -> bool {
@@ -72,12 +114,26 @@ impl BenchMode {
     const fn runs_recovering_warm(self) -> bool {
         matches!(self, Self::All | Self::Recovering)
     }
+
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    const fn runs_hostcalls_report_warm(self) -> bool {
+        matches!(self, Self::All | Self::HostCallsReport)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 struct BenchTotals {
     duration: Duration,
     stats: RunStats,
+    lexer_stats: WeavyLexerExecutionStats,
+    snark_stats: WeavySnarkExecutionStats,
+    execution_lanes: BTreeMap<String, usize>,
     successes: usize,
     failures: usize,
     runner_samples: usize,
@@ -92,6 +148,34 @@ fn add_run_stats(total: &mut RunStats, next: RunStats) {
     total.max_frame_depth = total.max_frame_depth.max(next.max_frame_depth);
 }
 
+fn add_lexer_execution_stats(
+    total: &mut WeavyLexerExecutionStats,
+    next: &WeavyLexerExecutionStats,
+) {
+    total.lex_call_count += next.lex_call_count;
+    total.direct_set_cache_hit_count += next.direct_set_cache_hit_count;
+    total.direct_set_cache_miss_count += next.direct_set_cache_miss_count;
+    for (kind, count) in &next.stencil_executions {
+        *total.stencil_executions.entry(*kind).or_default() += count;
+    }
+}
+
+fn add_snark_execution_stats(
+    total: &mut WeavySnarkExecutionStats,
+    next: &WeavySnarkExecutionStats,
+) {
+    total.intrinsic_count += next.intrinsic_count;
+    for (descriptor, count) in &next.descriptor_executions {
+        *total.descriptor_executions.entry(*descriptor).or_default() += count;
+    }
+    for (domain, count) in &next.domain_executions {
+        *total.domain_executions.entry(*domain).or_default() += count;
+    }
+    for (family, count) in &next.family_executions {
+        *total.family_executions.entry(*family).or_default() += count;
+    }
+}
+
 fn bench_parse<F>(iters: usize, mut parse: F) -> BenchTotals
 where
     F: FnMut() -> Result<WeavyParseReport, WeavyParseError>,
@@ -104,6 +188,12 @@ where
                 totals.successes += 1;
                 totals.runner_samples += 1;
                 add_run_stats(&mut totals.stats, report.stats());
+                add_lexer_execution_stats(&mut totals.lexer_stats, report.lexer_stats());
+                add_snark_execution_stats(&mut totals.snark_stats, report.snark_stats());
+                *totals
+                    .execution_lanes
+                    .entry(format!("{:?}", report.execution_lane()))
+                    .or_default() += 1;
             }
             Err(_) => {
                 totals.failures += 1;
@@ -159,6 +249,42 @@ fn print_bench_totals(label: &str, totals: &BenchTotals, iters: usize) {
         average_count(totals.stats.return_count, totals.runner_samples),
         totals.stats.max_frame_depth
     );
+    if !totals.execution_lanes.is_empty() {
+        let lanes = totals
+            .execution_lanes
+            .iter()
+            .map(|(lane, count)| format!("{lane}={count}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("      lanes: {lanes}");
+    }
+    let snark_summaries = totals.snark_stats.family_execution_summaries();
+    if let Some(summary) = snark_summaries.first() {
+        println!(
+            "      avg snark: intrinsics {:>9.1}  dominant {:?}/{:?} {:>9.1}",
+            average_count(totals.snark_stats.intrinsic_count, totals.runner_samples),
+            summary.family,
+            summary.execution,
+            average_count(summary.count, totals.runner_samples)
+        );
+    }
+    let lexer_summaries = totals.lexer_stats.stencil_execution_summaries();
+    if let Some(summary) = lexer_summaries.first() {
+        println!(
+            "      avg lexer: calls {:>9.1}  cache hit/miss {:>9.1}/{:<9.1}  dominant {:?} {:>9.1}",
+            average_count(totals.lexer_stats.lex_call_count, totals.runner_samples),
+            average_count(
+                totals.lexer_stats.direct_set_cache_hit_count,
+                totals.runner_samples
+            ),
+            average_count(
+                totals.lexer_stats.direct_set_cache_miss_count,
+                totals.runner_samples
+            ),
+            summary.kind,
+            average_count(summary.count, totals.runner_samples)
+        );
+    }
 }
 
 fn main() {
@@ -228,6 +354,21 @@ fn main() {
     let recovering_warm_plan_total = mode.runs_recovering_warm().then(|| {
         bench_parse(iters, || {
             parse_prepared_weavy_recovering_with_report_and_scanner(
+                &plan, &parser, &table, &input, None,
+            )
+        })
+    });
+
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    let hostcalls_report_warm_plan_total = mode.runs_hostcalls_report_warm().then(|| {
+        bench_parse(iters, || {
+            parse_prepared_weavy_hostcalls_with_report_and_scanner(
                 &plan, &parser, &table, &input, None,
             )
         })
@@ -405,6 +546,16 @@ fn main() {
     }
     if let Some(totals) = recovering_warm_plan_total {
         print_bench_totals("weavy recovering, warm", &totals, iters);
+    }
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    if let Some(totals) = hostcalls_report_warm_plan_total {
+        print_bench_totals("weavy hostcalls report, warm", &totals, iters);
     }
 }
 
