@@ -706,6 +706,8 @@ pub struct WeavyHostCallBlockReadiness {
     pub incompatible_blocks: usize,
     /// Intrinsic ops inside compatible blocks.
     pub compatible_intrinsic_ops: usize,
+    /// Host-call sites emitted by compatible blocks.
+    pub compatible_hostcall_sites: usize,
     /// Copy-and-patch host-call stencils emitted by compatible blocks.
     ///
     /// The scaffold emits one host-call stencil per intrinsic plus one terminal
@@ -1258,8 +1260,9 @@ fn hostcall_block_readiness(blocks: &[Vec<DenseSnarkWeavyOp>]) -> WeavyHostCallB
             None => {
                 readiness.compatible_blocks += 1;
                 readiness.compatible_intrinsic_ops += intrinsic_count;
-                readiness.compatible_hostcall_stencils +=
-                    hostcall_chain_layout_for_sites(intrinsic_count).copied_stencils;
+                let layout = hostcall_chain_layout_for_sites(intrinsic_count);
+                readiness.compatible_hostcall_sites += layout.hostcall_sites;
+                readiness.compatible_hostcall_stencils += layout.copied_stencils;
             }
         }
     }
@@ -1272,6 +1275,7 @@ fn hostcall_block_readiness(blocks: &[Vec<DenseSnarkWeavyOp>]) -> WeavyHostCallB
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct HostCallChainLayoutFacts {
+    hostcall_sites: usize,
     copied_stencils: usize,
 }
 
@@ -1280,12 +1284,14 @@ fn hostcall_chain_layout_for_sites(hostcall_sites: usize) -> HostCallChainLayout
     {
         let layout = weavy::jit::HostCallChainLayout::for_hostcall_sites(hostcall_sites);
         HostCallChainLayoutFacts {
+            hostcall_sites: layout.hostcall_sites,
             copied_stencils: layout.copied_stencils,
         }
     }
     #[cfg(not(feature = "jit"))]
     {
         HostCallChainLayoutFacts {
+            hostcall_sites,
             copied_stencils: hostcall_sites + 1,
         }
     }
@@ -11740,6 +11746,7 @@ mod tests {
                 compatible_blocks: 1,
                 incompatible_blocks: 3,
                 compatible_intrinsic_ops: 2,
+                compatible_hostcall_sites: 2,
                 compatible_hostcall_stencils: 3,
                 incompatible_intrinsic_ops: 1,
                 barrier_summaries: vec![
