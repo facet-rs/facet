@@ -32,7 +32,7 @@ use crate::dump::dump_config_with_schema;
 use crate::enum_conflicts::detect_enum_conflicts;
 use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
 use crate::help::{
-    generate_help_for_subcommand_with_config_formats,
+    generate_help_for_subcommand_with_config_formats_and_shape,
     generate_root_html_help_with_config_formats_and_anchor, html_help_anchor_for_subcommand_path,
     open_html_help_file, write_html_help_to_temp_file,
 };
@@ -251,7 +251,8 @@ impl<T: Facet<'static>> Driver<T> {
                 };
 
                 let config_file_extensions = self.config_file_extensions();
-                let text = generate_help_for_subcommand_with_config_formats(
+                let text = generate_help_for_subcommand_with_config_formats_and_shape(
+                    T::SHAPE,
                     &self.config.schema,
                     &subcommand_path,
                     &help_config,
@@ -572,7 +573,8 @@ impl<T: Facet<'static>> Driver<T> {
                     .unwrap_or_default();
 
                 let config_file_extensions = self.config_file_extensions();
-                let help = generate_help_for_subcommand_with_config_formats(
+                let help = generate_help_for_subcommand_with_config_formats_and_shape(
+                    T::SHAPE,
                     &self.config.schema,
                     &[],
                     &help_config,
@@ -614,7 +616,8 @@ impl<T: Facet<'static>> Driver<T> {
                 };
 
                 let config_file_extensions = self.config_file_extensions();
-                let help = generate_help_for_subcommand_with_config_formats(
+                let help = generate_help_for_subcommand_with_config_formats_and_shape(
+                    T::SHAPE,
                     &self.config.schema,
                     &subcommand_path,
                     &help_config,
@@ -656,7 +659,8 @@ impl<T: Facet<'static>> Driver<T> {
                 };
 
                 let config_file_extensions = self.config_file_extensions();
-                let help = generate_help_for_subcommand_with_config_formats(
+                let help = generate_help_for_subcommand_with_config_formats_and_shape(
+                    T::SHAPE,
                     &self.config.schema,
                     &subcommand_path,
                     &help_config,
@@ -1778,6 +1782,31 @@ mod tests {
     }
 
     #[derive(Facet, Debug)]
+    struct ArgsWithImplementationHelp {
+        #[facet(figue::subcommand)]
+        command: ImplementationHelpCommand,
+
+        #[facet(flatten)]
+        builtins: FigueBuiltins,
+    }
+
+    #[derive(Facet, Debug)]
+    #[allow(dead_code)]
+    #[repr(u8)]
+    enum ImplementationHelpCommand {
+        /// Serve requests.
+        Serve(ImplementationHelpServeArgs),
+    }
+
+    #[derive(Facet, Debug)]
+    #[allow(dead_code)]
+    struct ImplementationHelpServeArgs {
+        /// Port to listen on.
+        #[facet(figue::named)]
+        port: Option<u16>,
+    }
+
+    #[derive(Facet, Debug)]
     struct HelpTestConfig {
         #[facet(default = "localhost")]
         host: String,
@@ -1862,6 +1891,78 @@ mod tests {
                 let text = strip_ansi_escapes::strip_str(&text);
                 assert!(text.contains("--config <FILE>"));
                 assert!(text.contains("Supported file formats: .json, .jsonc."));
+            }
+            other => panic!("expected DriverError::Help, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_driver_help_includes_implementation_source_and_github_url() {
+        let config = builder::<ArgsWithImplementationHelp>()
+            .unwrap()
+            .cli(|cli| cli.args(["--help"]))
+            .help(|h| {
+                h.program_name("test-app")
+                    .include_implementation_source_file(true)
+                    .include_implementation_github_url("example/teamy", "deadbeef")
+            })
+            .build();
+
+        let driver = Driver::new(config);
+        let result = driver.run().into_result();
+
+        match result {
+            Err(DriverError::Help { text, .. }) => {
+                let text = strip_ansi_escapes::strip_str(&text);
+                let source_file = crate::help::implementation_source_for_subcommand_path(
+                    ArgsWithImplementationHelp::SHAPE,
+                    &[],
+                )
+                .expect("root help should resolve a source file");
+                let expected_url = format!(
+                    "https://github.com/example/teamy/blob/deadbeef/{}",
+                    source_file.replace('\\', "/")
+                );
+
+                assert!(text.contains("Implementation:"));
+                assert!(text.contains(source_file));
+                assert!(text.contains(&expected_url));
+            }
+            other => panic!("expected DriverError::Help, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_driver_subcommand_help_includes_implementation_source_and_github_url() {
+        let config = builder::<ArgsWithImplementationHelp>()
+            .unwrap()
+            .cli(|cli| cli.args(["serve", "--help"]))
+            .help(|h| {
+                h.program_name("test-app")
+                    .include_implementation_source_file(true)
+                    .include_implementation_github_url("example/teamy", "deadbeef")
+            })
+            .build();
+
+        let driver = Driver::new(config);
+        let result = driver.run().into_result();
+
+        match result {
+            Err(DriverError::Help { text, .. }) => {
+                let text = strip_ansi_escapes::strip_str(&text);
+                let source_file = crate::help::implementation_source_for_subcommand_path(
+                    ArgsWithImplementationHelp::SHAPE,
+                    &["Serve".to_string()],
+                )
+                .expect("subcommand help should resolve a source file");
+                let expected_url = format!(
+                    "https://github.com/example/teamy/blob/deadbeef/{}",
+                    source_file.replace('\\', "/")
+                );
+
+                assert!(text.contains("Implementation:"));
+                assert!(text.contains(source_file));
+                assert!(text.contains(&expected_url));
             }
             other => panic!("expected DriverError::Help, got {:?}", other),
         }
