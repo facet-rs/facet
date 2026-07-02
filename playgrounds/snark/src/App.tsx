@@ -45,12 +45,22 @@ type ParseOutput = {
   accepted_count: number;
   failure_count: number;
   max_live_versions: number;
+  lexer_call_count: number;
+  lexer_direct_set_cache_hits: number;
+  lexer_direct_set_cache_misses: number;
+  lexer_stencil_executions: ParseLexerStencilExecutionOutput[];
+  dominant_lexer_stencil_execution: ParseLexerStencilExecutionOutput | null;
   trace_event_count: number;
   tree_event_count: number;
   reuse_node_count: number;
   accepted_tree_event_count: number;
   accepted_error_count: number;
   accepted_missing_count: number;
+};
+
+type ParseLexerStencilExecutionOutput = {
+  kind: string;
+  count: number;
 };
 
 type PlanOutput = {
@@ -861,7 +871,7 @@ function ResultsDock({
         </Panel>
       ) : null}
 
-      {plan ? <PlanPanel plan={plan} /> : null}
+      {plan ? <PlanPanel plan={plan} parse={result?.parse ?? null} /> : null}
 
       <Panel
         title="S-expression"
@@ -998,11 +1008,12 @@ function ResultsDock({
   );
 }
 
-function PlanPanel({ plan }: { plan: PlanOutput }) {
+function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | null }) {
   const parserStencilTotal = countPlanItems(plan.snark_stencils);
   const lexerStencilTotal = countPlanItems(plan.lexer_stencils);
   const totalStencilWork = parserStencilTotal + lexerStencilTotal;
   const dominant = plan.dominant_backend_execution;
+  const dominantLexerExecution = parse?.dominant_lexer_stencil_execution ?? null;
   const backendExecutionItems = plan.backend_executions.map((summary) => ({
     ...summary,
     count: summary.total_count,
@@ -1042,7 +1053,25 @@ function PlanPanel({ plan }: { plan: PlanOutput }) {
         </div>
       ) : null}
 
+      {dominantLexerExecution ? (
+        <div className="plan-row">
+          <span>Runtime lexer hot lane</span>
+          <strong>{dominantLexerExecution.kind}</strong>
+          <code>
+            {dominantLexerExecution.count} executions · {parse?.lexer_call_count ?? 0} lex calls ·{" "}
+            {parse?.lexer_direct_set_cache_hits ?? 0}/{parse?.lexer_direct_set_cache_misses ?? 0} cache hit/miss
+          </code>
+        </div>
+      ) : null}
+
       <PlanTopList title="Parser stencil families" items={plan.snark_stencil_families} />
+      <PlanTopList
+        title="Runtime lexer executions"
+        items={(parse?.lexer_stencil_executions ?? []).map((summary) => ({
+          kind: summary.kind,
+          count: summary.count,
+        }))}
+      />
       <PlanTopList title="Lexer stencil ops" items={plan.lexer_stencils} />
       <PlanTopList title="Backend execution lanes" items={backendExecutionItems} />
       <PlanTopList title="Lowering barriers" items={plan.lowering_barriers} />

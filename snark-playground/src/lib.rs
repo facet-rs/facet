@@ -18,8 +18,9 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        SnarkStencilProfile, WeavyLoweringBarrier, WeavyParseError, WeavyParsePlan,
-        WeavyParseReport, parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
+        SnarkStencilProfile, WeavyLexerExecutionStats, WeavyLoweringBarrier, WeavyParseError,
+        WeavyParsePlan, WeavyParseReport,
+        parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner,
         reparse_prepared_weavy_recovering_with_report_and_scanner,
         reparse_prepared_weavy_with_report_and_scanner,
@@ -232,12 +233,23 @@ struct ParseOutput {
     accepted_count: usize,
     failure_count: usize,
     max_live_versions: usize,
+    lexer_call_count: usize,
+    lexer_direct_set_cache_hits: usize,
+    lexer_direct_set_cache_misses: usize,
+    lexer_stencil_executions: Vec<ParseLexerStencilExecutionOutput>,
+    dominant_lexer_stencil_execution: Option<ParseLexerStencilExecutionOutput>,
     trace_event_count: usize,
     tree_event_count: usize,
     reuse_node_count: usize,
     accepted_tree_event_count: usize,
     accepted_error_count: usize,
     accepted_missing_count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct ParseLexerStencilExecutionOutput {
+    kind: String,
+    count: usize,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -425,6 +437,10 @@ impl WeavyPlaygroundReport {
 
     fn tree_events(&self) -> &[TreeEvent] {
         self.0.tree_events()
+    }
+
+    fn lexer_stats(&self) -> &WeavyLexerExecutionStats {
+        self.0.lexer_stats()
     }
 
     fn accepted_resolved_tree(
@@ -844,6 +860,7 @@ fn parse_output(
     input: &str,
     accepted_tree_events: &[TreeEvent],
 ) -> ParseOutput {
+    let lexer_stats = report.lexer_stats();
     ParseOutput {
         sexp: report.tree_sexp(),
         tree: report
@@ -852,6 +869,23 @@ fn parse_output(
         accepted_count: report.accepted_count(),
         failure_count: report.failure_count(),
         max_live_versions: report.max_live_versions(),
+        lexer_call_count: lexer_stats.lex_call_count,
+        lexer_direct_set_cache_hits: lexer_stats.direct_set_cache_hit_count,
+        lexer_direct_set_cache_misses: lexer_stats.direct_set_cache_miss_count,
+        lexer_stencil_executions: lexer_stats
+            .stencil_execution_summaries()
+            .into_iter()
+            .map(|summary| ParseLexerStencilExecutionOutput {
+                kind: format!("{:?}", summary.kind),
+                count: summary.count,
+            })
+            .collect(),
+        dominant_lexer_stencil_execution: lexer_stats.dominant_stencil_execution().map(|summary| {
+            ParseLexerStencilExecutionOutput {
+                kind: format!("{:?}", summary.kind),
+                count: summary.count,
+            }
+        }),
         trace_event_count: report.trace_event_count(),
         tree_event_count: report.tree_events().len(),
         reuse_node_count: count_reused_nodes(report.tree_events()),
@@ -4996,6 +5030,21 @@ mod tests {
         let parse = response.parse.as_ref().expect("parse output");
         assert_eq!(parse.accepted_error_count, 0);
         assert_eq!(parse.accepted_missing_count, 0);
+        assert!(parse.lexer_call_count > 0);
+        assert!(parse.lexer_direct_set_cache_misses > 0);
+        assert_eq!(parse.lexer_direct_set_cache_hits, 0);
+        assert!(
+            parse
+                .lexer_stencil_executions
+                .iter()
+                .any(|summary| summary.kind == "PatternDfaSet" && summary.count > 0)
+        );
+        assert!(
+            parse
+                .dominant_lexer_stencil_execution
+                .as_ref()
+                .is_some_and(|summary| summary.count > 0)
+        );
         let plan = response.plan.as_ref().expect("plan output");
         assert!(plan.stencils_needed);
         assert!(plan.lexer_stencils_needed);
