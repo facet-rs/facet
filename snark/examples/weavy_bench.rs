@@ -14,7 +14,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyParseError, WeavyParsePlan, WeavyParseReport,
+        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree_and_scanner, parse_prepared_weavy_tree_and_scanner,
         parse_prepared_weavy_with_report_and_scanner,
@@ -339,6 +339,14 @@ fn main() {
     if !readiness.snark_stencil_state_summaries.is_empty() {
         println!("  snark stencil state surfaces:");
         for summary in &readiness.snark_stencil_state_summaries {
+            println!("    {:<18?} x{}", summary.state, summary.count);
+        }
+    }
+    let direct_no_trace_states =
+        readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+    if direct_no_trace_states != readiness.snark_stencil_state_summaries {
+        println!("  direct no-trace state surfaces:");
+        for summary in &direct_no_trace_states {
             println!("    {:<18?} x{}", summary.state, summary.count);
         }
     }

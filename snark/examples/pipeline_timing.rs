@@ -12,7 +12,8 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        SnarkStencilProfile, WeavyParsePlan,
+        parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
         parse_prepared_weavy_with_report,
     },
@@ -229,6 +230,15 @@ fn main() {
     if !analysis.readiness.snark_stencil_state_summaries.is_empty() {
         println!("  stencil state surfaces:");
         for summary in &analysis.readiness.snark_stencil_state_summaries {
+            println!("    {:?}: {}", summary.state, summary.count);
+        }
+    }
+    let direct_no_trace_states = analysis
+        .readiness
+        .snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+    if direct_no_trace_states != analysis.readiness.snark_stencil_state_summaries {
+        println!("  direct no-trace state surfaces:");
+        for summary in &direct_no_trace_states {
             println!("    {:?}: {}", summary.state, summary.count);
         }
     }

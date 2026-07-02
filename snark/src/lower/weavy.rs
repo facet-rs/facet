@@ -407,6 +407,16 @@ pub enum SnarkStencilState {
     TreeEventSink,
 }
 
+/// Runtime profile used when projecting Snark stencil obligations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum SnarkStencilProfile {
+    /// Full report/diagnostic surface: tree events and parser trace are both observable.
+    Full,
+    /// Direct production parse surface: parser trace is disabled and trace-only ops are removable.
+    DirectNoTrace,
+}
+
 /// ABI contract for one Snark-owned native stencil family.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnarkStencilContract {
@@ -1538,6 +1548,33 @@ impl WeavyParsePlanReadiness {
             .map(|summary| summary.count)
             .sum()
     }
+
+    /// Snark stencil obligations grouped by family for one runtime profile.
+    #[must_use]
+    pub fn snark_stencil_family_summaries_for_profile(
+        &self,
+        profile: SnarkStencilProfile,
+    ) -> Vec<WeavySnarkStencilFamilySummary> {
+        snark_stencil_family_summaries_for_profile(&self.snark_stencil_summaries, profile)
+    }
+
+    /// Snark stencil obligations grouped by execution strategy for one runtime profile.
+    #[must_use]
+    pub fn snark_stencil_execution_summaries_for_profile(
+        &self,
+        profile: SnarkStencilProfile,
+    ) -> Vec<WeavySnarkStencilExecutionSummary> {
+        snark_stencil_execution_summaries_for_profile(&self.snark_stencil_summaries, profile)
+    }
+
+    /// Snark stencil obligations grouped by session state for one runtime profile.
+    #[must_use]
+    pub fn snark_stencil_state_summaries_for_profile(
+        &self,
+        profile: SnarkStencilProfile,
+    ) -> Vec<WeavySnarkStencilStateSummary> {
+        snark_stencil_state_summaries_for_profile(&self.snark_stencil_summaries, profile)
+    }
 }
 
 #[must_use]
@@ -1555,17 +1592,33 @@ const fn native_copy_patch_jit_available() -> bool {
 fn snark_stencil_family_summaries(
     summaries: &[WeavySnarkStencilSummary],
 ) -> Vec<WeavySnarkStencilFamilySummary> {
+    snark_stencil_family_summaries_for_profile(summaries, SnarkStencilProfile::Full)
+}
+
+fn snark_stencil_family_summaries_for_profile(
+    summaries: &[WeavySnarkStencilSummary],
+    profile: SnarkStencilProfile,
+) -> Vec<WeavySnarkStencilFamilySummary> {
     let mut counts = BTreeMap::<
         (SnarkStencilFamily, SnarkStencilExecution),
         (usize, BTreeSet<SnarkStencilState>, EffectContract),
     >::new();
     for summary in summaries {
+        if !snark_stencil_summary_active_in_profile(summary, profile) {
+            continue;
+        }
         let (count, state, effect) = counts
             .entry((summary.stencil.family, summary.stencil.execution))
             .or_default();
         *count += summary.count;
-        state.extend(summary.stencil.state.iter().copied());
-        effect.accumulate(summary.effect.clone());
+        state.extend(snark_stencil_states_for_profile(
+            summary.stencil.state,
+            profile,
+        ));
+        effect.accumulate(snark_stencil_effect_for_profile(
+            summary.effect.clone(),
+            profile,
+        ));
     }
     let mut summaries = counts
         .into_iter()
@@ -1592,10 +1645,20 @@ fn snark_stencil_family_summaries(
 fn snark_stencil_state_summaries(
     summaries: &[WeavySnarkStencilSummary],
 ) -> Vec<WeavySnarkStencilStateSummary> {
+    snark_stencil_state_summaries_for_profile(summaries, SnarkStencilProfile::Full)
+}
+
+fn snark_stencil_state_summaries_for_profile(
+    summaries: &[WeavySnarkStencilSummary],
+    profile: SnarkStencilProfile,
+) -> Vec<WeavySnarkStencilStateSummary> {
     let mut counts = BTreeMap::<SnarkStencilState, usize>::new();
     for summary in summaries {
-        for state in summary.stencil.state {
-            *counts.entry(*state).or_default() += summary.count;
+        if !snark_stencil_summary_active_in_profile(summary, profile) {
+            continue;
+        }
+        for state in snark_stencil_states_for_profile(summary.stencil.state, profile) {
+            *counts.entry(state).or_default() += summary.count;
         }
     }
     let mut summaries = counts
@@ -1614,6 +1677,13 @@ fn snark_stencil_state_summaries(
 fn snark_stencil_execution_summaries(
     summaries: &[WeavySnarkStencilSummary],
 ) -> Vec<WeavySnarkStencilExecutionSummary> {
+    snark_stencil_execution_summaries_for_profile(summaries, SnarkStencilProfile::Full)
+}
+
+fn snark_stencil_execution_summaries_for_profile(
+    summaries: &[WeavySnarkStencilSummary],
+    profile: SnarkStencilProfile,
+) -> Vec<WeavySnarkStencilExecutionSummary> {
     let mut counts = BTreeMap::<
         SnarkStencilExecution,
         (
@@ -1624,11 +1694,20 @@ fn snark_stencil_execution_summaries(
         ),
     >::new();
     for summary in summaries {
+        if !snark_stencil_summary_active_in_profile(summary, profile) {
+            continue;
+        }
         let (count, families, state, effect) = counts.entry(summary.stencil.execution).or_default();
         *count += summary.count;
         families.insert(summary.stencil.family);
-        state.extend(summary.stencil.state.iter().copied());
-        effect.accumulate(summary.effect.clone());
+        state.extend(snark_stencil_states_for_profile(
+            summary.stencil.state,
+            profile,
+        ));
+        effect.accumulate(snark_stencil_effect_for_profile(
+            summary.effect.clone(),
+            profile,
+        ));
     }
     let mut summaries = counts
         .into_iter()
@@ -1649,6 +1728,37 @@ fn snark_stencil_execution_summaries(
             .then_with(|| left.execution.cmp(&right.execution))
     });
     summaries
+}
+
+fn snark_stencil_summary_active_in_profile(
+    summary: &WeavySnarkStencilSummary,
+    profile: SnarkStencilProfile,
+) -> bool {
+    match profile {
+        SnarkStencilProfile::Full => true,
+        SnarkStencilProfile::DirectNoTrace => summary.domain != SnarkIntrinsicDomain::Trace,
+    }
+}
+
+fn snark_stencil_states_for_profile(
+    states: &'static [SnarkStencilState],
+    profile: SnarkStencilProfile,
+) -> impl Iterator<Item = SnarkStencilState> + 'static {
+    states.iter().copied().filter(move |state| {
+        profile == SnarkStencilProfile::Full || *state != SnarkStencilState::TraceSink
+    })
+}
+
+fn snark_stencil_effect_for_profile(
+    mut effect: EffectContract,
+    profile: SnarkStencilProfile,
+) -> EffectContract {
+    if profile == SnarkStencilProfile::DirectNoTrace {
+        effect
+            .resources
+            .retain(|resource| resource.resource != EffectResource::Sink("parser_trace"));
+    }
+    effect
 }
 
 fn lowering_barrier_summaries(
@@ -11347,6 +11457,83 @@ mod tests {
                     count: 2,
                 },
             ]
+        );
+        let direct_no_trace_family = readiness
+            .snark_stencil_family_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+        let mut expected_direct_no_trace_tree_effect = reduce.effect();
+        expected_direct_no_trace_tree_effect
+            .resources
+            .retain(|resource| resource.resource != EffectResource::Sink("parser_trace"));
+        assert_eq!(
+            direct_no_trace_family,
+            vec![
+                WeavySnarkStencilFamilySummary {
+                    family: SnarkStencilFamily::TreeBuilder,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: vec![
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::TreeStore,
+                        SnarkStencilState::TreeJournal,
+                        SnarkStencilState::TreeEventSink,
+                    ],
+                    effect: expected_direct_no_trace_tree_effect,
+                    count: 4,
+                },
+                WeavySnarkStencilFamilySummary {
+                    family: SnarkStencilFamily::ParserCursor,
+                    execution: SnarkStencilExecution::DirectStencil,
+                    state: vec![
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::ScannerState,
+                        SnarkStencilState::AutoCloseStack,
+                    ],
+                    effect: commit.effect(),
+                    count: 3,
+                },
+                WeavySnarkStencilFamilySummary {
+                    family: SnarkStencilFamily::Lexer,
+                    execution: SnarkStencilExecution::LexerGraph,
+                    state: vec![
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::ParseTable,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::ParserStack,
+                        SnarkStencilState::BranchCursor,
+                        SnarkStencilState::Lookahead,
+                        SnarkStencilState::ScannerState,
+                        SnarkStencilState::AutoCloseStack,
+                    ],
+                    effect: lex.effect(),
+                    count: 2,
+                },
+            ]
+        );
+        let direct_no_trace_execution = readiness
+            .snark_stencil_execution_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+        assert!(
+            direct_no_trace_execution
+                .iter()
+                .all(|summary| !summary.state.contains(&SnarkStencilState::TraceSink))
+        );
+        assert!(
+            direct_no_trace_execution
+                .iter()
+                .any(|summary| summary.state.contains(&SnarkStencilState::TreeEventSink))
+        );
+        let direct_no_trace_state =
+            readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+        assert!(
+            !direct_no_trace_state
+                .iter()
+                .any(|summary| summary.state == SnarkStencilState::TraceSink)
+        );
+        assert!(
+            direct_no_trace_state
+                .iter()
+                .any(|summary| summary.state == SnarkStencilState::TreeEventSink)
         );
     }
 
