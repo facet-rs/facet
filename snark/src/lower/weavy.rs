@@ -3942,7 +3942,7 @@ struct RuntimeWeavyInput<'a> {
 
 struct RuntimeWeavyOutput<'a> {
     tree_store: &'a mut RuntimeWeavyTreeStore,
-    trace_events: &'a mut Vec<parser_ir::TraceEvent>,
+    trace_events: &'a mut RuntimeWeavyTraceSink,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     input_points: &'a RuntimeWeavyInputPoints,
@@ -3955,11 +3955,40 @@ struct RuntimeWeavyOutput<'a> {
 struct RuntimeWeavyStepperInput<'a> {
     input: RuntimeWeavyInput<'a>,
     tree_store: &'a mut RuntimeWeavyTreeStore,
-    trace_events: &'a mut Vec<parser_ir::TraceEvent>,
+    trace_events: &'a mut RuntimeWeavyTraceSink,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     input_points: &'a RuntimeWeavyInputPoints,
     external_scanner_errors: &'a RefCell<Vec<String>>,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeWeavyTraceSink {
+    events: Vec<parser_ir::TraceEvent>,
+    enabled: bool,
+}
+
+impl RuntimeWeavyTraceSink {
+    fn new(enabled: bool) -> Self {
+        Self {
+            events: Vec::new(),
+            enabled,
+        }
+    }
+
+    fn push(&mut self, event: parser_ir::TraceEvent) {
+        if self.enabled {
+            self.events.push(event);
+        }
+    }
+
+    fn next_id(&self) -> parser_ir::TraceEventId {
+        parser_ir::TraceEventId::from_index(self.events.len())
+    }
+
+    fn into_events(self) -> Vec<parser_ir::TraceEvent> {
+        self.events
+    }
 }
 
 struct RuntimeWeavyLexerScratch {
@@ -4983,7 +5012,7 @@ fn parse_weavy_with_lexer_program(
     }
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
-    let mut trace_events = Vec::new();
+    let mut trace_events = RuntimeWeavyTraceSink::new(block_execution.collects_traces());
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
     let external_scanner_errors = RefCell::new(Vec::new());
     trace_events.push(parser_ir::TraceEvent::ParseStart {
@@ -5077,7 +5106,7 @@ fn parse_weavy_with_lexer_program(
                 reason: parser_ir::BranchRetireReason::Limit,
             });
             trace_events.push(parser_ir::TraceEvent::ParseFinish {
-                id: next_runtime_weavy_trace_id(&trace_events),
+                id: trace_events.next_id(),
                 outcome: parser_ir::ParseOutcome::Failed,
             });
             return Err(WeavyParseError::BranchStepLimit { limit: step_limit });
@@ -5149,7 +5178,7 @@ fn parse_weavy_with_lexer_program(
         .min()
     else {
         trace_events.push(parser_ir::TraceEvent::ParseFinish {
-            id: next_runtime_weavy_trace_id(&trace_events),
+            id: trace_events.next_id(),
             outcome: parser_ir::ParseOutcome::Failed,
         });
         let external_scanner_errors = external_scanner_errors.borrow();
@@ -5188,7 +5217,7 @@ fn parse_weavy_with_lexer_program(
         let reusable_nodes =
             mark_runtime_weavy_reusable_nodes_with_errors(first_reusable_nodes, &first_tree_events);
         trace_events.push(parser_ir::TraceEvent::ParseFinish {
-            id: next_runtime_weavy_trace_id(&trace_events),
+            id: trace_events.next_id(),
             outcome: if min_error_cost == 0 {
                 parser_ir::ParseOutcome::Accepted
             } else {
@@ -5198,7 +5227,7 @@ fn parse_weavy_with_lexer_program(
         return Ok(WeavyParseReport {
             tree: first_node,
             stats,
-            trace_events,
+            trace_events: trace_events.into_events(),
             tree_events: first_tree_events,
             tree_store,
             reusable_nodes,
@@ -5210,7 +5239,7 @@ fn parse_weavy_with_lexer_program(
     }
 
     trace_events.push(parser_ir::TraceEvent::ParseFinish {
-        id: next_runtime_weavy_trace_id(&trace_events),
+        id: trace_events.next_id(),
         outcome: parser_ir::ParseOutcome::Failed,
     });
     let mut accepted_sexps = Vec::with_capacity(accepted_count);
@@ -5269,6 +5298,9 @@ impl WeavyParseReport {
 
     /// Tree events emitted by the accepted branch lineage.
     pub fn accepted_tree_events(&self) -> Vec<parser_ir::TreeEvent> {
+        if self.trace_events.is_empty() {
+            return self.tree_events.clone();
+        }
         parser_ir::tree_events_for_version_lineage(
             self.accepted_version,
             &self.trace_events,
@@ -5379,6 +5411,12 @@ enum RuntimeWeavyBlockExecution {
         )
     ))]
     NativeHostCalls,
+}
+
+impl RuntimeWeavyBlockExecution {
+    const fn collects_traces(self) -> bool {
+        matches!(self, Self::Metered)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5789,7 +5827,7 @@ fn try_reuse_runtime_weavy_node(
         .trace_events
         .push(parser_ir::TraceEvent::Tree(tree_event));
     output.trace_events.push(parser_ir::TraceEvent::StateEnter {
-        id: next_runtime_weavy_trace_id(output.trace_events),
+        id: output.trace_events.next_id(),
         version: branch.version,
         state: goto_state,
     });
@@ -6024,7 +6062,7 @@ fn enqueue_runtime_weavy_branch(
     branch: RuntimeWeavyBranch,
     recovery: RuntimeWeavyRecoveryMode,
     queued_recovery_costs: &mut HashMap<RuntimeWeavyBranchKey, u32>,
-    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    trace_events: &mut RuntimeWeavyTraceSink,
     branches: &mut BinaryHeap<CostOrderedBranch>,
 ) {
     if recovery == RuntimeWeavyRecoveryMode::Strict {
@@ -6051,7 +6089,7 @@ fn recover_runtime_weavy_to_viable_stack(
     mut branch: RuntimeWeavyBranch,
     lexer_scratch: &RuntimeWeavyLexerScratch,
     input_points: &RuntimeWeavyInputPoints,
-    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    trace_events: &mut RuntimeWeavyTraceSink,
 ) -> Option<RuntimeWeavyBranch> {
     if input_ctx.external_scanner.is_some() || branch.stack.len() <= 1 {
         return None;
@@ -6078,7 +6116,7 @@ fn recover_runtime_weavy_to_action_state(
     table: &parser_ir::ParseTable,
     mut branch: RuntimeWeavyBranch,
     lookahead: parser_ir::LookaheadSymbol,
-    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    trace_events: &mut RuntimeWeavyTraceSink,
 ) -> Option<RuntimeWeavyBranch> {
     let original_len = branch.stack.len();
     if original_len <= 1 {
@@ -6111,7 +6149,7 @@ fn recover_runtime_weavy_eof_error_root(
     input: &str,
     input_points: &RuntimeWeavyInputPoints,
     tree_store: &mut RuntimeWeavyTreeStore,
-    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    trace_events: &mut RuntimeWeavyTraceSink,
     tree_journal: &mut RuntimeWeavyTreeJournal,
 ) -> Option<RuntimeWeavyStepOutcome> {
     if branch.byte_position != input.len() {
@@ -6154,7 +6192,7 @@ fn recover_runtime_weavy_no_token(
     input: &str,
     input_points: &RuntimeWeavyInputPoints,
     tree_store: &mut RuntimeWeavyTreeStore,
-    trace_events: &mut Vec<parser_ir::TraceEvent>,
+    trace_events: &mut RuntimeWeavyTraceSink,
     tree_journal: &mut RuntimeWeavyTreeJournal,
 ) -> Option<RuntimeWeavyBranch> {
     let state = branch.stack.last().map(|entry| entry.state)?;
@@ -6204,7 +6242,7 @@ fn runtime_weavy_lex_succeeds(
     input_points: &RuntimeWeavyInputPoints,
 ) -> bool {
     let mut tree_store = RuntimeWeavyTreeStore::default();
-    let mut trace_events = Vec::new();
+    let mut trace_events = RuntimeWeavyTraceSink::new(false);
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
     let external_scanner_errors = RefCell::new(Vec::new());
     let stepper = RuntimeWeavyStepper::from_branch_ref(
@@ -6334,7 +6372,7 @@ struct RuntimeWeavyStepper<'a> {
     tree_journal_head: RuntimeWeavyTreeJournalHead,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
-    trace_events: &'a mut Vec<parser_ir::TraceEvent>,
+    trace_events: &'a mut RuntimeWeavyTraceSink,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
 
@@ -6543,7 +6581,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     state,
                 });
                 self.trace_events.push(parser_ir::TraceEvent::StateEnter {
-                    id: next_runtime_weavy_trace_id(self.trace_events),
+                    id: self.trace_events.next_id(),
                     version: self.version,
                     state,
                 });
@@ -6660,7 +6698,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     });
                 }
                 self.trace_events.push(parser_ir::TraceEvent::StateEnter {
-                    id: next_runtime_weavy_trace_id(self.trace_events),
+                    id: self.trace_events.next_id(),
                     version: self.version,
                     state: goto,
                 });
@@ -8377,10 +8415,6 @@ fn parser_production(id: ProductionId) -> parser_ir::ProductionId {
 
 fn parser_metadata(id: ProductionMetadataId) -> parser_ir::ProductionMetadataId {
     parser_ir::ProductionMetadataId::from_index(id.get() as usize)
-}
-
-fn next_runtime_weavy_trace_id(events: &[parser_ir::TraceEvent]) -> parser_ir::TraceEventId {
-    parser_ir::TraceEventId::from_index(events.len())
 }
 
 fn match_weavy_terminal_matcher_runtime(
@@ -10399,6 +10433,13 @@ mod tests {
                 .unwrap();
 
         assert_eq!(metered.tree(), unmetered.tree());
+        assert!(!metered.trace_events().is_empty());
+        assert!(unmetered.trace_events().is_empty());
+        assert_eq!(
+            metered.accepted_tree_events(),
+            unmetered.accepted_tree_events()
+        );
+        assert!(unmetered.accepted_resolved_tree(&parser, "ab").is_some());
         #[cfg(all(
             feature = "jit",
             any(
@@ -10407,6 +10448,25 @@ mod tests {
             )
         ))]
         assert_eq!(metered.tree(), native_hostcalls.tree());
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        {
+            assert!(native_hostcalls.trace_events().is_empty());
+            assert_eq!(
+                metered.accepted_tree_events(),
+                native_hostcalls.accepted_tree_events()
+            );
+            assert!(
+                native_hostcalls
+                    .accepted_resolved_tree(&parser, "ab")
+                    .is_some()
+            );
+        }
         assert_eq!(unmetered.tree().to_sexp(), "(source_file)");
         assert_eq!(unmetered.accepted_count(), 1);
         assert_eq!(unmetered.failure_count(), 0);
