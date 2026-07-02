@@ -848,6 +848,125 @@ struct SnarkIntrinsicExecutionKeys {
     execution: SnarkStencilExecution,
 }
 
+const SNARK_INTRINSIC_DESCRIPTOR_COUNT: usize = 14;
+const SNARK_INTRINSIC_DOMAIN_COUNT: usize = 7;
+const SNARK_STENCIL_FAMILY_COUNT: usize = 8;
+const SNARK_STENCIL_EXECUTION_COUNT: usize = 4;
+
+fn snark_intrinsic_descriptor_index(descriptor: IntrinsicDescriptor) -> usize {
+    match descriptor.name {
+        "lex" => 0,
+        "call_external_scanner" => 1,
+        "dispatch_actions" => 2,
+        "commit_lookahead" => 3,
+        "shift" => 4,
+        "shift_extra" => 5,
+        "reduce" => 6,
+        "split_glr" => 7,
+        "merge_glr" => 8,
+        "retire_branch" => 9,
+        "accept" => 10,
+        "emit_trace" => 11,
+        "emit_node" => 12,
+        "emit_tree_event" => 13,
+        _ => unreachable!("unknown Snark intrinsic descriptor"),
+    }
+}
+
+fn snark_intrinsic_descriptor_from_index(index: usize) -> Option<IntrinsicDescriptor> {
+    Some(IntrinsicDescriptor {
+        dialect: SnarkIntrinsic::DIALECT,
+        name: match index {
+            0 => "lex",
+            1 => "call_external_scanner",
+            2 => "dispatch_actions",
+            3 => "commit_lookahead",
+            4 => "shift",
+            5 => "shift_extra",
+            6 => "reduce",
+            7 => "split_glr",
+            8 => "merge_glr",
+            9 => "retire_branch",
+            10 => "accept",
+            11 => "emit_trace",
+            12 => "emit_node",
+            13 => "emit_tree_event",
+            _ => return None,
+        },
+    })
+}
+
+fn snark_intrinsic_domain_index(domain: SnarkIntrinsicDomain) -> usize {
+    match domain {
+        SnarkIntrinsicDomain::Lexing => 0,
+        SnarkIntrinsicDomain::ExternalScanner => 1,
+        SnarkIntrinsicDomain::ParserControl => 2,
+        SnarkIntrinsicDomain::GlrControl => 3,
+        SnarkIntrinsicDomain::Recovery => 4,
+        SnarkIntrinsicDomain::Tree => 5,
+        SnarkIntrinsicDomain::Trace => 6,
+    }
+}
+
+fn snark_intrinsic_domain_from_index(index: usize) -> Option<SnarkIntrinsicDomain> {
+    Some(match index {
+        0 => SnarkIntrinsicDomain::Lexing,
+        1 => SnarkIntrinsicDomain::ExternalScanner,
+        2 => SnarkIntrinsicDomain::ParserControl,
+        3 => SnarkIntrinsicDomain::GlrControl,
+        4 => SnarkIntrinsicDomain::Recovery,
+        5 => SnarkIntrinsicDomain::Tree,
+        6 => SnarkIntrinsicDomain::Trace,
+        _ => return None,
+    })
+}
+
+fn snark_stencil_family_index(family: SnarkStencilFamily) -> usize {
+    match family {
+        SnarkStencilFamily::Lexer => 0,
+        SnarkStencilFamily::ExternalScanner => 1,
+        SnarkStencilFamily::ParserDispatch => 2,
+        SnarkStencilFamily::ParserCursor => 3,
+        SnarkStencilFamily::ParserStack => 4,
+        SnarkStencilFamily::GlrScheduler => 5,
+        SnarkStencilFamily::TreeBuilder => 6,
+        SnarkStencilFamily::Sink => 7,
+    }
+}
+
+fn snark_stencil_family_from_index(index: usize) -> Option<SnarkStencilFamily> {
+    Some(match index {
+        0 => SnarkStencilFamily::Lexer,
+        1 => SnarkStencilFamily::ExternalScanner,
+        2 => SnarkStencilFamily::ParserDispatch,
+        3 => SnarkStencilFamily::ParserCursor,
+        4 => SnarkStencilFamily::ParserStack,
+        5 => SnarkStencilFamily::GlrScheduler,
+        6 => SnarkStencilFamily::TreeBuilder,
+        7 => SnarkStencilFamily::Sink,
+        _ => return None,
+    })
+}
+
+fn snark_stencil_execution_index(execution: SnarkStencilExecution) -> usize {
+    match execution {
+        SnarkStencilExecution::LexerGraph => 0,
+        SnarkStencilExecution::DirectStencil => 1,
+        SnarkStencilExecution::HostCall => 2,
+        SnarkStencilExecution::SinkAdapter => 3,
+    }
+}
+
+fn snark_stencil_execution_from_index(index: usize) -> Option<SnarkStencilExecution> {
+    Some(match index {
+        0 => SnarkStencilExecution::LexerGraph,
+        1 => SnarkStencilExecution::DirectStencil,
+        2 => SnarkStencilExecution::HostCall,
+        3 => SnarkStencilExecution::SinkAdapter,
+        _ => return None,
+    })
+}
+
 /// Runtime counters for Snark's copy-and-patch host-call block lane.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WeavyHostCallExecutionStats {
@@ -866,20 +985,6 @@ pub struct WeavyHostCallExecutionStats {
 }
 
 impl WeavySnarkExecutionStats {
-    fn record_intrinsic(&mut self, intrinsic: &SnarkIntrinsic) {
-        let keys = intrinsic.runtime_execution_keys();
-        self.intrinsic_count += 1;
-        *self
-            .descriptor_executions
-            .entry(keys.descriptor)
-            .or_default() += 1;
-        *self.domain_executions.entry(keys.domain).or_default() += 1;
-        *self
-            .family_executions
-            .entry((keys.family, keys.execution))
-            .or_default() += 1;
-    }
-
     /// Runtime executions sorted by descending count.
     #[must_use]
     pub fn family_execution_summaries(&self) -> Vec<WeavySnarkExecutionSummary> {
@@ -906,6 +1011,78 @@ impl WeavySnarkExecutionStats {
     #[must_use]
     pub fn dominant_family_execution(&self) -> Option<WeavySnarkExecutionSummary> {
         self.family_execution_summaries().into_iter().next()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RuntimeWeavySnarkExecutionStats {
+    intrinsic_count: usize,
+    descriptor_executions: [usize; SNARK_INTRINSIC_DESCRIPTOR_COUNT],
+    domain_executions: [usize; SNARK_INTRINSIC_DOMAIN_COUNT],
+    family_executions: [[usize; SNARK_STENCIL_EXECUTION_COUNT]; SNARK_STENCIL_FAMILY_COUNT],
+}
+
+impl Default for RuntimeWeavySnarkExecutionStats {
+    fn default() -> Self {
+        Self {
+            intrinsic_count: 0,
+            descriptor_executions: [0; SNARK_INTRINSIC_DESCRIPTOR_COUNT],
+            domain_executions: [0; SNARK_INTRINSIC_DOMAIN_COUNT],
+            family_executions: [[0; SNARK_STENCIL_EXECUTION_COUNT]; SNARK_STENCIL_FAMILY_COUNT],
+        }
+    }
+}
+
+impl RuntimeWeavySnarkExecutionStats {
+    fn record_intrinsic(&mut self, intrinsic: &SnarkIntrinsic) {
+        let keys = intrinsic.runtime_execution_keys();
+        self.intrinsic_count += 1;
+        self.descriptor_executions[snark_intrinsic_descriptor_index(keys.descriptor)] += 1;
+        self.domain_executions[snark_intrinsic_domain_index(keys.domain)] += 1;
+        self.family_executions[snark_stencil_family_index(keys.family)]
+            [snark_stencil_execution_index(keys.execution)] += 1;
+    }
+
+    fn to_public(&self) -> WeavySnarkExecutionStats {
+        let mut stats = WeavySnarkExecutionStats {
+            intrinsic_count: self.intrinsic_count,
+            descriptor_executions: BTreeMap::new(),
+            domain_executions: BTreeMap::new(),
+            family_executions: BTreeMap::new(),
+        };
+        for (index, count) in self.descriptor_executions.iter().copied().enumerate() {
+            if count == 0 {
+                continue;
+            }
+            let Some(descriptor) = snark_intrinsic_descriptor_from_index(index) else {
+                continue;
+            };
+            stats.descriptor_executions.insert(descriptor, count);
+        }
+        for (index, count) in self.domain_executions.iter().copied().enumerate() {
+            if count == 0 {
+                continue;
+            }
+            let Some(domain) = snark_intrinsic_domain_from_index(index) else {
+                continue;
+            };
+            stats.domain_executions.insert(domain, count);
+        }
+        for (family_index, executions) in self.family_executions.iter().enumerate() {
+            let Some(family) = snark_stencil_family_from_index(family_index) else {
+                continue;
+            };
+            for (execution_index, count) in executions.iter().copied().enumerate() {
+                if count == 0 {
+                    continue;
+                }
+                let Some(execution) = snark_stencil_execution_from_index(execution_index) else {
+                    continue;
+                };
+                stats.family_executions.insert((family, execution), count);
+            }
+        }
+        stats
     }
 }
 
@@ -4801,7 +4978,7 @@ struct RuntimeWeavyOutput<'a> {
     input_points: &'a RuntimeWeavyInputPoints,
     next_lookahead_index: &'a mut usize,
     stats: &'a mut RunStats,
-    snark_stats: &'a mut WeavySnarkExecutionStats,
+    snark_stats: &'a mut RuntimeWeavySnarkExecutionStats,
     hostcall_stats: &'a mut WeavyHostCallExecutionStats,
     block_execution: RuntimeWeavyBlockExecution,
     external_scanner_errors: &'a RefCell<Vec<String>>,
@@ -4814,7 +4991,7 @@ struct RuntimeWeavyStepperInput<'a> {
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     tree_event_collection: RuntimeWeavyTreeEventCollection,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
-    snark_stats: &'a mut WeavySnarkExecutionStats,
+    snark_stats: &'a mut RuntimeWeavySnarkExecutionStats,
     input_points: &'a RuntimeWeavyInputPoints,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
@@ -4838,7 +5015,7 @@ trait RuntimeWeavyDeterministicSink {
         tree_journal: RuntimeWeavyTreeJournal,
         stats: RunStats,
         lexer_stats: WeavyLexerExecutionStats,
-        snark_stats: WeavySnarkExecutionStats,
+        snark_stats: RuntimeWeavySnarkExecutionStats,
         hostcall_stats: WeavyHostCallExecutionStats,
         execution_lane: WeavyParseExecutionLane,
         version: parser_ir::StackVersionId,
@@ -4864,7 +5041,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicTreeSink {
         _tree_journal: RuntimeWeavyTreeJournal,
         _stats: RunStats,
         _lexer_stats: WeavyLexerExecutionStats,
-        _snark_stats: WeavySnarkExecutionStats,
+        _snark_stats: RuntimeWeavySnarkExecutionStats,
         _hostcall_stats: WeavyHostCallExecutionStats,
         _execution_lane: WeavyParseExecutionLane,
         _version: parser_ir::StackVersionId,
@@ -4892,7 +5069,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
         tree_journal: RuntimeWeavyTreeJournal,
         _stats: RunStats,
         _lexer_stats: WeavyLexerExecutionStats,
-        _snark_stats: WeavySnarkExecutionStats,
+        _snark_stats: RuntimeWeavySnarkExecutionStats,
         _hostcall_stats: WeavyHostCallExecutionStats,
         _execution_lane: WeavyParseExecutionLane,
         _version: parser_ir::StackVersionId,
@@ -4922,7 +5099,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
         tree_journal: RuntimeWeavyTreeJournal,
         stats: RunStats,
         lexer_stats: WeavyLexerExecutionStats,
-        snark_stats: WeavySnarkExecutionStats,
+        snark_stats: RuntimeWeavySnarkExecutionStats,
         hostcall_stats: WeavyHostCallExecutionStats,
         execution_lane: WeavyParseExecutionLane,
         version: parser_ir::StackVersionId,
@@ -4939,7 +5116,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
             tree,
             stats,
             lexer_stats,
-            snark_stats,
+            snark_stats: snark_stats.to_public(),
             hostcall_stats,
             execution_lane,
             trace_events: trace_events.into_events(),
@@ -5993,7 +6170,7 @@ where
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let external_scanner_errors = RefCell::new(Vec::new());
     let mut stats = RunStats::default();
-    let mut snark_stats = WeavySnarkExecutionStats::default();
+    let mut snark_stats = RuntimeWeavySnarkExecutionStats::default();
     let mut hostcall_stats = WeavyHostCallExecutionStats::default();
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
@@ -6112,7 +6289,7 @@ fn runtime_weavy_lex_one(
     let lexer_scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let external_scanner_errors = RefCell::new(Vec::new());
-    let mut snark_stats = WeavySnarkExecutionStats::default();
+    let mut snark_stats = RuntimeWeavySnarkExecutionStats::default();
     let branch = RuntimeWeavyBranch {
         version: parser_ir::StackVersionId::from_index(0),
         stack: vec![RuntimeWeavyStackEntry {
@@ -6450,7 +6627,7 @@ fn parse_weavy_with_lexer_program(
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(block_execution.collects_traces());
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
-    let mut snark_stats = WeavySnarkExecutionStats::default();
+    let mut snark_stats = RuntimeWeavySnarkExecutionStats::default();
     let external_scanner_errors = RefCell::new(Vec::new());
     trace_push!(
         trace_events,
@@ -6698,7 +6875,7 @@ fn parse_weavy_with_lexer_program(
             tree: first_node,
             stats,
             lexer_stats: lexer_scratch.execution_stats(),
-            snark_stats,
+            snark_stats: snark_stats.to_public(),
             hostcall_stats,
             execution_lane: block_execution.parse_execution_lane(),
             trace_events: trace_events.into_events(),
@@ -7738,7 +7915,7 @@ fn recover_runtime_weavy_to_viable_stack(
     mut branch: RuntimeWeavyBranch,
     lexer_scratch: &RuntimeWeavyLexerScratch,
     input_points: &RuntimeWeavyInputPoints,
-    snark_stats: &mut WeavySnarkExecutionStats,
+    snark_stats: &mut RuntimeWeavySnarkExecutionStats,
     trace_events: &mut RuntimeWeavyTraceSink,
 ) -> Option<RuntimeWeavyBranch> {
     if input_ctx.external_scanner.is_some() || branch.stack.len() <= 1 {
@@ -7908,7 +8085,7 @@ fn runtime_weavy_lex_succeeds(
     state: parser_ir::ParseStateId,
     lexer_scratch: &RuntimeWeavyLexerScratch,
     input_points: &RuntimeWeavyInputPoints,
-    snark_stats: &mut WeavySnarkExecutionStats,
+    snark_stats: &mut RuntimeWeavySnarkExecutionStats,
 ) -> bool {
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(false);
@@ -8044,7 +8221,7 @@ struct RuntimeWeavyStepper<'a> {
     tree_event_collection: RuntimeWeavyTreeEventCollection,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
-    snark_stats: &'a mut WeavySnarkExecutionStats,
+    snark_stats: &'a mut RuntimeWeavySnarkExecutionStats,
     trace_events: &'a mut RuntimeWeavyTraceSink,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
