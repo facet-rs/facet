@@ -129,6 +129,26 @@ pub trait HostCall<C> {
     fn call(&self, cx: &mut C) -> bool;
 }
 
+/// Static layout facts for a copied host-call chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostCallChainLayout {
+    /// Number of copied host-call stencils in the chain.
+    pub hostcall_sites: usize,
+    /// Number of copied stencils including the terminal done stencil.
+    pub copied_stencils: usize,
+}
+
+impl HostCallChainLayout {
+    /// Compute host-call chain layout facts from the number of call sites.
+    #[must_use]
+    pub const fn for_hostcall_sites(hostcall_sites: usize) -> Self {
+        Self {
+            hostcall_sites,
+            copied_stencils: hostcall_sites + 1,
+        }
+    }
+}
+
 /// Executable typed host-call chain over Weavy's shared copy-and-patch stencils.
 #[cfg(any(
     all(target_os = "macos", target_arch = "aarch64"),
@@ -219,7 +239,7 @@ impl<I> HostCallChain<I> {
     /// Number of host-call stencil sites emitted by this chain.
     #[must_use]
     pub fn hostcall_site_count(&self) -> usize {
-        self.call_slots.len()
+        HostCallChainLayout::for_hostcall_sites(self.infos.len()).hostcall_sites
     }
 
     /// Number of raw host-call ABI records materialized for the most recent run.
@@ -639,7 +659,7 @@ mod tests {
     ))]
     #[test]
     fn typed_hostcall_chain_runs_consumer_intrinsics_without_raw_abi() {
-        use super::{HostCall, HostCallChain};
+        use super::{HostCall, HostCallChain, HostCallChainLayout};
 
         struct State {
             value: u64,
@@ -655,7 +675,12 @@ mod tests {
         }
 
         let mut chain = HostCallChain::new(vec![Add(20), Add(21)]);
+        assert_eq!(
+            HostCallChainLayout::for_hostcall_sites(2).copied_stencils,
+            3
+        );
         assert_eq!(chain.hostcall_site_count(), 2);
+        assert_eq!(chain.stencil_count(), 3);
         assert_eq!(chain.hostcall_count(), 0);
         let mut state = State { value: 1 };
         chain.run(&mut state);
@@ -672,7 +697,7 @@ mod tests {
     ))]
     #[test]
     fn typed_hostcall_chain_stops_when_consumer_returns_false() {
-        use super::{HostCall, HostCallChain};
+        use super::{HostCall, HostCallChain, HostCallChainLayout};
 
         struct State {
             value: u64,
@@ -704,7 +729,12 @@ mod tests {
                 keep_running: true,
             },
         ]);
+        assert_eq!(
+            HostCallChainLayout::for_hostcall_sites(3).copied_stencils,
+            4
+        );
         assert_eq!(chain.hostcall_site_count(), 3);
+        assert_eq!(chain.stencil_count(), 4);
         assert_eq!(chain.hostcall_count(), 0);
         let mut state = State { value: 0 };
         chain.run(&mut state);

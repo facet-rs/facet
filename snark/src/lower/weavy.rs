@@ -1258,7 +1258,8 @@ fn hostcall_block_readiness(blocks: &[Vec<DenseSnarkWeavyOp>]) -> WeavyHostCallB
             None => {
                 readiness.compatible_blocks += 1;
                 readiness.compatible_intrinsic_ops += intrinsic_count;
-                readiness.compatible_hostcall_stencils += intrinsic_count + 1;
+                readiness.compatible_hostcall_stencils +=
+                    hostcall_chain_layout_for_sites(intrinsic_count).copied_stencils;
             }
         }
     }
@@ -1267,6 +1268,27 @@ fn hostcall_block_readiness(blocks: &[Vec<DenseSnarkWeavyOp>]) -> WeavyHostCallB
         .map(|(barrier, count)| WeavyHostCallBlockBarrierSummary { barrier, count })
         .collect();
     readiness
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HostCallChainLayoutFacts {
+    copied_stencils: usize,
+}
+
+fn hostcall_chain_layout_for_sites(hostcall_sites: usize) -> HostCallChainLayoutFacts {
+    #[cfg(feature = "jit")]
+    {
+        let layout = weavy::jit::HostCallChainLayout::for_hostcall_sites(hostcall_sites);
+        HostCallChainLayoutFacts {
+            copied_stencils: layout.copied_stencils,
+        }
+    }
+    #[cfg(not(feature = "jit"))]
+    {
+        HostCallChainLayoutFacts {
+            copied_stencils: hostcall_sites + 1,
+        }
+    }
 }
 
 fn hostcall_block_barrier(block: &[DenseSnarkWeavyOp]) -> Option<WeavyHostCallBlockBarrier> {
