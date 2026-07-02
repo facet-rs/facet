@@ -4,12 +4,6 @@
 //! functions, state ABI, host calls, and lowering policy; Weavy only exposes the
 //! neutral mechanics that multiple backends need.
 
-#[cfg(any(
-    all(target_os = "macos", target_arch = "aarch64"),
-    all(target_os = "linux", target_arch = "x86_64")
-))]
-use std::marker::PhantomData;
-
 pub use copypatch::{patch_branch26, patch_x86_rel32};
 
 #[cfg(any(
@@ -80,39 +74,31 @@ pub trait HostCall<C> {
     all(target_os = "macos", target_arch = "aarch64"),
     all(target_os = "linux", target_arch = "x86_64")
 ))]
-pub struct HostCallChain<C, I> {
+pub struct HostCallChain<I> {
     infos: Vec<I>,
+    call_slots: Vec<ProgSlot>,
     calls: Vec<HostCallInfo>,
     native: NativeProgram,
-    _marker: PhantomData<fn(&mut C)>,
 }
 
 #[cfg(any(
     all(target_os = "macos", target_arch = "aarch64"),
     all(target_os = "linux", target_arch = "x86_64")
 ))]
-impl<C, I> HostCallChain<C, I>
-where
-    I: HostCall<C>,
-{
+impl<I> HostCallChain<I> {
     /// Build an executable chain that calls each metadata item in order.
     ///
     /// Empty chains are valid and immediately return.
     #[must_use]
     pub fn new(infos: Vec<I>) -> Self {
-        let calls: Vec<_> = infos
-            .iter()
-            .map(|info| HostCallInfo {
-                info: core::ptr::from_ref(info).cast(),
-                call: typed_hostcall::<C, I>,
-            })
-            .collect();
-
         let mut layout = StencilLayout::new();
         let root = layout.start_chain();
         let mut previous = None;
-        for call in &calls {
-            let current = layout.emit_hostcall(root, core::ptr::from_ref(call));
+        let mut call_slots = Vec::with_capacity(infos.len());
+        for _ in &infos {
+            let slot = layout.reserve_prog_slot(root.prog_index);
+            call_slots.push(slot);
+            let current = layout.emit_stencil(stencils::HOSTCALL);
             if let Some(previous) = previous {
                 layout.patch_hostcall_continuation(previous, current);
             }
@@ -125,14 +111,27 @@ where
 
         Self {
             infos,
-            calls,
+            call_slots,
+            calls: Vec::new(),
             native: NativeProgram::new(layout, root),
-            _marker: PhantomData,
         }
     }
 
     /// Run the copied host-call chain against a typed context.
-    pub fn run(&self, cx: &mut C) {
+    pub fn run<C>(&mut self, cx: &mut C)
+    where
+        I: HostCall<C>,
+    {
+        self.calls.clear();
+        self.calls
+            .extend(self.infos.iter().map(|info| HostCallInfo {
+                info: core::ptr::from_ref(info).cast(),
+                call: typed_hostcall::<C, I>,
+            }));
+        for (slot, call) in self.call_slots.iter().copied().zip(&self.calls) {
+            self.native
+                .fill_prog_slot(slot, core::ptr::from_ref(call) as u64);
+        }
         let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
         let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
         unsafe {
@@ -578,7 +577,7 @@ mod tests {
             }
         }
 
-        let chain = HostCallChain::new(vec![Add(20), Add(21)]);
+        let mut chain = HostCallChain::new(vec![Add(20), Add(21)]);
         let mut state = State { value: 1 };
         chain.run(&mut state);
 
@@ -612,7 +611,7 @@ mod tests {
             }
         }
 
-        let chain = HostCallChain::new(vec![
+        let mut chain = HostCallChain::new(vec![
             Step {
                 add: 1,
                 keep_running: true,
