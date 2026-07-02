@@ -4391,6 +4391,32 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
     )
 }
 
+/// Execute a prepared Weavy plan with skip-invalid recovery, without collecting
+/// Weavy runner counters.
+pub fn parse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_weavy_with_lexer_program(
+        RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::SkipInvalidInput,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
+    )
+}
+
 /// Execute a recovering prepared Weavy plan and collect reusable-node metadata.
 pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
     plan: &WeavyParsePlan,
@@ -10422,6 +10448,11 @@ mod tests {
         let metered = parse_prepared_weavy_with_report(&plan, &parser, &table, "ab").unwrap();
         let unmetered =
             parse_prepared_weavy_unmetered_with_report(&plan, &parser, &table, "ab").unwrap();
+        let recovering_unmetered =
+            parse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
+                &plan, &parser, &table, "ab", None,
+            )
+            .unwrap();
         #[cfg(all(
             feature = "jit",
             any(
@@ -10436,10 +10467,14 @@ mod tests {
         assert_eq!(metered.tree(), unmetered.tree());
         assert!(!metered.trace_events().is_empty());
         assert!(unmetered.trace_events().is_empty());
+        assert!(recovering_unmetered.trace_events().is_empty());
         assert_eq!(
             metered.accepted_tree_events(),
             unmetered.accepted_tree_events()
         );
+        assert_eq!(metered.tree(), recovering_unmetered.tree());
+        assert_eq!(recovering_unmetered.accepted_count(), 1);
+        assert_eq!(recovering_unmetered.failure_count(), 0);
         assert!(unmetered.accepted_resolved_tree(&parser, "ab").is_some());
         #[cfg(all(
             feature = "jit",

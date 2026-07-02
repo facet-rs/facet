@@ -38,8 +38,8 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         WeavyParseError, WeavyParsePlan, WeavyParseReport,
-        parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
-        parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner,
+        parse_prepared_weavy_recovering_unmetered_with_report_and_scanner,
         parse_prepared_weavy_unmetered_with_report, parse_prepared_weavy_with_report,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
@@ -137,13 +137,13 @@ fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
 }
 
 fn recover_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_recovering_with_report_and_scanner(
+    parse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
         &p.plan, &p.parser, &p.table, input, None,
     )
 }
 
 fn collect_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
+    parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
         &p.plan, &p.parser, &p.table, input, None,
     )
 }
