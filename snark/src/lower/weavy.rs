@@ -8733,14 +8733,17 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let lookahead = LookaheadTokenId::from_index(self.lookahead_id.get() as usize);
         match action {
             parser_ir::ParseAction::Shift { state, .. } => {
+                let state = parser_ir::ParseStateId::from_index(state.get() as usize);
                 let commit = SnarkIntrinsic::CommitLookahead { version, lookahead };
                 let shift = SnarkIntrinsic::Shift {
                     version,
                     state: ParseStateId::from_index(state.get() as usize),
                     lookahead,
                 };
-                let _ = self.step_intrinsic(&commit)?;
-                let _ = self.step_intrinsic(&shift)?;
+                self.snark_stats.record_intrinsic(&commit);
+                self.commit_lookahead_direct()?;
+                self.snark_stats.record_intrinsic(&shift);
+                self.shift_direct(state)?;
             }
             parser_ir::ParseAction::ShiftExtra => {
                 let state = self
@@ -8754,8 +8757,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     state: ParseStateId::from_index(state.get() as usize),
                     lookahead,
                 };
-                let _ = self.step_intrinsic(&commit)?;
-                let _ = self.step_intrinsic(&shift_extra)?;
+                self.snark_stats.record_intrinsic(&commit);
+                self.commit_lookahead_direct()?;
+                self.snark_stats.record_intrinsic(&shift_extra);
+                self.shift_extra_direct(state)?;
             }
             parser_ir::ParseAction::Reduce {
                 production,
@@ -8773,7 +8778,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     dynamic_precedence,
                     aliases: None,
                 };
-                let _ = self.step_intrinsic(&reduce)?;
+                self.snark_stats.record_intrinsic(&reduce);
+                let _ = self.reduce_direct(production, metadata, symbol, child_count)?;
             }
             parser_ir::ParseAction::Accept {
                 production,
@@ -8790,9 +8796,226 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     child_count,
                     dynamic_precedence,
                 };
-                let _ = self.step_intrinsic(&accept)?;
+                self.snark_stats.record_intrinsic(&accept);
+                self.accept_direct(production, metadata, child_count)?;
             }
         }
+        Ok(())
+    }
+
+    fn commit_lookahead_direct(&mut self) -> Result<(), RuntimeWeavyStepError> {
+        let state = self
+            .stack
+            .last()
+            .ok_or(RuntimeWeavyStepError::EmptyStack)?
+            .state;
+        let token = self.lookahead.ok_or(RuntimeWeavyStepError::NoToken {
+            state,
+            byte_position: self.byte_position,
+            expected: RuntimeWeavyExpected::Empty,
+        })?;
+        self.committed_start = Some(self.byte_position);
+        self.update_auto_close_stack(token);
+        self.byte_position = token.end;
+        if let Some(scanner) = token.scanner {
+            self.scanner_snapshot = scanner.after();
+        }
+        Ok(())
+    }
+
+    fn shift_direct(
+        &mut self,
+        state: parser_ir::ParseStateId,
+    ) -> Result<(), RuntimeWeavyStepError> {
+        let token = self.lookahead.ok_or(RuntimeWeavyStepError::NoToken {
+            state,
+            byte_position: self.byte_position,
+            expected: RuntimeWeavyExpected::Empty,
+        })?;
+        let start = self.committed_start.take().unwrap_or(self.byte_position);
+        let (bytes, points) = runtime_weavy_input_ranges(self.input_points, start, token.end);
+        let event = parser_ir::TreeEvent::Token {
+            version: self.version,
+            symbol: runtime_weavy_lookahead_parser_symbol(token.lookahead),
+            lookahead: self.lookahead_id,
+            bytes,
+            points,
+            extra: false,
+            named: false,
+            keyword: parser_ir::KeywordStatus::Unchecked,
+        };
+        self.emit_runtime_tree_event(event);
+        trace_push!(
+            self.trace_events,
+            parser_ir::TraceEvent::Shift {
+                version: self.version,
+                lookahead: self.lookahead_id,
+                state,
+            }
+        );
+        trace_push!(
+            self.trace_events,
+            parser_ir::TraceEvent::StateEnter {
+                id: self.trace_events.next_id(),
+                version: self.version,
+                state,
+            }
+        );
+        self.stack.to_mut().push(RuntimeWeavyStackEntry {
+            state,
+            fragment: Some(RuntimeWeavyFragment::Hidden {
+                children: self.tree_store.empty_children(),
+                visible_nodes: self.tree_store.empty_children(),
+                start_byte: start,
+                end_byte: token.end,
+                lookahead_end_byte: token.inspected_end,
+                start_scanner_snapshot: self.scanner_snapshot,
+            }),
+            extra: false,
+            end_byte: token.end,
+        });
+        Ok(())
+    }
+
+    fn shift_extra_direct(
+        &mut self,
+        state: parser_ir::ParseStateId,
+    ) -> Result<(), RuntimeWeavyStepError> {
+        let token = self.lookahead.ok_or(RuntimeWeavyStepError::NoToken {
+            state,
+            byte_position: self.byte_position,
+            expected: RuntimeWeavyExpected::Empty,
+        })?;
+        let start = self.committed_start.take().unwrap_or(self.byte_position);
+        if let Some((fragment, events)) = self.runtime_extra_fragment(
+            self.version,
+            token.lookahead,
+            start,
+            token.end,
+            token.inspected_end,
+            self.scanner_snapshot,
+        ) {
+            self.emit_runtime_tree_events(events);
+            self.stack.to_mut().push(RuntimeWeavyStackEntry {
+                state,
+                fragment: Some(fragment),
+                extra: true,
+                end_byte: token.end,
+            });
+        }
+        Ok(())
+    }
+
+    fn reduce_direct(
+        &mut self,
+        production: parser_ir::ProductionId,
+        metadata: parser_ir::ProductionMetadataId,
+        symbol: parser_ir::NonterminalId,
+        child_count: usize,
+    ) -> Result<parser_ir::ParseStateId, RuntimeWeavyStepError> {
+        let reduction = self.runtime_reduce_fragment(production, metadata, child_count, false)?;
+        trace_push!(
+            self.trace_events,
+            parser_ir::TraceEvent::Reduce {
+                version: self.version,
+                production,
+                metadata,
+            }
+        );
+        let head_state = self
+            .stack
+            .last()
+            .ok_or(RuntimeWeavyStepError::EmptyStack)?
+            .state;
+        let goto = self.goto_state(head_state, symbol)?;
+        let (_start_byte, end_byte) = reduction.fragment.byte_range();
+        self.update_auto_close_stack_for_reduction(&reduction.fragment);
+        if let RuntimeWeavyFragment::Node {
+            node,
+            start_byte,
+            end_byte,
+            lookahead_end_byte,
+            start_scanner_snapshot,
+        } = &reduction.fragment
+            && self.reuse_collection == RuntimeWeavyReuseCollection::Enabled
+            && start_byte < end_byte
+        {
+            self.reusable_nodes.push(RuntimeWeavyReusableNode {
+                source_node: *node,
+                symbol,
+                entry_state: head_state,
+                entry_scanner_snapshot: *start_scanner_snapshot,
+                exit_scanner_snapshot: self.scanner_snapshot,
+                source_start_byte: *start_byte,
+                source_end_byte: *end_byte,
+                start_byte: *start_byte,
+                end_byte: *end_byte,
+                lookahead_end_byte: *lookahead_end_byte,
+                contains_error: false,
+            });
+        }
+        self.stack.to_mut().push(RuntimeWeavyStackEntry {
+            state: goto,
+            fragment: Some(reduction.fragment),
+            extra: false,
+            end_byte,
+        });
+        for fragment in reduction.trailing_extras {
+            let (_, end_byte) = fragment.byte_range();
+            self.stack.to_mut().push(RuntimeWeavyStackEntry {
+                state: goto,
+                fragment: Some(fragment),
+                extra: true,
+                end_byte,
+            });
+        }
+        trace_push!(
+            self.trace_events,
+            parser_ir::TraceEvent::StateEnter {
+                id: self.trace_events.next_id(),
+                version: self.version,
+                state: goto,
+            }
+        );
+        Ok(goto)
+    }
+
+    fn accept_direct(
+        &mut self,
+        production: parser_ir::ProductionId,
+        metadata: parser_ir::ProductionMetadataId,
+        child_count: usize,
+    ) -> Result<(), RuntimeWeavyStepError> {
+        let state = self
+            .stack
+            .last()
+            .ok_or(RuntimeWeavyStepError::EmptyStack)?
+            .state;
+        let token = self.lookahead.ok_or(RuntimeWeavyStepError::NoToken {
+            state,
+            byte_position: self.byte_position,
+            expected: RuntimeWeavyExpected::Empty,
+        })?;
+        if token.lookahead != parser_ir::LookaheadSymbol::Eof
+            || self.byte_position != self.input.len()
+        {
+            return Err(RuntimeWeavyStepError::TrailingInput {
+                byte_position: self.byte_position,
+            });
+        }
+        let reduction = self.runtime_reduce_fragment(production, metadata, child_count, true)?;
+        trace_push!(
+            self.trace_events,
+            parser_ir::TraceEvent::Reduce {
+                version: self.version,
+                production,
+                metadata,
+            }
+        );
+        let RuntimeWeavyFragment::Node { node, .. } = reduction.fragment else {
+            return Err(RuntimeWeavyStepError::AcceptedHiddenRoot);
+        };
+        self.accepted_root = Some(self.finish_runtime_root(node)?);
         Ok(())
     }
 
@@ -8884,74 +9107,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 Ok(Control::CallBlock(block))
             }
             SnarkIntrinsic::CommitLookahead { .. } => {
-                let state = self
-                    .stack
-                    .last()
-                    .ok_or(RuntimeWeavyStepError::EmptyStack)?
-                    .state;
-                let token = self.lookahead.ok_or(RuntimeWeavyStepError::NoToken {
-                    state,
-                    byte_position: self.byte_position,
-                    expected: RuntimeWeavyExpected::Empty,
-                })?;
-                self.committed_start = Some(self.byte_position);
-                self.update_auto_close_stack(token);
-                self.byte_position = token.end;
-                if let Some(scanner) = token.scanner {
-                    self.scanner_snapshot = scanner.after();
-                }
+                self.commit_lookahead_direct()?;
                 Ok(Control::Continue)
             }
             SnarkIntrinsic::Shift { state, .. } => {
                 let state = parser_state(*state);
-                let token = self.lookahead.ok_or(RuntimeWeavyStepError::NoToken {
-                    state,
-                    byte_position: self.byte_position,
-                    expected: RuntimeWeavyExpected::Empty,
-                })?;
-                let start = self.committed_start.take().unwrap_or(self.byte_position);
-                let (bytes, points) =
-                    runtime_weavy_input_ranges(self.input_points, start, token.end);
-                let event = parser_ir::TreeEvent::Token {
-                    version: self.version,
-                    symbol: runtime_weavy_lookahead_parser_symbol(token.lookahead),
-                    lookahead: self.lookahead_id,
-                    bytes,
-                    points,
-                    extra: false,
-                    named: false,
-                    keyword: parser_ir::KeywordStatus::Unchecked,
-                };
-                self.emit_runtime_tree_event(event);
-                trace_push!(
-                    self.trace_events,
-                    parser_ir::TraceEvent::Shift {
-                        version: self.version,
-                        lookahead: self.lookahead_id,
-                        state,
-                    }
-                );
-                trace_push!(
-                    self.trace_events,
-                    parser_ir::TraceEvent::StateEnter {
-                        id: self.trace_events.next_id(),
-                        version: self.version,
-                        state,
-                    }
-                );
-                self.stack.to_mut().push(RuntimeWeavyStackEntry {
-                    state,
-                    fragment: Some(RuntimeWeavyFragment::Hidden {
-                        children: self.tree_store.empty_children(),
-                        visible_nodes: self.tree_store.empty_children(),
-                        start_byte: start,
-                        end_byte: token.end,
-                        lookahead_end_byte: token.inspected_end,
-                        start_scanner_snapshot: self.scanner_snapshot,
-                    }),
-                    extra: false,
-                    end_byte: token.end,
-                });
+                self.shift_direct(state)?;
                 if self.mode == RuntimeWeavyMode::ApplyAction {
                     return Ok(Control::Continue);
                 }
@@ -8959,28 +9120,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             }
             SnarkIntrinsic::ShiftExtra { state, .. } => {
                 let state = parser_state(*state);
-                let token = self.lookahead.ok_or(RuntimeWeavyStepError::NoToken {
-                    state,
-                    byte_position: self.byte_position,
-                    expected: RuntimeWeavyExpected::Empty,
-                })?;
-                let start = self.committed_start.take().unwrap_or(self.byte_position);
-                if let Some((fragment, events)) = self.runtime_extra_fragment(
-                    self.version,
-                    token.lookahead,
-                    start,
-                    token.end,
-                    token.inspected_end,
-                    self.scanner_snapshot,
-                ) {
-                    self.emit_runtime_tree_events(events);
-                    self.stack.to_mut().push(RuntimeWeavyStackEntry {
-                        state,
-                        fragment: Some(fragment),
-                        extra: true,
-                        end_byte: token.end,
-                    });
-                }
+                self.shift_extra_direct(state)?;
                 if self.mode == RuntimeWeavyMode::ApplyAction {
                     return Ok(Control::Continue);
                 }
@@ -8995,72 +9135,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
             } => {
                 let production = parser_production(*production);
                 let metadata = parser_metadata(*metadata);
-                let reduction =
-                    self.runtime_reduce_fragment(production, metadata, *child_count, false)?;
-                trace_push!(
-                    self.trace_events,
-                    parser_ir::TraceEvent::Reduce {
-                        version: self.version,
-                        production,
-                        metadata,
-                    }
-                );
-                let head_state = self
-                    .stack
-                    .last()
-                    .ok_or(RuntimeWeavyStepError::EmptyStack)?
-                    .state;
                 let symbol = parser_nonterminal(*symbol);
-                let goto = self.goto_state(head_state, symbol)?;
-                let (_start_byte, end_byte) = reduction.fragment.byte_range();
-                self.update_auto_close_stack_for_reduction(&reduction.fragment);
-                if let RuntimeWeavyFragment::Node {
-                    node,
-                    start_byte,
-                    end_byte,
-                    lookahead_end_byte,
-                    start_scanner_snapshot,
-                } = &reduction.fragment
-                    && self.reuse_collection == RuntimeWeavyReuseCollection::Enabled
-                    && start_byte < end_byte
-                {
-                    self.reusable_nodes.push(RuntimeWeavyReusableNode {
-                        source_node: *node,
-                        symbol,
-                        entry_state: head_state,
-                        entry_scanner_snapshot: *start_scanner_snapshot,
-                        exit_scanner_snapshot: self.scanner_snapshot,
-                        source_start_byte: *start_byte,
-                        source_end_byte: *end_byte,
-                        start_byte: *start_byte,
-                        end_byte: *end_byte,
-                        lookahead_end_byte: *lookahead_end_byte,
-                        contains_error: false,
-                    });
-                }
-                self.stack.to_mut().push(RuntimeWeavyStackEntry {
-                    state: goto,
-                    fragment: Some(reduction.fragment),
-                    extra: false,
-                    end_byte,
-                });
-                for fragment in reduction.trailing_extras {
-                    let (_, end_byte) = fragment.byte_range();
-                    self.stack.to_mut().push(RuntimeWeavyStackEntry {
-                        state: goto,
-                        fragment: Some(fragment),
-                        extra: true,
-                        end_byte,
-                    });
-                }
-                trace_push!(
-                    self.trace_events,
-                    parser_ir::TraceEvent::StateEnter {
-                        id: self.trace_events.next_id(),
-                        version: self.version,
-                        state: goto,
-                    }
-                );
+                let goto = self.reduce_direct(production, metadata, symbol, *child_count)?;
                 if self.mode == RuntimeWeavyMode::ApplyAction {
                     return Ok(Control::Continue);
                 }
@@ -9072,39 +9148,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 child_count,
                 ..
             } => {
-                let state = self
-                    .stack
-                    .last()
-                    .ok_or(RuntimeWeavyStepError::EmptyStack)?
-                    .state;
-                let token = self.lookahead.ok_or(RuntimeWeavyStepError::NoToken {
-                    state,
-                    byte_position: self.byte_position,
-                    expected: RuntimeWeavyExpected::Empty,
-                })?;
-                if token.lookahead != parser_ir::LookaheadSymbol::Eof
-                    || self.byte_position != self.input.len()
-                {
-                    return Err(RuntimeWeavyStepError::TrailingInput {
-                        byte_position: self.byte_position,
-                    });
-                }
                 let production = parser_production(*production);
                 let metadata = parser_metadata(*metadata);
-                let reduction =
-                    self.runtime_reduce_fragment(production, metadata, *child_count, true)?;
-                trace_push!(
-                    self.trace_events,
-                    parser_ir::TraceEvent::Reduce {
-                        version: self.version,
-                        production,
-                        metadata,
-                    }
-                );
-                let RuntimeWeavyFragment::Node { node, .. } = reduction.fragment else {
-                    return Err(RuntimeWeavyStepError::AcceptedHiddenRoot);
-                };
-                self.accepted_root = Some(self.finish_runtime_root(node)?);
+                self.accept_direct(production, metadata, *child_count)?;
                 Ok(Control::Return)
             }
             SnarkIntrinsic::CallExternalScanner { .. }
