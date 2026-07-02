@@ -125,7 +125,6 @@ id_type!(
 );
 id_type!(TraceEventId, "Snark parser trace event identity.");
 id_type!(TreeEventId, "Snark tree-event identity.");
-id_type!(QueryPlanId, "Snark query plan identity.");
 id_type!(
     ValidSymbolSetId,
     "Snark external scanner valid-symbol-set identity."
@@ -138,7 +137,6 @@ id_type!(StackMergeKeyId, "Snark GLR stack-merge-key identity.");
 id_type!(BranchRankingId, "Snark GLR branch-ranking identity.");
 id_type!(ProductionMetadataId, "Snark production metadata identity.");
 id_type!(TreeNodeId, "Snark runtime tree-node identity.");
-id_type!(QueryCaptureId, "Snark query capture identity.");
 
 /// A domain intrinsic emitted by Snark lowering.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -282,22 +280,6 @@ pub enum SnarkIntrinsic {
         /// Tree event id.
         event: TreeEventId,
     },
-    /// Emit a query capture into the query result sink.
-    EmitCapture {
-        /// Query plan that emitted the capture.
-        query: QueryPlanId,
-        /// Query capture id.
-        capture: QueryCaptureId,
-        /// Runtime tree node captured.
-        node: TreeNodeId,
-        /// Optional field associated with the capture.
-        field: Option<FieldId>,
-    },
-    /// Run a lowered query plan over the current tree/event stream.
-    RunQuery {
-        /// Query plan id.
-        query: QueryPlanId,
-    },
 }
 
 /// Why a GLR branch was retired by Snark lowering/runtime.
@@ -330,8 +312,6 @@ pub enum SnarkIntrinsicDomain {
     Recovery,
     /// Runtime tree/event materialization.
     Tree,
-    /// Query/highlight capture evaluation.
-    Query,
     /// Diagnostic trace emission.
     Trace,
 }
@@ -368,10 +348,8 @@ pub enum SnarkStencilFamily {
     GlrScheduler,
     /// Tree store and CST/event materialization.
     TreeBuilder,
-    /// Trace/tree/query capture sink writes.
+    /// Trace/tree sink writes.
     Sink,
-    /// Query execution over the resolved tree/event stream.
-    Query,
 }
 
 /// How a Snark intrinsic should become executable in a native Weavy backend.
@@ -386,8 +364,6 @@ pub enum SnarkStencilExecution {
     HostCall,
     /// Optional sink adapter; removable when the sink is disabled.
     SinkAdapter,
-    /// Query-plan stencil over an accepted tree/event stream.
-    QueryPlan,
 }
 
 /// Session state a Snark stencil may read or mutate.
@@ -420,10 +396,6 @@ pub enum SnarkStencilState {
     TraceSink,
     /// Tree-event sink.
     TreeEventSink,
-    /// Query plan data.
-    QueryPlan,
-    /// Query capture sink.
-    QueryCaptureSink,
 }
 
 /// ABI contract for one Snark-owned native stencil family.
@@ -864,33 +836,6 @@ impl SnarkIntrinsic {
                     state: &[SnarkStencilState::TreeEventSink],
                 },
             ),
-            Self::EmitCapture { .. } => (
-                SnarkIntrinsicDomain::Query,
-                SnarkIntrinsicLowering::SinkOp,
-                EffectContract::new().write_resource(EffectResource::Sink("query_captures")),
-                SnarkStencilContract {
-                    family: SnarkStencilFamily::Sink,
-                    execution: SnarkStencilExecution::SinkAdapter,
-                    state: &[SnarkStencilState::QueryCaptureSink],
-                },
-            ),
-            Self::RunQuery { .. } => (
-                SnarkIntrinsicDomain::Query,
-                SnarkIntrinsicLowering::DialectOp,
-                EffectContract::new()
-                    .read_resource(EffectResource::Sink("tree_events"))
-                    .write_resource(EffectResource::Sink("query_captures"))
-                    .may_fail(),
-                SnarkStencilContract {
-                    family: SnarkStencilFamily::Query,
-                    execution: SnarkStencilExecution::QueryPlan,
-                    state: &[
-                        SnarkStencilState::QueryPlan,
-                        SnarkStencilState::TreeEventSink,
-                        SnarkStencilState::QueryCaptureSink,
-                    ],
-                },
-            ),
         };
         SnarkIntrinsicSemantics {
             descriptor,
@@ -919,8 +864,6 @@ impl IntrinsicOp for SnarkIntrinsic {
             Self::EmitTrace { .. } => "emit_trace",
             Self::EmitNode { .. } => "emit_node",
             Self::EmitTreeEvent { .. } => "emit_tree_event",
-            Self::EmitCapture { .. } => "emit_capture",
-            Self::RunQuery { .. } => "run_query",
         };
         IntrinsicDescriptor {
             dialect: Self::DIALECT,
@@ -6340,9 +6283,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
             | SnarkIntrinsic::RetireBranch { .. }
             | SnarkIntrinsic::EmitTrace { .. }
             | SnarkIntrinsic::EmitNode { .. }
-            | SnarkIntrinsic::EmitTreeEvent { .. }
-            | SnarkIntrinsic::EmitCapture { .. }
-            | SnarkIntrinsic::RunQuery { .. } => Err(RuntimeWeavyStepError::UnsupportedCanonicalOp),
+            | SnarkIntrinsic::EmitTreeEvent { .. } => {
+                Err(RuntimeWeavyStepError::UnsupportedCanonicalOp)
+            }
         }
     }
 

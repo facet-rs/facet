@@ -4,7 +4,7 @@ This document fixes the target architecture for Snark's parser lowering. Snark
 does not inspect generated Tree-sitter implementation files and does not treat
 generated parser code as an oracle. The parser is Snark's own
 Tree-sitter-compatible LR/GLR machine, built from validated `grammar.json`,
-scanner, query, corpus, and runtime-input contracts, then carried by Weavy
+scanner, corpus, and runtime-input contracts, then carried by Weavy
 programs.
 
 Weavy is the lowering and execution carrier. Snark owns parser semantics.
@@ -20,7 +20,7 @@ Snark owns:
 - Parser generation from validated grammar facts.
 - External scanner host ABI and scanner state replay.
 - Parse stack, GLR graph stack, tree construction, error recovery, incremental
-  edit handling, query execution, trace events, and oracle comparison.
+  edit handling, trace events, and oracle comparison.
 
 Weavy owns:
 
@@ -94,15 +94,14 @@ The executable intrinsic families should be:
   values, preserve scanner state at stack heads, and expose graph-stack ids.
 - Tree operations: open node, shift token, reduce node, attach field, apply
   alias, emit missing node, emit error node, finish node, and reuse old subtree.
-- Query operations: run compiled query bytecode over produced trees, emit
-  captures, evaluate predicates, and emit injection/tag/local/highlight events.
-- Oracle operations: normalize tree events to corpus S-expressions and normalize
-  query captures to highlight assertions.
+- Oracle operations: normalize tree events to corpus S-expressions. Query,
+  injection, tag, local, and highlight execution consume the Weavy-produced tree
+  through Snark's query engine, not through parser executor intrinsics.
 
 Each intrinsic has a stable `IntrinsicDescriptor` in the
 `snark.tree_sitter` dialect and a conservative `EffectContract`. Parser actions
 that advance source input, mutate scanner state, mutate parser stack state, or
-write tree/query sinks must remain ordered. External scanner calls are barriers
+write tree sinks must remain ordered. External scanner calls are barriers
 because they call language-owned scanner code.
 
 ## Blocks And Control Flow
@@ -247,11 +246,11 @@ machine; Snark defines and executes parser meaning.
    productions, terminals, lexical modes, precedence/conflict facts, LR actions,
    GLR conflict metadata, and tree emission plans.
 4. Lower generated tables into `SnarkWeavyLowered` blocks: root, state,
-   lex-mode, reduction, recovery, scanner, GLR worklist, and query blocks. This
+   lex-mode, reduction, recovery, scanner, and GLR worklist blocks. This
    is still data construction; no parser semantics move into Weavy.
 5. Implement the Snark `Step` runtime for the existing `SnarkIntrinsic`
    families, with explicit parser stack, GLR graph stack, scanner state, tree
-   sink, query sink, trace sink, and oracle sink.
+   sink, trace sink, and oracle sink.
 6. Make the pinned CSS fixture lane pass against parse corpus S-expressions
    and highlight assertions. The first passing lane should include at least one
    external-scanner valid-symbol-mask trace even if the chosen parse case does
