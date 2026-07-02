@@ -706,6 +706,11 @@ pub struct WeavyHostCallBlockReadiness {
     pub incompatible_blocks: usize,
     /// Intrinsic ops inside compatible blocks.
     pub compatible_intrinsic_ops: usize,
+    /// Copy-and-patch host-call stencils emitted by compatible blocks.
+    ///
+    /// The scaffold emits one host-call stencil per intrinsic plus one terminal
+    /// done stencil per compatible block.
+    pub compatible_hostcall_stencils: usize,
     /// Intrinsic ops inside incompatible blocks.
     pub incompatible_intrinsic_ops: usize,
     /// Distinct incompatibility reasons and their block counts.
@@ -1253,6 +1258,7 @@ fn hostcall_block_readiness(blocks: &[Vec<DenseSnarkWeavyOp>]) -> WeavyHostCallB
             None => {
                 readiness.compatible_blocks += 1;
                 readiness.compatible_intrinsic_ops += intrinsic_count;
+                readiness.compatible_hostcall_stencils += intrinsic_count + 1;
             }
         }
     }
@@ -11712,6 +11718,7 @@ mod tests {
                 compatible_blocks: 1,
                 incompatible_blocks: 3,
                 compatible_intrinsic_ops: 2,
+                compatible_hostcall_stencils: 3,
                 incompatible_intrinsic_ops: 1,
                 barrier_summaries: vec![
                     WeavyHostCallBlockBarrierSummary {

@@ -533,11 +533,12 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "hostcall_blocks: total={} compatible={} incompatible={} compatible_intrinsic_ops={} incompatible_intrinsic_ops={}",
+        "hostcall_blocks: total={} compatible={} incompatible={} compatible_intrinsic_ops={} compatible_hostcall_stencils={} incompatible_intrinsic_ops={}",
         hostcall_blocks.total_blocks,
         hostcall_blocks.compatible_blocks,
         hostcall_blocks.incompatible_blocks,
         hostcall_blocks.compatible_intrinsic_ops,
+        hostcall_blocks.compatible_hostcall_stencils,
         hostcall_blocks.incompatible_intrinsic_ops
     )?;
     if hostcall_blocks.barrier_summaries.is_empty() {
