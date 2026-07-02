@@ -1,3 +1,4 @@
+#[cfg(test)]
 use regex::Regex;
 
 use crate::parser::LexMatch;
@@ -128,21 +129,6 @@ pub(crate) fn match_known_pattern(
     Some(LexMatch::new(end, pattern_inspected_end(input, end)))
 }
 
-pub(crate) fn match_regex_leaf(
-    regex: &Regex,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    let haystack = input.get(byte_position..)?;
-    regex
-        .find(haystack)
-        .filter(|match_| match_.start() == 0)
-        .map(|match_| {
-            let end = byte_position + match_.end();
-            LexMatch::new(end, pattern_inspected_end(input, end))
-        })
-}
-
 pub(crate) fn match_nested_delimiters_with_inspection(
     open: &str,
     close: &str,
@@ -246,7 +232,8 @@ fn cached_regex(pattern: &str, flags: Option<&str>) -> Option<Regex> {
     entry.clone()
 }
 
-pub(crate) fn compile_regex_leaf(pattern: &str, flags: Option<&str>) -> Option<Regex> {
+#[cfg(test)]
+fn compile_regex_leaf(pattern: &str, flags: Option<&str>) -> Option<Regex> {
     Regex::new(&anchored_regex_source(pattern, flags)?).ok()
 }
 
@@ -260,6 +247,7 @@ pub(crate) fn regex_automata_leaf_source(pattern: &str, flags: Option<&str>) -> 
     })
 }
 
+#[cfg(test)]
 fn anchored_regex_source(pattern: &str, flags: Option<&str>) -> Option<String> {
     let body = rust_regex_source(pattern);
     let flags = rust_regex_flags(flags)?;

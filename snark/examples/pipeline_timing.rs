@@ -137,9 +137,8 @@ fn main() {
         analysis.readiness.host_call_barrier_intrinsic_count
     );
     println!(
-        "  lexer leaves: {} regex-automata, {} rust-regex fallback, {} unsupported pattern, {} unsupported terminal, {} unsupported symbol",
+        "  lexer leaves: {} regex-automata, {} unsupported pattern, {} unsupported terminal, {} unsupported symbol",
         analysis.readiness.lexer.regex_automata_count,
-        analysis.readiness.lexer.rust_regex_fallback_count,
         analysis.readiness.lexer.unsupported_pattern_count,
         analysis.readiness.lexer.unsupported_terminal_count,
         analysis.readiness.lexer.unsupported_symbol_count

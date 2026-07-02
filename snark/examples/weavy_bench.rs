@@ -294,7 +294,7 @@ fn main() {
         }
     }
     println!(
-        "  lexer lowering: literal sets {:>4}/{:<4}  pattern sets {:>4}/{:<4}  rematch {:>4}  known {:>4}  regex-auto {:>4}  fallback {:>4}  unsupported {:>4}",
+        "  lexer lowering: literal sets {:>4}/{:<4}  pattern sets {:>4}/{:<4}  rematch {:>4}  known {:>4}  regex-auto {:>4}  unsupported {:>4}",
         readiness.lexer.merged_literal_set_count,
         readiness.lexer.merged_literal_terminal_count,
         readiness.lexer.merged_pattern_set_count,
@@ -302,7 +302,6 @@ fn main() {
         readiness.lexer.merged_pattern_leaf_rematch_terminal_count,
         readiness.lexer.known_pattern_count,
         readiness.lexer.regex_automata_count,
-        readiness.lexer.rust_regex_fallback_count,
         readiness.lexer.unsupported_pattern_count
             + readiness.lexer.unsupported_terminal_count
             + readiness.lexer.unsupported_symbol_count

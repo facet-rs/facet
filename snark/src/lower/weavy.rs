@@ -15,7 +15,6 @@ use std::{
 };
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind as AhoMatchKind};
-use regex::Regex;
 use regex_automata::{
     Anchored, Input, MatchKind as RegexMatchKind, PatternSet,
     hybrid::dfa::{Cache as HybridDfaCache, DFA as HybridDfa, OverlappingState},
@@ -1462,10 +1461,6 @@ pub struct WeavyLexerReadiness {
     pub known_pattern_count: usize,
     /// Regex leaves backed by regex-automata and visible to lowering.
     pub regex_automata_count: usize,
-    /// Pattern leaves still delegated to the Rust regex engine.
-    pub regex_fallback_count: usize,
-    /// Regex leaves still backed by the Rust regex crate fallback.
-    pub rust_regex_fallback_count: usize,
     /// Pattern leaves unsupported by the current matcher compiler.
     pub unsupported_pattern_count: usize,
     /// Terminal roots still missing a lowered matcher.
@@ -1491,8 +1486,6 @@ impl WeavyLexerReadiness {
                 .direct_pattern_leaf_rematch_terminal_count,
             known_pattern_count: stats.known_pattern_count,
             regex_automata_count: stats.regex_automata_count,
-            regex_fallback_count: stats.rust_regex_fallback_count,
-            rust_regex_fallback_count: stats.rust_regex_fallback_count,
             unsupported_pattern_count: stats.unsupported_pattern_count,
             unsupported_terminal_count: stats.count(WeavyLexOpKind::UnsupportedTerminal),
             unsupported_symbol_count: stats.count(WeavyLexOpKind::UnsupportedSymbol),
@@ -1511,12 +1504,6 @@ impl WeavyLexerReadiness {
     #[must_use]
     pub fn barrier_summaries(&self) -> Vec<WeavyLoweringBarrierSummary> {
         let mut summaries = Vec::new();
-        if self.rust_regex_fallback_count > 0 {
-            summaries.push(WeavyLoweringBarrierSummary {
-                barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::RustRegexFallback),
-                count: self.rust_regex_fallback_count,
-            });
-        }
         if self.unsupported_pattern_count > 0 {
             summaries.push(WeavyLoweringBarrierSummary {
                 barrier: WeavyLoweringBarrier::Lexer(WeavyLexerBarrierKind::UnsupportedPattern),
@@ -1549,8 +1536,6 @@ impl WeavyLexerReadiness {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum WeavyLexerBarrierKind {
-    /// A regex pattern still executes through the Rust regex fallback.
-    RustRegexFallback,
     /// A pattern is unsupported by the current matcher compiler.
     UnsupportedPattern,
     /// A terminal root is unsupported by the current matcher compiler.
@@ -1912,8 +1897,6 @@ pub struct WeavyLexerStats {
     pub regex_pattern_count: usize,
     /// Number of regex pattern nodes backed by regex-automata.
     pub regex_automata_count: usize,
-    /// Number of regex pattern nodes still using the Rust regex fallback engine.
-    pub rust_regex_fallback_count: usize,
     /// Number of pattern nodes unsupported by the current matcher compiler.
     pub unsupported_pattern_count: usize,
     /// Number of external scanner candidates reachable through lowered modes.
@@ -1933,9 +1916,6 @@ impl WeavyLexerStats {
     #[must_use]
     pub fn barrier_kinds(&self) -> Vec<WeavyLexerBarrierKind> {
         let mut kinds = Vec::new();
-        if self.rust_regex_fallback_count > 0 {
-            kinds.push(WeavyLexerBarrierKind::RustRegexFallback);
-        }
         if self.unsupported_pattern_count > 0 {
             kinds.push(WeavyLexerBarrierKind::UnsupportedPattern);
         }
@@ -2254,15 +2234,7 @@ impl WeavyLexExpr {
                     WeavyPatternMatcherKind::Known => stats.known_pattern_count += 1,
                     WeavyPatternMatcherKind::Regex => {
                         stats.regex_pattern_count += 1;
-                        match pattern.regex_lowering() {
-                            Some(WeavyRegexLowering::RegexAutomata) => {
-                                stats.regex_automata_count += 1;
-                            }
-                            Some(WeavyRegexLowering::RustRegexFallback) => {
-                                stats.rust_regex_fallback_count += 1;
-                            }
-                            None => {}
-                        }
+                        stats.regex_automata_count += 1;
                     }
                     WeavyPatternMatcherKind::Unsupported => stats.unsupported_pattern_count += 1,
                 }
@@ -2390,13 +2362,6 @@ impl WeavyPatternMatcher {
         }
     }
 
-    const fn regex_lowering(&self) -> Option<WeavyRegexLowering> {
-        match self {
-            Self::Regex(leaf) => Some(leaf.lowering()),
-            Self::Known(_) | Self::Unsupported => None,
-        }
-    }
-
     fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
         match self {
             Self::Known(pattern) => {
@@ -2426,12 +2391,8 @@ struct WeavyRegexLeaf {
 
 impl WeavyRegexLeaf {
     fn new(source: String, flags: Option<String>) -> Option<Self> {
-        let rust_regex = crate::lex_match::compile_regex_leaf(&source, flags.as_deref())?;
         let regex_source = crate::lex_match::regex_automata_leaf_source(&source, flags.as_deref())?;
-        let engine = AutomataRegex::new(&regex_source).ok().map_or(
-            WeavyRegexEngine::RustRegexFallback(rust_regex),
-            WeavyRegexEngine::RegexAutomata,
-        );
+        let engine = WeavyRegexEngine::RegexAutomata(AutomataRegex::new(&regex_source).ok()?);
         Some(Self {
             regex_source,
             engine,
@@ -2440,10 +2401,6 @@ impl WeavyRegexLeaf {
 
     fn source(&self) -> &str {
         self.regex_source.as_str()
-    }
-
-    const fn lowering(&self) -> WeavyRegexLowering {
-        self.engine.lowering()
     }
 
     fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
@@ -2511,31 +2468,14 @@ impl WeavyRegexChoiceMatcher {
 #[derive(Clone, Debug)]
 enum WeavyRegexEngine {
     RegexAutomata(AutomataRegex),
-    RustRegexFallback(Regex),
 }
 
 impl WeavyRegexEngine {
-    const fn lowering(&self) -> WeavyRegexLowering {
-        match self {
-            Self::RegexAutomata(_) => WeavyRegexLowering::RegexAutomata,
-            Self::RustRegexFallback(_) => WeavyRegexLowering::RustRegexFallback,
-        }
-    }
-
     fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
         match self {
             Self::RegexAutomata(regex) => match_regex_automata_leaf(regex, input, byte_position),
-            Self::RustRegexFallback(regex) => {
-                crate::lex_match::match_regex_leaf(regex, input, byte_position)
-            }
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WeavyRegexLowering {
-    RegexAutomata,
-    RustRegexFallback,
 }
 
 fn match_regex_automata_leaf(
@@ -8559,7 +8499,6 @@ mod tests {
         assert_eq!(stats.known_pattern_count, 1);
         assert_eq!(stats.regex_pattern_count, 2);
         assert_eq!(stats.regex_automata_count, 2);
-        assert_eq!(stats.rust_regex_fallback_count, 0);
         assert_eq!(stats.unsupported_pattern_count, 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Until], 1);
         assert_eq!(stats.op_counts[&WeavyLexOpKind::Repeat], 1);
@@ -8851,7 +8790,7 @@ mod tests {
     }
 
     #[test]
-    fn lexer_readiness_counts_fallback_leaves() {
+    fn lexer_readiness_counts_automata_and_unsupported_leaves() {
         let stats = sample_lexer_program().stats();
 
         let readiness = WeavyLexerReadiness::from_stats(&stats);
@@ -8865,8 +8804,6 @@ mod tests {
         assert_eq!(readiness.merged_pattern_leaf_rematch_terminal_count, 0);
         assert_eq!(readiness.known_pattern_count, 1);
         assert_eq!(readiness.regex_automata_count, 2);
-        assert_eq!(readiness.regex_fallback_count, 0);
-        assert_eq!(readiness.rust_regex_fallback_count, 0);
         assert_eq!(readiness.unsupported_pattern_count, 1);
         assert_eq!(readiness.unsupported_terminal_count, 1);
         assert_eq!(readiness.unsupported_symbol_count, 0);
@@ -9598,8 +9535,6 @@ mod tests {
                 .merged_pattern_leaf_rematch_terminal_count,
             0
         );
-        assert_eq!(analysis.readiness.lexer.regex_fallback_count, 0);
-        assert_eq!(analysis.readiness.lexer.rust_regex_fallback_count, 0);
         assert_eq!(
             analysis.readiness.lexer.barrier_kinds,
             vec![

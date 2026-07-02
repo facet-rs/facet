@@ -323,7 +323,7 @@ fn run_readiness(grammar_path: &str) {
         readiness.native_copy_patch_jit_available
     );
     println!(
-        "lexer: modes={} terminals={} literal_sets={}/{} pattern_sets={}/{} dfa_sets={}/{} leaf_rematch={} known_patterns={} regex_automata={} rust_regex_fallback={} unsupported_patterns={} unsupported_terminals={} unsupported_symbols={} external_scanners={}",
+        "lexer: modes={} terminals={} literal_sets={}/{} pattern_sets={}/{} dfa_sets={}/{} leaf_rematch={} known_patterns={} regex_automata={} unsupported_patterns={} unsupported_terminals={} unsupported_symbols={} external_scanners={}",
         analysis.lexer.mode_count,
         analysis.lexer.terminal_count,
         lexer.merged_literal_set_count,
@@ -335,7 +335,6 @@ fn run_readiness(grammar_path: &str) {
         lexer.merged_pattern_leaf_rematch_terminal_count,
         lexer.known_pattern_count,
         lexer.regex_automata_count,
-        lexer.rust_regex_fallback_count,
         lexer.unsupported_pattern_count,
         lexer.unsupported_terminal_count,
         lexer.unsupported_symbol_count,
