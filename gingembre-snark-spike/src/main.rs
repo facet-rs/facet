@@ -714,15 +714,13 @@ fn tidy_expected(mut items: Vec<String>) -> Vec<String> {
 }
 
 
-/// What the error state tells us, derived from its LR item set:
-/// - `expecting_nts`: nonterminals right after a dot (the "big picture": `expr`), and
-/// - `in_progress`: visible constructs with the dot advanced (what we're in the middle of),
-///   most-progressed first.
-fn state_context(
+/// Kernel-item facts for ONE state: nonterminals right after a dot (what it's waiting to
+/// parse) and visible in-progress constructs (dot advanced), with their dot positions.
+fn state_kernel(
     parser: &ParserGrammar,
     table: &ParseTable,
     state: snark::parser::ParseStateId,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<String>, Vec<(usize, String)>) {
     let Some(st) = table.states().get(state.get() as usize) else {
         return (Vec::new(), Vec::new());
     };
@@ -757,7 +755,32 @@ fn state_context(
             in_progress.push((item.dot(), sym.name().to_string()));
         }
     }
+    (expecting, in_progress)
+}
+
+/// Context derived from the error state + the PARSE STACK: `expecting_nts` from the error
+/// state's kernel ("expected expr"), and `in_progress` from kernel items across ALL stacked
+/// states, innermost first — this is what turns "found end of input" into
+/// "while parsing: if_statement" for an unclosed `{% if %}` (the if_statement item lives in a
+/// stacked state, not the error state).
+fn state_context(
+    parser: &ParserGrammar,
+    table: &ParseTable,
+    state: snark::parser::ParseStateId,
+    state_stack: &[snark::parser::ParseStateId],
+) -> (Vec<String>, Vec<String>) {
+    let (expecting, mut in_progress) = state_kernel(parser, table, state);
     in_progress.sort_by_key(|(dot, _)| std::cmp::Reverse(*dot));
+    // Walk the stack top-down (innermost enclosing construct first), skipping the error state
+    // itself (already processed).
+    for stacked in state_stack.iter().rev() {
+        if *stacked == state {
+            continue;
+        }
+        let (_, mut below) = state_kernel(parser, table, *stacked);
+        below.sort_by_key(|(dot, _)| std::cmp::Reverse(*dot));
+        in_progress.extend(below);
+    }
     let expecting = tidy_expected(expecting);
     let mut seen = std::collections::BTreeSet::new();
     let in_progress = in_progress
@@ -780,8 +803,8 @@ fn diagnose(
     use snark::parser::LookaheadSymbol;
 
     let names = TermNames::derive(parser);
-    let (state, byte, expected, found) = match err {
-        E::NoToken { state, byte_position, expected } => {
+    let (state, stack, byte, expected, found) = match err {
+        E::NoToken { state, state_stack, byte_position, expected } => {
             let found = match src[*byte_position..].chars().next() {
                 Some(c) => format!("`{c}`"),
                 None => "end of input".to_string(),
@@ -790,9 +813,9 @@ fn diagnose(
                 .iter()
                 .filter_map(|s| names.display_spelling(parser, s))
                 .collect();
-            (*state, *byte_position, expected, found)
+            (*state, state_stack, *byte_position, expected, found)
         }
-        E::NoAction { state, lookahead, byte_position } => {
+        E::NoAction { state, state_stack, lookahead, byte_position } => {
             // Derive the expected set from the state's own action entries.
             let expected = table
                 .states()
@@ -826,14 +849,14 @@ fn diagnose(
                 }
                 _ => "token".to_string(), // External / non_exhaustive
             };
-            (*state, *byte_position, expected, found)
+            (*state, state_stack, *byte_position, expected, found)
         }
         other => return format!("error: {other}"),
     };
 
     let expected = tidy_expected(expected);
     let (line, byte_col, char_col, line_text) = line_col(src, byte);
-    let (expecting_nts, in_progress) = state_context(parser, table, state);
+    let (expecting_nts, in_progress) = state_context(parser, table, state, stack);
 
     // Headline: prefer the derived nonterminal ("expected expr") over a raw terminal list.
     let what = if !expecting_nts.is_empty() {
