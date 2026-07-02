@@ -600,6 +600,12 @@ impl WeavySnarkProfileStencilReadiness {
         });
         summaries
     }
+
+    /// Return the largest backend execution lane in this profile, if any.
+    #[must_use]
+    pub fn dominant_backend_execution(&self) -> Option<WeavySnarkProfileBackendExecutionSummary> {
+        self.backend_execution_summaries().into_iter().next()
+    }
 }
 
 /// Snark stencil obligations grouped by native stencil family and execution mode.
@@ -11286,6 +11292,15 @@ mod tests {
                 total_count: 1 + lexer_stencil_count,
             }]
         );
+        assert_eq!(
+            direct_no_trace_profile.dominant_backend_execution(),
+            Some(WeavySnarkProfileBackendExecutionSummary {
+                execution: SnarkStencilExecution::LexerGraph,
+                parser_count: 1,
+                lexer_count: lexer_stencil_count,
+                total_count: 1 + lexer_stencil_count,
+            })
+        );
         assert!(direct_no_trace_profile.needs_parser_stencils());
         assert!(direct_no_trace_profile.needs_lexer_stencils());
         assert!(direct_no_trace_profile.needs_backend_stencils());
@@ -11414,6 +11429,7 @@ mod tests {
         assert_eq!(direct_profile.lexer_stencil_count(), 0);
         assert_eq!(direct_profile.backend_stencil_count(), 0);
         assert!(direct_profile.backend_execution_summaries().is_empty());
+        assert_eq!(direct_profile.dominant_backend_execution(), None);
         assert!(!direct_profile.needs_parser_stencils());
         assert!(!direct_profile.needs_lexer_stencils());
         assert!(!direct_profile.needs_backend_stencils());

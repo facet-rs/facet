@@ -187,6 +187,16 @@ fn write_stencil_profile(
         &profile.lexer_summaries,
     )?;
 
+    if let Some(summary) = profile.dominant_backend_execution() {
+        writeln!(
+            out,
+            "{label}_dominant_backend_execution: {:?} parser={} lexer={} total={}",
+            summary.execution, summary.parser_count, summary.lexer_count, summary.total_count
+        )?;
+    } else {
+        writeln!(out, "{label}_dominant_backend_execution: none")?;
+    }
+
     let backend_execution = profile.backend_execution_summaries();
     if backend_execution.is_empty() {
         writeln!(out, "{label}_backend_execution: none")?;
