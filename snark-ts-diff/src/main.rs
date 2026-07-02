@@ -339,13 +339,20 @@ fn run_readiness(grammar_path: &str) {
         println!("stencil_descriptors:");
         for summary in &readiness.snark_stencil_summaries {
             println!(
-                "  {}.{} domain={:?} lowering={:?} family={:?} execution={:?} state={:?} count={}",
+                "  {}.{} domain={:?} lowering={:?} family={:?} execution={:?} effect_order={:?} may_fail={} may_allocate={} calls_user_code={} opaque={} resources={:?} typed_memory={:?} state={:?} count={}",
                 summary.descriptor.dialect,
                 summary.descriptor.name,
                 summary.domain,
                 summary.lowering,
                 summary.stencil.family,
                 summary.stencil.execution,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque,
+                summary.effect.resources,
+                summary.effect.typed_memory,
                 summary.stencil.state,
                 summary.count
             );

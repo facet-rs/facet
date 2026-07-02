@@ -292,6 +292,9 @@ fn readiness_accepts_frozen_grammar_json() {
     assert!(stdout.contains("stencil_descriptors:"));
     assert!(stdout.contains("snark.tree_sitter.lex domain=Lexing lowering=LexerGraph"));
     assert!(stdout.contains("snark.tree_sitter.reduce domain=Tree lowering=DialectOp"));
+    assert!(stdout.contains("effect_order=Ordered"));
+    assert!(stdout.contains("may_fail=true may_allocate=true calls_user_code=false opaque=false"));
+    assert!(stdout.contains("resources=[ResourceEffect"));
     assert!(stdout.contains("host_barriers=0 opaque=0 host_calls=0"));
     assert!(stdout.contains("Lexer(ExternalScanner):"));
 }
