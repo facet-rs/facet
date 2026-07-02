@@ -5706,6 +5706,7 @@ struct RuntimeWeavyAction {
     token: RuntimeWeavyToken,
     lookahead: parser_ir::LookaheadTokenId,
     block: BlockRef,
+    action: parser_ir::ParseAction,
 }
 
 /// Execute a prepared parser plan through the direct Weavy runtime.
@@ -6543,6 +6544,7 @@ where
                     token: dispatch.token,
                     lookahead: dispatch.lookahead,
                     block: action_block.block_ref,
+                    action,
                 },
                 RuntimeWeavyReuseCollection::Disabled,
                 &mut output,
@@ -7859,6 +7861,7 @@ fn step_runtime_weavy_branch(
                     token: dispatch.token,
                     lookahead: dispatch.lookahead,
                     block: action_block.block_ref,
+                    action: *action,
                 },
                 step.reuse_collection,
                 output,
@@ -7909,6 +7912,7 @@ fn step_runtime_weavy_branch(
             token: dispatch.token,
             lookahead: dispatch.lookahead,
             block: action_block.block_ref,
+            action,
         },
         step.reuse_collection,
         output,
@@ -8096,20 +8100,30 @@ fn run_runtime_weavy_action(
     );
     stepper.lookahead = Some(action_ctx.token);
     let version = stepper.version;
-    match run_runtime_weavy_block(
-        input_ctx.plan,
-        action_ctx.block,
-        &mut stepper,
-        output.block_execution,
-        output.hostcall_stats,
-    ) {
-        Ok(run_stats) => add_run_stats(output.stats, run_stats),
-        Err(error) => {
+    if output.block_execution == RuntimeWeavyBlockExecution::Direct {
+        if let Err(error) = stepper.apply_action_direct(action_ctx.action) {
             let state_stack = stepper.stack.iter().map(|entry| entry.state).collect();
             return RuntimeWeavyStepOutcome::Failed {
                 version,
                 failure: runtime_weavy_failure(error, state_stack),
             };
+        }
+    } else {
+        match run_runtime_weavy_block(
+            input_ctx.plan,
+            action_ctx.block,
+            &mut stepper,
+            output.block_execution,
+            output.hostcall_stats,
+        ) {
+            Ok(run_stats) => add_run_stats(output.stats, run_stats),
+            Err(error) => {
+                let state_stack = stepper.stack.iter().map(|entry| entry.state).collect();
+                return RuntimeWeavyStepOutcome::Failed {
+                    version,
+                    failure: runtime_weavy_failure(error, state_stack),
+                };
+            }
         }
     }
     if let Some(root) = stepper.accepted_root {
@@ -8709,6 +8723,77 @@ impl<'a> RuntimeWeavyStepper<'a> {
         };
         self.dispatch = Some(dispatch.clone());
         Ok(dispatch)
+    }
+
+    fn apply_action_direct(
+        &mut self,
+        action: parser_ir::ParseAction,
+    ) -> Result<(), RuntimeWeavyStepError> {
+        let version = StackVersionId::from_index(self.version.get() as usize);
+        let lookahead = LookaheadTokenId::from_index(self.lookahead_id.get() as usize);
+        match action {
+            parser_ir::ParseAction::Shift { state, .. } => {
+                let commit = SnarkIntrinsic::CommitLookahead { version, lookahead };
+                let shift = SnarkIntrinsic::Shift {
+                    version,
+                    state: ParseStateId::from_index(state.get() as usize),
+                    lookahead,
+                };
+                let _ = self.step_intrinsic(&commit)?;
+                let _ = self.step_intrinsic(&shift)?;
+            }
+            parser_ir::ParseAction::ShiftExtra => {
+                let state = self
+                    .stack
+                    .last()
+                    .ok_or(RuntimeWeavyStepError::EmptyStack)?
+                    .state;
+                let commit = SnarkIntrinsic::CommitLookahead { version, lookahead };
+                let shift_extra = SnarkIntrinsic::ShiftExtra {
+                    version,
+                    state: ParseStateId::from_index(state.get() as usize),
+                    lookahead,
+                };
+                let _ = self.step_intrinsic(&commit)?;
+                let _ = self.step_intrinsic(&shift_extra)?;
+            }
+            parser_ir::ParseAction::Reduce {
+                production,
+                metadata,
+                symbol,
+                child_count,
+                dynamic_precedence,
+            } => {
+                let reduce = SnarkIntrinsic::Reduce {
+                    version,
+                    production: ProductionId::from_index(production.get() as usize),
+                    metadata: ProductionMetadataId::from_index(metadata.get() as usize),
+                    symbol: NonterminalId::from_index(symbol.get() as usize),
+                    child_count,
+                    dynamic_precedence,
+                    aliases: None,
+                };
+                let _ = self.step_intrinsic(&reduce)?;
+            }
+            parser_ir::ParseAction::Accept {
+                production,
+                metadata,
+                symbol,
+                child_count,
+                dynamic_precedence,
+            } => {
+                let accept = SnarkIntrinsic::Accept {
+                    version,
+                    production: ProductionId::from_index(production.get() as usize),
+                    metadata: ProductionMetadataId::from_index(metadata.get() as usize),
+                    symbol: NonterminalId::from_index(symbol.get() as usize),
+                    child_count,
+                    dynamic_precedence,
+                };
+                let _ = self.step_intrinsic(&accept)?;
+            }
+        }
+        Ok(())
     }
 
     fn step_intrinsic<'program>(
