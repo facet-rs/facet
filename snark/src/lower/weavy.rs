@@ -1029,7 +1029,7 @@ impl WeavyParsePlan {
     ) -> Result<Self, WeavyParseError> {
         let program = lower_weavy_parser_program(parser, table)?;
         let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
-        let lexer_program = WeavyLexerProgram::from_compiled_modes(compiled_lex_modes);
+        let lexer_program = WeavyLexerProgram::from_compiled_modes(compiled_lex_modes, table);
         let auto_close_index = RuntimeWeavyAutoCloseIndex::new(parser, &lexer_program);
         Ok(Self {
             program,
@@ -1492,25 +1492,38 @@ pub enum WeavyLexerBarrierKind {
 #[derive(Clone, Debug)]
 struct WeavyLexerProgram {
     modes: Vec<WeavyLexModeProgram>,
+    state_modes: Vec<WeavyLexModeProgram>,
 }
 
 impl WeavyLexerProgram {
-    fn from_compiled_modes(modes: Vec<parser_ir::CompiledLexMode>) -> Self {
+    fn from_compiled_modes(
+        modes: Vec<parser_ir::CompiledLexMode>,
+        table: &parser_ir::ParseTable,
+    ) -> Self {
         let mut compiler = WeavyLexerCompiler::default();
-        Self {
-            modes: modes
-                .into_iter()
-                .map(|mode| WeavyLexModeProgram::from_compiled(mode, &mut compiler))
-                .collect(),
-        }
+        let modes = modes
+            .into_iter()
+            .map(|mode| WeavyLexModeProgram::from_compiled(mode, &mut compiler))
+            .collect::<Vec<_>>();
+        let state_modes = table
+            .states()
+            .iter()
+            .map(|state| {
+                let mode = &modes[state.lex_mode().get() as usize];
+                WeavyLexModeProgram::from_state(state, mode, &mut compiler)
+            })
+            .collect();
+        Self { modes, state_modes }
     }
 
-    fn runtime_mode(
+    fn runtime_state_mode(
         &self,
+        state: parser_ir::ParseStateId,
         mode: parser_ir::LexModeId,
     ) -> Result<&WeavyLexModeProgram, RuntimeWeavyStepError> {
-        self.modes
-            .get(mode.get() as usize)
+        self.state_modes
+            .get(state.get() as usize)
+            .or_else(|| self.modes.get(mode.get() as usize))
             .ok_or(RuntimeWeavyStepError::MissingLexMode { mode })
     }
 
@@ -1893,11 +1906,42 @@ impl WeavyLexModeProgram {
         compiled: parser_ir::CompiledLexMode,
         compiler: &mut WeavyLexerCompiler,
     ) -> Self {
-        let mut terminals = compiled
+        let terminals = compiled
             .terminals
             .into_iter()
             .map(|terminal| WeavyLexTerminal::from_compiled(terminal, compiler))
             .collect::<Vec<_>>();
+        Self::from_terminals(terminals, compiled.external_count, compiler)
+    }
+
+    fn from_state(
+        state: &parser_ir::ParseState,
+        mode: &WeavyLexModeProgram,
+        compiler: &mut WeavyLexerCompiler,
+    ) -> Self {
+        let mut terminals = Vec::new();
+        for entry in state.entries() {
+            let Some(terminal) = runtime_weavy_lookahead_terminal(entry.lookahead()) else {
+                continue;
+            };
+            if terminals
+                .iter()
+                .any(|row: &WeavyLexTerminal| row.terminal == terminal)
+            {
+                continue;
+            }
+            if let Some(row) = mode.terminal(terminal) {
+                terminals.push(row.clone());
+            }
+        }
+        Self::from_terminals(terminals, 0, compiler)
+    }
+
+    fn from_terminals(
+        mut terminals: Vec<WeavyLexTerminal>,
+        external_count: usize,
+        compiler: &mut WeavyLexerCompiler,
+    ) -> Self {
         let direct_literal_set = compiler.literal_set(&mut terminals);
         let direct_pattern_set = compiler.direct_pattern_set(&mut terminals);
         let non_direct_terminal_indices = terminals
@@ -1911,7 +1955,7 @@ impl WeavyLexModeProgram {
         Self {
             terminals,
             non_direct_terminal_indices,
-            external_count: compiled.external_count,
+            external_count,
             direct_literal_set,
             direct_pattern_set,
         }
@@ -3678,7 +3722,7 @@ impl RuntimeWeavyLexerScratch {
     fn with_direct_set_matches<R>(
         &self,
         input: &str,
-        mode: parser_ir::LexModeId,
+        cache_slot: usize,
         mode_program: &WeavyLexModeProgram,
         byte_position: usize,
         visit: impl FnOnce(
@@ -3688,7 +3732,7 @@ impl RuntimeWeavyLexerScratch {
         ) -> R,
     ) -> R {
         let key = RuntimeWeavyLexSetCacheKey {
-            mode,
+            slot: cache_slot,
             byte_position,
         };
         if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled
@@ -3700,7 +3744,7 @@ impl RuntimeWeavyLexerScratch {
                 &matches.terminal_indices,
             );
         }
-        self.compute_direct_set_matches(input, mode, mode_program, byte_position);
+        self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
         if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled {
             let matches = Arc::new(RuntimeWeavyDirectSetMatches {
                 literal_ends: self.direct_literal_ends.borrow().clone(),
@@ -3730,18 +3774,18 @@ impl RuntimeWeavyLexerScratch {
     fn direct_set_matches(
         &self,
         input: &str,
-        mode: parser_ir::LexModeId,
+        cache_slot: usize,
         mode_program: &WeavyLexModeProgram,
         byte_position: usize,
     ) -> Arc<RuntimeWeavyDirectSetMatches> {
         let key = RuntimeWeavyLexSetCacheKey {
-            mode,
+            slot: cache_slot,
             byte_position,
         };
         if let Some(matches) = self.direct_set_cache.borrow().get(&key) {
             return Arc::clone(matches);
         }
-        self.compute_direct_set_matches(input, mode, mode_program, byte_position);
+        self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
         let matches = Arc::new(RuntimeWeavyDirectSetMatches {
             literal_ends: self.direct_literal_ends.borrow().clone(),
             pattern_ends: self.direct_pattern_ends.borrow().clone(),
@@ -3756,7 +3800,7 @@ impl RuntimeWeavyLexerScratch {
     fn compute_direct_set_matches(
         &self,
         input: &str,
-        mode: parser_ir::LexModeId,
+        cache_slot: usize,
         mode_program: &WeavyLexModeProgram,
         byte_position: usize,
     ) {
@@ -3782,11 +3826,11 @@ impl RuntimeWeavyLexerScratch {
             let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
             if let Some(pattern_set) = &mode_program.direct_pattern_set {
                 let direct_pattern_dfa_cache =
-                    runtime_weavy_mode_slot(&mut direct_pattern_dfa_caches, mode)
+                    runtime_weavy_lexer_scratch_slot(&mut direct_pattern_dfa_caches, cache_slot)
                         .get_or_insert_with(|| pattern_set.create_dfa_cache())
                         .as_mut();
                 let direct_pattern_matches =
-                    runtime_weavy_mode_slot(&mut direct_pattern_matches, mode)
+                    runtime_weavy_lexer_scratch_slot(&mut direct_pattern_matches, cache_slot)
                         .get_or_insert_with(|| PatternSet::new(pattern_set.pattern_len()));
                 mode_program.match_direct_patterns_with_set(
                     input,
@@ -3801,13 +3845,6 @@ impl RuntimeWeavyLexerScratch {
             }
         }
     }
-}
-
-fn runtime_weavy_mode_slot<T>(
-    slots: &mut Vec<Option<T>>,
-    mode: parser_ir::LexModeId,
-) -> &mut Option<T> {
-    runtime_weavy_lexer_scratch_slot(slots, mode.get() as usize)
 }
 
 fn runtime_weavy_lexer_scratch_slot<T>(slots: &mut Vec<Option<T>>, index: usize) -> &mut Option<T> {
@@ -3831,7 +3868,7 @@ enum RuntimeWeavyLexSetCachePolicy {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct RuntimeWeavyLexSetCacheKey {
-    mode: parser_ir::LexModeId,
+    slot: usize,
     byte_position: usize,
 }
 
@@ -6357,12 +6394,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .ok_or(RuntimeWeavyStepError::MissingLexMode {
                 mode: state.lex_mode(),
             })?;
-        let mode_program = self.lexer_program.runtime_mode(mode.id())?;
+        let mode_program = self
+            .lexer_program
+            .runtime_state_mode(state.id(), mode.id())?;
         let mut best = None::<RuntimeWeavyTokenCandidate>;
         let mut best_rejected = None::<RuntimeWeavyTokenCandidate>;
         self.lexer_scratch.with_direct_set_matches(
             self.input,
-            mode.id(),
+            state.id().get() as usize,
             mode_program,
             byte_position,
             |direct_literal_ends,
@@ -6497,12 +6536,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .ok_or(RuntimeWeavyStepError::MissingLexMode {
                 mode: state.lex_mode(),
             })?;
-        let mode_program = self.lexer_program.runtime_mode(mode.id())?;
-        for terminal in mode.terminals() {
-            let Some(lookahead) = self.plan.terminal_lookahead(state.id(), *terminal) else {
-                continue;
-            };
-            let Some(terminal_row) = mode_program.terminal(*terminal) else {
+        let mode_program = self
+            .lexer_program
+            .runtime_state_mode(state.id(), mode.id())?;
+        for terminal_row in mode_program.terminals() {
+            let terminal = terminal_row.terminal;
+            let Some(lookahead) = self.plan.terminal_lookahead(state.id(), terminal) else {
                 continue;
             };
             let WeavyTerminalMatcher::Expr(WeavyLexExpr::AutoClose(spec)) = &terminal_row.matcher
@@ -9222,7 +9261,7 @@ mod tests {
     }
 
     #[test]
-    fn lexer_scratch_caches_direct_set_matches_by_mode_and_position() {
+    fn lexer_scratch_caches_direct_set_matches_by_slot_and_position() {
         let mut terminals = vec![
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(0),
@@ -9259,10 +9298,10 @@ mod tests {
         let scratch = RuntimeWeavyLexerScratch::default();
         let lex_mode = parser_ir::LexModeId::from_index(0);
 
-        let first = scratch.direct_set_matches("abcd", lex_mode, &mode, 0);
+        let first = scratch.direct_set_matches("abcd", lex_mode.get() as usize, &mode, 0);
         scratch.direct_literal_ends.borrow_mut().clear();
         scratch.direct_pattern_ends.borrow_mut().clear();
-        let second = scratch.direct_set_matches("zzzz", lex_mode, &mode, 0);
+        let second = scratch.direct_set_matches("zzzz", lex_mode.get() as usize, &mode, 0);
 
         assert_eq!(scratch.direct_set_cache.borrow().len(), 1);
         assert!(Arc::ptr_eq(&second, &first));
@@ -9318,14 +9357,14 @@ mod tests {
 
         let first = scratch.with_direct_set_matches(
             "abcd",
-            lex_mode,
+            lex_mode.get() as usize,
             &mode,
             0,
             |literal, pattern, terminals| (literal.to_vec(), pattern.to_vec(), terminals.to_vec()),
         );
         let second = scratch.with_direct_set_matches(
             "zzzz",
-            lex_mode,
+            lex_mode.get() as usize,
             &mode,
             0,
             |literal, pattern, terminals| (literal.to_vec(), pattern.to_vec(), terminals.to_vec()),
@@ -9582,7 +9621,10 @@ mod tests {
                 public_node_kind_names: vec![],
                 alias_names: vec![],
             },
-            lexer_program: WeavyLexerProgram { modes: vec![] },
+            lexer_program: WeavyLexerProgram {
+                modes: vec![],
+                state_modes: vec![],
+            },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
         };
 
@@ -9624,7 +9666,10 @@ mod tests {
                 public_node_kind_names: vec![],
                 alias_names: vec![],
             },
-            lexer_program: WeavyLexerProgram { modes: vec![] },
+            lexer_program: WeavyLexerProgram {
+                modes: vec![],
+                state_modes: vec![],
+            },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
         };
 
@@ -9880,7 +9925,10 @@ mod tests {
                 public_node_kind_names: vec![],
                 alias_names: vec![],
             },
-            lexer_program: WeavyLexerProgram { modes: vec![] },
+            lexer_program: WeavyLexerProgram {
+                modes: vec![],
+                state_modes: vec![],
+            },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
         };
         let readiness = plan.analysis().readiness;
@@ -10086,6 +10134,7 @@ mod tests {
                     direct_literal_set: None,
                     direct_pattern_set: None,
                 }],
+                state_modes: vec![],
             },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
         };
@@ -10199,6 +10248,7 @@ mod tests {
                 direct_literal_set,
                 direct_pattern_set,
             }],
+            state_modes: vec![],
         }
     }
 }
