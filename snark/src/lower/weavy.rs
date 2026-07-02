@@ -4977,7 +4977,7 @@ fn parse_weavy_deterministic_with_lexer_program(
                 version,
                 node,
                 error_cost,
-                tree_events,
+                tree_journal_head,
                 reusable_nodes,
             } => {
                 match output_kind {
@@ -4987,9 +4987,7 @@ fn parse_weavy_deterministic_with_lexer_program(
                     RuntimeWeavyDeterministicOutput::ResolvedTree => {
                         let mut builder =
                             parser_ir::ResolvedCstBuilder::new(input_ctx.parser, input_ctx.input);
-                        for event in &tree_events {
-                            builder.push(event);
-                        }
+                        tree_journal.visit(tree_journal_head, |event| builder.push(event));
                         let tree = builder
                             .finish()
                             .ok_or(WeavyParseError::MissingResolvedTree)?;
@@ -4997,6 +4995,7 @@ fn parse_weavy_deterministic_with_lexer_program(
                     }
                     RuntimeWeavyDeterministicOutput::Report => {}
                 }
+                let tree_events = tree_journal.collect(tree_journal_head);
                 let reusable_nodes =
                     mark_runtime_weavy_reusable_nodes_with_errors(reusable_nodes, &tree_events);
                 return Ok(Some(RuntimeWeavyDeterministicParse::Report(
@@ -5517,7 +5516,7 @@ fn parse_weavy_with_lexer_program(
                     version,
                     node,
                     error_cost,
-                    tree_events,
+                    tree_journal_head,
                     reusable_nodes,
                 } => {
                     trace_push!(
@@ -5529,6 +5528,7 @@ fn parse_weavy_with_lexer_program(
                     );
                     min_accepted_cost =
                         Some(min_accepted_cost.map_or(error_cost, |best| best.min(error_cost)));
+                    let tree_events = tree_journal.collect(tree_journal_head);
                     accepted.push((version, node, error_cost, tree_events, reusable_nodes));
                 }
                 RuntimeWeavyStepOutcome::Failed { version, error } => {
@@ -5912,6 +5912,22 @@ impl RuntimeWeavyTreeJournal {
         events.reverse();
         events
     }
+
+    fn visit(
+        &self,
+        head: RuntimeWeavyTreeJournalHead,
+        mut visitor: impl FnMut(&parser_ir::TreeEvent),
+    ) {
+        let mut indices = Vec::with_capacity(head.len);
+        let mut cursor = head.index;
+        while let Some(index) = cursor {
+            indices.push(index);
+            cursor = self.entries[index].parent.index;
+        }
+        for index in indices.into_iter().rev() {
+            visitor(&self.entries[index].event);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -5961,7 +5977,7 @@ enum RuntimeWeavyStepOutcome {
         version: parser_ir::StackVersionId,
         node: SexpNode,
         error_cost: u32,
-        tree_events: Vec<parser_ir::TreeEvent>,
+        tree_journal_head: RuntimeWeavyTreeJournalHead,
         reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     },
     Failed {
@@ -6403,7 +6419,7 @@ fn run_runtime_weavy_action(
             version,
             node,
             error_cost: stepper.error_cost,
-            tree_events: stepper.tree_journal.collect(stepper.tree_journal_head),
+            tree_journal_head: stepper.tree_journal_head,
             reusable_nodes: stepper.reusable_nodes,
         }
     } else {
@@ -6614,12 +6630,11 @@ fn recover_runtime_weavy_eof_error_root(
     };
     let mut error_journal = RuntimeWeavyTreeJournalHead::default();
     tree_journal.push(&mut error_journal, tree_event);
-    let accepted_tree_events = tree_journal.collect(error_journal);
     Some(RuntimeWeavyStepOutcome::Accepted {
         version: branch.version,
         node: tree_store.materialize_node(node),
         error_cost,
-        tree_events: accepted_tree_events,
+        tree_journal_head: error_journal,
         reusable_nodes: Vec::new(),
     })
 }
