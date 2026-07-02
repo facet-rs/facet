@@ -68,6 +68,7 @@ type PlanOutput = {
   snark_stencil_families: PlanStencilFamilyOutput[];
   snark_stencil_executions: PlanStencilExecutionOutput[];
   snark_stencil_states: PlanStencilStateOutput[];
+  backend_executions: PlanBackendExecutionOutput[];
   dominant_backend_execution: PlanBackendExecutionOutput | null;
   lowering_barriers: PlanBarrierOutput[];
 };
@@ -1002,6 +1003,10 @@ function PlanPanel({ plan }: { plan: PlanOutput }) {
   const lexerStencilTotal = countPlanItems(plan.lexer_stencils);
   const totalStencilWork = parserStencilTotal + lexerStencilTotal;
   const dominant = plan.dominant_backend_execution;
+  const backendExecutionItems = plan.backend_executions.map((summary) => ({
+    ...summary,
+    count: summary.total_count,
+  }));
 
   return (
     <Panel
@@ -1039,6 +1044,7 @@ function PlanPanel({ plan }: { plan: PlanOutput }) {
 
       <PlanTopList title="Parser stencil families" items={plan.snark_stencil_families} />
       <PlanTopList title="Lexer stencil ops" items={plan.lexer_stencils} />
+      <PlanTopList title="Backend execution lanes" items={backendExecutionItems} />
       <PlanTopList title="Lowering barriers" items={plan.lowering_barriers} />
     </Panel>
   );

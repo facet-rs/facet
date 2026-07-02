@@ -151,6 +151,7 @@ struct PlanOutput {
     snark_stencil_families: Vec<PlanStencilFamilyOutput>,
     snark_stencil_executions: Vec<PlanStencilExecutionOutput>,
     snark_stencil_states: Vec<PlanStencilStateOutput>,
+    backend_executions: Vec<PlanBackendExecutionOutput>,
     dominant_backend_execution: Option<PlanBackendExecutionOutput>,
     lowering_barriers: Vec<PlanBarrierOutput>,
 }
@@ -973,6 +974,16 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
             .map(|summary| PlanStencilStateOutput {
                 state: format!("{:?}", summary.state),
                 count: summary.count,
+            })
+            .collect(),
+        backend_executions: direct_profile
+            .backend_execution_summaries()
+            .into_iter()
+            .map(|summary| PlanBackendExecutionOutput {
+                execution: format!("{:?}", summary.execution),
+                parser_count: summary.parser_count,
+                lexer_count: summary.lexer_count,
+                total_count: summary.total_count,
             })
             .collect(),
         dominant_backend_execution: direct_profile.dominant_backend_execution().map(|summary| {
@@ -5046,6 +5057,18 @@ mod tests {
             dominant.total_count,
             dominant.parser_count + dominant.lexer_count
         );
+        assert!(plan.backend_executions.iter().any(|summary| {
+            summary.execution == "DirectStencil"
+                && summary.parser_count > 0
+                && summary.lexer_count == 0
+                && summary.total_count == summary.parser_count
+        }));
+        assert!(plan.backend_executions.iter().any(|summary| {
+            summary.execution == "LexerGraph"
+                && summary.parser_count > 0
+                && summary.lexer_count > 0
+                && summary.total_count == summary.parser_count + summary.lexer_count
+        }));
         assert!(
             plan.snark_stencil_states
                 .iter()
