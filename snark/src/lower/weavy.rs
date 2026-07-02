@@ -5345,7 +5345,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
 
     fn accepted(
         input_ctx: RuntimeWeavyInput<'_>,
-        _tree_store: RuntimeWeavyTreeStore,
+        tree_store: RuntimeWeavyTreeStore,
         _trace_events: RuntimeWeavyTraceSink,
         tree_journal: RuntimeWeavyTreeJournal,
         _stats: RunStats,
@@ -5359,10 +5359,11 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         _reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     ) -> Result<Self::Output, WeavyParseError> {
-        let mut builder = parser_ir::ResolvedCstBuilder::with_capacity(
+        let mut builder = parser_ir::ResolvedCstBuilder::with_node_capacity(
             input_ctx.parser,
             input_ctx.input,
             tree_journal_head.len,
+            tree_store.node_count(),
         );
         tree_journal.visit(tree_journal_head, |event| builder.push(event));
         builder.finish().ok_or(WeavyParseError::MissingResolvedTree)
@@ -10909,6 +10910,10 @@ enum RuntimeWeavyChildListKind {
 }
 
 impl RuntimeWeavyTreeStore {
+    fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     fn empty_children(&mut self) -> RuntimeWeavyChildListId {
         if self.child_lists.is_empty() {
             self.child_lists.push(RuntimeWeavyChildList {

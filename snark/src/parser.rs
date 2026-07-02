@@ -5023,13 +5023,22 @@ impl<'a> ResolvedCstBuilder<'a> {
         input: &'a str,
         capacity: usize,
     ) -> Self {
+        Self::with_node_capacity(parser, input, capacity, 0)
+    }
+
+    pub(crate) fn with_node_capacity(
+        parser: &'a ParserGrammar,
+        input: &'a str,
+        capacity: usize,
+        node_capacity: usize,
+    ) -> Self {
         Self {
             parser,
             input,
             source: Arc::<str>::from(input),
             names: ResolvedCstNames::from_parser(parser),
-            field_by_child: Vec::new(),
-            item_indices_by_node: Vec::new(),
+            field_by_child: vec![None; node_capacity],
+            item_indices_by_node: Vec::with_capacity(node_capacity),
             items: Vec::with_capacity(capacity),
         }
     }
@@ -5260,6 +5269,8 @@ impl<'a> ResolvedCstBuilder<'a> {
         let slot = node.get() as usize;
         if slot >= self.field_by_child.len() {
             self.field_by_child.resize_with(slot + 1, || None);
+        }
+        if slot >= self.item_indices_by_node.len() {
             self.item_indices_by_node
                 .resize_with(slot + 1, SmallVec::new);
         }
