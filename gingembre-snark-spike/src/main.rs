@@ -135,6 +135,11 @@ fn main() {
         jitmap();
         return;
     }
+    if args.get(1).map(|s| s == "--hot").unwrap_or(false) {
+        let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
+        hot(secs);
+        return;
+    }
     if args.get(1).map(|s| s == "--profile").unwrap_or(false) {
         profile();
         return;
@@ -1602,6 +1607,161 @@ fn jitmap() {
 
     let mut stack = vec![0i64; 64];
     println!("\n(run check: {expr} = {})", run_intop_native(&native, &mut stack));
+}
+
+/// Write a perf jitdump (`/tmp/jit-<pid>.dump`) that stax's jitdump tailer consumes to
+/// symbolicate + annotate JIT'd code. One `JIT_CODE_LOAD` per op: name = source snippet, bytes =
+/// the op's actual (patched) runtime code at its address. Format: 40-byte header (magic 0x4A695444)
+/// then records `id(u32) total_size(u32) timestamp(u64)` + payload.
+fn write_jitdump(path: &str, records: &[(u64, u64, String, Vec<u8>)]) -> std::io::Result<()> {
+    let pid = std::process::id();
+    let ts = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
+    };
+    let mut out = Vec::new();
+    // Header (40 bytes): magic, version, header_size, elf_mach(EM_AARCH64=183), pad, pid, ts, flags.
+    out.extend_from_slice(&0x4A69_5444u32.to_le_bytes());
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&40u32.to_le_bytes());
+    out.extend_from_slice(&183u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&pid.to_le_bytes());
+    out.extend_from_slice(&ts().to_le_bytes());
+    out.extend_from_slice(&0u64.to_le_bytes());
+    for (i, (addr, size, name, code)) in records.iter().enumerate() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&pid.to_le_bytes()); // pid
+        payload.extend_from_slice(&pid.to_le_bytes()); // tid
+        payload.extend_from_slice(&addr.to_le_bytes()); // vma (stax uses this)
+        payload.extend_from_slice(&addr.to_le_bytes()); // code_addr
+        payload.extend_from_slice(&size.to_le_bytes()); // code_size
+        payload.extend_from_slice(&(i as u64).to_le_bytes()); // code_index
+        payload.extend_from_slice(name.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(code);
+        let total = 16 + payload.len();
+        out.extend_from_slice(&0u32.to_le_bytes()); // id = JIT_CODE_LOAD
+        out.extend_from_slice(&(total as u32).to_le_bytes());
+        out.extend_from_slice(&ts().to_le_bytes());
+        out.extend_from_slice(&payload);
+    }
+    std::fs::write(path, &out)
+}
+
+/// Re-parse a jitdump (mirroring stax's `parse_code_load`) to self-verify it's well-formed.
+fn validate_jitdump(bytes: &[u8]) -> Vec<(u64, u64, String)> {
+    let mut out = Vec::new();
+    let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+    assert!(magic == 0x4A69_5444 || magic == 0x4474_694A, "bad jitdump magic {magic:#x}");
+    let mut cur = 40;
+    while cur + 16 <= bytes.len() {
+        let id = u32::from_le_bytes(bytes[cur..cur + 4].try_into().unwrap());
+        let total = u32::from_le_bytes(bytes[cur + 4..cur + 8].try_into().unwrap()) as usize;
+        if total < 16 || cur + total > bytes.len() {
+            break;
+        }
+        if id == 0 {
+            let p = &bytes[cur + 16..cur + total];
+            let avma = u64::from_le_bytes(p[8..16].try_into().unwrap());
+            let size = u64::from_le_bytes(p[24..32].try_into().unwrap());
+            let nul = p[40..].iter().position(|&b| b == 0).unwrap();
+            let name = String::from_utf8_lossy(&p[40..40 + nul]).into_owned();
+            out.push((avma, size, name));
+        }
+        cur += total;
+    }
+    out
+}
+
+/// HOT: JIT a chunky integer expression, emit a source-named jitdump, then run the JIT'd code in a
+/// hot loop so stax (`stax record --pid <pid>`) can sample + symbolicate + annotate it.
+fn hot(secs: u64) {
+    use std::time::{Duration, Instant};
+    use weavy::jit::{NativeProgram, StencilLayout};
+    let (parser, table, plan, anns) = build_plan();
+
+    let expr = "1 + 2 * 3 + 4 * 5 - 6 + 7 * 8 - 9 * 2 + 3 * 4 + 5 * 6 - 7 + 8 * 9 - 1 * 2 + 3 * 4";
+    let src = format!("{{{{ {expr} }}}}");
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).unwrap();
+    let resolved = report.accepted_resolved_tree(&parser, &src).unwrap();
+    let node = find_expr(&resolved).unwrap();
+    let mut spanned = Vec::new();
+    lower_int_spanned(node, &anns, &mut spanned);
+
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    let mut rows: Vec<MapRow> = Vec::new();
+    for (i, (op, span)) in spanned.iter().enumerate() {
+        let (bytes, cont, label): (&[u8], &'static [usize], String) = match op {
+            IntOp::Push(n) => {
+                layout.push_prog_word(root.prog_index, *n as u64);
+                (intop_stencils::PUSH, intop_stencils::PUSH_CONT, format!("op{i}_push"))
+            }
+            IntOp::Add => (intop_stencils::ADD, intop_stencils::ADD_CONT, format!("op{i}_add")),
+            IntOp::Sub => (intop_stencils::SUB, intop_stencils::SUB_CONT, format!("op{i}_sub")),
+            IntOp::Mul => (intop_stencils::MUL, intop_stencils::MUL_CONT, format!("op{i}_mul")),
+        };
+        let start = layout.emit_stencil(bytes);
+        rows.push(MapRow { start, cont, label, span: *span });
+    }
+    let done = layout.emit_stencil(intop_stencils::DONE);
+    for i in 0..rows.len() {
+        let next = rows.get(i + 1).map(|r| r.start).unwrap_or(done);
+        for &rel in rows[i].cont {
+            layout.patch_continuation(rows[i].start + rel, next);
+        }
+    }
+    let native = NativeProgram::new(layout, root);
+    let base = native.code_ptr() as usize;
+
+    // Build jitdump records from the ACTUAL patched runtime bytes at each op's address.
+    let mut records: Vec<(u64, u64, String, Vec<u8>)> = Vec::new();
+    for i in 0..rows.len() {
+        let r = &rows[i];
+        let end = rows.get(i + 1).map(|n| n.start).unwrap_or(done);
+        let size = end - r.start;
+        let code = unsafe { std::slice::from_raw_parts(native.code_ptr().add(r.start), size) }.to_vec();
+        let name = format!("jit::{} [{}]", r.label, &src[r.span.0..r.span.1]);
+        records.push(((base + r.start) as u64, size as u64, name, code));
+    }
+    let pid = std::process::id();
+    let path = format!("/tmp/jit-{pid}.dump");
+    write_jitdump(&path, &records).expect("write jitdump");
+
+    // Self-verify: re-parse the dump the way stax does.
+    let parsed = validate_jitdump(&std::fs::read(&path).unwrap());
+    assert_eq!(parsed.len(), records.len(), "jitdump round-trip record count");
+    println!(
+        "wrote {path}: {} JIT_CODE_LOAD records, self-validated (stax-format).\n\
+         first: {:#x} size {:#x} {:?}\n",
+        parsed.len(),
+        parsed[0].0,
+        parsed[0].1,
+        parsed[0].2,
+    );
+    println!(
+        "pid = {pid}. In another shell, profile the JIT'd code:\n\
+         \x20 stax record --pid {pid}\n\
+         \x20 stax wait --for-samples 20000 && stax top -n 12 --sort self\n\
+         \x20 stax annotate 'jit::op6_mul*'      # per-instruction samples on a JIT'd stencil\n"
+    );
+
+    // Hot loop: keep the JIT'd program executing so there's something to sample.
+    let native = &native;
+    let mut stack = vec![0i64; 128];
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    let mut iters = 0u64;
+    let mut acc = 0i64;
+    while Instant::now() < deadline {
+        for _ in 0..50_000 {
+            acc = acc.wrapping_add(run_intop_native(native, &mut stack));
+            iters += 1;
+        }
+    }
+    println!("ran {iters} JIT iterations over {secs}s (checksum {acc}). {expr} = {}", run_intop_native(native, &mut stack));
 }
 
 /// FUSE: prove the AST materializer is decoupled from snark's rich tree — it needs only the
