@@ -5359,7 +5359,11 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         _reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     ) -> Result<Self::Output, WeavyParseError> {
-        let mut builder = parser_ir::ResolvedCstBuilder::new(input_ctx.parser, input_ctx.input);
+        let mut builder = parser_ir::ResolvedCstBuilder::with_capacity(
+            input_ctx.parser,
+            input_ctx.input,
+            tree_journal_head.len,
+        );
         tree_journal.visit(tree_journal_head, |event| builder.push(event));
         builder.finish().ok_or(WeavyParseError::MissingResolvedTree)
     }
@@ -7592,7 +7596,8 @@ impl WeavyParseReport {
         parser: &parser_ir::ParserGrammar,
         input: &str,
     ) -> Option<parser_ir::ResolvedCstNode> {
-        let mut builder = parser_ir::ResolvedCstBuilder::new(parser, input);
+        let mut builder =
+            parser_ir::ResolvedCstBuilder::with_capacity(parser, input, self.tree_events.len());
         self.replay_accepted_tree_events(&mut |event: &parser_ir::TreeEvent| {
             builder.push(event);
         });

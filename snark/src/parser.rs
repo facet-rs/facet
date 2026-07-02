@@ -4913,13 +4913,17 @@ pub(crate) struct ResolvedCstBuilder<'a> {
 }
 
 impl<'a> ResolvedCstBuilder<'a> {
-    pub(crate) fn new(parser: &'a ParserGrammar, input: &'a str) -> Self {
+    pub(crate) fn with_capacity(
+        parser: &'a ParserGrammar,
+        input: &'a str,
+        capacity: usize,
+    ) -> Self {
         Self {
             parser,
             input,
             field_by_child: HashMap::new(),
             item_indices_by_node: HashMap::new(),
-            items: Vec::new(),
+            items: Vec::with_capacity(capacity),
         }
     }
 
