@@ -674,6 +674,39 @@ pub enum WeavyLexerStencilKind {
     CompositeChoice,
 }
 
+const WEAVY_LEXER_STENCIL_KIND_COUNT: usize = 10;
+
+fn weavy_lexer_stencil_kind_index(kind: WeavyLexerStencilKind) -> usize {
+    match kind {
+        WeavyLexerStencilKind::LiteralSet => 0,
+        WeavyLexerStencilKind::PatternDfaSet => 1,
+        WeavyLexerStencilKind::PatternLeafRematch => 2,
+        WeavyLexerStencilKind::KnownPattern => 3,
+        WeavyLexerStencilKind::RegexAutomata => 4,
+        WeavyLexerStencilKind::Until => 5,
+        WeavyLexerStencilKind::Nested => 6,
+        WeavyLexerStencilKind::AutoClose => 7,
+        WeavyLexerStencilKind::CompositeRegex => 8,
+        WeavyLexerStencilKind::CompositeChoice => 9,
+    }
+}
+
+fn weavy_lexer_stencil_kind_from_index(index: usize) -> Option<WeavyLexerStencilKind> {
+    Some(match index {
+        0 => WeavyLexerStencilKind::LiteralSet,
+        1 => WeavyLexerStencilKind::PatternDfaSet,
+        2 => WeavyLexerStencilKind::PatternLeafRematch,
+        3 => WeavyLexerStencilKind::KnownPattern,
+        4 => WeavyLexerStencilKind::RegexAutomata,
+        5 => WeavyLexerStencilKind::Until,
+        6 => WeavyLexerStencilKind::Nested,
+        7 => WeavyLexerStencilKind::AutoClose,
+        8 => WeavyLexerStencilKind::CompositeRegex,
+        9 => WeavyLexerStencilKind::CompositeChoice,
+        _ => return None,
+    })
+}
+
 /// Counted lexer-graph stencil obligation for backend/JIT prioritization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeavyLexerStencilSummary {
@@ -712,10 +745,6 @@ pub struct WeavyLexerExecutionStats {
 }
 
 impl WeavyLexerExecutionStats {
-    fn record_stencil(&mut self, kind: WeavyLexerStencilKind) {
-        *self.stencil_executions.entry(kind).or_default() += 1;
-    }
-
     /// Return the runtime execution count for one lexer matcher family.
     #[must_use]
     pub fn stencil_execution_count(&self, kind: WeavyLexerStencilKind) -> usize {
@@ -749,6 +778,41 @@ impl WeavyLexerExecutionStats {
     #[must_use]
     pub fn dominant_stencil_execution(&self) -> Option<WeavyLexerExecutionSummary> {
         self.stencil_execution_summaries().into_iter().next()
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RuntimeWeavyLexerExecutionStats {
+    lex_call_count: usize,
+    direct_set_cache_hit_count: usize,
+    direct_set_cache_miss_count: usize,
+    direct_set_uncached_count: usize,
+    stencil_executions: [usize; WEAVY_LEXER_STENCIL_KIND_COUNT],
+}
+
+impl RuntimeWeavyLexerExecutionStats {
+    fn record_stencil(&mut self, kind: WeavyLexerStencilKind) {
+        self.stencil_executions[weavy_lexer_stencil_kind_index(kind)] += 1;
+    }
+
+    fn to_public(&self) -> WeavyLexerExecutionStats {
+        let mut stats = WeavyLexerExecutionStats {
+            lex_call_count: self.lex_call_count,
+            direct_set_cache_hit_count: self.direct_set_cache_hit_count,
+            direct_set_cache_miss_count: self.direct_set_cache_miss_count,
+            direct_set_uncached_count: self.direct_set_uncached_count,
+            stencil_executions: BTreeMap::new(),
+        };
+        for (index, count) in self.stencil_executions.iter().copied().enumerate() {
+            if count == 0 {
+                continue;
+            }
+            let Some(kind) = weavy_lexer_stencil_kind_from_index(index) else {
+                continue;
+            };
+            stats.stencil_executions.insert(kind, count);
+        }
+        stats
     }
 }
 
@@ -4933,7 +4997,7 @@ macro_rules! trace_push {
 
 struct RuntimeWeavyLexerScratch {
     cache_policy: RuntimeWeavyLexSetCachePolicy,
-    execution_stats: RefCell<WeavyLexerExecutionStats>,
+    execution_stats: RefCell<RuntimeWeavyLexerExecutionStats>,
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_matches: RefCell<Vec<Option<PatternSet>>>,
@@ -4960,7 +5024,7 @@ impl RuntimeWeavyLexerScratch {
     }
 
     fn execution_stats(&self) -> WeavyLexerExecutionStats {
-        self.execution_stats.borrow().clone()
+        self.execution_stats.borrow().to_public()
     }
 
     fn record_lex_call(&self) {
@@ -9191,7 +9255,7 @@ fn match_weavy_direct_pattern_set(
 struct WeavyDirectPatternSetScratch<'a> {
     matches: &'a mut PatternSet,
     dfa_cache: Option<&'a mut HybridDfaCache>,
-    execution_stats: &'a RefCell<WeavyLexerExecutionStats>,
+    execution_stats: &'a RefCell<RuntimeWeavyLexerExecutionStats>,
 }
 
 fn match_weavy_direct_pattern_set_with_matches(
@@ -11401,7 +11465,7 @@ mod tests {
         let mut ends = Vec::new();
         let mut matches = None;
         let mut terminal_indices = Vec::new();
-        let execution_stats = RefCell::<WeavyLexerExecutionStats>::default();
+        let execution_stats = RefCell::<RuntimeWeavyLexerExecutionStats>::default();
 
         match_weavy_direct_pattern_set_with_matches(
             "abcd",
@@ -11426,6 +11490,7 @@ mod tests {
         assert_eq!(
             execution_stats
                 .borrow()
+                .to_public()
                 .stencil_execution_count(WeavyLexerStencilKind::PatternLeafRematch),
             2
         );
