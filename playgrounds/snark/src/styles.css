@@ -524,10 +524,69 @@ select {
 .dock {
   display: flex;
   flex-direction: column;
-  max-height: 45vh;
-  overflow: auto;
   border-top: 1px solid var(--line);
   background: var(--panel);
+}
+
+/* One slim strip of chips; the ONLY always-visible dock chrome. */
+.dock-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  min-height: 30px;
+  overflow-x: auto;
+}
+
+.dock-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dock-chip:hover {
+  background: var(--line-soft);
+}
+
+.dock-chip.on {
+  background: var(--line-soft);
+}
+
+.dock-chip-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.dock-chip.on .dock-chip-title {
+  color: var(--text);
+}
+
+.dock-chip-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* The single opt-in drawer above the bar. */
+.dock-drawer {
+  max-height: 42vh;
+  overflow: auto;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.dock-drawer > .panel-body {
+  padding: 14px 16px;
 }
 
 .dock-failure {

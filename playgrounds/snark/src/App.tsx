@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { runParse } from "./parseClient";
-import { runBenchmark, BenchPanel, type BenchReport } from "./benchmark";
+import { runBenchmark, BenchBody, benchMeta, type BenchReport } from "./benchmark";
 import { SourceEditor, type SourceEdit } from "./editor";
 import { captureClass } from "./highlight";
 import { defaultVendoredRootId, vendoredFiles } from "./bundled";
@@ -597,10 +597,10 @@ export function App() {
         <header className="rail-head">
           <div className="brand">
             <span className="brand-mark" aria-hidden="true">
-              ◢◣
+              🍉
             </span>
             <div className="brand-text">
-              <h1>Snark</h1>
+              <h1>snark</h1>
               <p>{result?.language ?? "mini_playground"}</p>
             </div>
           </div>
@@ -713,16 +713,16 @@ export function App() {
           onChange={(value, edit) => updateSourceInput(value, "", edit)}
         />
 
-        <div className="dock bench-dock">
-          <BenchPanel
-            report={benchReport}
-            running={busyTask === "bench"}
-            progress={benchProgress}
-            onRun={() => void handleRunBenchmark()}
-          />
-        </div>
-
-        <ResultsDock result={result} onUseInput={(value, sourcePath = "") => updateSourceInput(value, sourcePath)} />
+        <ResultsDock
+          result={result}
+          onUseInput={(value, sourcePath = "") => updateSourceInput(value, sourcePath)}
+          bench={{
+            report: benchReport,
+            running: busyTask === "bench",
+            progress: benchProgress,
+            onRun: () => void handleRunBenchmark(),
+          }}
+        />
       </section>
     </main>
   );
@@ -781,45 +781,26 @@ function StatusPill({
   );
 }
 
-// A collapsible panel whose body is mounted only while open — so a collapsed panel
-// costs nothing to reconcile. `<details>` hides content with CSS but React still
-// renders (and the browser still lays out) every node, which is what made switching
-// pages re-render the whole parse tree / capture list on every parse.
-function Panel({
-  title,
-  meta,
-  defaultOpen = false,
-  children,
-}: {
+
+type DockSection = {
+  id: string;
   title: string;
   meta?: ReactNode;
-  defaultOpen?: boolean;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className={`panel ${open ? "open" : ""}`}>
-      <button
-        type="button"
-        className="panel-summary"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-      >
-        <span className="panel-title">{title}</span>
-        {meta != null ? <span className="panel-meta">{meta}</span> : null}
-      </button>
-      {open ? <div className="panel-body">{children}</div> : null}
-    </div>
-  );
-}
+  body: ReactNode;
+};
 
+// One slim chip bar at the very bottom; at most ONE drawer open above it. Quiet by default:
+// nothing is expanded until asked, and the editor owns the viewport.
 function ResultsDock({
   result,
   onUseInput,
+  bench,
 }: {
   result: PlaygroundResponse | null;
   onUseInput: (value: string, sourcePath?: string) => void;
+  bench: { report: BenchReport | null; running: boolean; progress: string; onRun: () => void };
 }) {
+  const [active, setActive] = useState<string | null>(null);
   const failure = result && !result.ok ? result : null;
   const sexp = result?.parse?.sexp ?? "";
   const captures = composedHighlights(result);
@@ -837,30 +818,15 @@ function ResultsDock({
   ];
   const maxTimingMs = timingRows.reduce((max, row) => Math.max(max, row.ms), 0) || 1;
 
-  return (
-    <div className="dock">
-      {failure ? (
-        <div className="dock-failure">
-          <strong>{recovered ? "Recovered with errors" : "Parse failed"}</strong>
-          {unplaced.map((diagnostic, index) => (
-            <div className="dock-failure-row" key={`${diagnostic.stage}-${index}`}>
-              <span className="dock-failure-stage">{diagnostic.stage}</span>
-              <code>{diagnostic.message}</code>
-            </div>
-          ))}
-        </div>
-      ) : null}
+  const sections: DockSection[] = [];
 
-      {timingRows.length ? (
-        <Panel
-          title="Timings"
-          defaultOpen
-          meta={
-            result?.timings?.parse
-              ? `run parser ${result.timings.parse.ms.toFixed(2)} ms`
-              : "prepare only"
-          }
-        >
+  if (timingRows.length) {
+    sections.push({
+      id: "timings",
+      title: "Timings",
+      meta: result?.timings?.parse ? `${result.timings.parse.ms.toFixed(2)} ms` : "prepare only",
+      body: (
+        <>
           <div className="timing-list">
             {timingRows.map((row) => (
               <div className={`timing-row timing-${row.kind}`} key={`${row.kind}-${row.name}`}>
@@ -876,149 +842,209 @@ function ResultsDock({
             ))}
           </div>
           <p className="timing-note">
-            Prepare phases run once per grammar; “run parser” is live per input — watch it stay flat as input grows.
+            Prepare phases run once per grammar; “run parser” is live per input — watch it stay flat
+            as input grows.
           </p>
-        </Panel>
-      ) : null}
+        </>
+      ),
+    });
+  }
 
-      {plan ? <PlanPanel plan={plan} parse={result?.parse ?? null} /> : null}
+  if (plan) {
+    const dominant = plan.dominant_backend_execution;
+    sections.push({
+      id: "plan",
+      title: "Plan",
+      meta: dominant ? `${dominant.execution} · ${dominant.total_count} ops` : "no backend lane",
+      body: <PlanBody plan={plan} parse={result?.parse ?? null} />,
+    });
+  }
 
-      <Panel
-        title="S-expression"
-        meta={
-          result?.parse ? (
-            <>
-              {result.parse.accepted_count} accepted · {result.parse.failure_count} failed
-              {result.parse.reuse_node_count ? ` · ${result.parse.reuse_node_count} reused` : ""}
-              {result.parse.accepted_error_count || result.parse.accepted_missing_count
-                ? ` · ${result.parse.accepted_error_count} ERROR · ${result.parse.accepted_missing_count} MISSING`
-                : ""}
-            </>
-          ) : undefined
-        }
-      >
-        {sexp ? <pre className="sexp">{sexp}</pre> : <p className="empty">No parse tree.</p>}
-      </Panel>
+  sections.push({
+    id: "sexp",
+    title: "S-expression",
+    meta: result?.parse ? (
+      <>
+        {result.parse.accepted_count} accepted · {result.parse.failure_count} failed
+        {result.parse.reuse_node_count ? ` · ${result.parse.reuse_node_count} reused` : ""}
+        {result.parse.accepted_error_count || result.parse.accepted_missing_count
+          ? ` · ${result.parse.accepted_error_count} ERROR · ${result.parse.accepted_missing_count} MISSING`
+          : ""}
+      </>
+    ) : undefined,
+    body: sexp ? <pre className="sexp">{sexp}</pre> : <p className="empty">No parse tree.</p>,
+  });
 
-      <Panel title="Captures" meta={captures.length}>
-        {captures.length ? (
-          <div className="capture-list">
-            {captures.map((capture, index) => (
-              <div className="capture-row" key={`${capture.capture_name}-${capture.start_byte}-${index}`}>
-                <span className={`capture-chip ${captureClass(capture.capture_name)}`}>
-                  @{capture.capture_name}
-                </span>
-                <code>{capture.text}</code>
-                <span className="capture-loc">
-                  {capture.start_row}:{capture.start_column}
-                </span>
-              </div>
-            ))}
+  sections.push({
+    id: "captures",
+    title: "Captures",
+    meta: captures.length,
+    body: captures.length ? (
+      <div className="capture-list">
+        {captures.map((capture, index) => (
+          <div className="capture-row" key={`${capture.capture_name}-${capture.start_byte}-${index}`}>
+            <span className={`capture-chip ${captureClass(capture.capture_name)}`}>
+              @{capture.capture_name}
+            </span>
+            <code>{capture.text}</code>
+            <span className="capture-loc">
+              {capture.start_row}:{capture.start_column}
+            </span>
           </div>
-        ) : (
-          <p className="empty">No captures.</p>
-        )}
-      </Panel>
+        ))}
+      </div>
+    ) : (
+      <p className="empty">No captures.</p>
+    ),
+  });
 
-      {layers.length ? (
-        <Panel title="Layers" meta={countLayers(layers)}>
-          <LayerList layers={layers} />
-        </Panel>
-      ) : null}
+  if (layers.length) {
+    sections.push({
+      id: "layers",
+      title: "Layers",
+      meta: countLayers(layers),
+      body: <LayerList layers={layers} />,
+    });
+  }
 
-      {tests ? (
-        <Panel
-          title="Tests"
-          defaultOpen
-          meta={
-            <>
-              {tests.tests.corpus_passed + tests.tests.highlight_assertions_passed} pass ·{" "}
-              {tests.tests.corpus_failed +
-                tests.tests.highlight_assertions_failed +
-                tests.tests.highlight_fixture_errors}{" "}
-              fail
-            </>
-          }
-        >
-            <div className="corpus-list">
-              {tests.corpus.map((caseResult, index) => (
-                <details className="case" key={`${caseResult.path}-${caseResult.case_name}-${index}`}>
-                  <summary className={caseResult.passed ? "pass" : "fail"}>
-                    {caseResult.case_name}
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        onUseInput(caseResult.input, `${caseResult.path}#${caseResult.case_name}`);
-                      }}
+  if (tests) {
+    sections.push({
+      id: "tests",
+      title: "Tests",
+      meta: (
+        <>
+          {tests.tests.corpus_passed + tests.tests.highlight_assertions_passed} pass ·{" "}
+          {tests.tests.corpus_failed +
+            tests.tests.highlight_assertions_failed +
+            tests.tests.highlight_fixture_errors}{" "}
+          fail
+        </>
+      ),
+      body: (
+        <div className="corpus-list">
+          {tests.corpus.map((caseResult, index) => (
+            <details className="case" key={`${caseResult.path}-${caseResult.case_name}-${index}`}>
+              <summary className={caseResult.passed ? "pass" : "fail"}>
+                {caseResult.case_name}
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onUseInput(caseResult.input, `${caseResult.path}#${caseResult.case_name}`);
+                  }}
+                >
+                  Use input
+                </button>
+              </summary>
+              <div className="test-detail-grid">
+                {caseResult.error ? (
+                  <section>
+                    <h3>Error</h3>
+                    <pre>{caseResult.error}</pre>
+                  </section>
+                ) : null}
+                <section>
+                  <h3>Expected</h3>
+                  <pre>{caseResult.expected}</pre>
+                </section>
+                <section>
+                  <h3>Actual</h3>
+                  <pre>{caseResult.actual ?? ""}</pre>
+                </section>
+              </div>
+            </details>
+          ))}
+          {tests.highlight_tests.map((fixture) => (
+            <details className="case" key={fixture.path}>
+              <summary className={fixture.passed ? "pass" : "fail"}>
+                {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onUseInput(fixture.input, fixture.path);
+                  }}
+                >
+                  Use fixture
+                </button>
+              </summary>
+              {fixture.error ? (
+                <pre>{fixture.error}</pre>
+              ) : (
+                <div className="assertion-list">
+                  {fixture.assertions.map((assertion, index) => (
+                    <div
+                      className={assertion.passed ? "assertion-row pass" : "assertion-row fail"}
+                      key={`${fixture.path}-${assertion.row}-${assertion.column}-${index}`}
                     >
-                      Use input
-                    </button>
-                  </summary>
-                  <div className="test-detail-grid">
-                    {caseResult.error ? (
-                      <section>
-                        <h3>Error</h3>
-                        <pre>{caseResult.error}</pre>
-                      </section>
-                    ) : null}
-                    <section>
-                      <h3>Expected</h3>
-                      <pre>{caseResult.expected}</pre>
-                    </section>
-                    <section>
-                      <h3>Actual</h3>
-                      <pre>{caseResult.actual ?? ""}</pre>
-                    </section>
-                  </div>
-                </details>
-              ))}
-              {tests.highlight_tests.map((fixture) => (
-                <details className="case" key={fixture.path}>
-                  <summary className={fixture.passed ? "pass" : "fail"}>
-                    {fixture.path} ({fixture.passed_count}/{fixture.assertion_count})
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        onUseInput(fixture.input, fixture.path);
-                      }}
-                    >
-                      Use fixture
-                    </button>
-                  </summary>
-                  {fixture.error ? (
-                    <pre>{fixture.error}</pre>
-                  ) : (
-                    <div className="assertion-list">
-                      {fixture.assertions.map((assertion, index) => (
-                        <div
-                          className={assertion.passed ? "assertion-row pass" : "assertion-row fail"}
-                          key={`${fixture.path}-${assertion.row}-${assertion.column}-${index}`}
-                        >
-                          <span>
-                            {assertion.negative ? "!" : ""}@{assertion.capture_name}
-                          </span>
-                          <span className="capture-loc">
-                            {assertion.row}:{assertion.column}
-                          </span>
-                          {assertion.message ? <code>{assertion.message}</code> : null}
-                        </div>
-                      ))}
+                      <span>
+                        {assertion.negative ? "!" : ""}@{assertion.capture_name}
+                      </span>
+                      <span className="capture-loc">
+                        {assertion.row}:{assertion.column}
+                      </span>
+                      {assertion.message ? <code>{assertion.message}</code> : null}
                     </div>
-                  )}
-                </details>
-              ))}
+                  ))}
+                </div>
+              )}
+            </details>
+          ))}
+        </div>
+      ),
+    });
+  }
+
+  sections.push({
+    id: "bench",
+    title: "Benchmark",
+    meta: bench.running ? `running… ${bench.progress}` : benchMeta(bench.report),
+    body: <BenchBody {...bench} />,
+  });
+
+  const activeSection = sections.find((section) => section.id === active) ?? null;
+
+  return (
+    <div className="dock">
+      {failure ? (
+        <div className="dock-failure">
+          <strong>{recovered ? "Recovered with errors" : "Parse failed"}</strong>
+          {unplaced.map((diagnostic, index) => (
+            <div className="dock-failure-row" key={`${diagnostic.stage}-${index}`}>
+              <span className="dock-failure-stage">{diagnostic.stage}</span>
+              <code>{diagnostic.message}</code>
             </div>
-        </Panel>
+          ))}
+        </div>
       ) : null}
+
+      {activeSection ? (
+        <div className="dock-drawer">
+          <div className="panel-body">{activeSection.body}</div>
+        </div>
+      ) : null}
+
+      <nav className="dock-bar" aria-label="Result panels">
+        {sections.map((section) => (
+          <button
+            type="button"
+            key={section.id}
+            className={`dock-chip ${active === section.id ? "on" : ""}`}
+            aria-expanded={active === section.id}
+            onClick={() => setActive((current) => (current === section.id ? null : section.id))}
+          >
+            <span className="dock-chip-title">{section.title}</span>
+            {section.meta != null ? <span className="dock-chip-meta">{section.meta}</span> : null}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
 
-function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | null }) {
+function PlanBody({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | null }) {
   const parserStencilTotal = countPlanItems(plan.snark_stencils);
   const lexerStencilTotal = countPlanItems(plan.lexer_stencils);
   const totalStencilWork = parserStencilTotal + lexerStencilTotal;
@@ -1031,11 +1057,7 @@ function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | nul
   }));
 
   return (
-    <Panel
-      title="Plan"
-      defaultOpen
-      meta={dominant ? `${dominant.execution} · ${dominant.total_count} ops` : "no backend lane"}
-    >
+    <>
       <div className="plan-grid">
         <PlanFact
           label="Visibility"
@@ -1105,7 +1127,7 @@ function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | nul
       <PlanTopList title="Lexer stencil ops" items={plan.lexer_stencils} />
       <PlanTopList title="Backend execution lanes" items={backendExecutionItems} />
       <PlanTopList title="Lowering barriers" items={plan.lowering_barriers} />
-    </Panel>
+    </>
   );
 }
 
