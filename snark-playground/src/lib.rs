@@ -690,7 +690,12 @@ fn playground_response_for_session(
                 let accepted_tree_events = report.accepted_tree_events();
                 let accepted_error_count = count_accepted_errors(&accepted_tree_events);
                 let accepted_missing_count = count_accepted_missing(&accepted_tree_events);
-                parse = Some(parse_output(&report, &prepared.parser, input));
+                parse = Some(parse_output(
+                    &report,
+                    &prepared.parser,
+                    input,
+                    &accepted_tree_events,
+                ));
                 if accepted_error_count > 0 || accepted_missing_count > 0 {
                     diagnostics.push(diagnostic(
                         "parse",
@@ -816,8 +821,8 @@ fn parse_output(
     report: &WeavyPlaygroundReport,
     parser: &ParserGrammar,
     input: &str,
+    accepted_tree_events: &[TreeEvent],
 ) -> ParseOutput {
-    let accepted_tree_events = report.accepted_tree_events();
     ParseOutput {
         sexp: report.tree_sexp(),
         tree: report
@@ -830,8 +835,8 @@ fn parse_output(
         tree_event_count: report.tree_events().len(),
         reuse_node_count: count_reused_nodes(report.tree_events()),
         accepted_tree_event_count: accepted_tree_events.len(),
-        accepted_error_count: count_accepted_errors(&accepted_tree_events),
-        accepted_missing_count: count_accepted_missing(&accepted_tree_events),
+        accepted_error_count: count_accepted_errors(accepted_tree_events),
+        accepted_missing_count: count_accepted_missing(accepted_tree_events),
     }
 }
 
@@ -1604,7 +1609,12 @@ fn layer_output(
     };
     let mut diagnostics = Vec::new();
     let accepted_tree_events = report.report.accepted_tree_events();
-    let parse = parse_output(&report.report, &prepared.parser, &input);
+    let parse = parse_output(
+        &report.report,
+        &prepared.parser,
+        &input,
+        &accepted_tree_events,
+    );
     if parse.accepted_error_count > 0 || parse.accepted_missing_count > 0 {
         let primary_span = report
             .strict_error_byte
