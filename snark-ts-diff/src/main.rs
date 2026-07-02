@@ -40,8 +40,8 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParseReport,
-        WeavySnarkProfileStencilReadiness,
+        SnarkStencilProfile, WeavyLexerStencilSummary, WeavyParseError, WeavyParsePlan,
+        WeavyParseReport, WeavySnarkProfileStencilReadiness,
         parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
@@ -172,6 +172,12 @@ fn write_stencil_profile(
         }
     }
 
+    write_lexer_stencils(
+        out,
+        &format!("{label}_lexer_stencils"),
+        &profile.lexer_summaries,
+    )?;
+
     if profile.family_summaries.is_empty() {
         writeln!(out, "{label}_stencil_families: none")?;
     } else {
@@ -207,6 +213,26 @@ fn write_stencil_profile(
         }
     }
 
+    Ok(())
+}
+
+fn write_lexer_stencils(
+    out: &mut impl Write,
+    label: &str,
+    summaries: &[WeavyLexerStencilSummary],
+) -> io::Result<()> {
+    if summaries.is_empty() {
+        writeln!(out, "{label}: none")?;
+    } else {
+        writeln!(out, "{label}:")?;
+        for summary in summaries {
+            writeln!(
+                out,
+                "  {:?} execution={:?} state={:?} count={}",
+                summary.kind, summary.execution, summary.state, summary.count
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -507,18 +533,11 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
             writeln!(out, "  {kind:?}: {count}")?;
         }
     }
-    if readiness.lexer_stencil_summaries.is_empty() {
-        writeln!(out, "lexer_stencils: none")?;
-    } else {
-        writeln!(out, "lexer_stencils:")?;
-        for summary in &readiness.lexer_stencil_summaries {
-            writeln!(
-                out,
-                "  {:?} execution={:?} state={:?} count={}",
-                summary.kind, summary.execution, summary.state, summary.count
-            )?;
-        }
-    }
+    write_lexer_stencils(
+        &mut out,
+        "lexer_stencils",
+        &readiness.lexer_stencil_summaries,
+    )?;
     if readiness.barrier_summaries.is_empty() {
         writeln!(out, "barriers: none")?;
     } else {

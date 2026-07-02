@@ -505,6 +505,8 @@ pub struct WeavySnarkProfileStencilReadiness {
     pub profile: SnarkStencilProfile,
     /// Profile-specific Snark stencil obligations by descriptor.
     pub descriptor_summaries: Vec<WeavySnarkProfileStencilSummary>,
+    /// Lexer graph matcher ops that remain part of this profile's backend contract.
+    pub lexer_summaries: Vec<WeavyLexerStencilSummary>,
     /// Profile-specific Snark stencil obligations by family.
     pub family_summaries: Vec<WeavySnarkStencilFamilySummary>,
     /// Profile-specific Snark stencil obligations by execution lane.
@@ -1657,6 +1659,7 @@ impl WeavyParsePlanReadiness {
         WeavySnarkProfileStencilReadiness {
             profile,
             descriptor_summaries: self.snark_stencil_summaries_for_profile(profile),
+            lexer_summaries: self.lexer_stencil_summaries.clone(),
             family_summaries: self.snark_stencil_family_summaries_for_profile(profile),
             execution_summaries: self.snark_stencil_execution_summaries_for_profile(profile),
             state_summaries: self.snark_stencil_state_summaries_for_profile(profile),
@@ -11140,6 +11143,20 @@ mod tests {
         assert_eq!(
             analysis.readiness.lexer_stencil_summaries,
             analysis.lexer.stencil_summaries()
+        );
+        assert_eq!(
+            analysis
+                .readiness
+                .snark_stencil_profile(SnarkStencilProfile::DirectNoTrace)
+                .lexer_summaries,
+            analysis.readiness.lexer_stencil_summaries
+        );
+        assert_eq!(
+            analysis
+                .readiness
+                .snark_stencil_profile(SnarkStencilProfile::DirectTreeOnly)
+                .lexer_summaries,
+            analysis.readiness.lexer_stencil_summaries
         );
         assert!(
             analysis
