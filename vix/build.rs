@@ -536,7 +536,15 @@ impl<'a> Model<'a> {
              use snark::parser::ResolvedCstNode;\n\n\
              pub use crate::support::{Span, Spanned};\n\n",
         );
+        // Several hidden rules may share one enum (e.g. `_scrutinee` is a
+        // syntactic restriction of `_expr`): emit each NAME once, first
+        // (broadest) declaration wins for both the type and the lowering fn.
+        let mut emitted = Vec::new();
         for e in &self.enums {
+            if emitted.contains(&e.name) {
+                continue;
+            }
+            emitted.push(e.name.clone());
             self.emit_enum(&mut out, e);
         }
         for (idx, a) in self.adhocs.iter().enumerate() {

@@ -22,8 +22,8 @@
 //! consume this list.
 
 use crate::ast::{
-    Arg, ArrayElem, Block, Callee, CommandPart, Expr, Item, Pattern, SourceFile, Span, Spanned,
-    Stmt, Type,
+    Arg, ArrayElem, Block, CommandPart, EnumItem, Expr, FieldList, GenericParams, Item, PathRef,
+    Pattern, SourceFile, Span, Spanned, Stmt, StructItem, TupleFields, Type,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,7 +36,17 @@ pub enum SymbolKind {
     Let,
     ClosureParam,
     Import,
+    /// A struct or enum declaration.
+    Type,
+    /// A generic type parameter (`<A, B>`).
+    TypeParam,
+    /// A name bound by a match pattern (payload/shorthand positions).
+    Binding,
 }
+
+/// Primitive scalar types need no declaration or import; they resolve silently
+/// (no ref recorded — there is no def site to jump to).
+const BUILTIN_TYPES: &[&str] = &["Int", "Float", "String", "Bool"];
 
 #[derive(Debug, Clone)]
 pub struct Symbol {
@@ -136,22 +146,34 @@ pub fn bind(file: &SourceFile) -> Bindings {
             Item::Fn(f) => {
                 b.define(SymbolKind::Fn, &f.name);
             }
+            Item::Struct(s) => {
+                b.define(SymbolKind::Type, &s.name);
+            }
+            Item::Enum(e) => {
+                b.define(SymbolKind::Type, &e.name);
+            }
         }
     }
 
-    // Pass 2: bodies.
+    // Pass 2: bodies and type declarations.
     for item in &file.items {
-        if let Item::Fn(f) = item {
-            b.push();
-            for p in &f.params.params {
-                b.define(SymbolKind::Param, &p.name);
-                b.ty(&p.ty);
+        match item {
+            Item::Use(_) => {}
+            Item::Fn(f) => {
+                b.push();
+                b.generics(&f.generics);
+                for p in &f.params.params {
+                    b.define(SymbolKind::Param, &p.name);
+                    b.ty(&p.ty);
+                }
+                if let Some(rt) = &f.return_type {
+                    b.ty(rt);
+                }
+                b.block(&f.body);
+                b.pop();
             }
-            if let Some(rt) = &f.return_type {
-                b.ty(rt);
-            }
-            b.block(&f.body);
-            b.pop();
+            Item::Struct(s) => b.struct_item(s),
+            Item::Enum(e) => b.enum_item(e),
         }
     }
 
@@ -188,6 +210,9 @@ impl Binder {
     }
 
     fn resolve(&mut self, name: &Spanned<String>) {
+        if BUILTIN_TYPES.contains(&name.value.as_str()) {
+            return;
+        }
         for scope in self.scopes.iter().rev() {
             if let Some((_, id)) = scope.iter().rev().find(|(n, _)| *n == name.value) {
                 self.out.refs.push((name.span, *id));
@@ -197,9 +222,90 @@ impl Binder {
         self.out.unresolved.push(name.clone());
     }
 
+    fn generics(&mut self, generics: &Option<GenericParams>) {
+        if let Some(g) = generics {
+            for p in &g.params {
+                self.define(SymbolKind::TypeParam, p);
+            }
+        }
+    }
+
+    fn struct_item(&mut self, s: &StructItem) {
+        self.push();
+        self.generics(&s.generics);
+        if let Some(fields) = &s.fields {
+            self.field_list(fields);
+        }
+        if let Some(tuple) = &s.tuple {
+            self.tuple_fields(tuple);
+        }
+        self.pop();
+    }
+
+    fn enum_item(&mut self, e: &EnumItem) {
+        self.push();
+        self.generics(&e.generics);
+        for v in &e.variants {
+            if let Some(tuple) = &v.tuple {
+                self.tuple_fields(tuple);
+            }
+            if let Some(fields) = &v.fields {
+                self.field_list(fields);
+            }
+        }
+        self.pop();
+    }
+
+    fn field_list(&mut self, fields: &FieldList) {
+        for f in &fields.fields {
+            self.ty(&f.ty);
+            if let Some(default) = &f.default {
+                self.expr(default);
+            }
+        }
+    }
+
+    fn tuple_fields(&mut self, tuple: &TupleFields) {
+        for t in &tuple.tys {
+            self.ty(t);
+        }
+    }
+
+    fn path_ref(&mut self, p: &PathRef) {
+        match p {
+            PathRef::Identifier(name) => self.resolve(name),
+            PathRef::Scoped(s) => {
+                if let Some(head) = s.segments.first() {
+                    self.resolve(head);
+                }
+            }
+        }
+    }
+
     fn ty(&mut self, t: &Type) {
         match t {
             Type::Array(a) => self.ty(&a.elem),
+            Type::Generic(g) => {
+                if let Some(head) = g.base.segments.first() {
+                    self.resolve(head);
+                }
+                for arg in &g.args {
+                    self.ty(arg);
+                }
+            }
+            Type::Tuple(t) => {
+                for elem in &t.elems {
+                    self.ty(elem);
+                }
+            }
+            Type::Fn(f) => {
+                for param in &f.params {
+                    self.ty(param);
+                }
+                if let Some(rt) = &f.return_type {
+                    self.ty(rt);
+                }
+            }
             // Multi-segment type paths resolve their head; the rest waits for modules.
             Type::Path(p) => {
                 if let Some(head) = p.segments.first() {
@@ -239,14 +345,7 @@ impl Binder {
             Expr::Unary(x) => self.expr(&x.operand),
             Expr::Paren(x) => self.expr(&x.inner),
             Expr::Call(x) => {
-                match &x.callee {
-                    Callee::Identifier(name) => self.resolve(name),
-                    Callee::Scoped(s) => {
-                        if let Some(head) = s.segments.first() {
-                            self.resolve(head);
-                        }
-                    }
-                }
+                self.path_ref(&x.callee);
                 self.args(&x.args);
             }
             Expr::MethodCall(x) => {
@@ -258,11 +357,29 @@ impl Binder {
             Expr::Match(x) => {
                 self.expr(&x.scrutinee);
                 for arm in &x.arms {
-                    if let Pattern::Identifier(name) = &arm.pattern {
-                        // Constructor-like; no enum surface yet. Recorded, not bound.
-                        self.out.unresolved.push(name.clone());
+                    // Pattern bindings scope over the guard and the arm value.
+                    self.push();
+                    self.pattern(&arm.pattern, true);
+                    if let Some(guard) = &arm.guard {
+                        self.expr(guard);
                     }
                     self.expr(&arm.value);
+                    self.pop();
+                }
+            }
+            Expr::StructLit(x) => {
+                self.path_ref(&x.path);
+                for f in &x.fields {
+                    // Field NAMES name the type's fields, not scope values.
+                    self.expr(&f.value);
+                }
+                for s in &x.spreads {
+                    self.expr(&s.base);
+                }
+            }
+            Expr::Tuple(x) => {
+                for elem in &x.elems {
+                    self.expr(elem);
                 }
             }
             Expr::Closure(x) => {
@@ -305,6 +422,56 @@ impl Binder {
                 // A kwarg's NAME names the callee's parameter, not a value in scope.
                 Arg::Kwarg(k) => self.expr(&k.value),
                 Arg::Expr(e) => self.expr(e),
+            }
+        }
+    }
+
+    /// Bind a match pattern. The rule (from the types design sketch): inside
+    /// payload positions a bare identifier BINDS; at the TOP of an arm it is
+    /// constructor-like and stays unresolved until type-directed resolution
+    /// lands (this preserves `Linux => …` behaving as a variant reference, and
+    /// keeps the "typo'd variant silently becomes a catch-all" footgun shut).
+    ///
+    /// Known rename limitation: a shorthand field pattern (`{ name, .. }`)
+    /// binds `name`, but renaming that binding must expand the shorthand to
+    /// `name: new_name` — rename_edits doesn't know that yet.
+    fn pattern(&mut self, p: &Pattern, top: bool) {
+        match p {
+            Pattern::Wildcard(_) | Pattern::Str(_) | Pattern::Number(_) => {}
+            Pattern::Identifier(name) => {
+                if top {
+                    self.out.unresolved.push(name.clone());
+                } else {
+                    self.define(SymbolKind::Binding, name);
+                }
+            }
+            Pattern::Scoped(s) => {
+                if let Some(head) = s.segments.first() {
+                    self.resolve(head);
+                }
+            }
+            Pattern::Variant(v) => {
+                self.path_ref(&v.path);
+                for arg in &v.args {
+                    self.pattern(arg, false);
+                }
+            }
+            Pattern::Struct(sp) => {
+                self.path_ref(&sp.path);
+                for f in &sp.fields {
+                    match &f.pattern {
+                        Some(inner) => self.pattern(inner, false),
+                        // Shorthand: the field name IS the binding.
+                        None => {
+                            self.define(SymbolKind::Binding, &f.name);
+                        }
+                    }
+                }
+            }
+            Pattern::Tuple(t) => {
+                for elem in &t.elems {
+                    self.pattern(elem, false);
+                }
             }
         }
     }

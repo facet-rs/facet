@@ -10,6 +10,9 @@ ast({
   _item: { enum: "Item" },
   _statement: { enum: "Stmt" },
   _expr: { enum: "Expr" },
+  // Syntactic restriction of _expr (no bare struct literal before a match
+  // body's `{`) — same AST enum, deduped by the codegen.
+  _scrutinee: { enum: "Expr" },
   _type: { enum: "Type" },
   _pattern: { enum: "Pattern" },
   _arg: { enum: "Arg" },
@@ -17,6 +20,8 @@ ast({
   // items
   use_item: { as: "Use" },
   fn_item: { as: "Fn" },
+  struct_item: { as: "Struct" },
+  enum_item: { as: "Enum" },
 
   // statements
   let_statement: { as: "Let", struct: "LetStmt" },
@@ -29,17 +34,32 @@ ast({
     fields: { part: { enum: "CommandPart" } },
   },
   method_call: { as: "MethodCall" },
-  field_access: { as: "Field" },
+  field_access: {
+    as: "Field",
+    // `.name` field access | `.0` tuple index share the node
+    fields: { name: { enum: "Member" } },
+  },
   scoped_identifier: { as: "Scoped" },
-  call: { fields: { callee: { enum: "Callee" } } },
+  call: { fields: { callee: { enum: "PathRef" } } },
   array: { fields: { elem: { enum: "ArrayElem" } } },
+  struct_literal: {
+    as: "StructLit",
+    fields: { path: { enum: "PathRef" } },
+  },
+  tuple_expr: { as: "Tuple" },
 
   // types
   array_type: { as: "Array" },
+  generic_type: { as: "Generic" },
+  tuple_type: { as: "Tuple" },
+  fn_type: { as: "Fn" },
   type_path: { as: "Path" },
 
   // patterns
   wildcard_pattern: { as: "Wildcard" },
+  variant_pattern: { as: "Variant", fields: { path: { enum: "PathRef" } } },
+  struct_pattern: { as: "Struct", fields: { path: { enum: "PathRef" } } },
+  tuple_pattern: { as: "Tuple" },
 
   // leaves: decode choice ("text" = raw source text)
   identifier: { as: "Identifier", decode: "text" },

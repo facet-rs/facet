@@ -48,6 +48,9 @@ fn kind_str(kind: SymbolKind) -> &'static str {
         SymbolKind::Let => "let",
         SymbolKind::ClosureParam => "closure param",
         SymbolKind::Import => "import",
+        SymbolKind::Type => "type",
+        SymbolKind::TypeParam => "type param",
+        SymbolKind::Binding => "binding",
     }
 }
 

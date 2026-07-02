@@ -39,7 +39,7 @@ module.exports = grammar({
     source_file: ($) => repeat(field("item", $._item)),
 
     // ---- items ----------------------------------------------------------
-    _item: ($) => choice($.use_item, $.fn_item),
+    _item: ($) => choice($.use_item, $.fn_item, $.struct_item, $.enum_item),
 
     use_item: ($) => seq("use", field("tree", $.use_tree), ";"),
     use_tree: ($) =>
@@ -54,17 +54,76 @@ module.exports = grammar({
         optional(field("vis", "pub")),
         "fn",
         field("name", $.identifier),
+        optional(field("generics", $.generic_params)),
         field("params", $.param_list),
         optional(seq("->", field("return_type", $._type))),
         field("body", $.block),
       ),
 
+    // Record struct `struct T { a: A, b: B = default }`, tuple struct
+    // `struct T(A);` (newtype), unit struct `struct T;`. Field defaults mirror
+    // kwargs-with-defaults at call sites.
+    struct_item: ($) =>
+      seq(
+        optional(field("vis", "pub")),
+        "struct",
+        field("name", $.identifier),
+        optional(field("generics", $.generic_params)),
+        choice(field("fields", $.field_list), seq(field("tuple", $.tuple_fields), ";"), ";"),
+      ),
+
+    enum_item: ($) =>
+      seq(
+        optional(field("vis", "pub")),
+        "enum",
+        field("name", $.identifier),
+        optional(field("generics", $.generic_params)),
+        "{",
+        sepBy(",", field("variant", $.variant)),
+        "}",
+      ),
+
+    // Unit `Phony`, tuple `Object(Path)`, record `Archive { name: String }`.
+    // Declaration order IS the total order — reordering variants is semantic.
+    variant: ($) =>
+      seq(
+        field("name", $.identifier),
+        optional(choice(field("tuple", $.tuple_fields), field("fields", $.field_list))),
+      ),
+
+    field_list: ($) => seq("{", sepBy(",", field("field", $.field_decl)), "}"),
+    field_decl: ($) =>
+      seq(
+        field("name", $.identifier),
+        ":",
+        field("type", $._type),
+        optional(seq("=", field("default", $._expr))),
+      ),
+    tuple_fields: ($) => seq("(", sepBy(",", field("type", $._type)), ")"),
+
+    // Type parameters: no lifetimes (values, not places), and no hash/eq/ord
+    // bounds — every vix value has them by construction.
+    generic_params: ($) => seq("<", sepBy(",", field("param", $.identifier)), ">"),
+
     param_list: ($) => seq("(", sepBy(",", field("param", $.param)), ")"),
     param: ($) => seq(field("name", $.identifier), ":", field("type", $._type)),
 
     // ---- types ----------------------------------------------------------
-    _type: ($) => choice($.array_type, $.type_path),
+    _type: ($) =>
+      choice($.array_type, $.fn_type, $.tuple_type, $.generic_type, $.type_path),
     array_type: ($) => seq("[", field("elem", $._type), "]"),
+    generic_type: ($) =>
+      seq(field("base", $.type_path), "<", sepBy(",", field("arg", $._type)), ">"),
+    tuple_type: ($) =>
+      seq("(", field("elem", $._type), ",", sepBy(",", field("elem", $._type)), ")"),
+    fn_type: ($) =>
+      seq(
+        "fn",
+        "(",
+        sepBy(",", field("param", $._type)),
+        ")",
+        optional(seq("->", field("return_type", $._type))),
+      ),
     type_path: ($) =>
       seq(field("segment", $.identifier), repeat(seq("::", field("segment", $.identifier)))),
 
@@ -97,6 +156,31 @@ module.exports = grammar({
         $.match_expr,
         $.closure,
         $.command_block,
+        $.struct_literal,
+        $.tuple_expr,
+        $.array,
+        $.paren,
+        $.scoped_identifier,
+        $.identifier,
+        $.string,
+        $.path_literal,
+        $.number,
+        $.boolean,
+      ),
+
+    // `match X {` — a bare struct literal as scrutinee would be ambiguous with
+    // the match body's `{` (vix has no block/if exprs, so this is the ONLY
+    // struct-literal ambiguity). Rust's rule, shallowly: parenthesize it.
+    _scrutinee: ($) =>
+      choice(
+        $.binary,
+        $.unary,
+        $.call,
+        $.method_call,
+        $.field_access,
+        $.match_expr,
+        $.closure,
+        $.tuple_expr,
         $.array,
         $.paren,
         $.scoped_identifier,
@@ -137,8 +221,14 @@ module.exports = grammar({
         seq(field("receiver", $._expr), ".", field("name", $.identifier), field("args", $.arg_list)),
       ),
 
+    // `.name` field access and `.0` tuple index share one node; nested tuple
+    // indexing (`t.0.1`) is a KNOWN lexer wart (0.1 lexes as one number) — write
+    // `(t.0).1` until per-state numeric lexing splits it.
     field_access: ($) =>
-      prec(PREC.postfix, seq(field("receiver", $._expr), ".", field("name", $.identifier))),
+      prec(
+        PREC.postfix,
+        seq(field("receiver", $._expr), ".", field("name", choice($.identifier, $.number))),
+      ),
 
     arg_list: ($) => seq("(", sepBy(",", field("arg", $._arg)), ")"),
     _arg: ($) => choice($.kwarg, $._expr),
@@ -151,15 +241,74 @@ module.exports = grammar({
       seq("|", sepBy(",", field("param", $.identifier)), "|", field("body", $._expr)),
 
     match_expr: ($) =>
-      seq("match", field("scrutinee", $._expr), "{", sepBy(",", field("arm", $.match_arm)), "}"),
-    match_arm: ($) => seq(field("pattern", $._pattern), "=>", field("value", $._expr)),
-    _pattern: ($) => choice($.wildcard_pattern, $.identifier, $.string, $.number),
+      seq(
+        "match",
+        field("scrutinee", $._scrutinee),
+        "{",
+        sepBy(",", field("arm", $.match_arm)),
+        "}",
+      ),
+    match_arm: ($) =>
+      seq(
+        field("pattern", $._pattern),
+        optional(seq("if", field("guard", $._expr))),
+        "=>",
+        field("value", $._expr),
+      ),
+
+    _pattern: ($) =>
+      choice(
+        $.wildcard_pattern,
+        $.variant_pattern,
+        $.struct_pattern,
+        $.tuple_pattern,
+        $.scoped_identifier,
+        $.identifier,
+        $.string,
+        $.number,
+      ),
     wildcard_pattern: () => "_",
+    // `Artifact::Object(p)` / `Some(x)` — payload patterns recurse.
+    variant_pattern: ($) =>
+      seq(
+        field("path", choice($.identifier, $.scoped_identifier)),
+        "(",
+        sepBy(",", field("arg", $._pattern)),
+        ")",
+      ),
+    // `Artifact::Archive { name, members: m, .. }` — shorthand binds the field name.
+    struct_pattern: ($) =>
+      seq(
+        field("path", choice($.identifier, $.scoped_identifier)),
+        "{",
+        sepBy(",", choice(field("field", $.field_pattern), field("rest", $.rest_pattern))),
+        "}",
+      ),
+    field_pattern: ($) =>
+      seq(field("name", $.identifier), optional(seq(":", field("pattern", $._pattern)))),
+    rest_pattern: () => "..",
+    tuple_pattern: ($) =>
+      seq("(", field("elem", $._pattern), ",", sepBy(",", field("elem", $._pattern)), ")"),
 
     // Flag atoms are legal ONLY as array elements (feeding [Flag] values) — never general
     // expressions. Per-state lexing then makes `a - b` vs `[-DFOO]` unambiguous by
     // construction: a state either expects a flag or a binary minus, never both.
     array: ($) => seq("[", sepBy(",", field("elem", choice($.flag, $._expr))), "]"),
+
+    // `Toolchain { opt: 1, ..base }` — record construction with defaults
+    // filling the gaps and `..base` functional update.
+    struct_literal: ($) =>
+      seq(
+        field("path", choice($.identifier, $.scoped_identifier)),
+        "{",
+        sepBy(",", choice(field("field", $.field_init), field("spread", $.spread))),
+        "}",
+      ),
+    field_init: ($) => seq(field("name", $.identifier), ":", field("value", $._expr)),
+    spread: ($) => seq("..", field("base", $._expr)),
+
+    tuple_expr: ($) =>
+      seq("(", field("elem", $._expr), ",", sepBy(",", field("elem", $._expr)), ")"),
 
     paren: ($) => seq("(", field("inner", $._expr), ")"),
 
