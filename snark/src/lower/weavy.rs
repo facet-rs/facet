@@ -3428,6 +3428,8 @@ pub enum WeavyParseError {
     },
     /// Weavy program finished without accepting a tree.
     MissingAcceptedTree,
+    /// Accepted tree events could not be resolved into a CST.
+    MissingResolvedTree,
     /// No Weavy branch accepted the input.
     NoViableBranch {
         /// Number of failed or retired branches.
@@ -3567,6 +3569,12 @@ impl fmt::Display for WeavyParseError {
                 state.get()
             ),
             Self::MissingAcceptedTree => write!(f, "Weavy program finished without accepting"),
+            Self::MissingResolvedTree => {
+                write!(
+                    f,
+                    "accepted Weavy tree events could not be resolved into a CST"
+                )
+            }
             Self::NoViableBranch { failure_count } => {
                 write!(
                     f,
@@ -3994,8 +4002,25 @@ enum RuntimeWeavyTreeEventCollection {
     Enabled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeWeavyDeterministicOutput {
+    Tree,
+    ResolvedTree,
+    Report,
+}
+
+impl RuntimeWeavyDeterministicOutput {
+    const fn tree_event_collection(self) -> RuntimeWeavyTreeEventCollection {
+        match self {
+            Self::Tree => RuntimeWeavyTreeEventCollection::Disabled,
+            Self::ResolvedTree | Self::Report => RuntimeWeavyTreeEventCollection::Enabled,
+        }
+    }
+}
+
 enum RuntimeWeavyDeterministicParse {
     Tree(SexpNode),
+    ResolvedTree(parser_ir::ResolvedCstNode),
     Report(WeavyParseReport),
 }
 
@@ -4330,6 +4355,54 @@ pub fn parse_prepared_weavy_tree_and_scanner(
         RuntimeWeavyBlockExecution::Direct,
     )
     .map(|report| report.tree)
+}
+
+/// Execute a prepared parser plan through the direct Weavy runtime and return the ranged CST.
+///
+/// Deterministic parses resolve accepted tree events directly. Conflicts or errors fall back to
+/// the full report path so recovery and diagnostics stay identical to
+/// [`parse_prepared_weavy_with_report`].
+pub fn parse_prepared_weavy_resolved_tree(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+    parse_prepared_weavy_resolved_tree_and_scanner(plan, parser, table, input, None)
+}
+
+/// Execute a prepared parser plan with a scanner host and return the ranged CST.
+pub fn parse_prepared_weavy_resolved_tree_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(tree) = parse_weavy_deterministic_resolved_tree_with_lexer_program(input_ctx)? {
+        return Ok(tree);
+    }
+    parse_weavy_with_lexer_program(
+        input_ctx,
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
+    )
+    .and_then(|report| {
+        report
+            .accepted_resolved_tree(parser, input)
+            .ok_or(WeavyParseError::MissingResolvedTree)
+    })
 }
 
 /// Lex one token through a prepared Weavy plan at a concrete parse state.
@@ -4758,11 +4831,14 @@ fn parse_weavy_deterministic_report_with_lexer_program(
 ) -> Result<Option<WeavyParseReport>, WeavyParseError> {
     match parse_weavy_deterministic_with_lexer_program(
         input_ctx,
-        RuntimeWeavyTreeEventCollection::Enabled,
+        RuntimeWeavyDeterministicOutput::Report,
     )? {
         Some(RuntimeWeavyDeterministicParse::Report(report)) => Ok(Some(report)),
         Some(RuntimeWeavyDeterministicParse::Tree(_)) => {
-            unreachable!("enabled tree-event collection must return a deterministic parse report")
+            unreachable!("report deterministic output must return a parse report")
+        }
+        Some(RuntimeWeavyDeterministicParse::ResolvedTree(_)) => {
+            unreachable!("report deterministic output must not return a resolved tree")
         }
         None => Ok(None),
     }
@@ -4773,11 +4849,32 @@ fn parse_weavy_deterministic_tree_with_lexer_program(
 ) -> Result<Option<SexpNode>, WeavyParseError> {
     match parse_weavy_deterministic_with_lexer_program(
         input_ctx,
-        RuntimeWeavyTreeEventCollection::Disabled,
+        RuntimeWeavyDeterministicOutput::Tree,
     )? {
         Some(RuntimeWeavyDeterministicParse::Tree(tree)) => Ok(Some(tree)),
+        Some(RuntimeWeavyDeterministicParse::ResolvedTree(_)) => {
+            unreachable!("tree deterministic output must not return a resolved tree")
+        }
         Some(RuntimeWeavyDeterministicParse::Report(_)) => {
-            unreachable!("disabled tree-event collection must return only the deterministic tree")
+            unreachable!("tree deterministic output must not return a parse report")
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_weavy_deterministic_resolved_tree_with_lexer_program(
+    input_ctx: RuntimeWeavyInput<'_>,
+) -> Result<Option<parser_ir::ResolvedCstNode>, WeavyParseError> {
+    match parse_weavy_deterministic_with_lexer_program(
+        input_ctx,
+        RuntimeWeavyDeterministicOutput::ResolvedTree,
+    )? {
+        Some(RuntimeWeavyDeterministicParse::ResolvedTree(tree)) => Ok(Some(tree)),
+        Some(RuntimeWeavyDeterministicParse::Tree(_)) => {
+            unreachable!("resolved-tree deterministic output must not return a tree")
+        }
+        Some(RuntimeWeavyDeterministicParse::Report(_)) => {
+            unreachable!("resolved-tree deterministic output must not return a parse report")
         }
         None => Ok(None),
     }
@@ -4785,7 +4882,7 @@ fn parse_weavy_deterministic_tree_with_lexer_program(
 
 fn parse_weavy_deterministic_with_lexer_program(
     input_ctx: RuntimeWeavyInput<'_>,
-    tree_event_collection: RuntimeWeavyTreeEventCollection,
+    output_kind: RuntimeWeavyDeterministicOutput,
 ) -> Result<Option<RuntimeWeavyDeterministicParse>, WeavyParseError> {
     if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(WeavyParseError::WrongStage {
@@ -4803,6 +4900,7 @@ fn parse_weavy_deterministic_with_lexer_program(
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
     let step_limit = runtime_weavy_step_limit(input_ctx.table, input_ctx.input);
+    let tree_event_collection = output_kind.tree_event_collection();
     let mut branch = RuntimeWeavyBranch {
         version: parser_ir::StackVersionId::from_index(0),
         stack: vec![RuntimeWeavyStackEntry {
@@ -4882,8 +4980,22 @@ fn parse_weavy_deterministic_with_lexer_program(
                 tree_events,
                 reusable_nodes,
             } => {
-                if tree_event_collection == RuntimeWeavyTreeEventCollection::Disabled {
-                    return Ok(Some(RuntimeWeavyDeterministicParse::Tree(node)));
+                match output_kind {
+                    RuntimeWeavyDeterministicOutput::Tree => {
+                        return Ok(Some(RuntimeWeavyDeterministicParse::Tree(node)));
+                    }
+                    RuntimeWeavyDeterministicOutput::ResolvedTree => {
+                        let mut builder =
+                            parser_ir::ResolvedCstBuilder::new(input_ctx.parser, input_ctx.input);
+                        for event in &tree_events {
+                            builder.push(event);
+                        }
+                        let tree = builder
+                            .finish()
+                            .ok_or(WeavyParseError::MissingResolvedTree)?;
+                        return Ok(Some(RuntimeWeavyDeterministicParse::ResolvedTree(tree)));
+                    }
+                    RuntimeWeavyDeterministicOutput::Report => {}
                 }
                 let reusable_nodes =
                     mark_runtime_weavy_reusable_nodes_with_errors(reusable_nodes, &tree_events);
@@ -10827,9 +10939,23 @@ mod tests {
             })
             .unwrap()
             .expect("tiny grammar is deterministic");
+        let deterministic_resolved =
+            parse_weavy_deterministic_resolved_tree_with_lexer_program(RuntimeWeavyInput {
+                plan: &plan,
+                lexer_program: &plan.lexer_program,
+                auto_close_index: &plan.auto_close_index,
+                parser: &parser,
+                table: &table,
+                input: "ab",
+                external_scanner: None,
+            })
+            .unwrap()
+            .expect("tiny grammar is deterministic");
         let default_direct =
             parse_prepared_weavy_with_report(&plan, &parser, &table, "ab").unwrap();
         let tree_only = parse_prepared_weavy_tree(&plan, &parser, &table, "ab").unwrap();
+        let resolved_tree =
+            parse_prepared_weavy_resolved_tree(&plan, &parser, &table, "ab").unwrap();
         let recovering_direct = parse_prepared_weavy_recovering_with_report_and_scanner(
             &plan, &parser, &table, "ab", None,
         )
@@ -10849,6 +10975,11 @@ mod tests {
         assert_eq!(deterministic_direct.tree(), default_direct.tree());
         assert_eq!(&deterministic_tree_only, default_direct.tree());
         assert_eq!(&tree_only, default_direct.tree());
+        let report_resolved = default_direct
+            .accepted_resolved_tree(&parser, "ab")
+            .expect("direct report resolves its accepted tree");
+        assert_eq!(deterministic_resolved, report_resolved);
+        assert_eq!(resolved_tree, report_resolved);
         assert_eq!(
             deterministic_direct.accepted_tree_events(),
             default_direct.accepted_tree_events()
@@ -10874,11 +11005,6 @@ mod tests {
         assert_eq!(metered.tree(), recovering_direct.tree());
         assert_eq!(recovering_direct.accepted_count(), 1);
         assert_eq!(recovering_direct.failure_count(), 0);
-        assert!(
-            default_direct
-                .accepted_resolved_tree(&parser, "ab")
-                .is_some()
-        );
         #[cfg(all(
             feature = "jit",
             any(
