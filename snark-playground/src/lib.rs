@@ -4,6 +4,7 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    sync::Arc,
 };
 
 use facet::Facet;
@@ -374,7 +375,7 @@ struct PreparedGrammar {
     weavy_plan: WeavyParsePlan,
 }
 
-struct WeavyPlaygroundReport(WeavyParseReport);
+struct WeavyPlaygroundReport(Arc<WeavyParseReport>);
 
 impl WeavyPlaygroundReport {
     fn accepted_tree_events(&self) -> Vec<TreeEvent> {
@@ -460,7 +461,7 @@ pub struct PlaygroundSession {
     scanner_selection: ScannerSelection,
     embedded_languages: BTreeMap<String, PreparedEmbeddedLanguage>,
     last_input: Option<String>,
-    last_report: Option<WeavyParseReport>,
+    last_report: Option<Arc<WeavyParseReport>>,
     /// Per-phase timings from `prepare_grammar`, echoed with every parse response
     /// so the UI can show where one-time preparation spends its time.
     prepare_timings: Vec<PhaseTiming>,
@@ -779,14 +780,14 @@ fn parse_session_input(
     let previous = edit.and_then(|edit| {
         Some((
             previous_input.as_deref()?,
-            session.last_report.as_ref()?,
+            session.last_report.as_ref()?.as_ref(),
             edit,
         ))
     });
     let report = parse_weavy_with_optional_recovery(&session.prepared, scanner, input, previous)
         .map_err(|error| weavy_error_diagnostic("parse", &error, input))?;
     session.last_input = Some(input.to_owned());
-    session.last_report = Some(report.report.0.clone());
+    session.last_report = Some(Arc::clone(&report.report.0));
     Ok(report)
 }
 
@@ -2128,7 +2129,7 @@ fn parse_weavy_with_optional_recovery(
     };
     match strict {
         Ok(report) => Ok(PlaygroundParseReport {
-            report: WeavyPlaygroundReport(report),
+            report: WeavyPlaygroundReport(Arc::new(report)),
             strict_error_byte: None,
         }),
         Err(strict_error) => match if let Some((old_input, previous_report, edit)) = previous {
@@ -2146,7 +2147,7 @@ fn parse_weavy_with_optional_recovery(
             parse_recovering_weavy_with_optional_scanner(prepared, scanner, input)
         } {
             Ok(report) => Ok(PlaygroundParseReport {
-                report: WeavyPlaygroundReport(report),
+                report: WeavyPlaygroundReport(Arc::new(report)),
                 strict_error_byte: weavy_parse_error_byte(&strict_error),
             }),
             Err(_) => Err(strict_error),
