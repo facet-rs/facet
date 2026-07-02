@@ -2,7 +2,7 @@
 //! one-time setup from fresh-plan and warm-plan per-parse cost.
 //!
 //! Usage: cargo run --release -p snark --features json-import \
-//!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|tree|report|recovering]
+//!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|tree|resolved|report|recovering]
 
 use std::{
     env,
@@ -16,7 +16,8 @@ use snark::{
     lower::weavy::{
         WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_recovering_with_report_and_scanner,
-        parse_prepared_weavy_tree_and_scanner, parse_prepared_weavy_with_report_and_scanner,
+        parse_prepared_weavy_resolved_tree_and_scanner, parse_prepared_weavy_tree_and_scanner,
+        parse_prepared_weavy_with_report_and_scanner,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
@@ -31,6 +32,7 @@ fn ms(d: std::time::Duration) -> f64 {
 enum BenchMode {
     All,
     StrictTree,
+    StrictResolvedTree,
     StrictReport,
     Recovering,
 }
@@ -40,10 +42,13 @@ impl BenchMode {
         match arg.as_deref() {
             None | Some("all") => Self::All,
             Some("strict" | "tree") => Self::StrictTree,
+            Some("resolved" | "resolved-tree") => Self::StrictResolvedTree,
             Some("report" | "strict-report") => Self::StrictReport,
             Some("recovering") => Self::Recovering,
             Some(other) => {
-                panic!("unknown benchmark mode {other:?}; expected all|tree|report|recovering")
+                panic!(
+                    "unknown benchmark mode {other:?}; expected all|tree|resolved|report|recovering"
+                )
             }
         }
     }
@@ -54,6 +59,10 @@ impl BenchMode {
 
     const fn runs_strict_tree_warm(self) -> bool {
         matches!(self, Self::All | Self::StrictTree)
+    }
+
+    const fn runs_strict_resolved_tree_warm(self) -> bool {
+        matches!(self, Self::All | Self::StrictResolvedTree)
     }
 
     const fn runs_strict_report_warm(self) -> bool {
@@ -201,6 +210,12 @@ fn main() {
     let strict_tree_warm_plan_total = mode.runs_strict_tree_warm().then(|| {
         bench_tree_parse(iters, || {
             parse_prepared_weavy_tree_and_scanner(&plan, &parser, &table, &input, None)
+        })
+    });
+
+    let strict_resolved_tree_warm_plan_total = mode.runs_strict_resolved_tree_warm().then(|| {
+        bench_tree_parse(iters, || {
+            parse_prepared_weavy_resolved_tree_and_scanner(&plan, &parser, &table, &input, None)
         })
     });
 
@@ -361,6 +376,9 @@ fn main() {
     }
     if let Some(totals) = strict_tree_warm_plan_total {
         print_bench_totals("weavy strict tree, warm plan", &totals, iters);
+    }
+    if let Some(totals) = strict_resolved_tree_warm_plan_total {
+        print_bench_totals("weavy strict resolved, warm", &totals, iters);
     }
     if let Some(totals) = strict_report_warm_plan_total {
         print_bench_totals("weavy strict report, warm", &totals, iters);
