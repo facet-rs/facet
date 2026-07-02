@@ -3010,8 +3010,8 @@ pub enum WeavyParseError {
         /// Number of actions in the cell.
         action_count: usize,
     },
-    /// Weavy runtime execution does not yet execute external scanners.
-    UnsupportedExternalScanner {
+    /// A parse state needs external scanning but no scanner host was attached.
+    MissingExternalScannerHost {
         /// Parse state requesting external scanner support.
         state: parser_ir::ParseStateId,
         /// Number of external candidates in the lexical mode.
@@ -3151,12 +3151,12 @@ impl fmt::Display for WeavyParseError {
                 "state {} lookahead {lookahead:?} has {action_count} actions; Weavy runtime path is deterministic",
                 state.get()
             ),
-            Self::UnsupportedExternalScanner {
+            Self::MissingExternalScannerHost {
                 state,
                 external_count,
             } => write!(
                 f,
-                "state {} needs {external_count} external scanner candidates",
+                "state {} needs {external_count} external scanner candidates but no scanner host is attached",
                 state.get()
             ),
             Self::ExternalScannerError {
@@ -3306,10 +3306,10 @@ fn runtime_weavy_step_error_to_parse_error(
             lookahead,
             action_count,
         },
-        RuntimeWeavyStepError::UnsupportedExternalScanner {
+        RuntimeWeavyStepError::MissingExternalScannerHost {
             state,
             external_count,
-        } => WeavyParseError::UnsupportedExternalScanner {
+        } => WeavyParseError::MissingExternalScannerHost {
             state,
             external_count,
         },
@@ -5837,7 +5837,7 @@ enum RuntimeWeavyStepError {
         lookahead: parser_ir::LookaheadSymbol,
         action_count: usize,
     },
-    UnsupportedExternalScanner {
+    MissingExternalScannerHost {
         state: parser_ir::ParseStateId,
         external_count: usize,
     },
@@ -6428,7 +6428,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             });
         }
         if !mode.externals().is_empty() {
-            return Err(RuntimeWeavyStepError::UnsupportedExternalScanner {
+            return Err(RuntimeWeavyStepError::MissingExternalScannerHost {
                 state: state.id(),
                 external_count: mode.externals().len(),
             });
@@ -6614,7 +6614,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         byte_position: usize,
     ) -> Result<Option<ExternalScanResult>, RuntimeWeavyStepError> {
         let Some(scanner) = self.external_scanner else {
-            return Err(RuntimeWeavyStepError::UnsupportedExternalScanner {
+            return Err(RuntimeWeavyStepError::MissingExternalScannerHost {
                 state: state.id(),
                 external_count: mode.externals().len(),
             });

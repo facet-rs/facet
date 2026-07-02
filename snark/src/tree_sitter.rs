@@ -2737,7 +2737,7 @@ mod tests {
             let state = match error {
                 crate::lower::weavy::WeavyParseError::NoToken { state, .. }
                 | crate::lower::weavy::WeavyParseError::NoAction { state, .. }
-                | crate::lower::weavy::WeavyParseError::UnsupportedExternalScanner {
+                | crate::lower::weavy::WeavyParseError::MissingExternalScannerHost {
                     state, ..
                 }
                 | crate::lower::weavy::WeavyParseError::MissingState { state }
