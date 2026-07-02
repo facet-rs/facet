@@ -1133,8 +1133,14 @@ impl WeavyParsePlan {
             .modes()
             .find_map(|mode| mode.terminal(terminal))
             .ok_or(WeavyParseError::MissingTerminal { terminal })?;
-        match_weavy_terminal_matcher_runtime(&terminal.matcher, input, byte_position)
-            .map_err(runtime_weavy_match_error_to_parse_error)
+        let lexer_scratch = RuntimeWeavyLexerScratch::default();
+        match_weavy_terminal_matcher_runtime(
+            &terminal.matcher,
+            input,
+            byte_position,
+            &lexer_scratch,
+        )
+        .map_err(runtime_weavy_match_error_to_parse_error)
     }
 }
 
@@ -1601,6 +1607,8 @@ struct WeavyLexerCompiler {
     pattern_matchers: HashMap<WeavyPatternKey, WeavyPatternMatcher>,
     literal_sets: HashMap<Vec<WeavyLiteralSetEntry>, WeavyLiteralSet>,
     direct_pattern_sets: HashMap<Vec<WeavyDirectPatternSetEntry>, WeavyDirectPatternSet>,
+    choice_matchers: HashMap<Vec<String>, WeavyRegexChoiceMatcher>,
+    next_choice_matcher_id: usize,
 }
 
 impl WeavyLexerCompiler {
@@ -1649,6 +1657,16 @@ impl WeavyLexerCompiler {
         let matcher = WeavyPatternMatcher::from(pattern);
         self.pattern_matchers.insert(key, matcher.clone());
         matcher
+    }
+
+    fn choice_matcher(&mut self, regex_sources: Vec<String>) -> Option<WeavyRegexChoiceMatcher> {
+        if let Some(matcher) = self.choice_matchers.get(&regex_sources) {
+            return Some(matcher.clone());
+        }
+        let matcher = WeavyRegexChoiceMatcher::new(self.next_choice_matcher_id, &regex_sources)?;
+        self.next_choice_matcher_id += 1;
+        self.choice_matchers.insert(regex_sources, matcher.clone());
+        Some(matcher)
     }
 }
 
@@ -1857,6 +1875,8 @@ pub enum WeavyLexOpKind {
     Repeat1,
     /// Regular composed expression lowered to one automata-backed matcher.
     CompositeRegex,
+    /// Choice expression lowered to one multi-pattern automata matcher.
+    CompositeChoice,
     /// Lexical expression still blocked on symbol resolution.
     UnsupportedSymbol,
     /// Terminal root that does not have a lowered matcher yet.
@@ -2137,6 +2157,10 @@ enum WeavyLexExpr {
         matcher: WeavyRegexLeaf,
         original: Box<WeavyLexExpr>,
     },
+    CompositeChoice {
+        matcher: Box<WeavyRegexChoiceMatcher>,
+        original: Box<WeavyLexExpr>,
+    },
     UnsupportedSymbol(GrammarExprId),
 }
 
@@ -2176,9 +2200,10 @@ impl WeavyLexExpr {
             parser_ir::CompiledLexExpr::UnsupportedSymbol(expr) => Self::UnsupportedSymbol(expr),
         };
         match expr {
-            Self::Seq(_) | Self::Choice(_) | Self::Repeat(_) | Self::Repeat1(_) => {
+            Self::Seq(_) | Self::Repeat(_) | Self::Repeat1(_) => {
                 Self::compile_composite_regex(expr)
             }
+            Self::Choice(_) => Self::compile_composite_choice(expr, compiler),
             _ => expr,
         }
     }
@@ -2192,6 +2217,29 @@ impl WeavyLexExpr {
         };
         Self::CompositeRegex {
             matcher,
+            original: Box::new(expr),
+        }
+    }
+
+    fn compile_composite_choice(expr: Self, compiler: &mut WeavyLexerCompiler) -> Self {
+        let Self::Choice(members) = &expr else {
+            return expr;
+        };
+        let mut sources = Vec::with_capacity(members.len());
+        for member in members {
+            let Some(source) = regex_source_for_weavy_lex_expr(member) else {
+                return expr;
+            };
+            if source.is_empty() {
+                return expr;
+            }
+            sources.push(source);
+        }
+        let Some(matcher) = compiler.choice_matcher(sources) else {
+            return expr;
+        };
+        Self::CompositeChoice {
+            matcher: Box::new(matcher),
             original: Box::new(expr),
         }
     }
@@ -2246,6 +2294,10 @@ impl WeavyLexExpr {
                 stats.record(WeavyLexOpKind::CompositeRegex);
                 original.add_stats(stats);
             }
+            Self::CompositeChoice { original, .. } => {
+                stats.record(WeavyLexOpKind::CompositeChoice);
+                original.add_stats(stats);
+            }
             Self::UnsupportedSymbol(_) => stats.record(WeavyLexOpKind::UnsupportedSymbol),
         }
     }
@@ -2265,6 +2317,7 @@ fn regex_source_for_weavy_lex_expr(expr: &WeavyLexExpr) -> Option<String> {
         }
         WeavyLexExpr::Choice(_) | WeavyLexExpr::Repeat(_) | WeavyLexExpr::Repeat1(_) => None,
         WeavyLexExpr::CompositeRegex { matcher, .. } => Some(matcher.source().to_owned()),
+        WeavyLexExpr::CompositeChoice { .. } => None,
         WeavyLexExpr::Until(_)
         | WeavyLexExpr::Nested { .. }
         | WeavyLexExpr::AutoClose(_)
@@ -2373,6 +2426,63 @@ impl WeavyRegexLeaf {
 
     fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
         self.engine.match_input(input, byte_position)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WeavyRegexChoiceMatcher {
+    id: usize,
+    dfa: HybridDfa,
+}
+
+impl WeavyRegexChoiceMatcher {
+    fn new(id: usize, regex_sources: &[String]) -> Option<Self> {
+        if regex_sources.is_empty() {
+            return None;
+        }
+        let regex_source_refs = regex_sources.iter().map(String::as_str).collect::<Vec<_>>();
+        let dfa = HybridDfa::builder()
+            .configure(HybridDfa::config().match_kind(RegexMatchKind::All))
+            .build_many(&regex_source_refs)
+            .ok()?;
+        Some(Self { id, dfa })
+    }
+
+    fn create_dfa_cache(&self) -> HybridDfaCache {
+        self.dfa.create_cache()
+    }
+
+    fn match_input(
+        &self,
+        input: &str,
+        byte_position: usize,
+        dfa_cache: &mut HybridDfaCache,
+    ) -> Result<Option<parser_ir::LexMatch>, ()> {
+        let Some(haystack) = input.get(byte_position..) else {
+            return Ok(None);
+        };
+        let search = Input::new(haystack).anchored(Anchored::Yes);
+        let mut state = OverlappingState::start();
+        let mut best = None::<(usize, usize)>;
+        loop {
+            self.dfa
+                .try_search_overlapping_fwd(dfa_cache, &search, &mut state)
+                .map_err(|_| ())?;
+            let Some(match_) = state.get_match() else {
+                break;
+            };
+            let pattern = match_.pattern().as_usize();
+            debug_assert!(pattern < self.dfa.pattern_len());
+            let end = byte_position + match_.offset();
+            match best {
+                Some((best_pattern, best_end))
+                    if end < best_end || (end == best_end && pattern >= best_pattern) => {}
+                _ => best = Some((pattern, end)),
+            }
+        }
+        Ok(best.map(|(_, end)| {
+            parser_ir::LexMatch::new(end, crate::lex_match::pattern_inspected_end(input, end))
+        }))
     }
 }
 
@@ -3628,6 +3738,7 @@ struct RuntimeWeavyLexerScratch {
     direct_pattern_matches: RefCell<Vec<Option<PatternSet>>>,
     direct_terminal_indices: RefCell<Vec<usize>>,
     direct_pattern_dfa_caches: RefCell<Vec<Option<Option<HybridDfaCache>>>>,
+    choice_dfa_caches: RefCell<Vec<Option<HybridDfaCache>>>,
     direct_set_cache:
         RefCell<HashMap<RuntimeWeavyLexSetCacheKey, Arc<RuntimeWeavyDirectSetMatches>>>,
 }
@@ -3641,8 +3752,21 @@ impl RuntimeWeavyLexerScratch {
             direct_pattern_matches: RefCell::default(),
             direct_terminal_indices: RefCell::default(),
             direct_pattern_dfa_caches: RefCell::default(),
+            choice_dfa_caches: RefCell::default(),
             direct_set_cache: RefCell::default(),
         }
+    }
+
+    fn match_choice(
+        &self,
+        matcher: &WeavyRegexChoiceMatcher,
+        input: &str,
+        byte_position: usize,
+    ) -> Result<Option<parser_ir::LexMatch>, ()> {
+        let mut choice_dfa_caches = self.choice_dfa_caches.borrow_mut();
+        let cache = runtime_weavy_lexer_scratch_slot(&mut choice_dfa_caches, matcher.id)
+            .get_or_insert_with(|| matcher.create_dfa_cache());
+        matcher.match_input(input, byte_position, cache)
     }
 
     fn with_direct_set_matches<R>(
@@ -3777,7 +3901,10 @@ fn runtime_weavy_mode_slot<T>(
     slots: &mut Vec<Option<T>>,
     mode: parser_ir::LexModeId,
 ) -> &mut Option<T> {
-    let index = mode.get() as usize;
+    runtime_weavy_lexer_scratch_slot(slots, mode.get() as usize)
+}
+
+fn runtime_weavy_lexer_scratch_slot<T>(slots: &mut Vec<Option<T>>, index: usize) -> &mut Option<T> {
     if slots.len() <= index {
         slots.resize_with(index + 1, || None);
     }
@@ -6438,7 +6565,12 @@ impl<'a> RuntimeWeavyStepper<'a> {
         terminal: &WeavyLexTerminal,
         byte_position: usize,
     ) -> Result<Option<parser_ir::LexMatch>, RuntimeWeavyStepError> {
-        match_weavy_terminal_matcher_runtime(&terminal.matcher, self.input, byte_position)
+        match_weavy_terminal_matcher_runtime(
+            &terminal.matcher,
+            self.input,
+            byte_position,
+            self.lexer_scratch,
+        )
     }
 
     fn match_external(
@@ -7719,10 +7851,11 @@ fn match_weavy_terminal_matcher_runtime(
     matcher: &WeavyTerminalMatcher,
     input: &str,
     byte_position: usize,
+    lexer_scratch: &RuntimeWeavyLexerScratch,
 ) -> Result<Option<parser_ir::LexMatch>, RuntimeWeavyStepError> {
     match matcher {
         WeavyTerminalMatcher::Expr(expr) => {
-            match_weavy_lex_expr_runtime(expr, input, byte_position)
+            match_weavy_lex_expr_runtime(expr, input, byte_position, lexer_scratch)
         }
         WeavyTerminalMatcher::UnsupportedTerminal { terminal } => {
             Err(RuntimeWeavyStepError::UnsupportedTerminal {
@@ -7752,6 +7885,7 @@ fn match_weavy_lex_expr_runtime(
     expr: &WeavyLexExpr,
     input: &str,
     byte_position: usize,
+    lexer_scratch: &RuntimeWeavyLexerScratch,
 ) -> Result<Option<parser_ir::LexMatch>, RuntimeWeavyStepError> {
     match expr {
         WeavyLexExpr::Blank => Ok(Some(parser_ir::LexMatch {
@@ -7781,7 +7915,9 @@ fn match_weavy_lex_expr_runtime(
             let mut position = byte_position;
             let mut inspected_end = byte_position;
             for member in members {
-                let Some(match_) = match_weavy_lex_expr_runtime(member, input, position)? else {
+                let Some(match_) =
+                    match_weavy_lex_expr_runtime(member, input, position, lexer_scratch)?
+                else {
                     return Ok(None);
                 };
                 position = match_.end;
@@ -7795,7 +7931,8 @@ fn match_weavy_lex_expr_runtime(
         WeavyLexExpr::Choice(members) => {
             let mut best = None::<parser_ir::LexMatch>;
             for member in members {
-                if let Some(match_) = match_weavy_lex_expr_runtime(member, input, byte_position)?
+                if let Some(match_) =
+                    match_weavy_lex_expr_runtime(member, input, byte_position, lexer_scratch)?
                     && best.is_none_or(|best| match_.end > best.end)
                 {
                     best = Some(match_);
@@ -7806,7 +7943,9 @@ fn match_weavy_lex_expr_runtime(
         WeavyLexExpr::Repeat(content) => {
             let mut position = byte_position;
             let mut inspected_end = byte_position;
-            while let Some(match_) = match_weavy_lex_expr_runtime(content, input, position)? {
+            while let Some(match_) =
+                match_weavy_lex_expr_runtime(content, input, position, lexer_scratch)?
+            {
                 inspected_end = inspected_end.max(match_.inspected_end);
                 if match_.end == position {
                     break;
@@ -7819,7 +7958,9 @@ fn match_weavy_lex_expr_runtime(
             }))
         }
         WeavyLexExpr::Repeat1(content) => {
-            let Some(first) = match_weavy_lex_expr_runtime(content, input, byte_position)? else {
+            let Some(first) =
+                match_weavy_lex_expr_runtime(content, input, byte_position, lexer_scratch)?
+            else {
                 return Ok(None);
             };
             let mut position = first.end;
@@ -7827,7 +7968,9 @@ fn match_weavy_lex_expr_runtime(
             if position == byte_position {
                 return Ok(None);
             }
-            while let Some(match_) = match_weavy_lex_expr_runtime(content, input, position)? {
+            while let Some(match_) =
+                match_weavy_lex_expr_runtime(content, input, position, lexer_scratch)?
+            {
                 inspected_end = inspected_end.max(match_.inspected_end);
                 if match_.end == position {
                     break;
@@ -7843,7 +7986,8 @@ fn match_weavy_lex_expr_runtime(
             let compiled = matcher.match_input(input, byte_position);
             #[cfg(debug_assertions)]
             {
-                let interpreted = match_weavy_lex_expr_runtime(original, input, byte_position)?;
+                let interpreted =
+                    match_weavy_lex_expr_runtime(original, input, byte_position, lexer_scratch)?;
                 debug_assert_eq!(
                     compiled.map(|match_| match_.end),
                     interpreted.map(|match_| match_.end),
@@ -7861,6 +8005,42 @@ fn match_weavy_lex_expr_runtime(
                 let _ = original;
             }
             Ok(compiled)
+        }
+        WeavyLexExpr::CompositeChoice { matcher, original } => {
+            let compiled = lexer_scratch.match_choice(matcher, input, byte_position);
+            #[cfg(debug_assertions)]
+            {
+                let interpreted =
+                    match_weavy_lex_expr_runtime(original, input, byte_position, lexer_scratch)?;
+                if let Ok(compiled) = compiled {
+                    debug_assert_eq!(
+                        compiled.map(|match_| match_.end),
+                        interpreted.map(|match_| match_.end),
+                        "composite choice lowering changed the recursive lexer expression end"
+                    );
+                    if let (Some(compiled), Some(interpreted)) = (compiled, interpreted) {
+                        debug_assert!(
+                            compiled.inspected_end >= interpreted.inspected_end,
+                            "composite choice lowering under-reported inspected_end"
+                        );
+                    }
+                    Ok(compiled)
+                } else {
+                    Ok(interpreted)
+                }
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                match compiled {
+                    Ok(compiled) => {
+                        let _ = original;
+                        Ok(compiled)
+                    }
+                    Err(()) => {
+                        match_weavy_lex_expr_runtime(original, input, byte_position, lexer_scratch)
+                    }
+                }
+            }
         }
         WeavyLexExpr::UnsupportedSymbol(expr) => {
             Err(RuntimeWeavyStepError::UnsupportedLexicalSymbol { expr: *expr })
@@ -7896,6 +8076,16 @@ fn runtime_weavy_lookahead_terminal(
         | parser_ir::LookaheadSymbol::Eof
         | parser_ir::LookaheadSymbol::ErrorRecovery(_) => None,
     }
+}
+
+#[cfg(test)]
+fn match_weavy_lex_expr_for_tests(
+    expr: &WeavyLexExpr,
+    input: &str,
+    byte_position: usize,
+) -> Result<Option<parser_ir::LexMatch>, RuntimeWeavyStepError> {
+    let lexer_scratch = RuntimeWeavyLexerScratch::default();
+    match_weavy_lex_expr_runtime(expr, input, byte_position, &lexer_scratch)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -8193,29 +8383,51 @@ mod tests {
 
         assert!(matches!(expr, WeavyLexExpr::CompositeRegex { .. }));
         assert_eq!(
-            match_weavy_lex_expr_runtime(&expr, "ab", 0).expect("match"),
+            match_weavy_lex_expr_for_tests(&expr, "ab", 0).expect("match"),
             Some(parser_ir::LexMatch::new(2, 2))
         );
         assert_eq!(
-            match_weavy_lex_expr_runtime(&expr, "nope", 0).expect("match"),
+            match_weavy_lex_expr_for_tests(&expr, "nope", 0).expect("match"),
             None
         );
     }
 
     #[test]
-    fn composite_regex_leaves_choice_on_structural_matcher() {
-        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Choice(vec![
-            WeavyLexExpr::String("a".to_owned()),
-            WeavyLexExpr::Seq(vec![
+    fn composite_choice_lowers_regexable_choice_matchers() {
+        let mut compiler = WeavyLexerCompiler::default();
+        let expr = WeavyLexExpr::compile_composite_choice(
+            WeavyLexExpr::Choice(vec![
                 WeavyLexExpr::String("a".to_owned()),
+                WeavyLexExpr::Seq(vec![
+                    WeavyLexExpr::String("a".to_owned()),
+                    WeavyLexExpr::String("a".to_owned()),
+                ]),
+            ]),
+            &mut compiler,
+        );
+
+        assert!(matches!(expr, WeavyLexExpr::CompositeChoice { .. }));
+        assert_eq!(
+            match_weavy_lex_expr_for_tests(&expr, "aa", 0).expect("match"),
+            Some(parser_ir::LexMatch::new(2, 2))
+        );
+    }
+
+    #[test]
+    fn composite_choice_keeps_blank_choice_structural() {
+        let mut compiler = WeavyLexerCompiler::default();
+        let expr = WeavyLexExpr::compile_composite_choice(
+            WeavyLexExpr::Choice(vec![
+                WeavyLexExpr::Blank,
                 WeavyLexExpr::String("a".to_owned()),
             ]),
-        ]));
+            &mut compiler,
+        );
 
-        assert!(!matches!(expr, WeavyLexExpr::CompositeRegex { .. }));
+        assert!(matches!(expr, WeavyLexExpr::Choice(_)));
         assert_eq!(
-            match_weavy_lex_expr_runtime(&expr, "aa", 0).expect("match"),
-            Some(parser_ir::LexMatch::new(2, 2))
+            match_weavy_lex_expr_for_tests(&expr, "a", 0).expect("match"),
+            Some(parser_ir::LexMatch::new(1, 1))
         );
     }
 
