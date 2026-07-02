@@ -30,6 +30,10 @@ use snark::{
     validated::ValidatedGrammar,
 };
 
+// Salvaged from bearcove/kajit (scrapped): real DWARF + GDB/LLDB JIT interface for our JIT.
+mod jit_debug;
+mod jit_dwarf;
+
 /// First slice: context-free templates (text + interpolation + numeric/bool
 /// literals + binary ops), so the render oracle doesn't depend on a data model.
 const SAMPLES: &[(&str, &str)] = &[
@@ -142,6 +146,10 @@ fn main() {
     }
     if args.get(1).map(|s| s == "--serialize").unwrap_or(false) {
         serialize();
+        return;
+    }
+    if args.get(1).map(|s| s == "--debug").unwrap_or(false) {
+        debug_jit();
         return;
     }
     if args.get(1).map(|s| s == "--profile").unwrap_or(false) {
@@ -1613,6 +1621,184 @@ fn jitmap() {
 
     let mut stack = vec![0i64; 64];
     println!("\n(run check: {expr} = {})", run_intop_native(&native, &mut stack));
+}
+
+/// DEBUG: give the JIT'd code REAL debugger support via DWARF + the GDB/LLDB JIT interface
+/// (salvaged from kajit). We JIT an expression, write a per-op source listing, build an in-memory
+/// ELF with `.symtab` (per-op names) + `.debug_line` (each op's code range -> a listing line), and
+/// register it through `__jit_debug_register_code`. lldb then resolves JIT'd PCs to op names and
+/// steps the JIT'd code line-by-line through the listing.
+fn debug_jit() {
+    use weavy::jit::{NativeProgram, StencilLayout};
+    let (parser, table, plan, anns) = build_plan();
+
+    let expr = "1 + 2 * 3 + 4 * 5 - 6 + 7 * 8";
+    let src = format!("{{{{ {expr} }}}}");
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).unwrap();
+    let resolved = report.accepted_resolved_tree(&parser, &src).unwrap();
+    let node = find_expr(&resolved).unwrap();
+    let mut spanned = Vec::new();
+    lower_int_spanned(node, &anns, &mut spanned);
+
+    // Assemble, recording per-op offsets (as in --jitmap).
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    let mut rows: Vec<MapRow> = Vec::new();
+    for (i, (op, span)) in spanned.iter().enumerate() {
+        let (bytes, cont, label): (&[u8], &'static [usize], String) = match op {
+            IntOp::Push(n) => {
+                layout.push_prog_word(root.prog_index, *n as u64);
+                (intop_stencils::PUSH, intop_stencils::PUSH_CONT, format!("op{i}_push_{n}"))
+            }
+            IntOp::Add => (intop_stencils::ADD, intop_stencils::ADD_CONT, format!("op{i}_add")),
+            IntOp::Sub => (intop_stencils::SUB, intop_stencils::SUB_CONT, format!("op{i}_sub")),
+            IntOp::Mul => (intop_stencils::MUL, intop_stencils::MUL_CONT, format!("op{i}_mul")),
+        };
+        let start = layout.emit_stencil(bytes);
+        rows.push(MapRow { start, cont, label, span: *span });
+    }
+    let done = layout.emit_stencil(intop_stencils::DONE);
+    for i in 0..rows.len() {
+        let next = rows.get(i + 1).map(|r| r.start).unwrap_or(done);
+        for &rel in rows[i].cont {
+            layout.patch_continuation(rows[i].start + rel, next);
+        }
+    }
+    let code_len = layout.code_len();
+    let native = NativeProgram::new(layout, root);
+    let base = native.code_ptr() as u64;
+
+    // Write a per-op source listing; line i+1 describes op i (with its template sub-expression).
+    let dir = std::env::temp_dir();
+    let file_name = "snark-jit.listing".to_string(); // fixed name so a debugger breakpoint can target it
+    let mut listing = String::new();
+    for (i, r) in rows.iter().enumerate() {
+        listing.push_str(&format!("{:<20} ; {}\n", format!("op{i}: {}", r.label), &src[r.span.0..r.span.1]));
+    }
+    std::fs::write(dir.join(&file_name), &listing).expect("write listing");
+
+    // Per-op symbols (for .symtab) + source map (code offset -> listing line index).
+    let symbols: Vec<jit_debug::JitSymbolEntry> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let end = rows.get(i + 1).map(|n| n.start).unwrap_or(done);
+            jit_debug::JitSymbolEntry {
+                name: format!("jit::{}", r.label),
+                offset: r.start,
+                size: end - r.start,
+            }
+        })
+        .collect();
+    let source_map: Vec<(u32, u32)> = rows.iter().enumerate().map(|(i, r)| (r.start as u32, i as u32)).collect();
+
+    let dwarf = jit_dwarf::build_jit_dwarf_sections(
+        base,
+        code_len as u64,
+        &source_map,
+        &file_name,
+        dir.to_str(),
+    )
+    .expect("build DWARF");
+
+    // Self-validate the .debug_line: parse its rows back and confirm addr -> line.
+    let rows_back = parse_debug_line_addr_line(&dwarf.debug_line);
+    println!("template: {src:?}   ({} ops, {code_len}B native @ {base:#x})", rows.len());
+    println!("listing:  {}\n", dir.join(&file_name).display());
+    println!(".debug_line rows (addr -> source line), parsed back from our DWARF:");
+    for (i, (addr, line)) in rows_back.iter().take(rows.len()).enumerate() {
+        println!("  {addr:#x}  line {line:>2}  = op{i} {:?}", &src[rows[i].span.0..rows[i].span.1]);
+    }
+
+    // Register with the debugger (keep the registration alive while we run).
+    let _reg = jit_debug::register_jit_code_with_dwarf(
+        native.code_ptr(),
+        code_len,
+        &symbols,
+        Some(&dwarf),
+    );
+    println!(
+        "\nRegistered with the GDB/LLDB JIT interface (in-memory ELF + .symtab + .debug_line).\n\
+         Tool-independent proof (any DWARF consumer): dump + dwarfdump the JIT ELF —\n\
+         \x20 KAJIT_DEBUG_DUMP_ELF_DIR=/tmp/jitelf <this-bin> --debug\n\
+         \x20 dwarfdump --debug-line /tmp/jitelf/*.elf     # addr -> listing line, verified\n\
+         gdb (Linux) source-steps the JIT'd code line-by-line through the listing; macOS lldb's\n\
+         gdb-jit loader is finicky (needs `settings set plugin.jit-loader.gdb.enable on`), but\n\
+         the emitted DWARF is standard + correct.\n"
+    );
+
+    // Run the JIT'd code once (a live registration exists while `_reg` is in scope).
+    let mut stack = vec![0i64; 64];
+    println!("(run check: {expr} = {})", run_intop_native(&native, &mut stack));
+    drop(_reg);
+}
+
+/// Minimal DWARF v4 `.debug_line` reader: return (address, line) for each COPY row — enough to
+/// self-verify our emitted line program maps JIT PCs to listing lines.
+fn parse_debug_line_addr_line(section: &[u8]) -> Vec<(u64, u64)> {
+    // Header: unit_length(4) version(2) header_length(4) then the header_body; program follows.
+    if section.len() < 10 {
+        return Vec::new();
+    }
+    let header_length = u32::from_le_bytes(section[6..10].try_into().unwrap()) as usize;
+    let mut i = 10 + header_length; // start of the line-number program
+    let (mut addr, mut line) = (0u64, 1i64);
+    let mut out = Vec::new();
+    while i < section.len() {
+        let op = section[i];
+        i += 1;
+        match op {
+            0 => {
+                // extended opcode: len uleb, sub-opcode
+                let len = uleb(section, &mut i) as usize;
+                if len == 0 {
+                    break;
+                }
+                let sub = section[i];
+                if sub == 0x02 {
+                    // DW_LNE_set_address
+                    addr = u64::from_le_bytes(section[i + 1..i + 9].try_into().unwrap());
+                }
+                i += len; // includes the sub-opcode byte
+            }
+            0x01 => out.push((addr, line as u64)), // DW_LNS_copy
+            0x02 => addr += uleb(section, &mut i), // DW_LNS_advance_pc
+            0x03 => line += sleb(section, &mut i), // DW_LNS_advance_line
+            _ => {}
+        }
+    }
+    out
+}
+
+fn uleb(b: &[u8], i: &mut usize) -> u64 {
+    let (mut r, mut s) = (0u64, 0);
+    loop {
+        let byte = b[*i];
+        *i += 1;
+        r |= u64::from(byte & 0x7f) << s;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        s += 7;
+    }
+    r
+}
+
+fn sleb(b: &[u8], i: &mut usize) -> i64 {
+    let (mut r, mut s) = (0i64, 0);
+    loop {
+        let byte = b[*i];
+        *i += 1;
+        r |= i64::from(byte & 0x7f) << s;
+        s += 7;
+        if byte & 0x80 == 0 {
+            if s < 64 && byte & 0x40 != 0 {
+                r |= -(1i64 << s);
+            }
+            break;
+        }
+    }
+    r
 }
 
 /// SERIALIZE: cache a compiled template with phon. Bytecode vs native: we serialize the PORTABLE,
