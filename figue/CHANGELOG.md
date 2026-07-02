@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0-rc.6](https://github.com/facet-rs/facet/compare/figue-attrs-v5.0.0-rc.5...figue-attrs-v5.0.0-rc.6) - 2026-07-02
+
+### Other
+
+- updated the following local packages: facet
+
 ## [5.0.0-rc.5](https://github.com/facet-rs/facet/compare/figue-attrs-v5.0.0-rc.4...figue-attrs-v5.0.0-rc.5) - 2026-06-28
 
 ### Other

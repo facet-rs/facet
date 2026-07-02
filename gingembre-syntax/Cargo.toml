@@ -1,6 +1,6 @@
 [package]
 name = "gingembre-syntax"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 rust-version = "1.91"
 description = "Lossless cstree syntax for gingembre templates, shared by the engine and the authoring LSP"
