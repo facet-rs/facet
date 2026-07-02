@@ -13,7 +13,7 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
-        parse_prepared_weavy_with_report,
+        parse_prepared_weavy_tree, parse_prepared_weavy_with_report,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
@@ -74,12 +74,18 @@ fn main() {
         WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy parse plan")
     );
     let analysis = plan.analysis();
-    // Measure the entry points the playground calls: strict first, recovering
-    // only when strict fails.
+    // Measure the lean tree path separately from the rich report path. The
+    // report path is still what diagnostics, recovery, and incremental reuse
+    // consumers need; the tree path is the valid-input fast consumer shape.
     let t0 = Instant::now();
-    let strict = parse_prepared_weavy_with_report(&plan, &parser, &table, &input);
-    let t_strict = t0.elapsed().as_secs_f64() * 1000.0;
-    let strict_ok = strict.is_ok();
+    let strict_tree = parse_prepared_weavy_tree(&plan, &parser, &table, &input);
+    let t_strict_tree = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_tree_ok = strict_tree.is_ok();
+
+    let t0 = Instant::now();
+    let strict_report = parse_prepared_weavy_with_report(&plan, &parser, &table, &input);
+    let t_strict_report = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_report_ok = strict_report.is_ok();
 
     let t0 = Instant::now();
     let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
@@ -117,7 +123,11 @@ fn main() {
     println!("\n---- steady state (parse, same input) ----");
     println!(
         "  {:<40} {:>11.3} ms   (strict ok? {})",
-        "parse_prepared_weavy_with_report", t_strict, strict_ok
+        "parse_prepared_weavy_tree", t_strict_tree, strict_tree_ok
+    );
+    println!(
+        "  {:<40} {:>11.3} ms   (strict ok? {})",
+        "parse_prepared_weavy_with_report", t_strict_report, strict_report_ok
     );
     println!(
         "  {:<40} {:>11.3} ms",
