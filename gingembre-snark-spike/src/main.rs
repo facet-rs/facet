@@ -1492,6 +1492,42 @@ fn specialize() {
 /// and debuggability (fault/deopt address -> which op / template expression). Also surfaces the
 /// serialization property: a pure-stencil program has no absolute pointers, so it's a
 /// self-contained relocatable blob (an AOT/JIT-cache artifact).
+/// Lower a statically-integer expression to `(op, source byte range)` by walking the PARSE tree
+/// (which carries byte ranges). A binary op's span is its whole sub-expression; a push's span is
+/// the literal — so the JIT map nests like a flame graph over the template source.
+fn lower_int_spanned<N: ParseNode>(node: &N, anns: &Annotations, out: &mut Vec<(IntOp, (usize, usize))>) {
+    let mut node = node;
+    while anns.get(node.kind()).is_some_and(|a| a.transparent) {
+        node = node.children().iter().find(|c| c.named()).expect("transparent inner named child");
+    }
+    match node.kind() {
+        "binary" => {
+            lower_int_spanned(select_child(node, "named:0"), anns, out);
+            lower_int_spanned(select_child(node, "named:1"), anns, out);
+            let op = match leaf_text(select_child(node, "token")).as_deref() {
+                Some("+") => IntOp::Add,
+                Some("-") => IntOp::Sub,
+                Some("*") => IntOp::Mul,
+                other => panic!("non-int op {other:?} in spanned lowering"),
+            };
+            out.push((op, node.byte_range()));
+        }
+        "number" => {
+            let n = leaf_text(node).and_then(|t| t.trim().parse::<i64>().ok()).unwrap_or(0);
+            out.push((IntOp::Push(n), node.byte_range()));
+        }
+        other => panic!("unsupported node {other:?} in spanned int lowering"),
+    }
+}
+
+/// One emitted stencil's JIT-map row: code offset, continuation relocs, op symbol, source span.
+struct MapRow {
+    start: usize,
+    cont: &'static [usize],
+    label: String,
+    span: (usize, usize),
+}
+
 fn jitmap() {
     use weavy::jit::{NativeProgram, StencilLayout};
     let (parser, table, plan, anns) = build_plan();
@@ -1500,70 +1536,72 @@ fn jitmap() {
     let src = format!("{{{{ {expr} }}}}");
     let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).unwrap();
     let resolved = report.accepted_resolved_tree(&parser, &src).unwrap();
-    let ast = expr_via_jit(find_expr(&resolved).unwrap(), &anns);
-    let mut ops = Vec::new();
-    lower_int(&ast, &mut ops);
+    let node = find_expr(&resolved).unwrap();
 
-    // Assemble, recording each op's code offset + a symbol (op label).
+    // Lower straight off the parse tree so every op carries its SOURCE byte range.
+    let mut spanned = Vec::new();
+    lower_int_spanned(node, &anns, &mut spanned);
+
     let mut layout = StencilLayout::new();
     let root = layout.start_chain();
-    let mut entries: Vec<(usize, &'static [usize], String)> = Vec::new();
-    for (i, op) in ops.iter().enumerate() {
+    let mut rows: Vec<MapRow> = Vec::new();
+    for (i, (op, span)) in spanned.iter().enumerate() {
         let (bytes, cont, label): (&[u8], &'static [usize], String) = match op {
             IntOp::Push(n) => {
                 layout.push_prog_word(root.prog_index, *n as u64);
-                (intop_stencils::PUSH, intop_stencils::PUSH_CONT, format!("push {n}"))
+                (intop_stencils::PUSH, intop_stencils::PUSH_CONT, format!("op{i}_push_{n}"))
             }
-            IntOp::Add => (intop_stencils::ADD, intop_stencils::ADD_CONT, "add".into()),
-            IntOp::Sub => (intop_stencils::SUB, intop_stencils::SUB_CONT, "sub".into()),
-            IntOp::Mul => (intop_stencils::MUL, intop_stencils::MUL_CONT, "mul".into()),
+            IntOp::Add => (intop_stencils::ADD, intop_stencils::ADD_CONT, format!("op{i}_add")),
+            IntOp::Sub => (intop_stencils::SUB, intop_stencils::SUB_CONT, format!("op{i}_sub")),
+            IntOp::Mul => (intop_stencils::MUL, intop_stencils::MUL_CONT, format!("op{i}_mul")),
         };
         let start = layout.emit_stencil(bytes);
-        entries.push((start, cont, format!("op{i}_{}", label.replace(' ', "_"))));
+        rows.push(MapRow { start, cont, label, span: *span });
     }
     let done = layout.emit_stencil(intop_stencils::DONE);
-    for i in 0..entries.len() {
-        let (start, cont, _) = &entries[i];
-        let next = entries.get(i + 1).map(|(s, _, _)| *s).unwrap_or(done);
-        for &rel in *cont {
-            layout.patch_continuation(start + rel, next);
+    for i in 0..rows.len() {
+        let next = rows.get(i + 1).map(|r| r.start).unwrap_or(done);
+        for &rel in rows[i].cont {
+            layout.patch_continuation(rows[i].start + rel, next);
         }
     }
-
-    // Serialization property: inspect the prog stream — pure immediates, zero host pointers.
     let prog_words = layout.prog(root.prog_index).to_vec();
     let code_len = layout.code_len();
-
     let native = NativeProgram::new(layout, root);
     let base = native.code_ptr() as usize;
 
-    println!("expr: {expr}\n  {} ops -> {code_len} bytes of native code at {base:#x}\n", ops.len());
-    println!("--- JIT symbol map (perf `/tmp/perf-<pid>.map` format: <addr> <size> <symbol>) ---");
-    for i in 0..entries.len() {
-        let (start, _, label) = &entries[i];
-        let end = entries.get(i + 1).map(|(s, _, _)| *s).unwrap_or(done);
-        println!("{:016x} {:<4x} jit_intop::{label}", base + start, end - start);
+    println!("template: {src:?}\nexpr: {expr}   ({} ops, {code_len}B native @ {base:#x})\n", spanned.len());
+    println!("--- source-mapped JIT symbols:  addr  size  symbol  ->  template source ---");
+    let mut perf = String::new();
+    for i in 0..rows.len() {
+        let r = &rows[i];
+        let end = rows.get(i + 1).map(|n| n.start).unwrap_or(done);
+        let source = &src[r.span.0..r.span.1];
+        println!("{:016x} {:<3x} jit::{:<12} -> {source:?}  @ {}..{}", base + r.start, end - r.start, r.label, r.span.0, r.span.1);
+        // perf `/tmp/perf-<pid>.map` line: <hex addr> <hex size> <symbol>
+        perf.push_str(&format!("{:x} {:x} jit::{} [{}]\n", base + r.start, end - r.start, r.label, source));
     }
-    println!("{:016x} {:<4x} jit_intop::done", base + done, code_len - done);
+    let pid = std::process::id();
+    let path = format!("/tmp/perf-{pid}.map");
+    let wrote = std::fs::write(&path, &perf).is_ok();
 
     println!(
-        "\nDebuggability: a fault/deopt PC lands in one of these ranges -> exact op (and, once the\n\
-         generated AST carries byte spans, the exact template sub-expression). stax/perf/lldb\n\
-         symbolicate JIT frames from a map like this instead of showing a bare address.\n"
+        "\nWrote {path} ({}): `perf report` symbolicates JIT frames from this — a sampled PC in a\n\
+         stencil's range resolves to the op AND the template sub-expression (nested spans = a\n\
+         source flame graph). Same map answers a debugger: a fault/deopt PC -> exact template text.\n\
+         stax can consume the same offset->source table.",
+        if wrote { "ok" } else { "write failed" },
     );
     println!(
-        "Serialization: this program's prog stream is {} words, ALL immediates ({prog_words:?})\n\
-         — ZERO host pointers, and branches are PC-relative. So (code bytes + prog stream) is a\n\
-         self-contained relocatable blob: serialize once, reload into a fresh exec buffer, run\n\
-         anywhere. (The hostcall lane can't: its prog stream holds HostCallInfo pointers.)\n\
-         Reload needs one weavy API: NativeProgram::from_parts(code, progs, entry).",
-        prog_words.len()
+        "\nSerialization: prog stream is {} immediates ({prog_words:?}), ZERO host pointers, branches\n\
+         PC-relative -> a self-contained relocatable blob (serialize once, reload anywhere as an\n\
+         AOT/JIT cache). Hostcall lane can't (prog holds HostCallInfo pointers). Reload needs one\n\
+         weavy API: NativeProgram::from_parts(code, progs, entry).",
+        prog_words.len(),
     );
 
-    // Confirm it still computes the right answer.
     let mut stack = vec![0i64; 64];
-    let result = run_intop_native(&native, &mut stack);
-    println!("\n(run check: {expr} = {result})");
+    println!("\n(run check: {expr} = {})", run_intop_native(&native, &mut stack));
 }
 
 /// FUSE: prove the AST materializer is decoupled from snark's rich tree — it needs only the
@@ -1834,6 +1872,8 @@ trait ParseNode: Sized {
     fn named(&self) -> bool;
     fn text(&self) -> Option<&str>;
     fn children(&self) -> &[Self];
+    /// Half-open source byte range `[start, end)` — for source-mapped diagnostics/JIT profiling.
+    fn byte_range(&self) -> (usize, usize);
 }
 
 impl ParseNode for RuntimeResolvedNode {
@@ -1849,6 +1889,10 @@ impl ParseNode for RuntimeResolvedNode {
     fn children(&self) -> &[Self] {
         RuntimeResolvedNode::children(self)
     }
+    fn byte_range(&self) -> (usize, usize) {
+        let b = RuntimeResolvedNode::bytes(self);
+        (b.start().get() as usize, b.end().get() as usize)
+    }
 }
 
 /// A lightweight parse node — kind + text + ordered children, nothing else. What a lean
@@ -1859,6 +1903,7 @@ struct LeanNode {
     kind: String,
     named: bool,
     text: Option<String>,
+    range: (usize, usize),
     children: Vec<LeanNode>,
 }
 
@@ -1875,6 +1920,9 @@ impl ParseNode for LeanNode {
     fn children(&self) -> &[Self] {
         &self.children
     }
+    fn byte_range(&self) -> (usize, usize) {
+        self.range
+    }
 }
 
 /// Project any `ParseNode` into a `LeanNode` (simulates what a lean driver would emit directly).
@@ -1883,6 +1931,7 @@ fn to_lean<N: ParseNode>(node: &N) -> LeanNode {
         kind: node.kind().to_string(),
         named: node.named(),
         text: node.text().map(str::to_string),
+        range: node.byte_range(),
         children: node.children().iter().map(to_lean).collect(),
     }
 }
