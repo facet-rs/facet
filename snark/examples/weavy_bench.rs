@@ -278,8 +278,8 @@ fn main() {
         readiness.needs_lexer_stencils()
     );
     println!(
-        "  native copy-patch JIT available: {}",
-        readiness.native_copy_patch_jit_available
+        "  copy-patch JIT available: {}",
+        readiness.copy_patch_jit_available
     );
     println!(
         "  parser lowering: dialect {:>6}  lexer-graph {:>6}  sinks {:>6}  host barriers {:>6}",

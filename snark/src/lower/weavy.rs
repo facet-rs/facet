@@ -1617,9 +1617,9 @@ pub struct WeavyParsePlanReadiness {
     /// Lexer graph matcher ops that still need Snark-owned stencils or further
     /// lowering before the lexer can be optimized as neutral Weavy dataflow.
     pub lexer_stencil_summaries: Vec<WeavyLexerStencilSummary>,
-    /// True when Snark was built with Weavy's native copy-patch JIT support and
-    /// the current target can execute those stencils.
-    pub native_copy_patch_jit_available: bool,
+    /// True when Snark was built with Weavy's machine-code copy-patch JIT
+    /// support and the current target can execute those stencils.
+    pub copy_patch_jit_available: bool,
     /// Unique Snark dialect descriptors that still block fully-visible lowering.
     pub parser_barrier_descriptors: Vec<IntrinsicDescriptor>,
     /// Distinct parser/action and lexer blockers with their remaining counts.
@@ -1664,7 +1664,7 @@ impl WeavyParsePlanReadiness {
             snark_stencil_execution_summaries,
             snark_stencil_state_summaries,
             lexer_stencil_summaries,
-            native_copy_patch_jit_available: native_copy_patch_jit_available(),
+            copy_patch_jit_available: copy_patch_jit_available(),
             parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
             barrier_summaries,
         }
@@ -1784,7 +1784,7 @@ impl WeavyParsePlanReadiness {
 }
 
 #[must_use]
-const fn native_copy_patch_jit_available() -> bool {
+const fn copy_patch_jit_available() -> bool {
     #[cfg(feature = "jit")]
     {
         weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
@@ -11325,20 +11325,20 @@ mod tests {
         assert!(!analysis.readiness.is_neutral_weavy_only());
         assert!(analysis.readiness.needs_snark_stencils());
         assert_eq!(
-            analysis.readiness.native_copy_patch_jit_available,
-            native_copy_patch_jit_available()
+            analysis.readiness.copy_patch_jit_available,
+            copy_patch_jit_available()
         );
     }
 
     #[test]
-    fn native_copy_patch_jit_availability_follows_snark_feature_gate() {
+    fn copy_patch_jit_availability_follows_snark_feature_gate() {
         #[cfg(feature = "jit")]
         assert_eq!(
-            native_copy_patch_jit_available(),
+            copy_patch_jit_available(),
             weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
         );
         #[cfg(not(feature = "jit"))]
-        assert!(!native_copy_patch_jit_available());
+        assert!(!copy_patch_jit_available());
     }
 
     #[test]

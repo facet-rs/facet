@@ -491,7 +491,7 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
     writeln!(out, "grammar: {grammar_path}")?;
     writeln!(
         out,
-        "parser: neutral_ops={} snark_intrinsics={} lexer_graph={} sink={} dialect={} host_barriers={} opaque={} host_calls={} stencils_needed={} lexer_stencils_needed={} native_copy_patch_jit_available={}",
+        "parser: neutral_ops={} snark_intrinsics={} lexer_graph={} sink={} dialect={} host_barriers={} opaque={} host_calls={} stencils_needed={} lexer_stencils_needed={} copy_patch_jit_available={}",
         readiness.neutral_weavy_op_count,
         readiness.snark_intrinsic_count,
         readiness.lexer_graph_intrinsic_count,
@@ -502,7 +502,7 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
         readiness.host_call_intrinsic_count,
         readiness.needs_snark_stencils(),
         readiness.needs_lexer_stencils(),
-        readiness.native_copy_patch_jit_available
+        readiness.copy_patch_jit_available
     )?;
     writeln!(
         out,
