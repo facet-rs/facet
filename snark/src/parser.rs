@@ -5568,7 +5568,7 @@ fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> 
 }
 
 fn attach_resolved_children_from_event_order(items: &mut [ResolvedCstItem]) -> Vec<usize> {
-    let mut roots = Vec::<usize>::new();
+    let mut roots = Vec::<usize>::with_capacity(items.len());
     #[cfg(debug_assertions)]
     let mut parents = vec![None; items.len()];
 
@@ -5692,6 +5692,9 @@ fn build_resolved_node(index: usize, items: &[ResolvedCstItem]) -> ResolvedCstNo
 }
 
 fn sort_resolved_children(children: &mut [usize], items: &[ResolvedCstItem]) {
+    if children.len() < 2 {
+        return;
+    }
     children.sort_unstable_by_key(|child| {
         let item = &items[*child];
         (item.bytes.start().get(), item.bytes.end().get(), item.order)
