@@ -115,6 +115,10 @@ fn main() {
         eval_weavy_proof();
         return;
     }
+    if args.get(1).map(|s| s == "--specialize").unwrap_or(false) {
+        specialize();
+        return;
+    }
     if let (Some(grammar), Some(input)) = (args.get(1), args.get(2)) {
         repro(grammar, input);
         return;
@@ -792,6 +796,208 @@ fn eval_weavy_proof() {
         "\n✓ evaluation ALSO lowers to Weavy: the ONE generated AST -> stack program -> interp\n\
          AND copy-and-patch JIT, oracle-matched to gingembre's evaluator. No second AST, no\n\
          tree-walk. Next: text/if/for as emit + control-flow ops (Weavy blocks) for full render."
+    );
+}
+
+// ===========================================================================================
+// V8-style type specialization: when the generated AST proves a subtree is integer (all
+// `number` leaves + arithmetic ops — the grammar annotations already type the leaves), lower
+// it to UNBOXED i64 ops over an i64 stack. No `Value` construction, no as_number()/re-box on
+// every op, no dynamic dispatch through the arithmetic tower. Measured against the boxed path.
+// (Variables are the not-statically-known case → the guard+deopt / inline-cache story, next.)
+// ===========================================================================================
+
+/// Unboxed integer op — the monomorphic fast path.
+#[derive(Clone, Debug)]
+enum IntOp {
+    Push(i64),
+    Add,
+    Sub,
+    Mul,
+}
+
+/// Is this subtree statically integer? (number literals + int arithmetic). This is the type
+/// fact the grammar hands us for free — `number` decodes to i64.
+fn is_static_int(e: &gen_ast::Expr) -> bool {
+    match e {
+        gen_ast::Expr::Number(_) => true,
+        gen_ast::Expr::Binary(b) => {
+            matches!(b.op.as_str(), "+" | "-" | "*")
+                && is_static_int(&b.left)
+                && is_static_int(&b.right)
+        }
+        gen_ast::Expr::Variable(_) => false,
+    }
+}
+
+/// Lower a statically-integer subtree to unboxed i64 ops (assumes `is_static_int`).
+fn lower_int(e: &gen_ast::Expr, out: &mut Vec<IntOp>) {
+    match e {
+        gen_ast::Expr::Number(n) => out.push(IntOp::Push(*n)),
+        gen_ast::Expr::Binary(b) => {
+            lower_int(&b.left, out);
+            lower_int(&b.right, out);
+            out.push(match b.op.as_str() {
+                "+" => IntOp::Add,
+                "-" => IntOp::Sub,
+                "*" => IntOp::Mul,
+                other => unreachable!("non-int op {other:?} slipped past is_static_int"),
+            });
+        }
+        gen_ast::Expr::Variable(_) => unreachable!("variable slipped past is_static_int"),
+    }
+}
+
+/// Unboxed i64 stack machine — no `Value`, no tag checks.
+struct IntMachine {
+    stack: Vec<i64>,
+}
+
+#[inline]
+fn int_apply(stack: &mut Vec<i64>, op: &IntOp) {
+    match op {
+        IntOp::Push(n) => stack.push(*n),
+        IntOp::Add => {
+            let b = stack.pop().unwrap();
+            *stack.last_mut().unwrap() += b;
+        }
+        IntOp::Sub => {
+            let b = stack.pop().unwrap();
+            *stack.last_mut().unwrap() -= b;
+        }
+        IntOp::Mul => {
+            let b = stack.pop().unwrap();
+            *stack.last_mut().unwrap() *= b;
+        }
+    }
+}
+
+impl<'p> weavy::Step<'p, u32, IntOp> for IntMachine {
+    type Error = std::convert::Infallible;
+    type Continuation = ();
+    fn step(&mut self, op: &'p IntOp) -> Result<weavy::Control<'p, u32, IntOp, ()>, Self::Error> {
+        int_apply(&mut self.stack, op);
+        Ok(weavy::Control::Continue)
+    }
+}
+
+unsafe extern "C" fn int_jit_apply(cx: *mut (), info: *const ()) -> bool {
+    let m = unsafe { &mut *cx.cast::<IntMachine>() };
+    let op = unsafe { &*info.cast::<IntOp>() };
+    int_apply(&mut m.stack, op);
+    true
+}
+
+/// Assemble a native program from a caller-owned host-call array (which must outlive the
+/// returned program — the copied code reads its `info` pointers). No borrow is tracked because
+/// the program stores raw pointers, so keep `calls` alive in the same scope.
+fn build_native(calls: &[weavy::jit::HostCallInfo]) -> weavy::jit::NativeProgram {
+    use weavy::jit::{NativeProgram, StencilLayout};
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    let mut sites = Vec::with_capacity(calls.len());
+    for call in calls {
+        sites.push(layout.emit_hostcall(root, core::ptr::from_ref(call)));
+    }
+    let done = layout.emit_done();
+    for i in 0..sites.len() {
+        layout.patch_hostcall_continuation(sites[i], sites.get(i + 1).copied().unwrap_or(done));
+    }
+    NativeProgram::new(layout, root)
+}
+
+/// Host-call metadata for an unboxed int program (kept alive by the caller).
+fn int_calls(ops: &[IntOp]) -> Vec<weavy::jit::HostCallInfo> {
+    ops.iter()
+        .map(|op| weavy::jit::HostCallInfo {
+            info: core::ptr::from_ref(op).cast(),
+            call: int_jit_apply,
+        })
+        .collect()
+}
+
+/// PROOF + MEASUREMENT: type-specialized unboxed i64 path vs the boxed `Value` path, for a
+/// statically-integer expression. Same result (oracle vs gingembre), very different cost.
+fn specialize() {
+    use std::time::Instant;
+    use weavy::jit::HostCallCtx;
+
+    let (parser, table, plan, anns) = build_plan();
+    let ctx: BTreeMap<String, Value> = BTreeMap::new();
+    let g_ctx = Context::new();
+
+    // A chunky statically-integer expression, so per-op cost dominates loop overhead.
+    let expr = "1 + 2 * 3 + 4 * 5 - 6 + 7 * 8 - 9 * 2 + 3 * 4";
+    let src = format!("{{{{ {expr} }}}}");
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).unwrap();
+    let resolved = report.accepted_resolved_tree(&parser, &src).unwrap();
+    let ast = expr_via_jit(find_expr(&resolved).unwrap(), &anns);
+
+    assert!(is_static_int(&ast), "expr should be statically integer");
+
+    // Boxed path (Value ops) and unboxed path (i64 ops) from the SAME generated AST.
+    let mut boxed_ops = Vec::new();
+    lower_eval(&ast, &mut boxed_ops);
+    let mut int_ops = Vec::new();
+    lower_int(&ast, &mut int_ops);
+
+    // Host-call arrays — kept alive in this fn scope for as long as the programs can run.
+    let boxed_calls: Vec<weavy::jit::HostCallInfo> = boxed_ops
+        .iter()
+        .map(|op| weavy::jit::HostCallInfo { info: core::ptr::from_ref(op).cast(), call: eval_jit_apply })
+        .collect();
+    let boxed_prog = build_native(&boxed_calls);
+    let int_calls = int_calls(&int_ops);
+    let int_prog = build_native(&int_calls);
+
+    // Oracle: both agree with gingembre.
+    let native = block_on(gingembre::eval_expression(expr, &g_ctx)).unwrap();
+    let native_i64 = native.as_number().and_then(|n| n.to_i64()).unwrap();
+    let boxed_val = run_eval_via_weavy_jit(&boxed_ops, &ctx);
+    let unboxed = {
+        let mut m = IntMachine { stack: Vec::new() };
+        let mut cx = HostCallCtx::new(int_prog.entry_prog(), &mut m);
+        let entry = unsafe { int_prog.entry_fn::<HostCallCtx<IntMachine>>() };
+        unsafe { entry(&mut cx) };
+        m.stack.pop().unwrap()
+    };
+    assert_eq!(boxed_val.as_number().and_then(|n| n.to_i64()), Some(native_i64));
+    assert_eq!(unboxed, native_i64);
+    println!("expr: {expr}");
+    println!("  = {native_i64}  (unboxed i64 == boxed Value == gingembre)\n");
+
+    // Run each JIT program (compiled once above) many times, time run-only.
+    let m = 1_000_000u32;
+
+    let boxed_entry = unsafe { boxed_prog.entry_fn::<HostCallCtx<EvalMachine>>() };
+    let t = Instant::now();
+    for _ in 0..m {
+        let mut mm = EvalMachine { stack: Vec::new(), ctx: ctx.clone() };
+        let mut cx = HostCallCtx::new(boxed_prog.entry_prog(), &mut mm);
+        unsafe { boxed_entry(&mut cx) };
+        std::hint::black_box(mm.stack.pop());
+    }
+    let boxed_ns = t.elapsed().as_nanos() / m as u128;
+
+    let int_entry = unsafe { int_prog.entry_fn::<HostCallCtx<IntMachine>>() };
+    let t = Instant::now();
+    for _ in 0..m {
+        let mut mm = IntMachine { stack: Vec::new() };
+        let mut cx = HostCallCtx::new(int_prog.entry_prog(), &mut mm);
+        unsafe { int_entry(&mut cx) };
+        std::hint::black_box(mm.stack.pop());
+    }
+    let int_ns = t.elapsed().as_nanos() / m as u128;
+
+    println!("JIT run-only, {} ops, avg over {m} iters:", int_ops.len());
+    println!("  boxed  Value ops (tag check + box/unbox each op) : {boxed_ns:>5} ns");
+    println!("  unboxed i64  ops (native add/sub/mul, no Value)  : {int_ns:>5} ns");
+    println!(
+        "  speedup: {:.1}x\n\nThe unboxed path is the V8 SMI story: because the grammar proved\n\
+         these are integers, we never construct a Value or dispatch on a tag. The remaining\n\
+         boxed cost is the tagged-union tax the specialization removes. Variables need the\n\
+         guard+deopt (weavy branch chain) to enter this fast path speculatively — next.",
+        boxed_ns as f64 / int_ns as f64
     );
 }
 
