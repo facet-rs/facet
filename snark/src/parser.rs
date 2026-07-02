@@ -5391,7 +5391,7 @@ pub enum ParseAction {
     },
 }
 
-/// GLR runtime table facts that are not specific to one stack version.
+/// GLR table facts that are not specific to one stack version.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GlrPlan {
     conflicts: Vec<ConflictPlan>,

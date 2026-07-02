@@ -370,8 +370,9 @@ Add the table-generation side before attempting runtime parsing:
 
 8. Tests
    Use tiny grammars as structural oracles for item sets and action/goto tables,
-   then add Tree-sitter corpus fixtures as behavioral oracles once the runtime
-   exists. Avoid tests that only prove a reduced recognizer accepts a CSS slice.
+   then use Tree-sitter corpus fixtures as behavioral oracles through the Weavy
+   executor. Avoid tests that only prove a partial parser slice accepts a CSS
+   sample without exercising the production execution path.
 
 Reference points used for this note: Snark's current `grammar`, `validated`,
 and `lower` boundaries; Tree-sitter's public grammar DSL documentation for

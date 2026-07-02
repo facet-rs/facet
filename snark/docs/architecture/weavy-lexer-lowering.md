@@ -72,9 +72,12 @@ Direct pattern sets currently use `regex-automata` with caller-provided match
 scratch, and the common path uses a hybrid DFA to report match end offsets
 directly. That removes both the old per-token `regex::RegexSet::matches`
 allocation and the follow-up leaf rematch for direct pattern terminals when the
-hybrid DFA can be built. This is still a bridge, not the architecture endpoint:
-the direction above remains merged lex-mode automata lowered into Snark's Weavy
-program and then specialized by Weavy/JIT.
+hybrid DFA can be built. Plain composed `seq` expressions whose leaves are all
+regular also lower to one automata-backed matcher, while choices and repeats
+remain structural until their longest-match semantics have a purpose-built graph
+lowering. This is still a bridge, not the architecture endpoint: the direction
+above remains merged lex-mode automata lowered into Snark's Weavy program and
+then specialized by Weavy/JIT.
 
 ## JIT Path
 

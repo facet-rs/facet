@@ -354,7 +354,7 @@ fn workspace_path(relative: impl AsRef<Path>) -> PathBuf {
         .join(relative)
 }
 
-/// snark's named-node s-expression via the production (RuntimeWeavy) path.
+/// Snark's named-node s-expression through the production Weavy executor.
 fn snark_sexp(grammar_path: &Path, input: &str) -> String {
     let json = match snark_dsl::emit_with_boa(grammar_path) {
         Ok(json) => json,
