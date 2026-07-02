@@ -216,7 +216,13 @@ impl<I> HostCallChain<I> {
         &self.infos
     }
 
-    /// Number of raw host-call ABI records kept alive by this chain.
+    /// Number of host-call stencil sites emitted by this chain.
+    #[must_use]
+    pub fn hostcall_site_count(&self) -> usize {
+        self.call_slots.len()
+    }
+
+    /// Number of raw host-call ABI records materialized for the most recent run.
     #[must_use]
     pub fn hostcall_count(&self) -> usize {
         self.calls.len()
@@ -649,6 +655,8 @@ mod tests {
         }
 
         let mut chain = HostCallChain::new(vec![Add(20), Add(21)]);
+        assert_eq!(chain.hostcall_site_count(), 2);
+        assert_eq!(chain.hostcall_count(), 0);
         let mut state = State { value: 1 };
         chain.run(&mut state);
 
@@ -696,6 +704,8 @@ mod tests {
                 keep_running: true,
             },
         ]);
+        assert_eq!(chain.hostcall_site_count(), 3);
+        assert_eq!(chain.hostcall_count(), 0);
         let mut state = State { value: 0 };
         chain.run(&mut state);
 
