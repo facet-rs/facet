@@ -1,4 +1,4 @@
-# facet-core
+# facet
 
 [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-core/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-core.svg)](https://crates.io/crates/facet-core)
@@ -6,14 +6,52 @@
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-core.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-facet provides reflection for Rust: it gives types a [`SHAPE`](Facet::SHAPE) associated
-const with details on the layout, fields, doc comments, attributes, etc.
+`facet` is an entire ecosystem of Rust crates built on top of reflection.
 
-It can be used for many things, from (de)serialization to pretty-printing,
-rich debuggers, CLI parsing, reflection in templating engines, code
-generation, etc.
+The core facet crates give types a [`SHAPE`](Facet::SHAPE) associated const with
+details on the kind (struct, enum, tuple?), layout (size, alignment), fields,
+doc comments, arbitrary attributes, along with 
 
-See <https://facet.rs> for details.
+From there, `facet-reflect` allows reading from existing values, building new
+values from scratch, and even mutating existing values in-place if they're plain
+old data.
+
+A rich (de)serialization ecosystem is built on top of these, for formats like
+JSON, TOML, YAML, MsgPack, Postcard, ASN1, XDR, CSV, XML, but also facet-native
+(ie. designed by the same authors and leveraging some capabilities that would
+be hard to get elsewhere) like [styx](facet-styx/) (a human-oriented document
+language you'd use in place of YAML or TOML) and [phon](phon/) (a schema-aware
+binary format that comes in self-describing form _and_ in compact form).
+
+Inserting or fetching records from database is essentially (de)serialization
+again, so the facet ecosystem also includes adapters for sqlite and Postgres
+(via [dibs](dibs/), which does a little more than just data binding).
+
+Want two programs to talk to each other? [vox](vox/) has you covered: an RPC
+system built on top of the Phon binary format, which purports to support forwards
+and backwards compatibility, although nobody's built the "semver checks" tooling
+for it yet so, PRs welcome.
+
+Reflection has a cost: facet-json used to be 5-7x slower than serde-json. In
+comes [weavy](weavy/), an IR target that any crate can lower to, using their own
+intrinsics, for which they can provide native stencils. On platforms that
+support it, weavy uses a copy-patch technique to assemble native code for much
+faster (citation needed) execution still. Not an option on iPhone, and generally
+a memory safety liability.
+
+For syntax highlighting, I (Amos) was a bit annoyed that
+[arborium](https://github.com/bearcove/arborium) (a tree-sitter grammar
+distribution) required a C toolchain, so I made [snark](snark/), a
+tree-sitter-compatible parser framework, which lowers to weavy, has JIT
+support, and will happily codegen an AST for you (into which it can parse
+your language) given a few extra annotations.
+
+## Website note
+
+The <https://facet.rs> website has a lot of information about a lot of the
+ecosystem but it's unfortunately not super reliable as LLMs have been doing
+too much of the writing (on account on Amos being burned out). This is being
+slowly repaired. Bear with us.
 
 ## Workspace contents
 
@@ -102,25 +140,6 @@ Thanks to all individual sponsors:
     <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-dark.svg">
     <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-light.svg" height="40" alt="Patreon">
     </picture>
-</a> </p>
-
-...along with corporate sponsors:
-
-<p> <a href="https://aws.amazon.com">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-light.svg" height="40" alt="AWS">
-</picture>
-</a> <a href="https://zed.dev">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-light.svg" height="40" alt="Zed">
-</picture>
-</a> <a href="https://depot.dev?utm_source=facet">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-light.svg" height="40" alt="Depot">
-</picture>
 </a> </p>
 
 ...without whom this work could not exist.
