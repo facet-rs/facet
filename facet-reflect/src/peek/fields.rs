@@ -484,7 +484,7 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                             }
                             // None - skip this field entirely
                             continue;
-                        } else if let Ok(struct_peek) = peek.into_struct() {
+                        } else if let Ok(struct_peek) = peek.innermost_peek().into_struct() {
                             self.stack.push(FieldsForSerializeIterState::Fields(
                                 FieldIter::new_struct(struct_peek),
                             ))
