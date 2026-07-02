@@ -7730,7 +7730,7 @@ struct RuntimeWeavyBranchStep<'a, 'out> {
     outcomes: &'out mut Vec<RuntimeWeavyStepOutcome>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct RuntimeWeavyDispatch {
     state: parser_ir::ParseStateId,
     token: RuntimeWeavyToken,
@@ -8778,16 +8778,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 entry.actions().first().copied(),
             )
         };
-        let dispatch = RuntimeWeavyDispatch {
+        Ok(RuntimeWeavyDispatch {
             state,
             token,
             lookahead: self.lookahead_id,
             entry_index,
             action_count,
             first_action,
-        };
-        self.dispatch = Some(dispatch.clone());
-        Ok(dispatch)
+        })
     }
 
     fn apply_action_direct(
