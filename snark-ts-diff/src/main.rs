@@ -40,8 +40,8 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParseReport,
-        parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
+        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParsePlanReadiness,
+        WeavyParseReport, parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
     },
@@ -137,6 +137,53 @@ fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     best_ms
+}
+
+fn write_stencil_profile(
+    out: &mut impl Write,
+    readiness: &WeavyParsePlanReadiness,
+    label: &str,
+    profile: SnarkStencilProfile,
+) -> io::Result<()> {
+    let families = readiness.snark_stencil_family_summaries_for_profile(profile);
+    if families.is_empty() {
+        writeln!(out, "{label}_stencil_families: none")?;
+    } else {
+        writeln!(out, "{label}_stencil_families:")?;
+        for summary in &families {
+            writeln!(
+                out,
+                "  {:?}/{:?}: count={} state={:?}",
+                summary.family, summary.execution, summary.count, summary.state
+            )?;
+        }
+    }
+
+    let execution = readiness.snark_stencil_execution_summaries_for_profile(profile);
+    if execution.is_empty() {
+        writeln!(out, "{label}_stencil_execution: none")?;
+    } else {
+        writeln!(out, "{label}_stencil_execution:")?;
+        for summary in &execution {
+            writeln!(
+                out,
+                "  {:?}: count={} families={:?} state={:?}",
+                summary.execution, summary.count, summary.families, summary.state
+            )?;
+        }
+    }
+
+    let state = readiness.snark_stencil_state_summaries_for_profile(profile);
+    if state.is_empty() {
+        writeln!(out, "{label}_stencil_state: none")?;
+    } else {
+        writeln!(out, "{label}_stencil_state:")?;
+        for summary in &state {
+            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Best (min) ranged-CST parse time in ms over `iters` runs, after one warm-up.
@@ -489,26 +536,18 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
             writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
         }
     }
-    let direct_no_trace_state =
-        readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
-    if direct_no_trace_state.is_empty() {
-        writeln!(out, "direct_no_trace_stencil_state: none")?;
-    } else {
-        writeln!(out, "direct_no_trace_stencil_state:")?;
-        for summary in &direct_no_trace_state {
-            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
-        }
-    }
-    let direct_tree_only_state =
-        readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectTreeOnly);
-    if direct_tree_only_state.is_empty() {
-        writeln!(out, "direct_tree_only_stencil_state: none")?;
-    } else {
-        writeln!(out, "direct_tree_only_stencil_state:")?;
-        for summary in &direct_tree_only_state {
-            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
-        }
-    }
+    write_stencil_profile(
+        &mut out,
+        readiness,
+        "direct_no_trace",
+        SnarkStencilProfile::DirectNoTrace,
+    )?;
+    write_stencil_profile(
+        &mut out,
+        readiness,
+        "direct_tree_only",
+        SnarkStencilProfile::DirectTreeOnly,
+    )?;
     Ok(())
 }
 
