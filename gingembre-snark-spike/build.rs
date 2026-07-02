@@ -88,14 +88,16 @@ fn build_intop_stencils(manifest: &std::path::Path) {
     );
     if !native {
         // Empty stencils -> the runtime lane falls back to the interpreter.
-        let mut empty = ["PUSH", "ADD", "SUB", "MUL", "DONE"]
+        let mut empty = ["PUSH", "ADD", "SUB", "MUL", "FADD", "FSUB", "FMUL", "DONE"]
             .iter()
             .map(|n| format!("pub const {n}: &[u8] = &[];\npub const {n}_CONT: &[usize] = &[];\n"))
             .collect::<String>();
-        empty.push_str(
-            "pub const GUARD: &[u8] = &[];\npub const GUARD_FAST_CONT: &[usize] = &[];\n\
-             pub const GUARD_DEOPT_CONT: &[usize] = &[];\n",
-        );
+        for g in ["GUARD", "GUARD_F64"] {
+            empty.push_str(&format!(
+                "pub const {g}: &[u8] = &[];\npub const {g}_FAST_CONT: &[usize] = &[];\n\
+                 pub const {g}_DEOPT_CONT: &[usize] = &[];\n"
+            ));
+        }
         fs::write(&generated, empty).expect("write empty stencils");
         return;
     }
@@ -127,6 +129,9 @@ fn build_intop_stencils(manifest: &std::path::Path) {
         "weavy_intop_add",
         "weavy_intop_sub",
         "weavy_intop_mul",
+        "weavy_intop_fadd",
+        "weavy_intop_fsub",
+        "weavy_intop_fmul",
         "weavy_intop_done",
     ];
     let get = |sym: &str| copypatch::extract::extract_stencil(&bytes, &symbols, sym, "weavy_cont");
@@ -138,6 +143,9 @@ fn build_intop_stencils(manifest: &std::path::Path) {
         ("ADD", "weavy_intop_add"),
         ("SUB", "weavy_intop_sub"),
         ("MUL", "weavy_intop_mul"),
+        ("FADD", "weavy_intop_fadd"),
+        ("FSUB", "weavy_intop_fsub"),
+        ("FMUL", "weavy_intop_fmul"),
         ("DONE", "weavy_intop_done"),
     ] {
         let st = get(sym);
@@ -160,15 +168,18 @@ fn build_intop_stencils(manifest: &std::path::Path) {
         );
     }
     let guard_bytes = fs::read(&guard_obj).expect("read guard object");
-    let guard = copypatch::extract::extract_stencil_n(
-        &guard_bytes,
-        &["weavy_guard_i64"],
-        "weavy_guard_i64",
-        &["weavy_cont", "weavy_deopt"],
-    );
-    writeln!(s, "pub const GUARD: &[u8] = &{:?};", guard.bytes).unwrap();
-    writeln!(s, "pub const GUARD_FAST_CONT: &[usize] = &{:?};", guard.cont_relocs[0]).unwrap();
-    writeln!(s, "pub const GUARD_DEOPT_CONT: &[usize] = &{:?};", guard.cont_relocs[1]).unwrap();
+    let guard_syms = ["weavy_guard_i64", "weavy_guard_f64"];
+    for (name, sym) in [("GUARD", "weavy_guard_i64"), ("GUARD_F64", "weavy_guard_f64")] {
+        let g = copypatch::extract::extract_stencil_n(
+            &guard_bytes,
+            &guard_syms,
+            sym,
+            &["weavy_cont", "weavy_deopt"],
+        );
+        writeln!(s, "pub const {name}: &[u8] = &{:?};", g.bytes).unwrap();
+        writeln!(s, "pub const {name}_FAST_CONT: &[usize] = &{:?};", g.cont_relocs[0]).unwrap();
+        writeln!(s, "pub const {name}_DEOPT_CONT: &[usize] = &{:?};", g.cont_relocs[1]).unwrap();
+    }
 
     fs::write(&generated, s).expect("write intop stencils");
 }

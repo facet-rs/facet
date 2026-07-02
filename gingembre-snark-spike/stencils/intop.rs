@@ -91,6 +91,42 @@ pub unsafe extern "C" fn weavy_intop_mul(cx: *mut Ctx) {
     cont!(weavy_cont, cx);
 }
 
+// --- Float lane: same i64 stack, values stored as f64 bits (push reuses `weavy_intop_push`
+//     with f64-bit immediates; only the arithmetic bitcasts). -----------------------------
+
+/// `a + b` as f64 (bitcast in/out of the shared stack).
+#[no_mangle]
+pub unsafe extern "C" fn weavy_intop_fadd(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let b = f64::from_bits(*c.sp.sub(1) as u64);
+    let a = f64::from_bits(*c.sp.sub(2) as u64);
+    *c.sp.sub(2) = (a + b).to_bits() as i64;
+    c.sp = c.sp.sub(1);
+    cont!(weavy_cont, cx);
+}
+
+/// `a - b` as f64.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_intop_fsub(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let b = f64::from_bits(*c.sp.sub(1) as u64);
+    let a = f64::from_bits(*c.sp.sub(2) as u64);
+    *c.sp.sub(2) = (a - b).to_bits() as i64;
+    c.sp = c.sp.sub(1);
+    cont!(weavy_cont, cx);
+}
+
+/// `a * b` as f64.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_intop_fmul(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let b = f64::from_bits(*c.sp.sub(1) as u64);
+    let a = f64::from_bits(*c.sp.sub(2) as u64);
+    *c.sp.sub(2) = (a * b).to_bits() as i64;
+    c.sp = c.sp.sub(1);
+    cont!(weavy_cont, cx);
+}
+
 /// Terminal: a lone `ret`.
 #[no_mangle]
 pub unsafe extern "C" fn weavy_intop_done(_cx: *mut Ctx) {}

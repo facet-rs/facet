@@ -127,6 +127,10 @@ fn main() {
         fuse();
         return;
     }
+    if args.get(1).map(|s| s == "--ic").unwrap_or(false) {
+        inline_cache();
+        return;
+    }
     if args.get(1).map(|s| s == "--profile").unwrap_or(false) {
         profile();
         return;
@@ -1031,8 +1035,23 @@ fn lower_spec(e: &gen_ast::Expr, vars: &mut Vec<String>, out: &mut Vec<SpecOp>) 
 /// A resolved variable slot — MUST match `VarSlot` in stencils/guard.rs.
 #[repr(C)]
 struct SpecVarSlot {
-    is_int: i64,
-    value: i64,
+    tag: i64,
+    bits: i64,
+}
+
+const TAG_I64: i64 = 0;
+const TAG_F64: i64 = 1;
+const TAG_OTHER: i64 = 2;
+
+/// Classify a gingembre value into a guard tag + unboxed bits.
+fn tag_of(v: &Value) -> SpecVarSlot {
+    if let Some(i) = v.as_number().and_then(|n| n.to_i64()) {
+        SpecVarSlot { tag: TAG_I64, bits: i }
+    } else if let Some(f) = v.as_number().and_then(|n| n.to_f64()) {
+        SpecVarSlot { tag: TAG_F64, bits: f.to_bits() as i64 }
+    } else {
+        SpecVarSlot { tag: TAG_OTHER, bits: 0 }
+    }
 }
 
 /// Threaded state — MUST match `Ctx` in stencils/guard.rs (prog/sp share layout with IntCtx).
@@ -1113,6 +1132,184 @@ fn run_spec_native(
     }
 }
 
+/// Assemble a guarded program specialized to ONE type profile `ty` (TAG_I64 or TAG_F64): the
+/// guard, arithmetic stencils, and push-immediate encoding are all chosen by `ty`. This is what
+/// an inline cache compiles per observed type.
+fn build_ic_native(ops: &[SpecOp], ty: i64) -> Option<weavy::jit::NativeProgram> {
+    use weavy::jit::StencilLayout;
+    let float = ty == TAG_F64;
+    if intop_stencils::GUARD.is_empty() || !weavy::jit::NATIVE_COPY_PATCH_AVAILABLE {
+        return None;
+    }
+    let (guard, guard_fast, guard_deopt) = if float {
+        (intop_stencils::GUARD_F64, intop_stencils::GUARD_F64_FAST_CONT, intop_stencils::GUARD_F64_DEOPT_CONT)
+    } else {
+        (intop_stencils::GUARD, intop_stencils::GUARD_FAST_CONT, intop_stencils::GUARD_DEOPT_CONT)
+    };
+    let (add, add_c, sub, sub_c, mul, mul_c) = if float {
+        (
+            intop_stencils::FADD, intop_stencils::FADD_CONT,
+            intop_stencils::FSUB, intop_stencils::FSUB_CONT,
+            intop_stencils::FMUL, intop_stencils::FMUL_CONT,
+        )
+    } else {
+        (
+            intop_stencils::ADD, intop_stencils::ADD_CONT,
+            intop_stencils::SUB, intop_stencils::SUB_CONT,
+            intop_stencils::MUL, intop_stencils::MUL_CONT,
+        )
+    };
+
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    type Site = (usize, &'static [usize], Option<&'static [usize]>);
+    let mut sites: Vec<Site> = Vec::with_capacity(ops.len());
+    for op in ops {
+        match op {
+            SpecOp::Guard(idx) => {
+                layout.push_prog_word(root.prog_index, *idx as u64);
+                sites.push((layout.emit_stencil(guard), guard_fast, Some(guard_deopt)));
+            }
+            SpecOp::Push(n) => {
+                // In the float program, integer literals become f64 bits.
+                let imm = if float { (*n as f64).to_bits() } else { *n as u64 };
+                layout.push_prog_word(root.prog_index, imm);
+                sites.push((layout.emit_stencil(intop_stencils::PUSH), intop_stencils::PUSH_CONT, None));
+            }
+            SpecOp::Add => sites.push((layout.emit_stencil(add), add_c, None)),
+            SpecOp::Sub => sites.push((layout.emit_stencil(sub), sub_c, None)),
+            SpecOp::Mul => sites.push((layout.emit_stencil(mul), mul_c, None)),
+        }
+    }
+    let done = layout.emit_stencil(intop_stencils::DONE);
+    for i in 0..sites.len() {
+        let (start, fast, deopt) = sites[i];
+        let next = sites.get(i + 1).map(|(s, _, _)| *s).unwrap_or(done);
+        for &rel in fast {
+            layout.patch_continuation(start + rel, next);
+        }
+        if let Some(deopt_relocs) = deopt {
+            for &rel in deopt_relocs {
+                layout.patch_continuation(start + rel, done);
+            }
+        }
+    }
+    Some(weavy::jit::NativeProgram::new(layout, root))
+}
+
+/// A polymorphic inline cache: caches one compiled native program per observed type profile.
+/// Hit -> run the cached native code; miss -> compile for the new type, cache, run.
+#[derive(Default)]
+struct InlineCache {
+    entries: Vec<(i64, weavy::jit::NativeProgram)>,
+    hits: usize,
+    misses: usize,
+}
+
+impl InlineCache {
+    /// Evaluate `ops` for a variable of runtime type `ty`. Returns the raw result bits (i64 value
+    /// or f64 bits), or `None` if the guard deopted (unknown type).
+    fn eval(&mut self, ops: &[SpecOp], ty: i64, slots: &[SpecVarSlot], stack: &mut [i64]) -> Option<i64> {
+        if let Some((_, prog)) = self.entries.iter().find(|(t, _)| *t == ty) {
+            self.hits += 1;
+            return run_spec_native(prog, slots, stack);
+        }
+        self.misses += 1;
+        let prog = build_ic_native(ops, ty)?; // compile the specialization for this type
+        let r = run_spec_native(&prog, slots, stack);
+        self.entries.push((ty, prog));
+        r
+    }
+}
+
+/// PROOF + MEASUREMENT: a polymorphic INLINE CACHE. The generated AST is compiled per observed
+/// variable type (int lane / float lane) on the first sighting, cached, and reused; a type change
+/// triggers one recompile + a new cache entry. Oracle: every result matches gingembre.
+fn inline_cache() {
+    use std::time::Instant;
+    let (parser, table, plan, anns) = build_plan();
+
+    let expr = "x * 3 + 1";
+    let src = format!("{{{{ {expr} }}}}");
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).unwrap();
+    let resolved = report.accepted_resolved_tree(&parser, &src).unwrap();
+    let ast = expr_via_jit(find_expr(&resolved).unwrap(), &anns);
+    let mut vars = Vec::new();
+    let mut ops = Vec::new();
+    lower_spec(&ast, &mut vars, &mut ops);
+    println!("expr: {expr}   program: {ops:?}   vars: {vars:?}\n");
+
+    let mut ic = InlineCache::default();
+    let mut stack = vec![0i64; 64];
+
+    // A stream of calls with varying runtime types (monomorphic int, then a float shows up).
+    // (tag_of uses to_i64 as a stand-in, so a WHOLE float would land in the int lane; a
+    // production guard reads the Value's real tag. Fractional floats classify as float here.)
+    let stream = [
+        Value::from(10i64),
+        Value::from(20i64),
+        Value::from(30i64),
+        Value::from(2.5f64),
+        Value::from(4.5f64),
+        Value::from(7i64),
+    ];
+    for x in &stream {
+        let slot = tag_of(x);
+        let before = (ic.hits, ic.misses);
+        let bits = ic.eval(&ops, slot.tag, std::slice::from_ref(&slot), &mut stack).expect("guard held");
+
+        let mut gctx = Context::new();
+        gctx.set("x", x.clone());
+        let gingembre = block_on(gingembre::eval_expression(expr, &gctx)).unwrap();
+
+        let (kind, got, ok) = if slot.tag == TAG_I64 {
+            let g = gingembre.as_number().and_then(|n| n.to_i64()).unwrap();
+            ("int", format!("{bits}"), bits == g)
+        } else {
+            let f = f64::from_bits(bits as u64);
+            let g = gingembre.as_number().and_then(|n| n.to_f64()).unwrap();
+            ("flt", format!("{f}"), (f - g).abs() < 1e-9)
+        };
+        assert!(ok, "IC result must match gingembre for x={x:?}");
+        let ev = if ic.hits > before.0 { "HIT " } else { "MISS→compile" };
+        println!("x = {x:<10?} [{kind}]  {ev}  -> {got}  (== gingembre {gingembre:?})");
+    }
+    println!(
+        "\nIC state: {} cache entries (one native program per type), {} hits, {} misses/compiles.",
+        ic.entries.len(),
+        ic.hits,
+        ic.misses,
+    );
+
+    // Measure a cached HIT (no compile) vs a cold MISS (compile + run) vs gingembre.
+    let x = Value::from(10i64);
+    let slot = tag_of(&x);
+    let mut warm = InlineCache::default();
+    warm.eval(&ops, slot.tag, std::slice::from_ref(&slot), &mut stack); // prime
+    let m = 200_000u32;
+    let t = Instant::now();
+    for _ in 0..m {
+        std::hint::black_box(warm.eval(&ops, slot.tag, std::slice::from_ref(&slot), &mut stack));
+    }
+    let hit_ns = t.elapsed().as_nanos() / m as u128;
+    let t = Instant::now();
+    for _ in 0..m {
+        let mut cold = InlineCache::default();
+        std::hint::black_box(cold.eval(&ops, slot.tag, std::slice::from_ref(&slot), &mut stack));
+    }
+    let miss_ns = t.elapsed().as_nanos() / m as u128;
+    println!(
+        "\ncached HIT: {hit_ns} ns   cold MISS (compile+run): {miss_ns} ns   (compile amortizes after ~{} calls)",
+        miss_ns / hit_ns.max(1)
+    );
+    println!(
+        "\nThis is a polymorphic inline cache: first sighting of a type compiles a specialized\n\
+         native program (int lane vs float lane, different guard + arithmetic stencils); repeats\n\
+         hit the cache and run compiled code; a new type recompiles once. The guard is the IC's\n\
+         type check — same conditional-branch stencil, now selecting the cached specialization."
+    );
+}
+
 /// PROOF + MEASUREMENT: type speculation with deopt. The generated AST -> a guarded copy-and-
 /// patch program that BETS every variable is an integer. When the bet holds it runs the unboxed
 /// fast path; when it misses, a guard branches to the deopt exit and we fall back to gingembre's
@@ -1133,15 +1330,8 @@ fn speculate() {
     let native = build_spec_native(&ops).expect("guard stencils available");
     println!("expr: {expr}   speculative program: {ops:?}   vars: {vars:?}\n");
 
-    // Resolve each variable to a guard slot (is_int + unboxed value) from a gingembre value.
-    let slots_for = |x: &Value| -> Vec<SpecVarSlot> {
-        vars.iter()
-            .map(|_| match x.as_number().and_then(|n| n.to_i64()) {
-                Some(v) => SpecVarSlot { is_int: 1, value: v },
-                None => SpecVarSlot { is_int: 0, value: 0 },
-            })
-            .collect()
-    };
+    // Resolve each variable to a guard slot (tag + unboxed bits) from a gingembre value.
+    let slots_for = |x: &Value| -> Vec<SpecVarSlot> { vars.iter().map(|_| tag_of(x)).collect() };
 
     for (label, x) in [("x = 10 (int)", Value::from(10i64)), ("x = 2.5 (float)", Value::from(2.5f64))] {
         let mut gctx = Context::new();
