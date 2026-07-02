@@ -140,6 +140,10 @@ fn main() {
         hot(secs);
         return;
     }
+    if args.get(1).map(|s| s == "--serialize").unwrap_or(false) {
+        serialize();
+        return;
+    }
     if args.get(1).map(|s| s == "--profile").unwrap_or(false) {
         profile();
         return;
@@ -835,8 +839,10 @@ fn eval_weavy_proof() {
 // (Variables are the not-statically-known case → the guard+deopt / inline-cache story, next.)
 // ===========================================================================================
 
-/// Unboxed integer op — the monomorphic fast path.
-#[derive(Clone, Debug)]
+/// Unboxed integer op — the monomorphic fast path. `Facet` so it can be phon-serialized as
+/// portable bytecode (see `--serialize`).
+#[derive(facet::Facet, Clone, Debug, PartialEq)]
+#[repr(u8)]
 enum IntOp {
     Push(i64),
     Add,
@@ -1607,6 +1613,72 @@ fn jitmap() {
 
     let mut stack = vec![0i64; 64];
     println!("\n(run check: {expr} = {})", run_intop_native(&native, &mut stack));
+}
+
+/// SERIALIZE: cache a compiled template with phon. Bytecode vs native: we serialize the PORTABLE,
+/// Facet-derived forms (the generated AST, and the op stream) with phon and RE-JIT on load — cheap
+/// (~µs), portable across arch/OS, and safe (recompiled from trusted stencils, not trusting raw
+/// code bytes). Native code is arch-locked and only a same-machine cache.
+fn serialize() {
+    use weavy::jit::StencilLayout;
+    let (parser, table, plan, anns) = build_plan();
+
+    let expr = "1 + 2 * 3 + 4 * 5 - 6 + 7 * 8";
+    let src = format!("{{{{ {expr} }}}}");
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).unwrap();
+    let resolved = report.accepted_resolved_tree(&parser, &src).unwrap();
+    let ast = expr_via_jit(find_expr(&resolved).unwrap(), &anns);
+    let mut ops = Vec::new();
+    lower_int(&ast, &mut ops);
+
+    // phon-serialize the two portable, Facet-derived artifacts.
+    let ast_bytes = phon::api::encode(&ast).expect("phon encode AST");
+    let ops_bytes = phon::api::encode(&ops).expect("phon encode ops");
+
+    // Round-trip both back through phon.
+    let ast2: gen_ast::Expr = phon::api::decode(&ast_bytes).expect("phon decode AST");
+    let ops2: Vec<IntOp> = phon::api::decode(&ops_bytes).expect("phon decode ops");
+    assert_eq!(ast, ast2, "AST must survive phon round-trip");
+    assert_eq!(ops, ops2, "op bytecode must survive phon round-trip");
+
+    // Native code size, for the comparison (build a layout to measure).
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    for op in &ops {
+        let bytes = match op {
+            IntOp::Push(n) => {
+                layout.push_prog_word(root.prog_index, *n as u64);
+                intop_stencils::PUSH
+            }
+            IntOp::Add => intop_stencils::ADD,
+            IntOp::Sub => intop_stencils::SUB,
+            IntOp::Mul => intop_stencils::MUL,
+        };
+        layout.emit_stencil(bytes);
+    }
+    layout.emit_stencil(intop_stencils::DONE);
+    let native_len = layout.code_len();
+
+    // The "reload" path: decode op bytecode -> re-JIT -> run. This is what a cache load does.
+    let native = build_intop_native(&ops2).expect("re-JIT from decoded bytecode");
+    let mut stack = vec![0i64; 64];
+    let result = run_intop_native(&native, &mut stack);
+
+    println!("expr: {expr}   ({} ops)\n", ops.len());
+    println!("artifact sizes:");
+    println!("  template source        : {:>4} B  (most portable; re-parse+lower+JIT on load)", src.len());
+    println!("  phon AST bytecode      : {:>4} B  (Facet gen_ast::Expr; re-lower+JIT on load)", ast_bytes.len());
+    println!("  phon op bytecode       : {:>4} B  (Facet Vec<IntOp>; re-JIT only, ~µs)", ops_bytes.len());
+    println!("  native code (this arch): {:>4} B  (arch-locked; mmap+run, needs from_parts)", native_len);
+    println!("\nreloaded phon op bytecode -> re-JIT -> {expr} = {result}  (round-trip verified)");
+    println!(
+        "\nbytecode vs native: serialize the PORTABLE Facet forms with phon (AST or ops) and re-JIT\n\
+         on load. It's portable across arch/OS, SAFE (recompiled from trusted stencils, not\n\
+         executing cached bytes), and re-JIT is ~µs (amortizes instantly). Native code is a\n\
+         same-machine optimization only: arch/OS-locked and you'd be trusting raw bytes as code.\n\
+         The op stream IS the bytecode; phon (itself a copy-and-patch codec) carries it as data.\n\
+         Nice recursion: phon's JIT decodes the bytes that drive our JIT."
+    );
 }
 
 /// Write a perf jitdump (`/tmp/jit-<pid>.dump`) that stax's jitdump tailer consumes to
