@@ -15,6 +15,9 @@
 //!   # strict parse to ranged CST, using the deterministic direct resolved-tree path
 //!   cargo run --release -p snark-ts-diff -- resolved <grammar.js|grammar.json> <input-file> [iters]
 //!
+//!   # strict parse to arena-backed ranged CST, skipping owned recursive materialization
+//!   cargo run --release -p snark-ts-diff -- resolved-cst <grammar.js|grammar.json> <input-file> [iters]
+//!
 //!   # strict parse through Weavy host-call blocks; requires --features jit
 //!   cargo run --release -p snark-ts-diff --features jit -- hostcalls <grammar.js|grammar.json> <input-file> [iters]
 //!
@@ -42,7 +45,7 @@ use snark::{
     lower::weavy::{
         SnarkStencilProfile, WeavyLexerStencilSummary, WeavyParseError, WeavyParsePlan,
         WeavyParseReport, WeavyParseWorkspace, WeavySnarkProfileStencilReadiness,
-        parse_prepared_weavy_resolved_tree,
+        parse_prepared_weavy_resolved_cst, parse_prepared_weavy_resolved_tree,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
@@ -279,6 +282,18 @@ fn best_resolved_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, Weav
     for _ in 0..iters.max(1) {
         let start = Instant::now();
         let _ = parse_prepared_weavy_resolved_tree(&p.plan, &p.parser, &p.table, input)?;
+        best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    Ok(best_ms)
+}
+
+/// Best (min) arena-CST parse time in ms over `iters` runs, after one warm-up.
+fn best_resolved_cst_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
+    let _ = parse_prepared_weavy_resolved_cst(&p.plan, &p.parser, &p.table, input)?;
+    let mut best_ms = f64::INFINITY;
+    for _ in 0..iters.max(1) {
+        let start = Instant::now();
+        let _ = parse_prepared_weavy_resolved_cst(&p.plan, &p.parser, &p.table, input)?;
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     Ok(best_ms)
@@ -846,6 +861,41 @@ fn main() {
             "root_kind={} children={}",
             tree.kind(),
             tree.children().len()
+        );
+        return;
+    }
+
+    if args.get(1).map(|s| s == "resolved-cst").unwrap_or(false) {
+        let grammar_path = args
+            .get(2)
+            .expect("usage: resolved-cst <grammar.js|grammar.json> <input> [iters]");
+        let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
+        let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+        let p = prepare(grammar_path);
+        let tree = match parse_prepared_weavy_resolved_cst(&p.plan, &p.parser, &p.table, &input) {
+            Ok(tree) => tree,
+            Err(error) => {
+                eprintln!("resolved-cst parse failed: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let best_ms = match best_resolved_cst_ms(&p, &input, iters) {
+            Ok(best_ms) => best_ms,
+            Err(error) => {
+                eprintln!("resolved-cst parse failed during timing: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let bytes = input.len();
+        println!(
+            "snark weavy resolved-cst parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
+            bytes as f64 / best_ms
+        );
+        println!(
+            "root_kind={} roots={} items={}",
+            tree.root_kind().unwrap_or("<empty>"),
+            tree.root_count(),
+            tree.len()
         );
         return;
     }

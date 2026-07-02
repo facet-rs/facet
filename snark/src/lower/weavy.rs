@@ -5370,6 +5370,44 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
     }
 }
 
+struct RuntimeWeavyDeterministicResolvedCstSink;
+
+impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedCstSink {
+    type Output = parser_ir::ResolvedCstTree;
+
+    const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
+        RuntimeWeavyTreeEventCollection::Enabled;
+    const SNARK_STAT_COLLECTION: bool = false;
+
+    fn accepted(
+        input_ctx: RuntimeWeavyInput<'_>,
+        tree_store: RuntimeWeavyTreeStore,
+        _trace_events: RuntimeWeavyTraceSink,
+        tree_journal: RuntimeWeavyTreeJournal,
+        _stats: RunStats,
+        _lexer_stats: WeavyLexerExecutionStats,
+        _snark_stats: RuntimeWeavySnarkExecutionStats,
+        _hostcall_stats: WeavyHostCallExecutionStats,
+        _execution_lane: WeavyParseExecutionLane,
+        _version: parser_ir::StackVersionId,
+        _root: parser_ir::TreeNodeId,
+        _error_cost: u32,
+        tree_journal_head: RuntimeWeavyTreeJournalHead,
+        _reusable_nodes: Vec<RuntimeWeavyReusableNode>,
+    ) -> Result<Self::Output, WeavyParseError> {
+        let mut builder = parser_ir::ResolvedCstBuilder::with_node_capacity(
+            input_ctx.parser,
+            input_ctx.input,
+            tree_journal_head.len,
+            tree_store.node_count(),
+        );
+        tree_journal.visit(tree_journal_head, |event| builder.push(event));
+        builder
+            .finish_tree()
+            .ok_or(WeavyParseError::MissingResolvedTree)
+    }
+}
+
 struct RuntimeWeavyDeterministicReportSink;
 
 impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
@@ -5832,6 +5870,16 @@ pub fn parse_prepared_weavy_resolved_tree(
     parse_prepared_weavy_resolved_tree_and_scanner(plan, parser, table, input, None)
 }
 
+/// Execute a prepared parser plan through the direct Weavy runtime and return an arena CST.
+pub fn parse_prepared_weavy_resolved_cst(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<parser_ir::ResolvedCstTree, WeavyParseError> {
+    parse_prepared_weavy_resolved_cst_and_scanner(plan, parser, table, input, None)
+}
+
 /// Execute a prepared parser plan with a scanner host and return the ranged CST.
 pub fn parse_prepared_weavy_resolved_tree_and_scanner(
     plan: &WeavyParsePlan,
@@ -5862,6 +5910,40 @@ pub fn parse_prepared_weavy_resolved_tree_and_scanner(
     .and_then(|report| {
         report
             .accepted_resolved_tree(parser, input)
+            .ok_or(WeavyParseError::MissingResolvedTree)
+    })
+}
+
+/// Execute a prepared parser plan with a scanner host and return an arena CST.
+pub fn parse_prepared_weavy_resolved_cst_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<parser_ir::ResolvedCstTree, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(tree) = parse_weavy_deterministic_resolved_cst_with_lexer_program(input_ctx)? {
+        return Ok(tree);
+    }
+    parse_weavy_with_lexer_program(
+        input_ctx,
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
+    )
+    .and_then(|report| {
+        report
+            .accepted_resolved_cst(parser, input)
             .ok_or(WeavyParseError::MissingResolvedTree)
     })
 }
@@ -6460,6 +6542,25 @@ fn parse_weavy_deterministic_resolved_tree_with_execution(
     block_execution: RuntimeWeavyBlockExecution,
 ) -> Result<Option<parser_ir::ResolvedCstNode>, WeavyParseError> {
     parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicResolvedTreeSink>(
+        input_ctx,
+        block_execution,
+    )
+}
+
+fn parse_weavy_deterministic_resolved_cst_with_lexer_program(
+    input_ctx: RuntimeWeavyInput<'_>,
+) -> Result<Option<parser_ir::ResolvedCstTree>, WeavyParseError> {
+    parse_weavy_deterministic_resolved_cst_with_execution(
+        input_ctx,
+        RuntimeWeavyBlockExecution::Direct,
+    )
+}
+
+fn parse_weavy_deterministic_resolved_cst_with_execution(
+    input_ctx: RuntimeWeavyInput<'_>,
+    block_execution: RuntimeWeavyBlockExecution,
+) -> Result<Option<parser_ir::ResolvedCstTree>, WeavyParseError> {
+    parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicResolvedCstSink>(
         input_ctx,
         block_execution,
     )
@@ -7605,6 +7706,20 @@ impl WeavyParseReport {
             builder.push(event);
         });
         builder.finish()
+    }
+
+    /// Accepted runtime arena CST with anonymous terminals and source ranges preserved.
+    pub fn accepted_resolved_cst(
+        &self,
+        parser: &parser_ir::ParserGrammar,
+        input: &str,
+    ) -> Option<parser_ir::ResolvedCstTree> {
+        let mut builder =
+            parser_ir::ResolvedCstBuilder::with_capacity(parser, input, self.tree_events.len());
+        self.replay_accepted_tree_events(&mut |event: &parser_ir::TreeEvent| {
+            builder.push(event);
+        });
+        builder.finish_tree()
     }
 
     /// Number of accepted runtime branches before identical-tree coalescing.

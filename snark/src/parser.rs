@@ -4961,6 +4961,174 @@ impl ParseNode for ResolvedCstNode {
     }
 }
 
+/// Arena-backed resolved CST with anonymous terminals and source ranges preserved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCstTree {
+    roots: Vec<usize>,
+    items: Vec<ResolvedCstItem>,
+}
+
+/// Borrowed handle into a [`ResolvedCstTree`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResolvedCstTreeNode<'a> {
+    tree: &'a ResolvedCstTree,
+    index: usize,
+}
+
+impl ResolvedCstTree {
+    /// Number of materialized items in this tree.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Whether this tree has no items.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Number of root items.
+    pub fn root_count(&self) -> usize {
+        self.roots.len()
+    }
+
+    /// Single root item, when this tree has exactly one root.
+    pub fn root(&self) -> Option<ResolvedCstTreeNode<'_>> {
+        let [index] = self.roots.as_slice() else {
+            return None;
+        };
+        Some(ResolvedCstTreeNode {
+            tree: self,
+            index: *index,
+        })
+    }
+
+    /// Root items in source order.
+    pub fn roots(&self) -> impl ExactSizeIterator<Item = ResolvedCstTreeNode<'_>> + '_ {
+        self.roots
+            .iter()
+            .copied()
+            .map(|index| ResolvedCstTreeNode { tree: self, index })
+    }
+
+    /// Kind for the public root projection.
+    pub fn root_kind(&self) -> Option<&str> {
+        match self.roots.as_slice() {
+            [] => None,
+            [index] => Some(self.items[*index].kind.as_ref()),
+            _ => Some("ROOT"),
+        }
+    }
+
+    /// Materialize this arena tree into the owned recursive compatibility shape.
+    pub fn to_owned_node(&self) -> Option<ResolvedCstNode> {
+        if self.roots.is_empty() {
+            return None;
+        }
+        if self.roots.len() == 1 {
+            return Some(build_resolved_node(self.roots[0], &self.items));
+        }
+
+        let first = self.roots[0];
+        let last = self.roots[self.roots.len() - 1];
+        let bytes = ByteRange::new(
+            self.items[first].bytes.start(),
+            self.items[last].bytes.end(),
+        )
+        .ok()?;
+        let points = PointRange::new(
+            self.items[first].points.start(),
+            self.items[last].points.end(),
+        )
+        .ok()?;
+        Some(ResolvedCstNode {
+            kind: "ROOT".into(),
+            symbol: None,
+            field: None,
+            node: None,
+            bytes,
+            points,
+            named: true,
+            visible: true,
+            extra: false,
+            text: None,
+            children: self
+                .roots
+                .iter()
+                .copied()
+                .map(|root| build_resolved_node(root, &self.items))
+                .collect(),
+        })
+    }
+}
+
+impl<'a> ResolvedCstTreeNode<'a> {
+    fn item(&self) -> &'a ResolvedCstItem {
+        &self.tree.items[self.index]
+    }
+
+    /// Node or terminal kind.
+    pub fn kind(&self) -> &'a str {
+        self.item().kind.as_ref()
+    }
+
+    /// Parser symbol for terminal leaves, if this node came from a shifted token.
+    pub fn symbol(&self) -> Option<ParserSymbol> {
+        self.item().symbol
+    }
+
+    /// Field name attached by the grammar, when known.
+    pub fn field(&self) -> Option<&'a str> {
+        self.item().field.as_deref()
+    }
+
+    /// Parse tree node id, when this item materialized a tree node.
+    pub fn node(&self) -> Option<TreeNodeId> {
+        self.item().node
+    }
+
+    /// Source byte range.
+    pub fn bytes(&self) -> ByteRange {
+        self.item().bytes
+    }
+
+    /// Source point range.
+    pub fn points(&self) -> PointRange {
+        self.item().points
+    }
+
+    /// Whether this item is named in public traversal.
+    pub fn named(&self) -> bool {
+        self.item().named
+    }
+
+    /// Whether this item is visible in public traversal.
+    pub fn visible(&self) -> bool {
+        self.item().visible
+    }
+
+    /// Whether this item came from an extra token/node.
+    pub fn extra(&self) -> bool {
+        self.item().extra
+    }
+
+    /// Source text for terminal leaves.
+    pub fn text(&self) -> Option<&'a str> {
+        self.item().text.as_ref().and_then(ResolvedCstText::as_str)
+    }
+
+    /// Child items in source order.
+    pub fn children(&self) -> impl ExactSizeIterator<Item = ResolvedCstTreeNode<'a>> + '_ {
+        self.item()
+            .children
+            .iter()
+            .copied()
+            .map(|index| ResolvedCstTreeNode {
+                tree: self.tree,
+                index,
+            })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedCstItem {
     kind: Arc<str>,
@@ -5285,6 +5453,27 @@ impl<'a> ResolvedCstBuilder<'a> {
                 .into_iter()
                 .map(|root| build_resolved_node(root, &self.items))
                 .collect(),
+        })
+    }
+
+    pub(crate) fn finish_tree(mut self) -> Option<ResolvedCstTree> {
+        if self.items.is_empty() {
+            return None;
+        }
+
+        let mut roots = attach_resolved_children_from_event_order(&mut self.items);
+        if roots.is_empty() {
+            return None;
+        }
+        sort_resolved_children(&mut roots, &self.items);
+        for index in 0..self.items.len() {
+            let mut children = std::mem::take(&mut self.items[index].children);
+            sort_resolved_children(&mut children, &self.items);
+            self.items[index].children = children;
+        }
+        Some(ResolvedCstTree {
+            roots,
+            items: self.items,
         })
     }
 
@@ -6787,6 +6976,21 @@ extras (
         assert_eq!(tree.kind(), "template");
         assert!(texts.contains(&"+"), "resolved terminals: {texts:?}");
         assert!(texts.contains(&"*"), "resolved terminals: {texts:?}");
+    }
+
+    #[test]
+    fn prepared_weavy_resolved_cst_materializes_like_resolved_tree() {
+        let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
+        let input = "{{ 1 + 2 * 3 }}";
+        let tree =
+            crate::lower::weavy::parse_prepared_weavy_resolved_tree(plan, parser, table, input)
+                .unwrap();
+        let arena =
+            crate::lower::weavy::parse_prepared_weavy_resolved_cst(plan, parser, table, input)
+                .unwrap();
+
+        assert_eq!(arena.root_kind(), Some("template"));
+        assert_eq!(arena.to_owned_node(), Some(tree));
     }
 
     #[test]
