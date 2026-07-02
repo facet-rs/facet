@@ -5345,16 +5345,23 @@ pub fn parse_prepared_weavy_hostcalls_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(report) = parse_weavy_deterministic_report_with_execution(
+        input_ctx,
+        RuntimeWeavyBlockExecution::HostCalls,
+    )? {
+        return Ok(report);
+    }
     parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
+        input_ctx,
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Disabled,
@@ -5784,9 +5791,16 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
 fn parse_weavy_deterministic_report_with_lexer_program(
     input_ctx: RuntimeWeavyInput<'_>,
 ) -> Result<Option<WeavyParseReport>, WeavyParseError> {
+    parse_weavy_deterministic_report_with_execution(input_ctx, RuntimeWeavyBlockExecution::Direct)
+}
+
+fn parse_weavy_deterministic_report_with_execution(
+    input_ctx: RuntimeWeavyInput<'_>,
+    block_execution: RuntimeWeavyBlockExecution,
+) -> Result<Option<WeavyParseReport>, WeavyParseError> {
     parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicReportSink>(
         input_ctx,
-        RuntimeWeavyBlockExecution::Direct,
+        block_execution,
     )
 }
 
@@ -12307,6 +12321,27 @@ mod tests {
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
+        let deterministic_hostcalls = parse_weavy_deterministic_report_with_execution(
+            RuntimeWeavyInput {
+                plan: &plan,
+                lexer_program: &plan.lexer_program,
+                auto_close_index: &plan.auto_close_index,
+                parser: &parser,
+                table: &table,
+                input: "ab",
+                external_scanner: None,
+            },
+            RuntimeWeavyBlockExecution::HostCalls,
+        )
+        .unwrap()
+        .expect("tiny grammar is deterministic through host-call report blocks");
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
         let hostcalls =
             parse_prepared_weavy_hostcalls_with_report(&plan, &parser, &table, "ab").unwrap();
         #[cfg(all(
@@ -12392,8 +12427,13 @@ mod tests {
         ))]
         {
             assert_eq!(metered.tree(), hostcalls.tree());
+            assert_eq!(deterministic_hostcalls.tree(), hostcalls.tree());
             assert_eq!(
                 hostcalls.execution_lane(),
+                WeavyParseExecutionLane::HostCalls
+            );
+            assert_eq!(
+                deterministic_hostcalls.execution_lane(),
                 WeavyParseExecutionLane::HostCalls
             );
         }
