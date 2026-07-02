@@ -5390,8 +5390,11 @@ impl WeavyParseReport {
         parser: &parser_ir::ParserGrammar,
         input: &str,
     ) -> Option<parser_ir::ResolvedCstNode> {
-        let accepted_tree_events = self.accepted_tree_events();
-        parser_ir::resolved_tree_from_events(parser, input, &accepted_tree_events)
+        let mut builder = parser_ir::ResolvedCstBuilder::new(parser, input);
+        self.replay_accepted_tree_events(&mut |event: &parser_ir::TreeEvent| {
+            builder.push(event);
+        });
+        builder.finish()
     }
 
     /// Number of accepted runtime branches before identical-tree coalescing.

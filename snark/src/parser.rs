@@ -4903,28 +4903,42 @@ struct ResolvedCstItem {
     children: Vec<usize>,
 }
 
-pub(crate) fn resolved_tree_from_events(
-    parser: &ParserGrammar,
-    input: &str,
-    tree_events: &[TreeEvent],
-) -> Option<ResolvedCstNode> {
-    let field_by_child = tree_events
-        .iter()
-        .filter_map(|event| match event {
+pub(crate) struct ResolvedCstBuilder<'a> {
+    parser: &'a ParserGrammar,
+    input: &'a str,
+    field_by_child: HashMap<TreeNodeId, String>,
+    item_indices_by_node: HashMap<TreeNodeId, Vec<usize>>,
+    items: Vec<ResolvedCstItem>,
+}
+
+impl<'a> ResolvedCstBuilder<'a> {
+    pub(crate) fn new(parser: &'a ParserGrammar, input: &'a str) -> Self {
+        Self {
+            parser,
+            input,
+            field_by_child: HashMap::new(),
+            item_indices_by_node: HashMap::new(),
+            items: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, event: &TreeEvent) {
+        let order = self.items.len();
+        match event {
             TreeEvent::Field {
                 child: Some(child),
                 field,
                 ..
-            } => parser
-                .fields
-                .get(field.get() as usize)
-                .map(|decl| (*child, decl.name().to_owned())),
-            _ => None,
-        })
-        .collect::<HashMap<_, _>>();
-    let mut items = Vec::<ResolvedCstItem>::new();
-    for (order, event) in tree_events.iter().enumerate() {
-        match event {
+            } => {
+                if let Some(name) = self
+                    .parser
+                    .fields
+                    .get(field.get() as usize)
+                    .map(|decl| decl.name().to_owned())
+                {
+                    self.attach_field(*child, name);
+                }
+            }
             TreeEvent::Token {
                 symbol,
                 bytes,
@@ -4933,9 +4947,9 @@ pub(crate) fn resolved_tree_from_events(
                 named,
                 ..
             } => {
-                let text = source_slice(input, *bytes).map(str::to_owned);
-                items.push(ResolvedCstItem {
-                    kind: parser_symbol_kind(parser, *symbol, text.as_deref()),
+                let text = source_slice(self.input, *bytes).map(str::to_owned);
+                self.push_item(ResolvedCstItem {
+                    kind: parser_symbol_kind(self.parser, *symbol, text.as_deref()),
                     symbol: Some(*symbol),
                     field: None,
                     node: None,
@@ -4956,24 +4970,26 @@ pub(crate) fn resolved_tree_from_events(
                 points,
                 ..
             } => {
-                let public_node =
-                    parser.production_metadata[metadata.get() as usize].public_node()?;
-                items.push(ResolvedCstItem {
-                    kind: parser.public_node_kinds[public_node.get() as usize]
-                        .name()
-                        .to_owned(),
-                    symbol: None,
-                    field: field_by_child.get(node).cloned(),
-                    node: Some(*node),
-                    bytes: *bytes,
-                    points: *points,
-                    named: true,
-                    visible: true,
-                    extra: false,
-                    text: None,
-                    order,
-                    children: Vec::new(),
-                });
+                if let Some(public_node) =
+                    self.parser.production_metadata[metadata.get() as usize].public_node()
+                {
+                    self.push_item(ResolvedCstItem {
+                        kind: self.parser.public_node_kinds[public_node.get() as usize]
+                            .name()
+                            .to_owned(),
+                        symbol: None,
+                        field: self.field_by_child.get(node).cloned(),
+                        node: Some(*node),
+                        bytes: *bytes,
+                        points: *points,
+                        named: true,
+                        visible: true,
+                        extra: false,
+                        text: None,
+                        order,
+                        children: Vec::new(),
+                    });
+                }
             }
             TreeEvent::CloseNode {
                 node,
@@ -4982,12 +4998,12 @@ pub(crate) fn resolved_tree_from_events(
                 points,
                 ..
             } => {
-                items.push(ResolvedCstItem {
-                    kind: parser.public_node_kinds[public_node.get() as usize]
+                self.push_item(ResolvedCstItem {
+                    kind: self.parser.public_node_kinds[public_node.get() as usize]
                         .name()
                         .to_owned(),
                     symbol: None,
-                    field: field_by_child.get(node).cloned(),
+                    field: self.field_by_child.get(node).cloned(),
                     node: Some(*node),
                     bytes: *bytes,
                     points: *points,
@@ -4999,19 +5015,16 @@ pub(crate) fn resolved_tree_from_events(
                     children: Vec::new(),
                 });
             }
-            TreeEvent::CloseNode {
-                public_node: None, ..
-            } => {}
             TreeEvent::Error {
                 node,
                 bytes,
                 points,
                 ..
             } => {
-                items.push(ResolvedCstItem {
+                self.push_item(ResolvedCstItem {
                     kind: "ERROR".to_owned(),
                     symbol: None,
-                    field: field_by_child.get(node).cloned(),
+                    field: self.field_by_child.get(node).cloned(),
                     node: Some(*node),
                     bytes: *bytes,
                     points: *points,
@@ -5029,8 +5042,8 @@ pub(crate) fn resolved_tree_from_events(
                 points,
                 ..
             } => {
-                items.push(ResolvedCstItem {
-                    kind: parser_symbol_kind(parser, *symbol, None),
+                self.push_item(ResolvedCstItem {
+                    kind: parser_symbol_kind(self.parser, *symbol, None),
                     symbol: Some(*symbol),
                     field: None,
                     node: None,
@@ -5052,11 +5065,11 @@ pub(crate) fn resolved_tree_from_events(
                 points,
                 ..
             } => {
-                let kind = parser.aliases[alias.get() as usize].value().to_owned();
-                items.push(ResolvedCstItem {
+                let kind = self.parser.aliases[alias.get() as usize].value().to_owned();
+                self.push_item(ResolvedCstItem {
                     kind,
                     symbol: None,
-                    field: field_by_child.get(node).cloned(),
+                    field: self.field_by_child.get(node).cloned(),
                     node: Some(*node),
                     bytes: *bytes,
                     points: *points,
@@ -5068,73 +5081,110 @@ pub(crate) fn resolved_tree_from_events(
                     children: Vec::new(),
                 });
             }
-            TreeEvent::OpenNode { .. } | TreeEvent::Field { .. } | TreeEvent::ReuseNode { .. } => {}
-        }
-    }
-    if items.is_empty() {
-        return None;
-    }
-
-    let mut parents = vec![None; items.len()];
-    for child in 0..items.len() {
-        let mut best = None::<(usize, usize, usize)>;
-        for parent in 0..items.len() {
-            if parent == child
-                || items[parent].node.is_none()
-                || !resolved_item_contains(&items[parent], &items[child])
-            {
-                continue;
+            TreeEvent::OpenNode { .. }
+            | TreeEvent::Field { child: None, .. }
+            | TreeEvent::CloseNode {
+                public_node: None, ..
             }
-            let key = (
-                resolved_item_len(&items[parent]),
-                items[parent].order,
-                parent,
-            );
-            if best.is_none_or(|best| key < best) {
-                best = Some(key);
+            | TreeEvent::ReuseNode { .. } => {}
+        }
+    }
+
+    pub(crate) fn finish(mut self) -> Option<ResolvedCstNode> {
+        if self.items.is_empty() {
+            return None;
+        }
+
+        let mut parents = vec![None; self.items.len()];
+        for (child, parent_slot) in parents.iter_mut().enumerate() {
+            let mut best = None::<(usize, usize, usize)>;
+            for parent in 0..self.items.len() {
+                if parent == child
+                    || self.items[parent].node.is_none()
+                    || !resolved_item_contains(&self.items[parent], &self.items[child])
+                {
+                    continue;
+                }
+                let key = (
+                    resolved_item_len(&self.items[parent]),
+                    self.items[parent].order,
+                    parent,
+                );
+                if best.is_none_or(|best| key < best) {
+                    best = Some(key);
+                }
+            }
+            *parent_slot = best.map(|(_, _, parent)| parent);
+        }
+        for (child, parent) in parents.iter().enumerate() {
+            if let Some(parent) = *parent {
+                self.items[parent].children.push(child);
             }
         }
-        parents[child] = best.map(|(_, _, parent)| parent);
+
+        let mut roots = parents
+            .iter()
+            .enumerate()
+            .filter_map(|(index, parent)| parent.is_none().then_some(index))
+            .collect::<Vec<_>>();
+        if roots.is_empty() {
+            return None;
+        }
+        sort_resolved_children(&mut roots, &self.items);
+        if roots.len() == 1 {
+            return Some(build_resolved_node(roots[0], &self.items));
+        }
+
+        let first = roots[0];
+        let last = roots[roots.len() - 1];
+        let bytes = ByteRange::new(
+            self.items[first].bytes.start(),
+            self.items[last].bytes.end(),
+        )
+        .ok()?;
+        let points = PointRange::new(
+            self.items[first].points.start(),
+            self.items[last].points.end(),
+        )
+        .ok()?;
+        Some(ResolvedCstNode {
+            kind: "ROOT".to_owned(),
+            symbol: None,
+            field: None,
+            node: None,
+            bytes,
+            points,
+            named: true,
+            visible: true,
+            extra: false,
+            text: None,
+            children: roots
+                .into_iter()
+                .map(|root| build_resolved_node(root, &self.items))
+                .collect(),
+        })
     }
-    for (child, parent) in parents.iter().enumerate() {
-        if let Some(parent) = *parent {
-            items[parent].children.push(child);
+
+    fn attach_field(&mut self, node: TreeNodeId, name: String) {
+        self.field_by_child.insert(node, name.clone());
+        if let Some(indices) = self.item_indices_by_node.get(&node) {
+            for index in indices {
+                self.items[*index].field = Some(name.clone());
+            }
         }
     }
 
-    let mut roots = parents
-        .iter()
-        .enumerate()
-        .filter_map(|(index, parent)| parent.is_none().then_some(index))
-        .collect::<Vec<_>>();
-    if roots.is_empty() {
-        return None;
+    fn push_item(&mut self, item: ResolvedCstItem) {
+        let node = item.node;
+        let index = self.items.len();
+        self.items.push(item);
+        if let Some(node) = node {
+            self.item_indices_by_node
+                .entry(node)
+                .or_default()
+                .push(index);
+        }
     }
-    sort_resolved_children(&mut roots, &items);
-    if roots.len() == 1 {
-        return Some(build_resolved_node(roots[0], &items));
-    }
-
-    let first = roots[0];
-    let last = roots[roots.len() - 1];
-    let bytes = ByteRange::new(items[first].bytes.start(), items[last].bytes.end()).ok()?;
-    let points = PointRange::new(items[first].points.start(), items[last].points.end()).ok()?;
-    Some(ResolvedCstNode {
-        kind: "ROOT".to_owned(),
-        symbol: None,
-        field: None,
-        node: None,
-        bytes,
-        points,
-        named: true,
-        visible: true,
-        extra: false,
-        text: None,
-        children: roots
-            .into_iter()
-            .map(|root| build_resolved_node(root, &items))
-            .collect(),
-    })
 }
 
 fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> bool {
