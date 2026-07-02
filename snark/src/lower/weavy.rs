@@ -1663,17 +1663,6 @@ impl WeavyParserProgram {
         Ok(block)
     }
 
-    fn runtime_action_block_row(
-        &self,
-        state: parser_ir::ParseStateId,
-        entry_index: usize,
-    ) -> Option<&[WeavyParserActionBlock]> {
-        self.action_blocks
-            .get(state.get() as usize)
-            .and_then(|rows| rows.get(entry_index))
-            .map(Vec::as_slice)
-    }
-
     fn terminal_lookahead(
         &self,
         state: parser_ir::ParseStateId,
@@ -5705,7 +5694,7 @@ struct RuntimeWeavyDirectSetMatches {
 struct RuntimeWeavyAction {
     token: RuntimeWeavyToken,
     lookahead: parser_ir::LookaheadTokenId,
-    block: BlockRef,
+    block: Option<BlockRef>,
     action: parser_ir::ParseAction,
 }
 
@@ -6528,14 +6517,16 @@ where
             let Some(action) = dispatch.first_action.filter(|_| dispatch.action_count == 1) else {
                 return Ok(None);
             };
-            let Some(action_block) = input_ctx
-                .plan
-                .program
-                .runtime_action_block_row(dispatch.state, dispatch.entry_index)
-                .and_then(|blocks| blocks.first())
-                .filter(|block| block.action == action)
-            else {
-                return Ok(None);
+            let block = match runtime_weavy_action_block_for_execution(
+                input_ctx,
+                block_execution,
+                dispatch.state,
+                dispatch.entry_index,
+                0,
+                action,
+            ) {
+                Ok(block) => block,
+                Err(_) => return Ok(None),
             };
             run_runtime_weavy_action(
                 input_ctx,
@@ -6543,7 +6534,7 @@ where
                 RuntimeWeavyAction {
                     token: dispatch.token,
                     lookahead: dispatch.lookahead,
-                    block: action_block.block_ref,
+                    block,
                     action,
                 },
                 RuntimeWeavyReuseCollection::Disabled,
@@ -6579,6 +6570,36 @@ where
             }
             RuntimeWeavyStepOutcome::Failed { .. } => return Ok(None),
         }
+    }
+}
+
+fn runtime_weavy_action_block_for_execution(
+    input_ctx: RuntimeWeavyInput<'_>,
+    block_execution: RuntimeWeavyBlockExecution,
+    state: parser_ir::ParseStateId,
+    entry_index: usize,
+    action_index: usize,
+    action: parser_ir::ParseAction,
+) -> Result<Option<BlockRef>, RuntimeWeavyStepError> {
+    match block_execution {
+        RuntimeWeavyBlockExecution::Direct => Ok(None),
+        RuntimeWeavyBlockExecution::Metered => input_ctx
+            .plan
+            .program
+            .runtime_action_block(state, entry_index, action_index, action)
+            .map(Some),
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        RuntimeWeavyBlockExecution::HostCalls => input_ctx
+            .plan
+            .program
+            .runtime_action_block(state, entry_index, action_index, action)
+            .map(Some),
     }
 }
 
@@ -7829,28 +7850,23 @@ fn step_runtime_weavy_branch(
                 branches: versions.clone(),
             }
         );
-        let action_blocks = input_ctx
-            .plan
-            .program
-            .runtime_action_block_row(dispatch.state, dispatch.entry_index);
         for (action_index, (action, version)) in actions.iter().zip(versions).enumerate() {
-            let Some(action_block) = action_blocks
-                .and_then(|blocks| blocks.get(action_index))
-                .filter(|block| block.action == *action)
-            else {
-                step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
-                    version,
-                    failure: runtime_weavy_failure(
-                        RuntimeWeavyStepError::MissingActionBlock {
-                            state: dispatch.state,
-                            entry_index: dispatch.entry_index,
-                            action_index,
-                            action: *action,
-                        },
-                        branch_state_stack.clone(),
-                    ),
-                });
-                continue;
+            let block = match runtime_weavy_action_block_for_execution(
+                input_ctx,
+                output.block_execution,
+                dispatch.state,
+                dispatch.entry_index,
+                action_index,
+                *action,
+            ) {
+                Ok(block) => block,
+                Err(error) => {
+                    step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
+                        version,
+                        failure: runtime_weavy_failure(error, branch_state_stack.clone()),
+                    });
+                    continue;
+                }
             };
             let mut branch = branch.clone();
             branch.version = version;
@@ -7860,7 +7876,7 @@ fn step_runtime_weavy_branch(
                 RuntimeWeavyAction {
                     token: dispatch.token,
                     lookahead: dispatch.lookahead,
-                    block: action_block.block_ref,
+                    block,
                     action: *action,
                 },
                 step.reuse_collection,
@@ -7884,26 +7900,22 @@ fn step_runtime_weavy_branch(
         });
         return;
     };
-    let Some(action_block) = input_ctx
-        .plan
-        .program
-        .runtime_action_block_row(dispatch.state, dispatch.entry_index)
-        .and_then(|blocks| blocks.first())
-        .filter(|block| block.action == action)
-    else {
-        step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
-            version: source_version,
-            failure: runtime_weavy_failure(
-                RuntimeWeavyStepError::MissingActionBlock {
-                    state: dispatch.state,
-                    entry_index: dispatch.entry_index,
-                    action_index: 0,
-                    action,
-                },
-                branch_state_stack,
-            ),
-        });
-        return;
+    let block = match runtime_weavy_action_block_for_execution(
+        input_ctx,
+        output.block_execution,
+        dispatch.state,
+        dispatch.entry_index,
+        0,
+        action,
+    ) {
+        Ok(block) => block,
+        Err(error) => {
+            step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
+                version: source_version,
+                failure: runtime_weavy_failure(error, branch_state_stack),
+            });
+            return;
+        }
     };
     step.outcomes.push(run_runtime_weavy_action(
         input_ctx,
@@ -7911,7 +7923,7 @@ fn step_runtime_weavy_branch(
         RuntimeWeavyAction {
             token: dispatch.token,
             lookahead: dispatch.lookahead,
-            block: action_block.block_ref,
+            block,
             action,
         },
         step.reuse_collection,
@@ -8109,9 +8121,28 @@ fn run_runtime_weavy_action(
             };
         }
     } else {
+        let Some(block) = action_ctx.block else {
+            let state_stack = stepper.stack.iter().map(|entry| entry.state).collect();
+            return RuntimeWeavyStepOutcome::Failed {
+                version,
+                failure: runtime_weavy_failure(
+                    RuntimeWeavyStepError::MissingActionBlock {
+                        state: stepper
+                            .stack
+                            .last()
+                            .map(|entry| entry.state)
+                            .unwrap_or(parser_ir::ParseStateId::from_index(0)),
+                        entry_index: 0,
+                        action_index: 0,
+                        action: action_ctx.action,
+                    },
+                    state_stack,
+                ),
+            };
+        };
         match run_runtime_weavy_block(
             input_ctx.plan,
-            action_ctx.block,
+            block,
             &mut stepper,
             output.block_execution,
             output.hostcall_stats,
