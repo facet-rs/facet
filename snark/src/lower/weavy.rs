@@ -12336,6 +12336,14 @@ mod tests {
             assert_eq!(hostcalls.accepted_count(), 1);
             assert_eq!(hostcalls.failure_count(), 0);
             assert_eq!(hostcalls.stats().step_count, 0);
+            let hostcall_snark_stats = hostcalls.snark_stats();
+            assert!(hostcall_snark_stats.intrinsic_count > 0);
+            assert_eq!(hostcall_snark_stats, snark_stats);
+            assert!(
+                hostcall_snark_stats
+                    .dominant_family_execution()
+                    .is_some_and(|summary| summary.count > 0)
+            );
         }
     }
 
