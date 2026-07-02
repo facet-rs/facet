@@ -23,6 +23,7 @@ use crate::{
         StaticPrecedenceValue, SymbolRef, ValidatedGrammar, VisibleNodeKind,
     },
 };
+use smallvec::SmallVec;
 
 macro_rules! id_type {
     ($name:ident, $doc:literal) => {
@@ -4908,8 +4909,8 @@ struct ResolvedCstItem {
 pub(crate) struct ResolvedCstBuilder<'a> {
     parser: &'a ParserGrammar,
     input: &'a str,
-    field_by_child: HashMap<TreeNodeId, Arc<str>>,
-    item_indices_by_node: HashMap<TreeNodeId, Vec<usize>>,
+    field_by_child: Vec<Option<Arc<str>>>,
+    item_indices_by_node: Vec<SmallVec<[usize; 1]>>,
     items: Vec<ResolvedCstItem>,
 }
 
@@ -4922,8 +4923,8 @@ impl<'a> ResolvedCstBuilder<'a> {
         Self {
             parser,
             input,
-            field_by_child: HashMap::new(),
-            item_indices_by_node: HashMap::new(),
+            field_by_child: Vec::new(),
+            item_indices_by_node: Vec::new(),
             items: Vec::with_capacity(capacity),
         }
     }
@@ -4984,7 +4985,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                             .name()
                             .into(),
                         symbol: None,
-                        field: self.field_by_child.get(node).cloned(),
+                        field: self.field_for_node(*node),
                         node: Some(*node),
                         bytes: *bytes,
                         points: *points,
@@ -5009,7 +5010,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                         .name()
                         .into(),
                     symbol: None,
-                    field: self.field_by_child.get(node).cloned(),
+                    field: self.field_for_node(*node),
                     node: Some(*node),
                     bytes: *bytes,
                     points: *points,
@@ -5030,7 +5031,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 self.push_item(ResolvedCstItem {
                     kind: "ERROR".into(),
                     symbol: None,
-                    field: self.field_by_child.get(node).cloned(),
+                    field: self.field_for_node(*node),
                     node: Some(*node),
                     bytes: *bytes,
                     points: *points,
@@ -5075,7 +5076,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 self.push_item(ResolvedCstItem {
                     kind,
                     symbol: None,
-                    field: self.field_by_child.get(node).cloned(),
+                    field: self.field_for_node(*node),
                     node: Some(*node),
                     bytes: *bytes,
                     points: *points,
@@ -5152,11 +5153,10 @@ impl<'a> ResolvedCstBuilder<'a> {
     }
 
     fn attach_field(&mut self, node: TreeNodeId, name: Arc<str>) {
-        self.field_by_child.insert(node, name.clone());
-        if let Some(indices) = self.item_indices_by_node.get(&node) {
-            for index in indices {
-                self.items[*index].field = Some(name.clone());
-            }
+        let slot = self.ensure_node_slot(node);
+        self.field_by_child[slot] = Some(name.clone());
+        for index in &self.item_indices_by_node[slot] {
+            self.items[*index].field = Some(name.clone());
         }
     }
 
@@ -5165,11 +5165,25 @@ impl<'a> ResolvedCstBuilder<'a> {
         let index = self.items.len();
         self.items.push(item);
         if let Some(node) = node {
-            self.item_indices_by_node
-                .entry(node)
-                .or_default()
-                .push(index);
+            let slot = self.ensure_node_slot(node);
+            self.item_indices_by_node[slot].push(index);
         }
+    }
+
+    fn ensure_node_slot(&mut self, node: TreeNodeId) -> usize {
+        let slot = node.get() as usize;
+        if slot >= self.field_by_child.len() {
+            self.field_by_child.resize_with(slot + 1, || None);
+            self.item_indices_by_node
+                .resize_with(slot + 1, SmallVec::new);
+        }
+        slot
+    }
+
+    fn field_for_node(&self, node: TreeNodeId) -> Option<Arc<str>> {
+        self.field_by_child
+            .get(node.get() as usize)
+            .and_then(Clone::clone)
     }
 }
 
