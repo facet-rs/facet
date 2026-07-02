@@ -5195,7 +5195,7 @@ fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> 
 
 fn resolved_parent_slots(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
     let mut indices = (0..items.len()).collect::<Vec<_>>();
-    indices.sort_by_key(|index| {
+    indices.sort_unstable_by_key(|index| {
         let item = &items[*index];
         (
             item.bytes.start().get(),
@@ -5282,7 +5282,7 @@ fn build_resolved_node(index: usize, items: &[ResolvedCstItem]) -> ResolvedCstNo
 }
 
 fn sort_resolved_children(children: &mut [usize], items: &[ResolvedCstItem]) {
-    children.sort_by_key(|child| {
+    children.sort_unstable_by_key(|child| {
         let item = &items[*child];
         (item.bytes.start().get(), item.bytes.end().get(), item.order)
     });
