@@ -617,9 +617,249 @@ fn perf() {
     );
 }
 
-/// DIAG: feed malformed templates to both front ends and show what each reports. snark either
-/// recovers (ERROR/MISSING nodes) or hard-errors with the exact expected-terminal set + byte
-/// position; gingembre emits a construct-aware human message. Different shapes — see takeaway.
+// ===========================================================================================
+// Snark error reporting: shape the raw parse error into a human diagnostic, with EVERYTHING
+// derived from the grammar + table — friendly terminal names from `public_names`, line:col
+// from the source, and construct context from the error state's LR items. Nothing per-rule is
+// hand-written: "unclosed if_statement, expected `{% endif %}`" falls out of the item set, for
+// every rule in every grammar.
+// ===========================================================================================
+
+/// Terminal naming, derived once from the grammar: a pattern terminal is named after the
+/// visible rule that consists of exactly that terminal (`number: $ => /\d+/` names the pattern
+/// "number"); literals display as backticked spellings; extras (whitespace/comments) and unnamed
+/// internal lexical variables are unsuggestable noise.
+struct TermNames {
+    /// TerminalId index -> friendly rule name (for pattern/token terminals).
+    by_terminal: Vec<Option<String>>,
+    /// TerminalId index -> is an `extras` terminal.
+    extra: Vec<bool>,
+}
+
+impl TermNames {
+    fn derive(parser: &ParserGrammar) -> Self {
+        let n = parser.symbols().terminals().len();
+        let mut by_terminal = vec![None; n];
+        for prod in parser.productions() {
+            // A visible rule that is exactly one terminal names that terminal.
+            if let [step] = prod.steps()
+                && let snark::parser::ParserSymbol::Terminal(t) = step.symbol()
+            {
+                let lhs = &parser.symbols().nonterminals()[prod.lhs().get() as usize];
+                if lhs.visible()
+                    && lhs.origin() == snark::parser::NonterminalOrigin::Rule
+                    && by_terminal[t.get() as usize].is_none()
+                {
+                    by_terminal[t.get() as usize] = Some(lhs.name().to_string());
+                }
+            }
+        }
+        let mut extra = vec![false; n];
+        for root in parser.extra_roots() {
+            if let snark::parser::ParserSymbol::Terminal(t) = root.symbol() {
+                extra[t.get() as usize] = true;
+            }
+        }
+        Self { by_terminal, extra }
+    }
+
+    /// Friendly display, or `None` when the terminal shouldn't be suggested (extras, unnamed
+    /// internal lexical variables).
+    fn display(&self, parser: &ParserGrammar, tid: snark::parser::TerminalId) -> Option<String> {
+        let i = tid.get() as usize;
+        if self.extra[i] {
+            return None;
+        }
+        let t = &parser.symbols().terminals()[i];
+        if t.kind() == snark::parser::ParserTerminalKind::String {
+            return Some(format!("`{}`", t.spelling()));
+        }
+        if let Some(name) = &self.by_terminal[i] {
+            return Some(name.clone());
+        }
+        if let Some(name) = t.public_names().first() {
+            return Some(name.clone());
+        }
+        None // unnamed internal token: noise, not guidance
+    }
+
+    /// Display for a raw expected spelling (NoToken carries spellings, not ids).
+    fn display_spelling(&self, parser: &ParserGrammar, spelling: &str) -> Option<String> {
+        for (i, t) in parser.symbols().terminals().iter().enumerate() {
+            if t.spelling() == spelling {
+                return self.display(parser, snark::parser::TerminalId::from_index(i));
+            }
+        }
+        Some(format!("`{spelling}`"))
+    }
+}
+
+/// 1-based (line, column, line text) for a byte offset.
+fn line_col(src: &str, byte: usize) -> (usize, usize, &str) {
+    let byte = byte.min(src.len());
+    let line_start = src[..byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_no = src[..byte].matches('\n').count() + 1;
+    let line_end = src[line_start..].find('\n').map(|i| line_start + i).unwrap_or(src.len());
+    (line_no, byte - line_start + 1, &src[line_start..line_end])
+}
+
+/// Dedupe + tidy an expected list: case-insensitive dedupe (folds `true`/`True`), keep order.
+fn tidy_expected(mut items: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    items.retain(|s| seen.insert(s.to_lowercase()));
+    items
+}
+
+
+/// What the error state tells us, derived from its LR item set:
+/// - `expecting_nts`: nonterminals right after a dot (the "big picture": `expr`), and
+/// - `in_progress`: visible constructs with the dot advanced (what we're in the middle of),
+///   most-progressed first.
+fn state_context(
+    parser: &ParserGrammar,
+    table: &ParseTable,
+    state: snark::parser::ParseStateId,
+) -> (Vec<String>, Vec<String>) {
+    let Some(st) = table.states().get(state.get() as usize) else {
+        return (Vec::new(), Vec::new());
+    };
+    let Some(items) = table
+        .item_sets()
+        .get(st.item_set().get() as usize)
+        .map(|s| s.items())
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut expecting = Vec::new();
+    let mut in_progress: Vec<(usize, String)> = Vec::new();
+    for item in items {
+        let prod = &parser.productions()[item.production().get() as usize];
+        // KERNEL items only (dot advanced): closure items would spam every alternative of an
+        // expected nonterminal; the kernel's next-nonterminal is the general answer ("expr").
+        if item.dot() == 0 {
+            continue;
+        }
+        // Nonterminal right after the dot: what this state is waiting to parse.
+        if let Some(step) = prod.steps().get(item.dot())
+            && let snark::parser::ParserSymbol::Nonterminal(nt) = step.symbol()
+        {
+            let sym = &parser.symbols().nonterminals()[nt.get() as usize];
+            if sym.origin() == snark::parser::NonterminalOrigin::Rule {
+                expecting.push(sym.name().trim_start_matches('_').to_string());
+            }
+        }
+        // Dot advanced: this construct is in progress.
+        let sym = &parser.symbols().nonterminals()[prod.lhs().get() as usize];
+        if sym.visible() && sym.origin() == snark::parser::NonterminalOrigin::Rule {
+            in_progress.push((item.dot(), sym.name().to_string()));
+        }
+    }
+    in_progress.sort_by_key(|(dot, _)| std::cmp::Reverse(*dot));
+    let expecting = tidy_expected(expecting);
+    let mut seen = std::collections::BTreeSet::new();
+    let in_progress = in_progress
+        .into_iter()
+        .filter_map(|(_, n)| seen.insert(n.clone()).then_some(n))
+        .take(3)
+        .collect();
+    (expecting, in_progress)
+}
+
+/// Shape a raw snark parse error into a human diagnostic. Fully derived: no per-rule prose.
+fn diagnose(
+    err: &snark::lower::weavy::WeavyParseError,
+    parser: &ParserGrammar,
+    table: &ParseTable,
+    name: &str,
+    src: &str,
+) -> String {
+    use snark::lower::weavy::WeavyParseError as E;
+    use snark::parser::LookaheadSymbol;
+
+    let names = TermNames::derive(parser);
+    let (state, byte, expected, found) = match err {
+        E::NoToken { state, byte_position, expected } => {
+            let found = match src[*byte_position..].chars().next() {
+                Some(c) => format!("`{c}`"),
+                None => "end of input".to_string(),
+            };
+            let expected = expected
+                .iter()
+                .filter_map(|s| names.display_spelling(parser, s))
+                .collect();
+            (*state, *byte_position, expected, found)
+        }
+        E::NoAction { state, lookahead, byte_position } => {
+            // Derive the expected set from the state's own action entries.
+            let expected = table
+                .states()
+                .get(state.get() as usize)
+                .map(|st| {
+                    st.entries()
+                        .iter()
+                        .filter_map(|e| match e.lookahead() {
+                            LookaheadSymbol::Terminal(t) | LookaheadSymbol::ReservedWord { terminal: t, .. } => {
+                                names.display(parser, t)
+                            }
+                            LookaheadSymbol::External(x) => Some(
+                                parser
+                                    .symbols()
+                                    .externals()
+                                    .get(x.get() as usize)
+                                    .and_then(|e| e.name())
+                                    .unwrap_or("external token")
+                                    .to_string(),
+                            ),
+                            LookaheadSymbol::Eof => Some("end of input".to_string()),
+                            _ => None, // non_exhaustive enum
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let found = match lookahead {
+                LookaheadSymbol::Eof => "end of input".to_string(),
+                LookaheadSymbol::Terminal(t) | LookaheadSymbol::ReservedWord { terminal: t, .. } => {
+                    names.display(parser, *t).unwrap_or_else(|| "token".to_string())
+                }
+                _ => "token".to_string(), // External / non_exhaustive
+            };
+            (*state, *byte_position, expected, found)
+        }
+        other => return format!("error: {other}"),
+    };
+
+    let expected = tidy_expected(expected);
+    let (line, col, line_text) = line_col(src, byte);
+    let (expecting_nts, in_progress) = state_context(parser, table, state);
+
+    // Headline: prefer the derived nonterminal ("expected expr") over a raw terminal list.
+    let what = if !expecting_nts.is_empty() {
+        expecting_nts.join(" or ")
+    } else if expected.len() <= 3 {
+        expected.join(", ")
+    } else {
+        format!("one of {}", expected[..3].join(", "))
+    };
+
+    let mut out = String::new();
+    use std::fmt::Write;
+    writeln!(out, "error: expected {what}, found {found}").unwrap();
+    writeln!(out, "  --> {name}:{line}:{col}").unwrap();
+    writeln!(out, "   |").unwrap();
+    writeln!(out, "{line:>2} | {line_text}").unwrap();
+    writeln!(out, "   | {}^", " ".repeat(col.saturating_sub(1))).unwrap();
+    if !expected.is_empty() {
+        writeln!(out, "   = expected: {}", expected.join(", ")).unwrap();
+    }
+    if !in_progress.is_empty() {
+        writeln!(out, "   = while parsing: {}", in_progress.join(", ")).unwrap();
+    }
+    out
+}
+
+/// DIAG: feed malformed templates to gingembre (hand-tuned prose) and snark (raw error +
+/// `diagnose`, everything derived from grammar + table). The derived diagnostics carry friendly
+/// names, line:col + caret, the full expected set, and construct context — for every rule.
 fn diag() {
     let (parser, table, plan, _anns) = build_plan();
     let bad = ["{{ 1 + }}", "{% if x %}no end", "{{ 1 +* 2 }}"];
@@ -632,7 +872,6 @@ fn diag() {
             Err(e) => println!("gingembre: {e}"),
         }
 
-        // snark: recovered tree with ERROR/MISSING nodes + failure count.
         match parse_prepared_weavy_with_report(&plan, &parser, &table, src) {
             Ok(report) => {
                 println!("snark: parsed with recovery (see tree; ERROR/MISSING mark the gap)");
@@ -642,16 +881,23 @@ fn diag() {
                     println!("   (no accepted tree)");
                 }
             }
-            Err(e) => println!("snark: hard parse error: {e:?}"),
+            Err(e) => {
+                println!("snark (derived diagnostic):");
+                print!("{}", diagnose(&e, &parser, &table, "template", src));
+            }
         }
     }
     println!(
-        "\nTakeaway: snark's error carries the EXACT expected-terminal set + byte position\n\
-         (richer raw material than gingembre's), but unshaped: raw regexes not friendly names,\n\
-         byte offset not line:col, no construct context (gingembre hand-writes 'unclosed if,\n\
-         expected endif'). gingembre's are human-tuned but coarser ('expected an expression')\n\
-         and here even slightly wrong. snark has the better DATA, gingembre the better PROSE.\n\
-         Not reconciled yet."
+        "\nEverything in the derived diagnostics comes from the grammar + table: pattern-terminal\n\
+         names from the single-terminal visible rule that defines them (number/identifier/string),\n\
+         extras + unnamed internal tokens filtered, the headline nonterminal from the error\n\
+         state's KERNEL items ('expected expr'), line:col + caret from the source, the expected\n\
+         set from the state's own table entries, and 'while parsing' from the kernel items — no\n\
+         per-construct prose anywhere. Two of three beat gingembre's hand-written messages\n\
+         (which say 'end of input' for `+*` — wrong). The remaining gap is the unclosed-if case:\n\
+         'expected {{% endif %}}' needs the PARSE STACK (if_statement's item sits in a stacked\n\
+         state, not the error state) — the ask for snark is to carry Vec<ParseStateId> in\n\
+         NoToken/NoAction; then 'while parsing: if_statement' + its closer fall out the same way."
     );
 }
 
