@@ -1791,6 +1791,15 @@ mod tests {
     }
 
     #[derive(Facet, Debug)]
+    struct ArgsWithNestedImplementationHelp {
+        #[facet(figue::subcommand)]
+        command: NestedImplementationHelpCommand,
+
+        #[facet(flatten)]
+        builtins: FigueBuiltins,
+    }
+
+    #[derive(Facet, Debug)]
     #[allow(dead_code)]
     #[repr(u8)]
     enum ImplementationHelpCommand {
@@ -1804,6 +1813,33 @@ mod tests {
         /// Port to listen on.
         #[facet(figue::named)]
         port: Option<u16>,
+    }
+
+    #[derive(Facet, Debug)]
+    #[allow(dead_code)]
+    #[repr(u8)]
+    enum NestedImplementationHelpCommand {
+        /// Repository commands.
+        Repo {
+            #[facet(figue::subcommand)]
+            action: NestedImplementationRepoCommand,
+        },
+    }
+
+    #[derive(Facet, Debug)]
+    #[allow(dead_code)]
+    #[repr(u8)]
+    enum NestedImplementationRepoCommand {
+        /// Clone a repository.
+        Clone(NestedImplementationCloneArgs),
+    }
+
+    #[derive(Facet, Debug)]
+    #[allow(dead_code)]
+    struct NestedImplementationCloneArgs {
+        /// Maximum history depth.
+        #[facet(figue::named)]
+        depth: Option<u16>,
     }
 
     #[derive(Facet, Debug)]
@@ -1914,7 +1950,6 @@ mod tests {
         match result {
             Err(DriverError::Help { text, .. }) => {
                 let text = strip_ansi_escapes::strip_str(&text);
-                println!("{text}");
                 let source_file = crate::help::implementation_source_for_subcommand_path(
                     ArgsWithImplementationHelp::SHAPE,
                     &[],
@@ -1951,7 +1986,6 @@ mod tests {
         match result {
             Err(DriverError::Help { text, .. }) => {
                 let text = strip_ansi_escapes::strip_str(&text);
-                println!("{text}");
                 let source_file = crate::help::implementation_source_for_subcommand_path(
                     ArgsWithImplementationHelp::SHAPE,
                     &["Serve".to_string()],
@@ -1962,6 +1996,43 @@ mod tests {
                     source_file.replace('\\', "/")
                 );
 
+                assert!(text.contains("Implementation:"));
+                assert!(text.contains(source_file));
+                assert!(text.contains(&expected_url));
+            }
+            other => panic!("expected DriverError::Help, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_driver_nested_subcommand_help_includes_implementation_source_and_github_url() {
+        let config = builder::<ArgsWithNestedImplementationHelp>()
+            .unwrap()
+            .cli(|cli| cli.args(["repo", "clone", "--help"]))
+            .help(|h| {
+                h.program_name("test-app")
+                    .include_implementation_source_file(true)
+                    .include_implementation_github_url("example/teamy", "deadbeef")
+            })
+            .build();
+
+        let driver = Driver::new(config);
+        let result = driver.run().into_result();
+
+        match result {
+            Err(DriverError::Help { text, .. }) => {
+                let text = strip_ansi_escapes::strip_str(&text);
+                let source_file = crate::help::implementation_source_for_subcommand_path(
+                    ArgsWithNestedImplementationHelp::SHAPE,
+                    &["Repo".to_string(), "Clone".to_string()],
+                )
+                .expect("nested subcommand help should resolve a source file");
+                let expected_url = format!(
+                    "https://github.com/example/teamy/blob/deadbeef/{}",
+                    source_file.replace('\\', "/")
+                );
+
+                assert!(text.contains("test-app repo clone"));
                 assert!(text.contains("Implementation:"));
                 assert!(text.contains(source_file));
                 assert!(text.contains(&expected_url));

@@ -311,16 +311,19 @@ fn next_subcommand_shape(
     shape: &'static facet_core::Shape,
     target_effective_name: &str,
 ) -> Option<&'static facet_core::Shape> {
-    let fields = match shape.ty {
-        facet_core::Type::User(facet_core::UserType::Struct(s)) => s.fields,
+    let shape = unwrap_option_shape(shape);
+    let enum_shape = match shape.ty {
+        facet_core::Type::User(facet_core::UserType::Struct(s)) => {
+            let subcommand_field = s
+                .fields
+                .iter()
+                .find(|field| field.has_attr(Some("args"), "subcommand"))?;
+            unwrap_option_shape(subcommand_field.shape())
+        }
+        facet_core::Type::User(facet_core::UserType::Enum(_)) => shape,
         _ => return None,
     };
 
-    let subcommand_field = fields
-        .iter()
-        .find(|field| field.has_attr(Some("args"), "subcommand"))?;
-
-    let enum_shape = unwrap_option_shape(subcommand_field.shape());
     let variants = match enum_shape.ty {
         facet_core::Type::User(facet_core::UserType::Enum(e)) => e.variants,
         _ => return None,
@@ -334,14 +337,14 @@ fn next_subcommand_shape(
         return Some(enum_shape);
     }
 
-    let has_direct_subcommand = variant
+    let direct_subcommand_field = variant
         .data
         .fields
         .iter()
-        .any(|field| field.has_attr(Some("args"), "subcommand"));
+        .find(|field| field.has_attr(Some("args"), "subcommand"));
 
-    if has_direct_subcommand {
-        return Some(enum_shape);
+    if let Some(direct_subcommand_field) = direct_subcommand_field {
+        return Some(unwrap_option_shape(direct_subcommand_field.shape()));
     }
 
     if variant.data.fields.len() == 1 {
