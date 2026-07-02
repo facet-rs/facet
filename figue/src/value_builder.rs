@@ -312,6 +312,7 @@ impl<'a> ValueBuilder<'a> {
             diagnostics: self.diagnostics,
             source_text: None,
             config_file_paths: IndexMap::default(),
+            help_list_mode: None,
         }
     }
 
@@ -408,6 +409,7 @@ impl<'a> ValueBuilder<'a> {
             diagnostics: self.diagnostics,
             source_text: None,
             config_file_paths: IndexMap::default(),
+            help_list_mode: None,
         }
     }
 

@@ -3,6 +3,7 @@
 //! This module provides utilities to generate help text from Schema,
 //! including doc comments, field names, and attribute information.
 
+use crate::driver::HelpListMode;
 use crate::missing::normalize_program_name;
 use crate::schema::{
     ArgLevelSchema, ArgSchema, ConfigFieldGroupSchema, ConfigFieldSchema, ConfigStructSchema,
@@ -331,6 +332,155 @@ pub(crate) fn generate_help_for_subcommand_with_config_formats(
     }
 
     generate_help_for_subcommand_level(current_args, final_sub, &command_path.join(" "), config)
+}
+
+/// Generate help-list output for subcommands at the current command level.
+///
+/// In [`HelpListMode::Short`], this returns one full CLI command path per line,
+/// recursively listing all reachable leaf commands.
+/// In [`HelpListMode::Full`], this returns concatenated help output for each
+/// reachable leaf subcommand under the current command path.
+pub(crate) fn generate_help_list_for_subcommand(
+    schema: &Schema,
+    subcommand_path: &[String],
+    config: &HelpConfig,
+    mode: HelpListMode,
+) -> String {
+    let program_name = config
+        .program_name
+        .clone()
+        .or_else(|| {
+            std::env::args()
+                .next()
+                .map(|path| normalize_program_name(&path))
+        })
+        .unwrap_or_else(|| "program".to_string());
+
+    let mut current_args = schema.args();
+    let mut resolved_path = Vec::new();
+
+    for name in subcommand_path {
+        let sub = current_args
+            .subcommands()
+            .values()
+            .find(|s| s.effective_name() == name);
+
+        let Some(sub) = sub else {
+            return generate_help_for_subcommand(schema, &[], config);
+        };
+
+        resolved_path.push(sub.effective_name().to_string());
+        current_args = sub.args();
+    }
+
+    if !current_args.has_subcommands() {
+        let command_display = if resolved_path.is_empty() {
+            program_name
+        } else {
+            let cli_chain = resolve_cli_chain(schema, &resolved_path);
+            if cli_chain.is_empty() {
+                program_name
+            } else {
+                format!("{} {}", program_name, cli_chain.join(" "))
+            }
+        };
+        return format!("No subcommands available for {command_display}.");
+    }
+
+    match mode {
+        HelpListMode::Short => {
+            let mut cli_chain = if resolved_path.is_empty() {
+                Vec::new()
+            } else {
+                resolve_cli_chain(schema, &resolved_path)
+            };
+            let mut commands = Vec::new();
+            collect_short_help_commands(
+                &mut commands,
+                program_name.as_str(),
+                &mut cli_chain,
+                current_args,
+            );
+            commands.join("\n")
+        }
+        HelpListMode::Full => {
+            let mut sections = Vec::new();
+            let mut leaf_paths = Vec::new();
+            let mut working_path = resolved_path.clone();
+            collect_leaf_subcommand_paths(&mut leaf_paths, &mut working_path, current_args);
+
+            for child_path in leaf_paths {
+                sections.push(generate_help_for_subcommand(schema, &child_path, config));
+            }
+            sections.join("\n\n")
+        }
+    }
+}
+
+fn collect_leaf_subcommand_paths(
+    leaf_paths: &mut Vec<Vec<String>>,
+    current_path: &mut Vec<String>,
+    args: &ArgLevelSchema,
+) {
+    if !args.has_subcommands() {
+        if !current_path.is_empty() {
+            leaf_paths.push(current_path.clone());
+        }
+        return;
+    }
+
+    for sub in args.subcommands().values() {
+        current_path.push(sub.effective_name().to_string());
+        collect_leaf_subcommand_paths(leaf_paths, current_path, sub.args());
+        current_path.pop();
+    }
+}
+
+fn collect_short_help_commands(
+    commands: &mut Vec<String>,
+    program_name: &str,
+    cli_chain: &mut Vec<String>,
+    args: &ArgLevelSchema,
+) {
+    if args.subcommand_optional() {
+        if cli_chain.is_empty() {
+            commands.push(program_name.to_string());
+        } else {
+            commands.push(format!("{} {}", program_name, cli_chain.join(" ")));
+        }
+    }
+
+    if !args.has_subcommands() {
+        if !cli_chain.is_empty() {
+            commands.push(format!("{} {}", program_name, cli_chain.join(" ")));
+        }
+        return;
+    }
+
+    for sub in args.subcommands().values() {
+        cli_chain.push(sub.cli_name().to_string());
+        collect_short_help_commands(commands, program_name, cli_chain, sub.args());
+        cli_chain.pop();
+    }
+}
+
+fn resolve_cli_chain(schema: &Schema, subcommand_path: &[String]) -> Vec<String> {
+    let mut current_args = schema.args();
+    let mut cli_path = Vec::new();
+
+    for name in subcommand_path {
+        let sub = current_args
+            .subcommands()
+            .values()
+            .find(|s| s.effective_name() == name);
+        let Some(sub) = sub else {
+            break;
+        };
+        cli_path.push(sub.cli_name().to_string());
+        current_args = sub.args();
+    }
+
+    cli_path
 }
 
 /// Generate help from a built Schema.
@@ -2999,6 +3149,94 @@ mod tests {
             std::fs::read_to_string(path).expect("HTML help should be readable"),
             "<!doctype html><title>help</title>"
         );
+    }
+
+    #[derive(Facet)]
+    struct NestedRootArgs {
+        #[facet(args::subcommand)]
+        command: NestedRootCommand,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum NestedRootCommand {
+        Home(NestedHomeArgs),
+        Cache(NestedCacheArgs),
+    }
+
+    #[derive(Facet)]
+    struct NestedHomeArgs {
+        #[facet(args::subcommand)]
+        command: NestedHomeCommand,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum NestedHomeCommand {
+        Open,
+        Show,
+    }
+
+    #[derive(Facet)]
+    struct NestedCacheArgs {
+        #[facet(args::subcommand)]
+        command: NestedCacheCommand,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum NestedCacheCommand {
+        Open,
+        Show,
+    }
+
+    #[test]
+    fn test_help_list_short_is_recursive_with_full_command_paths() {
+        let schema = Schema::from_shape(NestedRootArgs::SHAPE).unwrap();
+        let output = generate_help_list_for_subcommand(
+            &schema,
+            &[],
+            &HelpConfig {
+                program_name: Some("myapp".to_string()),
+                ..HelpConfig::default()
+            },
+            HelpListMode::Short,
+        );
+
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "myapp home open",
+                "myapp home show",
+                "myapp cache open",
+                "myapp cache show"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_help_list_full_is_recursive_for_leaf_subcommands() {
+        let schema = Schema::from_shape(NestedRootArgs::SHAPE).unwrap();
+        let output = generate_help_list_for_subcommand(
+            &schema,
+            &[],
+            &HelpConfig {
+                program_name: Some("myapp".to_string()),
+                ..HelpConfig::default()
+            },
+            HelpListMode::Full,
+        );
+
+        assert!(output.contains("myapp home open"));
+        assert!(output.contains("myapp home show"));
+        assert!(output.contains("myapp cache open"));
+        assert!(output.contains("myapp cache show"));
+        assert!(!output.contains("myapp home\n\n"));
+        assert!(!output.contains("myapp cache\n\n"));
     }
 
     #[test]
