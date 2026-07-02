@@ -1050,9 +1050,9 @@ fn build_spec_native(ops: &[SpecOp]) -> Option<weavy::jit::NativeProgram> {
     }
     let mut layout = StencilLayout::new();
     let root = layout.start_chain();
-    // (start, fast/next cont relocs, optional deopt cont relocs)
-    let mut sites: Vec<(usize, &'static [usize], Option<&'static [usize]>)> =
-        Vec::with_capacity(ops.len());
+    // One emitted stencil: (code offset, fast/next cont relocs, optional deopt cont relocs).
+    type Site = (usize, &'static [usize], Option<&'static [usize]>);
+    let mut sites: Vec<Site> = Vec::with_capacity(ops.len());
     for op in ops {
         match op {
             SpecOp::Guard(idx) => {
