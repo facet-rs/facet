@@ -7,6 +7,7 @@
 //! Tree-sitter implementation files.
 
 use std::{
+    cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
@@ -5095,27 +5096,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
 
-        let mut parents = vec![None; self.items.len()];
-        for (child, parent_slot) in parents.iter_mut().enumerate() {
-            let mut best = None::<(usize, usize, usize)>;
-            for parent in 0..self.items.len() {
-                if parent == child
-                    || self.items[parent].node.is_none()
-                    || !resolved_item_contains(&self.items[parent], &self.items[child])
-                {
-                    continue;
-                }
-                let key = (
-                    resolved_item_len(&self.items[parent]),
-                    self.items[parent].order,
-                    parent,
-                );
-                if best.is_none_or(|best| key < best) {
-                    best = Some(key);
-                }
-            }
-            *parent_slot = best.map(|(_, _, parent)| parent);
-        }
+        let parents = resolved_parent_slots(&self.items);
         for (child, parent) in parents.iter().enumerate() {
             if let Some(parent) = *parent {
                 self.items[parent].children.push(child);
@@ -5193,6 +5174,68 @@ fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> 
         && child.bytes.end() <= parent.bytes.end()
 }
 
+fn resolved_parent_slots(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
+    let mut indices = (0..items.len()).collect::<Vec<_>>();
+    indices.sort_by_key(|index| {
+        let item = &items[*index];
+        (
+            item.bytes.start().get(),
+            Reverse(item.bytes.end().get()),
+            Reverse(item.order),
+            Reverse(*index),
+        )
+    });
+
+    let mut parents = vec![None; items.len()];
+    let mut ancestors = Vec::<usize>::new();
+    for child in indices {
+        while let Some(parent) = ancestors.last().copied() {
+            if resolved_item_contains(&items[parent], &items[child]) {
+                break;
+            }
+            ancestors.pop();
+        }
+        parents[child] = ancestors.last().copied();
+        if items[child].node.is_some() {
+            ancestors.push(child);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    if items.len() <= 4096 {
+        debug_assert_eq!(parents, resolved_parent_slots_quadratic(items));
+    }
+
+    parents
+}
+
+#[cfg(debug_assertions)]
+fn resolved_parent_slots_quadratic(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
+    let mut parents = vec![None; items.len()];
+    for (child, parent_slot) in parents.iter_mut().enumerate() {
+        let mut best = None::<(usize, usize, usize)>;
+        for parent in 0..items.len() {
+            if parent == child
+                || items[parent].node.is_none()
+                || !resolved_item_contains(&items[parent], &items[child])
+            {
+                continue;
+            }
+            let key = (
+                resolved_item_len(&items[parent]),
+                items[parent].order,
+                parent,
+            );
+            if best.is_none_or(|best| key < best) {
+                best = Some(key);
+            }
+        }
+        *parent_slot = best.map(|(_, _, parent)| parent);
+    }
+    parents
+}
+
+#[cfg(debug_assertions)]
 fn resolved_item_len(item: &ResolvedCstItem) -> usize {
     item.bytes.end().get() as usize - item.bytes.start().get() as usize
 }
