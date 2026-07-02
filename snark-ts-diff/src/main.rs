@@ -56,7 +56,7 @@ use snark::{
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-use snark::lower::weavy::parse_prepared_weavy_native_hostcalls_with_report;
+use snark::lower::weavy::parse_prepared_weavy_native_hostcalls_tree;
 
 /// One prepared grammar: everything the parse entrypoint needs, built once so
 /// the timed loop measures only parsing, never grammar preparation.
@@ -245,8 +245,8 @@ fn collect_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyPars
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-fn native_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_native_hostcalls_with_report(&p.plan, &p.parser, &p.table, input)
+fn native_once(p: &Prepared, input: &str) -> Result<(), WeavyParseError> {
+    parse_prepared_weavy_native_hostcalls_tree(&p.plan, &p.parser, &p.table, input).map(|_| ())
 }
 
 /// Best (min) recovering parse time in ms over `iters` runs, after one warm-up.
@@ -281,11 +281,11 @@ fn best_collect_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, Weavy
     )
 ))]
 fn best_native_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
-    let _ = native_once(p, input)?;
+    native_once(p, input)?;
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        let _ = native_once(p, input)?;
+        native_once(p, input)?;
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     Ok(best_ms)
