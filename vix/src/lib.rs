@@ -18,6 +18,8 @@ pub mod ast {
     include!(concat!(env!("OUT_DIR"), "/vix_ast.rs"));
 }
 
+pub mod binder;
+
 /// The tree-sitter grammar.json emitted from grammar.js at build time, embedded so
 /// the runtime parser needs no JS engine.
 pub const GRAMMAR_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/vix_grammar.json"));
