@@ -40,7 +40,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyParseError, WeavyParsePlan, WeavyParseReport,
+        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
@@ -486,6 +486,16 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
     } else {
         writeln!(out, "stencil_state:")?;
         for summary in &readiness.snark_stencil_state_summaries {
+            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
+        }
+    }
+    let direct_no_trace_state =
+        readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+    if direct_no_trace_state.is_empty() {
+        writeln!(out, "direct_no_trace_stencil_state: none")?;
+    } else {
+        writeln!(out, "direct_no_trace_stencil_state:")?;
+        for summary in &direct_no_trace_state {
             writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
         }
     }
