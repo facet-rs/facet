@@ -111,6 +111,10 @@ fn main() {
         diag();
         return;
     }
+    if args.get(1).map(|s| s == "--eval").unwrap_or(false) {
+        eval_weavy_proof();
+        return;
+    }
     if let (Some(grammar), Some(input)) = (args.get(1), args.get(2)) {
         repro(grammar, input);
         return;
@@ -609,6 +613,185 @@ fn diag() {
          expected endif'). gingembre's are human-tuned but coarser ('expected an expression')\n\
          and here even slightly wrong. snark has the better DATA, gingembre the better PROSE.\n\
          Not reconciled yet."
+    );
+}
+
+// ===========================================================================================
+// #3: the TEMPLATE ITSELF lowers to Weavy too. Materialization (tree -> AST) was one Weavy
+// program; EVALUATION (AST -> Value) is ANOTHER. gingembre's evaluator is an async, boxed-
+// future tree-walk over a SECOND AST; here we lower the ONE generated AST into a flat
+// stack-machine Weavy program and run it through the interpreter AND the copy-and-patch JIT.
+// Oracle: gingembre's own `eval_expression`. (Subset: int arithmetic + comparison + logical +
+// variable load — the operators the generated Expr/Binary covers. The int-arith intrinsic is
+// the disposable stand-in; in the real thing it'd be gingembre's own Value ops as intrinsics.)
+// ===========================================================================================
+
+/// A Weavy op for evaluating an expression as a stack machine.
+#[derive(Clone, Debug)]
+enum EvalOp {
+    PushInt(i64),
+    LoadVar(String),
+    /// Pop b, pop a, push (a `op` b).
+    Bin(String),
+}
+
+/// Post-order lowering of the generated AST into a stack program (this is the "eval lowers to
+/// Weavy" step — the analogue of `build` for materialization).
+fn lower_eval(e: &gen_ast::Expr, out: &mut Vec<EvalOp>) {
+    match e {
+        gen_ast::Expr::Number(n) => out.push(EvalOp::PushInt(*n)),
+        gen_ast::Expr::Variable(v) => out.push(EvalOp::LoadVar(v.clone())),
+        gen_ast::Expr::Binary(b) => {
+            lower_eval(&b.left, out);
+            lower_eval(&b.right, out);
+            out.push(EvalOp::Bin(b.op.clone()));
+        }
+    }
+}
+
+/// The single source of eval-op semantics — shared by interpreter and JIT (mirrors `apply_op`).
+fn eval_apply(stack: &mut Vec<Value>, ctx: &BTreeMap<String, Value>, op: &EvalOp) -> Result<(), String> {
+    match op {
+        EvalOp::PushInt(n) => stack.push(Value::from(*n)),
+        EvalOp::LoadVar(v) => {
+            let val = ctx.get(v).cloned().ok_or_else(|| format!("undefined variable {v:?}"))?;
+            stack.push(val);
+        }
+        EvalOp::Bin(o) => {
+            let b = stack.pop().ok_or("stack underflow")?;
+            let a = stack.pop().ok_or("stack underflow")?;
+            stack.push(eval_binop(&a, o, &b)?);
+        }
+    }
+    Ok(())
+}
+
+fn eval_binop(a: &Value, op: &str, b: &Value) -> Result<Value, String> {
+    let int = |v: &Value| v.as_number().and_then(|n| n.to_i64());
+    let (ai, bi) = (int(a), int(b));
+    let need = |x: Option<i64>| x.ok_or_else(|| format!("non-integer operand for {op:?}"));
+    Ok(match op {
+        "+" => Value::from(need(ai)? + need(bi)?),
+        "-" => Value::from(need(ai)? - need(bi)?),
+        "*" => Value::from(need(ai)? * need(bi)?),
+        "==" => Value::from(ai == bi),
+        "!=" => Value::from(ai != bi),
+        "<" => Value::from(need(ai)? < need(bi)?),
+        "<=" => Value::from(need(ai)? <= need(bi)?),
+        ">" => Value::from(need(ai)? > need(bi)?),
+        ">=" => Value::from(need(ai)? >= need(bi)?),
+        "and" => Value::from(a.as_bool().unwrap_or(false) && b.as_bool().unwrap_or(false)),
+        "or" => Value::from(a.as_bool().unwrap_or(false) || b.as_bool().unwrap_or(false)),
+        other => return Err(format!("unsupported operator {other:?}")),
+    })
+}
+
+/// Stack-machine evaluator (owns its context so the JIT can cast a plain `*mut EvalMachine`).
+struct EvalMachine {
+    stack: Vec<Value>,
+    ctx: BTreeMap<String, Value>,
+}
+
+impl<'p> weavy::Step<'p, u32, EvalOp> for EvalMachine {
+    type Error = String;
+    type Continuation = ();
+    fn step(&mut self, op: &'p EvalOp) -> Result<weavy::Control<'p, u32, EvalOp, ()>, String> {
+        eval_apply(&mut self.stack, &self.ctx, op)?;
+        Ok(weavy::Control::Continue)
+    }
+}
+
+/// Evaluate the stack program through the weavy interpreter.
+fn run_eval_via_weavy(ops: &[EvalOp], ctx: &BTreeMap<String, Value>) -> Value {
+    let mut m = EvalMachine { stack: Vec::new(), ctx: ctx.clone() };
+    let lowered = weavy::Lowered::<u32, EvalOp>::new(ops.to_vec());
+    weavy::run(&lowered, &mut m).expect("eval run");
+    m.stack.pop().expect("result on stack")
+}
+
+/// The JIT intrinsic: apply one eval op to the stack machine.
+unsafe extern "C" fn eval_jit_apply(cx: *mut (), info: *const ()) -> bool {
+    let m = unsafe { &mut *cx.cast::<EvalMachine>() };
+    let op = unsafe { &*info.cast::<EvalOp>() };
+    eval_apply(&mut m.stack, &m.ctx, op).is_ok()
+}
+
+/// Evaluate the stack program by COPY-AND-PATCH JIT-compiling it (same harness as the
+/// materializer — the eval program is just another Weavy op stream that JITs).
+fn run_eval_via_weavy_jit(ops: &[EvalOp], ctx: &BTreeMap<String, Value>) -> Value {
+    use weavy::jit::{HostCallCtx, HostCallInfo, NativeProgram, StencilLayout};
+    if !weavy::jit::NATIVE_COPY_PATCH_AVAILABLE {
+        return run_eval_via_weavy(ops, ctx);
+    }
+    let calls: Vec<HostCallInfo> = ops
+        .iter()
+        .map(|op| HostCallInfo {
+            info: core::ptr::from_ref(op).cast(),
+            call: eval_jit_apply,
+        })
+        .collect();
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    let mut sites = Vec::with_capacity(calls.len());
+    for call in &calls {
+        sites.push(layout.emit_hostcall(root, core::ptr::from_ref(call)));
+    }
+    let done = layout.emit_done();
+    for i in 0..sites.len() {
+        layout.patch_hostcall_continuation(sites[i], sites.get(i + 1).copied().unwrap_or(done));
+    }
+    let native = NativeProgram::new(layout, root);
+    let mut m = EvalMachine { stack: Vec::new(), ctx: ctx.clone() };
+    let mut cx = HostCallCtx::new(native.entry_prog(), &mut m);
+    let entry = unsafe { native.entry_fn::<HostCallCtx<EvalMachine>>() };
+    unsafe { entry(&mut cx) };
+    m.stack.pop().expect("result on stack")
+}
+
+/// #3 PROOF: one generated AST, and EVALUATION is also a Weavy program (interp + JIT), oracle'd
+/// against gingembre's own evaluator.
+fn eval_weavy_proof() {
+    let (parser, table, plan, anns) = build_plan();
+
+    let mut my_ctx = BTreeMap::new();
+    my_ctx.insert("x".to_string(), Value::from(42i64));
+    let mut g_ctx = Context::new();
+    g_ctx.set("x", Value::from(42i64));
+
+    let exprs = [
+        "1 + 2",
+        "1 + 2 * 3",
+        "2 * 3 + 4 * 5",
+        "10 - 2 - 3",
+        "2 * 3 > 5",
+        "1 + 1 == 2",
+        "1 < 2 and 3 < 4",
+        "x",
+        "x + 1",
+    ];
+    for expr in exprs {
+        let src = format!("{{{{ {expr} }}}}");
+        let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).expect("parse");
+        let resolved = report.accepted_resolved_tree(&parser, &src).expect("resolved tree");
+        let node = find_expr(&resolved).expect("no expr");
+
+        // ONE AST (generated, via JIT) -> eval Weavy program.
+        let ast = expr_via_jit(node, &anns);
+        let mut ops = Vec::new();
+        lower_eval(&ast, &mut ops);
+
+        let via_interp = run_eval_via_weavy(&ops, &my_ctx);
+        let via_jit = run_eval_via_weavy_jit(&ops, &my_ctx);
+        let native = block_on(gingembre::eval_expression(expr, &g_ctx)).expect("gingembre eval");
+
+        assert_eq!(via_interp, native, "weavy-interp eval must match gingembre for {expr:?}");
+        assert_eq!(via_jit, native, "weavy-JIT eval must match gingembre for {expr:?}");
+        println!("✓ {expr:<20} = {native:?}  ({} eval ops; interp==jit==gingembre)", ops.len());
+    }
+    println!(
+        "\n✓ evaluation ALSO lowers to Weavy: the ONE generated AST -> stack program -> interp\n\
+         AND copy-and-patch JIT, oracle-matched to gingembre's evaluator. No second AST, no\n\
+         tree-walk. Next: text/if/for as emit + control-flow ops (Weavy blocks) for full render."
     );
 }
 
