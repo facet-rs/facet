@@ -22,7 +22,7 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
-        parse_prepared_weavy_with_report,
+        parse_prepared_weavy_tree,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
@@ -387,8 +387,8 @@ fn snark_sexp(grammar_path: &Path, input: &str) -> String {
         Ok(p) => p,
         Err(e) => return format!("PLAN-ERR: {e:?}"),
     };
-    match parse_prepared_weavy_with_report(&plan, &parser, &table, input) {
-        Ok(report) => report.tree().to_sexp(),
+    match parse_prepared_weavy_tree(&plan, &parser, &table, input) {
+        Ok(tree) => tree.to_sexp(),
         Err(e) => format!("PARSE-ERR: {e:?}"),
     }
 }
