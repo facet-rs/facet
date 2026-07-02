@@ -495,6 +495,46 @@ pub struct WeavySnarkStencilStateSummary {
     pub count: usize,
 }
 
+/// Why a dense parser block cannot be represented by the current native
+/// host-call chain scaffold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum WeavyNativeHostCallBlockBarrier {
+    /// The block enters another block; the first native scaffold is block-local.
+    CallsBlock,
+    /// A return appears before the block tail, so later ops would be unreachable.
+    NonTailReturn,
+    /// The block contains canonical Weavy ops that Snark's parser dialect does
+    /// not execute yet.
+    UnsupportedCanonicalOp,
+}
+
+/// Block compatibility summary for the first Snark-owned copy-and-patch lane.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeavyNativeHostCallBlockReadiness {
+    /// Dense parser/action blocks in the prepared plan.
+    pub total_blocks: usize,
+    /// Blocks the current scaffold can lower to a linear native host-call chain.
+    pub compatible_blocks: usize,
+    /// Blocks that require runner/control lowering before they can be copied.
+    pub incompatible_blocks: usize,
+    /// Intrinsic ops inside compatible blocks.
+    pub compatible_intrinsic_ops: usize,
+    /// Intrinsic ops inside incompatible blocks.
+    pub incompatible_intrinsic_ops: usize,
+    /// Distinct incompatibility reasons and their block counts.
+    pub barrier_summaries: Vec<WeavyNativeHostCallBlockBarrierSummary>,
+}
+
+/// Count of dense blocks blocked by one native host-call compatibility reason.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavyNativeHostCallBlockBarrierSummary {
+    /// Incompatibility reason.
+    pub barrier: WeavyNativeHostCallBlockBarrier,
+    /// Number of blocks with this reason.
+    pub count: usize,
+}
+
 impl SnarkIntrinsicSemanticStats {
     fn record(&mut self, intrinsic: &SnarkIntrinsic) {
         let semantics = intrinsic.semantics();
@@ -924,6 +964,12 @@ impl WeavyParserProgram {
         dense_snark_intrinsic_semantic_stats(&self.dense)
     }
 
+    /// Dense-block coverage for the first native host-call scaffold.
+    #[must_use]
+    pub fn native_hostcall_block_readiness(&self) -> WeavyNativeHostCallBlockReadiness {
+        native_hostcall_block_readiness(&self.dense.blocks)
+    }
+
     fn runtime_state_block(
         &self,
         state: parser_ir::ParseStateId,
@@ -1001,6 +1047,60 @@ fn dense_snark_intrinsic_semantic_stats(
     stats
 }
 
+fn native_hostcall_block_readiness(
+    blocks: &[Vec<DenseSnarkWeavyOp>],
+) -> WeavyNativeHostCallBlockReadiness {
+    let mut readiness = WeavyNativeHostCallBlockReadiness {
+        total_blocks: blocks.len(),
+        ..WeavyNativeHostCallBlockReadiness::default()
+    };
+    let mut barrier_counts = BTreeMap::<WeavyNativeHostCallBlockBarrier, usize>::new();
+    for block in blocks {
+        let intrinsic_count = block
+            .iter()
+            .filter(|op| matches!(op, WeavyOp::Intrinsic(_)))
+            .count();
+        match native_hostcall_block_barrier(block) {
+            Some(barrier) => {
+                readiness.incompatible_blocks += 1;
+                readiness.incompatible_intrinsic_ops += intrinsic_count;
+                *barrier_counts.entry(barrier).or_default() += 1;
+            }
+            None => {
+                readiness.compatible_blocks += 1;
+                readiness.compatible_intrinsic_ops += intrinsic_count;
+            }
+        }
+    }
+    readiness.barrier_summaries = barrier_counts
+        .into_iter()
+        .map(|(barrier, count)| WeavyNativeHostCallBlockBarrierSummary { barrier, count })
+        .collect();
+    readiness
+}
+
+fn native_hostcall_block_barrier(
+    block: &[DenseSnarkWeavyOp],
+) -> Option<WeavyNativeHostCallBlockBarrier> {
+    for (index, op) in block.iter().enumerate() {
+        match op {
+            WeavyOp::Intrinsic(_) => {}
+            WeavyOp::Control(ControlOp::Return) if index + 1 == block.len() => {}
+            WeavyOp::Control(ControlOp::Return) => {
+                return Some(WeavyNativeHostCallBlockBarrier::NonTailReturn);
+            }
+            WeavyOp::Control(ControlOp::CallBlock { .. } | ControlOp::CallBlockThen { .. }) => {
+                return Some(WeavyNativeHostCallBlockBarrier::CallsBlock);
+            }
+            WeavyOp::Memory(_) | WeavyOp::Init(_) | WeavyOp::Aggregate(_) => {
+                return Some(WeavyNativeHostCallBlockBarrier::UnsupportedCanonicalOp);
+            }
+            _ => return Some(WeavyNativeHostCallBlockBarrier::UnsupportedCanonicalOp),
+        }
+    }
+    None
+}
+
 fn add_snark_intrinsic_semantic_stats(
     program: &[DenseSnarkWeavyOp],
     stats: &mut SnarkIntrinsicSemanticStats,
@@ -1049,11 +1149,13 @@ impl WeavyParsePlan {
         let parser = self.program.analysis();
         let parser_semantics = self.program.semantic_stats();
         let lexer = self.lexer_stats();
+        let native_hostcall_blocks = self.program.native_hostcall_block_readiness();
         WeavyParsePlanAnalysis {
             readiness: WeavyParsePlanReadiness::from_parts(&parser, &parser_semantics, &lexer),
             parser,
             parser_semantics,
             lexer,
+            native_hostcall_blocks,
         }
     }
 
@@ -1095,6 +1197,8 @@ pub struct WeavyParsePlanAnalysis {
     pub parser_semantics: SnarkIntrinsicSemanticStats,
     /// Snark-owned lexer graph shape summary.
     pub lexer: WeavyLexerStats,
+    /// Native host-call block compatibility for the first copy-and-patch lane.
+    pub native_hostcall_blocks: WeavyNativeHostCallBlockReadiness,
     /// Optimizer/JIT readiness derived from parser effects and lexer leaves.
     pub readiness: WeavyParsePlanReadiness,
 }
@@ -9878,6 +9982,86 @@ mod tests {
         assert!(!readiness.is_fully_visible());
         assert!(!readiness.is_neutral_weavy_only());
         assert!(readiness.needs_snark_stencils());
+    }
+
+    #[test]
+    fn parse_plan_analysis_reports_native_hostcall_block_readiness() {
+        let lex = SnarkIntrinsic::Lex {
+            version: StackVersionId(0),
+            mode: LexModeId(0),
+            output: LookaheadTokenId(0),
+        };
+        let commit = SnarkIntrinsic::CommitLookahead {
+            version: StackVersionId(0),
+            lookahead: LookaheadTokenId(0),
+        };
+        let dense = DenseSnarkWeavyLowered::new(
+            vec![],
+            vec![
+                vec![
+                    WeavyOp::Intrinsic(lex.clone()),
+                    WeavyOp::Intrinsic(commit.clone()),
+                    WeavyOp::Control(ControlOp::Return),
+                ],
+                vec![WeavyOp::Control(ControlOp::CallBlock {
+                    block: BlockRef::new(0),
+                    base_offset: 0,
+                })],
+                vec![
+                    WeavyOp::Control(ControlOp::Return),
+                    WeavyOp::Intrinsic(commit.clone()),
+                ],
+                vec![WeavyOp::Memory(weavy::ir::MemoryOp::Zero {
+                    offset: 0,
+                    size: 4,
+                })],
+            ],
+        );
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense,
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+                terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
+                public_node_kind_names: vec![],
+                alias_names: vec![],
+            },
+            lexer_program: WeavyLexerProgram {
+                modes: vec![],
+                state_modes: vec![],
+            },
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+        };
+
+        let readiness = plan.analysis().native_hostcall_blocks;
+
+        assert_eq!(
+            readiness,
+            WeavyNativeHostCallBlockReadiness {
+                total_blocks: 4,
+                compatible_blocks: 1,
+                incompatible_blocks: 3,
+                compatible_intrinsic_ops: 2,
+                incompatible_intrinsic_ops: 1,
+                barrier_summaries: vec![
+                    WeavyNativeHostCallBlockBarrierSummary {
+                        barrier: WeavyNativeHostCallBlockBarrier::CallsBlock,
+                        count: 1,
+                    },
+                    WeavyNativeHostCallBlockBarrierSummary {
+                        barrier: WeavyNativeHostCallBlockBarrier::NonTailReturn,
+                        count: 1,
+                    },
+                    WeavyNativeHostCallBlockBarrierSummary {
+                        barrier: WeavyNativeHostCallBlockBarrier::UnsupportedCanonicalOp,
+                        count: 1,
+                    },
+                ],
+            }
+        );
     }
 
     #[test]

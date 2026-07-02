@@ -310,6 +310,7 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
     let analysis = p.plan.analysis();
     let readiness = &analysis.readiness;
     let lexer = &readiness.lexer;
+    let native_blocks = &analysis.native_hostcall_blocks;
     let mut out = io::stdout().lock();
     writeln!(out, "grammar: {grammar_path}")?;
     writeln!(
@@ -353,6 +354,23 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
         readiness.is_fully_visible(),
         readiness.is_neutral_weavy_only()
     )?;
+    writeln!(
+        out,
+        "native_hostcall_blocks: total={} compatible={} incompatible={} compatible_intrinsic_ops={} incompatible_intrinsic_ops={}",
+        native_blocks.total_blocks,
+        native_blocks.compatible_blocks,
+        native_blocks.incompatible_blocks,
+        native_blocks.compatible_intrinsic_ops,
+        native_blocks.incompatible_intrinsic_ops
+    )?;
+    if native_blocks.barrier_summaries.is_empty() {
+        writeln!(out, "native_hostcall_block_barriers: none")?;
+    } else {
+        writeln!(out, "native_hostcall_block_barriers:")?;
+        for summary in &native_blocks.barrier_summaries {
+            writeln!(out, "  {:?}: {}", summary.barrier, summary.count)?;
+        }
+    }
     if analysis.lexer.op_counts.is_empty() {
         writeln!(out, "lexer_ops: none")?;
     } else {
