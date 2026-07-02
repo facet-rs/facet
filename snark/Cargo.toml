@@ -34,6 +34,7 @@ facet-json = { workspace = true, optional = true }
 indexmap.workspace = true
 regex.workspace = true
 regex-automata.workspace = true
+smallvec.workspace = true
 weavy.workspace = true
 
 [dev-dependencies]

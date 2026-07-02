@@ -29,6 +29,7 @@ use regex_automata::{
     hybrid::dfa::{Cache as HybridDfaCache, DFA as HybridDfa, OverlappingState},
     meta::Regex as AutomataRegex,
 };
+use smallvec::SmallVec;
 use weavy::{
     BlockRef, Control, RunError, RunStats, Step,
     ir::{
@@ -11116,7 +11117,8 @@ impl RuntimeWeavyTreeStore {
 
     fn materialize_children(&self, id: RuntimeWeavyChildListId) -> Vec<SexpChild> {
         let mut children = Vec::with_capacity(self.child_lists[id.0].len);
-        let mut stack = vec![(id, None::<&str>)];
+        let mut stack = SmallVec::<[(RuntimeWeavyChildListId, Option<&str>); 8]>::new();
+        stack.push((id, None));
         while let Some((id, kind_override)) = stack.pop() {
             match &self.child_lists[id.0].kind {
                 RuntimeWeavyChildListKind::Empty => {}
