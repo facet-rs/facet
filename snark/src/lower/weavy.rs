@@ -3982,6 +3982,10 @@ impl RuntimeWeavyTraceSink {
         }
     }
 
+    const fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     fn next_id(&self) -> parser_ir::TraceEventId {
         parser_ir::TraceEventId::from_index(self.events.len())
     }
@@ -3989,6 +3993,14 @@ impl RuntimeWeavyTraceSink {
     fn into_events(self) -> Vec<parser_ir::TraceEvent> {
         self.events
     }
+}
+
+macro_rules! trace_push {
+    ($sink:expr, $event:expr) => {
+        if $sink.is_enabled() {
+            $sink.push($event);
+        }
+    };
 }
 
 struct RuntimeWeavyLexerScratch {
@@ -4905,15 +4917,21 @@ fn parse_weavy_with_lexer_program(
     let mut trace_events = RuntimeWeavyTraceSink::new(block_execution.collects_traces());
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
     let external_scanner_errors = RefCell::new(Vec::new());
-    trace_events.push(parser_ir::TraceEvent::ParseStart {
-        id: parser_ir::TraceEventId::from_index(0),
-        state: parser_ir::ParseStateId::from_index(0),
-    });
-    trace_events.push(parser_ir::TraceEvent::StateEnter {
-        id: parser_ir::TraceEventId::from_index(1),
-        version: parser_ir::StackVersionId::from_index(0),
-        state: parser_ir::ParseStateId::from_index(0),
-    });
+    trace_push!(
+        trace_events,
+        parser_ir::TraceEvent::ParseStart {
+            id: parser_ir::TraceEventId::from_index(0),
+            state: parser_ir::ParseStateId::from_index(0),
+        }
+    );
+    trace_push!(
+        trace_events,
+        parser_ir::TraceEvent::StateEnter {
+            id: parser_ir::TraceEventId::from_index(1),
+            version: parser_ir::StackVersionId::from_index(0),
+            state: parser_ir::ParseStateId::from_index(0),
+        }
+    );
 
     let initial_branch = RuntimeWeavyBranch {
         version: parser_ir::StackVersionId::from_index(0),
@@ -4982,23 +5000,32 @@ fn parse_weavy_with_lexer_program(
                 .get(&key)
                 .is_some_and(|best_cost| branch.error_cost > *best_cost)
             {
-                trace_events.push(parser_ir::TraceEvent::GlrRetire {
-                    version: branch.version,
-                    reason: parser_ir::BranchRetireReason::Dominated,
-                });
+                trace_push!(
+                    trace_events,
+                    parser_ir::TraceEvent::GlrRetire {
+                        version: branch.version,
+                        reason: parser_ir::BranchRetireReason::Dominated,
+                    }
+                );
                 continue;
             }
         }
         step_count += 1;
         if step_count > step_limit {
-            trace_events.push(parser_ir::TraceEvent::GlrRetire {
-                version: branch.version,
-                reason: parser_ir::BranchRetireReason::Limit,
-            });
-            trace_events.push(parser_ir::TraceEvent::ParseFinish {
-                id: trace_events.next_id(),
-                outcome: parser_ir::ParseOutcome::Failed,
-            });
+            trace_push!(
+                trace_events,
+                parser_ir::TraceEvent::GlrRetire {
+                    version: branch.version,
+                    reason: parser_ir::BranchRetireReason::Limit,
+                }
+            );
+            trace_push!(
+                trace_events,
+                parser_ir::TraceEvent::ParseFinish {
+                    id: trace_events.next_id(),
+                    outcome: parser_ir::ParseOutcome::Failed,
+                }
+            );
             return Err(WeavyParseError::BranchStepLimit { limit: step_limit });
         }
 
@@ -5042,19 +5069,25 @@ fn parse_weavy_with_lexer_program(
                     tree_events,
                     reusable_nodes,
                 } => {
-                    trace_events.push(parser_ir::TraceEvent::GlrRetire {
-                        version,
-                        reason: parser_ir::BranchRetireReason::Accepted,
-                    });
+                    trace_push!(
+                        trace_events,
+                        parser_ir::TraceEvent::GlrRetire {
+                            version,
+                            reason: parser_ir::BranchRetireReason::Accepted,
+                        }
+                    );
                     min_accepted_cost =
                         Some(min_accepted_cost.map_or(error_cost, |best| best.min(error_cost)));
                     accepted.push((version, node, error_cost, tree_events, reusable_nodes));
                 }
                 RuntimeWeavyStepOutcome::Failed { version, error } => {
-                    trace_events.push(parser_ir::TraceEvent::GlrRetire {
-                        version,
-                        reason: parser_ir::BranchRetireReason::NoAction,
-                    });
+                    trace_push!(
+                        trace_events,
+                        parser_ir::TraceEvent::GlrRetire {
+                            version,
+                            reason: parser_ir::BranchRetireReason::NoAction,
+                        }
+                    );
                     failures.push(error);
                 }
             }
@@ -5067,10 +5100,13 @@ fn parse_weavy_with_lexer_program(
         .map(|(_, _, error_cost, _, _)| *error_cost)
         .min()
     else {
-        trace_events.push(parser_ir::TraceEvent::ParseFinish {
-            id: trace_events.next_id(),
-            outcome: parser_ir::ParseOutcome::Failed,
-        });
+        trace_push!(
+            trace_events,
+            parser_ir::TraceEvent::ParseFinish {
+                id: trace_events.next_id(),
+                outcome: parser_ir::ParseOutcome::Failed,
+            }
+        );
         let external_scanner_errors = external_scanner_errors.borrow();
         return Err(select_runtime_weavy_failure(
             input_ctx,
@@ -5106,14 +5142,17 @@ fn parse_weavy_with_lexer_program(
     {
         let reusable_nodes =
             mark_runtime_weavy_reusable_nodes_with_errors(first_reusable_nodes, &first_tree_events);
-        trace_events.push(parser_ir::TraceEvent::ParseFinish {
-            id: trace_events.next_id(),
-            outcome: if min_error_cost == 0 {
-                parser_ir::ParseOutcome::Accepted
-            } else {
-                parser_ir::ParseOutcome::Recovered
-            },
-        });
+        trace_push!(
+            trace_events,
+            parser_ir::TraceEvent::ParseFinish {
+                id: trace_events.next_id(),
+                outcome: if min_error_cost == 0 {
+                    parser_ir::ParseOutcome::Accepted
+                } else {
+                    parser_ir::ParseOutcome::Recovered
+                },
+            }
+        );
         return Ok(WeavyParseReport {
             tree: first_node,
             stats,
@@ -5128,10 +5167,13 @@ fn parse_weavy_with_lexer_program(
         });
     }
 
-    trace_events.push(parser_ir::TraceEvent::ParseFinish {
-        id: trace_events.next_id(),
-        outcome: parser_ir::ParseOutcome::Failed,
-    });
+    trace_push!(
+        trace_events,
+        parser_ir::TraceEvent::ParseFinish {
+            id: trace_events.next_id(),
+            outcome: parser_ir::ParseOutcome::Failed,
+        }
+    );
     let mut accepted_sexps = Vec::with_capacity(accepted_count);
     accepted_sexps.push(first_node.to_sexp());
     accepted_sexps.extend(
@@ -5603,11 +5645,14 @@ fn step_runtime_weavy_branch(
             dispatch.token.lookahead,
             actions,
         );
-        output.trace_events.push(parser_ir::TraceEvent::GlrSplit {
-            source: source_version,
-            conflict,
-            branches: versions.clone(),
-        });
+        trace_push!(
+            output.trace_events,
+            parser_ir::TraceEvent::GlrSplit {
+                source: source_version,
+                conflict,
+                branches: versions.clone(),
+            }
+        );
         let action_blocks = input_ctx
             .plan
             .program
@@ -5707,20 +5752,32 @@ fn try_reuse_runtime_weavy_node(
         output.input_points,
         output.tree_store,
     );
-    output
-        .tree_journal
-        .push(&mut branch.tree_journal, tree_event.clone());
-    output
-        .tree_journal
-        .extend(&mut branch.tree_journal, replayed_events.clone());
-    output
-        .trace_events
-        .push(parser_ir::TraceEvent::Tree(tree_event));
-    output.trace_events.push(parser_ir::TraceEvent::StateEnter {
-        id: output.trace_events.next_id(),
-        version: branch.version,
-        state: goto_state,
-    });
+    if output.trace_events.is_enabled() {
+        output
+            .tree_journal
+            .push(&mut branch.tree_journal, tree_event.clone());
+        output
+            .tree_journal
+            .extend(&mut branch.tree_journal, replayed_events.clone());
+        output
+            .trace_events
+            .push(parser_ir::TraceEvent::Tree(tree_event));
+    } else {
+        output
+            .tree_journal
+            .push(&mut branch.tree_journal, tree_event);
+        output
+            .tree_journal
+            .extend(&mut branch.tree_journal, replayed_events);
+    }
+    trace_push!(
+        output.trace_events,
+        parser_ir::TraceEvent::StateEnter {
+            id: output.trace_events.next_id(),
+            version: branch.version,
+            state: goto_state,
+        }
+    );
     branch.stack.push(RuntimeWeavyStackEntry {
         state: goto_state,
         fragment: Some(RuntimeWeavyFragment::Node {
@@ -5962,10 +6019,13 @@ fn enqueue_runtime_weavy_branch(
     let key = RuntimeWeavyBranchKey::from_branch(&branch);
     match queued_recovery_costs.get(&key).copied() {
         Some(best_cost) if branch.error_cost >= best_cost => {
-            trace_events.push(parser_ir::TraceEvent::GlrRetire {
-                version: branch.version,
-                reason: parser_ir::BranchRetireReason::Dominated,
-            });
+            trace_push!(
+                trace_events,
+                parser_ir::TraceEvent::GlrRetire {
+                    version: branch.version,
+                    reason: parser_ir::BranchRetireReason::Dominated,
+                }
+            );
         }
         _ => {
             queued_recovery_costs.insert(key, branch.error_cost);
@@ -5992,10 +6052,13 @@ fn recover_runtime_weavy_to_viable_stack(
             branch.error_cost = branch
                 .error_cost
                 .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
-            trace_events.push(parser_ir::TraceEvent::Recover {
-                version: branch.version,
-                state,
-            });
+            trace_push!(
+                trace_events,
+                parser_ir::TraceEvent::Recover {
+                    version: branch.version,
+                    state,
+                }
+            );
             return Some(branch);
         }
     }
@@ -6024,10 +6087,13 @@ fn recover_runtime_weavy_to_action_state(
             branch.error_cost = branch
                 .error_cost
                 .saturating_add(u32::try_from(original_len - len).unwrap_or(u32::MAX));
-            trace_events.push(parser_ir::TraceEvent::Recover {
-                version: branch.version,
-                state,
-            });
+            trace_push!(
+                trace_events,
+                parser_ir::TraceEvent::Recover {
+                    version: branch.version,
+                    state,
+                }
+            );
             return Some(branch);
         }
     }
@@ -6054,10 +6120,13 @@ fn recover_runtime_weavy_eof_error_root(
         children: Vec::new(),
     });
     let (bytes, points) = runtime_weavy_input_ranges(input_points, 0, input.len());
-    trace_events.push(parser_ir::TraceEvent::Recover {
-        version: branch.version,
-        state,
-    });
+    trace_push!(
+        trace_events,
+        parser_ir::TraceEvent::Recover {
+            version: branch.version,
+            state,
+        }
+    );
     let tree_event = parser_ir::TreeEvent::Error {
         version: branch.version,
         node,
@@ -6093,10 +6162,13 @@ fn recover_runtime_weavy_no_token(
         children: Vec::new(),
     });
     let (bytes, points) = runtime_weavy_input_ranges(input_points, start_byte, end_byte);
-    trace_events.push(parser_ir::TraceEvent::Recover {
-        version: branch.version,
-        state,
-    });
+    trace_push!(
+        trace_events,
+        parser_ir::TraceEvent::Recover {
+            version: branch.version,
+            state,
+        }
+    );
     let tree_event = parser_ir::TreeEvent::Error {
         version: branch.version,
         node,
@@ -6365,21 +6437,26 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 } else {
                     None
                 };
-                self.trace_events.push(parser_ir::TraceEvent::Lex {
-                    version: self.version,
-                    mode: mode_id,
-                    lookahead: self.lookahead_id,
-                });
+                trace_push!(
+                    self.trace_events,
+                    parser_ir::TraceEvent::Lex {
+                        version: self.version,
+                        mode: mode_id,
+                        lookahead: self.lookahead_id,
+                    }
+                );
                 if let Some(valid_symbols) = valid_symbols {
                     let scanner = token.scanner;
-                    self.trace_events
-                        .push(parser_ir::TraceEvent::ExternalScanner {
+                    trace_push!(
+                        self.trace_events,
+                        parser_ir::TraceEvent::ExternalScanner {
                             version: self.version,
                             valid_symbols,
                             before: scanner.and_then(|scanner| scanner.before()),
                             after: scanner.and_then(|scanner| scanner.after()),
                             result: Some(self.lookahead_id),
-                        });
+                        }
+                    );
                 }
                 self.lookahead = Some(token);
                 Ok(Control::Continue)
@@ -6462,19 +6539,29 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     named: false,
                     keyword: parser_ir::KeywordStatus::Unchecked,
                 };
-                self.tree_journal
-                    .push(&mut self.tree_journal_head, event.clone());
-                self.trace_events.push(parser_ir::TraceEvent::Tree(event));
-                self.trace_events.push(parser_ir::TraceEvent::Shift {
-                    version: self.version,
-                    lookahead: self.lookahead_id,
-                    state,
-                });
-                self.trace_events.push(parser_ir::TraceEvent::StateEnter {
-                    id: self.trace_events.next_id(),
-                    version: self.version,
-                    state,
-                });
+                if self.trace_events.is_enabled() {
+                    self.tree_journal
+                        .push(&mut self.tree_journal_head, event.clone());
+                    self.trace_events.push(parser_ir::TraceEvent::Tree(event));
+                } else {
+                    self.tree_journal.push(&mut self.tree_journal_head, event);
+                }
+                trace_push!(
+                    self.trace_events,
+                    parser_ir::TraceEvent::Shift {
+                        version: self.version,
+                        lookahead: self.lookahead_id,
+                        state,
+                    }
+                );
+                trace_push!(
+                    self.trace_events,
+                    parser_ir::TraceEvent::StateEnter {
+                        id: self.trace_events.next_id(),
+                        version: self.version,
+                        state,
+                    }
+                );
                 self.stack.to_mut().push(RuntimeWeavyStackEntry {
                     state,
                     fragment: Some(RuntimeWeavyFragment::Hidden {
@@ -6534,11 +6621,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 let metadata = parser_metadata(*metadata);
                 let reduction =
                     self.runtime_reduce_fragment(production, metadata, *child_count, false)?;
-                self.trace_events.push(parser_ir::TraceEvent::Reduce {
-                    version: self.version,
-                    production,
-                    metadata,
-                });
+                trace_push!(
+                    self.trace_events,
+                    parser_ir::TraceEvent::Reduce {
+                        version: self.version,
+                        production,
+                        metadata,
+                    }
+                );
                 let head_state = self
                     .stack
                     .last()
@@ -6587,11 +6677,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         end_byte,
                     });
                 }
-                self.trace_events.push(parser_ir::TraceEvent::StateEnter {
-                    id: self.trace_events.next_id(),
-                    version: self.version,
-                    state: goto,
-                });
+                trace_push!(
+                    self.trace_events,
+                    parser_ir::TraceEvent::StateEnter {
+                        id: self.trace_events.next_id(),
+                        version: self.version,
+                        state: goto,
+                    }
+                );
                 if self.mode == RuntimeWeavyMode::ApplyAction {
                     return Ok(Control::Continue);
                 }
@@ -6624,11 +6717,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 let metadata = parser_metadata(*metadata);
                 let reduction =
                     self.runtime_reduce_fragment(production, metadata, *child_count, true)?;
-                self.trace_events.push(parser_ir::TraceEvent::Reduce {
-                    version: self.version,
-                    production,
-                    metadata,
-                });
+                trace_push!(
+                    self.trace_events,
+                    parser_ir::TraceEvent::Reduce {
+                        version: self.version,
+                        production,
+                        metadata,
+                    }
+                );
                 let RuntimeWeavyFragment::Node { node, .. } = reduction.fragment else {
                     return Err(RuntimeWeavyStepError::AcceptedHiddenRoot);
                 };
