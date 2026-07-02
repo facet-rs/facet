@@ -4125,7 +4125,7 @@ trait RuntimeWeavyDeterministicSink {
         tree_journal: RuntimeWeavyTreeJournal,
         stats: RunStats,
         version: parser_ir::StackVersionId,
-        node: SexpNode,
+        root: parser_ir::TreeNodeId,
         error_cost: u32,
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         reusable_nodes: Vec<RuntimeWeavyReusableNode>,
@@ -4142,17 +4142,17 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicTreeSink {
 
     fn accepted(
         _input_ctx: RuntimeWeavyInput<'_>,
-        _tree_store: RuntimeWeavyTreeStore,
+        tree_store: RuntimeWeavyTreeStore,
         _trace_events: RuntimeWeavyTraceSink,
         _tree_journal: RuntimeWeavyTreeJournal,
         _stats: RunStats,
         _version: parser_ir::StackVersionId,
-        node: SexpNode,
+        root: parser_ir::TreeNodeId,
         _error_cost: u32,
         _tree_journal_head: RuntimeWeavyTreeJournalHead,
         _reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     ) -> Result<Self::Output, WeavyParseError> {
-        Ok(node)
+        Ok(tree_store.materialize_node(root))
     }
 }
 
@@ -4171,7 +4171,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
         tree_journal: RuntimeWeavyTreeJournal,
         _stats: RunStats,
         _version: parser_ir::StackVersionId,
-        _node: SexpNode,
+        _root: parser_ir::TreeNodeId,
         _error_cost: u32,
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         _reusable_nodes: Vec<RuntimeWeavyReusableNode>,
@@ -4197,7 +4197,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
         tree_journal: RuntimeWeavyTreeJournal,
         stats: RunStats,
         version: parser_ir::StackVersionId,
-        node: SexpNode,
+        root: parser_ir::TreeNodeId,
         error_cost: u32,
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         reusable_nodes: Vec<RuntimeWeavyReusableNode>,
@@ -4205,8 +4205,9 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
         let tree_events = tree_journal.collect(tree_journal_head);
         let reusable_nodes =
             mark_runtime_weavy_reusable_nodes_with_errors(reusable_nodes, &tree_events);
+        let tree = tree_store.materialize_node(root);
         Ok(WeavyParseReport {
-            tree: node,
+            tree,
             stats,
             trace_events: trace_events.into_events(),
             tree_events,
@@ -5141,7 +5142,7 @@ where
             RuntimeWeavyStepOutcome::Branch(next) => branch = next,
             RuntimeWeavyStepOutcome::Accepted {
                 version,
-                node,
+                root,
                 error_cost,
                 tree_journal_head,
                 reusable_nodes,
@@ -5153,7 +5154,7 @@ where
                     tree_journal,
                     stats,
                     version,
-                    node,
+                    root,
                     error_cost,
                     tree_journal_head,
                     reusable_nodes,
@@ -5554,7 +5555,7 @@ fn parse_weavy_with_lexer_program(
     let mut min_accepted_cost: Option<u32> = None;
     let mut accepted = Vec::<(
         parser_ir::StackVersionId,
-        SexpNode,
+        parser_ir::TreeNodeId,
         u32,
         Vec<parser_ir::TreeEvent>,
         Vec<RuntimeWeavyReusableNode>,
@@ -5661,7 +5662,7 @@ fn parse_weavy_with_lexer_program(
                 ),
                 RuntimeWeavyStepOutcome::Accepted {
                     version,
-                    node,
+                    root,
                     error_cost,
                     tree_journal_head,
                     reusable_nodes,
@@ -5676,7 +5677,7 @@ fn parse_weavy_with_lexer_program(
                     min_accepted_cost =
                         Some(min_accepted_cost.map_or(error_cost, |best| best.min(error_cost)));
                     let tree_events = tree_journal.collect(tree_journal_head);
-                    accepted.push((version, node, error_cost, tree_events, reusable_nodes));
+                    accepted.push((version, root, error_cost, tree_events, reusable_nodes));
                 }
                 RuntimeWeavyStepOutcome::Failed { version, error } => {
                     trace_push!(
@@ -5732,11 +5733,12 @@ fn parse_weavy_with_lexer_program(
     if best_accepted.is_empty() {
         unreachable!("accepted Weavy branches have a minimum recovery cost");
     }
-    let (first_version, first_node, _, first_tree_events, first_reusable_nodes) =
+    let (first_version, first_root, _, first_tree_events, first_reusable_nodes) =
         best_accepted.remove(0);
+    let first_node = tree_store.materialize_node(first_root);
     if best_accepted
         .iter()
-        .all(|(_, node, _, _, _)| node == &first_node)
+        .all(|(_, root, _, _, _)| tree_store.materialize_node(*root) == first_node)
     {
         let reusable_nodes =
             mark_runtime_weavy_reusable_nodes_with_errors(first_reusable_nodes, &first_tree_events);
@@ -5777,7 +5779,7 @@ fn parse_weavy_with_lexer_program(
     accepted_sexps.extend(
         best_accepted
             .iter()
-            .map(|(_, node, _, _, _)| node.to_sexp()),
+            .map(|(_, root, _, _, _)| tree_store.materialize_node(*root).to_sexp()),
     );
     Err(WeavyParseError::AmbiguousParse {
         accepted_count,
@@ -6122,7 +6124,7 @@ enum RuntimeWeavyStepOutcome {
     Branch(RuntimeWeavyBranch),
     Accepted {
         version: parser_ir::StackVersionId,
-        node: SexpNode,
+        root: parser_ir::TreeNodeId,
         error_cost: u32,
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         reusable_nodes: Vec<RuntimeWeavyReusableNode>,
@@ -6561,10 +6563,10 @@ fn run_runtime_weavy_action(
             return RuntimeWeavyStepOutcome::Failed { version, error };
         }
     }
-    if let Some(node) = stepper.tree {
+    if let Some(root) = stepper.accepted_root {
         RuntimeWeavyStepOutcome::Accepted {
             version,
-            node,
+            root,
             error_cost: stepper.error_cost,
             tree_journal_head: stepper.tree_journal_head,
             reusable_nodes: stepper.reusable_nodes,
@@ -6779,7 +6781,7 @@ fn recover_runtime_weavy_eof_error_root(
     tree_journal.push(&mut error_journal, tree_event);
     Some(RuntimeWeavyStepOutcome::Accepted {
         version: branch.version,
-        node: tree_store.materialize_node(node),
+        root: node,
         error_cost,
         tree_journal_head: error_journal,
         reusable_nodes: Vec::new(),
@@ -6965,7 +6967,7 @@ struct RuntimeWeavyStepper<'a> {
     committed_start: Option<usize>,
     lookahead: Option<RuntimeWeavyToken>,
     lookahead_id: parser_ir::LookaheadTokenId,
-    tree: Option<SexpNode>,
+    accepted_root: Option<parser_ir::TreeNodeId>,
     mode: RuntimeWeavyMode,
     reuse_collection: RuntimeWeavyReuseCollection,
     dispatch: Option<RuntimeWeavyDispatch>,
@@ -7005,7 +7007,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             committed_start: None,
             lookahead: None,
             lookahead_id,
-            tree: None,
+            accepted_root: None,
             mode,
             reuse_collection,
             dispatch: None,
@@ -7044,7 +7046,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             committed_start: None,
             lookahead: None,
             lookahead_id,
-            tree: None,
+            accepted_root: None,
             mode,
             reuse_collection: RuntimeWeavyReuseCollection::Disabled,
             dispatch: None,
@@ -7365,7 +7367,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 let RuntimeWeavyFragment::Node { node, .. } = reduction.fragment else {
                     return Err(RuntimeWeavyStepError::AcceptedHiddenRoot);
                 };
-                self.tree = Some(self.finish_runtime_root(node)?);
+                self.accepted_root = Some(self.finish_runtime_root(node)?);
                 Ok(Control::Return)
             }
             SnarkIntrinsic::CallExternalScanner { .. }
@@ -7952,7 +7954,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
     fn finish_runtime_root(
         &mut self,
         node: parser_ir::TreeNodeId,
-    ) -> Result<SexpNode, RuntimeWeavyStepError> {
+    ) -> Result<parser_ir::TreeNodeId, RuntimeWeavyStepError> {
         let mut leading_children = self.tree_store.empty_children();
         for entry in self.stack.to_mut().drain(..) {
             match (entry.extra, entry.fragment) {
@@ -7969,7 +7971,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             }
         }
         if self.tree_store.children_is_empty(leading_children) {
-            return Ok(self.tree_store.materialize_node(node));
+            return Ok(node);
         }
         let root_kind = self.tree_store.node_kind_handle(node);
         let root_children = self.tree_store.node_children(node);
@@ -7977,7 +7979,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .tree_store
             .concat_children(leading_children, root_children);
         let root = self.tree_store.push_node(root_kind, root_children);
-        Ok(self.tree_store.materialize_node(root))
+        Ok(root)
     }
 
     fn goto_state(
