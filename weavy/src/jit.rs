@@ -81,6 +81,17 @@ pub struct HostCallChain<I> {
     native: NativeProgram,
 }
 
+// SAFETY: The copied code and side program streams are owned by the chain and
+// remain immutable except through `&mut self` in `run`, where host-call records
+// are rebuilt for the caller's current context. Moving the chain to another
+// thread is sound when the consumer metadata is `Send`; sharing still requires
+// external synchronization because `run` takes `&mut self`.
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+unsafe impl<I: Send> Send for HostCallChain<I> {}
+
 #[cfg(any(
     all(target_os = "macos", target_arch = "aarch64"),
     all(target_os = "linux", target_arch = "x86_64")

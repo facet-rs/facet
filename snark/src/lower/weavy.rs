@@ -14,6 +14,15 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+use std::sync::{Mutex, OnceLock};
+
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind as AhoMatchKind};
 use regex_automata::{
     Anchored, Input, MatchKind as RegexMatchKind, PatternSet,
@@ -1101,6 +1110,150 @@ fn native_hostcall_block_barrier(
     None
 }
 
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[derive(Default)]
+struct RuntimeWeavyNativeBlockCache {
+    blocks: Vec<OnceLock<Option<Mutex<weavy::jit::HostCallChain<RuntimeWeavyNativeHostInfo>>>>>,
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+impl fmt::Debug for RuntimeWeavyNativeBlockCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RuntimeWeavyNativeBlockCache")
+            .field("blocks", &self.blocks.len())
+            .finish()
+    }
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+impl RuntimeWeavyNativeBlockCache {
+    fn new(program: &WeavyParserProgram) -> Self {
+        let blocks = program
+            .dense
+            .blocks
+            .iter()
+            .map(|_| OnceLock::new())
+            .collect();
+        Self { blocks }
+    }
+
+    fn build_block(
+        block: &[DenseSnarkWeavyOp],
+    ) -> Option<Mutex<weavy::jit::HostCallChain<RuntimeWeavyNativeHostInfo>>> {
+        if native_hostcall_block_barrier(block).is_some() {
+            return None;
+        }
+        let infos = block
+            .iter()
+            .filter_map(|op| match op {
+                WeavyOp::Intrinsic(_) => Some(RuntimeWeavyNativeHostInfo { op: op.clone() }),
+                WeavyOp::Control(ControlOp::Return) => None,
+                _ => None,
+            })
+            .collect();
+        Some(Mutex::new(weavy::jit::HostCallChain::new(infos)))
+    }
+
+    fn run_block(
+        &self,
+        program: &WeavyParserProgram,
+        block: BlockRef,
+        stepper: &mut RuntimeWeavyStepper<'_>,
+    ) -> Result<bool, RuntimeWeavyStepError> {
+        let Some(slot) = self.blocks.get(block.index()) else {
+            return Ok(false);
+        };
+        let block_program = program.runtime_dense_block(block)?;
+        let Some(chain) = slot.get_or_init(|| Self::build_block(block_program)) else {
+            return Ok(false);
+        };
+        let mut chain = chain
+            .lock()
+            .map_err(|_| RuntimeWeavyStepError::UnsupportedCanonicalOp)?;
+        let mut state = RuntimeWeavyNativeBlockState {
+            stepper,
+            error: None,
+        };
+        chain.run(&mut state);
+        if let Some(error) = state.error {
+            return Err(error);
+        }
+        Ok(true)
+    }
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+struct RuntimeWeavyNativeHostInfo {
+    op: DenseSnarkWeavyOp,
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+struct RuntimeWeavyNativeBlockState<'a, 'stepper> {
+    stepper: &'a mut RuntimeWeavyStepper<'stepper>,
+    error: Option<RuntimeWeavyStepError>,
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+impl<'a, 'stepper> weavy::jit::HostCall<RuntimeWeavyNativeBlockState<'a, 'stepper>>
+    for RuntimeWeavyNativeHostInfo
+{
+    fn call(&self, cx: &mut RuntimeWeavyNativeBlockState<'a, 'stepper>) -> bool {
+        match cx.stepper.step(&self.op) {
+            Ok(Control::Continue) => true,
+            Ok(Control::Return) => false,
+            Ok(
+                Control::CallProgram(_)
+                | Control::CallProgramThen(_, _)
+                | Control::CallBlock(_)
+                | Control::CallBlockThen(_, _),
+            ) => {
+                cx.error = Some(RuntimeWeavyStepError::UnsupportedCanonicalOp);
+                false
+            }
+            Err(error) => {
+                cx.error = Some(error);
+                false
+            }
+        }
+    }
+}
+
 fn add_snark_intrinsic_semantic_stats(
     program: &[DenseSnarkWeavyOp],
     stats: &mut SnarkIntrinsicSemanticStats,
@@ -1118,6 +1271,14 @@ pub struct WeavyParsePlan {
     program: WeavyParserProgram,
     lexer_program: WeavyLexerProgram,
     auto_close_index: RuntimeWeavyAutoCloseIndex,
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    native_blocks: Arc<RuntimeWeavyNativeBlockCache>,
 }
 
 impl WeavyParsePlan {
@@ -1131,10 +1292,26 @@ impl WeavyParsePlan {
         let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
         let lexer_program = WeavyLexerProgram::from_compiled_modes(compiled_lex_modes, table);
         let auto_close_index = RuntimeWeavyAutoCloseIndex::new(parser, &lexer_program);
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        let native_blocks = Arc::new(RuntimeWeavyNativeBlockCache::new(&program));
         Ok(Self {
             program,
             lexer_program,
             auto_close_index,
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            native_blocks,
         })
     }
 
@@ -3754,7 +3931,7 @@ fn action_program_for(
 
 #[derive(Clone, Copy)]
 struct RuntimeWeavyInput<'a> {
-    plan: &'a WeavyParserProgram,
+    plan: &'a WeavyParsePlan,
     lexer_program: &'a WeavyLexerProgram,
     auto_close_index: &'a RuntimeWeavyAutoCloseIndex,
     parser: &'a parser_ir::ParserGrammar,
@@ -3771,7 +3948,7 @@ struct RuntimeWeavyOutput<'a> {
     input_points: &'a RuntimeWeavyInputPoints,
     next_lookahead_index: &'a mut usize,
     stats: &'a mut RunStats,
-    stats_collection: RuntimeWeavyStatsCollection,
+    block_execution: RuntimeWeavyBlockExecution,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
 
@@ -4010,7 +4187,7 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4021,7 +4198,7 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Disabled,
-        RuntimeWeavyStatsCollection::Enabled,
+        RuntimeWeavyBlockExecution::Metered,
     )
 }
 
@@ -4045,7 +4222,7 @@ pub fn parse_prepared_weavy_unmetered_with_report_and_scanner(
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4056,7 +4233,56 @@ pub fn parse_prepared_weavy_unmetered_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Disabled,
-        RuntimeWeavyStatsCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
+    )
+}
+
+/// Execute a prepared Weavy plan through native host-call blocks.
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+pub fn parse_prepared_weavy_native_hostcalls_with_report(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_native_hostcalls_with_report_and_scanner(plan, parser, table, input, None)
+}
+
+/// Execute a prepared Weavy plan through native host-call blocks with a scanner host.
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+pub fn parse_prepared_weavy_native_hostcalls_with_report_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_weavy_with_lexer_program(
+        RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::NativeHostCalls,
     )
 }
 
@@ -4070,7 +4296,7 @@ pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4081,7 +4307,7 @@ pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyStatsCollection::Enabled,
+        RuntimeWeavyBlockExecution::Metered,
     )
 }
 
@@ -4096,7 +4322,7 @@ pub fn parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4107,7 +4333,7 @@ pub fn parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyStatsCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
     )
 }
 
@@ -4121,7 +4347,7 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4132,7 +4358,7 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
         RuntimeWeavyReuseCollection::Disabled,
-        RuntimeWeavyStatsCollection::Enabled,
+        RuntimeWeavyBlockExecution::Metered,
     )
 }
 
@@ -4146,7 +4372,7 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4157,7 +4383,7 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
         RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyStatsCollection::Enabled,
+        RuntimeWeavyBlockExecution::Metered,
     )
 }
 
@@ -4172,7 +4398,7 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_an
 ) -> Result<WeavyParseReport, WeavyParseError> {
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4183,7 +4409,7 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_an
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
         RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyStatsCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
     )
 }
 
@@ -4363,7 +4589,7 @@ pub fn reparse_prepared_weavy_with_report_and_scanner(
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4374,7 +4600,7 @@ pub fn reparse_prepared_weavy_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         Some(&reuse_index),
         RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyStatsCollection::Enabled,
+        RuntimeWeavyBlockExecution::Metered,
     )
 }
 
@@ -4395,7 +4621,7 @@ pub fn reparse_prepared_weavy_unmetered_with_report_and_scanner(
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4406,7 +4632,7 @@ pub fn reparse_prepared_weavy_unmetered_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         Some(&reuse_index),
         RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyStatsCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
     )
 }
 
@@ -4426,7 +4652,7 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4437,7 +4663,7 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         Some(&reuse_index),
         RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyStatsCollection::Enabled,
+        RuntimeWeavyBlockExecution::Metered,
     )
 }
 
@@ -4458,7 +4684,7 @@ pub fn reparse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
     let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
     parse_weavy_with_lexer_program(
         RuntimeWeavyInput {
-            plan: &plan.program,
+            plan,
             lexer_program: &plan.lexer_program,
             auto_close_index: &plan.auto_close_index,
             parser,
@@ -4469,7 +4695,7 @@ pub fn reparse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         Some(&reuse_index),
         RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyStatsCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
     )
 }
 
@@ -4748,7 +4974,7 @@ fn parse_weavy_with_lexer_program(
     recovery: RuntimeWeavyRecoveryMode,
     reuse_index: Option<&RuntimeWeavyReuseIndex<'_>>,
     reuse_collection: RuntimeWeavyReuseCollection,
-    stats_collection: RuntimeWeavyStatsCollection,
+    block_execution: RuntimeWeavyBlockExecution,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(WeavyParseError::WrongStage {
@@ -4865,7 +5091,7 @@ fn parse_weavy_with_lexer_program(
             input_points: &input_points,
             next_lookahead_index: &mut next_lookahead_index,
             stats: &mut stats,
-            stats_collection,
+            block_execution,
             external_scanner_errors: &external_scanner_errors,
         };
         branch_outcomes.clear();
@@ -5142,9 +5368,17 @@ enum RuntimeWeavyReuseCollection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimeWeavyStatsCollection {
-    Disabled,
-    Enabled,
+enum RuntimeWeavyBlockExecution {
+    Direct,
+    Metered,
+    #[cfg(all(
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
+    NativeHostCalls,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5448,6 +5682,7 @@ fn step_runtime_weavy_branch(
         });
         let action_blocks = input_ctx
             .plan
+            .program
             .runtime_action_block_row(dispatch.state, dispatch.entry_index);
         for (action_index, (action, version)) in actions.iter().zip(versions).enumerate() {
             let Some(action_block) = action_blocks
@@ -5485,6 +5720,7 @@ fn step_runtime_weavy_branch(
     let action = actions[0];
     let Some(action_block) = input_ctx
         .plan
+        .program
         .runtime_action_block_row(dispatch.state, dispatch.entry_index)
         .and_then(|blocks| blocks.first())
         .filter(|block| block.action == action)
@@ -5614,7 +5850,7 @@ fn run_runtime_weavy_state_probe(
         .last()
         .ok_or(RuntimeWeavyStepError::EmptyStack)?
         .state;
-    let block = input_ctx.plan.runtime_state_block(state)?;
+    let block = input_ctx.plan.program.runtime_state_block(state)?;
     let mut stepper = RuntimeWeavyStepper::from_branch_ref(
         RuntimeWeavyStepperInput {
             input: input_ctx,
@@ -5630,7 +5866,7 @@ fn run_runtime_weavy_state_probe(
         RuntimeWeavyMode::ProbeState,
     );
     let run_result =
-        run_runtime_weavy_block(input_ctx.plan, block, &mut stepper, output.stats_collection);
+        run_runtime_weavy_block(input_ctx.plan, block, &mut stepper, output.block_execution);
     if stepper.lookahead.is_some() {
         *output.next_lookahead_index += 1;
     }
@@ -5692,7 +5928,7 @@ fn run_runtime_weavy_action(
         input_ctx.plan,
         action_ctx.block,
         &mut stepper,
-        output.stats_collection,
+        output.block_execution,
     ) {
         Ok(run_stats) => add_run_stats(output.stats, run_stats),
         Err(error) => {
@@ -5722,18 +5958,36 @@ fn run_runtime_weavy_action(
 }
 
 fn run_runtime_weavy_block(
-    plan: &WeavyParserProgram,
+    plan: &WeavyParsePlan,
     block: BlockRef,
     stepper: &mut RuntimeWeavyStepper<'_>,
-    stats_collection: RuntimeWeavyStatsCollection,
+    block_execution: RuntimeWeavyBlockExecution,
 ) -> Result<RunStats, RuntimeWeavyStepError> {
-    let program = plan.runtime_dense_block(block)?;
-    let result = match stats_collection {
-        RuntimeWeavyStatsCollection::Enabled => {
-            weavy::run_dense_program_with_stats(program, &plan.dense.blocks, stepper)
+    let parser_program = &plan.program;
+    let program = parser_program.runtime_dense_block(block)?;
+    let result = match block_execution {
+        RuntimeWeavyBlockExecution::Metered => {
+            weavy::run_dense_program_with_stats(program, &parser_program.dense.blocks, stepper)
         }
-        RuntimeWeavyStatsCollection::Disabled => {
-            weavy::run_dense_program(program, &plan.dense.blocks, stepper)
+        RuntimeWeavyBlockExecution::Direct => {
+            weavy::run_dense_program(program, &parser_program.dense.blocks, stepper)
+                .map(|()| RunStats::default())
+        }
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        RuntimeWeavyBlockExecution::NativeHostCalls => {
+            if plan
+                .native_blocks
+                .run_block(parser_program, block, stepper)?
+            {
+                return Ok(RunStats::default());
+            }
+            weavy::run_dense_program(program, &parser_program.dense.blocks, stepper)
                 .map(|()| RunStats::default())
         }
     };
@@ -6093,7 +6347,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         reuse_collection: RuntimeWeavyReuseCollection,
     ) -> Self {
         Self {
-            plan: stepper_input.input.plan,
+            plan: &stepper_input.input.plan.program,
             parser: stepper_input.input.parser,
             table: stepper_input.input.table,
             lexer_program: stepper_input.input.lexer_program,
@@ -6131,7 +6385,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         mode: RuntimeWeavyMode,
     ) -> Self {
         Self {
-            plan: stepper_input.input.plan,
+            plan: &stepper_input.input.plan.program,
             parser: stepper_input.input.parser,
             table: stepper_input.input.table,
             lexer_program: stepper_input.input.lexer_program,
@@ -9504,6 +9758,14 @@ mod tests {
             },
             lexer_program: sample_lexer_program(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            native_blocks: Default::default(),
         };
 
         let analysis = plan.analysis();
@@ -9730,6 +9992,14 @@ mod tests {
                 state_modes: vec![],
             },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            native_blocks: Default::default(),
         };
 
         let readiness = plan.analysis().readiness;
@@ -9775,6 +10045,14 @@ mod tests {
                 state_modes: vec![],
             },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            native_blocks: Default::default(),
         };
 
         let analysis = plan.analysis();
@@ -9899,6 +10177,14 @@ mod tests {
             },
             lexer_program: sample_lexer_program(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            native_blocks: Default::default(),
         };
 
         let readiness = plan.analysis().readiness;
@@ -10034,6 +10320,14 @@ mod tests {
                 state_modes: vec![],
             },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            native_blocks: Default::default(),
         };
 
         let readiness = plan.analysis().native_hostcall_blocks;
@@ -10062,6 +10356,73 @@ mod tests {
                 ],
             }
         );
+    }
+
+    #[test]
+    fn unmetered_weavy_parse_matches_metered_parse() {
+        let raw = crate::grammar::RawGrammarJson::from_tree_sitter_json_str(
+            r#"{
+              "name": "tiny",
+              "rules": {
+                "source_file": {
+                  "type": "SEQ",
+                  "members": [
+                    { "type": "STRING", "value": "a" },
+                    { "type": "STRING", "value": "b" }
+                  ]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = crate::lexical::LexicalFacts::from_grammar(&validated);
+        let parser = parser_ir::ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = parser_ir::ParseTable::from_grammar(&parser).unwrap();
+        let plan = WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+
+        let metered = parse_prepared_weavy_with_report(&plan, &parser, &table, "ab").unwrap();
+        let unmetered =
+            parse_prepared_weavy_unmetered_with_report(&plan, &parser, &table, "ab").unwrap();
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        let native_hostcalls =
+            parse_prepared_weavy_native_hostcalls_with_report(&plan, &parser, &table, "ab")
+                .unwrap();
+
+        assert_eq!(metered.tree(), unmetered.tree());
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        assert_eq!(metered.tree(), native_hostcalls.tree());
+        assert_eq!(unmetered.tree().to_sexp(), "(source_file)");
+        assert_eq!(unmetered.accepted_count(), 1);
+        assert_eq!(unmetered.failure_count(), 0);
+        assert_eq!(unmetered.stats().step_count, 0);
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        {
+            assert_eq!(native_hostcalls.accepted_count(), 1);
+            assert_eq!(native_hostcalls.failure_count(), 0);
+            assert_eq!(native_hostcalls.stats().step_count, 0);
+        }
     }
 
     #[test]
@@ -10114,6 +10475,14 @@ mod tests {
                 state_modes: vec![],
             },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            native_blocks: Default::default(),
         };
         let readiness = plan.analysis().readiness;
 
@@ -10321,6 +10690,14 @@ mod tests {
                 state_modes: vec![],
             },
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            native_blocks: Default::default(),
         };
 
         let readiness = plan.analysis().readiness;
