@@ -131,6 +131,10 @@ fn main() {
         inline_cache();
         return;
     }
+    if args.get(1).map(|s| s == "--jitmap").unwrap_or(false) {
+        jitmap();
+        return;
+    }
     if args.get(1).map(|s| s == "--profile").unwrap_or(false) {
         profile();
         return;
@@ -1480,6 +1484,86 @@ fn specialize() {
          no fn-pointer call back into Rust), chained by patching the weavy_cont hole. This is\n\
          the lane phon-jit uses; the earlier '--eval/--ast JIT' were HOSTCALL chains, not this."
     );
+}
+
+/// JITMAP: make JIT'd stencil code observable. A copy-and-patch program is otherwise an
+/// anonymous executable blob (invisible to perf/lldb/stax); but we control the assembly, so we
+/// emit a `code-offset -> op` symbol map — the foundation for BOTH profiling (symbolicate samples)
+/// and debuggability (fault/deopt address -> which op / template expression). Also surfaces the
+/// serialization property: a pure-stencil program has no absolute pointers, so it's a
+/// self-contained relocatable blob (an AOT/JIT-cache artifact).
+fn jitmap() {
+    use weavy::jit::{NativeProgram, StencilLayout};
+    let (parser, table, plan, anns) = build_plan();
+
+    let expr = "1 + 2 * 3 + 4 * 5";
+    let src = format!("{{{{ {expr} }}}}");
+    let report = parse_prepared_weavy_with_report(&plan, &parser, &table, &src).unwrap();
+    let resolved = report.accepted_resolved_tree(&parser, &src).unwrap();
+    let ast = expr_via_jit(find_expr(&resolved).unwrap(), &anns);
+    let mut ops = Vec::new();
+    lower_int(&ast, &mut ops);
+
+    // Assemble, recording each op's code offset + a symbol (op label).
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    let mut entries: Vec<(usize, &'static [usize], String)> = Vec::new();
+    for (i, op) in ops.iter().enumerate() {
+        let (bytes, cont, label): (&[u8], &'static [usize], String) = match op {
+            IntOp::Push(n) => {
+                layout.push_prog_word(root.prog_index, *n as u64);
+                (intop_stencils::PUSH, intop_stencils::PUSH_CONT, format!("push {n}"))
+            }
+            IntOp::Add => (intop_stencils::ADD, intop_stencils::ADD_CONT, "add".into()),
+            IntOp::Sub => (intop_stencils::SUB, intop_stencils::SUB_CONT, "sub".into()),
+            IntOp::Mul => (intop_stencils::MUL, intop_stencils::MUL_CONT, "mul".into()),
+        };
+        let start = layout.emit_stencil(bytes);
+        entries.push((start, cont, format!("op{i}_{}", label.replace(' ', "_"))));
+    }
+    let done = layout.emit_stencil(intop_stencils::DONE);
+    for i in 0..entries.len() {
+        let (start, cont, _) = &entries[i];
+        let next = entries.get(i + 1).map(|(s, _, _)| *s).unwrap_or(done);
+        for &rel in *cont {
+            layout.patch_continuation(start + rel, next);
+        }
+    }
+
+    // Serialization property: inspect the prog stream — pure immediates, zero host pointers.
+    let prog_words = layout.prog(root.prog_index).to_vec();
+    let code_len = layout.code_len();
+
+    let native = NativeProgram::new(layout, root);
+    let base = native.code_ptr() as usize;
+
+    println!("expr: {expr}\n  {} ops -> {code_len} bytes of native code at {base:#x}\n", ops.len());
+    println!("--- JIT symbol map (perf `/tmp/perf-<pid>.map` format: <addr> <size> <symbol>) ---");
+    for i in 0..entries.len() {
+        let (start, _, label) = &entries[i];
+        let end = entries.get(i + 1).map(|(s, _, _)| *s).unwrap_or(done);
+        println!("{:016x} {:<4x} jit_intop::{label}", base + start, end - start);
+    }
+    println!("{:016x} {:<4x} jit_intop::done", base + done, code_len - done);
+
+    println!(
+        "\nDebuggability: a fault/deopt PC lands in one of these ranges -> exact op (and, once the\n\
+         generated AST carries byte spans, the exact template sub-expression). stax/perf/lldb\n\
+         symbolicate JIT frames from a map like this instead of showing a bare address.\n"
+    );
+    println!(
+        "Serialization: this program's prog stream is {} words, ALL immediates ({prog_words:?})\n\
+         — ZERO host pointers, and branches are PC-relative. So (code bytes + prog stream) is a\n\
+         self-contained relocatable blob: serialize once, reload into a fresh exec buffer, run\n\
+         anywhere. (The hostcall lane can't: its prog stream holds HostCallInfo pointers.)\n\
+         Reload needs one weavy API: NativeProgram::from_parts(code, progs, entry).",
+        prog_words.len()
+    );
+
+    // Confirm it still computes the right answer.
+    let mut stack = vec![0i64; 64];
+    let result = run_intop_native(&native, &mut stack);
+    println!("\n(run check: {expr} = {result})");
 }
 
 /// FUSE: prove the AST materializer is decoupled from snark's rich tree — it needs only the
