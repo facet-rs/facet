@@ -209,13 +209,16 @@ pub fn register_jit_code_with_dwarf(
 // ---------------------------------------------------------------------------
 
 /// A JIT'd code region for the debugger/profiler: symbol `name`, byte `offset`+`size` in the code
-/// buffer, and 1-based source `line` in the listing file. This is all a weavy JIT consumer needs
-/// to supply for lldb/gdb source-stepping + perf/stax symbolication.
+/// buffer, and a 1-based source `line` (+ optional 1-based `column`, 0 = none) in the source file.
+/// Columns let ONE source line carry many JIT regions — e.g. each sub-expression of a template
+/// line — so the REAL source file (not a synthetic listing) can be the debug source. This is all a
+/// weavy JIT consumer needs for lldb/gdb source-stepping + perf/stax symbolication.
 pub struct JitSourceSymbol {
     pub name: String,
     pub offset: usize,
     pub size: usize,
     pub line: u32,
+    pub column: u32,
 }
 
 /// Register JIT'd code with the debugger (GDB/LLDB JIT interface) with per-symbol source lines, so
@@ -233,10 +236,10 @@ pub fn register_jit_source(
         .iter()
         .map(|s| JitSymbolEntry { name: s.name.clone(), offset: s.offset, size: s.size })
         .collect();
-    // `build_jit_dwarf_sections` maps (offset, line_index) -> line = line_index + 1.
-    let source_map: Vec<(u32, u32)> = symbols
+    // `build_jit_dwarf_sections` maps (offset, line_index, column) -> line = line_index + 1.
+    let source_map: Vec<(u32, u32, u32)> = symbols
         .iter()
-        .map(|s| (s.offset as u32, s.line.saturating_sub(1)))
+        .map(|s| (s.offset as u32, s.line.saturating_sub(1), s.column))
         .collect();
     let dwarf = super::dwarf::build_jit_dwarf_sections(
         code_ptr as u64,
@@ -815,10 +818,10 @@ mod tests {
 
     #[test]
     fn elf_with_dwarf_sections_contains_debug_line() {
-        let dwarf = super::dwarf::build_jit_dwarf_sections(
+        let dwarf = crate::jit::dwarf::build_jit_dwarf_sections(
             0x2000,
             16,
-            &[(0, 0), (4, 1)],
+            &[(0, 0, 0), (4, 1, 0)],
             "decoder.ra",
             Some("jit"),
         )

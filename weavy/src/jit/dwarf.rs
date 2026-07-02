@@ -55,6 +55,9 @@ impl JitDwarfSections {
 pub struct JitDebugLineRow {
     pub code_offset: u32,
     pub line: u32,
+    /// 1-based source column; 0 = no column information (DWARF convention). Columns let ONE
+    /// source line carry many JIT regions — e.g. each sub-expression of a template line.
+    pub column: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +144,7 @@ pub enum DwarfPrepError {
 const DW_LNS_COPY: u8 = 1;
 const DW_LNS_ADVANCE_PC: u8 = 2;
 const DW_LNS_ADVANCE_LINE: u8 = 3;
+const DW_LNS_SET_COLUMN: u8 = 5;
 
 const DW_LNE_END_SEQUENCE: u8 = 1;
 const DW_LNE_SET_ADDRESS: u8 = 2;
@@ -192,13 +196,14 @@ const DW_OP_PLUS_UCONST: u8 = 0x23;
 
 /// Build DWARF sections for one JIT function.
 ///
-/// `source_map` entries are interpreted as:
+/// `source_map` entries are `(code_offset, line_index, column)`:
 /// - address: `code_address + code_offset`
-/// - line: `ra_mir_inst_index + 1`
+/// - line: `line_index + 1`
+/// - column: 1-based; 0 = no column info
 pub fn build_jit_dwarf_sections(
     code_address: u64,
     code_size: u64,
-    source_map: &[(u32, u32)],
+    source_map: &[(u32, u32, u32)],
     file_name: &str,
     directory: Option<&str>,
 ) -> Result<JitDwarfSections, DwarfPrepError> {
@@ -225,7 +230,7 @@ pub fn build_jit_dwarf_sections_with_variables(
     target_arch: DwarfTargetArch,
     code_address: u64,
     code_size: u64,
-    source_map: &[(u32, u32)],
+    source_map: &[(u32, u32, u32)],
     file_name: &str,
     directory: Option<&str>,
     subprogram_name: &str,
@@ -261,9 +266,10 @@ pub fn build_jit_dwarf_sections_with_variables(
             directory: directory.map(ToOwned::to_owned),
             rows: source_map
                 .iter()
-                .map(|(code_offset, ra_mir_inst_index)| JitDebugLineRow {
+                .map(|(code_offset, line_index, column)| JitDebugLineRow {
                     code_offset: *code_offset,
-                    line: ra_mir_inst_index.saturating_add(1),
+                    line: line_index.saturating_add(1),
+                    column: *column,
                 })
                 .collect(),
         },
@@ -926,7 +932,7 @@ pub fn expr_fbreg_deref_size(offset: i64, size: u8) -> Vec<u8> {
 pub fn build_debug_line_section(
     code_address: u64,
     code_size: u64,
-    source_map: &[(u32, u32)],
+    source_map: &[(u32, u32, u32)],
     file_name: &str,
     directory: Option<&str>,
 ) -> Result<Vec<u8>, DwarfPrepError> {
@@ -953,7 +959,7 @@ pub fn build_debug_line_section(
         }
     }
 
-    for (offset, _) in source_map {
+    for (offset, _, _) in source_map {
         if (*offset as u64) > code_size {
             return Err(DwarfPrepError::SourceOffsetOutOfBounds {
                 offset: *offset,
@@ -995,10 +1001,12 @@ pub fn build_debug_line_section(
 
     let mut current_offset = 0u64;
     let mut current_line = 1i64;
+    let mut current_column = 0u64; // DWARF line-machine initial column register
 
-    for (offset, ra_mir_inst_index) in source_map {
+    for (offset, line_index, column) in source_map {
         let offset = *offset as u64;
-        let line = (*ra_mir_inst_index as i64) + 1;
+        let line = (*line_index as i64) + 1;
+        let column = *column as u64;
 
         if offset > current_offset {
             program.push(DW_LNS_ADVANCE_PC);
@@ -1011,6 +1019,12 @@ pub fn build_debug_line_section(
             program.push(DW_LNS_ADVANCE_LINE);
             push_sleb128(&mut program, delta_line);
             current_line = line;
+        }
+
+        if column != current_column {
+            program.push(DW_LNS_SET_COLUMN);
+            push_uleb128(&mut program, column);
+            current_column = column;
         }
 
         program.push(DW_LNS_COPY);
@@ -1045,7 +1059,7 @@ pub fn build_debug_line_section_from_debug_info(
         .line_table
         .rows
         .iter()
-        .map(|row| (row.code_offset, row.line.saturating_sub(1)))
+        .map(|row| (row.code_offset, row.line.saturating_sub(1), row.column))
         .collect::<Vec<_>>();
     build_debug_line_section(
         debug_info.code_address,
@@ -1120,7 +1134,7 @@ mod tests {
         out
     }
 
-    fn parse_debug_line_rows(section: &[u8]) -> Vec<(u64, i64)> {
+    fn parse_debug_line_rows(section: &[u8]) -> Vec<(u64, i64, u64)> {
         let unit_length = u32::from_le_bytes(section[0..4].try_into().unwrap()) as usize;
         let version = u16::from_le_bytes(section[4..6].try_into().unwrap());
         assert_eq!(version, 4);
@@ -1131,6 +1145,7 @@ mod tests {
         let mut rows = Vec::new();
         let mut address = 0u64;
         let mut line = 1i64;
+        let mut column = 0u64;
 
         while program_i < section.len() {
             let opcode = section[program_i];
@@ -1160,7 +1175,10 @@ mod tests {
                 DW_LNS_ADVANCE_LINE => {
                     line += parse_sleb(section, &mut program_i);
                 }
-                DW_LNS_COPY => rows.push((address, line)),
+                DW_LNS_SET_COLUMN => {
+                    column = parse_uleb(section, &mut program_i);
+                }
+                DW_LNS_COPY => rows.push((address, line, column)),
                 other => panic!("unexpected standard opcode {other}"),
             }
         }
@@ -1183,14 +1201,30 @@ mod tests {
         let section = build_debug_line_section(
             0x1000,
             12,
-            &[(0, 0), (4, 3), (9, 7)],
+            &[(0, 0, 0), (4, 3, 0), (9, 7, 0)],
             "decoder.ra",
             Some("jit"),
         )
         .unwrap();
 
         let rows = parse_debug_line_rows(&section);
-        assert_eq!(rows, vec![(0x1000, 1), (0x1004, 4), (0x1009, 8)]);
+        assert_eq!(rows, vec![(0x1000, 1, 0), (0x1004, 4, 0), (0x1009, 8, 0)]);
+    }
+
+    #[test]
+    fn debug_line_rows_carry_columns() {
+        // Several sub-expressions of ONE source line, pinned by column (the template case).
+        let section = build_debug_line_section(
+            0x1000,
+            12,
+            &[(0, 0, 4), (4, 0, 8), (9, 0, 4)],
+            "template.jinja",
+            None,
+        )
+        .unwrap();
+
+        let rows = parse_debug_line_rows(&section);
+        assert_eq!(rows, vec![(0x1000, 1, 4), (0x1004, 1, 8), (0x1009, 1, 4)]);
     }
 
     #[test]
@@ -1202,7 +1236,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_source_map_and_inputs() {
-        let err = build_debug_line_section(0, 8, &[(4, 1), (4, 2)], "f", None).unwrap_err();
+        let err = build_debug_line_section(0, 8, &[(4, 1, 0), (4, 2, 0)], "f", None).unwrap_err();
         assert!(matches!(
             err,
             DwarfPrepError::SourceMapNotStrictlyIncreasing {
@@ -1211,7 +1245,7 @@ mod tests {
             }
         ));
 
-        let err = build_debug_line_section(0, 7, &[(8, 0)], "f", None).unwrap_err();
+        let err = build_debug_line_section(0, 7, &[(8, 0, 0)], "f", None).unwrap_err();
         assert!(matches!(
             err,
             DwarfPrepError::SourceOffsetOutOfBounds {
@@ -1463,7 +1497,7 @@ mod tests {
             DwarfTargetArch::X86_64,
             0x1000,
             8,
-            &[(0, 0)],
+            &[(0, 0, 0)],
             "decoder.ra",
             Some("jit"),
             "kajit::decode::Bools",
@@ -1485,7 +1519,7 @@ mod tests {
             DwarfTargetArch::X86_64,
             0x1000,
             8,
-            &[(0, 0)],
+            &[(0, 0, 0)],
             "decoder.ra",
             Some("jit"),
             "kajit::decode::Bools",
@@ -1514,6 +1548,7 @@ mod tests {
                 rows: vec![JitDebugLineRow {
                     code_offset: 0,
                     line: 1,
+                    column: 0,
                 }],
             },
             subprogram: JitDebugSubprogram {

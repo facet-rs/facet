@@ -1084,8 +1084,9 @@ struct SpecCtx {
 
 /// Assemble a speculative program: guard stencils (two successors: fast chain / deopt exit)
 /// mixed with the unboxed IntOp stencils. Every guard's deopt hole and the final op both patch
-/// to `DONE`; the fast holes chain linearly.
-fn build_spec_native(ops: &[SpecOp]) -> Option<weavy::jit::NativeProgram> {
+/// to `DONE`; the fast holes chain linearly. Also returns each op's code offset + the done
+/// offset, so the guarded program can be registered with the debugger (DWARF per op).
+fn build_spec_native(ops: &[SpecOp]) -> Option<(weavy::jit::NativeProgram, Vec<usize>, usize)> {
     use weavy::jit::StencilLayout;
     if intop_stencils::GUARD.is_empty() || !weavy::jit::NATIVE_COPY_PATCH_AVAILABLE {
         return None;
@@ -1125,7 +1126,54 @@ fn build_spec_native(ops: &[SpecOp]) -> Option<weavy::jit::NativeProgram> {
             }
         }
     }
-    Some(weavy::jit::NativeProgram::new(layout, root))
+    let starts = sites.iter().map(|(s, _, _)| *s).collect();
+    Some((weavy::jit::NativeProgram::new(layout, root), starts, done))
+}
+
+/// Register a guarded/speculative program with the debugger: write a one-op-per-line listing
+/// (guards named after the variable + speculated type) and map each op's code range to its line.
+/// lldb can then break ON A GUARD and stop in the guard stencil before the bet is taken.
+fn register_spec_program(
+    native: &weavy::jit::NativeProgram,
+    ops: &[SpecOp],
+    vars: &[String],
+    starts: &[usize],
+    done: usize,
+    file_name: &str,
+    lane: &str,
+) -> weavy::jit::debug::JitRegistration {
+    let dir = std::env::temp_dir();
+    let mut listing = String::new();
+    let mut symbols = Vec::with_capacity(ops.len());
+    for (i, op) in ops.iter().enumerate() {
+        let label = match op {
+            SpecOp::Guard(idx) => format!("guard {} is {lane} (deopt otherwise)", vars[*idx]),
+            SpecOp::Push(n) => format!("push {n}"),
+            SpecOp::Add => "add".to_string(),
+            SpecOp::Sub => "sub".to_string(),
+            SpecOp::Mul => "mul".to_string(),
+        };
+        listing.push_str(&label);
+        listing.push('\n');
+        let end = starts.get(i + 1).copied().unwrap_or(done);
+        symbols.push(weavy::jit::debug::JitSourceSymbol {
+            name: format!("jit::{lane}::op{i}_{}", label.split_whitespace().next().unwrap_or("op")),
+            offset: starts[i],
+            size: end - starts[i],
+            line: (i + 1) as u32,
+            column: 0,
+        });
+    }
+    std::fs::write(dir.join(file_name), &listing).expect("write spec listing");
+    let code_len = done + intop_stencils::DONE.len(); // DONE is the last stencil (a lone ret)
+    weavy::jit::debug::register_jit_source(
+        native.code_ptr(),
+        code_len,
+        file_name,
+        dir.to_str(),
+        &symbols,
+    )
+    .expect("register spec program")
 }
 
 /// Run a speculative program. Returns `Some(result)` if every guard's bet held (fast path), or
@@ -1154,7 +1202,7 @@ fn run_spec_native(
 /// Assemble a guarded program specialized to ONE type profile `ty` (TAG_I64 or TAG_F64): the
 /// guard, arithmetic stencils, and push-immediate encoding are all chosen by `ty`. This is what
 /// an inline cache compiles per observed type.
-fn build_ic_native(ops: &[SpecOp], ty: i64) -> Option<weavy::jit::NativeProgram> {
+fn build_ic_native(ops: &[SpecOp], ty: i64) -> Option<(weavy::jit::NativeProgram, Vec<usize>, usize)> {
     use weavy::jit::StencilLayout;
     let float = ty == TAG_F64;
     if intop_stencils::GUARD.is_empty() || !weavy::jit::NATIVE_COPY_PATCH_AVAILABLE {
@@ -1213,14 +1261,17 @@ fn build_ic_native(ops: &[SpecOp], ty: i64) -> Option<weavy::jit::NativeProgram>
             }
         }
     }
-    Some(weavy::jit::NativeProgram::new(layout, root))
+    let starts = sites.iter().map(|(s, _, _)| *s).collect();
+    Some((weavy::jit::NativeProgram::new(layout, root), starts, done))
 }
 
 /// A polymorphic inline cache: caches one compiled native program per observed type profile.
-/// Hit -> run the cached native code; miss -> compile for the new type, cache, run.
+/// Hit -> run the cached native code; miss -> compile for the new type, cache, run. Each compiled
+/// specialization is registered with the debugger (its own listing + DWARF), so lldb sees every
+/// IC entry as a distinct JIT image and can break on a specific specialization's guard.
 #[derive(Default)]
 struct InlineCache {
-    entries: Vec<(i64, weavy::jit::NativeProgram)>,
+    entries: Vec<(i64, weavy::jit::NativeProgram, weavy::jit::debug::JitRegistration)>,
     hits: usize,
     misses: usize,
 }
@@ -1229,14 +1280,25 @@ impl InlineCache {
     /// Evaluate `ops` for a variable of runtime type `ty`. Returns the raw result bits (i64 value
     /// or f64 bits), or `None` if the guard deopted (unknown type).
     fn eval(&mut self, ops: &[SpecOp], ty: i64, slots: &[SpecVarSlot], stack: &mut [i64]) -> Option<i64> {
-        if let Some((_, prog)) = self.entries.iter().find(|(t, _)| *t == ty) {
+        if let Some((_, prog, _)) = self.entries.iter().find(|(t, _, _)| *t == ty) {
             self.hits += 1;
             return run_spec_native(prog, slots, stack);
         }
         self.misses += 1;
-        let prog = build_ic_native(ops, ty)?; // compile the specialization for this type
+        let (prog, starts, done) = build_ic_native(ops, ty)?; // compile the specialization
+        let lane = if ty == TAG_F64 { "f64" } else { "i64" };
+        let vars: Vec<String> = (0..ops.len()).map(|i| format!("v{i}")).collect();
+        let reg = register_spec_program(
+            &prog,
+            ops,
+            &vars,
+            &starts,
+            done,
+            &format!("snark-ic-{lane}.listing"),
+            lane,
+        );
         let r = run_spec_native(&prog, slots, stack);
-        self.entries.push((ty, prog));
+        self.entries.push((ty, prog, reg));
         r
     }
 }
@@ -1346,8 +1408,15 @@ fn speculate() {
     let mut vars = Vec::new();
     let mut ops = Vec::new();
     lower_spec(&ast, &mut vars, &mut ops);
-    let native = build_spec_native(&ops).expect("guard stencils available");
-    println!("expr: {expr}   speculative program: {ops:?}   vars: {vars:?}\n");
+    let (native, starts, done) = build_spec_native(&ops).expect("guard stencils available");
+    // DWARF for the guarded lane: lldb can break ON THE GUARD (snark-spec.listing:1) and stop in
+    // the guard stencil before the bet is taken.
+    let _spec_reg = register_spec_program(&native, &ops, &vars, &starts, done, "snark-spec.listing", "i64");
+    println!("expr: {expr}   speculative program: {ops:?}   vars: {vars:?}");
+    println!(
+        "debugger: registered (break ON the guard: `breakpoint set -f snark-spec.listing -l 1 -K false`\n\
+         \x20— -K false stops at the stencil's first instruction instead of sliding past it)\n"
+    );
 
     // Resolve each variable to a guard slot (tag + unboxed bits) from a gingembre value.
     let slots_for = |x: &Value| -> Vec<SpecVarSlot> { vars.iter().map(|_| tag_of(x)).collect() };
@@ -1664,16 +1733,13 @@ fn debug_jit() {
     let native = NativeProgram::new(layout, root);
     let base = native.code_ptr() as u64;
 
-    // Write a per-op source listing; line i+1 describes op i (with its template sub-expression).
+    // The REAL TEMPLATE is the debug source: write it to a file; every op maps to line 1 with a
+    // COLUMN pinning its sub-expression within the line (byte span start, 1-based).
     let dir = std::env::temp_dir();
-    let file_name = "snark-jit.listing".to_string(); // fixed name so a debugger breakpoint can target it
-    let mut listing = String::new();
-    for (i, r) in rows.iter().enumerate() {
-        listing.push_str(&format!("{:<20} ; {}\n", format!("op{i}: {}", r.label), &src[r.span.0..r.span.1]));
-    }
-    std::fs::write(dir.join(&file_name), &listing).expect("write listing");
+    let file_name = "snark-template.jinja".to_string(); // fixed name so a debugger breakpoint can target it
+    std::fs::write(dir.join(&file_name), format!("{src}\n")).expect("write template source");
 
-    // One weavy call: per-op symbols + source lines -> ELF + DWARF -> register with the debugger.
+    // One weavy call: per-op symbols + line/COLUMN -> ELF + DWARF -> register with the debugger.
     let symbols: Vec<weavy::jit::debug::JitSourceSymbol> = rows
         .iter()
         .enumerate()
@@ -1683,16 +1749,17 @@ fn debug_jit() {
                 name: format!("jit::{}", r.label),
                 offset: r.start,
                 size: end - r.start,
-                line: (i + 1) as u32,
+                line: 1,
+                column: (r.span.0 + 1) as u32,
             }
         })
         .collect();
 
     println!("template: {src:?}   ({} ops, {code_len}B native @ {base:#x})", rows.len());
-    println!("listing:  {}\n", dir.join(&file_name).display());
-    println!("op -> listing line -> template source:");
+    println!("debug source: {} (the template itself)\n", dir.join(&file_name).display());
+    println!("op -> template line:column -> sub-expression:");
     for (i, r) in rows.iter().enumerate() {
-        println!("  line {:>2}  op{i} {:<8} {:?}", i + 1, r.label, &src[r.span.0..r.span.1]);
+        println!("  1:{:<3} op{i} {:<10} {:?}", r.span.0 + 1, r.label, &src[r.span.0..r.span.1]);
     }
 
     // Register with the debugger via the graduated weavy::jit::debug facade.
@@ -1705,13 +1772,14 @@ fn debug_jit() {
     )
     .expect("register JIT source");
     println!(
-        "\nRegistered with the GDB/LLDB JIT interface (in-memory ELF + .symtab + .debug_line).\n\
-         Source-level debug the JIT'd code (VERIFIED in lldb — stops in the stencil for `2 * 3`):\n\
-         \x20 lldb -o 'settings set plugin.jit-loader.gdb.enable on' -o 'b {file_name}:4' \\\n\
-         \x20      -o run -o 'source list' -o 'bt' -- <this-bin> --debug\n\
-         The breakpoint binds when the JIT registers; lldb stops IN the native stencil at listing\n\
-         line 4 (op3 `2 * 3`) and the backtrace threads the JIT frame back into Rust `main`.\n\
-         Tool-independent too: KAJIT_DEBUG_DUMP_ELF_DIR=/tmp/jitelf then dwarfdump --debug-line.\n"
+        "\nRegistered with the GDB/LLDB JIT interface. The debug source is the TEMPLATE FILE and\n\
+         DWARF columns pin each op within line 1 — set a COLUMN breakpoint on a sub-expression:\n\
+         \x20 lldb -o 'settings set plugin.jit-loader.gdb.enable on' \\\n\
+         \x20      -o 'breakpoint set -f {file_name} -l 1 -u 8' \\\n\
+         \x20      -o run -o 'frame info' -o 'bt' -- <this-bin> --debug\n\
+         (column 8 = `2 * 3`; lldb stops in that op's native stencil.)\n\
+         Tool-independent: KAJIT_DEBUG_DUMP_ELF_DIR=/tmp/jitelf then dwarfdump --debug-line shows\n\
+         the Column field populated per op.\n"
     );
 
     // Run the JIT'd code once (a live registration exists while `_reg` is in scope).
@@ -1866,7 +1934,8 @@ fn hot(secs: u64) {
                 name: format!("jit::{} [{}]", r.label, &src[r.span.0..r.span.1]),
                 offset: r.start,
                 size: end - r.start,
-                line: (i + 1) as u32,
+                line: 1,
+                column: (r.span.0 + 1) as u32,
             }
         })
         .collect();
