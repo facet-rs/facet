@@ -2725,6 +2725,7 @@ struct WeavyLexerCompiler {
     literal_sets: HashMap<Vec<WeavyLiteralSetEntry>, WeavyLiteralSet>,
     direct_pattern_sets: HashMap<Vec<WeavyDirectPatternSetEntry>, WeavyDirectPatternSet>,
     choice_matchers: HashMap<Vec<String>, WeavyRegexChoiceMatcher>,
+    next_regex_leaf_id: usize,
     next_choice_matcher_id: usize,
 }
 
@@ -2771,9 +2772,16 @@ impl WeavyLexerCompiler {
         if let Some(matcher) = self.pattern_matchers.get(&key) {
             return matcher.clone();
         }
-        let matcher = WeavyPatternMatcher::from(pattern);
+        let matcher = WeavyPatternMatcher::from_compiled(pattern, self);
         self.pattern_matchers.insert(key, matcher.clone());
         matcher
+    }
+
+    fn regex_leaf(&mut self, source: String, flags: Option<String>) -> Option<WeavyRegexLeaf> {
+        let id = self.next_regex_leaf_id;
+        let leaf = WeavyRegexLeaf::new(Some(id), source, flags)?;
+        self.next_regex_leaf_id += 1;
+        Some(leaf)
     }
 
     fn choice_matcher(&mut self, regex_sources: Vec<String>) -> Option<WeavyRegexChoiceMatcher> {
@@ -3448,18 +3456,18 @@ impl WeavyLexExpr {
         };
         match expr {
             Self::Seq(_) | Self::Repeat(_) | Self::Repeat1(_) => {
-                Self::compile_composite_regex(expr)
+                Self::compile_composite_regex(expr, compiler)
             }
             Self::Choice(_) => Self::compile_composite_choice(expr, compiler),
             _ => expr,
         }
     }
 
-    fn compile_composite_regex(expr: Self) -> Self {
+    fn compile_composite_regex(expr: Self, compiler: &mut WeavyLexerCompiler) -> Self {
         let Some(source) = regex_source_for_weavy_lex_expr(&expr) else {
             return expr;
         };
-        let Some(matcher) = WeavyRegexLeaf::new(source, None) else {
+        let Some(matcher) = compiler.regex_leaf(source, None) else {
             return expr;
         };
         Self::CompositeRegex {
@@ -3602,6 +3610,28 @@ enum WeavyPatternMatcherKind {
 
 impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
     fn from(value: crate::lex_match::CompiledPattern) -> Self {
+        Self::from_compiled_without_cache(value)
+    }
+}
+
+impl WeavyPatternMatcher {
+    fn from_compiled(
+        value: crate::lex_match::CompiledPattern,
+        compiler: &mut WeavyLexerCompiler,
+    ) -> Self {
+        Self::from_compiled_inner(value, |source, flags| compiler.regex_leaf(source, flags))
+    }
+
+    fn from_compiled_without_cache(value: crate::lex_match::CompiledPattern) -> Self {
+        Self::from_compiled_inner(value, |source, flags| {
+            WeavyRegexLeaf::new(None, source, flags)
+        })
+    }
+
+    fn from_compiled_inner(
+        value: crate::lex_match::CompiledPattern,
+        mut regex_leaf: impl FnMut(String, Option<String>) -> Option<WeavyRegexLeaf>,
+    ) -> Self {
         let kind = value.kind();
         match kind {
             crate::lex_match::CompiledPatternKind::Known => {
@@ -3611,16 +3641,12 @@ impl From<crate::lex_match::CompiledPattern> for WeavyPatternMatcher {
                 };
                 Self::Known(pattern)
             }
-            crate::lex_match::CompiledPatternKind::Regex => {
-                WeavyRegexLeaf::new(value.source, value.flags)
-                    .map(Self::Regex)
-                    .unwrap_or(Self::Unsupported)
-            }
+            crate::lex_match::CompiledPatternKind::Regex => regex_leaf(value.source, value.flags)
+                .map(Self::Regex)
+                .unwrap_or(Self::Unsupported),
         }
     }
-}
 
-impl WeavyPatternMatcher {
     const fn kind(&self) -> WeavyPatternMatcherKind {
         match self {
             Self::Known(_) => WeavyPatternMatcherKind::Known,
@@ -3648,21 +3674,41 @@ impl WeavyPatternMatcher {
             Self::Unsupported => None,
         }
     }
+
+    fn match_input_with_scratch(
+        &self,
+        input: &str,
+        byte_position: usize,
+        lexer_scratch: &RuntimeWeavyLexerScratch,
+    ) -> Option<parser_ir::LexMatch> {
+        match self {
+            Self::Known(pattern) => {
+                crate::lex_match::match_known_pattern(*pattern, input, byte_position)
+            }
+            Self::Regex(leaf) => lexer_scratch.match_regex_leaf(leaf, input, byte_position),
+            Self::Unsupported => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 struct WeavyRegexLeaf {
+    cache_id: Option<usize>,
     regex_source: String,
-    engine: WeavyRegexEngine,
+    automaton: Arc<AutomataRegex>,
+    dfa: Option<Arc<HybridDfa>>,
 }
 
 impl WeavyRegexLeaf {
-    fn new(source: String, flags: Option<String>) -> Option<Self> {
+    fn new(cache_id: Option<usize>, source: String, flags: Option<String>) -> Option<Self> {
         let regex_source = crate::lex_match::regex_automata_leaf_source(&source, flags.as_deref())?;
-        let engine = WeavyRegexEngine::RegexAutomata(AutomataRegex::new(&regex_source).ok()?);
+        let automaton = Arc::new(AutomataRegex::new(&regex_source).ok()?);
+        let dfa = HybridDfa::builder().build(&regex_source).ok().map(Arc::new);
         Some(Self {
+            cache_id,
             regex_source,
-            engine,
+            automaton,
+            dfa,
         })
     }
 
@@ -3671,7 +3717,37 @@ impl WeavyRegexLeaf {
     }
 
     fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
-        self.engine.match_input(input, byte_position)
+        self.match_input_with_cache(input, byte_position, None)
+    }
+
+    fn create_dfa_cache(&self) -> Option<HybridDfaCache> {
+        self.dfa.as_ref().map(|dfa| dfa.create_cache())
+    }
+
+    fn match_input_with_cache(
+        &self,
+        input: &str,
+        byte_position: usize,
+        dfa_cache: Option<&mut HybridDfaCache>,
+    ) -> Option<parser_ir::LexMatch> {
+        let _ = input.get(byte_position..)?;
+        if let (Some(dfa), Some(dfa_cache)) = (&self.dfa, dfa_cache) {
+            let search = Input::new(input)
+                .range(byte_position..)
+                .anchored(Anchored::Yes);
+            match dfa.try_search_fwd(dfa_cache, &search) {
+                Ok(Some(match_)) => {
+                    let end = match_.offset();
+                    return Some(parser_ir::LexMatch::new(
+                        end,
+                        crate::lex_match::pattern_inspected_end(input, end),
+                    ));
+                }
+                Ok(None) => return None,
+                Err(_) => {}
+            }
+        }
+        match_regex_automata_leaf(&self.automaton, input, byte_position)
     }
 }
 
@@ -3729,19 +3805,6 @@ impl WeavyRegexChoiceMatcher {
         Ok(best.map(|(_, end)| {
             parser_ir::LexMatch::new(end, crate::lex_match::pattern_inspected_end(input, end))
         }))
-    }
-}
-
-#[derive(Clone, Debug)]
-enum WeavyRegexEngine {
-    RegexAutomata(AutomataRegex),
-}
-
-impl WeavyRegexEngine {
-    fn match_input(&self, input: &str, byte_position: usize) -> Option<parser_ir::LexMatch> {
-        match self {
-            Self::RegexAutomata(regex) => match_regex_automata_leaf(regex, input, byte_position),
-        }
     }
 }
 
@@ -5180,6 +5243,7 @@ struct RuntimeWeavyLexerScratch {
     direct_pattern_matches: RefCell<Vec<Option<PatternSet>>>,
     direct_terminal_indices: RefCell<Vec<usize>>,
     direct_pattern_dfa_caches: RefCell<Vec<Option<Option<HybridDfaCache>>>>,
+    regex_leaf_dfa_caches: RefCell<Vec<Option<Option<HybridDfaCache>>>>,
     choice_dfa_caches: RefCell<Vec<Option<HybridDfaCache>>>,
     direct_set_cache:
         RefCell<HashMap<RuntimeWeavyLexSetCacheKey, Arc<RuntimeWeavyDirectSetMatches>>>,
@@ -5195,6 +5259,7 @@ impl RuntimeWeavyLexerScratch {
             direct_pattern_matches: RefCell::default(),
             direct_terminal_indices: RefCell::default(),
             direct_pattern_dfa_caches: RefCell::default(),
+            regex_leaf_dfa_caches: RefCell::default(),
             choice_dfa_caches: RefCell::default(),
             direct_set_cache: RefCell::default(),
         }
@@ -5224,6 +5289,22 @@ impl RuntimeWeavyLexerScratch {
 
     fn record_stencil_execution(&self, kind: WeavyLexerStencilKind) {
         self.execution_stats.borrow_mut().record_stencil(kind);
+    }
+
+    fn match_regex_leaf(
+        &self,
+        leaf: &WeavyRegexLeaf,
+        input: &str,
+        byte_position: usize,
+    ) -> Option<parser_ir::LexMatch> {
+        let Some(cache_id) = leaf.cache_id else {
+            return leaf.match_input(input, byte_position);
+        };
+        let mut regex_leaf_dfa_caches = self.regex_leaf_dfa_caches.borrow_mut();
+        let cache = runtime_weavy_lexer_scratch_slot(&mut regex_leaf_dfa_caches, cache_id)
+            .get_or_insert_with(|| leaf.create_dfa_cache())
+            .as_mut();
+        leaf.match_input_with_cache(input, byte_position, cache)
     }
 
     fn match_choice(
@@ -10400,7 +10481,7 @@ fn match_weavy_lex_expr_runtime_inner(
                     WeavyPatternMatcherKind::Unsupported => {}
                 }
             }
-            Ok(pattern.match_input(input, byte_position))
+            Ok(pattern.match_input_with_scratch(input, byte_position, lexer_scratch))
         }
         WeavyLexExpr::Until(matcher) => {
             if account {
@@ -10517,7 +10598,7 @@ fn match_weavy_lex_expr_runtime_inner(
             if account {
                 lexer_scratch.record_stencil_execution(WeavyLexerStencilKind::CompositeRegex);
             }
-            let compiled = matcher.match_input(input, byte_position);
+            let compiled = lexer_scratch.match_regex_leaf(matcher, input, byte_position);
             #[cfg(debug_assertions)]
             {
                 let interpreted = match_weavy_lex_expr_runtime_inner(
@@ -11015,10 +11096,14 @@ mod tests {
 
     #[test]
     fn composite_regex_lowers_plain_sequence_matchers() {
-        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Seq(vec![
-            WeavyLexExpr::String("a".to_owned()),
-            WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("[a-z]", None).into()),
-        ]));
+        let mut compiler = WeavyLexerCompiler::default();
+        let expr = WeavyLexExpr::compile_composite_regex(
+            WeavyLexExpr::Seq(vec![
+                WeavyLexExpr::String("a".to_owned()),
+                WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("[a-z]", None).into()),
+            ]),
+            &mut compiler,
+        );
 
         assert!(matches!(expr, WeavyLexExpr::CompositeRegex { .. }));
         assert_eq!(
@@ -11033,9 +11118,11 @@ mod tests {
 
     #[test]
     fn composite_regex_lowers_repeat_matchers() {
-        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Repeat(Box::new(
-            WeavyLexExpr::String("a".to_owned()),
-        )));
+        let mut compiler = WeavyLexerCompiler::default();
+        let expr = WeavyLexExpr::compile_composite_regex(
+            WeavyLexExpr::Repeat(Box::new(WeavyLexExpr::String("a".to_owned()))),
+            &mut compiler,
+        );
 
         assert!(matches!(expr, WeavyLexExpr::CompositeRegex { .. }));
         assert_eq!(
@@ -11050,9 +11137,13 @@ mod tests {
 
     #[test]
     fn composite_regex_lowers_non_empty_repeat1_matchers() {
-        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Repeat1(Box::new(
-            WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("[a-z]", None).into()),
-        )));
+        let mut compiler = WeavyLexerCompiler::default();
+        let expr = WeavyLexExpr::compile_composite_regex(
+            WeavyLexExpr::Repeat1(Box::new(WeavyLexExpr::Pattern(
+                crate::lex_match::compile_pattern("[a-z]", None).into(),
+            ))),
+            &mut compiler,
+        );
 
         assert!(matches!(expr, WeavyLexExpr::CompositeRegex { .. }));
         assert_eq!(
@@ -11067,9 +11158,13 @@ mod tests {
 
     #[test]
     fn composite_regex_keeps_empty_repeat1_structural() {
-        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Repeat1(Box::new(
-            WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("a*", None).into()),
-        )));
+        let mut compiler = WeavyLexerCompiler::default();
+        let expr = WeavyLexExpr::compile_composite_regex(
+            WeavyLexExpr::Repeat1(Box::new(WeavyLexExpr::Pattern(
+                crate::lex_match::compile_pattern("a*", None).into(),
+            ))),
+            &mut compiler,
+        );
 
         assert!(matches!(expr, WeavyLexExpr::Repeat1(_)));
         assert_eq!(
