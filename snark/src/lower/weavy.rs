@@ -3399,7 +3399,16 @@ impl WeavyLexModeProgram {
                 continue;
             }
             if let Some(row) = mode.terminal(terminal) {
-                terminals.push(row.clone());
+                let mut row = row.clone();
+                row.lookahead = Some(RuntimeWeavyTerminalLookahead {
+                    terminal,
+                    lookahead: entry.lookahead(),
+                    shifts_only_extra: entry
+                        .actions()
+                        .iter()
+                        .all(|action| matches!(action, parser_ir::ParseAction::ShiftExtra)),
+                });
+                terminals.push(row);
             }
         }
         Self::from_terminals(terminals, 0, compiler)
@@ -3506,6 +3515,7 @@ impl WeavyLexModeProgram {
 struct WeavyLexTerminal {
     terminal: parser_ir::TerminalId,
     matcher: WeavyTerminalMatcher,
+    lookahead: Option<RuntimeWeavyTerminalLookahead>,
     immediate: bool,
     literal: bool,
     lexical_precedence: i32,
@@ -3522,6 +3532,7 @@ impl WeavyLexTerminal {
         Self {
             terminal: value.terminal,
             matcher: WeavyTerminalMatcher::from_compiled(value.matcher, compiler),
+            lookahead: None,
             immediate: value.immediate,
             literal: value.literal,
             lexical_precedence: value.lexical_precedence,
@@ -9297,9 +9308,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         implicit_precedence: terminal_row.implicit_precedence,
                         scanner: None,
                     };
-                    let Some(lookahead) = self
-                        .plan
-                        .terminal_lookahead(state.id(), terminal_row.terminal)
+                    let Some(lookahead) = self.runtime_terminal_lookahead(state.id(), terminal_row)
                     else {
                         push_runtime_weavy_candidate(&mut best_rejected, candidate);
                         continue;
@@ -9399,8 +9408,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             .lexer_program
             .runtime_state_mode(state.id(), mode.id())?;
         for terminal_row in mode_program.terminals() {
-            let terminal = terminal_row.terminal;
-            let Some(lookahead) = self.plan.terminal_lookahead(state.id(), terminal) else {
+            let Some(lookahead) = self.runtime_terminal_lookahead(state.id(), terminal_row) else {
                 continue;
             };
             let WeavyTerminalMatcher::Expr(WeavyLexExpr::AutoClose(spec)) = &terminal_row.matcher
@@ -9420,6 +9428,16 @@ impl<'a> RuntimeWeavyStepper<'a> {
             }));
         }
         Ok(None)
+    }
+
+    fn runtime_terminal_lookahead(
+        &self,
+        state: parser_ir::ParseStateId,
+        terminal: &WeavyLexTerminal,
+    ) -> Option<RuntimeWeavyTerminalLookahead> {
+        terminal
+            .lookahead
+            .or_else(|| self.plan.terminal_lookahead(state, terminal.terminal))
     }
 
     fn update_auto_close_stack(&mut self, token: RuntimeWeavyToken) {
@@ -12066,6 +12084,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(0),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("a".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12076,6 +12095,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(1),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("ab".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12118,6 +12138,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(0),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("\"".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12128,6 +12149,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(1),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("\"\"\"".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12168,6 +12190,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(0),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("netcore".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12178,6 +12201,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(1),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("netstd".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12188,6 +12212,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(2),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("java".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12198,6 +12223,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(3),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("java.swift".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12252,6 +12278,7 @@ mod tests {
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
                     crate::lex_match::compile_pattern("[a-z]+", None).into(),
                 )),
+                lookahead: None,
                 immediate: false,
                 literal: false,
                 lexical_precedence: 0,
@@ -12264,6 +12291,7 @@ mod tests {
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
                     crate::lex_match::compile_pattern("[a-z]{2}", None).into(),
                 )),
+                lookahead: None,
                 immediate: false,
                 literal: false,
                 lexical_precedence: 0,
@@ -12322,6 +12350,7 @@ mod tests {
             matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
                 crate::lex_match::compile_pattern("([^\"]|\\n|\"\"?[^\"])*", None).into(),
             )),
+            lookahead: None,
             immediate: false,
             literal: false,
             lexical_precedence: 0,
@@ -12388,6 +12417,7 @@ mod tests {
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
                     crate::lex_match::compile_pattern("[a-z]+", None).into(),
                 )),
+                lookahead: None,
                 immediate: false,
                 literal: false,
                 lexical_precedence: 0,
@@ -12400,6 +12430,7 @@ mod tests {
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
                     crate::lex_match::compile_pattern("[0-9]+", None).into(),
                 )),
+                lookahead: None,
                 immediate: false,
                 literal: false,
                 lexical_precedence: 0,
@@ -12459,6 +12490,7 @@ mod tests {
         let mut terminals = vec![WeavyLexTerminal {
             terminal: parser_ir::TerminalId::from_index(0),
             matcher: WeavyTerminalMatcher::Expr(composite),
+            lookahead: None,
             immediate: false,
             literal: false,
             lexical_precedence: 0,
@@ -12522,6 +12554,7 @@ mod tests {
         let mut terminals = vec![WeavyLexTerminal {
             terminal: parser_ir::TerminalId::from_index(0),
             matcher: WeavyTerminalMatcher::Expr(composite),
+            lookahead: None,
             immediate: false,
             literal: false,
             lexical_precedence: 0,
@@ -12580,6 +12613,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(0),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("ab".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12592,6 +12626,7 @@ mod tests {
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
                     crate::lex_match::compile_pattern("[a-z]+", None).into(),
                 )),
+                lookahead: None,
                 immediate: false,
                 literal: false,
                 lexical_precedence: 0,
@@ -12637,6 +12672,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(0),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("ab".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -12649,6 +12685,7 @@ mod tests {
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
                     crate::lex_match::compile_pattern("[a-z]+", None).into(),
                 )),
+                lookahead: None,
                 immediate: false,
                 literal: false,
                 lexical_precedence: 0,
@@ -14305,6 +14342,7 @@ mod tests {
                         close: "#}".to_owned(),
                     })),
                 ])),
+                lookahead: None,
                 immediate: false,
                 literal: false,
                 lexical_precedence: 0,
@@ -14317,6 +14355,7 @@ mod tests {
                 matcher: WeavyTerminalMatcher::UnsupportedTerminal {
                     terminal: parser_ir::TerminalId::from_index(1),
                 },
+                lookahead: None,
                 immediate: false,
                 literal: false,
                 lexical_precedence: 0,
@@ -14327,6 +14366,7 @@ mod tests {
             WeavyLexTerminal {
                 terminal: parser_ir::TerminalId::from_index(2),
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::String("if".to_owned())),
+                lookahead: None,
                 immediate: false,
                 literal: true,
                 lexical_precedence: 0,
@@ -14339,6 +14379,7 @@ mod tests {
                 matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
                     crate::lex_match::compile_pattern("[0-9]+", None).into(),
                 )),
+                lookahead: None,
                 immediate: false,
                 literal: false,
                 lexical_precedence: 0,
