@@ -1855,6 +1855,8 @@ pub enum WeavyLexOpKind {
     Repeat,
     /// One-or-more repetition.
     Repeat1,
+    /// Regular composed expression lowered to one automata-backed matcher.
+    CompositeRegex,
     /// Lexical expression still blocked on symbol resolution.
     UnsupportedSymbol,
     /// Terminal root that does not have a lowered matcher yet.
@@ -2124,18 +2126,25 @@ enum WeavyLexExpr {
     String(String),
     Pattern(WeavyPatternMatcher),
     Until(WeavyUntilMatcher),
-    Nested { open: String, close: String },
+    Nested {
+        open: String,
+        close: String,
+    },
     AutoClose(Box<WeavyAutoCloseSpec>),
     Seq(Vec<WeavyLexExpr>),
     Choice(Vec<WeavyLexExpr>),
     Repeat(Box<WeavyLexExpr>),
     Repeat1(Box<WeavyLexExpr>),
+    CompositeRegex {
+        matcher: WeavyRegexLeaf,
+        original: Box<WeavyLexExpr>,
+    },
     UnsupportedSymbol(GrammarExprId),
 }
 
 impl WeavyLexExpr {
     fn from_compiled(value: parser_ir::CompiledLexExpr, compiler: &mut WeavyLexerCompiler) -> Self {
-        match value {
+        let expr = match value {
             parser_ir::CompiledLexExpr::Blank => Self::Blank,
             parser_ir::CompiledLexExpr::String(value) => Self::String(value),
             parser_ir::CompiledLexExpr::Pattern(pattern) => {
@@ -2167,6 +2176,25 @@ impl WeavyLexExpr {
                 Self::Repeat1(Box::new(Self::from_compiled(*content, compiler)))
             }
             parser_ir::CompiledLexExpr::UnsupportedSymbol(expr) => Self::UnsupportedSymbol(expr),
+        };
+        match expr {
+            Self::Seq(_) | Self::Choice(_) | Self::Repeat(_) | Self::Repeat1(_) => {
+                Self::compile_composite_regex(expr)
+            }
+            _ => expr,
+        }
+    }
+
+    fn compile_composite_regex(expr: Self) -> Self {
+        let Some(source) = regex_source_for_weavy_lex_expr(&expr) else {
+            return expr;
+        };
+        let Some(matcher) = WeavyRegexLeaf::new(source, None) else {
+            return expr;
+        };
+        Self::CompositeRegex {
+            matcher,
+            original: Box::new(expr),
         }
     }
 
@@ -2216,8 +2244,33 @@ impl WeavyLexExpr {
                 stats.record(WeavyLexOpKind::Repeat1);
                 content.add_stats(stats);
             }
+            Self::CompositeRegex { original, .. } => {
+                stats.record(WeavyLexOpKind::CompositeRegex);
+                original.add_stats(stats);
+            }
             Self::UnsupportedSymbol(_) => stats.record(WeavyLexOpKind::UnsupportedSymbol),
         }
+    }
+}
+
+fn regex_source_for_weavy_lex_expr(expr: &WeavyLexExpr) -> Option<String> {
+    match expr {
+        WeavyLexExpr::Blank => Some(String::new()),
+        WeavyLexExpr::String(value) => Some(regex::escape(value)),
+        WeavyLexExpr::Pattern(pattern) => pattern.regex_source().map(Cow::into_owned),
+        WeavyLexExpr::Seq(members) => {
+            let mut source = String::new();
+            for member in members {
+                source.push_str(&regex_source_for_weavy_lex_expr(member)?);
+            }
+            Some(source)
+        }
+        WeavyLexExpr::Choice(_) | WeavyLexExpr::Repeat(_) | WeavyLexExpr::Repeat1(_) => None,
+        WeavyLexExpr::CompositeRegex { matcher, .. } => Some(matcher.source().to_owned()),
+        WeavyLexExpr::Until(_)
+        | WeavyLexExpr::Nested { .. }
+        | WeavyLexExpr::AutoClose(_)
+        | WeavyLexExpr::UnsupportedSymbol(_) => None,
     }
 }
 
@@ -2294,28 +2347,26 @@ impl WeavyPatternMatcher {
 
 #[derive(Clone, Debug)]
 struct WeavyRegexLeaf {
-    regex_set_source: String,
+    regex_source: String,
     engine: WeavyRegexEngine,
 }
 
 impl WeavyRegexLeaf {
     fn new(source: String, flags: Option<String>) -> Option<Self> {
         let rust_regex = crate::lex_match::compile_regex_leaf(&source, flags.as_deref())?;
-        let regex_set_source = rust_regex.as_str().to_owned();
-        let engine = crate::lex_match::regex_automata_leaf_source(&source, flags.as_deref())
-            .and_then(|source| AutomataRegex::new(&source).ok())
-            .map_or(
-                WeavyRegexEngine::RustRegexFallback(rust_regex),
-                WeavyRegexEngine::RegexAutomata,
-            );
+        let regex_source = crate::lex_match::regex_automata_leaf_source(&source, flags.as_deref())?;
+        let engine = AutomataRegex::new(&regex_source).ok().map_or(
+            WeavyRegexEngine::RustRegexFallback(rust_regex),
+            WeavyRegexEngine::RegexAutomata,
+        );
         Some(Self {
-            regex_set_source,
+            regex_source,
             engine,
         })
     }
 
     fn source(&self) -> &str {
-        self.regex_set_source.as_str()
+        self.regex_source.as_str()
     }
 
     const fn lowering(&self) -> WeavyRegexLowering {
@@ -7809,6 +7860,29 @@ fn match_weavy_lex_expr_runtime(
                 inspected_end,
             }))
         }
+        WeavyLexExpr::CompositeRegex { matcher, original } => {
+            let compiled = matcher.match_input(input, byte_position);
+            #[cfg(debug_assertions)]
+            {
+                let interpreted = match_weavy_lex_expr_runtime(original, input, byte_position)?;
+                debug_assert_eq!(
+                    compiled.map(|match_| match_.end),
+                    interpreted.map(|match_| match_.end),
+                    "composite regex lowering changed the recursive lexer expression end"
+                );
+                if let (Some(compiled), Some(interpreted)) = (compiled, interpreted) {
+                    debug_assert!(
+                        compiled.inspected_end >= interpreted.inspected_end,
+                        "composite regex lowering under-reported inspected_end"
+                    );
+                }
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                let _ = original;
+            }
+            Ok(compiled)
+        }
         WeavyLexExpr::UnsupportedSymbol(expr) => {
             Err(RuntimeWeavyStepError::UnsupportedLexicalSymbol { expr: *expr })
         }
@@ -8129,6 +8203,41 @@ mod tests {
             Some(parser_ir::LexMatch::new(3, 4))
         );
         assert_eq!(matcher.match_input("anderson", 0), None);
+    }
+
+    #[test]
+    fn composite_regex_lowers_plain_sequence_matchers() {
+        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Seq(vec![
+            WeavyLexExpr::String("a".to_owned()),
+            WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("[a-z]", None).into()),
+        ]));
+
+        assert!(matches!(expr, WeavyLexExpr::CompositeRegex { .. }));
+        assert_eq!(
+            match_weavy_lex_expr_runtime(&expr, "ab", 0).expect("match"),
+            Some(parser_ir::LexMatch::new(2, 2))
+        );
+        assert_eq!(
+            match_weavy_lex_expr_runtime(&expr, "nope", 0).expect("match"),
+            None
+        );
+    }
+
+    #[test]
+    fn composite_regex_leaves_choice_on_structural_matcher() {
+        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Choice(vec![
+            WeavyLexExpr::String("a".to_owned()),
+            WeavyLexExpr::Seq(vec![
+                WeavyLexExpr::String("a".to_owned()),
+                WeavyLexExpr::String("a".to_owned()),
+            ]),
+        ]));
+
+        assert!(!matches!(expr, WeavyLexExpr::CompositeRegex { .. }));
+        assert_eq!(
+            match_weavy_lex_expr_runtime(&expr, "aa", 0).expect("match"),
+            Some(parser_ir::LexMatch::new(2, 2))
+        );
     }
 
     #[derive(Default)]
