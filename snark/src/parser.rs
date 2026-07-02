@@ -4909,9 +4909,81 @@ struct ResolvedCstItem {
 pub(crate) struct ResolvedCstBuilder<'a> {
     parser: &'a ParserGrammar,
     input: &'a str,
+    names: ResolvedCstNames,
     field_by_child: Vec<Option<Arc<str>>>,
     item_indices_by_node: Vec<SmallVec<[usize; 1]>>,
     items: Vec<ResolvedCstItem>,
+}
+
+struct ResolvedCstNames {
+    fields: Vec<Arc<str>>,
+    public_nodes: Vec<Arc<str>>,
+    aliases: Vec<Arc<str>>,
+    terminals: Vec<Arc<str>>,
+    nonterminals: Vec<Arc<str>>,
+    externals: Vec<Option<Arc<str>>>,
+    eof: Arc<str>,
+    error: Arc<str>,
+    missing: Arc<str>,
+    recovery: Arc<str>,
+}
+
+impl ResolvedCstNames {
+    fn from_parser(parser: &ParserGrammar) -> Self {
+        Self {
+            fields: parser
+                .fields
+                .iter()
+                .map(|field| Arc::<str>::from(field.name()))
+                .collect(),
+            public_nodes: parser
+                .public_node_kinds
+                .iter()
+                .map(|kind| Arc::<str>::from(kind.name()))
+                .collect(),
+            aliases: parser
+                .aliases
+                .iter()
+                .map(|alias| Arc::<str>::from(alias.value()))
+                .collect(),
+            terminals: parser
+                .symbols
+                .terminals
+                .iter()
+                .map(|terminal| {
+                    let name = match terminal.kind() {
+                        ParserTerminalKind::String | ParserTerminalKind::AutoClose => {
+                            terminal.spelling()
+                        }
+                        ParserTerminalKind::Pattern
+                        | ParserTerminalKind::Token
+                        | ParserTerminalKind::ImmediateToken => terminal
+                            .public_names()
+                            .first()
+                            .map(String::as_str)
+                            .unwrap_or_else(|| terminal.spelling()),
+                    };
+                    Arc::<str>::from(name)
+                })
+                .collect(),
+            nonterminals: parser
+                .symbols
+                .nonterminals
+                .iter()
+                .map(|nonterminal| Arc::<str>::from(nonterminal.name()))
+                .collect(),
+            externals: parser
+                .symbols
+                .externals
+                .iter()
+                .map(|external| external.name().map(Arc::<str>::from))
+                .collect(),
+            eof: Arc::<str>::from("EOF"),
+            error: Arc::<str>::from("ERROR"),
+            missing: Arc::<str>::from("MISSING"),
+            recovery: Arc::<str>::from("RECOVERY"),
+        }
+    }
 }
 
 impl<'a> ResolvedCstBuilder<'a> {
@@ -4923,6 +4995,7 @@ impl<'a> ResolvedCstBuilder<'a> {
         Self {
             parser,
             input,
+            names: ResolvedCstNames::from_parser(parser),
             field_by_child: Vec::new(),
             item_indices_by_node: Vec::new(),
             items: Vec::with_capacity(capacity),
@@ -4937,12 +5010,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 field,
                 ..
             } => {
-                if let Some(name) = self
-                    .parser
-                    .fields
-                    .get(field.get() as usize)
-                    .map(|decl| Arc::<str>::from(decl.name()))
-                {
+                if let Some(name) = self.field_name(*field) {
                     self.attach_field(*child, name);
                 }
             }
@@ -4956,7 +5024,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             } => {
                 let text = source_slice(self.input, *bytes).map(Arc::<str>::from);
                 self.push_item(ResolvedCstItem {
-                    kind: parser_symbol_kind(self.parser, *symbol, text.as_deref()),
+                    kind: self.symbol_kind(*symbol, text.as_deref()),
                     symbol: Some(*symbol),
                     field: None,
                     node: None,
@@ -4981,9 +5049,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     self.parser.production_metadata[metadata.get() as usize].public_node()
                 {
                     self.push_item(ResolvedCstItem {
-                        kind: self.parser.public_node_kinds[public_node.get() as usize]
-                            .name()
-                            .into(),
+                        kind: self.public_node_kind(public_node),
                         symbol: None,
                         field: self.field_for_node(*node),
                         node: Some(*node),
@@ -5006,9 +5072,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 ..
             } => {
                 self.push_item(ResolvedCstItem {
-                    kind: self.parser.public_node_kinds[public_node.get() as usize]
-                        .name()
-                        .into(),
+                    kind: self.public_node_kind(*public_node),
                     symbol: None,
                     field: self.field_for_node(*node),
                     node: Some(*node),
@@ -5029,7 +5093,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 ..
             } => {
                 self.push_item(ResolvedCstItem {
-                    kind: "ERROR".into(),
+                    kind: Arc::clone(&self.names.error),
                     symbol: None,
                     field: self.field_for_node(*node),
                     node: Some(*node),
@@ -5050,7 +5114,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 ..
             } => {
                 self.push_item(ResolvedCstItem {
-                    kind: parser_symbol_kind(self.parser, *symbol, None),
+                    kind: self.symbol_kind(*symbol, None),
                     symbol: Some(*symbol),
                     field: None,
                     node: None,
@@ -5072,9 +5136,8 @@ impl<'a> ResolvedCstBuilder<'a> {
                 points,
                 ..
             } => {
-                let kind = Arc::<str>::from(self.parser.aliases[alias.get() as usize].value());
                 self.push_item(ResolvedCstItem {
-                    kind,
+                    kind: self.alias_kind(*alias),
                     symbol: None,
                     field: self.field_for_node(*node),
                     node: Some(*node),
@@ -5185,6 +5248,53 @@ impl<'a> ResolvedCstBuilder<'a> {
             .get(node.get() as usize)
             .and_then(Clone::clone)
     }
+
+    fn field_name(&self, field: FieldId) -> Option<Arc<str>> {
+        self.names.fields.get(field.get() as usize).cloned()
+    }
+
+    fn public_node_kind(&self, public_node: PublicNodeKindId) -> Arc<str> {
+        self.names
+            .public_nodes
+            .get(public_node.get() as usize)
+            .cloned()
+            .unwrap_or_else(|| {
+                Arc::<str>::from(self.parser.public_node_kinds[public_node.get() as usize].name())
+            })
+    }
+
+    fn alias_kind(&self, alias: AliasId) -> Arc<str> {
+        self.names
+            .aliases
+            .get(alias.get() as usize)
+            .cloned()
+            .unwrap_or_else(|| Arc::<str>::from(self.parser.aliases[alias.get() as usize].value()))
+    }
+
+    fn symbol_kind(&self, symbol: ParserSymbol, token_text: Option<&str>) -> Arc<str> {
+        match symbol {
+            ParserSymbol::Terminal(terminal) => {
+                self.names.terminals[terminal.get() as usize].clone()
+            }
+            ParserSymbol::Nonterminal(nonterminal) => {
+                self.names.nonterminals[nonterminal.get() as usize].clone()
+            }
+            ParserSymbol::External(external) => self
+                .names
+                .externals
+                .get(external.get() as usize)
+                .and_then(Clone::clone)
+                .unwrap_or_else(|| Arc::<str>::from(token_text.unwrap_or("<external>"))),
+            ParserSymbol::Eof => Arc::clone(&self.names.eof),
+            ParserSymbol::Internal(internal) => {
+                match self.parser.symbols.internal[internal.get() as usize].kind() {
+                    InternalSymbolKind::Error => Arc::clone(&self.names.error),
+                    InternalSymbolKind::Missing => Arc::clone(&self.names.missing),
+                    InternalSymbolKind::Recovery => Arc::clone(&self.names.recovery),
+                }
+            }
+        }
+    }
 }
 
 fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> bool {
@@ -5292,47 +5402,6 @@ fn source_slice(input: &str, bytes: ByteRange) -> Option<&str> {
     let start = bytes.start().get() as usize;
     let end = bytes.end().get() as usize;
     input.get(start..end)
-}
-
-fn parser_symbol_kind(
-    parser: &ParserGrammar,
-    symbol: ParserSymbol,
-    token_text: Option<&str>,
-) -> Arc<str> {
-    match symbol {
-        ParserSymbol::Terminal(terminal) => {
-            let terminal = &parser.symbols.terminals[terminal.get() as usize];
-            match terminal.kind() {
-                ParserTerminalKind::String | ParserTerminalKind::AutoClose => {
-                    terminal.spelling().into()
-                }
-                ParserTerminalKind::Pattern
-                | ParserTerminalKind::Token
-                | ParserTerminalKind::ImmediateToken => terminal
-                    .public_names()
-                    .first()
-                    .map(String::as_str)
-                    .unwrap_or_else(|| terminal.spelling())
-                    .into(),
-            }
-        }
-        ParserSymbol::Nonterminal(nonterminal) => parser.symbols.nonterminals
-            [nonterminal.get() as usize]
-            .name()
-            .into(),
-        ParserSymbol::External(external) => parser.symbols.externals[external.get() as usize]
-            .name()
-            .unwrap_or_else(|| token_text.unwrap_or("<external>"))
-            .into(),
-        ParserSymbol::Eof => "EOF".into(),
-        ParserSymbol::Internal(internal) => {
-            match parser.symbols.internal[internal.get() as usize].kind() {
-                InternalSymbolKind::Error => "ERROR".into(),
-                InternalSymbolKind::Missing => "MISSING".into(),
-                InternalSymbolKind::Recovery => "RECOVERY".into(),
-            }
-        }
-    }
 }
 
 pub(crate) fn visit_tree_events_for_version_lineage(
