@@ -4491,7 +4491,7 @@ impl<'a> WeavyParseSession<'a> {
         input: impl Into<String>,
     ) -> Result<&WeavyParseReport, WeavyParseError> {
         let input = input.into();
-        let report = parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
+        let report = parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
             self.plan,
             self.parser,
             self.table,
@@ -4516,7 +4516,7 @@ impl<'a> WeavyParseSession<'a> {
         let report = if let (Some(old_input), Some(last_report)) =
             (self.last_input.as_deref(), self.last_report.as_ref())
         {
-            reparse_prepared_weavy_with_report_and_scanner(
+            reparse_prepared_weavy_unmetered_with_report_and_scanner(
                 self.plan,
                 self.parser,
                 self.table,
@@ -4527,7 +4527,7 @@ impl<'a> WeavyParseSession<'a> {
                 self.external_scanner,
             )?
         } else {
-            parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
+            parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
                 self.plan,
                 self.parser,
                 self.table,
@@ -4549,13 +4549,14 @@ impl<'a> WeavyParseSession<'a> {
         input: impl Into<String>,
     ) -> Result<&WeavyParseReport, WeavyParseError> {
         let input = input.into();
-        let report = parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
-            self.plan,
-            self.parser,
-            self.table,
-            &input,
-            self.external_scanner,
-        )?;
+        let report =
+            parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_and_scanner(
+                self.plan,
+                self.parser,
+                self.table,
+                &input,
+                self.external_scanner,
+            )?;
         self.last_input = Some(input);
         self.last_report = Some(report);
         Ok(self
@@ -4574,7 +4575,7 @@ impl<'a> WeavyParseSession<'a> {
         let report = if let (Some(old_input), Some(last_report)) =
             (self.last_input.as_deref(), self.last_report.as_ref())
         {
-            reparse_prepared_weavy_recovering_with_report_and_scanner(
+            reparse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
                 self.plan,
                 self.parser,
                 self.table,
@@ -4585,7 +4586,7 @@ impl<'a> WeavyParseSession<'a> {
                 self.external_scanner,
             )?
         } else {
-            parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
+            parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_and_scanner(
                 self.plan,
                 self.parser,
                 self.table,

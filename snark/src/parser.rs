@@ -7844,6 +7844,7 @@ extras (
             first.tree().to_sexp(),
             "(source_file (insensitive) (wrapped))"
         );
+        assert!(first.trace_events().is_empty());
         assert_eq!(session.last_input(), Some("ABCXYZ"));
 
         let edit = ParserInputEdit::new(0, 3, 3);
@@ -7853,6 +7854,7 @@ extras (
                 .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert!(reparsed.trace_events().is_empty());
         assert!(
             reparsed
                 .tree_events()
