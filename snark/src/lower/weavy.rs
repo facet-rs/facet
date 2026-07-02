@@ -776,6 +776,14 @@ pub struct WeavySnarkExecutionStats {
     pub family_executions: BTreeMap<(SnarkStencilFamily, SnarkStencilExecution), usize>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SnarkIntrinsicExecutionKeys {
+    descriptor: IntrinsicDescriptor,
+    domain: SnarkIntrinsicDomain,
+    family: SnarkStencilFamily,
+    execution: SnarkStencilExecution,
+}
+
 /// Runtime counters for Snark's copy-and-patch host-call block lane.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WeavyHostCallExecutionStats {
@@ -795,16 +803,16 @@ pub struct WeavyHostCallExecutionStats {
 
 impl WeavySnarkExecutionStats {
     fn record_intrinsic(&mut self, intrinsic: &SnarkIntrinsic) {
-        let semantics = intrinsic.semantics();
+        let keys = intrinsic.runtime_execution_keys();
         self.intrinsic_count += 1;
         *self
             .descriptor_executions
-            .entry(semantics.descriptor)
+            .entry(keys.descriptor)
             .or_default() += 1;
-        *self.domain_executions.entry(semantics.domain).or_default() += 1;
+        *self.domain_executions.entry(keys.domain).or_default() += 1;
         *self
             .family_executions
-            .entry((semantics.stencil.family, semantics.stencil.execution))
+            .entry((keys.family, keys.execution))
             .or_default() += 1;
     }
 
@@ -976,6 +984,68 @@ impl SnarkIntrinsicSemanticStats {
 impl SnarkIntrinsic {
     /// The Weavy dialect name used by Snark intrinsics.
     pub const DIALECT: &'static str = "snark.tree_sitter";
+
+    fn runtime_execution_keys(&self) -> SnarkIntrinsicExecutionKeys {
+        let descriptor = self.descriptor();
+        let (domain, family, execution) = match self {
+            Self::Lex { .. } => (
+                SnarkIntrinsicDomain::Lexing,
+                SnarkStencilFamily::Lexer,
+                SnarkStencilExecution::LexerGraph,
+            ),
+            Self::CallExternalScanner { .. } => (
+                SnarkIntrinsicDomain::ExternalScanner,
+                SnarkStencilFamily::ExternalScanner,
+                SnarkStencilExecution::HostCall,
+            ),
+            Self::DispatchActions { .. } => (
+                SnarkIntrinsicDomain::ParserControl,
+                SnarkStencilFamily::ParserDispatch,
+                SnarkStencilExecution::DirectStencil,
+            ),
+            Self::CommitLookahead { .. } => (
+                SnarkIntrinsicDomain::ParserControl,
+                SnarkStencilFamily::ParserCursor,
+                SnarkStencilExecution::DirectStencil,
+            ),
+            Self::Shift { .. } | Self::ShiftExtra { .. } => (
+                SnarkIntrinsicDomain::ParserControl,
+                SnarkStencilFamily::ParserStack,
+                SnarkStencilExecution::DirectStencil,
+            ),
+            Self::Reduce { .. } => (
+                SnarkIntrinsicDomain::Tree,
+                SnarkStencilFamily::TreeBuilder,
+                SnarkStencilExecution::DirectStencil,
+            ),
+            Self::SplitGlr { .. } | Self::MergeGlr { .. } | Self::RetireBranch { .. } => (
+                SnarkIntrinsicDomain::GlrControl,
+                SnarkStencilFamily::GlrScheduler,
+                SnarkStencilExecution::DirectStencil,
+            ),
+            Self::Accept { .. } => (
+                SnarkIntrinsicDomain::ParserControl,
+                SnarkStencilFamily::TreeBuilder,
+                SnarkStencilExecution::DirectStencil,
+            ),
+            Self::EmitTrace { .. } => (
+                SnarkIntrinsicDomain::Trace,
+                SnarkStencilFamily::Sink,
+                SnarkStencilExecution::SinkAdapter,
+            ),
+            Self::EmitNode { .. } | Self::EmitTreeEvent { .. } => (
+                SnarkIntrinsicDomain::Tree,
+                SnarkStencilFamily::Sink,
+                SnarkStencilExecution::SinkAdapter,
+            ),
+        };
+        SnarkIntrinsicExecutionKeys {
+            descriptor,
+            domain,
+            family,
+            execution,
+        }
+    }
 
     /// Optimizer-facing semantic metadata for this Snark dialect op.
     #[must_use]
@@ -10505,6 +10575,95 @@ mod tests {
         assert!(scanner.effect.opaque);
         assert!(scanner.effect.calls_user_code);
         assert_eq!(scanner.effect.ordering, EffectOrdering::Barrier);
+    }
+
+    #[test]
+    fn runtime_execution_keys_match_full_semantics() {
+        let intrinsics = vec![
+            SnarkIntrinsic::Lex {
+                version: StackVersionId(0),
+                mode: LexModeId(0),
+                output: LookaheadTokenId(1),
+            },
+            SnarkIntrinsic::CallExternalScanner {
+                version: StackVersionId(0),
+                state: ParseStateId(7),
+                valid_symbols: ValidSymbolSetId(3),
+                scanner_state: ExternalScannerStateId(2),
+                before: Some(ScannerSnapshotId(0)),
+                after: Some(ScannerSnapshotId(1)),
+                result: Some(LookaheadTokenId(4)),
+            },
+            SnarkIntrinsic::DispatchActions {
+                version: StackVersionId(0),
+                state: ParseStateId(7),
+                lookahead: LookaheadTokenId(1),
+            },
+            SnarkIntrinsic::CommitLookahead {
+                version: StackVersionId(0),
+                lookahead: LookaheadTokenId(1),
+            },
+            SnarkIntrinsic::Shift {
+                version: StackVersionId(0),
+                state: ParseStateId(7),
+                lookahead: LookaheadTokenId(1),
+            },
+            SnarkIntrinsic::ShiftExtra {
+                version: StackVersionId(0),
+                state: ParseStateId(7),
+                lookahead: LookaheadTokenId(1),
+            },
+            SnarkIntrinsic::Reduce {
+                version: StackVersionId(0),
+                production: ProductionId(2),
+                metadata: ProductionMetadataId(3),
+                symbol: NonterminalId(4),
+                child_count: 2,
+                dynamic_precedence: 0,
+                aliases: None,
+            },
+            SnarkIntrinsic::SplitGlr {
+                conflict: ConflictId(1),
+                source: StackVersionId(0),
+                branches: vec![StackVersionId(1), StackVersionId(2)],
+            },
+            SnarkIntrinsic::MergeGlr {
+                survivor: StackVersionId(1),
+                retired: StackVersionId(2),
+                key: StackMergeKeyId(3),
+                ranking: BranchRankingId(4),
+            },
+            SnarkIntrinsic::RetireBranch {
+                version: StackVersionId(1),
+                reason: BranchRetireReason::NoAction,
+            },
+            SnarkIntrinsic::Accept {
+                version: StackVersionId(0),
+                production: ProductionId(2),
+                metadata: ProductionMetadataId(3),
+                symbol: NonterminalId(4),
+                child_count: 2,
+                dynamic_precedence: 0,
+            },
+            SnarkIntrinsic::EmitTrace {
+                event: TraceEventId(1),
+            },
+            SnarkIntrinsic::EmitNode {
+                symbol: SymbolId(1),
+            },
+            SnarkIntrinsic::EmitTreeEvent {
+                event: TreeEventId(1),
+            },
+        ];
+
+        for intrinsic in intrinsics {
+            let keys = intrinsic.runtime_execution_keys();
+            let semantics = intrinsic.semantics();
+            assert_eq!(keys.descriptor, semantics.descriptor);
+            assert_eq!(keys.domain, semantics.domain);
+            assert_eq!(keys.family, semantics.stencil.family);
+            assert_eq!(keys.execution, semantics.stencil.execution);
+        }
     }
 
     #[test]
