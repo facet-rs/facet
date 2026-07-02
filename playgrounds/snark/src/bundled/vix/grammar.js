@@ -33,22 +33,25 @@ module.exports = grammar({
   word: ($) => $.identifier,
 
   rules: {
-    source_file: ($) => repeat($._item),
+    // Every AST-relevant child carries a field(): the typed AST (and its lowering) is
+    // DERIVED from fields + cardinality (bare -> T, optional -> Option<T>, repeat -> Vec<T>)
+    // by vix's build.rs. An unfielded child is invisible to the AST by construction.
+    source_file: ($) => repeat(field("item", $._item)),
 
     // ---- items ----------------------------------------------------------
     _item: ($) => choice($.use_item, $.fn_item),
 
-    use_item: ($) => seq("use", $.use_tree, ";"),
+    use_item: ($) => seq("use", field("tree", $.use_tree), ";"),
     use_tree: ($) =>
       seq(
-        $.identifier,
-        repeat(seq("::", $.identifier)),
-        optional(seq("::", "{", sepBy(",", $.identifier), "}")),
+        field("segment", $.identifier),
+        repeat(seq("::", field("segment", $.identifier))),
+        optional(seq("::", "{", sepBy(",", field("leaf", $.identifier)), "}")),
       ),
 
     fn_item: ($) =>
       seq(
-        optional("pub"),
+        optional(field("vis", "pub")),
         "fn",
         field("name", $.identifier),
         field("params", $.param_list),
@@ -56,16 +59,18 @@ module.exports = grammar({
         field("body", $.block),
       ),
 
-    param_list: ($) => seq("(", sepBy(",", $.param), ")"),
+    param_list: ($) => seq("(", sepBy(",", field("param", $.param)), ")"),
     param: ($) => seq(field("name", $.identifier), ":", field("type", $._type)),
 
     // ---- types ----------------------------------------------------------
     _type: ($) => choice($.array_type, $.type_path),
-    array_type: ($) => seq("[", $._type, "]"),
-    type_path: ($) => seq($.identifier, repeat(seq("::", $.identifier))),
+    array_type: ($) => seq("[", field("elem", $._type), "]"),
+    type_path: ($) =>
+      seq(field("segment", $.identifier), repeat(seq("::", field("segment", $.identifier)))),
 
     // ---- statements / blocks ---------------------------------------------
-    block: ($) => seq("{", repeat($._statement), optional($._expr), "}"),
+    block: ($) =>
+      seq("{", repeat(field("stmt", $._statement)), optional(field("tail", $._expr)), "}"),
 
     _statement: ($) => choice($.let_statement, $.expr_statement),
 
@@ -79,7 +84,7 @@ module.exports = grammar({
         ";",
       ),
 
-    expr_statement: ($) => seq($._expr, ";"),
+    expr_statement: ($) => seq(field("expr", $._expr), ";"),
 
     // ---- expressions ------------------------------------------------------
     _expr: ($) =>
@@ -117,7 +122,8 @@ module.exports = grammar({
       );
     },
 
-    unary: ($) => prec(PREC.unary, seq(choice("-", "!"), $._expr)),
+    unary: ($) =>
+      prec(PREC.unary, seq(field("op", choice("-", "!")), field("operand", $._expr))),
 
     call: ($) =>
       prec(
@@ -134,17 +140,18 @@ module.exports = grammar({
     field_access: ($) =>
       prec(PREC.postfix, seq(field("receiver", $._expr), ".", field("name", $.identifier))),
 
-    arg_list: ($) => seq("(", sepBy(",", $._arg), ")"),
+    arg_list: ($) => seq("(", sepBy(",", field("arg", $._arg)), ")"),
     _arg: ($) => choice($.kwarg, $._expr),
     kwarg: ($) => seq(field("name", $.identifier), ":", field("value", $._expr)),
 
-    scoped_identifier: ($) => seq($.identifier, repeat1(seq("::", $.identifier))),
+    scoped_identifier: ($) =>
+      seq(field("segment", $.identifier), repeat1(seq("::", field("segment", $.identifier)))),
 
     closure: ($) =>
-      seq("|", sepBy(",", $.identifier), "|", field("body", $._expr)),
+      seq("|", sepBy(",", field("param", $.identifier)), "|", field("body", $._expr)),
 
     match_expr: ($) =>
-      seq("match", field("scrutinee", $._expr), "{", sepBy(",", $.match_arm), "}"),
+      seq("match", field("scrutinee", $._expr), "{", sepBy(",", field("arm", $.match_arm)), "}"),
     match_arm: ($) => seq(field("pattern", $._pattern), "=>", field("value", $._expr)),
     _pattern: ($) => choice($.wildcard_pattern, $.identifier, $.string, $.number),
     wildcard_pattern: () => "_",
@@ -152,9 +159,9 @@ module.exports = grammar({
     // Flag atoms are legal ONLY as array elements (feeding [Flag] values) — never general
     // expressions. Per-state lexing then makes `a - b` vs `[-DFOO]` unambiguous by
     // construction: a state either expects a flag or a binary minus, never both.
-    array: ($) => seq("[", sepBy(",", choice($.flag, $._expr)), "]"),
+    array: ($) => seq("[", sepBy(",", field("elem", choice($.flag, $._expr))), "]"),
 
-    paren: ($) => seq("(", $._expr, ")"),
+    paren: ($) => seq("(", field("inner", $._expr), ")"),
 
     // ---- command blocks ----------------------------------------------------
     // `cc! { -O2 -c {src / unit} -o {out} }` — the body is command-token soup with
@@ -165,10 +172,10 @@ module.exports = grammar({
         field("command", $.identifier),
         token.immediate("!"),
         "{",
-        repeat(choice($.splice, $.command_token)),
+        repeat(field("part", choice($.splice, $.command_token))),
         "}",
       ),
-    splice: ($) => seq("{", $._expr, "}"),
+    splice: ($) => seq("{", field("expr", $._expr), "}"),
     // Anything that isn't whitespace or a brace: flags, subcommands, file names.
     command_token: () => prec(-1, /[^{}\s]+/),
 
