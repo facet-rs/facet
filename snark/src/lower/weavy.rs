@@ -3740,6 +3740,7 @@ struct RuntimeWeavyOutput<'a> {
     input_points: &'a RuntimeWeavyInputPoints,
     next_lookahead_index: &'a mut usize,
     stats: &'a mut RunStats,
+    stats_collection: RuntimeWeavyStatsCollection,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
 
@@ -3996,6 +3997,7 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyStatsCollection::Enabled,
     )
 }
 
@@ -4020,6 +4022,33 @@ pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Enabled,
+        RuntimeWeavyStatsCollection::Enabled,
+    )
+}
+
+/// Execute a prepared Weavy plan, collect reusable-node metadata, and skip
+/// Weavy runner counters.
+pub fn parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_weavy_with_lexer_program(
+        RuntimeWeavyInput {
+            plan: &plan.program,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Enabled,
+        RuntimeWeavyStatsCollection::Disabled,
     )
 }
 
@@ -4044,6 +4073,7 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
         RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyStatsCollection::Enabled,
     )
 }
 
@@ -4068,6 +4098,33 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
         RuntimeWeavyReuseCollection::Enabled,
+        RuntimeWeavyStatsCollection::Enabled,
+    )
+}
+
+/// Execute a recovering prepared Weavy plan, collect reusable-node metadata, and
+/// skip Weavy runner counters.
+pub fn parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_weavy_with_lexer_program(
+        RuntimeWeavyInput {
+            plan: &plan.program,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::SkipInvalidInput,
+        None,
+        RuntimeWeavyReuseCollection::Enabled,
+        RuntimeWeavyStatsCollection::Disabled,
     )
 }
 
@@ -4258,6 +4315,39 @@ pub fn reparse_prepared_weavy_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         Some(&reuse_index),
         RuntimeWeavyReuseCollection::Enabled,
+        RuntimeWeavyStatsCollection::Enabled,
+    )
+}
+
+/// Reparse one edited input through Weavy using reusable nodes from a previous
+/// report, without collecting Weavy runner counters.
+#[allow(clippy::too_many_arguments)]
+pub fn reparse_prepared_weavy_unmetered_with_report_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    old_input: &str,
+    previous_report: &WeavyParseReport,
+    edit: parser_ir::ParserInputEdit,
+    new_input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    validate_weavy_edit(edit, old_input, new_input)?;
+    let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
+    parse_weavy_with_lexer_program(
+        RuntimeWeavyInput {
+            plan: &plan.program,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input: new_input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::Strict,
+        Some(&reuse_index),
+        RuntimeWeavyReuseCollection::Enabled,
+        RuntimeWeavyStatsCollection::Disabled,
     )
 }
 
@@ -4288,6 +4378,39 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         Some(&reuse_index),
         RuntimeWeavyReuseCollection::Enabled,
+        RuntimeWeavyStatsCollection::Enabled,
+    )
+}
+
+/// Reparse one edited input through Weavy with skip-invalid recovery, without
+/// collecting Weavy runner counters.
+#[allow(clippy::too_many_arguments)]
+pub fn reparse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    old_input: &str,
+    previous_report: &WeavyParseReport,
+    edit: parser_ir::ParserInputEdit,
+    new_input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    validate_weavy_edit(edit, old_input, new_input)?;
+    let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
+    parse_weavy_with_lexer_program(
+        RuntimeWeavyInput {
+            plan: &plan.program,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input: new_input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::SkipInvalidInput,
+        Some(&reuse_index),
+        RuntimeWeavyReuseCollection::Enabled,
+        RuntimeWeavyStatsCollection::Disabled,
     )
 }
 
@@ -4563,6 +4686,7 @@ fn parse_weavy_with_lexer_program(
     recovery: RuntimeWeavyRecoveryMode,
     reuse_index: Option<&RuntimeWeavyReuseIndex>,
     reuse_collection: RuntimeWeavyReuseCollection,
+    stats_collection: RuntimeWeavyStatsCollection,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(WeavyParseError::WrongStage {
@@ -4679,6 +4803,7 @@ fn parse_weavy_with_lexer_program(
             input_points: &input_points,
             next_lookahead_index: &mut next_lookahead_index,
             stats: &mut stats,
+            stats_collection,
             external_scanner_errors: &external_scanner_errors,
         };
         branch_outcomes.clear();
@@ -4943,6 +5068,12 @@ enum RuntimeWeavyRecoveryMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeWeavyReuseCollection {
+    Disabled,
+    Enabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeWeavyStatsCollection {
     Disabled,
     Enabled,
 }
@@ -5453,7 +5584,8 @@ fn run_runtime_weavy_state_probe(
         parser_ir::LookaheadTokenId::from_index(*output.next_lookahead_index),
         RuntimeWeavyMode::ProbeState,
     );
-    let run_result = run_runtime_weavy_block(input_ctx.plan, block, &mut stepper);
+    let run_result =
+        run_runtime_weavy_block(input_ctx.plan, block, &mut stepper, output.stats_collection);
     if stepper.lookahead.is_some() {
         *output.next_lookahead_index += 1;
     }
@@ -5511,7 +5643,12 @@ fn run_runtime_weavy_action(
     );
     stepper.lookahead = Some(action_ctx.token);
     let version = stepper.version;
-    match run_runtime_weavy_block(input_ctx.plan, action_ctx.block, &mut stepper) {
+    match run_runtime_weavy_block(
+        input_ctx.plan,
+        action_ctx.block,
+        &mut stepper,
+        output.stats_collection,
+    ) {
         Ok(run_stats) => add_run_stats(output.stats, run_stats),
         Err(error) => {
             return RuntimeWeavyStepOutcome::Failed { version, error };
@@ -5543,9 +5680,19 @@ fn run_runtime_weavy_block(
     plan: &WeavyParserProgram,
     block: BlockRef,
     stepper: &mut RuntimeWeavyStepper<'_>,
+    stats_collection: RuntimeWeavyStatsCollection,
 ) -> Result<RunStats, RuntimeWeavyStepError> {
     let program = plan.runtime_dense_block(block)?;
-    match weavy::run_dense_program_with_stats(program, &plan.dense.blocks, stepper) {
+    let result = match stats_collection {
+        RuntimeWeavyStatsCollection::Enabled => {
+            weavy::run_dense_program_with_stats(program, &plan.dense.blocks, stepper)
+        }
+        RuntimeWeavyStatsCollection::Disabled => {
+            weavy::run_dense_program(program, &plan.dense.blocks, stepper)
+                .map(|()| RunStats::default())
+        }
+    };
+    match result {
         Ok(stats) => Ok(stats),
         Err(RunError::MissingBlock(block)) => {
             Err(RuntimeWeavyStepError::MissingDenseRuntimeBlock {

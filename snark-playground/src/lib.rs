@@ -19,10 +19,10 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         WeavyLoweringBarrier, WeavyParseError, WeavyParsePlan, WeavyParseReport,
-        parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
-        parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner,
-        reparse_prepared_weavy_recovering_with_report_and_scanner,
-        reparse_prepared_weavy_with_report_and_scanner,
+        parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner,
+        parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_and_scanner,
+        reparse_prepared_weavy_recovering_unmetered_with_report_and_scanner,
+        reparse_prepared_weavy_unmetered_with_report_and_scanner,
     },
     manifest::TreeSitterConfig,
     parser::{
@@ -2084,7 +2084,7 @@ fn parse_strict_weavy_with_optional_scanner(
     scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
+    parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
         &prepared.weavy_plan,
         &prepared.parser,
         &prepared.table,
@@ -2098,7 +2098,7 @@ fn parse_recovering_weavy_with_optional_scanner(
     scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
+    parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_and_scanner(
         &prepared.weavy_plan,
         &prepared.parser,
         &prepared.table,
@@ -2114,7 +2114,7 @@ fn parse_weavy_with_optional_recovery(
     previous: Option<(&str, &WeavyParseReport, ParserInputEdit)>,
 ) -> Result<PlaygroundParseReport, WeavyParseError> {
     let strict = if let Some((old_input, previous_report, edit)) = previous {
-        reparse_prepared_weavy_with_report_and_scanner(
+        reparse_prepared_weavy_unmetered_with_report_and_scanner(
             &prepared.weavy_plan,
             &prepared.parser,
             &prepared.table,
@@ -2133,7 +2133,7 @@ fn parse_weavy_with_optional_recovery(
             strict_error_byte: None,
         }),
         Err(strict_error) => match if let Some((old_input, previous_report, edit)) = previous {
-            reparse_prepared_weavy_recovering_with_report_and_scanner(
+            reparse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
                 &prepared.weavy_plan,
                 &prepared.parser,
                 &prepared.table,
