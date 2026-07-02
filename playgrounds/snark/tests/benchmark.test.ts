@@ -83,6 +83,7 @@ test("graphql size ladder parses cleanly and reports timings", async () => {
     console.log(`scalingIndex (median xPrev/sizeRatio) = ${scalingIndex.toFixed(3)}  [1.0 = linear, >>1 = super-linear]`);
 
     assert.equal(Number.isFinite(scalingIndex), true);
+    assert.ok(scalingIndex < 2, `expected near-linear scaling, got ${scalingIndex.toFixed(3)}`);
   } finally {
     session.free();
   }
