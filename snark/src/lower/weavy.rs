@@ -4888,6 +4888,70 @@ pub fn parse_prepared_weavy_native_hostcalls_tree_and_scanner(
     .map(|report| report.tree)
 }
 
+/// Execute a prepared Weavy plan through native host-call blocks and return the ranged CST.
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+pub fn parse_prepared_weavy_native_hostcalls_resolved_tree(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+    parse_prepared_weavy_native_hostcalls_resolved_tree_and_scanner(
+        plan, parser, table, input, None,
+    )
+}
+
+/// Execute a prepared Weavy plan through native host-call blocks with a scanner host and return
+/// the ranged CST.
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+pub fn parse_prepared_weavy_native_hostcalls_resolved_tree_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(tree) = parse_weavy_deterministic_resolved_tree_with_execution(
+        input_ctx,
+        RuntimeWeavyBlockExecution::NativeHostCalls,
+    )? {
+        return Ok(tree);
+    }
+    parse_weavy_with_lexer_program(
+        input_ctx,
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::NativeHostCalls,
+    )
+    .and_then(|report| {
+        report
+            .accepted_resolved_tree(parser, input)
+            .ok_or(WeavyParseError::MissingResolvedTree)
+    })
+}
+
 /// Execute a prepared Weavy plan and collect reusable-node metadata.
 pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     plan: &WeavyParsePlan,
@@ -5215,9 +5279,19 @@ fn parse_weavy_deterministic_tree_with_execution(
 fn parse_weavy_deterministic_resolved_tree_with_lexer_program(
     input_ctx: RuntimeWeavyInput<'_>,
 ) -> Result<Option<parser_ir::ResolvedCstNode>, WeavyParseError> {
-    parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicResolvedTreeSink>(
+    parse_weavy_deterministic_resolved_tree_with_execution(
         input_ctx,
         RuntimeWeavyBlockExecution::Direct,
+    )
+}
+
+fn parse_weavy_deterministic_resolved_tree_with_execution(
+    input_ctx: RuntimeWeavyInput<'_>,
+    block_execution: RuntimeWeavyBlockExecution,
+) -> Result<Option<parser_ir::ResolvedCstNode>, WeavyParseError> {
+    parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicResolvedTreeSink>(
+        input_ctx,
+        block_execution,
     )
 }
 
@@ -11363,6 +11437,16 @@ mod tests {
         ))]
         let native_hostcalls_tree =
             parse_prepared_weavy_native_hostcalls_tree(&plan, &parser, &table, "ab").unwrap();
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        let native_hostcalls_resolved_tree =
+            parse_prepared_weavy_native_hostcalls_resolved_tree(&plan, &parser, &table, "ab")
+                .unwrap();
 
         assert_eq!(metered.tree(), default_direct.tree());
         assert_eq!(deterministic_direct.tree(), default_direct.tree());
@@ -11373,6 +11457,14 @@ mod tests {
             .expect("direct report resolves its accepted tree");
         assert_eq!(deterministic_resolved, report_resolved);
         assert_eq!(resolved_tree, report_resolved);
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        assert_eq!(native_hostcalls_resolved_tree, report_resolved);
         assert_eq!(
             deterministic_direct.accepted_tree_events(),
             default_direct.accepted_tree_events()
