@@ -8028,7 +8028,7 @@ fn run_runtime_weavy_state_probe(
         .last()
         .ok_or(RuntimeWeavyStepError::EmptyStack)?
         .state;
-    let block = input_ctx.plan.program.runtime_state_block(state)?;
+    let _block = input_ctx.plan.program.runtime_state_block(state)?;
     let mut stepper = RuntimeWeavyStepper::from_branch_ref(
         RuntimeWeavyStepperInput {
             input: input_ctx,
@@ -8045,26 +8045,11 @@ fn run_runtime_weavy_state_probe(
         parser_ir::LookaheadTokenId::from_index(*output.next_lookahead_index),
         RuntimeWeavyMode::ProbeState,
     );
-    let run_result = run_runtime_weavy_block(
-        input_ctx.plan,
-        block,
-        &mut stepper,
-        output.block_execution,
-        output.hostcall_stats,
-    );
+    let dispatch = stepper.probe_state_direct(state)?;
     if stepper.lookahead.is_some() {
         *output.next_lookahead_index += 1;
     }
-    let run_stats = run_result?;
-    add_run_stats(output.stats, run_stats);
-    stepper.dispatch.ok_or(RuntimeWeavyStepError::NoAction {
-        state,
-        lookahead: stepper
-            .lookahead
-            .map(|token| token.lookahead)
-            .unwrap_or(parser_ir::LookaheadSymbol::Eof),
-        byte_position: stepper.byte_position,
-    })
+    Ok(dispatch)
 }
 
 /// Total dynamic precedence of an accepted tree: the sum of each reduced
@@ -8648,6 +8633,82 @@ impl<'a> RuntimeWeavyStepper<'a> {
             trace_events: stepper_input.trace_events,
             external_scanner_errors: stepper_input.external_scanner_errors,
         }
+    }
+
+    fn probe_state_direct(
+        &mut self,
+        state: parser_ir::ParseStateId,
+    ) -> Result<RuntimeWeavyDispatch, RuntimeWeavyStepError> {
+        let mode_id = self.parse_state(state)?.lex_mode();
+        self.snark_stats.record_intrinsic(&SnarkIntrinsic::Lex {
+            version: StackVersionId::from_index(self.version.get() as usize),
+            mode: LexModeId::from_index(mode_id.get() as usize),
+            output: LookaheadTokenId::from_index(self.lookahead_id.get() as usize),
+        });
+        let token = {
+            let state_row = self.parse_state(state)?;
+            self.lex(state_row, self.byte_position)?
+        };
+        let valid_symbols = if let parser_ir::LookaheadSymbol::External(_) = token.lookahead {
+            self.table.lexical_modes()[mode_id.get() as usize].valid_symbols()
+        } else {
+            None
+        };
+        trace_push!(
+            self.trace_events,
+            parser_ir::TraceEvent::Lex {
+                version: self.version,
+                mode: mode_id,
+                lookahead: self.lookahead_id,
+            }
+        );
+        if let Some(valid_symbols) = valid_symbols {
+            trace_push!(
+                self.trace_events,
+                parser_ir::TraceEvent::ExternalScanner {
+                    version: self.version,
+                    valid_symbols,
+                    before: token.scanner.and_then(|scanner| scanner.before()),
+                    after: token.scanner.and_then(|scanner| scanner.after()),
+                    result: Some(self.lookahead_id),
+                }
+            );
+        }
+        self.lookahead = Some(token);
+        self.snark_stats
+            .record_intrinsic(&SnarkIntrinsic::DispatchActions {
+                version: StackVersionId::from_index(self.version.get() as usize),
+                state: ParseStateId::from_index(state.get() as usize),
+                lookahead: LookaheadTokenId::from_index(self.lookahead_id.get() as usize),
+            });
+        let (entry_index, action_count, first_action) = {
+            let state_row = self.parse_state(state)?;
+            let (entry_index, entry) = state_row
+                .entries()
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| entry.lookahead() == token.lookahead)
+                .ok_or(RuntimeWeavyStepError::NoAction {
+                    state,
+                    lookahead: token.lookahead,
+                    byte_position: self.byte_position,
+                })?;
+            (
+                entry_index,
+                entry.actions().len(),
+                entry.actions().first().copied(),
+            )
+        };
+        let dispatch = RuntimeWeavyDispatch {
+            state,
+            token,
+            lookahead: self.lookahead_id,
+            entry_index,
+            action_count,
+            first_action,
+        };
+        self.dispatch = Some(dispatch.clone());
+        Ok(dispatch)
     }
 
     fn step_intrinsic<'program>(
