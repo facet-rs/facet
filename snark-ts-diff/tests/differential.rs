@@ -300,8 +300,8 @@ fn readiness_accepts_frozen_grammar_json() {
     assert!(stdout.contains("direct_no_trace_stencil_state:"));
     assert!(stdout.contains("host_barriers=0 opaque=0 host_calls=0"));
     assert!(stdout.contains("Lexer(ExternalScanner):"));
-    assert!(stdout.contains("native_hostcall_blocks: total="));
-    assert!(stdout.contains("native_hostcall_block_barriers:"));
+    assert!(stdout.contains("hostcall_blocks: total="));
+    assert!(stdout.contains("hostcall_block_barriers:"));
 }
 
 // ---------------------------------------------------------------------------

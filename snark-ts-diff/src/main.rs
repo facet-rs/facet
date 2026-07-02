@@ -1,6 +1,6 @@
 //! Parse-throughput bench for the snark Weavy runtime.
 //!
-//! Two modes:
+//! Common modes:
 //!
 //!   # single input, prepare once, parse N times, report best (min) ms
 //!   cargo run --release -p snark-ts-diff -- <grammar.js|grammar.json> <input-file> [iters]
@@ -15,8 +15,8 @@
 //!   # strict parse to ranged CST, using the deterministic direct resolved-tree path
 //!   cargo run --release -p snark-ts-diff -- resolved <grammar.js|grammar.json> <input-file> [iters]
 //!
-//!   # strict parse through native host-call blocks; requires --features jit
-//!   cargo run --release -p snark-ts-diff --features jit -- native <grammar.js|grammar.json> <input-file> [iters]
+//!   # strict parse through Weavy host-call blocks; requires --features jit
+//!   cargo run --release -p snark-ts-diff --features jit -- hostcalls <grammar.js|grammar.json> <input-file> [iters]
 //!
 //!   # lowering/JIT readiness for one grammar
 //!   cargo run --release -p snark-ts-diff -- readiness <grammar.js|grammar.json>
@@ -290,7 +290,7 @@ fn collect_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyPars
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-fn native_once(p: &Prepared, input: &str) -> Result<(), WeavyParseError> {
+fn hostcalls_once(p: &Prepared, input: &str) -> Result<(), WeavyParseError> {
     parse_prepared_weavy_native_hostcalls_tree(&p.plan, &p.parser, &p.table, input).map(|_| ())
 }
 
@@ -325,12 +325,12 @@ fn best_collect_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, Weavy
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-fn best_native_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
-    native_once(p, input)?;
+fn best_hostcalls_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
+    hostcalls_once(p, input)?;
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        native_once(p, input)?;
+        hostcalls_once(p, input)?;
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     Ok(best_ms)
@@ -486,7 +486,7 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
     let analysis = p.plan.analysis();
     let readiness = &analysis.readiness;
     let lexer = &readiness.lexer;
-    let native_blocks = &analysis.native_hostcall_blocks;
+    let hostcall_blocks = &analysis.native_hostcall_blocks;
     let mut out = io::stdout().lock();
     writeln!(out, "grammar: {grammar_path}")?;
     writeln!(
@@ -533,18 +533,18 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "native_hostcall_blocks: total={} compatible={} incompatible={} compatible_intrinsic_ops={} incompatible_intrinsic_ops={}",
-        native_blocks.total_blocks,
-        native_blocks.compatible_blocks,
-        native_blocks.incompatible_blocks,
-        native_blocks.compatible_intrinsic_ops,
-        native_blocks.incompatible_intrinsic_ops
+        "hostcall_blocks: total={} compatible={} incompatible={} compatible_intrinsic_ops={} incompatible_intrinsic_ops={}",
+        hostcall_blocks.total_blocks,
+        hostcall_blocks.compatible_blocks,
+        hostcall_blocks.incompatible_blocks,
+        hostcall_blocks.compatible_intrinsic_ops,
+        hostcall_blocks.incompatible_intrinsic_ops
     )?;
-    if native_blocks.barrier_summaries.is_empty() {
-        writeln!(out, "native_hostcall_block_barriers: none")?;
+    if hostcall_blocks.barrier_summaries.is_empty() {
+        writeln!(out, "hostcall_block_barriers: none")?;
     } else {
-        writeln!(out, "native_hostcall_block_barriers:")?;
-        for summary in &native_blocks.barrier_summaries {
+        writeln!(out, "hostcall_block_barriers:")?;
+        for summary in &hostcall_blocks.barrier_summaries {
             writeln!(out, "  {:?}: {}", summary.barrier, summary.count)?;
         }
     }
@@ -748,7 +748,7 @@ fn main() {
         return;
     }
 
-    if args.get(1).map(|s| s == "native").unwrap_or(false) {
+    if args.get(1).map(|s| s == "hostcalls").unwrap_or(false) {
         #[cfg(all(
             feature = "jit",
             any(
@@ -759,24 +759,24 @@ fn main() {
         {
             let grammar_path = args
                 .get(2)
-                .expect("usage: native <grammar.js|grammar.json> <input> [iters]");
+                .expect("usage: hostcalls <grammar.js|grammar.json> <input> [iters]");
             let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
             let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
             let p = prepare(grammar_path);
-            if let Err(error) = native_once(&p, &input) {
-                eprintln!("native hostcall parse failed: {error:?}");
+            if let Err(error) = hostcalls_once(&p, &input) {
+                eprintln!("Weavy hostcall parse failed: {error:?}");
                 std::process::exit(1);
             }
-            let best_ms = match best_native_ms(&p, &input, iters) {
+            let best_ms = match best_hostcalls_ms(&p, &input, iters) {
                 Ok(best_ms) => best_ms,
                 Err(error) => {
-                    eprintln!("native hostcall parse failed during timing: {error:?}");
+                    eprintln!("Weavy hostcall parse failed during timing: {error:?}");
                     std::process::exit(1);
                 }
             };
             let bytes = input.len();
             println!(
-                "snark weavy native-hostcall parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
+                "snark weavy hostcall parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
                 bytes as f64 / best_ms
             );
             return;
@@ -790,7 +790,7 @@ fn main() {
         )))]
         {
             eprintln!(
-                "native hostcall parse requires `--features jit` on a supported native target"
+                "Weavy hostcall parse requires `--features jit` on a supported native target"
             );
             std::process::exit(1);
         }
