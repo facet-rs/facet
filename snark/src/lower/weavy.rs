@@ -4218,12 +4218,20 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_unmetered_with_report_and_scanner(
-        plan,
-        parser,
-        table,
-        input,
-        external_scanner,
+    parse_weavy_with_lexer_program(
+        RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        },
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
     )
 }
 
@@ -4259,41 +4267,6 @@ pub fn parse_prepared_weavy_metered_with_report_and_scanner(
         None,
         RuntimeWeavyReuseCollection::Disabled,
         RuntimeWeavyBlockExecution::Metered,
-    )
-}
-
-/// Execute a prepared Weavy plan and skip Weavy runner counters.
-pub fn parse_prepared_weavy_unmetered_with_report(
-    plan: &WeavyParsePlan,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_unmetered_with_report_and_scanner(plan, parser, table, input, None)
-}
-
-/// Execute a prepared Weavy plan with a scanner host and skip Weavy runner counters.
-pub fn parse_prepared_weavy_unmetered_with_report_and_scanner(
-    plan: &WeavyParsePlan,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ExternalScannerHost>,
-) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
-        RuntimeWeavyRecoveryMode::Strict,
-        None,
-        RuntimeWeavyReuseCollection::Disabled,
-        RuntimeWeavyBlockExecution::Direct,
     )
 }
 
@@ -4367,32 +4340,6 @@ pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyBlockExecution::Metered,
-    )
-}
-
-/// Execute a prepared Weavy plan, collect reusable-node metadata, and skip
-/// Weavy runner counters.
-pub fn parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
-    plan: &WeavyParsePlan,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ExternalScannerHost>,
-) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
-        RuntimeWeavyRecoveryMode::Strict,
-        None,
-        RuntimeWeavyReuseCollection::Enabled,
         RuntimeWeavyBlockExecution::Direct,
     )
 }
@@ -4418,64 +4365,12 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
         RuntimeWeavyReuseCollection::Disabled,
-        RuntimeWeavyBlockExecution::Metered,
-    )
-}
-
-/// Execute a prepared Weavy plan with skip-invalid recovery, without collecting
-/// Weavy runner counters.
-pub fn parse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
-    plan: &WeavyParsePlan,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ExternalScannerHost>,
-) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
-        RuntimeWeavyRecoveryMode::SkipInvalidInput,
-        None,
-        RuntimeWeavyReuseCollection::Disabled,
         RuntimeWeavyBlockExecution::Direct,
     )
 }
 
 /// Execute a recovering prepared Weavy plan and collect reusable-node metadata.
 pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
-    plan: &WeavyParsePlan,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    input: &str,
-    external_scanner: Option<&dyn ExternalScannerHost>,
-) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
-        RuntimeWeavyRecoveryMode::SkipInvalidInput,
-        None,
-        RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyBlockExecution::Metered,
-    )
-}
-
-/// Execute a recovering prepared Weavy plan, collect reusable-node metadata, and
-/// skip Weavy runner counters.
-pub fn parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_and_scanner(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
@@ -4548,7 +4443,7 @@ impl<'a> WeavyParseSession<'a> {
         input: impl Into<String>,
     ) -> Result<&WeavyParseReport, WeavyParseError> {
         let input = input.into();
-        let report = parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
+        let report = parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
             self.plan,
             self.parser,
             self.table,
@@ -4573,7 +4468,7 @@ impl<'a> WeavyParseSession<'a> {
         let report = if let (Some(old_input), Some(last_report)) =
             (self.last_input.as_deref(), self.last_report.as_ref())
         {
-            reparse_prepared_weavy_unmetered_with_report_and_scanner(
+            reparse_prepared_weavy_with_report_and_scanner(
                 self.plan,
                 self.parser,
                 self.table,
@@ -4584,7 +4479,7 @@ impl<'a> WeavyParseSession<'a> {
                 self.external_scanner,
             )?
         } else {
-            parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner(
+            parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
                 self.plan,
                 self.parser,
                 self.table,
@@ -4606,14 +4501,13 @@ impl<'a> WeavyParseSession<'a> {
         input: impl Into<String>,
     ) -> Result<&WeavyParseReport, WeavyParseError> {
         let input = input.into();
-        let report =
-            parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_and_scanner(
-                self.plan,
-                self.parser,
-                self.table,
-                &input,
-                self.external_scanner,
-            )?;
+        let report = parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
+            self.plan,
+            self.parser,
+            self.table,
+            &input,
+            self.external_scanner,
+        )?;
         self.last_input = Some(input);
         self.last_report = Some(report);
         Ok(self
@@ -4632,7 +4526,7 @@ impl<'a> WeavyParseSession<'a> {
         let report = if let (Some(old_input), Some(last_report)) =
             (self.last_input.as_deref(), self.last_report.as_ref())
         {
-            reparse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
+            reparse_prepared_weavy_recovering_with_report_and_scanner(
                 self.plan,
                 self.parser,
                 self.table,
@@ -4643,7 +4537,7 @@ impl<'a> WeavyParseSession<'a> {
                 self.external_scanner,
             )?
         } else {
-            parse_prepared_weavy_recovering_collecting_reuse_unmetered_with_report_and_scanner(
+            parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
                 self.plan,
                 self.parser,
                 self.table,
@@ -4660,41 +4554,10 @@ impl<'a> WeavyParseSession<'a> {
     }
 }
 
-/// Reparse one edited input through Weavy using reusable nodes from a previous report.
+/// Reparse one edited input through the direct Weavy runtime using reusable
+/// nodes from a previous report.
 #[allow(clippy::too_many_arguments)]
 pub fn reparse_prepared_weavy_with_report_and_scanner(
-    plan: &WeavyParsePlan,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    old_input: &str,
-    previous_report: &WeavyParseReport,
-    edit: parser_ir::ParserInputEdit,
-    new_input: &str,
-    external_scanner: Option<&dyn ExternalScannerHost>,
-) -> Result<WeavyParseReport, WeavyParseError> {
-    validate_weavy_edit(edit, old_input, new_input)?;
-    let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
-    parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input: new_input,
-            external_scanner,
-        },
-        RuntimeWeavyRecoveryMode::Strict,
-        Some(&reuse_index),
-        RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyBlockExecution::Metered,
-    )
-}
-
-/// Reparse one edited input through Weavy using reusable nodes from a previous
-/// report, without collecting Weavy runner counters.
-#[allow(clippy::too_many_arguments)]
-pub fn reparse_prepared_weavy_unmetered_with_report_and_scanner(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
@@ -4723,41 +4586,10 @@ pub fn reparse_prepared_weavy_unmetered_with_report_and_scanner(
     )
 }
 
-/// Reparse one edited input through Weavy with skip-invalid recovery.
+/// Reparse one edited input through the direct Weavy runtime with skip-invalid
+/// recovery.
 #[allow(clippy::too_many_arguments)]
 pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
-    plan: &WeavyParsePlan,
-    parser: &parser_ir::ParserGrammar,
-    table: &parser_ir::ParseTable,
-    old_input: &str,
-    previous_report: &WeavyParseReport,
-    edit: parser_ir::ParserInputEdit,
-    new_input: &str,
-    external_scanner: Option<&dyn ExternalScannerHost>,
-) -> Result<WeavyParseReport, WeavyParseError> {
-    validate_weavy_edit(edit, old_input, new_input)?;
-    let reuse_index = RuntimeWeavyReuseIndex::from_report(previous_report, edit);
-    parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input: new_input,
-            external_scanner,
-        },
-        RuntimeWeavyRecoveryMode::SkipInvalidInput,
-        Some(&reuse_index),
-        RuntimeWeavyReuseCollection::Enabled,
-        RuntimeWeavyBlockExecution::Metered,
-    )
-}
-
-/// Reparse one edited input through Weavy with skip-invalid recovery, without
-/// collecting Weavy runner counters.
-#[allow(clippy::too_many_arguments)]
-pub fn reparse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
     table: &parser_ir::ParseTable,
@@ -10451,7 +10283,7 @@ mod tests {
     }
 
     #[test]
-    fn unmetered_weavy_parse_matches_metered_parse() {
+    fn direct_weavy_parse_matches_metered_parse() {
         let raw = crate::grammar::RawGrammarJson::from_tree_sitter_json_str(
             r#"{
               "name": "tiny",
@@ -10480,13 +10312,10 @@ mod tests {
             parse_prepared_weavy_metered_with_report(&plan, &parser, &table, "ab").unwrap();
         let default_direct =
             parse_prepared_weavy_with_report(&plan, &parser, &table, "ab").unwrap();
-        let unmetered =
-            parse_prepared_weavy_unmetered_with_report(&plan, &parser, &table, "ab").unwrap();
-        let recovering_unmetered =
-            parse_prepared_weavy_recovering_unmetered_with_report_and_scanner(
-                &plan, &parser, &table, "ab", None,
-            )
-            .unwrap();
+        let recovering_direct = parse_prepared_weavy_recovering_with_report_and_scanner(
+            &plan, &parser, &table, "ab", None,
+        )
+        .unwrap();
         #[cfg(all(
             feature = "jit",
             any(
@@ -10498,20 +10327,22 @@ mod tests {
             parse_prepared_weavy_native_hostcalls_with_report(&plan, &parser, &table, "ab")
                 .unwrap();
 
-        assert_eq!(metered.tree(), unmetered.tree());
-        assert!(!metered.trace_events().is_empty());
         assert_eq!(metered.tree(), default_direct.tree());
+        assert!(!metered.trace_events().is_empty());
         assert!(default_direct.trace_events().is_empty());
-        assert!(unmetered.trace_events().is_empty());
-        assert!(recovering_unmetered.trace_events().is_empty());
+        assert!(recovering_direct.trace_events().is_empty());
         assert_eq!(
             metered.accepted_tree_events(),
-            unmetered.accepted_tree_events()
+            default_direct.accepted_tree_events()
         );
-        assert_eq!(metered.tree(), recovering_unmetered.tree());
-        assert_eq!(recovering_unmetered.accepted_count(), 1);
-        assert_eq!(recovering_unmetered.failure_count(), 0);
-        assert!(unmetered.accepted_resolved_tree(&parser, "ab").is_some());
+        assert_eq!(metered.tree(), recovering_direct.tree());
+        assert_eq!(recovering_direct.accepted_count(), 1);
+        assert_eq!(recovering_direct.failure_count(), 0);
+        assert!(
+            default_direct
+                .accepted_resolved_tree(&parser, "ab")
+                .is_some()
+        );
         #[cfg(all(
             feature = "jit",
             any(
@@ -10539,10 +10370,10 @@ mod tests {
                     .is_some()
             );
         }
-        assert_eq!(unmetered.tree().to_sexp(), "(source_file)");
-        assert_eq!(unmetered.accepted_count(), 1);
-        assert_eq!(unmetered.failure_count(), 0);
-        assert_eq!(unmetered.stats().step_count, 0);
+        assert_eq!(default_direct.tree().to_sexp(), "(source_file)");
+        assert_eq!(default_direct.accepted_count(), 1);
+        assert_eq!(default_direct.failure_count(), 0);
+        assert_eq!(default_direct.stats().step_count, 0);
         #[cfg(all(
             feature = "jit",
             any(
