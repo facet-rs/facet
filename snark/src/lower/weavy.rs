@@ -6603,6 +6603,29 @@ fn runtime_weavy_action_block_for_execution(
     }
 }
 
+fn runtime_weavy_state_block_for_execution(
+    input_ctx: RuntimeWeavyInput<'_>,
+    block_execution: RuntimeWeavyBlockExecution,
+    state: parser_ir::ParseStateId,
+) -> Result<Option<BlockRef>, RuntimeWeavyStepError> {
+    match block_execution {
+        RuntimeWeavyBlockExecution::Direct => Ok(None),
+        RuntimeWeavyBlockExecution::Metered => {
+            input_ctx.plan.program.runtime_state_block(state).map(Some)
+        }
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        RuntimeWeavyBlockExecution::HostCalls => {
+            input_ctx.plan.program.runtime_state_block(state).map(Some)
+        }
+    }
+}
+
 fn runtime_weavy_lex_one(
     input_ctx: RuntimeWeavyInput<'_>,
     byte_position: usize,
@@ -8044,7 +8067,7 @@ fn run_runtime_weavy_state_probe(
         .last()
         .ok_or(RuntimeWeavyStepError::EmptyStack)?
         .state;
-    let _block = input_ctx.plan.program.runtime_state_block(state)?;
+    let _block = runtime_weavy_state_block_for_execution(input_ctx, output.block_execution, state)?;
     let mut stepper = RuntimeWeavyStepper::from_branch_ref(
         RuntimeWeavyStepperInput {
             input: input_ctx,
