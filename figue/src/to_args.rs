@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 use facet_core::Facet;
 use facet_core::ScalarType as FacetScalarType;
@@ -98,33 +98,36 @@ pub fn to_os_args<T: Facet<'static> + ?Sized>(value: &T) -> Result<Vec<OsString>
     to_os_args_with_schema(value, &schema)
 }
 
-/// Convert a typed CLI value into a shell-friendly command argument string.
+/// Convert a typed CLI value into a display-oriented argument string.
 ///
-/// This is equivalent to [`to_os_args`] joined by spaces with lossy UTF-8 conversion.
-pub fn to_args_string<T: Facet<'static> + ?Sized>(value: &T) -> Result<String, ToArgsError> {
+/// This joins [`to_os_args`] with spaces as an [`OsString`] and applies basic
+/// double-quoting when a token contains spaces or single quotes. It is not a
+/// full shell-escaping implementation.
+pub fn to_args_string<T: Facet<'static> + ?Sized>(value: &T) -> Result<OsString, ToArgsError> {
     let args = to_os_args(value)?;
-    Ok(args
-        .iter()
-        .map(|arg| arg.to_string_lossy().to_string())
-        .collect::<Vec<_>>()
-        .join(" "))
+    Ok(render_display_command(args.iter().map(OsString::as_os_str)))
 }
 
-/// Convert a typed CLI value into a shell-friendly command string prefixed with
-/// the current executable path.
+/// Convert a typed CLI value into a display-oriented command string prefixed
+/// with the current executable path.
 pub fn to_args_string_with_current_exe<T: Facet<'static> + ?Sized>(
     value: &T,
-) -> Result<String, ToArgsError> {
+) -> Result<OsString, ToArgsError> {
     let exe =
         std::env::current_exe().map_err(|error| ToArgsError::CurrentExe(error.to_string()))?;
-    let exe_display = exe.to_string_lossy().to_string();
-    let args = to_args_string(value)?;
 
-    if args.is_empty() {
-        Ok(exe_display)
-    } else {
-        Ok(format!("{exe_display} {args}"))
+    let exe_display = exe.to_string_lossy();
+    if exe_display.contains(' ') {
+        tracing::warn!(
+            exe_path = %exe_display,
+            "to_args_string_with_current_exe is using basic quoting for an executable path containing spaces"
+        );
     }
+
+    let args = to_os_args(value)?;
+    Ok(render_display_command(
+        std::iter::once(exe.as_os_str()).chain(args.iter().map(OsString::as_os_str)),
+    ))
 }
 
 /// Convenience trait for converting typed CLI values to argument vectors.
@@ -134,14 +137,14 @@ pub trait ToArgs: Facet<'static> {
         to_os_args(self)
     }
 
-    /// Convert this value into a shell-friendly command argument string.
-    fn to_args_string(&self) -> Result<String, ToArgsError> {
+    /// Convert this value into a display-oriented argument string.
+    fn to_args_string(&self) -> Result<OsString, ToArgsError> {
         to_args_string(self)
     }
 
-    /// Convert this value into a shell-friendly command string prefixed with
+    /// Convert this value into a display-oriented command string prefixed with
     /// the current executable path.
-    fn to_args_string_with_current_exe(&self) -> Result<String, ToArgsError> {
+    fn to_args_string_with_current_exe(&self) -> Result<OsString, ToArgsError> {
         to_args_string_with_current_exe(self)
     }
 }
@@ -158,7 +161,7 @@ enum NamedArgValueMode {
 fn named_arg_value_mode(schema: &ArgSchema) -> NamedArgValueMode {
     match schema.kind() {
         ArgKind::Named { counted: true, .. } => NamedArgValueMode::CountedFlag,
-        ArgKind::Named { counted: false, .. } if schema.value().is_bool_or_vec_of_bool() => {
+        ArgKind::Named { counted: false, .. } if schema.value().inner_if_option().is_bool() => {
             NamedArgValueMode::BoolFlag
         }
         ArgKind::Named { counted: false, .. } => NamedArgValueMode::RequiredValue,
@@ -279,10 +282,16 @@ fn encode_named_arg(
     }
 
     if matches!(value_mode, NamedArgValueMode::BoolFlag) {
-        if let ConfigValue::Bool(bool_value) = value
-            && bool_value.value
-        {
+        let ConfigValue::Bool(bool_value) = value else {
+            return Err(ToArgsError::UnsupportedScalarValue {
+                arg_name: name.to_string(),
+            });
+        };
+
+        if bool_value.value {
             args.push(flag.into());
+        } else if matches!(schema.default(), Some(ConfigValue::Bool(default)) if default.value) {
+            args.push(format!("--no-{}", name.to_kebab_case()).into());
         }
         return Ok(());
     }
@@ -351,6 +360,38 @@ fn maybe_emit_positional_separator(
     }
 }
 
+fn render_display_command<'a>(tokens: impl IntoIterator<Item = &'a OsStr>) -> OsString {
+    let mut rendered = OsString::new();
+
+    for token in tokens {
+        if !rendered.is_empty() {
+            rendered.push(" ");
+        }
+        rendered.push(render_display_token(token));
+    }
+
+    rendered
+}
+
+fn render_display_token(token: &OsStr) -> OsString {
+    let token_display = token.to_string_lossy();
+    if token_display.contains('"') {
+        tracing::warn!(
+            value = %token_display,
+            "to_args_string is using basic quoting for a value containing a double quote"
+        );
+    }
+
+    if token_display.contains(' ') || token_display.contains('\'') {
+        let mut quoted = OsString::from("\"");
+        quoted.push(token);
+        quoted.push("\"");
+        quoted
+    } else {
+        token.to_os_string()
+    }
+}
+
 fn value_to_cli_token(
     name: &str,
     value: &ConfigValue,
@@ -358,7 +399,7 @@ fn value_to_cli_token(
 ) -> Result<String, ToArgsError> {
     match value {
         ConfigValue::Bool(sourced) => Ok(sourced.value.to_string()),
-        ConfigValue::Integer(sourced) => Ok(integer_to_cli_token(sourced.value, value_schema)),
+        ConfigValue::Integer(sourced) => integer_to_cli_token(name, sourced.value, value_schema),
         ConfigValue::Float(sourced) => Ok(sourced.value.to_string()),
         ConfigValue::String(sourced) => Ok(sourced.value.clone()),
         ConfigValue::Enum(sourced) if sourced.value.fields.is_empty() => {
@@ -376,20 +417,42 @@ fn value_to_cli_token(
 }
 
 
-fn integer_to_cli_token(value: i64, value_schema: Option<&ValueSchema>) -> String {
+fn integer_to_cli_token(
+    name: &str,
+    value: i64,
+    value_schema: Option<&ValueSchema>,
+) -> Result<String, ToArgsError> {
+    fn unsupported(arg_name: &str) -> Result<String, ToArgsError> {
+        Err(ToArgsError::UnsupportedScalarValue {
+            arg_name: arg_name.to_string(),
+        })
+    }
+
     let scalar = match value_schema {
         Some(ValueSchema::Leaf(leaf)) => leaf.shape.scalar_type(),
         _ => None,
     };
 
     match scalar {
-        Some(FacetScalarType::U8) => (value as u8).to_string(),
-        Some(FacetScalarType::U16) => (value as u16).to_string(),
-        Some(FacetScalarType::U32) => (value as u32).to_string(),
-        Some(FacetScalarType::U64) => (value as u64).to_string(),
-        Some(FacetScalarType::U128) => ((value as u64) as u128).to_string(),
-        Some(FacetScalarType::USize) => (value as usize).to_string(),
-        _ => value.to_string(),
+        Some(FacetScalarType::U8) => match u8::try_from(value) {
+            Ok(value) => Ok(value.to_string()),
+            Err(_) => unsupported(name),
+        },
+        Some(FacetScalarType::U16) => match u16::try_from(value) {
+            Ok(value) => Ok(value.to_string()),
+            Err(_) => unsupported(name),
+        },
+        Some(FacetScalarType::U32) => match u32::try_from(value) {
+            Ok(value) => Ok(value.to_string()),
+            Err(_) => unsupported(name),
+        },
+        Some(FacetScalarType::U64) => Ok((value as u64).to_string()),
+        Some(FacetScalarType::U128) => match u128::try_from(value) {
+            Ok(value) => Ok(value.to_string()),
+            Err(_) => unsupported(name),
+        },
+        Some(FacetScalarType::USize) => Ok((value as usize).to_string()),
+        _ => Ok(value.to_string()),
     }
 }
 
@@ -447,6 +510,24 @@ mod tests {
     }
 
     #[derive(Facet, Debug, PartialEq)]
+    struct Unsigned128Cli {
+        #[facet(args::named)]
+        limit: u128,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct DefaultTrueBoolCli {
+        #[facet(args::named, default = true)]
+        verbose: bool,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct BoolVecCli {
+        #[facet(args::named)]
+        verbose: Vec<bool>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
     struct DashPositionalCli {
         #[facet(args::positional)]
         query: String,
@@ -482,6 +563,8 @@ mod tests {
         };
 
         let args_string = to_args_string(&cli).expect("to_args_string should succeed");
+        let args_string = args_string.to_string_lossy();
+
         assert!(args_string.contains("--verbose"));
         assert!(args_string.contains("build"));
         assert!(args_string.contains("--release"));
@@ -496,6 +579,7 @@ mod tests {
 
         let command = to_args_string_with_current_exe(&cli)
             .expect("to_args_string_with_current_exe should succeed");
+        let command = command.to_string_lossy();
         let exe_display = std::env::current_exe()
             .expect("current_exe should resolve")
             .to_string_lossy()
@@ -503,6 +587,24 @@ mod tests {
 
         assert!(command.starts_with(&exe_display));
         assert!(command.contains("build"));
+    }
+
+    #[test]
+    fn to_args_string_quotes_values_with_spaces_or_single_quotes() {
+        let cli = BoolVecCli {
+            verbose: vec![],
+        };
+
+        let rendered = render_display_command([
+            OsStr::new("plain"),
+            OsStr::new("two words"),
+            OsStr::new("it's"),
+        ]);
+
+        assert_eq!(rendered.to_string_lossy(), "plain \"two words\" \"it's\"");
+
+        let args_string = to_args_string(&cli).expect("to_args_string should succeed");
+        assert!(args_string.is_empty());
     }
 
     #[test]
@@ -531,6 +633,77 @@ mod tests {
                 .get_silent();
 
         assert_eq!(cli, parsed);
+    }
+
+    #[test]
+    fn to_args_emits_no_flag_for_default_true_bool_set_false() {
+        let cli = DefaultTrueBoolCli { verbose: false };
+
+        let args = to_os_args(&cli).expect("to_args should succeed");
+        let args_as_str = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(args_as_str, vec!["--no-verbose"]);
+
+        let parsed: DefaultTrueBoolCli =
+            crate::from_slice(&args_as_str.iter().map(String::as_str).collect::<Vec<_>>())
+                .into_result()
+                .expect("roundtrip parse should succeed")
+                .get_silent();
+
+        assert_eq!(cli, parsed);
+    }
+
+    #[test]
+    fn to_args_emits_explicit_values_for_vec_of_bool() {
+        let cli = BoolVecCli {
+            verbose: vec![true, false, true],
+        };
+
+        let args = to_os_args(&cli).expect("to_args should succeed");
+        let args_as_str = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args_as_str,
+            vec![
+                "--verbose",
+                "true",
+                "--verbose",
+                "false",
+                "--verbose",
+                "true"
+            ]
+        );
+
+        let parsed: BoolVecCli =
+            crate::from_slice(&args_as_str.iter().map(String::as_str).collect::<Vec<_>>())
+                .into_result()
+                .expect("roundtrip parse should succeed")
+                .get_silent();
+
+        assert_eq!(cli, parsed);
+    }
+
+    #[test]
+    fn to_args_rejects_lossy_u128_intermediate_values() {
+        let schema = Schema::from_shape(Unsigned128Cli::SHAPE).expect("schema should be valid");
+
+        let mut root = indexmap! {};
+        root.insert("limit".to_string(), ConfigValue::Integer(Sourced::new(-1)));
+
+        let mut args = Vec::new();
+        let error = encode_level(schema.args(), &root, &mut args)
+            .expect_err("lossy u128 intermediate values should fail");
+
+        assert!(matches!(
+            error,
+            ToArgsError::UnsupportedScalarValue { arg_name } if arg_name == "limit"
+        ));
     }
 
     #[test]

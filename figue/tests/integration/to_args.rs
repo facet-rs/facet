@@ -1,5 +1,4 @@
 use facet::Facet;
-use facet_testhelpers::test;
 use figue::{self as args, ToArgs};
 
 #[derive(Facet, Debug, PartialEq)]
@@ -84,6 +83,8 @@ fn test_clean_command_hint_includes_full_invocation() {
     let full_command = cli
         .to_args_string_with_current_exe()
         .expect("clean to_args_string_with_current_exe should succeed");
+    let args_string = args_string.to_string_lossy().to_string();
+    let full_command = full_command.to_string_lossy().to_string();
     let exe_display = std::env::current_exe()
         .expect("current_exe should resolve during tests")
         .to_string_lossy()

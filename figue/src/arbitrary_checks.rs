@@ -442,7 +442,7 @@ enum NamedArgValueMode {
 fn named_arg_value_mode(schema: &ArgSchema) -> NamedArgValueMode {
     match schema.kind() {
         ArgKind::Named { counted: true, .. } => NamedArgValueMode::CountedFlag,
-        ArgKind::Named { counted: false, .. } if schema.value().is_bool_or_vec_of_bool() => {
+        ArgKind::Named { counted: false, .. } if schema.value().inner_if_option().is_bool() => {
             NamedArgValueMode::BoolFlag
         }
         ArgKind::Named { counted: false, .. } => NamedArgValueMode::RequiredValue,
