@@ -357,6 +357,27 @@ fn error_counts(report: &WeavyParseReport) -> (usize, usize) {
         })
 }
 
+fn print_lexer_execution_stats(report: &WeavyParseReport) {
+    let stats = report.lexer_stats();
+    let stencils = if stats.stencil_executions.is_empty() {
+        "none".to_owned()
+    } else {
+        stats
+            .stencil_executions
+            .iter()
+            .map(|(kind, count)| format!("{kind:?}={count}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    println!(
+        "lexer_execution: calls={} direct_set_cache_hits={} direct_set_cache_misses={} stencils={}",
+        stats.lex_call_count,
+        stats.direct_set_cache_hit_count,
+        stats.direct_set_cache_miss_count,
+        stencils
+    );
+}
+
 #[derive(Facet)]
 struct Row {
     k: u64,
@@ -687,6 +708,7 @@ fn main() {
             errors,
             missing
         );
+        print_lexer_execution_stats(&report);
         return;
     }
 
@@ -723,6 +745,7 @@ fn main() {
             report.max_live_versions(),
             report.reusable_node_count()
         );
+        print_lexer_execution_stats(&report);
         return;
     }
 

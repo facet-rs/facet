@@ -687,6 +687,34 @@ pub struct WeavyLexerStencilSummary {
     pub count: usize,
 }
 
+/// Runtime execution counters for Snark's lowered lexer graph.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeavyLexerExecutionStats {
+    /// Calls into the parse-state-driven lexer.
+    pub lex_call_count: usize,
+    /// Reused direct-set matcher results keyed by lexical mode/state and byte.
+    pub direct_set_cache_hit_count: usize,
+    /// Fresh direct-set matcher evaluations keyed by lexical mode/state and byte.
+    pub direct_set_cache_miss_count: usize,
+    /// Executed lexer graph matcher families.
+    pub stencil_executions: BTreeMap<WeavyLexerStencilKind, usize>,
+}
+
+impl WeavyLexerExecutionStats {
+    fn record_stencil(&mut self, kind: WeavyLexerStencilKind) {
+        *self.stencil_executions.entry(kind).or_default() += 1;
+    }
+
+    /// Return the runtime execution count for one lexer matcher family.
+    #[must_use]
+    pub fn stencil_execution_count(&self, kind: WeavyLexerStencilKind) -> usize {
+        self.stencil_executions
+            .get(&kind)
+            .copied()
+            .unwrap_or_default()
+    }
+}
+
 /// Why a dense parser block cannot be represented by the current host-call
 /// chain scaffold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -2787,9 +2815,8 @@ impl WeavyLexModeProgram {
         input: &str,
         byte_position: usize,
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
-        matches: &mut PatternSet,
-        dfa_cache: Option<&mut HybridDfaCache>,
         terminal_indices: &mut Vec<usize>,
+        scratch: WeavyDirectPatternSetScratch<'_>,
     ) {
         if self.direct_pattern_set.is_none() {
             ends.clear();
@@ -2800,9 +2827,8 @@ impl WeavyLexModeProgram {
             self,
             byte_position,
             ends,
-            matches,
-            dfa_cache,
             terminal_indices,
+            scratch,
         );
     }
 
@@ -4544,6 +4570,7 @@ trait RuntimeWeavyDeterministicSink {
         trace_events: RuntimeWeavyTraceSink,
         tree_journal: RuntimeWeavyTreeJournal,
         stats: RunStats,
+        lexer_stats: WeavyLexerExecutionStats,
         version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
         error_cost: u32,
@@ -4566,6 +4593,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicTreeSink {
         _trace_events: RuntimeWeavyTraceSink,
         _tree_journal: RuntimeWeavyTreeJournal,
         _stats: RunStats,
+        _lexer_stats: WeavyLexerExecutionStats,
         _version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
         _error_cost: u32,
@@ -4590,6 +4618,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
         _trace_events: RuntimeWeavyTraceSink,
         tree_journal: RuntimeWeavyTreeJournal,
         _stats: RunStats,
+        _lexer_stats: WeavyLexerExecutionStats,
         _version: parser_ir::StackVersionId,
         _root: parser_ir::TreeNodeId,
         _error_cost: u32,
@@ -4616,6 +4645,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
         trace_events: RuntimeWeavyTraceSink,
         tree_journal: RuntimeWeavyTreeJournal,
         stats: RunStats,
+        lexer_stats: WeavyLexerExecutionStats,
         version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
         error_cost: u32,
@@ -4629,6 +4659,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
         Ok(WeavyParseReport {
             tree,
             stats,
+            lexer_stats,
             trace_events: trace_events.into_events(),
             tree_events,
             tree_store,
@@ -4684,6 +4715,7 @@ macro_rules! trace_push {
 
 struct RuntimeWeavyLexerScratch {
     cache_policy: RuntimeWeavyLexSetCachePolicy,
+    execution_stats: RefCell<WeavyLexerExecutionStats>,
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_matches: RefCell<Vec<Option<PatternSet>>>,
@@ -4698,6 +4730,7 @@ impl RuntimeWeavyLexerScratch {
     fn new(cache_policy: RuntimeWeavyLexSetCachePolicy) -> Self {
         Self {
             cache_policy,
+            execution_stats: RefCell::default(),
             direct_literal_ends: RefCell::default(),
             direct_pattern_ends: RefCell::default(),
             direct_pattern_matches: RefCell::default(),
@@ -4706,6 +4739,28 @@ impl RuntimeWeavyLexerScratch {
             choice_dfa_caches: RefCell::default(),
             direct_set_cache: RefCell::default(),
         }
+    }
+
+    fn execution_stats(&self) -> WeavyLexerExecutionStats {
+        self.execution_stats.borrow().clone()
+    }
+
+    fn record_lex_call(&self) {
+        self.execution_stats.borrow_mut().lex_call_count += 1;
+    }
+
+    fn record_direct_set_cache_hit(&self) {
+        self.execution_stats.borrow_mut().direct_set_cache_hit_count += 1;
+    }
+
+    fn record_direct_set_cache_miss(&self) {
+        self.execution_stats
+            .borrow_mut()
+            .direct_set_cache_miss_count += 1;
+    }
+
+    fn record_stencil_execution(&self, kind: WeavyLexerStencilKind) {
+        self.execution_stats.borrow_mut().record_stencil(kind);
     }
 
     fn match_choice(
@@ -4739,12 +4794,14 @@ impl RuntimeWeavyLexerScratch {
         if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled
             && let Some(matches) = self.direct_set_cache.borrow().get(&key)
         {
+            self.record_direct_set_cache_hit();
             return visit(
                 &matches.literal_ends,
                 &matches.pattern_ends,
                 &matches.terminal_indices,
             );
         }
+        self.record_direct_set_cache_miss();
         self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
         if self.cache_policy == RuntimeWeavyLexSetCachePolicy::Enabled {
             let matches = Arc::new(RuntimeWeavyDirectSetMatches {
@@ -4810,6 +4867,7 @@ impl RuntimeWeavyLexerScratch {
             let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
             let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
             if mode_program.direct_literal_set.is_some() {
+                self.record_stencil_execution(WeavyLexerStencilKind::LiteralSet);
                 mode_program.match_direct_literals_with_set(
                     input,
                     byte_position,
@@ -4826,6 +4884,7 @@ impl RuntimeWeavyLexerScratch {
             let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
             let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
             if let Some(pattern_set) = &mode_program.direct_pattern_set {
+                self.record_stencil_execution(WeavyLexerStencilKind::PatternDfaSet);
                 let direct_pattern_dfa_cache =
                     runtime_weavy_lexer_scratch_slot(&mut direct_pattern_dfa_caches, cache_slot)
                         .get_or_insert_with(|| pattern_set.create_dfa_cache())
@@ -4837,9 +4896,12 @@ impl RuntimeWeavyLexerScratch {
                     input,
                     byte_position,
                     &mut direct_pattern_ends,
-                    direct_pattern_matches,
-                    direct_pattern_dfa_cache,
                     &mut direct_terminal_indices,
+                    WeavyDirectPatternSetScratch {
+                        matches: direct_pattern_matches,
+                        dfa_cache: direct_pattern_dfa_cache,
+                        execution_stats: &self.execution_stats,
+                    },
                 );
             } else {
                 direct_pattern_ends.clear();
@@ -5718,6 +5780,7 @@ where
                     trace_events,
                     tree_journal,
                     stats,
+                    lexer_scratch.execution_stats(),
                     version,
                     root,
                     error_cost,
@@ -6327,6 +6390,7 @@ fn parse_weavy_with_lexer_program(
         return Ok(WeavyParseReport {
             tree: first_node,
             stats,
+            lexer_stats: lexer_scratch.execution_stats(),
             trace_events: trace_events.into_events(),
             tree_events: first_tree_events,
             tree_store,
@@ -6363,6 +6427,7 @@ fn parse_weavy_with_lexer_program(
 pub struct WeavyParseReport {
     tree: SexpNode,
     stats: RunStats,
+    lexer_stats: WeavyLexerExecutionStats,
     trace_events: Vec<parser_ir::TraceEvent>,
     tree_events: Vec<parser_ir::TreeEvent>,
     tree_store: RuntimeWeavyTreeStore,
@@ -6397,6 +6462,11 @@ impl WeavyParseReport {
     /// Weavy runner execution counters accumulated over block runs.
     pub const fn stats(&self) -> RunStats {
         self.stats
+    }
+
+    /// Runtime lexer graph counters accumulated while producing this report.
+    pub const fn lexer_stats(&self) -> &WeavyLexerExecutionStats {
+        &self.lexer_stats
     }
 
     /// Structured parser trace events emitted during runtime execution.
@@ -7996,6 +8066,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         state: &parser_ir::ParseState,
         byte_position: usize,
     ) -> Result<RuntimeWeavyToken, RuntimeWeavyStepError> {
+        self.lexer_scratch.record_lex_call();
         if let Some(token) = self.runtime_auto_close_token(state, byte_position)? {
             return Ok(token);
         }
@@ -8168,6 +8239,8 @@ impl<'a> RuntimeWeavyStepper<'a> {
             else {
                 continue;
             };
+            self.lexer_scratch
+                .record_stencil_execution(WeavyLexerStencilKind::AutoClose);
             let Some(marker_len) = spec.trigger_len(open_tag, self.input, byte_position) else {
                 continue;
             };
@@ -8767,10 +8840,19 @@ fn match_weavy_direct_pattern_set(
         mode,
         byte_position,
         ends,
-        runtime_weavy_pattern_set(matches, pattern_set.pattern_len()),
-        dfa_cache,
         terminal_indices,
+        WeavyDirectPatternSetScratch {
+            matches: runtime_weavy_pattern_set(matches, pattern_set.pattern_len()),
+            dfa_cache,
+            execution_stats: &RefCell::default(),
+        },
     );
+}
+
+struct WeavyDirectPatternSetScratch<'a> {
+    matches: &'a mut PatternSet,
+    dfa_cache: Option<&'a mut HybridDfaCache>,
+    execution_stats: &'a RefCell<WeavyLexerExecutionStats>,
 }
 
 fn match_weavy_direct_pattern_set_with_matches(
@@ -8778,9 +8860,8 @@ fn match_weavy_direct_pattern_set_with_matches(
     mode: &WeavyLexModeProgram,
     byte_position: usize,
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
-    matches: &mut PatternSet,
-    dfa_cache: Option<&mut HybridDfaCache>,
     terminal_indices: &mut Vec<usize>,
+    scratch: WeavyDirectPatternSetScratch<'_>,
 ) {
     let Some(pattern_set) = &mode.direct_pattern_set else {
         ends.clear();
@@ -8791,8 +8872,8 @@ fn match_weavy_direct_pattern_set_with_matches(
     pattern_set.for_each_match_with_set(
         input,
         byte_position,
-        matches,
-        dfa_cache,
+        scratch.matches,
+        scratch.dfa_cache,
         |set_index, terminal_index, dfa_match| {
             if let Some(match_) = dfa_match {
                 if ends[set_index].is_none() {
@@ -8806,6 +8887,10 @@ fn match_weavy_direct_pattern_set_with_matches(
             else {
                 return;
             };
+            scratch
+                .execution_stats
+                .borrow_mut()
+                .record_stencil(WeavyLexerStencilKind::PatternLeafRematch);
             let match_ = pattern.match_input(input, byte_position);
             if match_.is_some() && ends[set_index].is_none() {
                 terminal_indices.push(terminal_index);
@@ -9699,6 +9784,16 @@ fn match_weavy_lex_expr_runtime(
     byte_position: usize,
     lexer_scratch: &RuntimeWeavyLexerScratch,
 ) -> Result<Option<parser_ir::LexMatch>, RuntimeWeavyStepError> {
+    match_weavy_lex_expr_runtime_inner(expr, input, byte_position, lexer_scratch, true)
+}
+
+fn match_weavy_lex_expr_runtime_inner(
+    expr: &WeavyLexExpr,
+    input: &str,
+    byte_position: usize,
+    lexer_scratch: &RuntimeWeavyLexerScratch,
+    account: bool,
+) -> Result<Option<parser_ir::LexMatch>, RuntimeWeavyStepError> {
     match expr {
         WeavyLexExpr::Blank => Ok(Some(parser_ir::LexMatch {
             end: byte_position,
@@ -9712,9 +9807,31 @@ fn match_weavy_lex_expr_runtime(
                     inspected_end: byte_position + value.len(),
                 }))
         }
-        WeavyLexExpr::Pattern(pattern) => Ok(pattern.match_input(input, byte_position)),
-        WeavyLexExpr::Until(matcher) => Ok(matcher.match_input(input, byte_position)),
+        WeavyLexExpr::Pattern(pattern) => {
+            if account {
+                match pattern.kind() {
+                    WeavyPatternMatcherKind::Known => {
+                        lexer_scratch.record_stencil_execution(WeavyLexerStencilKind::KnownPattern);
+                    }
+                    WeavyPatternMatcherKind::Regex => {
+                        lexer_scratch
+                            .record_stencil_execution(WeavyLexerStencilKind::RegexAutomata);
+                    }
+                    WeavyPatternMatcherKind::Unsupported => {}
+                }
+            }
+            Ok(pattern.match_input(input, byte_position))
+        }
+        WeavyLexExpr::Until(matcher) => {
+            if account {
+                lexer_scratch.record_stencil_execution(WeavyLexerStencilKind::Until);
+            }
+            Ok(matcher.match_input(input, byte_position))
+        }
         WeavyLexExpr::Nested { open, close } => {
+            if account {
+                lexer_scratch.record_stencil_execution(WeavyLexerStencilKind::Nested);
+            }
             Ok(crate::lex_match::match_nested_delimiters_with_inspection(
                 open,
                 close,
@@ -9727,8 +9844,13 @@ fn match_weavy_lex_expr_runtime(
             let mut position = byte_position;
             let mut inspected_end = byte_position;
             for member in members {
-                let Some(match_) =
-                    match_weavy_lex_expr_runtime(member, input, position, lexer_scratch)?
+                let Some(match_) = match_weavy_lex_expr_runtime_inner(
+                    member,
+                    input,
+                    position,
+                    lexer_scratch,
+                    account,
+                )?
                 else {
                     return Ok(None);
                 };
@@ -9743,9 +9865,13 @@ fn match_weavy_lex_expr_runtime(
         WeavyLexExpr::Choice(members) => {
             let mut best = None::<parser_ir::LexMatch>;
             for member in members {
-                if let Some(match_) =
-                    match_weavy_lex_expr_runtime(member, input, byte_position, lexer_scratch)?
-                    && best.is_none_or(|best| match_.end > best.end)
+                if let Some(match_) = match_weavy_lex_expr_runtime_inner(
+                    member,
+                    input,
+                    byte_position,
+                    lexer_scratch,
+                    account,
+                )? && best.is_none_or(|best| match_.end > best.end)
                 {
                     best = Some(match_);
                 }
@@ -9755,9 +9881,13 @@ fn match_weavy_lex_expr_runtime(
         WeavyLexExpr::Repeat(content) => {
             let mut position = byte_position;
             let mut inspected_end = byte_position;
-            while let Some(match_) =
-                match_weavy_lex_expr_runtime(content, input, position, lexer_scratch)?
-            {
+            while let Some(match_) = match_weavy_lex_expr_runtime_inner(
+                content,
+                input,
+                position,
+                lexer_scratch,
+                account,
+            )? {
                 inspected_end = inspected_end.max(match_.inspected_end);
                 if match_.end == position {
                     break;
@@ -9770,8 +9900,13 @@ fn match_weavy_lex_expr_runtime(
             }))
         }
         WeavyLexExpr::Repeat1(content) => {
-            let Some(first) =
-                match_weavy_lex_expr_runtime(content, input, byte_position, lexer_scratch)?
+            let Some(first) = match_weavy_lex_expr_runtime_inner(
+                content,
+                input,
+                byte_position,
+                lexer_scratch,
+                account,
+            )?
             else {
                 return Ok(None);
             };
@@ -9780,9 +9915,13 @@ fn match_weavy_lex_expr_runtime(
             if position == byte_position {
                 return Ok(None);
             }
-            while let Some(match_) =
-                match_weavy_lex_expr_runtime(content, input, position, lexer_scratch)?
-            {
+            while let Some(match_) = match_weavy_lex_expr_runtime_inner(
+                content,
+                input,
+                position,
+                lexer_scratch,
+                account,
+            )? {
                 inspected_end = inspected_end.max(match_.inspected_end);
                 if match_.end == position {
                     break;
@@ -9795,11 +9934,19 @@ fn match_weavy_lex_expr_runtime(
             }))
         }
         WeavyLexExpr::CompositeRegex { matcher, original } => {
+            if account {
+                lexer_scratch.record_stencil_execution(WeavyLexerStencilKind::CompositeRegex);
+            }
             let compiled = matcher.match_input(input, byte_position);
             #[cfg(debug_assertions)]
             {
-                let interpreted =
-                    match_weavy_lex_expr_runtime(original, input, byte_position, lexer_scratch)?;
+                let interpreted = match_weavy_lex_expr_runtime_inner(
+                    original,
+                    input,
+                    byte_position,
+                    lexer_scratch,
+                    false,
+                )?;
                 debug_assert_eq!(
                     compiled.map(|match_| match_.end),
                     interpreted.map(|match_| match_.end),
@@ -9819,11 +9966,19 @@ fn match_weavy_lex_expr_runtime(
             Ok(compiled)
         }
         WeavyLexExpr::CompositeChoice { matcher, original } => {
+            if account {
+                lexer_scratch.record_stencil_execution(WeavyLexerStencilKind::CompositeChoice);
+            }
             let compiled = lexer_scratch.match_choice(matcher, input, byte_position);
             #[cfg(debug_assertions)]
             {
-                let interpreted =
-                    match_weavy_lex_expr_runtime(original, input, byte_position, lexer_scratch)?;
+                let interpreted = match_weavy_lex_expr_runtime_inner(
+                    original,
+                    input,
+                    byte_position,
+                    lexer_scratch,
+                    false,
+                )?;
                 if let Ok(compiled) = compiled {
                     debug_assert_eq!(
                         compiled.map(|match_| match_.end),
@@ -9848,9 +10003,13 @@ fn match_weavy_lex_expr_runtime(
                         let _ = original;
                         Ok(compiled)
                     }
-                    Err(()) => {
-                        match_weavy_lex_expr_runtime(original, input, byte_position, lexer_scratch)
-                    }
+                    Err(()) => match_weavy_lex_expr_runtime_inner(
+                        original,
+                        input,
+                        byte_position,
+                        lexer_scratch,
+                        account,
+                    ),
                 }
             }
         }
@@ -10813,26 +10972,35 @@ mod tests {
         };
         let mut ends = Vec::new();
         let mut matches = None;
-        let mut dfa_cache = mode
-            .direct_pattern_set
-            .as_ref()
-            .and_then(WeavyDirectPatternSet::create_dfa_cache);
         let mut terminal_indices = Vec::new();
+        let execution_stats = RefCell::<WeavyLexerExecutionStats>::default();
 
-        match_weavy_direct_pattern_set(
+        match_weavy_direct_pattern_set_with_matches(
             "abcd",
             &mode,
             0,
             &mut ends,
-            &mut matches,
-            dfa_cache.as_mut(),
             &mut terminal_indices,
+            WeavyDirectPatternSetScratch {
+                matches: runtime_weavy_pattern_set(
+                    &mut matches,
+                    mode.direct_pattern_set.as_ref().unwrap().pattern_len(),
+                ),
+                dfa_cache: None,
+                execution_stats: &execution_stats,
+            },
         );
 
         assert_eq!(ends.len(), 2);
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 3)));
         assert_eq!(terminal_indices, vec![0, 1]);
+        assert_eq!(
+            execution_stats
+                .borrow()
+                .stencil_execution_count(WeavyLexerStencilKind::PatternLeafRematch),
+            2
+        );
     }
 
     #[test]
@@ -11984,6 +12152,21 @@ mod tests {
         assert_eq!(default_direct.accepted_count(), 1);
         assert_eq!(default_direct.failure_count(), 0);
         assert_eq!(default_direct.stats().step_count, 0);
+        assert!(default_direct.lexer_stats().lex_call_count > 0);
+        assert!(default_direct.lexer_stats().direct_set_cache_miss_count > 0);
+        assert_eq!(default_direct.lexer_stats().direct_set_cache_hit_count, 0);
+        assert!(
+            default_direct
+                .lexer_stats()
+                .stencil_execution_count(WeavyLexerStencilKind::LiteralSet)
+                > 0
+        );
+        assert_eq!(
+            default_direct
+                .lexer_stats()
+                .stencil_execution_count(WeavyLexerStencilKind::PatternDfaSet),
+            0
+        );
         #[cfg(all(
             feature = "jit",
             any(
