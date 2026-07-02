@@ -40,8 +40,8 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParseReport,
-        parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
+        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParsePlanReadiness,
+        WeavyParseReport, parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_with_report_and_scanner,
         parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
     },
@@ -56,7 +56,7 @@ use snark::{
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-use snark::lower::weavy::parse_prepared_weavy_native_hostcalls_with_report;
+use snark::lower::weavy::parse_prepared_weavy_native_hostcalls_tree;
 
 /// One prepared grammar: everything the parse entrypoint needs, built once so
 /// the timed loop measures only parsing, never grammar preparation.
@@ -139,6 +139,81 @@ fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
     best_ms
 }
 
+fn write_stencil_profile(
+    out: &mut impl Write,
+    readiness: &WeavyParsePlanReadiness,
+    label: &str,
+    profile: SnarkStencilProfile,
+) -> io::Result<()> {
+    let descriptors = readiness.snark_stencil_summaries_for_profile(profile);
+    if descriptors.is_empty() {
+        writeln!(out, "{label}_stencil_descriptors: none")?;
+    } else {
+        writeln!(out, "{label}_stencil_descriptors:")?;
+        for summary in &descriptors {
+            writeln!(
+                out,
+                "  {}.{} domain={:?} lowering={:?} family={:?} execution={:?} effect_order={:?} may_fail={} may_allocate={} calls_user_code={} opaque={} resources={:?} typed_memory={:?} state={:?} count={}",
+                summary.descriptor.dialect,
+                summary.descriptor.name,
+                summary.domain,
+                summary.lowering,
+                summary.family,
+                summary.execution,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque,
+                summary.effect.resources,
+                summary.effect.typed_memory,
+                summary.state,
+                summary.count
+            )?;
+        }
+    }
+
+    let families = readiness.snark_stencil_family_summaries_for_profile(profile);
+    if families.is_empty() {
+        writeln!(out, "{label}_stencil_families: none")?;
+    } else {
+        writeln!(out, "{label}_stencil_families:")?;
+        for summary in &families {
+            writeln!(
+                out,
+                "  {:?}/{:?}: count={} state={:?}",
+                summary.family, summary.execution, summary.count, summary.state
+            )?;
+        }
+    }
+
+    let execution = readiness.snark_stencil_execution_summaries_for_profile(profile);
+    if execution.is_empty() {
+        writeln!(out, "{label}_stencil_execution: none")?;
+    } else {
+        writeln!(out, "{label}_stencil_execution:")?;
+        for summary in &execution {
+            writeln!(
+                out,
+                "  {:?}: count={} families={:?} state={:?}",
+                summary.execution, summary.count, summary.families, summary.state
+            )?;
+        }
+    }
+
+    let state = readiness.snark_stencil_state_summaries_for_profile(profile);
+    if state.is_empty() {
+        writeln!(out, "{label}_stencil_state: none")?;
+    } else {
+        writeln!(out, "{label}_stencil_state:")?;
+        for summary in &state {
+            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Best (min) ranged-CST parse time in ms over `iters` runs, after one warm-up.
 fn best_resolved_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
     let _ = parse_prepared_weavy_resolved_tree(&p.plan, &p.parser, &p.table, input)?;
@@ -170,8 +245,8 @@ fn collect_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyPars
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-fn native_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
-    parse_prepared_weavy_native_hostcalls_with_report(&p.plan, &p.parser, &p.table, input)
+fn native_once(p: &Prepared, input: &str) -> Result<(), WeavyParseError> {
+    parse_prepared_weavy_native_hostcalls_tree(&p.plan, &p.parser, &p.table, input).map(|_| ())
 }
 
 /// Best (min) recovering parse time in ms over `iters` runs, after one warm-up.
@@ -206,11 +281,11 @@ fn best_collect_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, Weavy
     )
 ))]
 fn best_native_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
-    let _ = native_once(p, input)?;
+    native_once(p, input)?;
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        let _ = native_once(p, input)?;
+        native_once(p, input)?;
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     Ok(best_ms)
@@ -489,16 +564,18 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
             writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
         }
     }
-    let direct_no_trace_state =
-        readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
-    if direct_no_trace_state.is_empty() {
-        writeln!(out, "direct_no_trace_stencil_state: none")?;
-    } else {
-        writeln!(out, "direct_no_trace_stencil_state:")?;
-        for summary in &direct_no_trace_state {
-            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
-        }
-    }
+    write_stencil_profile(
+        &mut out,
+        readiness,
+        "direct_no_trace",
+        SnarkStencilProfile::DirectNoTrace,
+    )?;
+    write_stencil_profile(
+        &mut out,
+        readiness,
+        "direct_tree_only",
+        SnarkStencilProfile::DirectTreeOnly,
+    )?;
     Ok(())
 }
 

@@ -249,7 +249,11 @@ pub fn register_jit_source(
 
     let entries: Vec<JitSymbolEntry> = symbols
         .iter()
-        .map(|s| JitSymbolEntry { name: s.name.clone(), offset: s.offset, size: s.size })
+        .map(|s| JitSymbolEntry {
+            name: s.name.clone(),
+            offset: s.offset,
+            size: s.size,
+        })
         .collect();
     // `build_jit_dwarf_sections` maps (offset, line_index, column) -> line = line_index + 1.
     let source_map: Vec<(u32, u32, u32)> = symbols
@@ -263,7 +267,12 @@ pub fn register_jit_source(
         file_name,
         directory,
     )?;
-    Ok(register_jit_code_with_dwarf(code_ptr, code_len, &entries, Some(&dwarf)))
+    Ok(register_jit_code_with_dwarf(
+        code_ptr,
+        code_len,
+        &entries,
+        Some(&dwarf),
+    ))
 }
 
 /// Write a perf **jitdump** (`/tmp/jit-<pid>.dump`) so `perf`/stax symbolicate + annotate JIT'd
@@ -274,7 +283,11 @@ pub fn register_jit_source(
 /// Every symbol's `code_ptr + offset .. + offset + size` range must be valid readable memory
 /// (normally guaranteed by pointing at a live [`super::NativeProgram`]'s code buffer with
 /// offsets/sizes from its layout).
-pub unsafe fn write_jitdump(path: &str, code_ptr: *const u8, symbols: &[JitSourceSymbol]) -> std::io::Result<()> {
+pub unsafe fn write_jitdump(
+    path: &str,
+    code_ptr: *const u8,
+    symbols: &[JitSourceSymbol],
+) -> std::io::Result<()> {
     let pid = std::process::id();
     let ts = || {
         std::time::SystemTime::now()
@@ -883,9 +896,27 @@ mod tests {
         // Deliberately UNSORTED by offset: the facade must sort before building .debug_line
         // (which requires strictly increasing offsets).
         let symbols = vec![
-            JitSourceSymbol { name: "jit::b".into(), offset: 8, size: 8, line: 1, column: 9 },
-            JitSourceSymbol { name: "jit::a".into(), offset: 0, size: 8, line: 1, column: 4 },
-            JitSourceSymbol { name: "jit::c".into(), offset: 16, size: 8, line: 2, column: 0 },
+            JitSourceSymbol {
+                name: "jit::b".into(),
+                offset: 8,
+                size: 8,
+                line: 1,
+                column: 9,
+            },
+            JitSourceSymbol {
+                name: "jit::a".into(),
+                offset: 0,
+                size: 8,
+                line: 1,
+                column: 4,
+            },
+            JitSourceSymbol {
+                name: "jit::c".into(),
+                offset: 16,
+                size: 8,
+                line: 2,
+                column: 0,
+            },
         ];
         let reg = register_jit_source(code.as_ptr(), code.len(), "t.jinja", None, &symbols)
             .expect("register with unsorted symbols");
@@ -907,8 +938,20 @@ mod tests {
     fn write_jitdump_round_trips_records() {
         let code: Vec<u8> = (0u8..32).collect();
         let symbols = vec![
-            JitSourceSymbol { name: "jit::op0 [1 + 2]".into(), offset: 0, size: 16, line: 1, column: 4 },
-            JitSourceSymbol { name: "jit::op1 [3]".into(), offset: 16, size: 16, line: 1, column: 8 },
+            JitSourceSymbol {
+                name: "jit::op0 [1 + 2]".into(),
+                offset: 0,
+                size: 16,
+                line: 1,
+                column: 4,
+            },
+            JitSourceSymbol {
+                name: "jit::op1 [3]".into(),
+                offset: 16,
+                size: 16,
+                line: 1,
+                column: 8,
+            },
         ];
         let dir = std::env::temp_dir();
         let path = dir.join(format!("weavy-jitdump-test-{}.dump", std::process::id()));
@@ -921,7 +964,10 @@ mod tests {
         // pid/tid/vma/code_addr/code_size/code_index + name\0 + code bytes.
         let bytes = std::fs::read(path).unwrap();
         std::fs::remove_file(path).ok();
-        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 0x4A69_5444);
+        assert_eq!(
+            u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+            0x4A69_5444
+        );
         let mut cur = 40;
         let mut seen = Vec::new();
         while cur + 16 <= bytes.len() {
@@ -940,7 +986,11 @@ mod tests {
         assert_eq!(seen.len(), 2);
         assert_eq!(seen[0].0, code.as_ptr() as u64);
         assert_eq!(seen[0].2, "jit::op0 [1 + 2]");
-        assert_eq!(seen[0].3, &code[0..16], "record carries the actual code bytes");
+        assert_eq!(
+            seen[0].3,
+            &code[0..16],
+            "record carries the actual code bytes"
+        );
         assert_eq!(seen[1].0, code.as_ptr() as u64 + 16);
         assert_eq!(seen[1].3, &code[16..32]);
     }

@@ -453,6 +453,7 @@ mod tests {
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
         lower::weavy::{
             WeavyParsePlan, WeavyParseReport, parse_prepared_weavy_metered_with_report_and_scanner,
+            parse_prepared_weavy_tree_and_scanner, parse_prepared_weavy_with_report_and_scanner,
         },
         parser::{
             ExternalScanRequest, ExternalScanResult, ExternalScannerHost, LookaheadSymbol,
@@ -1088,7 +1089,7 @@ mod tests {
         let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_metered_with_report_and_scanner(
+            parse_prepared_weavy_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -1116,7 +1117,6 @@ mod tests {
                 .filter(|capture| capture.capture_name() == "variable")
                 .collect::<Vec<_>>()
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]
@@ -1175,7 +1175,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[0].name, "Universal selectors");
-        let weavy_report = parse_weavy_report_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1183,8 +1183,7 @@ mod tests {
             &selector_cases[0].input,
         );
 
-        assert_same!(weavy_report.tree(), &selector_cases[0].expected);
-        assert!(weavy_report.stats().step_count > 0);
+        assert_same!(actual_tree, selector_cases[0].expected);
     }
 
     #[test]
@@ -1279,7 +1278,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[2].name, "Class selectors");
-        let weavy_report = parse_weavy_report_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1287,8 +1286,7 @@ mod tests {
             &selector_cases[2].input,
         );
 
-        assert_same!(weavy_report.tree(), &selector_cases[2].expected);
-        assert!(weavy_report.stats().step_count > 0);
+        assert_same!(actual_tree, selector_cases[2].expected);
     }
 
     #[test]
@@ -1419,7 +1417,7 @@ mod tests {
         let css_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let scanner = RecordingCssExternalScannerHost::new(&css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_metered_with_report_and_scanner(
+            parse_prepared_weavy_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -1453,7 +1451,6 @@ mod tests {
             0,
             "expected Weavy scanner calls to respect the valid-symbol mask"
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn parses_pinned_css_pseudo_class_selectors_through_weavy_runtime_scanner_snapshots() {
@@ -1548,7 +1545,6 @@ mod tests {
                 .any(|(before, _, _)| before.is_some_and(|before| before.get() == 0)),
             "expected Weavy runtime scanner traces to observe the committed stateless CSS snapshot marker"
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]
@@ -1738,7 +1734,7 @@ mod tests {
         let css_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let scanner = RecordingCssExternalScannerHost::new(&css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_metered_with_report_and_scanner(
+            parse_prepared_weavy_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -1768,7 +1764,6 @@ mod tests {
             0,
             "expected Weavy scanner calls to respect the valid-symbol mask"
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]
@@ -2032,7 +2027,7 @@ mod tests {
             assert_eq!(case.name, case_name);
             let weavy_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
             let weavy_report = unwrap_weavy_report_or_panic(
-                parse_prepared_weavy_metered_with_report_and_scanner(
+                parse_prepared_weavy_with_report_and_scanner(
                     &plan,
                     &parser_grammar,
                     &parse_table,
@@ -2056,7 +2051,6 @@ mod tests {
                     .any(|event| matches!(event, crate::parser::TreeEvent::Reduce { .. })),
                 "expected Weavy tree reductions for `{case_name}`"
             );
-            assert!(weavy_report.stats().step_count > 0);
         }
     }
     #[test]
@@ -2116,7 +2110,6 @@ mod tests {
                 .any(|event| matches!(event, crate::parser::TreeEvent::Reduce { .. })),
             "expected Weavy runtime tree execution to emit reduce tree events"
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn executes_css_important_declaration_highlight_through_weavy_glr_lineage() {
@@ -2146,7 +2139,7 @@ mod tests {
         let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_metered_with_report_and_scanner(
+            parse_prepared_weavy_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -2172,7 +2165,6 @@ mod tests {
             weavy_report.failure_count() > 0,
             "expected Weavy accepted-lineage query input to retire a failed GLR branch"
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn parses_pinned_css_important_declarations_through_weavy_glr_conflict() {
@@ -2232,7 +2224,6 @@ mod tests {
                 .any(|event| matches!(event, crate::parser::TraceEvent::GlrRetire { .. })),
             "expected Weavy runtime branch retirement evidence"
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]
@@ -2394,7 +2385,6 @@ mod tests {
             capture_texts(&weavy_field_captures, "json.value"),
             ["\"good\""]
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn executes_json_comment_highlights_through_weavy_runtime_events() {
@@ -2445,7 +2435,6 @@ mod tests {
                 "/*\n   * Block comments are also ok\n   */",
             ]
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]
@@ -2512,15 +2501,14 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[4].name, "Comments");
-        let weavy_report = parse_weavy_report_without_external_scanner_or_panic(
+        let actual_tree = parse_weavy_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
             &cases[4].input,
         );
 
-        assert_same!(weavy_report.tree(), &cases[4].expected);
-        assert!(weavy_report.stats().step_count > 0);
+        assert_same!(actual_tree, cases[4].expected);
     }
     #[test]
     fn parses_json_leading_visible_extra_through_weavy_lowering() {
@@ -2538,7 +2526,7 @@ mod tests {
             .unwrap();
         let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
         let input = "// leading\n{\"a\": 1}";
-        let weavy_report = parse_weavy_report_without_external_scanner_or_panic(
+        let actual_tree = parse_weavy_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2546,10 +2534,9 @@ mod tests {
         );
 
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            actual_tree.to_sexp(),
             "(document (comment) (object (pair (string (string_content)) (number))))"
         );
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     fn collect_node_kinds(node: &SexpNode, out: &mut BTreeSet<String>) {
@@ -2667,56 +2654,9 @@ mod tests {
         parse_table: &ParseTable,
         input: &str,
     ) -> SexpNode {
-        parse_weavy_report_or_panic(grammar, validated, parser_grammar, parse_table, input)
-            .tree()
-            .clone()
-    }
-
-    fn parse_weavy_without_external_scanner_or_panic(
-        validated: &ValidatedGrammar,
-        parser_grammar: &ParserGrammar,
-        parse_table: &ParseTable,
-        input: &str,
-    ) -> SexpNode {
-        parse_weavy_report_without_external_scanner_or_panic(
-            validated,
-            parser_grammar,
-            parse_table,
-            input,
-        )
-        .tree()
-        .clone()
-    }
-
-    fn parse_weavy_report_without_external_scanner_or_panic(
-        validated: &ValidatedGrammar,
-        parser_grammar: &ParserGrammar,
-        parse_table: &ParseTable,
-        input: &str,
-    ) -> WeavyParseReport {
-        unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_metered_with_report_and_scanner(
-                &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
-                parser_grammar,
-                parse_table,
-                input,
-                None,
-            ),
-            parser_grammar,
-            parse_table,
-        )
-    }
-
-    fn parse_weavy_report_or_panic(
-        grammar: &ImportedGrammar,
-        validated: &ValidatedGrammar,
-        parser_grammar: &ParserGrammar,
-        parse_table: &ParseTable,
-        input: &str,
-    ) -> WeavyParseReport {
         let scanner = CssExternalScannerHost::new(grammar, parser_grammar);
-        unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_metered_with_report_and_scanner(
+        unwrap_weavy_tree_or_panic(
+            parse_prepared_weavy_tree_and_scanner(
                 &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
                 parser_grammar,
                 parse_table,
@@ -2728,37 +2668,91 @@ mod tests {
         )
     }
 
+    fn parse_weavy_without_external_scanner_or_panic(
+        validated: &ValidatedGrammar,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+        input: &str,
+    ) -> SexpNode {
+        unwrap_weavy_tree_or_panic(
+            parse_prepared_weavy_tree_and_scanner(
+                &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
+                parser_grammar,
+                parse_table,
+                input,
+                None,
+            ),
+            parser_grammar,
+            parse_table,
+        )
+    }
+
+    fn parse_weavy_report_without_external_scanner_or_panic(
+        validated: &ValidatedGrammar,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+        input: &str,
+    ) -> WeavyParseReport {
+        unwrap_weavy_report_or_panic(
+            parse_prepared_weavy_with_report_and_scanner(
+                &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
+                parser_grammar,
+                parse_table,
+                input,
+                None,
+            ),
+            parser_grammar,
+            parse_table,
+        )
+    }
+
+    fn format_weavy_parse_error_debug(
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+        error: &crate::lower::weavy::WeavyParseError,
+    ) -> String {
+        let state = match error {
+            crate::lower::weavy::WeavyParseError::NoToken { state, .. }
+            | crate::lower::weavy::WeavyParseError::NoAction { state, .. }
+            | crate::lower::weavy::WeavyParseError::MissingExternalScannerHost { state, .. }
+            | crate::lower::weavy::WeavyParseError::MissingState { state }
+            | crate::lower::weavy::WeavyParseError::ExternalScannerError { state, .. }
+            | crate::lower::weavy::WeavyParseError::UnreducedStackEntry { state }
+            | crate::lower::weavy::WeavyParseError::UnexpectedConflictInActionBlock {
+                state, ..
+            }
+            | crate::lower::weavy::WeavyParseError::MissingGoto { state, .. } => Some(*state),
+            _ => None,
+        };
+        let mut states = Vec::new();
+        if let Some(state) = state {
+            states.push(state);
+        }
+        states
+            .into_iter()
+            .map(|state| describe_parse_state(parser_grammar, parse_table, state))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    fn unwrap_weavy_tree_or_panic(
+        result: Result<SexpNode, crate::lower::weavy::WeavyParseError>,
+        parser_grammar: &ParserGrammar,
+        parse_table: &ParseTable,
+    ) -> SexpNode {
+        result.unwrap_or_else(|error| {
+            let state_dump = format_weavy_parse_error_debug(parser_grammar, parse_table, &error);
+            panic!("Weavy parse failed: {error}; relevant states:\n{state_dump}")
+        })
+    }
+
     fn unwrap_weavy_report_or_panic(
         result: Result<WeavyParseReport, crate::lower::weavy::WeavyParseError>,
         parser_grammar: &ParserGrammar,
         parse_table: &ParseTable,
     ) -> WeavyParseReport {
         result.unwrap_or_else(|error| {
-            let state = match error {
-                crate::lower::weavy::WeavyParseError::NoToken { state, .. }
-                | crate::lower::weavy::WeavyParseError::NoAction { state, .. }
-                | crate::lower::weavy::WeavyParseError::MissingExternalScannerHost {
-                    state, ..
-                }
-                | crate::lower::weavy::WeavyParseError::MissingState { state }
-                | crate::lower::weavy::WeavyParseError::ExternalScannerError { state, .. }
-                | crate::lower::weavy::WeavyParseError::UnreducedStackEntry { state }
-                | crate::lower::weavy::WeavyParseError::UnexpectedConflictInActionBlock {
-                    state,
-                    ..
-                } => Some(state),
-                crate::lower::weavy::WeavyParseError::MissingGoto { state, .. } => Some(state),
-                _ => None,
-            };
-            let mut states = Vec::new();
-            if let Some(state) = state {
-                states.push(state);
-            }
-            let state_dump = states
-                .into_iter()
-                .map(|state| describe_parse_state(parser_grammar, parse_table, state))
-                .collect::<Vec<_>>()
-                .join("\n\n");
+            let state_dump = format_weavy_parse_error_debug(parser_grammar, parse_table, &error);
             panic!("Weavy parse failed: {error}; relevant states:\n{state_dump}");
         })
     }

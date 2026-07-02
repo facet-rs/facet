@@ -26,8 +26,9 @@ use snark::{
     },
     manifest::TreeSitterConfig,
     parser::{
-        ExternalId, ExternalScanRequest, ExternalScanResult, ExternalScannerHost, ParseTable,
-        ParserExecutionError, ParserGrammar, ParserInputEdit, ResolvedCstNode, ScannerSnapshotId,
+        ExternalId, ExternalScanRequest, ExternalScanResult, ExternalScannerHost, LookaheadSymbol,
+        NonterminalOrigin, ParseStateId, ParseTable, ParserExecutionError, ParserGrammar,
+        ParserInputEdit, ParserSymbol, ParserTerminalKind, ResolvedCstNode, ScannerSnapshotId,
         TreeEvent,
     },
     query::QuerySource,
@@ -790,7 +791,7 @@ fn parse_session_input(
         ))
     });
     let report = parse_weavy_with_optional_recovery(&session.prepared, scanner, input, previous)
-        .map_err(|error| weavy_error_diagnostic("parse", &error, input))?;
+        .map_err(|error| weavy_error_diagnostic("parse", &error, &session.prepared, input))?;
     session.last_input = Some(input.to_owned());
     session.last_report = Some(Arc::clone(&report.report.0));
     Ok(report)
@@ -1593,7 +1594,7 @@ fn layer_output(
     let report = match report_result {
         Ok(report) => report,
         Err(error) => {
-            let diagnostic = weavy_error_diagnostic("parse", &error, &input);
+            let diagnostic = weavy_error_diagnostic("parse", &error, prepared, &input);
             return LayerOutput {
                 language: group.language,
                 combined: group.combined,
@@ -2187,9 +2188,16 @@ fn accepted_problem_span(events: &[TreeEvent], input: &str) -> Option<Diagnostic
     })
 }
 
-fn weavy_error_diagnostic(stage: &str, error: &WeavyParseError, input: &str) -> Diagnostic {
+fn weavy_error_diagnostic(
+    stage: &str,
+    error: &WeavyParseError,
+    prepared: &PreparedGrammar,
+    input: &str,
+) -> Diagnostic {
     let span = weavy_parse_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
-    diagnostic(stage, error.to_string(), span)
+    let message = friendly_weavy_error_message(error, prepared, input, span.as_ref())
+        .unwrap_or_else(|| error.to_string());
+    diagnostic(stage, message, span)
 }
 
 fn weavy_parse_error_byte(error: &WeavyParseError) -> Option<usize> {
@@ -2199,6 +2207,293 @@ fn weavy_parse_error_byte(error: &WeavyParseError) -> Option<usize> {
         | WeavyParseError::TrailingInput { byte_position } => Some(*byte_position),
         _ => None,
     }
+}
+
+fn friendly_weavy_error_message(
+    error: &WeavyParseError,
+    prepared: &PreparedGrammar,
+    input: &str,
+    span: Option<&DiagnosticSpan>,
+) -> Option<String> {
+    let names = DiagnosticTermNames::new(&prepared.parser);
+    let (state, state_stack, byte_position, found) = match error {
+        WeavyParseError::NoToken {
+            state,
+            state_stack,
+            byte_position,
+            ..
+        } => (
+            *state,
+            state_stack.as_slice(),
+            *byte_position,
+            source_found_at(input, *byte_position),
+        ),
+        WeavyParseError::NoAction {
+            state,
+            state_stack,
+            lookahead,
+            byte_position,
+        } => (
+            *state,
+            state_stack.as_slice(),
+            *byte_position,
+            names
+                .lookahead_name(&prepared.parser, *lookahead, true)
+                .unwrap_or_else(|| source_found_at(input, *byte_position)),
+        ),
+        _ => return None,
+    };
+
+    let expected_context =
+        expected_kernel_symbols(&prepared.parser, &prepared.table, state, &names);
+    let expected_entries = expected_entry_symbols(&prepared.parser, &prepared.table, state, &names);
+    let expected = expected_context
+        .first()
+        .cloned()
+        .or_else(|| short_expected_list(&expected_entries))
+        .unwrap_or_else(|| "token".to_owned());
+    let mut message = if let Some(span) = span {
+        format!(
+            "{}:{}: expected {expected}, found {found}",
+            span.start_row + 1,
+            span.start_column + 1
+        )
+    } else {
+        format!("byte {byte_position}: expected {expected}, found {found}")
+    };
+    if !expected_entries.is_empty() {
+        message.push_str("; expected one of: ");
+        message.push_str(&expected_entries.join(", "));
+    }
+    let context = stack_context(&prepared.parser, &prepared.table, state_stack);
+    if !context.is_empty() {
+        message.push_str("; while parsing: ");
+        message.push_str(&context.join(" > "));
+    }
+    Some(message)
+}
+
+struct DiagnosticTermNames {
+    terminal_names: Vec<Option<String>>,
+    extra_terminals: BTreeSet<usize>,
+}
+
+impl DiagnosticTermNames {
+    fn new(parser: &ParserGrammar) -> Self {
+        let mut terminal_names = parser
+            .symbols()
+            .terminals()
+            .iter()
+            .map(|terminal| terminal.public_names().first().cloned())
+            .collect::<Vec<_>>();
+        for production in parser.productions() {
+            let [step] = production.steps() else {
+                continue;
+            };
+            let ParserSymbol::Terminal(terminal) = step.symbol() else {
+                continue;
+            };
+            let Some(lhs) = parser
+                .symbols()
+                .nonterminals()
+                .get(production.lhs().get() as usize)
+            else {
+                continue;
+            };
+            if lhs.visible()
+                && lhs.origin() == NonterminalOrigin::Rule
+                && let Some(slot) = terminal_names.get_mut(terminal.get() as usize)
+                && slot.is_none()
+            {
+                *slot = Some(friendly_rule_name(lhs.name()));
+            }
+        }
+        let extra_terminals = parser
+            .extra_roots()
+            .iter()
+            .filter_map(|extra| match extra.symbol() {
+                ParserSymbol::Terminal(terminal) => Some(terminal.get() as usize),
+                _ => None,
+            })
+            .collect();
+        Self {
+            terminal_names,
+            extra_terminals,
+        }
+    }
+
+    fn lookahead_name(
+        &self,
+        parser: &ParserGrammar,
+        lookahead: LookaheadSymbol,
+        include_extras: bool,
+    ) -> Option<String> {
+        match lookahead {
+            LookaheadSymbol::Terminal(terminal)
+            | LookaheadSymbol::ReservedWord { terminal, .. } => {
+                self.terminal_name(parser, terminal, include_extras)
+            }
+            LookaheadSymbol::External(external) => parser
+                .symbols()
+                .externals()
+                .get(external.get() as usize)
+                .and_then(|external| external.name())
+                .map(friendly_rule_name),
+            LookaheadSymbol::Eof => Some("end of input".to_owned()),
+            LookaheadSymbol::ErrorRecovery(_) => None,
+            _ => None,
+        }
+    }
+
+    fn parser_symbol_name(&self, parser: &ParserGrammar, symbol: ParserSymbol) -> Option<String> {
+        match symbol {
+            ParserSymbol::Terminal(terminal) => self.terminal_name(parser, terminal, false),
+            ParserSymbol::Nonterminal(nonterminal) => parser
+                .symbols()
+                .nonterminals()
+                .get(nonterminal.get() as usize)
+                .map(|symbol| friendly_rule_name(symbol.name())),
+            ParserSymbol::External(external) => parser
+                .symbols()
+                .externals()
+                .get(external.get() as usize)
+                .and_then(|external| external.name())
+                .map(friendly_rule_name),
+            ParserSymbol::Eof => Some("end of input".to_owned()),
+            ParserSymbol::Internal(_) => None,
+            _ => None,
+        }
+    }
+
+    fn terminal_name(
+        &self,
+        parser: &ParserGrammar,
+        terminal: snark::parser::TerminalId,
+        include_extras: bool,
+    ) -> Option<String> {
+        let index = terminal.get() as usize;
+        if !include_extras && self.extra_terminals.contains(&index) {
+            return None;
+        }
+        if let Some(Some(name)) = self.terminal_names.get(index) {
+            return Some(name.clone());
+        }
+        let terminal = parser.symbols().terminals().get(index)?;
+        match terminal.kind() {
+            ParserTerminalKind::String => Some(format!("`{}`", terminal.spelling())),
+            ParserTerminalKind::AutoClose => Some(friendly_rule_name(terminal.spelling())),
+            ParserTerminalKind::Pattern
+            | ParserTerminalKind::Token
+            | ParserTerminalKind::ImmediateToken => None,
+        }
+    }
+}
+
+fn expected_kernel_symbols(
+    parser: &ParserGrammar,
+    table: &ParseTable,
+    state: ParseStateId,
+    names: &DiagnosticTermNames,
+) -> Vec<String> {
+    let Some(state) = table.states().get(state.get() as usize) else {
+        return Vec::new();
+    };
+    let Some(item_set) = table.item_sets().get(state.item_set().get() as usize) else {
+        return Vec::new();
+    };
+    let mut symbols = BTreeSet::new();
+    for item in item_set.items().iter().filter(|item| item.dot() > 0) {
+        let Some(production) = parser.productions().get(item.production().get() as usize) else {
+            continue;
+        };
+        let Some(step) = production.steps().get(item.dot()) else {
+            continue;
+        };
+        if let Some(name) = names.parser_symbol_name(parser, step.symbol()) {
+            symbols.insert(name);
+        }
+    }
+    symbols.into_iter().collect()
+}
+
+fn expected_entry_symbols(
+    parser: &ParserGrammar,
+    table: &ParseTable,
+    state: ParseStateId,
+    names: &DiagnosticTermNames,
+) -> Vec<String> {
+    let Some(state) = table.states().get(state.get() as usize) else {
+        return Vec::new();
+    };
+    let mut symbols = BTreeSet::new();
+    for entry in state.entries() {
+        if let Some(name) = names.lookahead_name(parser, entry.lookahead(), false) {
+            symbols.insert(name);
+        }
+    }
+    symbols.into_iter().take(8).collect()
+}
+
+fn stack_context(
+    parser: &ParserGrammar,
+    table: &ParseTable,
+    state_stack: &[ParseStateId],
+) -> Vec<String> {
+    let mut context = Vec::new();
+    let mut seen = BTreeSet::new();
+    for state in state_stack.iter().rev().copied() {
+        let Some(state) = table.states().get(state.get() as usize) else {
+            continue;
+        };
+        let Some(item_set) = table.item_sets().get(state.item_set().get() as usize) else {
+            continue;
+        };
+        for item in item_set.items().iter().filter(|item| item.dot() > 0) {
+            let Some(production) = parser.productions().get(item.production().get() as usize)
+            else {
+                continue;
+            };
+            let Some(lhs) = parser
+                .symbols()
+                .nonterminals()
+                .get(production.lhs().get() as usize)
+            else {
+                continue;
+            };
+            if lhs.origin() != NonterminalOrigin::Rule {
+                continue;
+            }
+            let name = friendly_rule_name(lhs.name());
+            if seen.insert(name.clone()) {
+                context.push(name);
+            }
+            if context.len() >= 4 {
+                return context;
+            }
+        }
+    }
+    context
+}
+
+fn short_expected_list(expected: &[String]) -> Option<String> {
+    match expected {
+        [] => None,
+        [one] => Some(one.clone()),
+        _ => Some("one of the expected tokens".to_owned()),
+    }
+}
+
+fn friendly_rule_name(name: &str) -> String {
+    name.trim_start_matches('_').replace('_', " ")
+}
+
+fn source_found_at(input: &str, byte: usize) -> String {
+    let start = char_boundary_at_or_before(input, byte.min(input.len()));
+    if start >= input.len() {
+        return "end of input".to_owned();
+    }
+    let end = next_char_boundary(input, start);
+    format!("`{}`", input[start..end].escape_debug())
 }
 
 fn diagnostic_span(input: &str, byte: usize) -> Option<DiagnosticSpan> {
@@ -5673,5 +5968,54 @@ mod tests {
             )),
             Some((3, 4, 1, 0, 1, 1))
         );
+    }
+
+    #[test]
+    fn no_token_diagnostics_use_grammar_names() {
+        let raw = RawGrammarJson::from_tree_sitter_json_str(
+            r#"{
+  "name": "diagnostic_smoke",
+  "rules": {
+    "document": {
+      "type": "SYMBOL",
+      "name": "word"
+    },
+    "word": {
+      "type": "PATTERN",
+      "value": "\\w+"
+    }
+  }
+}"#,
+        )
+        .unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = ParseTable::from_grammar(&parser).unwrap();
+        let weavy_plan = WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let prepared = PreparedGrammar {
+            raw,
+            parser,
+            table,
+            weavy_plan,
+        };
+        let error = WeavyParseError::NoToken {
+            state: ParseStateId::from_index(0),
+            state_stack: vec![ParseStateId::from_index(0)],
+            byte_position: 0,
+            expected: Vec::new(),
+        };
+        let diagnostic = weavy_error_diagnostic("parse", &error, &prepared, "}");
+        assert_eq!(diagnostic.stage, "parse");
+        assert!(
+            diagnostic.message.contains("1:1: expected"),
+            "{diagnostic:?}"
+        );
+        assert!(diagnostic.message.contains("word"), "{diagnostic:?}");
+        assert!(diagnostic.message.contains("found `}`"), "{diagnostic:?}");
+        assert!(!diagnostic.message.contains("state"), "{diagnostic:?}");
     }
 }
