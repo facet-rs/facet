@@ -1,0 +1,45 @@
+// lua.vix — Lua 5.4 for any target the fleet can serve.
+
+use vix::{Tree, Path, Target};
+use caps::{Cc, Ar};
+
+/// Lua's sources, pinned by content. `fetch` is pure: the checksum IS the identity;
+/// the URL is only a hint about where satisfying bytes may be found.
+fn sources() -> Tree {
+    let tar = fetch(
+        url: "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+        sha256: "4f18ddae154e9f5d79f21e9a6ba48e5b5f5b2e6ab5e2c4a1e0d3b7f1b7de00d1",
+    );
+    extract(tar) / p"lua-5.4.8/src"
+}
+
+/// One translation unit -> one object file, wherever `cc` lives.
+fn object(cc: Cc, src: Tree, unit: Path, defines: [Flag]) -> Tree {
+    cc! {
+        -O2 -Wall {defines}
+        -c {src / unit}
+        -o {unit.with_ext("o")}
+    }
+}
+
+/// The interpreter, one target at a time.
+pub fn lua(target: Target) -> Tree {
+    let cc = Cc::acquire(target);
+    let ar = Ar::acquire(target);
+    let src = sources();
+
+    let defines = match target.os {
+        Linux => [-DLUA_USE_LINUX],
+        Macos => [-DLUA_USE_MACOSX],
+        _     => [],
+    };
+
+    let units = src.glob("*.c")
+        .filter(|u| u != p"lua.c" && u != p"luac.c" && u != p"onelua.c");
+
+    let objs: Tree = units.map(|u| object(cc, src, u, defines)).collect();
+
+    let lib  = ar! { rcs liblua.a {objs.glob("*.o")} };
+    let main = object(cc, src, p"lua.c", defines);
+    cc! { -o lua {main / p"lua.o"} {lib / p"liblua.a"} -lm }
+}
