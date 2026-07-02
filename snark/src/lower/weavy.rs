@@ -6487,6 +6487,12 @@ where
             stage: input_ctx.parser.stage(),
         });
     }
+    if block_execution == RuntimeWeavyBlockExecution::Direct {
+        return parse_weavy_deterministic_direct_with_execution_and_scratch::<S>(
+            input_ctx,
+            lexer_scratch,
+        );
+    }
     lexer_scratch.reset_for_parse(RuntimeWeavyLexSetCachePolicy::Disabled);
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
@@ -6617,6 +6623,133 @@ where
             RuntimeWeavyStepOutcome::Failed { .. } => return Ok(None),
         }
     }
+}
+
+fn parse_weavy_deterministic_direct_with_execution_and_scratch<S>(
+    input_ctx: RuntimeWeavyInput<'_>,
+    lexer_scratch: &RuntimeWeavyLexerScratch,
+) -> Result<Option<S::Output>, WeavyParseError>
+where
+    S: RuntimeWeavyDeterministicSink,
+{
+    lexer_scratch.reset_for_parse(RuntimeWeavyLexSetCachePolicy::Disabled);
+
+    let mut tree_store = RuntimeWeavyTreeStore::default();
+    let mut trace_events = RuntimeWeavyTraceSink::new(false);
+    let mut tree_journal = RuntimeWeavyTreeJournal::default();
+    let input_points = if S::TREE_EVENT_COLLECTION == RuntimeWeavyTreeEventCollection::Enabled {
+        RuntimeWeavyInputPoints::new(input_ctx.input)
+    } else {
+        RuntimeWeavyInputPoints::disabled(input_ctx.input)
+    };
+    let external_scanner_errors = RefCell::new(Vec::new());
+    let stats = RunStats::default();
+    let mut snark_stats = if S::SNARK_STAT_COLLECTION {
+        RuntimeWeavySnarkExecutionStats::default()
+    } else {
+        RuntimeWeavySnarkExecutionStats::disabled()
+    };
+    let hostcall_stats = WeavyHostCallExecutionStats::default();
+    let mut next_lookahead_index = 0usize;
+    let mut step_count = 0usize;
+    let step_limit = runtime_weavy_step_limit(input_ctx.table, input_ctx.input);
+    let initial_branch = RuntimeWeavyBranch {
+        version: parser_ir::StackVersionId::from_index(0),
+        stack: vec![RuntimeWeavyStackEntry {
+            state: parser_ir::ParseStateId::from_index(0),
+            fragment: None,
+            extra: false,
+            end_byte: 0,
+        }],
+        byte_position: 0,
+        scanner_snapshot: None,
+        auto_close_stack: Vec::new(),
+        error_cost: 0,
+        tree_journal: RuntimeWeavyTreeJournalHead::default(),
+        reusable_nodes: Vec::new(),
+    };
+
+    let accepted = {
+        let mut stepper = RuntimeWeavyStepper::from_branch(
+            RuntimeWeavyStepperInput {
+                input: input_ctx,
+                tree_store: &mut tree_store,
+                trace_events: &mut trace_events,
+                tree_journal: &mut tree_journal,
+                tree_event_collection: S::TREE_EVENT_COLLECTION,
+                lexer_scratch,
+                snark_stats: &mut snark_stats,
+                input_points: &input_points,
+                external_scanner_errors: &external_scanner_errors,
+            },
+            initial_branch,
+            parser_ir::LookaheadTokenId::from_index(0),
+            RuntimeWeavyMode::ApplyAction,
+            RuntimeWeavyReuseCollection::Disabled,
+        );
+        loop {
+            step_count += 1;
+            if step_count > step_limit {
+                return Ok(None);
+            }
+
+            stepper.lookahead = None;
+            stepper.lookahead_id = parser_ir::LookaheadTokenId::from_index(next_lookahead_index);
+            let version = stepper.version;
+            let state = match stepper.stack.last() {
+                Some(entry) => entry.state,
+                None => return Ok(None),
+            };
+            let dispatch = match stepper.probe_state_direct(state) {
+                Ok(dispatch) => dispatch,
+                Err(_) => return Ok(None),
+            };
+            if stepper.lookahead.is_some() {
+                next_lookahead_index += 1;
+            }
+            let Some(action) = dispatch.first_action.filter(|_| dispatch.action_count == 1) else {
+                return Ok(None);
+            };
+            if stepper.apply_action_direct(action).is_err() {
+                return Ok(None);
+            }
+            if let Some(root) = stepper.accepted_root {
+                break RuntimeWeavyAccepted {
+                    version,
+                    root,
+                    error_cost: stepper.error_cost,
+                    tree_journal_head: stepper.tree_journal_head,
+                    reusable_nodes: std::mem::take(&mut stepper.reusable_nodes),
+                };
+            }
+        }
+    };
+
+    S::accepted(
+        input_ctx,
+        tree_store,
+        trace_events,
+        tree_journal,
+        stats,
+        lexer_scratch.execution_stats(),
+        snark_stats,
+        hostcall_stats,
+        RuntimeWeavyBlockExecution::Direct.parse_execution_lane(),
+        accepted.version,
+        accepted.root,
+        accepted.error_cost,
+        accepted.tree_journal_head,
+        accepted.reusable_nodes,
+    )
+    .map(Some)
+}
+
+struct RuntimeWeavyAccepted {
+    version: parser_ir::StackVersionId,
+    root: parser_ir::TreeNodeId,
+    error_cost: u32,
+    tree_journal_head: RuntimeWeavyTreeJournalHead,
+    reusable_nodes: Vec<RuntimeWeavyReusableNode>,
 }
 
 fn runtime_weavy_action_block_for_execution(
