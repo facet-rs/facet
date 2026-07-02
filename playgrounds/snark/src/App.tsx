@@ -1066,7 +1066,7 @@ function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | nul
 
       {dominantSnarkExecution ? (
         <div className="plan-row">
-          <span>Runtime parser hot lane</span>
+          <span>Weavy parser hot lane</span>
           <strong>{dominantSnarkExecution.family}</strong>
           <code>
             {parse?.execution_lane ?? "Unknown"} · {dominantSnarkExecution.execution} ·{" "}
@@ -1078,7 +1078,7 @@ function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | nul
 
       {dominantLexerExecution ? (
         <div className="plan-row">
-          <span>Runtime lexer hot lane</span>
+          <span>Weavy lexer hot lane</span>
           <strong>{dominantLexerExecution.kind}</strong>
           <code>
             {dominantLexerExecution.count} executions · {parse?.lexer_call_count ?? 0} lex calls ·{" "}
@@ -1089,14 +1089,14 @@ function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | nul
 
       <PlanTopList title="Parser stencil families" items={plan.snark_stencil_families} />
       <PlanTopList
-        title="Runtime parser executions"
+        title="Weavy parser executions"
         items={(parse?.snark_stencil_executions ?? []).map((summary) => ({
           kind: `${summary.family} · ${summary.execution}`,
           count: summary.count,
         }))}
       />
       <PlanTopList
-        title="Runtime lexer executions"
+        title="Weavy lexer executions"
         items={(parse?.lexer_stencil_executions ?? []).map((summary) => ({
           kind: summary.kind,
           count: summary.count,
