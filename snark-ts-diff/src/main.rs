@@ -40,7 +40,7 @@ use snark::{
         WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_collecting_reuse_unmetered_with_report_and_scanner,
         parse_prepared_weavy_recovering_unmetered_with_report_and_scanner,
-        parse_prepared_weavy_unmetered_with_report, parse_prepared_weavy_with_report,
+        parse_prepared_weavy_unmetered_with_report,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
@@ -677,7 +677,8 @@ fn main() {
     let iters: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
 
     let p = prepare(grammar_path);
-    if let Err(e) = parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, &input) {
+    if let Err(e) = parse_prepared_weavy_unmetered_with_report(&p.plan, &p.parser, &p.table, &input)
+    {
         eprintln!("parse failed: {e:?}");
         std::process::exit(1);
     }
