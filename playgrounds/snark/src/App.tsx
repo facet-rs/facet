@@ -59,10 +59,12 @@ type PlanOutput = {
   lexer_fully_visible: boolean;
   neutral_weavy_only: boolean;
   stencils_needed: boolean;
+  lexer_stencils_needed: boolean;
   copy_patch_jit_available: boolean;
   neutral_weavy_op_count: number;
   snark_intrinsic_count: number;
   snark_stencils: PlanStencilOutput[];
+  lexer_stencils: PlanLexerStencilOutput[];
   snark_stencil_families: PlanStencilFamilyOutput[];
   snark_stencil_executions: PlanStencilExecutionOutput[];
   snark_stencil_states: PlanStencilStateOutput[];
@@ -75,6 +77,13 @@ type PlanBackendExecutionOutput = {
   parser_count: number;
   lexer_count: number;
   total_count: number;
+};
+
+type PlanLexerStencilOutput = {
+  kind: string;
+  execution: string;
+  state: string[];
+  count: number;
 };
 
 type PlanStencilFamilyOutput = {
@@ -794,6 +803,7 @@ function ResultsDock({
   const sexp = result?.parse?.sexp ?? "";
   const captures = composedHighlights(result);
   const layers = result?.layers ?? [];
+  const plan = result?.plan ?? null;
   const tests = result?.tests.requested ? result : null;
   const unplaced = result?.diagnostics.filter((diagnostic) => !diagnostic.primary_span) ?? [];
   const recovered =
@@ -849,6 +859,8 @@ function ResultsDock({
           </p>
         </Panel>
       ) : null}
+
+      {plan ? <PlanPanel plan={plan} /> : null}
 
       <Panel
         title="S-expression"
@@ -983,6 +995,94 @@ function ResultsDock({
       ) : null}
     </div>
   );
+}
+
+function PlanPanel({ plan }: { plan: PlanOutput }) {
+  const parserStencilTotal = countPlanItems(plan.snark_stencils);
+  const lexerStencilTotal = countPlanItems(plan.lexer_stencils);
+  const totalStencilWork = parserStencilTotal + lexerStencilTotal;
+  const dominant = plan.dominant_backend_execution;
+
+  return (
+    <Panel
+      title="Plan"
+      defaultOpen
+      meta={dominant ? `${dominant.execution} · ${dominant.total_count} ops` : "no backend lane"}
+    >
+      <div className="plan-grid">
+        <PlanFact
+          label="Visibility"
+          value={plan.fully_visible ? "full" : plan.parser_fully_visible || plan.lexer_fully_visible ? "partial" : "opaque"}
+          detail={`parser ${plan.parser_fully_visible ? "visible" : "opaque"} · lexer ${plan.lexer_fully_visible ? "visible" : "opaque"}`}
+        />
+        <PlanFact
+          label="Execution"
+          value={plan.neutral_weavy_only ? "neutral" : "snark dialect"}
+          detail={`${plan.neutral_weavy_op_count} neutral ops · ${plan.snark_intrinsic_count} intrinsics`}
+        />
+        <PlanFact
+          label="Copy-patch"
+          value={plan.copy_patch_jit_available ? "available" : "blocked"}
+          detail={`${totalStencilWork} stencil sites · parser ${parserStencilTotal} · lexer ${lexerStencilTotal}`}
+        />
+      </div>
+
+      {dominant ? (
+        <div className="plan-row">
+          <span>Dominant direct backend</span>
+          <strong>{dominant.execution}</strong>
+          <code>
+            parser {dominant.parser_count} · lexer {dominant.lexer_count} · total {dominant.total_count}
+          </code>
+        </div>
+      ) : null}
+
+      <PlanTopList title="Parser stencil families" items={plan.snark_stencil_families} />
+      <PlanTopList title="Lexer stencil ops" items={plan.lexer_stencils} />
+      <PlanTopList title="Lowering barriers" items={plan.lowering_barriers} />
+    </Panel>
+  );
+}
+
+function PlanFact({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="plan-fact">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <code>{detail}</code>
+    </div>
+  );
+}
+
+function PlanTopList({ title, items }: { title: string; items: Array<{ count: number } & Record<string, unknown>> }) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className="plan-list">
+      <h3>{title}</h3>
+      {items.slice(0, 5).map((item, index) => (
+        <div className="plan-list-row" key={`${title}-${index}-${planItemLabel(item)}`}>
+          <code>{planItemLabel(item)}</code>
+          <span>{item.count}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function planItemLabel(item: Record<string, unknown>) {
+  if (typeof item.kind === "string") {
+    return item.kind;
+  }
+  if (typeof item.family === "string") {
+    return item.family;
+  }
+  return typeof item.execution === "string" ? item.execution : String(item.kind ?? item.state ?? "unknown");
+}
+
+function countPlanItems(items: Array<{ count: number }>) {
+  return items.reduce((total, item) => total + item.count, 0);
 }
 
 function LayerList({ layers }: { layers: LayerOutput[] }) {

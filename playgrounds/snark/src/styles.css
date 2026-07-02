@@ -633,6 +633,95 @@ select {
   word-break: break-word;
 }
 
+/* ---------- plan readiness ---------- */
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.plan-fact {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--code-bg);
+}
+
+.plan-fact span,
+.plan-list h3,
+.plan-row > span {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.plan-fact strong,
+.plan-row strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.plan-fact code,
+.plan-row code,
+.plan-list-row code,
+.plan-list-row span {
+  min-width: 0;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.plan-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  margin-top: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--chip-bg);
+}
+
+.plan-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-list {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.plan-list h3 {
+  margin: 0 0 2px;
+}
+
+.plan-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.plan-list-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- captures list ---------- */
 
 .capture-list {
