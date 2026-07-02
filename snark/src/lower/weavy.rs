@@ -11285,10 +11285,11 @@ fn match_weavy_lex_expr_for_tests(
     match_weavy_lex_expr_runtime(expr, input, byte_position, &lexer_scratch)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 struct RuntimeWeavyInputPoints {
     input_len: usize,
     line_starts: Vec<usize>,
+    cached_line_index: Cell<usize>,
 }
 
 impl RuntimeWeavyInputPoints {
@@ -11302,15 +11303,37 @@ impl RuntimeWeavyInputPoints {
         Self {
             input_len: input.len(),
             line_starts,
+            cached_line_index: Cell::new(0),
         }
     }
 
     fn point_at(&self, byte: usize) -> PointBytes {
         let byte = byte.min(self.input_len);
-        let line_index = self
+        let mut line_index = self
+            .cached_line_index
+            .get()
+            .min(self.line_starts.len().saturating_sub(1));
+        let line_start = self.line_starts[line_index];
+        let next_line_start = self
             .line_starts
-            .partition_point(|line_start| *line_start <= byte)
-            .saturating_sub(1);
+            .get(line_index + 1)
+            .copied()
+            .unwrap_or_else(|| self.input_len.saturating_add(1));
+        if byte < line_start {
+            line_index = self
+                .line_starts
+                .partition_point(|line_start| *line_start <= byte)
+                .saturating_sub(1);
+        } else if byte >= next_line_start {
+            while self
+                .line_starts
+                .get(line_index + 1)
+                .is_some_and(|line_start| *line_start <= byte)
+            {
+                line_index += 1;
+            }
+        }
+        self.cached_line_index.set(line_index);
         let line_start = self.line_starts[line_index];
         PointBytes::new(
             Row::new(u32::try_from(line_index).expect("runtime row fits u32")),
@@ -11354,6 +11377,28 @@ mod tests {
 
         assert_eq!(descriptor.dialect, "snark.tree_sitter");
         assert_eq!(descriptor.name, "shift");
+    }
+
+    #[test]
+    fn runtime_weavy_input_points_cache_tracks_forward_and_backward_queries() {
+        let points = RuntimeWeavyInputPoints::new("ab\nc\n");
+
+        assert_eq!(
+            points.point_at(0),
+            PointBytes::new(Row::new(0), Utf8ColumnBytes::new(0))
+        );
+        assert_eq!(
+            points.point_at(3),
+            PointBytes::new(Row::new(1), Utf8ColumnBytes::new(0))
+        );
+        assert_eq!(
+            points.point_at(5),
+            PointBytes::new(Row::new(2), Utf8ColumnBytes::new(0))
+        );
+        assert_eq!(
+            points.point_at(1),
+            PointBytes::new(Row::new(0), Utf8ColumnBytes::new(1))
+        );
     }
 
     #[test]
