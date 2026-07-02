@@ -90,6 +90,43 @@ impl Default for VixParser {
 pub mod support {
     use snark::parser::ResolvedCstNode;
 
+    /// Half-open byte range into the source, carried by every AST node.
+    #[derive(facet::Facet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct Span {
+        pub start: u32,
+        pub end: u32,
+    }
+
+    impl Span {
+        pub fn contains(&self, offset: u32) -> bool {
+            self.start <= offset && offset < self.end
+        }
+    }
+
+    /// A decoded leaf value plus where it came from — rename/go-to-def need the
+    /// span of every identifier OCCURRENCE, not just of enclosing nodes.
+    #[derive(facet::Facet, Debug, Clone, PartialEq)]
+    pub struct Spanned<T> {
+        pub value: T,
+        pub span: Span,
+    }
+
+    impl<T> core::ops::Deref for Spanned<T> {
+        type Target = T;
+        fn deref(&self) -> &T {
+            &self.value
+        }
+    }
+
+    /// This node's source span.
+    pub fn span(n: &ResolvedCstNode) -> Span {
+        let bytes = n.bytes();
+        Span {
+            start: bytes.start().get(),
+            end: bytes.end().get(),
+        }
+    }
+
     /// All children carrying the given field.
     pub fn fields<'a>(
         n: &'a ResolvedCstNode,
@@ -110,7 +147,7 @@ pub mod support {
 
     /// Raw source text of a node: its own token text, or its non-extra descendants'
     /// token texts concatenated in order (leaf nodes wrap one anonymous token).
-    pub fn node_text(n: &ResolvedCstNode) -> String {
+    fn raw_text(n: &ResolvedCstNode) -> String {
         fn collect(n: &ResolvedCstNode, out: &mut String) {
             if let Some(t) = n.text() {
                 out.push_str(t);
@@ -127,6 +164,14 @@ pub mod support {
         out
     }
 
+    /// Raw-text leaf (identifier, number, flag, command token).
+    pub fn node_text(n: &ResolvedCstNode) -> Spanned<String> {
+        Spanned {
+            value: raw_text(n),
+            span: span(n),
+        }
+    }
+
     /// Token-valued fields (`field("op", …)`, `field("vis", "pub")`): snark drops
     /// `Field { child: None }` for anonymous token steps, so the generated lowering
     /// scans the node's direct anonymous children against the grammar-derived token
@@ -139,18 +184,27 @@ pub mod support {
     }
 
     /// `"…"` string literal -> contents, escapes processed.
-    pub fn decode_string(n: &ResolvedCstNode) -> String {
-        unquote(&node_text(n))
+    pub fn decode_string(n: &ResolvedCstNode) -> Spanned<String> {
+        Spanned {
+            value: unquote(&raw_text(n)),
+            span: span(n),
+        }
     }
 
     /// `p"…"` path literal -> contents, escapes processed.
-    pub fn decode_path(n: &ResolvedCstNode) -> String {
-        let raw = node_text(n);
-        unquote(raw.strip_prefix('p').unwrap_or(&raw))
+    pub fn decode_path(n: &ResolvedCstNode) -> Spanned<String> {
+        let raw = raw_text(n);
+        Spanned {
+            value: unquote(raw.strip_prefix('p').unwrap_or(&raw)),
+            span: span(n),
+        }
     }
 
-    pub fn decode_bool(n: &ResolvedCstNode) -> bool {
-        node_text(n) == "true"
+    pub fn decode_bool(n: &ResolvedCstNode) -> Spanned<bool> {
+        Spanned {
+            value: raw_text(n) == "true",
+            span: span(n),
+        }
     }
 
     fn unquote(raw: &str) -> String {

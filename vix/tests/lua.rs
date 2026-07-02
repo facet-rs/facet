@@ -21,8 +21,11 @@ fn lua_sketch_lowers_to_typed_ast() {
     let Item::Use(use_vix) = &file.items[0] else {
         panic!("item 0 is `use vix::…`");
     };
-    assert_eq!(use_vix.tree.segments, ["vix"]);
-    assert_eq!(use_vix.tree.leaves, ["Tree", "Path", "Target"]);
+    let names = |xs: &[vix::support::Spanned<String>]| {
+        xs.iter().map(|s| s.value.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(names(&use_vix.tree.segments), ["vix"]);
+    assert_eq!(names(&use_vix.tree.leaves), ["Tree", "Path", "Target"]);
 
     let fns: Vec<_> = file
         .items
@@ -36,7 +39,7 @@ fn lua_sketch_lowers_to_typed_ast() {
     let (sources, object, lua) = (&fns[0], &fns[1], &fns[2]);
 
     // fn sources() -> Tree { let tar = …; extract(tar) / p"lua-5.4.8/src" }
-    assert_eq!(sources.name, "sources");
+    assert_eq!(sources.name.value, "sources");
     assert_eq!(sources.vis, None);
     assert_eq!(sources.body.stmts.len(), 1);
     let Some(Expr::Binary(join)) = &sources.body.tail else {
@@ -46,13 +49,16 @@ fn lua_sketch_lowers_to_typed_ast() {
     let Expr::Path(p) = &join.right else {
         panic!("join rhs is a path literal");
     };
-    assert_eq!(p, "lua-5.4.8/src");
+    assert_eq!(p.value, "lua-5.4.8/src");
 
     // fn object(cc: Cc, src: Tree, unit: Path, defines: [Flag]) -> Tree { cc! { … } }
-    assert_eq!(object.name, "object");
+    assert_eq!(object.name.value, "object");
     let params = &object.params.params;
     assert_eq!(
-        params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        params
+            .iter()
+            .map(|p| p.name.value.as_str())
+            .collect::<Vec<_>>(),
         ["cc", "src", "unit", "defines"]
     );
     let Type::Array(defines_ty) = &params[3].ty else {
@@ -61,12 +67,12 @@ fn lua_sketch_lowers_to_typed_ast() {
     let Type::Path(flag) = &defines_ty.elem else {
         panic!("array elem is a path type");
     };
-    assert_eq!(flag.segments, ["Flag"]);
+    assert_eq!(names(&flag.segments), ["Flag"]);
     assert!(object.body.stmts.is_empty());
     let Some(Expr::Command(cc)) = &object.body.tail else {
         panic!("object tail is cc! {{…}}");
     };
-    assert_eq!(cc.command, "cc");
+    assert_eq!(cc.command.value, "cc");
     // -O2 -Wall {defines} -c {src / unit} -o {unit.with_ext("o")}
     assert_eq!(cc.parts.len(), 7);
     assert_eq!(
@@ -78,7 +84,7 @@ fn lua_sketch_lowers_to_typed_ast() {
     );
 
     // pub fn lua(target: Target) -> Tree
-    assert_eq!(lua.name, "lua");
+    assert_eq!(lua.name.value, "lua");
     assert_eq!(lua.vis.as_deref(), Some("pub"));
     assert_eq!(lua.body.stmts.len(), 8);
 
@@ -86,7 +92,7 @@ fn lua_sketch_lowers_to_typed_ast() {
     let Stmt::Let(defines) = &lua.body.stmts[3] else {
         panic!("stmt 3 is `let defines`");
     };
-    assert_eq!(defines.name, "defines");
+    assert_eq!(defines.name.value, "defines");
     let Expr::Match(m) = &defines.value else {
         panic!("defines is a match");
     };
@@ -94,7 +100,7 @@ fn lua_sketch_lowers_to_typed_ast() {
     let Pattern::Identifier(first) = &m.arms[0].pattern else {
         panic!("first arm matches Linux");
     };
-    assert_eq!(first, "Linux");
+    assert_eq!(first.value, "Linux");
     let Expr::Array(linux_flags) = &m.arms[0].value else {
         panic!("Linux arm yields an array");
     };
@@ -102,8 +108,8 @@ fn lua_sketch_lowers_to_typed_ast() {
     let ArrayElem::Flag(flag) = &linux_flags.elems[0] else {
         panic!("array elem is a flag");
     };
-    assert_eq!(flag, "-DLUA_USE_LINUX");
-    assert!(matches!(m.arms[2].pattern, Pattern::Wildcard));
+    assert_eq!(flag.value, "-DLUA_USE_LINUX");
+    assert!(matches!(m.arms[2].pattern, Pattern::Wildcard(_)));
     let Expr::Array(empty) = &m.arms[2].value else {
         panic!("wildcard arm yields an array");
     };
@@ -116,11 +122,11 @@ fn lua_sketch_lowers_to_typed_ast() {
     let Expr::MethodCall(filter) = &units.value else {
         panic!("units is a method-call chain");
     };
-    assert_eq!(filter.name, "filter");
+    assert_eq!(filter.name.value, "filter");
     let Some(Arg::Expr(Expr::Closure(pred))) = filter.args.args.first() else {
         panic!("filter takes a closure");
     };
-    assert_eq!(pred.params, ["u"]);
+    assert_eq!(names(&pred.params), ["u"]);
 
     // tail: cc! { -o lua {main / p"lua.o"} {lib / p"liblua.a"} -lm }
     let Some(Expr::Command(link)) = &lua.body.tail else {
