@@ -809,15 +809,14 @@ impl<'a> Model<'a> {
 }
 
 /// Grammar field names are singular (they label one child each); Vec-shaped fields
-/// pluralize (`stmt` -> `stmts`, `leaf` -> `leaves`), and `type` dodges the keyword.
+/// pluralize (`stmt` -> `stmts`, `entry` -> `entries`, `leaf` -> `leaves`), and a
+/// singular `type` dodges the keyword (plural `types` doesn't need to).
 fn rust_field_name(name: &str, mult: Mult) -> String {
-    let singular = match name {
-        "type" => "ty",
-        other => other,
-    };
-    match (mult, singular) {
+    match (mult, name) {
         (Mult::Many, "leaf") => "leaves".to_string(),
+        (Mult::Many, s) if s.ends_with('y') => format!("{}ies", &s[..s.len() - 1]),
         (Mult::Many, s) if !s.ends_with('s') => format!("{s}s"),
+        (_, "type") => "ty".to_string(),
         (_, s) => s.to_string(),
     }
 }

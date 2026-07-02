@@ -31,5 +31,5 @@ pub fn demo() -> Float {
         value: Expr::Num(6.0),
         body: Expr::Mul(Expr::Var("x"), Expr::Num(7.0)),
     };
-    eval(program, Map::new())
+    eval(program, {})
 }

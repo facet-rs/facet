@@ -266,7 +266,7 @@ impl Binder {
     }
 
     fn tuple_fields(&mut self, tuple: &TupleFields) {
-        for t in &tuple.tys {
+        for t in &tuple.types {
             self.ty(t);
         }
     }
@@ -374,7 +374,16 @@ impl Binder {
                     self.expr(&f.value);
                 }
                 for s in &x.spreads {
-                    self.expr(&s.base);
+                    // `..base` = record update; bare `..` = partial construction.
+                    if let Some(base) = &s.base {
+                        self.expr(base);
+                    }
+                }
+            }
+            Expr::Map(x) => {
+                for entry in &x.entries {
+                    self.expr(&entry.key);
+                    self.expr(&entry.value);
                 }
             }
             Expr::Tuple(x) => {
@@ -421,6 +430,8 @@ impl Binder {
             match arg {
                 // A kwarg's NAME names the callee's parameter, not a value in scope.
                 Arg::Kwarg(k) => self.expr(&k.value),
+                // A trailing `..` marks the call partial — nothing to resolve.
+                Arg::Partial(_) => {}
                 Arg::Expr(e) => self.expr(e),
             }
         }

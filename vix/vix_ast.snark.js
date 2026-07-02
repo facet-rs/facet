@@ -46,7 +46,10 @@ ast({
     as: "StructLit",
     fields: { path: { enum: "PathRef" } },
   },
+  map_literal: { as: "Map", struct: "MapLiteral" },
   tuple_expr: { as: "Tuple" },
+  partial: { as: "Partial" },
+  tuple_index: { as: "Index", decode: "text" },
 
   // types
   array_type: { as: "Array" },

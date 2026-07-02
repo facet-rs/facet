@@ -157,6 +157,7 @@ module.exports = grammar({
         $.closure,
         $.command_block,
         $.struct_literal,
+        $.map_literal,
         $.tuple_expr,
         $.array,
         $.paren,
@@ -180,6 +181,7 @@ module.exports = grammar({
         $.field_access,
         $.match_expr,
         $.closure,
+        $.map_literal,
         $.tuple_expr,
         $.array,
         $.paren,
@@ -221,17 +223,22 @@ module.exports = grammar({
         seq(field("receiver", $._expr), ".", field("name", $.identifier), field("args", $.arg_list)),
       ),
 
-    // `.name` field access and `.0` tuple index share one node; nested tuple
-    // indexing (`t.0.1`) is a KNOWN lexer wart (0.1 lexes as one number) — write
-    // `(t.0).1` until per-state numeric lexing splits it.
+    // `.name` field access and `.0` tuple index share one node. tuple_index is
+    // a DEDICATED integer token: the only states where it's valid are after
+    // `.`, where `number` (with its fraction part) is NOT — so `t.0.1` lexes
+    // as `0`, `.`, `1` by construction. Per-state lexing again: no float token
+    // is ever formed and re-split (the rustc hack rust-analyzer hates).
     field_access: ($) =>
       prec(
         PREC.postfix,
-        seq(field("receiver", $._expr), ".", field("name", choice($.identifier, $.number))),
+        seq(field("receiver", $._expr), ".", field("name", choice($.identifier, $.tuple_index))),
       ),
 
     arg_list: ($) => seq("(", sepBy(",", field("arg", $._arg)), ")"),
-    _arg: ($) => choice($.kwarg, $._expr),
+    // `object(cc: gcc, ..)` — a trailing bare `..` makes the call PARTIAL:
+    // the result is a function of the not-yet-given (non-defaulted) params.
+    _arg: ($) => choice($.kwarg, $.partial, $._expr),
+    partial: () => "..",
     kwarg: ($) => seq(field("name", $.identifier), ":", field("value", $._expr)),
 
     scoped_identifier: ($) =>
@@ -305,7 +312,14 @@ module.exports = grammar({
         "}",
       ),
     field_init: ($) => seq(field("name", $.identifier), ":", field("value", $._expr)),
-    spread: ($) => seq("..", field("base", $._expr)),
+    // `..base` = record update; bare `..` = PARTIAL construction ("the rest
+    // comes later" — same `..` as pattern rest and call partials).
+    spread: ($) => seq("..", optional(field("base", $._expr))),
+
+    // Bare braces are free in vix (no block/if exprs), so maps get the literal
+    // they deserve: `{ "CC": "clang", "OPT": flag }` — keys are expressions.
+    map_literal: ($) => seq("{", sepBy(",", field("entry", $.map_entry)), "}"),
+    map_entry: ($) => seq(field("key", $._expr), ":", field("value", $._expr)),
 
     tuple_expr: ($) =>
       seq("(", field("elem", $._expr), ",", sepBy(",", field("elem", $._expr)), ")"),
@@ -342,6 +356,7 @@ module.exports = grammar({
     flag: () => token(/--?[A-Za-z][A-Za-z0-9_=+.\/-]*/),
 
     number: () => /\d+(\.\d+)?/,
+    tuple_index: () => /[0-9]+/,
     boolean: () => choice("true", "false"),
 
     line_comment: () => token(seq("//", /[^/\n][^\n]*|/)),

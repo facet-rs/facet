@@ -4,7 +4,7 @@
 // ordered, facet-shaped, and serializable. There is nothing to derive: the
 // language cannot express a type that can't be a memo key.
 
-use vix::{Tree, Path, Target};
+use vix::{Tree, Path, Target, Map};
 use caps::{Cc, Ar};
 
 /// Record struct; field defaults mirror kwargs-with-defaults.
@@ -12,6 +12,7 @@ struct Toolchain {
     cc: Cc,
     ar: Ar,
     opt: Int = 2,
+    env: Map<String, String> = {},
 }
 
 /// Tuple struct (newtype) and unit struct.
@@ -50,6 +51,24 @@ fn apply(f: fn(Int) -> Int, x: Int) -> Int {
     f(x)
 }
 
+fn scaled(k: Int, x: Int) -> Int {
+    k * x
+}
+
+/// Partial application: a trailing `..` says "the rest comes later" — the
+/// same `..` as record update and pattern rest.
+fn partials() -> Int {
+    let double = scaled(k: 2, ..);
+    double(x: 21)
+}
+
+/// Tuple indexing nests: `deep.0.1` lexes as `0`, `.`, `1` — tuple_index is
+/// its own token, and no float is ever formed where none can occur.
+fn depths() -> Int {
+    let deep = ((1, 2), 3);
+    deep.0.1
+}
+
 pub fn toolchain(target: Target) -> Toolchain {
     let base = Toolchain { cc: Cc::acquire(target), ar: Ar::acquire(target) };
     let tuned = match target.os {
@@ -57,5 +76,6 @@ pub fn toolchain(target: Target) -> Toolchain {
         _ => base,
     };
     let pair = (tuned, Probe);
-    pair.0
+    let flags = { "CFLAGS": "-O2", "LDFLAGS": "-lm" };
+    Toolchain { env: flags, ..pair.0 }
 }

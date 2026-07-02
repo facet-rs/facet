@@ -126,10 +126,53 @@ fn types_tour_parses_and_binds_clean() {
         panic!("windows arm is a record update");
     };
     assert_eq!(update.spreads.len(), 1);
-    let Some(Expr::Field(idx)) = &toolchain_fn.body.tail else {
-        panic!("tail is pair.0");
+    // tail: `Toolchain { env: flags, ..pair.0 }` — map-valued field + record
+    // update whose base is a tuple index.
+    let Some(Expr::StructLit(tail)) = &toolchain_fn.body.tail else {
+        panic!("tail is a record update");
     };
-    assert!(matches!(&idx.name, vix::ast::Member::Number(n) if n.value == "0"));
+    assert_eq!(tail.fields.len(), 1);
+    assert_eq!(tail.spreads.len(), 1);
+    let Some(Expr::Field(idx)) = &tail.spreads[0].base else {
+        panic!("spread base is pair.0");
+    };
+    assert!(matches!(&idx.name, vix::ast::Member::Index(n) if n.value == "0"));
+
+    // `let flags = { "CFLAGS": …, "LDFLAGS": … };` — a map literal.
+    let Stmt::Let(flags) = &toolchain_fn.body.stmts[3] else {
+        panic!("fourth stmt is let flags");
+    };
+    let Expr::Map(map) = &flags.value else {
+        panic!("flags is a map literal");
+    };
+    assert_eq!(map.entries.len(), 2);
+
+    // partials: `scaled(k: 2, ..)` is a partial call.
+    let partials = fns.iter().find(|f| f.name.value == "partials").unwrap();
+    let Stmt::Let(double) = &partials.body.stmts[0] else {
+        panic!("let double");
+    };
+    let Expr::Call(call) = &double.value else {
+        panic!("double is a call");
+    };
+    assert!(
+        call.args
+            .args
+            .iter()
+            .any(|a| matches!(a, vix::ast::Arg::Partial(_))),
+        "trailing `..` marks the call partial"
+    );
+
+    // depths: `deep.0.1` nests tuple indices (no float token forms).
+    let depths = fns.iter().find(|f| f.name.value == "depths").unwrap();
+    let Some(Expr::Field(outer)) = &depths.body.tail else {
+        panic!("tail is deep.0.1");
+    };
+    assert!(matches!(&outer.name, vix::ast::Member::Index(n) if n.value == "1"));
+    let Expr::Field(inner) = &outer.receiver else {
+        panic!("receiver is deep.0");
+    };
+    assert!(matches!(&inner.name, vix::ast::Member::Index(n) if n.value == "0"));
 }
 
 #[test]
