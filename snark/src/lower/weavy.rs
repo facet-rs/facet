@@ -2604,15 +2604,17 @@ impl WeavyDirectPatternSet {
         if let (Some(dfa), Some(dfa_cache)) = (&self.dfa, dfa_cache) {
             let search = Input::new(haystack).anchored(Anchored::Yes);
             let mut state = OverlappingState::start();
+            let mut dfa_failed = false;
             loop {
                 if dfa
                     .try_search_overlapping_fwd(dfa_cache, &search, &mut state)
                     .is_err()
                 {
+                    dfa_failed = true;
                     break;
                 }
                 let Some(match_) = state.get_match() else {
-                    return;
+                    break;
                 };
                 let set_index = match_.pattern().as_usize();
                 let end = byte_position + match_.offset();
@@ -2624,6 +2626,9 @@ impl WeavyDirectPatternSet {
                         crate::lex_match::pattern_inspected_end(input, end),
                     )),
                 );
+            }
+            if !dfa_failed {
+                return;
             }
         }
         matches.clear();
