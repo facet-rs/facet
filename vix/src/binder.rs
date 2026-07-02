@@ -66,6 +66,11 @@ impl Bindings {
         self.symbols.iter().enumerate().map(|(i, s)| (SymbolId(i), s))
     }
 
+    /// Every resolved reference occurrence.
+    pub fn refs(&self) -> impl Iterator<Item = (Span, SymbolId)> + '_ {
+        self.refs.iter().copied()
+    }
+
     pub fn unresolved(&self) -> &[Spanned<String>] {
         &self.unresolved
     }

@@ -14,6 +14,7 @@ description = "The vix build language: grammar-derived typed AST over snark."
 [dependencies]
 snark = { path = "../snark", features = ["json-import"] }
 facet = { path = "../facet" }
+facet-json = { path = "../facet-json" }
 
 [build-dependencies]
 snark = { path = "../snark", features = ["json-import"] }

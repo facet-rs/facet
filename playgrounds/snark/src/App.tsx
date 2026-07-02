@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { runParse } from "./parseClient";
 import { runBenchmark, BenchBody, benchMeta, type BenchReport } from "./benchmark";
-import { SourceEditor, type SourceEdit } from "./editor";
+import { SourceEditor, type IdeInfo, type IdeState, type SourceEdit } from "./editor";
 import { captureClass } from "./highlight";
 import { defaultVendoredRootId, vendoredFiles } from "./bundled";
 import {
@@ -284,6 +284,8 @@ type PlaygroundResponse = {
   highlight_tests: HighlightTestOutput[];
   tests: TestSummary;
   timings: Timings;
+  /** vix IDE bindings (attached client-side from the worker's vix lane). */
+  vix_ide?: IdeState;
 };
 
 const defaultFiles: BundleFile[] = vendoredFiles;
@@ -587,7 +589,7 @@ export function App() {
         baselineInputRef.current === pendingEdit.oldInput &&
         pendingEdit.oldInput !== input;
 
-      let result: { response: string; prepared: boolean };
+      let result: { response: string; prepared: boolean; vix: string | null };
       try {
         result = await runParse({
           key,
@@ -596,6 +598,7 @@ export function App() {
           runCorpus: runBundledTests,
           edit: useReparse ? pendingEdit.edit : null,
           useReparse,
+          vixIde: activeGrammarRootId === "vix",
         });
       } catch (error) {
         // A worker/prepare failure: force a fresh prepare on the next run.
@@ -606,6 +609,8 @@ export function App() {
 
       preparedKeyRef.current = result.prepared ? key : null;
       const parsed = JSON.parse(result.response) as PlaygroundResponse;
+      // IDE bindings only make sense against the exact input they were computed for.
+      parsed.vix_ide = result.vix ? { ide: JSON.parse(result.vix) as IdeInfo, input } : null;
       if (runBundledTests) {
         bundledTestSnapshotRef.current = {
           key,
@@ -753,6 +758,7 @@ export function App() {
           input={input}
           captures={editorCaptures}
           diagnostic={editorDiagnostic}
+          ide={result?.vix_ide ?? null}
           onChange={(value, edit) => updateSourceInput(value, "", edit)}
         />
 

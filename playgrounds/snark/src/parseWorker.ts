@@ -2,7 +2,7 @@
 // heavy grammar (e.g. gingembre) takes seconds and is synchronous; doing it on the main
 // thread freezes the whole UI, which is brutal on mobile. The worker holds the prepared
 // session so the main thread only ever posts a message and renders the result.
-import init, { SnarkPlaygroundSession } from "@bearcove/snark-wasm";
+import init, { SnarkPlaygroundSession, vixBindings } from "@bearcove/snark-wasm";
 
 export type ParseWorkerRequest = {
   id: number;
@@ -13,10 +13,12 @@ export type ParseWorkerRequest = {
   runCorpus: boolean;
   edit: unknown | null;
   useReparse: boolean;
+  /** Also compute vix IDE bindings (symbols/refs/unresolved) for this input. */
+  vixIde?: boolean;
 };
 
 export type ParseWorkerResponse =
-  | { id: number; ok: true; response: string; prepared: boolean }
+  | { id: number; ok: true; response: string; prepared: boolean; vix: string | null }
   | { id: number; ok: false; error: string };
 
 const ready = init();
@@ -32,7 +34,7 @@ function post(response: ParseWorkerResponse) {
 }
 
 self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
-  const { id, key, files, input, runCorpus, edit, useReparse } = event.data;
+  const { id, key, files, input, runCorpus, edit, useReparse, vixIde } = event.data;
   try {
     const initStart = performance.now();
     await ready;
@@ -69,7 +71,10 @@ self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
       edit: useReparse ? edit : null,
     });
     const response = useReparse ? session.reparse(request) : session.parse(request);
-    post({ id, ok: true, response, prepared: true });
+    // vix IDE bindings ride the same round trip: parse+bind with vix's own embedded
+    // grammar (lazy table build inside wasm, once per worker lifetime).
+    const vix = vixIde ? vixBindings(input) : null;
+    post({ id, ok: true, response, prepared: true, vix });
   } catch (error) {
     post({ id, ok: false, error: errorMessage(error) });
   }

@@ -3,7 +3,7 @@
 import type { ParseWorkerRequest, ParseWorkerResponse } from "./parseWorker";
 
 export type RunParseInput = Omit<ParseWorkerRequest, "id">;
-export type RunParseResult = { response: string; prepared: boolean };
+export type RunParseResult = { response: string; prepared: boolean; vix: string | null };
 
 let worker: Worker | null = null;
 let nextId = 1;
@@ -22,7 +22,7 @@ function ensureWorker(): Worker {
     }
     pending.delete(data.id);
     if (data.ok) {
-      entry.resolve({ response: data.response, prepared: data.prepared });
+      entry.resolve({ response: data.response, prepared: data.prepared, vix: data.vix });
     } else {
       entry.reject(new Error(data.error));
     }

@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 snark-playground = { path = "../snark-playground" }
+vix = { path = "../vix" }
 wasm-bindgen.workspace = true
 
 [lints]

@@ -492,7 +492,20 @@ select {
 }
 .capture-comment {
   color: var(--cap-comment);
-  font-style: italic;
+}
+
+/* IDE ops (vix): occurrence highlighting, unresolved-name underlines. */
+.cm-occ {
+  background: var(--accent-soft);
+  border-radius: 2px;
+  outline: 1px solid light-dark(rgb(176 125 18 / 25%), rgb(227 178 90 / 30%));
+}
+.cm-occ-def {
+  background: light-dark(rgb(176 125 18 / 24%), rgb(227 178 90 / 26%));
+}
+.cm-unresolved {
+  text-decoration: underline dotted var(--warn);
+  text-underline-offset: 3px;
 }
 .capture-number {
   color: var(--cap-number);
