@@ -1,9 +1,9 @@
 # Weavy Lexer Lowering
 
-Snark's lexer endpoint is not a loop over Rust regex calls. The current
-`CompiledLexMode` path is a correctness-preserving interpreter and an oracle
-for the lowered form, but the lowered executor should carry a lexer program
-owned by Snark and executed by Weavy.
+Snark's lexer endpoint is not a loop over Rust regex calls. The parser-side
+lex compiler emits declarative terminal structure and precedence metadata, then
+Weavy owns the executable lexer program: compiled leaves, merged sets, scratch
+storage, and matching.
 
 ## Boundary
 
@@ -42,7 +42,7 @@ The generator should lower each lex mode into one lexer graph:
 - external scanners remain explicit Snark host calls with scanner snapshots.
 
 Executing a lex mode is then one pass through the graph at the current byte
-position. The result is the same candidate set the interpreter would have found:
+position. The result is the same candidate set the matcher oracle would have found:
 terminal id, accepted end byte, inspected end byte, lexical precedence, literal
 flag, immediate flag, and scanner snapshot effect.
 
@@ -50,21 +50,21 @@ The parser state still filters valid terminals and externals. This preserves the
 important Tree-sitter property that JavaScript-style ambiguities such as
 regex-vs-divide are lexer-mode/lookahead questions, not global regex questions.
 
-## Interpreter Oracle
+## Oracle
 
-The current Rust matcher stays useful as the differential oracle:
+The correctness oracle is the parser's observable output, not a second lexer
+executor:
 
-- for each generated lex mode and test byte position, run the interpreted
-  matcher;
-- run the lowered Weavy lexer graph;
-- compare candidate terminal ids, end bytes, inspected end bytes, precedence
-  fields, and selected winner;
-- include extras, reserved words, direct pattern terminals, composed token
-  roots, and declarative primitives in the corpus.
+- corpus/query/highlight fixtures compare Weavy parse and query behavior against
+  Tree-sitter's observable output;
+- focused Weavy lexer tests cover terminal candidates, end bytes, inspected end
+  bytes, precedence fields, and selected winner for literals, pattern sets,
+  composed token roots, extras, reserved words, and declarative primitives;
+- bundled grammar differential tests guard real grammar regressions such as
+  GraphQL block strings and Thrift comments.
 
-This lets the lowered lexer move incrementally without weakening correctness:
-the first compiled graph can cover literals and direct pattern sets, then expand
-to composed token expressions and declarative scanner primitives.
+This keeps the direction singular: improve the Weavy lexer graph and its JIT
+surface, not a parser-side interpreter mirror.
 
 ## Current Bridge
 
@@ -72,9 +72,14 @@ Direct pattern sets currently use `regex-automata` with caller-provided match
 scratch, and the common path uses a hybrid DFA to report match end offsets
 directly. That removes both the old per-token `regex::RegexSet::matches`
 allocation and the follow-up leaf rematch for direct pattern terminals when the
-hybrid DFA can be built. This is still a bridge, not the architecture endpoint:
+hybrid DFA can be built. Plain composed `seq` expressions whose leaves are all
+regular also lower to one automata-backed matcher. Regexable `choice`
+expressions lower to a multi-pattern DFA op that applies Snark's
+longest-match/first-tie rule explicitly, and safe `repeat`/`repeat1`
+expressions lower to composite automata while retaining structural fallback for
+empty-match edge cases. This is still a bridge, not the architecture endpoint:
 the direction above remains merged lex-mode automata lowered into Snark's Weavy
-program, with the Rust matcher kept as the oracle.
+program and then specialized by Weavy/JIT.
 
 ## JIT Path
 

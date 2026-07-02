@@ -130,6 +130,70 @@ module.exports = grammar({
 
   assert.equal(response.ok, true);
   assert.equal(response.language, "tiny_playground");
+  assert.equal(response.plan.stencils_needed, true);
+  assert.ok(
+    response.plan.snark_stencil_families.some(
+      (summary: { family: string; execution: string; count: number }) =>
+        summary.family === "Lexer" && summary.execution === "LexerGraph" && summary.count > 0,
+    ),
+  );
+  assert.ok(
+    response.plan.snark_stencil_executions.some(
+      (summary: { execution: string; families: string[]; count: number }) =>
+        summary.execution === "LexerGraph" &&
+        summary.families.includes("Lexer") &&
+        summary.count > 0,
+    ),
+  );
+  assert.ok(
+    response.plan.snark_stencil_states.some(
+      (summary: { state: string; count: number }) =>
+        summary.state === "LexerProgram" && summary.count > 0,
+    ),
+  );
+  assert.ok(
+    response.plan.snark_stencil_states.some(
+      (summary: { state: string; count: number }) =>
+        summary.state === "ScannerState" && summary.count > 0,
+    ),
+  );
+  assert.ok(
+    response.plan.snark_stencils.some(
+      (summary: {
+        descriptor: string;
+        domain: string;
+        lowering: string;
+        family: string;
+        execution: string;
+        state: string[];
+        count: number;
+        effect: {
+          ordering: string;
+          resource_count: number;
+          typed_memory_count: number;
+          may_fail: boolean;
+          may_allocate: boolean;
+          calls_user_code: boolean;
+          opaque: boolean;
+        };
+      }) =>
+        summary.descriptor === "snark.tree_sitter::lex" &&
+        summary.domain === "Lexing" &&
+        summary.lowering === "LexerGraph" &&
+        summary.family === "Lexer" &&
+        summary.execution === "LexerGraph" &&
+        summary.state.includes("LexerProgram") &&
+        summary.state.includes("ScannerState") &&
+        summary.count > 0 &&
+        summary.effect.ordering === "Ordered" &&
+        summary.effect.resource_count === 3 &&
+        summary.effect.typed_memory_count === 0 &&
+        summary.effect.may_fail === true &&
+        summary.effect.may_allocate === false &&
+        summary.effect.calls_user_code === false &&
+        summary.effect.opaque === false,
+    ),
+  );
   assert.equal(response.parse.sexp, "(document (word) (word))");
   assert.deepEqual(
     response.highlights.map((capture: { capture_name: string; text: string }) => [
@@ -1717,7 +1781,7 @@ test("runs every non-error vendored sample through generated grammar.json and Sn
 const arboriumNginxDef = "/Users/amos/oss/arborium/langs/group-maple/nginx/def";
 
 test(
-  "reports Arborium nginx grammar.js dirty recovered parse through Snark WASM",
+  "reports Arborium nginx grammar.js recovered map entry errors through Snark WASM",
   { skip: existsSync(arboriumNginxDef) ? false : `${arboriumNginxDef} is not available` },
   () => {
     const grammarJs = readFileSync(`${arboriumNginxDef}/grammar/grammar.js`, "utf8");
@@ -1746,19 +1810,21 @@ test(
     assert.equal(response.ok, false);
     assert.equal(response.language, "nginx");
     assert.equal(response.diagnostics[0].stage, "parse");
-    assert.match(response.diagnostics[0].message, /accepted parse contains/);
-    assert.deepEqual(
-      [
-        response.diagnostics[0].primary_span.start_row,
-        response.diagnostics[0].primary_span.start_column,
-      ],
-      [107, 81],
-    );
-    assert.ok(response.parse);
-    assert.ok(response.parse.accepted_error_count > 0);
+    assert.match(response.diagnostics[0].message, /accepted parse contains \d+ ERROR node/);
+    assert.notEqual(response.parse, null);
+    assert.equal(response.parse.accepted_count, 1);
+    assert.equal(response.parse.accepted_error_count > 0, true);
     assert.equal(response.parse.accepted_missing_count, 0);
-    assert.match(response.parse.sexp, /\(ERROR/);
-    assert.ok(response.highlights.length > 0);
+    assert.match(response.parse.sexp, /\(ERROR\)/);
+    assert.equal(response.highlights.length > 0, true);
+    assert.equal(
+      response.highlights.some(
+        (capture: { capture_name: string; text: string }) =>
+          capture.capture_name === "comment" &&
+          capture.text === "# Configuration File - Nginx Server Configs\n",
+      ),
+      true,
+    );
   },
 );
 

@@ -12,7 +12,9 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
+        SnarkStencilProfile, WeavyParsePlan,
+        parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
         parse_prepared_weavy_with_report,
     },
     parser::{ParseTable, ParserGrammar},
@@ -69,20 +71,32 @@ fn main() {
         "table",
         ParseTable::from_grammar(&parser).expect("build parse table")
     );
-    let (t_plan, runtime) = phase!(
+    let (t_plan, plan) = phase!(
         "plan",
         WeavyParsePlan::new(&validated, &parser, &table).expect("Weavy parse plan")
     );
-    // Measure the entry points the playground calls: strict first, recovering
-    // only when strict fails.
+    let analysis = plan.analysis();
+    // Measure the lean consumer paths separately from the rich report path. The
+    // report path is still what diagnostics, recovery, and incremental reuse
+    // consumers need.
     let t0 = Instant::now();
-    let strict = parse_prepared_weavy_with_report(&runtime, &parser, &table, &input);
-    let t_strict = t0.elapsed().as_secs_f64() * 1000.0;
-    let strict_ok = strict.is_ok();
+    let strict_tree = parse_prepared_weavy_tree(&plan, &parser, &table, &input);
+    let t_strict_tree = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_tree_ok = strict_tree.is_ok();
+
+    let t0 = Instant::now();
+    let strict_resolved_tree = parse_prepared_weavy_resolved_tree(&plan, &parser, &table, &input);
+    let t_strict_resolved_tree = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_resolved_tree_ok = strict_resolved_tree.is_ok();
+
+    let t0 = Instant::now();
+    let strict_report = parse_prepared_weavy_with_report(&plan, &parser, &table, &input);
+    let t_strict_report = t0.elapsed().as_secs_f64() * 1000.0;
+    let strict_report_ok = strict_report.is_ok();
 
     let t0 = Instant::now();
     let _ = parse_prepared_weavy_recovering_with_report_and_scanner(
-        &runtime, &parser, &table, &input, None,
+        &plan, &parser, &table, &input, None,
     );
     let t_recovering = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -116,10 +130,116 @@ fn main() {
     println!("\n---- steady state (parse, same input) ----");
     println!(
         "  {:<40} {:>11.3} ms   (strict ok? {})",
-        "parse_prepared_weavy_with_report", t_strict, strict_ok
+        "parse_prepared_weavy_tree", t_strict_tree, strict_tree_ok
+    );
+    println!(
+        "  {:<40} {:>11.3} ms   (strict ok? {})",
+        "parse_prepared_weavy_resolved_tree", t_strict_resolved_tree, strict_resolved_tree_ok
+    );
+    println!(
+        "  {:<40} {:>11.3} ms   (strict ok? {})",
+        "parse_prepared_weavy_with_report", t_strict_report, strict_report_ok
     );
     println!(
         "  {:<40} {:>11.3} ms",
         "parse_prepared_weavy_recovering", t_recovering
     );
+
+    println!("\n---- weavy lowering readiness ----");
+    println!(
+        "  parser ops: {} neutral, {} snark intrinsics",
+        analysis.readiness.neutral_weavy_op_count, analysis.readiness.snark_intrinsic_count
+    );
+    println!(
+        "  intrinsic lanes: {} dialect, {} lexer graph, {} sink, {} host-call barrier",
+        analysis.readiness.dialect_op_intrinsic_count,
+        analysis.readiness.lexer_graph_intrinsic_count,
+        analysis.readiness.sink_op_intrinsic_count,
+        analysis.readiness.host_call_barrier_intrinsic_count
+    );
+    println!(
+        "  lexer leaves: {} regex-automata, {} unsupported pattern, {} unsupported terminal, {} unsupported symbol",
+        analysis.readiness.lexer.regex_automata_count,
+        analysis.readiness.lexer.unsupported_pattern_count,
+        analysis.readiness.lexer.unsupported_terminal_count,
+        analysis.readiness.lexer.unsupported_symbol_count
+    );
+    println!(
+        "  merged lexer sets: {} literal sets ({} terminals), {} pattern sets ({} terminals)",
+        analysis.readiness.lexer.merged_literal_set_count,
+        analysis.readiness.lexer.merged_literal_terminal_count,
+        analysis.readiness.lexer.merged_pattern_set_count,
+        analysis.readiness.lexer.merged_pattern_terminal_count
+    );
+    println!(
+        "  fully visible? parser={} all={} neutral-weavy-only={} needs-snark-stencils={}",
+        analysis.readiness.is_parser_fully_visible(),
+        analysis.readiness.is_fully_visible(),
+        analysis.readiness.is_neutral_weavy_only(),
+        analysis.readiness.needs_snark_stencils()
+    );
+    if analysis.readiness.barrier_summaries.is_empty() {
+        println!("  blockers: none");
+    } else {
+        println!("  blockers:");
+        for summary in &analysis.readiness.barrier_summaries {
+            println!("    {:?}: {}", summary.barrier, summary.count);
+        }
+    }
+
+    if !analysis.readiness.snark_stencil_family_summaries.is_empty() {
+        println!("  stencil families:");
+        for summary in &analysis.readiness.snark_stencil_family_summaries {
+            println!(
+                "    {:?}/{:?}: {}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+                summary.family,
+                summary.execution,
+                summary.count,
+                summary.state,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque
+            );
+        }
+    }
+
+    if !analysis
+        .readiness
+        .snark_stencil_execution_summaries
+        .is_empty()
+    {
+        println!("  stencil execution lanes:");
+        for summary in &analysis.readiness.snark_stencil_execution_summaries {
+            println!(
+                "    {:?}: {}  families={:?}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+                summary.execution,
+                summary.count,
+                summary.families,
+                summary.state,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque
+            );
+        }
+    }
+
+    if !analysis.readiness.snark_stencil_state_summaries.is_empty() {
+        println!("  stencil state surfaces:");
+        for summary in &analysis.readiness.snark_stencil_state_summaries {
+            println!("    {:?}: {}", summary.state, summary.count);
+        }
+    }
+    let direct_no_trace_states = analysis
+        .readiness
+        .snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+    if direct_no_trace_states != analysis.readiness.snark_stencil_state_summaries {
+        println!("  direct no-trace state surfaces:");
+        for summary in &direct_no_trace_states {
+            println!("    {:?}: {}", summary.state, summary.count);
+        }
+    }
 }

@@ -4,7 +4,7 @@
 //! Goal: answer "can snark be gingembre's front end?" Nothing more.
 //!
 //! It parses gingembre with snark's Weavy runtime, hand-lowers the resolved CST
-//! (`RuntimeResolvedNode`) into `gingembre::ast::Template`, renders it through
+//! (`ResolvedCstNode`) into `gingembre::ast::Template`, renders it through
 //! gingembre's REAL evaluator, and diffs the output against the native
 //! `cst_lower` path (`gingembre::parse_template_recovered`). Byte-identical
 //! render = the surface carries the semantics.
@@ -26,7 +26,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report},
-    parser::{ParseTable, ParserGrammar, RuntimeResolvedNode},
+    parser::{ParseTable, ParserGrammar, ResolvedCstNode},
     validated::ValidatedGrammar,
 };
 
@@ -1912,7 +1912,7 @@ fn hot(secs: u64) {
 
 /// FUSE: prove the AST materializer is decoupled from snark's rich tree — it needs only the
 /// `ParseNode` interface (kind/named/text/children). Build the generated AST over BOTH the rich
-/// `RuntimeResolvedNode` and a lightweight `LeanNode` (what a lean parse->AST driver emits) and
+/// `ResolvedCstNode` and a lightweight `LeanNode` (what a lean parse->AST driver emits) and
 /// show they're identical. This is the concrete interface + proof for PL core's lean driver.
 fn fuse() {
     let (parser, table, plan, anns) = build_plan();
@@ -1933,7 +1933,7 @@ fn fuse() {
     }
     println!(
         "\n✓ materialization needs ONLY kind/named/text/children (the ParseNode trait).\n\
-         RuntimeResolvedNode and the lightweight LeanNode yield the IDENTICAL generated AST.\n\
+         ResolvedCstNode and the lightweight LeanNode yield the IDENTICAL generated AST.\n\
          A lean parse->AST driver builds LeanNode-shaped nodes directly on each reduce — no\n\
          sexp, no tree_store, no trace/tree events — and feeds this same Shape-driven build().\n\
          See notes/gingembre-snark-lean-parse.md for the full driver design + handoff."
@@ -2168,7 +2168,7 @@ fn run_ops_via_weavy_jit<T: facet::Facet<'static>>(ops: &[BuildOp]) -> T {
 /// records a flat `BuildOp` program as it goes — that program IS the Weavy IR for the
 /// materialization (see `run_ops_via_weavy`).
 /// The MINIMAL node interface the AST materializer needs: kind, named-ness, leaf text, ordered
-/// children. `RuntimeResolvedNode` (the rich parse's resolved tree) implements it, and so does
+/// children. `ResolvedCstNode` (the rich parse's resolved tree) implements it, and so does
 /// the lightweight `LeanNode` a lean parse->AST driver would emit — proving materialization is
 /// decoupled from snark's rich tree machinery. THIS is the interface PL core's lean driver
 /// implements: build LeanNode-shaped nodes on reduce (no sexp/tree_store/trace/tree events),
@@ -2182,27 +2182,27 @@ trait ParseNode: Sized {
     fn byte_range(&self) -> (usize, usize);
 }
 
-impl ParseNode for RuntimeResolvedNode {
+impl ParseNode for ResolvedCstNode {
     fn kind(&self) -> &str {
-        RuntimeResolvedNode::kind(self)
+        ResolvedCstNode::kind(self)
     }
     fn named(&self) -> bool {
-        RuntimeResolvedNode::named(self)
+        ResolvedCstNode::named(self)
     }
     fn text(&self) -> Option<&str> {
-        RuntimeResolvedNode::text(self)
+        ResolvedCstNode::text(self)
     }
     fn children(&self) -> &[Self] {
-        RuntimeResolvedNode::children(self)
+        ResolvedCstNode::children(self)
     }
     fn byte_range(&self) -> (usize, usize) {
-        let b = RuntimeResolvedNode::bytes(self);
+        let b = ResolvedCstNode::bytes(self);
         (b.start().get() as usize, b.end().get() as usize)
     }
 }
 
 /// A lightweight parse node — kind + text + ordered children, nothing else. What a lean
-/// deterministic parse->AST driver emits per reduce. Built here FROM a `RuntimeResolvedNode`
+/// deterministic parse->AST driver emits per reduce. Built here FROM a `ResolvedCstNode`
 /// only to prove the materializer is byte-identical over it; the real driver builds it directly.
 #[derive(Debug, Clone)]
 struct LeanNode {
@@ -2391,10 +2391,10 @@ fn build_context() -> Context {
 }
 
 // ---------------------------------------------------------------------------
-// Hand-lowering: RuntimeResolvedNode -> gingembre::ast (THROWAWAY).
+// Hand-lowering: ResolvedCstNode -> gingembre::ast (THROWAWAY).
 // ---------------------------------------------------------------------------
 
-fn lower_template(node: &RuntimeResolvedNode) -> Template {
+fn lower_template(node: &ResolvedCstNode) -> Template {
     let body = node.children().iter().filter_map(lower_node).collect();
     Template {
         body,
@@ -2402,7 +2402,7 @@ fn lower_template(node: &RuntimeResolvedNode) -> Template {
     }
 }
 
-fn lower_node(node: &RuntimeResolvedNode) -> Option<Node> {
+fn lower_node(node: &ResolvedCstNode) -> Option<Node> {
     match node.kind() {
         "text" => Some(Node::Text(TextNode {
             text: full_text(node),
@@ -2441,7 +2441,7 @@ fn lower_node(node: &RuntimeResolvedNode) -> Option<Node> {
     }
 }
 
-fn lower_if(node: &RuntimeResolvedNode) -> Option<Node> {
+fn lower_if(node: &ResolvedCstNode) -> Option<Node> {
     let condition = node.children().iter().find_map(lower_expr)?;
     let mut elif_branches = Vec::new();
     let mut else_body = None;
@@ -2465,8 +2465,8 @@ fn lower_if(node: &RuntimeResolvedNode) -> Option<Node> {
     }))
 }
 
-fn lower_for(node: &RuntimeResolvedNode) -> Option<Node> {
-    let idents: Vec<&RuntimeResolvedNode> = node
+fn lower_for(node: &ResolvedCstNode) -> Option<Node> {
+    let idents: Vec<&ResolvedCstNode> = node
         .children()
         .iter()
         .filter(|c| c.kind() == "identifier")
@@ -2504,7 +2504,7 @@ fn lower_for(node: &RuntimeResolvedNode) -> Option<Node> {
     }))
 }
 
-fn lower_expr(node: &RuntimeResolvedNode) -> Option<Expr> {
+fn lower_expr(node: &ResolvedCstNode) -> Option<Expr> {
     match node.kind() {
         "literal" => lower_literal(node).map(Expr::Literal),
         "list" => Some(Expr::Literal(Literal::List(ListLit {
@@ -2566,7 +2566,7 @@ fn lower_expr(node: &RuntimeResolvedNode) -> Option<Expr> {
 }
 
 /// Extract `(positional args, kwargs)` from the `arg_list` child of `node`.
-fn lower_args(node: &RuntimeResolvedNode) -> (Vec<Expr>, Vec<(Ident, Expr)>) {
+fn lower_args(node: &ResolvedCstNode) -> (Vec<Expr>, Vec<(Ident, Expr)>) {
     let mut args = Vec::new();
     let mut kwargs = Vec::new();
     let Some(arg_list) = named_child(node, "arg_list") else {
@@ -2593,18 +2593,18 @@ fn lower_args(node: &RuntimeResolvedNode) -> (Vec<Expr>, Vec<(Ident, Expr)>) {
     (args, kwargs)
 }
 
-fn named_child<'a>(node: &'a RuntimeResolvedNode, kind: &str) -> Option<&'a RuntimeResolvedNode> {
+fn named_child<'a>(node: &'a ResolvedCstNode, kind: &str) -> Option<&'a ResolvedCstNode> {
     node.children().iter().find(|c| c.kind() == kind)
 }
 
-fn ident(node: &RuntimeResolvedNode) -> Option<Ident> {
+fn ident(node: &ResolvedCstNode) -> Option<Ident> {
     Some(Ident {
         name: leaf_text(node)?,
         span: span(0, 0),
     })
 }
 
-fn string_value(node: &RuntimeResolvedNode) -> Option<StringLit> {
+fn string_value(node: &ResolvedCstNode) -> Option<StringLit> {
     Some(StringLit {
         value: full_text(node)
             .trim_matches(|c| c == '"' || c == '\'')
@@ -2613,7 +2613,7 @@ fn string_value(node: &RuntimeResolvedNode) -> Option<StringLit> {
     })
 }
 
-fn find_body(node: &RuntimeResolvedNode) -> Vec<Node> {
+fn find_body(node: &ResolvedCstNode) -> Vec<Node> {
     node.children()
         .iter()
         .find(|c| c.kind() == "body")
@@ -2621,7 +2621,7 @@ fn find_body(node: &RuntimeResolvedNode) -> Vec<Node> {
         .unwrap_or_default()
 }
 
-fn lower_literal(node: &RuntimeResolvedNode) -> Option<Literal> {
+fn lower_literal(node: &ResolvedCstNode) -> Option<Literal> {
     let inner = node.children().iter().find(|c| c.named())?;
     match inner.kind() {
         "number" => {
@@ -2652,7 +2652,7 @@ fn lower_literal(node: &RuntimeResolvedNode) -> Option<Literal> {
     }
 }
 
-fn lower_binary(node: &RuntimeResolvedNode) -> Option<Expr> {
+fn lower_binary(node: &ResolvedCstNode) -> Option<Expr> {
     let op_text = node
         .children()
         .iter()
@@ -2726,7 +2726,7 @@ fn expr_via_jit<N: ParseNode>(node: &N, anns: &Annotations) -> gen_ast::Expr {
 }
 
 /// Concatenate every terminal's source text under this node.
-fn full_text(node: &RuntimeResolvedNode) -> String {
+fn full_text(node: &ResolvedCstNode) -> String {
     if let Some(text) = node.text() {
         return text.to_string();
     }
@@ -2742,7 +2742,7 @@ fn leaf_text<N: ParseNode>(node: &N) -> Option<String> {
 }
 
 /// Debug dump of the resolved tree (only printed on an oracle mismatch).
-fn dump(node: &RuntimeResolvedNode, depth: usize) {
+fn dump(node: &ResolvedCstNode, depth: usize) {
     let indent = "  ".repeat(depth);
     let field = node.field().map(|f| format!("{f}: ")).unwrap_or_default();
     let anon = if node.named() { "" } else { " (anon)" };

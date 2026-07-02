@@ -452,7 +452,7 @@ mod tests {
         grammar::{PrecedenceValue, RawGrammarJson, RawRuleJson},
         lexical::{LeadingExtrasPolicy, LexicalFacts, LexicalRootKind, ScannerHostOperation},
         lower::weavy::{
-            WeavyParsePlan, WeavyParseReport, parse_prepared_weavy_with_report_and_scanner,
+            WeavyParsePlan, WeavyParseReport, parse_prepared_weavy_metered_with_report_and_scanner,
         },
         parser::{
             ExternalScanRequest, ExternalScanResult, ExternalScannerHost, LookaheadSymbol,
@@ -1088,7 +1088,7 @@ mod tests {
         let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_metered_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -1098,13 +1098,11 @@ mod tests {
             &parser_grammar,
             &parse_table,
         );
-        let captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &highlight_fixture.source.body.0,
-            );
+        let captures = highlights_query.body.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &highlight_fixture.source.body.0,
+        );
 
         assert_css_highlight_assertions_covered(&assertions, &captures);
         assert!(
@@ -1421,7 +1419,7 @@ mod tests {
         let css_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let scanner = RecordingCssExternalScannerHost::new(&css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_metered_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -1482,7 +1480,7 @@ mod tests {
         let weavy_css_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let weavy_scanner = RecordingCssExternalScannerHost::new(&weavy_css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_metered_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -1740,7 +1738,7 @@ mod tests {
         let css_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let scanner = RecordingCssExternalScannerHost::new(&css_scanner);
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_metered_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -2034,7 +2032,7 @@ mod tests {
             assert_eq!(case.name, case_name);
             let weavy_scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
             let weavy_report = unwrap_weavy_report_or_panic(
-                parse_prepared_weavy_with_report_and_scanner(
+                parse_prepared_weavy_metered_with_report_and_scanner(
                     &plan,
                     &parser_grammar,
                     &parse_table,
@@ -2085,7 +2083,7 @@ mod tests {
         let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_metered_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -2148,7 +2146,7 @@ mod tests {
         let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_metered_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -2158,13 +2156,11 @@ mod tests {
             &parser_grammar,
             &parse_table,
         );
-        let weavy_captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &declaration_cases[7].input,
-            );
+        let weavy_captures = highlights_query.body.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &declaration_cases[7].input,
+        );
 
         assert_same!(weavy_report.tree(), &declaration_cases[7].expected);
         assert_important_keyword_capture(&weavy_captures);
@@ -2202,7 +2198,7 @@ mod tests {
         let scanner = CssExternalScannerHost::new(grammar, &parser_grammar);
         let plan = WeavyParsePlan::new(&validated, &parser_grammar, &parse_table).unwrap();
         let weavy_report = unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_metered_with_report_and_scanner(
                 &plan,
                 &parser_grammar,
                 &parse_table,
@@ -2378,19 +2374,16 @@ mod tests {
 "#
             .to_owned(),
         );
-        let weavy_captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &cases[0].input,
-            );
-        let weavy_field_captures = field_regression_query
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &cases[0].input,
-            );
+        let weavy_captures = highlights_query.body.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &cases[0].input,
+        );
+        let weavy_field_captures = field_regression_query.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &cases[0].input,
+        );
 
         assert_same!(weavy_report.tree(), &cases[0].expected);
         assert_eq!(
@@ -2436,13 +2429,11 @@ mod tests {
             &parse_table,
             &cases[4].input,
         );
-        let weavy_captures = highlights_query
-            .body
-            .execute_runtime_highlights_from_tree_events(
-                &parser_grammar,
-                &weavy_report.accepted_tree_events(),
-                &cases[4].input,
-            );
+        let weavy_captures = highlights_query.body.execute_highlights_from_tree_events(
+            &parser_grammar,
+            &weavy_report.accepted_tree_events(),
+            &cases[4].input,
+        );
 
         assert_same!(weavy_report.tree(), &cases[4].expected);
         assert_eq!(
@@ -2704,7 +2695,7 @@ mod tests {
         input: &str,
     ) -> WeavyParseReport {
         unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_metered_with_report_and_scanner(
                 &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
                 parser_grammar,
                 parse_table,
@@ -2725,7 +2716,7 @@ mod tests {
     ) -> WeavyParseReport {
         let scanner = CssExternalScannerHost::new(grammar, parser_grammar);
         unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
+            parse_prepared_weavy_metered_with_report_and_scanner(
                 &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
                 parser_grammar,
                 parse_table,
@@ -2746,15 +2737,16 @@ mod tests {
             let state = match error {
                 crate::lower::weavy::WeavyParseError::NoToken { state, .. }
                 | crate::lower::weavy::WeavyParseError::NoAction { state, .. }
-                | crate::lower::weavy::WeavyParseError::UnsupportedExternalScanner {
+                | crate::lower::weavy::WeavyParseError::MissingExternalScannerHost {
                     state, ..
                 }
                 | crate::lower::weavy::WeavyParseError::MissingState { state }
                 | crate::lower::weavy::WeavyParseError::ExternalScannerError { state, .. }
                 | crate::lower::weavy::WeavyParseError::UnreducedStackEntry { state }
-                | crate::lower::weavy::WeavyParseError::UnsupportedConflict { state, .. } => {
-                    Some(state)
-                }
+                | crate::lower::weavy::WeavyParseError::UnexpectedConflictInActionBlock {
+                    state,
+                    ..
+                } => Some(state),
                 crate::lower::weavy::WeavyParseError::MissingGoto { state, .. } => Some(state),
                 _ => None,
             };

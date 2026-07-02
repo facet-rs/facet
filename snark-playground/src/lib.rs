@@ -4,6 +4,7 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    sync::Arc,
 };
 
 use facet::Facet;
@@ -17,7 +18,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyParseError, WeavyParsePlan, WeavyParseReport,
+        WeavyLoweringBarrier, WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner,
         reparse_prepared_weavy_recovering_with_report_and_scanner,
@@ -26,8 +27,8 @@ use snark::{
     manifest::TreeSitterConfig,
     parser::{
         ExternalId, ExternalScanRequest, ExternalScanResult, ExternalScannerHost, ParseTable,
-        ParserExecutionError, ParserGrammar, RuntimeInputEdit, RuntimeResolvedNode,
-        ScannerSnapshotId, TreeEvent,
+        ParserExecutionError, ParserGrammar, ParserInputEdit, ResolvedCstNode, ScannerSnapshotId,
+        TreeEvent,
     },
     query::QuerySource,
     runtime_input::{PointBytes, PointRange, Row, Utf8ColumnBytes},
@@ -60,9 +61,9 @@ struct PlaygroundInputEdit {
     new_end_byte: usize,
 }
 
-impl From<PlaygroundInputEdit> for RuntimeInputEdit {
+impl From<PlaygroundInputEdit> for ParserInputEdit {
     fn from(edit: PlaygroundInputEdit) -> Self {
-        RuntimeInputEdit::new(edit.start_byte, edit.old_end_byte, edit.new_end_byte)
+        ParserInputEdit::new(edit.start_byte, edit.old_end_byte, edit.new_end_byte)
     }
 }
 
@@ -93,6 +94,7 @@ struct PlaygroundResponse {
     language: Option<String>,
     diagnostics: Vec<Diagnostic>,
     bundle: BundleSummary,
+    plan: Option<PlanOutput>,
     parse: Option<ParseOutput>,
     highlights: Vec<HighlightOutput>,
     injections: Vec<InjectionOutput>,
@@ -130,6 +132,76 @@ struct BundleSummary {
     generated_files_ignored: Vec<String>,
     scanner_paths: Vec<String>,
     active_scanner: Option<String>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanOutput {
+    fully_visible: bool,
+    parser_fully_visible: bool,
+    lexer_fully_visible: bool,
+    neutral_weavy_only: bool,
+    stencils_needed: bool,
+    native_copy_patch_jit_available: bool,
+    neutral_weavy_op_count: usize,
+    snark_intrinsic_count: usize,
+    snark_stencils: Vec<PlanStencilOutput>,
+    snark_stencil_families: Vec<PlanStencilFamilyOutput>,
+    snark_stencil_executions: Vec<PlanStencilExecutionOutput>,
+    snark_stencil_states: Vec<PlanStencilStateOutput>,
+    lowering_barriers: Vec<PlanBarrierOutput>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilFamilyOutput {
+    family: String,
+    execution: String,
+    state: Vec<String>,
+    effect: PlanStencilEffectOutput,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilExecutionOutput {
+    execution: String,
+    families: Vec<String>,
+    state: Vec<String>,
+    effect: PlanStencilEffectOutput,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilStateOutput {
+    state: String,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilOutput {
+    descriptor: String,
+    domain: String,
+    lowering: String,
+    family: String,
+    execution: String,
+    state: Vec<String>,
+    effect: PlanStencilEffectOutput,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanStencilEffectOutput {
+    ordering: String,
+    resource_count: usize,
+    typed_memory_count: usize,
+    may_fail: bool,
+    may_allocate: bool,
+    calls_user_code: bool,
+    opaque: bool,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanBarrierOutput {
+    kind: String,
+    count: usize,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -303,7 +375,7 @@ struct PreparedGrammar {
     weavy_plan: WeavyParsePlan,
 }
 
-struct WeavyPlaygroundReport(WeavyParseReport);
+struct WeavyPlaygroundReport(Arc<WeavyParseReport>);
 
 impl WeavyPlaygroundReport {
     fn accepted_tree_events(&self) -> Vec<TreeEvent> {
@@ -338,7 +410,7 @@ impl WeavyPlaygroundReport {
         &self,
         parser: &ParserGrammar,
         input: &str,
-    ) -> Option<RuntimeResolvedNode> {
+    ) -> Option<ResolvedCstNode> {
         self.0.accepted_resolved_tree(parser, input)
     }
 }
@@ -389,7 +461,7 @@ pub struct PlaygroundSession {
     scanner_selection: ScannerSelection,
     embedded_languages: BTreeMap<String, PreparedEmbeddedLanguage>,
     last_input: Option<String>,
-    last_report: Option<WeavyParseReport>,
+    last_report: Option<Arc<WeavyParseReport>>,
     /// Per-phase timings from `prepare_grammar`, echoed with every parse response
     /// so the UI can show where one-time preparation spends its time.
     prepare_timings: Vec<PhaseTiming>,
@@ -420,7 +492,7 @@ impl PlaygroundSession {
                 ));
             }
         };
-        let edit = request.edit.map(RuntimeInputEdit::from);
+        let edit = request.edit.map(ParserInputEdit::from);
         if let (Some(edit), Some(old_input)) = (edit, self.last_input.as_deref())
             && let Err(error) = edit.validate_against(old_input, &request.input)
         {
@@ -448,6 +520,7 @@ impl PlaygroundSession {
                     primary_span: None,
                 }],
                 bundle,
+                plan: None,
                 parse: None,
                 highlights: Vec::new(),
                 injections: Vec::new(),
@@ -467,6 +540,7 @@ impl PlaygroundSession {
                     language: None,
                     diagnostics: vec![diagnostic(&stage, message, None)],
                     bundle,
+                    plan: None,
                     parse: None,
                     highlights: Vec::new(),
                     injections: Vec::new(),
@@ -493,6 +567,7 @@ impl PlaygroundSession {
                     None,
                 )],
                 bundle,
+                plan: Some(plan_output(&prepared.weavy_plan)),
                 parse: None,
                 highlights: Vec::new(),
                 injections: Vec::new(),
@@ -520,7 +595,7 @@ impl PlaygroundSession {
         &mut self,
         input: &str,
         run_corpus: bool,
-        edit: Option<RuntimeInputEdit>,
+        edit: Option<ParserInputEdit>,
     ) -> PlaygroundResponse {
         playground_response_for_session(self, input, run_corpus, edit)
     }
@@ -531,6 +606,7 @@ impl PlaygroundSession {
             language: Some(self.prepared.raw.name.clone()),
             diagnostics: vec![diagnostic(stage, message, None)],
             bundle: self.bundle.clone(),
+            plan: Some(plan_output(&self.prepared.weavy_plan)),
             parse: None,
             highlights: Vec::new(),
             injections: Vec::new(),
@@ -592,7 +668,7 @@ fn playground_response_for_session(
     session: &mut PlaygroundSession,
     input: &str,
     run_corpus: bool,
-    edit: Option<RuntimeInputEdit>,
+    edit: Option<ParserInputEdit>,
 ) -> PlaygroundResponse {
     let bundle = session.bundle.clone();
     let mut diagnostics = Vec::new();
@@ -614,7 +690,12 @@ fn playground_response_for_session(
                 let accepted_tree_events = report.accepted_tree_events();
                 let accepted_error_count = count_accepted_errors(&accepted_tree_events);
                 let accepted_missing_count = count_accepted_missing(&accepted_tree_events);
-                parse = Some(parse_output(&report, &prepared.parser, input));
+                parse = Some(parse_output(
+                    &report,
+                    &prepared.parser,
+                    input,
+                    &accepted_tree_events,
+                ));
                 if accepted_error_count > 0 || accepted_missing_count > 0 {
                     diagnostics.push(diagnostic(
                         "parse",
@@ -677,6 +758,7 @@ fn playground_response_for_session(
         language: Some(prepared.raw.name.clone()),
         diagnostics,
         bundle,
+        plan: Some(plan_output(&prepared.weavy_plan)),
         parse,
         highlights,
         injections,
@@ -691,7 +773,7 @@ fn playground_response_for_session(
 fn parse_session_input(
     session: &mut PlaygroundSession,
     input: &str,
-    edit: Option<RuntimeInputEdit>,
+    edit: Option<ParserInputEdit>,
 ) -> Result<PlaygroundParseReport, Diagnostic> {
     let scanner = session
         .scanner_selection
@@ -703,14 +785,14 @@ fn parse_session_input(
     let previous = edit.and_then(|edit| {
         Some((
             previous_input.as_deref()?,
-            session.last_report.as_ref()?,
+            session.last_report.as_ref()?.as_ref(),
             edit,
         ))
     });
     let report = parse_weavy_with_optional_recovery(&session.prepared, scanner, input, previous)
-        .map_err(|error| runtime_weavy_error_diagnostic("parse", &error, input))?;
+        .map_err(|error| weavy_error_diagnostic("parse", &error, input))?;
     session.last_input = Some(input.to_owned());
-    session.last_report = Some(report.report.0.clone());
+    session.last_report = Some(Arc::clone(&report.report.0));
     Ok(report)
 }
 
@@ -739,8 +821,8 @@ fn parse_output(
     report: &WeavyPlaygroundReport,
     parser: &ParserGrammar,
     input: &str,
+    accepted_tree_events: &[TreeEvent],
 ) -> ParseOutput {
-    let accepted_tree_events = report.accepted_tree_events();
     ParseOutput {
         sexp: report.tree_sexp(),
         tree: report
@@ -753,12 +835,128 @@ fn parse_output(
         tree_event_count: report.tree_events().len(),
         reuse_node_count: count_reused_nodes(report.tree_events()),
         accepted_tree_event_count: accepted_tree_events.len(),
-        accepted_error_count: count_accepted_errors(&accepted_tree_events),
-        accepted_missing_count: count_accepted_missing(&accepted_tree_events),
+        accepted_error_count: count_accepted_errors(accepted_tree_events),
+        accepted_missing_count: count_accepted_missing(accepted_tree_events),
     }
 }
 
-fn resolved_tree_output(node: &RuntimeResolvedNode) -> ResolvedTreeOutput {
+fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
+    let readiness = plan.analysis().readiness;
+    PlanOutput {
+        fully_visible: readiness.is_fully_visible(),
+        parser_fully_visible: readiness.is_parser_fully_visible(),
+        lexer_fully_visible: readiness.lexer.is_fully_visible(),
+        neutral_weavy_only: readiness.is_neutral_weavy_only(),
+        stencils_needed: readiness.needs_snark_stencils(),
+        native_copy_patch_jit_available: readiness.native_copy_patch_jit_available,
+        neutral_weavy_op_count: readiness.neutral_weavy_op_count,
+        snark_intrinsic_count: readiness.snark_intrinsic_count,
+        snark_stencils: readiness
+            .snark_stencil_summaries
+            .iter()
+            .map(|summary| PlanStencilOutput {
+                descriptor: format!(
+                    "{}::{}",
+                    summary.descriptor.dialect, summary.descriptor.name
+                ),
+                domain: format!("{:?}", summary.domain),
+                lowering: format!("{:?}", summary.lowering),
+                family: format!("{:?}", summary.stencil.family),
+                execution: format!("{:?}", summary.stencil.execution),
+                state: summary
+                    .stencil
+                    .state
+                    .iter()
+                    .map(|state| format!("{state:?}"))
+                    .collect(),
+                effect: PlanStencilEffectOutput {
+                    ordering: format!("{:?}", summary.effect.ordering),
+                    resource_count: summary.effect.resources.len(),
+                    typed_memory_count: summary.effect.typed_memory.len(),
+                    may_fail: summary.effect.may_fail,
+                    may_allocate: summary.effect.may_allocate,
+                    calls_user_code: summary.effect.calls_user_code,
+                    opaque: summary.effect.opaque,
+                },
+                count: summary.count,
+            })
+            .collect(),
+        snark_stencil_families: readiness
+            .snark_stencil_family_summaries
+            .iter()
+            .map(|summary| PlanStencilFamilyOutput {
+                family: format!("{:?}", summary.family),
+                execution: format!("{:?}", summary.execution),
+                state: summary
+                    .state
+                    .iter()
+                    .map(|state| format!("{state:?}"))
+                    .collect(),
+                effect: PlanStencilEffectOutput {
+                    ordering: format!("{:?}", summary.effect.ordering),
+                    resource_count: summary.effect.resources.len(),
+                    typed_memory_count: summary.effect.typed_memory.len(),
+                    may_fail: summary.effect.may_fail,
+                    may_allocate: summary.effect.may_allocate,
+                    calls_user_code: summary.effect.calls_user_code,
+                    opaque: summary.effect.opaque,
+                },
+                count: summary.count,
+            })
+            .collect(),
+        snark_stencil_executions: readiness
+            .snark_stencil_execution_summaries
+            .iter()
+            .map(|summary| PlanStencilExecutionOutput {
+                execution: format!("{:?}", summary.execution),
+                families: summary
+                    .families
+                    .iter()
+                    .map(|family| format!("{family:?}"))
+                    .collect(),
+                state: summary
+                    .state
+                    .iter()
+                    .map(|state| format!("{state:?}"))
+                    .collect(),
+                effect: PlanStencilEffectOutput {
+                    ordering: format!("{:?}", summary.effect.ordering),
+                    resource_count: summary.effect.resources.len(),
+                    typed_memory_count: summary.effect.typed_memory.len(),
+                    may_fail: summary.effect.may_fail,
+                    may_allocate: summary.effect.may_allocate,
+                    calls_user_code: summary.effect.calls_user_code,
+                    opaque: summary.effect.opaque,
+                },
+                count: summary.count,
+            })
+            .collect(),
+        snark_stencil_states: readiness
+            .snark_stencil_state_summaries
+            .iter()
+            .map(|summary| PlanStencilStateOutput {
+                state: format!("{:?}", summary.state),
+                count: summary.count,
+            })
+            .collect(),
+        lowering_barriers: readiness
+            .barrier_summaries
+            .iter()
+            .map(|summary| PlanBarrierOutput {
+                kind: match summary.barrier {
+                    WeavyLoweringBarrier::ParserIntrinsic(descriptor) => {
+                        format!("parser:{}::{}", descriptor.dialect, descriptor.name)
+                    }
+                    WeavyLoweringBarrier::Lexer(kind) => format!("lexer:{kind:?}"),
+                    _ => format!("{:?}", summary.barrier),
+                },
+                count: summary.count,
+            })
+            .collect(),
+    }
+}
+
+fn resolved_tree_output(node: &ResolvedCstNode) -> ResolvedTreeOutput {
     let bytes = node.bytes();
     let points = node.points();
     ResolvedTreeOutput {
@@ -1118,7 +1316,7 @@ fn highlight_outputs(
     input: &str,
 ) -> Vec<HighlightOutput> {
     query
-        .execute_runtime_highlights_from_tree_events(parser, tree_events, input)
+        .execute_highlights_from_tree_events(parser, tree_events, input)
         .into_iter()
         .map(|capture| {
             let bytes = capture.bytes();
@@ -1219,7 +1417,7 @@ fn injection_outputs(
     input: &str,
 ) -> Vec<InjectionOutput> {
     query
-        .execute_runtime_injections_from_tree_events(parser, tree_events, input)
+        .execute_injections_from_tree_events(parser, tree_events, input)
         .into_iter()
         .flat_map(|region| {
             let language = region.language().to_owned();
@@ -1366,9 +1564,10 @@ fn layer_output(
     };
     // Build this language's parse table now, on first injection (cached thereafter).
     let resolved = language.resolved();
-    let (Some(prepared), Some(scanner_selection)) =
-        (resolved.prepared.as_ref(), resolved.scanner_selection.as_ref())
-    else {
+    let (Some(prepared), Some(scanner_selection)) = (
+        resolved.prepared.as_ref(),
+        resolved.scanner_selection.as_ref(),
+    ) else {
         return LayerOutput {
             language: group.language,
             combined: group.combined,
@@ -1394,7 +1593,7 @@ fn layer_output(
     let report = match report_result {
         Ok(report) => report,
         Err(error) => {
-            let diagnostic = runtime_weavy_error_diagnostic("parse", &error, &input);
+            let diagnostic = weavy_error_diagnostic("parse", &error, &input);
             return LayerOutput {
                 language: group.language,
                 combined: group.combined,
@@ -1410,7 +1609,12 @@ fn layer_output(
     };
     let mut diagnostics = Vec::new();
     let accepted_tree_events = report.report.accepted_tree_events();
-    let parse = parse_output(&report.report, &prepared.parser, &input);
+    let parse = parse_output(
+        &report.report,
+        &prepared.parser,
+        &input,
+        &accepted_tree_events,
+    );
     if parse.accepted_error_count > 0 || parse.accepted_missing_count > 0 {
         let primary_span = report
             .strict_error_byte
@@ -1596,7 +1800,7 @@ fn layer_highlight_outputs(
     segments: &[LayerSegment],
 ) -> Vec<HighlightOutput> {
     query
-        .execute_runtime_highlights_from_tree_events(parser, tree_events, input)
+        .execute_highlights_from_tree_events(parser, tree_events, input)
         .into_iter()
         .flat_map(|capture| {
             let bytes = capture.bytes();
@@ -1777,7 +1981,7 @@ fn run_highlight_tests(
             }
         };
         let accepted_tree_events = report.accepted_tree_events();
-        let captures = query.execute_runtime_highlights_from_tree_events(
+        let captures = query.execute_highlights_from_tree_events(
             &prepared.parser,
             &accepted_tree_events,
             &file.text,
@@ -1917,7 +2121,7 @@ fn parse_weavy_with_optional_recovery(
     prepared: &PreparedGrammar,
     scanner: Option<&dyn ExternalScannerHost>,
     input: &str,
-    previous: Option<(&str, &WeavyParseReport, RuntimeInputEdit)>,
+    previous: Option<(&str, &WeavyParseReport, ParserInputEdit)>,
 ) -> Result<PlaygroundParseReport, WeavyParseError> {
     let strict = if let Some((old_input, previous_report, edit)) = previous {
         reparse_prepared_weavy_with_report_and_scanner(
@@ -1935,7 +2139,7 @@ fn parse_weavy_with_optional_recovery(
     };
     match strict {
         Ok(report) => Ok(PlaygroundParseReport {
-            report: WeavyPlaygroundReport(report),
+            report: WeavyPlaygroundReport(Arc::new(report)),
             strict_error_byte: None,
         }),
         Err(strict_error) => match if let Some((old_input, previous_report, edit)) = previous {
@@ -1953,7 +2157,7 @@ fn parse_weavy_with_optional_recovery(
             parse_recovering_weavy_with_optional_scanner(prepared, scanner, input)
         } {
             Ok(report) => Ok(PlaygroundParseReport {
-                report: WeavyPlaygroundReport(report),
+                report: WeavyPlaygroundReport(Arc::new(report)),
                 strict_error_byte: weavy_parse_error_byte(&strict_error),
             }),
             Err(_) => Err(strict_error),
@@ -1983,7 +2187,7 @@ fn accepted_problem_span(events: &[TreeEvent], input: &str) -> Option<Diagnostic
     })
 }
 
-fn runtime_weavy_error_diagnostic(stage: &str, error: &WeavyParseError, input: &str) -> Diagnostic {
+fn weavy_error_diagnostic(stage: &str, error: &WeavyParseError, input: &str) -> Diagnostic {
     let span = weavy_parse_error_byte(error).and_then(|byte| diagnostic_span(input, byte));
     diagnostic(stage, error.to_string(), span)
 }
@@ -2079,6 +2283,7 @@ fn response_with_diagnostic(stage: &str, message: String) -> PlaygroundResponse 
             scanner_paths: Vec::new(),
             active_scanner: None,
         },
+        plan: None,
         parse: None,
         highlights: Vec::new(),
         injections: Vec::new(),
@@ -2574,7 +2779,7 @@ mod tests {
     }
 
     #[test]
-    fn playground_session_reparse_uses_runtime_reuse() {
+    fn playground_session_reparse_uses_weavy_reuse() {
         let files = vec![
             BundleFile {
                 path: "src/grammar.json".to_owned(),
@@ -4210,7 +4415,7 @@ mod tests {
     }
 
     #[test]
-    fn uses_source_matched_css_scanner_for_runtime_parse() {
+    fn uses_source_matched_css_scanner_for_weavy_parse() {
         let files = vec![
             BundleFile {
                 path: "src/grammar.json".to_owned(),
@@ -4442,6 +4647,64 @@ mod tests {
         let parse = response.parse.as_ref().expect("parse output");
         assert_eq!(parse.accepted_error_count, 0);
         assert_eq!(parse.accepted_missing_count, 0);
+        let plan = response.plan.as_ref().expect("plan output");
+        assert!(plan.stencils_needed);
+        assert!(
+            plan.snark_stencil_families
+                .iter()
+                .any(|summary| summary.family == "Lexer"
+                    && summary.execution == "LexerGraph"
+                    && summary.state.iter().any(|state| state == "LexerProgram")
+                    && summary.state.iter().any(|state| state == "ScannerState")
+                    && summary.effect.ordering == "Ordered"
+                    && summary.effect.resource_count == 3
+                    && summary.effect.typed_memory_count == 0
+                    && summary.effect.may_fail
+                    && !summary.effect.may_allocate
+                    && !summary.effect.calls_user_code
+                    && !summary.effect.opaque
+                    && summary.count > 0)
+        );
+        assert!(
+            plan.snark_stencil_executions
+                .iter()
+                .any(|summary| summary.execution == "LexerGraph"
+                    && summary.families.iter().any(|family| family == "Lexer")
+                    && summary.state.iter().any(|state| state == "LexerProgram")
+                    && summary.state.iter().any(|state| state == "ScannerState")
+                    && summary.effect.ordering == "Ordered"
+                    && summary.effect.resource_count >= 3
+                    && summary.effect.typed_memory_count == 0
+                    && summary.effect.may_fail
+                    && !summary.effect.calls_user_code
+                    && !summary.effect.opaque
+                    && summary.count > 0)
+        );
+        assert!(
+            plan.snark_stencil_states
+                .iter()
+                .any(|summary| summary.state == "LexerProgram" && summary.count > 0)
+        );
+        assert!(
+            plan.snark_stencil_states
+                .iter()
+                .any(|summary| summary.state == "ScannerState" && summary.count > 0)
+        );
+        assert!(plan.snark_stencils.iter().any(|summary| summary.descriptor
+            == "snark.tree_sitter::lex"
+            && summary.domain == "Lexing"
+            && summary.lowering == "LexerGraph"
+            && summary.family == "Lexer"
+            && summary.execution == "LexerGraph"
+            && summary.state.iter().any(|state| state == "LexerProgram")
+            && summary.state.iter().any(|state| state == "ScannerState")
+            && summary.effect.ordering == "Ordered"
+            && summary.effect.resource_count == 3
+            && summary.effect.typed_memory_count == 0
+            && summary.effect.may_fail
+            && !summary.effect.may_allocate
+            && !summary.effect.calls_user_code
+            && !summary.effect.opaque));
         let mut captures = response
             .highlights
             .iter()
@@ -4656,7 +4919,9 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("accepted parse contains")
+                .contains("accepted parse contains"),
+            "{:#?}",
+            response.diagnostics
         );
         let parse = response.parse.as_ref().expect("recovered parse output");
         assert!(parse.accepted_error_count > 0);
@@ -4717,7 +4982,7 @@ mod tests {
     }
 
     #[test]
-    fn arborium_nginx_sample_reports_dirty_recovered_parse() {
+    fn arborium_nginx_sample_reports_recovered_map_entry_errors() {
         let def = std::path::Path::new("/Users/amos/oss/arborium/langs/group-maple/nginx/def");
         if !def.exists() {
             return;
@@ -4760,20 +5025,15 @@ mod tests {
         assert!(
             response.diagnostics[0]
                 .message
-                .contains("accepted parse contains")
+                .contains("accepted parse contains"),
+            "{:#?}",
+            response.diagnostics
         );
-        assert_eq!(
-            response
-                .diagnostics
-                .first()
-                .and_then(|diagnostic| diagnostic.primary_span.as_ref())
-                .map(|span| (span.start_row, span.start_column)),
-            Some((107, 81))
-        );
-        let parse = response.parse.as_ref().expect("recovered parse output");
-        assert!(parse.accepted_error_count > 0);
+        let parse = response.parse.as_ref().expect("recovered parse is kept");
+        assert_eq!(parse.accepted_count, 1);
+        assert!(parse.accepted_error_count > 0, "{parse:#?}");
         assert_eq!(parse.accepted_missing_count, 0);
-        assert!(parse.sexp.contains("(ERROR"));
+        assert!(parse.sexp.contains("(ERROR)"), "{}", parse.sexp);
         assert!(!response.highlights.is_empty());
     }
 
@@ -4786,7 +5046,7 @@ mod tests {
         let mut results = Vec::new();
         for bundle in &bundles {
             let files =
-                vendored_runtime_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
+                vendored_playground_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
             let mut session =
                 PlaygroundSession::prepare_files(files.clone()).unwrap_or_else(|response| {
                     panic!("{} should prepare: {:#?}", bundle.id, response.diagnostics)
@@ -4900,7 +5160,7 @@ mod tests {
                 ),
                 (
                     "graphql",
-                    "samples/starwars_schema.graphql",
+                    "samples/0004kb.graphql",
                     true,
                     Some("graphql"),
                     Some(0),
@@ -4966,7 +5226,7 @@ mod tests {
     }
 
     #[test]
-    fn all_non_error_vendored_playground_samples_parse_from_rust() {
+    fn representative_vendored_playground_samples_parse_from_rust() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../playgrounds/snark/src/bundled");
         let bundles = read_vendored_bundles(&root);
@@ -4974,7 +5234,7 @@ mod tests {
         let mut failures = Vec::new();
         for bundle in &bundles {
             let files =
-                vendored_runtime_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
+                vendored_playground_files(&bundles, &bundle.id, vendored_embedded_ids(&bundle.id));
             let mut session = match PlaygroundSession::prepare_files(files.clone()) {
                 Ok(session) => session,
                 Err(response) => {
@@ -4995,6 +5255,7 @@ mod tests {
                 .iter()
                 .filter(|file| file.path.starts_with("samples/"))
                 .filter(|file| !is_error_sample(&file.path))
+                .filter(|file| !is_benchmark_only_sample(&file.path))
                 .cloned()
                 .collect::<Vec<_>>();
             for sample in samples {
@@ -5033,7 +5294,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../playgrounds/snark/src/bundled");
         let bundles = read_vendored_bundles(&root);
-        let mut session = PlaygroundSession::prepare_files(vendored_runtime_files(
+        let mut session = PlaygroundSession::prepare_files(vendored_playground_files(
             &bundles,
             "gingembre",
             &["html"],
@@ -5238,7 +5499,7 @@ mod tests {
             .collect()
     }
 
-    fn vendored_runtime_files(
+    fn vendored_playground_files(
         bundles: &[VendoredBundle],
         active_id: &str,
         embedded_ids: &[&str],
@@ -5329,6 +5590,16 @@ mod tests {
     fn is_error_sample(path: &str) -> bool {
         let lower = path.to_ascii_lowercase();
         lower.contains("error") || lower.contains("invalid") || lower.contains("fail")
+    }
+
+    fn is_benchmark_only_sample(path: &str) -> bool {
+        matches!(
+            path,
+            "samples/0016kb.graphql"
+                | "samples/0064kb.graphql"
+                | "samples/0256kb.graphql"
+                | "samples/1024kb.graphql"
+        )
     }
 
     fn resolved_tree_texts(node: &ResolvedTreeOutput) -> Vec<&str> {

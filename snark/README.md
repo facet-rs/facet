@@ -19,7 +19,4 @@ facts, and provenance maps, then executes those facts through Weavy programs.
 Correctness is checked against Tree-sitter's observable corpus S-expressions and
 query/highlight assertions.
 
-The crate also contains `milestone::scannerless`, a deliberately small smoke
-parser for tiny scannerless grammars. It is not the semantic bridge to Weavy.
-
 See `docs/methodology.md` for the fixture and oracle policy.

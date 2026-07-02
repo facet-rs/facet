@@ -53,6 +53,69 @@ type ParseOutput = {
   accepted_missing_count: number;
 };
 
+type PlanOutput = {
+  fully_visible: boolean;
+  parser_fully_visible: boolean;
+  lexer_fully_visible: boolean;
+  neutral_weavy_only: boolean;
+  stencils_needed: boolean;
+  native_copy_patch_jit_available: boolean;
+  neutral_weavy_op_count: number;
+  snark_intrinsic_count: number;
+  snark_stencils: PlanStencilOutput[];
+  snark_stencil_families: PlanStencilFamilyOutput[];
+  snark_stencil_executions: PlanStencilExecutionOutput[];
+  snark_stencil_states: PlanStencilStateOutput[];
+  lowering_barriers: PlanBarrierOutput[];
+};
+
+type PlanStencilFamilyOutput = {
+  family: string;
+  execution: string;
+  state: string[];
+  effect: PlanStencilEffectOutput;
+  count: number;
+};
+
+type PlanStencilExecutionOutput = {
+  execution: string;
+  families: string[];
+  state: string[];
+  effect: PlanStencilEffectOutput;
+  count: number;
+};
+
+type PlanStencilStateOutput = {
+  state: string;
+  count: number;
+};
+
+type PlanStencilOutput = {
+  descriptor: string;
+  domain: string;
+  lowering: string;
+  family: string;
+  execution: string;
+  state: string[];
+  effect: PlanStencilEffectOutput;
+  count: number;
+};
+
+type PlanStencilEffectOutput = {
+  ordering: string;
+  resource_count: number;
+  typed_memory_count: number;
+  may_fail: boolean;
+  may_allocate: boolean;
+  calls_user_code: boolean;
+  opaque: boolean;
+};
+
+type PlanBarrierOutput = {
+  kind: string;
+  count: number;
+};
+
 type ResolvedTreeOutput = {
   kind: string;
   field: string | null;
@@ -174,6 +237,7 @@ type PlaygroundResponse = {
     scanner_paths: string[];
     active_scanner: string | null;
   };
+  plan: PlanOutput | null;
   parse: ParseOutput | null;
   highlights: HighlightOutput[];
   injections: InjectionOutput[];
@@ -1100,6 +1164,7 @@ function responseWithDiagnostic(stage: string, message: string, files: BundleFil
         .map((file) => file.path),
       active_scanner: null,
     },
+    plan: null,
     parse: null,
     highlights: [],
     injections: [],

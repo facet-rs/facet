@@ -22,7 +22,7 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         WeavyParsePlan, parse_prepared_weavy_recovering_with_report_and_scanner,
-        parse_prepared_weavy_with_report,
+        parse_prepared_weavy_tree,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
@@ -272,6 +272,38 @@ fn bundled_graphql_unterminated_block_string_recovers_to_error_root() {
     assert_eq!(sn, ts);
 }
 
+#[test]
+fn readiness_accepts_frozen_grammar_json() {
+    let grammar_path =
+        workspace_path("snark/tests/fixtures/packages/tree-sitter-css-reduced/src/grammar.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_snark-ts-diff"))
+        .arg("readiness")
+        .arg(&grammar_path)
+        .output()
+        .expect("run snark-ts-diff readiness");
+    assert!(
+        out.status.success(),
+        "readiness failed: stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("visibility: parser=true lexer=false full=false"));
+    assert!(stdout.contains("lexer_ops:"));
+    assert!(stdout.contains("  Pattern:"));
+    assert!(stdout.contains("stencil_descriptors:"));
+    assert!(stdout.contains("snark.tree_sitter.lex domain=Lexing lowering=LexerGraph"));
+    assert!(stdout.contains("snark.tree_sitter.reduce domain=Tree lowering=DialectOp"));
+    assert!(stdout.contains("effect_order=Ordered"));
+    assert!(stdout.contains("may_fail=true may_allocate=true calls_user_code=false opaque=false"));
+    assert!(stdout.contains("resources=[ResourceEffect"));
+    assert!(stdout.contains("direct_no_trace_stencil_state:"));
+    assert!(stdout.contains("host_barriers=0 opaque=0 host_calls=0"));
+    assert!(stdout.contains("Lexer(ExternalScanner):"));
+    assert!(stdout.contains("native_hostcall_blocks: total="));
+    assert!(stdout.contains("native_hostcall_block_barriers:"));
+}
+
 // ---------------------------------------------------------------------------
 
 fn tree_sitter_available() -> bool {
@@ -315,14 +347,17 @@ fn tree_sitter_parse_file(dir: &Path, path: &str) -> String {
 }
 
 fn bundled_path(relative: &str) -> PathBuf {
+    workspace_path(format!("playgrounds/snark/src/bundled/{relative}"))
+}
+
+fn workspace_path(relative: impl AsRef<Path>) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("snark-ts-diff lives inside the facet workspace")
-        .join("playgrounds/snark/src/bundled")
         .join(relative)
 }
 
-/// snark's named-node s-expression via the production (RuntimeWeavy) path.
+/// Snark's named-node s-expression through the production Weavy executor.
 fn snark_sexp(grammar_path: &Path, input: &str) -> String {
     let json = match snark_dsl::emit_with_boa(grammar_path) {
         Ok(json) => json,
@@ -353,8 +388,8 @@ fn snark_sexp(grammar_path: &Path, input: &str) -> String {
         Ok(p) => p,
         Err(e) => return format!("PLAN-ERR: {e:?}"),
     };
-    match parse_prepared_weavy_with_report(&plan, &parser, &table, input) {
-        Ok(report) => report.tree().to_sexp(),
+    match parse_prepared_weavy_tree(&plan, &parser, &table, input) {
+        Ok(tree) => tree.to_sexp(),
         Err(e) => format!("PARSE-ERR: {e:?}"),
     }
 }

@@ -1,8 +1,8 @@
-//! Tree-sitter-style parser generator and LR/GLR runtime scaffolding.
+//! Tree-sitter-style parser generator and LR/GLR execution scaffolding.
 //!
 //! This module is the final-shape parser lane. It is deliberately table- and
-//! runtime-oriented: validated grammar facts become normalized productions,
-//! lexical modes, LR actions, GLR metadata, tree plans, and traceable runtime
+//! execution-oriented: validated grammar facts become normalized productions,
+//! lexical modes, LR actions, GLR metadata, tree plans, and traceable execution
 //! state. It is not a recursive recognizer and it never consumes generated
 //! Tree-sitter implementation files.
 
@@ -61,7 +61,7 @@ id_type!(ConflictId, "Declared or generated conflict id.");
 id_type!(ItemSetId, "LR item-set id.");
 id_type!(StackVersionId, "GLR stack-version id.");
 id_type!(GraphStackNodeId, "GLR graph-stack node id.");
-id_type!(TreeNodeId, "Runtime tree node id.");
+id_type!(TreeNodeId, "Parser tree node id.");
 id_type!(TraceEventId, "Structured parser trace event id.");
 id_type!(InternalSymbolId, "Internal parser sentinel symbol id.");
 id_type!(ReservedContextId, "Reserved-word context id.");
@@ -90,8 +90,8 @@ pub enum ParserGenerationStage {
     Productions,
     /// LR item sets and action/goto tables have been generated.
     Tables,
-    /// Runtime tree, scanner, recovery, and query plans have been attached.
-    RuntimePlans,
+    /// Tree, scanner, recovery, and query plans have been attached.
+    ExecutionPlans,
 }
 
 /// Parser-generator input after validated grammar facts enter the parser lane.
@@ -127,7 +127,7 @@ impl ParserGrammar {
     ///
     /// This is not production lowering. The next parser-generator phase must
     /// flatten `ValidatedGrammar` expressions into [`Production`] rows before
-    /// item sets or runtime execution are valid.
+    /// item sets or parser execution are valid.
     pub fn seed_from_validated(grammar: &ValidatedGrammar, lexical: &LexicalFacts) -> Self {
         Self::seed(grammar, lexical)
     }
@@ -4236,6 +4236,7 @@ impl TableConflict {
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledLexMode {
     pub(crate) terminals: Vec<CompiledLexTerminal>,
+    pub(crate) external_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -4246,16 +4247,12 @@ pub(crate) struct CompiledLexTerminal {
     pub(crate) literal: bool,
     pub(crate) lexical_precedence: i32,
     pub(crate) implicit_precedence: i32,
-    pub(crate) direct_pattern_index: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum CompiledTerminalMatcher {
     Expr(CompiledLexExpr),
-    UnsupportedTerminal {
-        terminal: TerminalId,
-        spelling: String,
-    },
+    UnsupportedTerminal { terminal: TerminalId },
 }
 
 #[derive(Debug, Clone)]
@@ -4434,119 +4431,6 @@ fn compile_until_markers(markers: &[String]) -> CompiledUntilMatcher {
     crate::lex_match::compile_until_markers(markers)
 }
 
-#[cfg(test)]
-pub(crate) fn match_compiled_lex_terminal(
-    terminal: &CompiledLexTerminal,
-    input: &str,
-    byte_position: usize,
-) -> Result<Option<LexMatch>, ParserExecutionError> {
-    match &terminal.matcher {
-        CompiledTerminalMatcher::Expr(expr) => match_compiled_lex_expr(expr, input, byte_position),
-        CompiledTerminalMatcher::UnsupportedTerminal { terminal, spelling } => Err(
-            ParserExecutionError::new(ParserExecutionErrorKind::UnsupportedTerminal {
-                terminal: *terminal,
-                spelling: spelling.clone(),
-            }),
-        ),
-    }
-}
-
-#[cfg(test)]
-fn match_compiled_lex_expr(
-    expr: &CompiledLexExpr,
-    input: &str,
-    byte_position: usize,
-) -> Result<Option<LexMatch>, ParserExecutionError> {
-    match expr {
-        CompiledLexExpr::Blank => Ok(Some(LexMatch::new(byte_position, byte_position))),
-        CompiledLexExpr::String(value) => {
-            Ok(input[byte_position..]
-                .starts_with(value)
-                .then_some(LexMatch::new(
-                    byte_position + value.len(),
-                    byte_position + value.len(),
-                )))
-        }
-        CompiledLexExpr::Pattern(pattern) => Ok(crate::lex_match::match_compiled_pattern(
-            pattern,
-            input,
-            byte_position,
-        )),
-        CompiledLexExpr::Until(matcher) => Ok(
-            crate::lex_match::match_compiled_until_markers_with_inspection(
-                matcher,
-                input,
-                byte_position,
-            ),
-        ),
-        CompiledLexExpr::Nested { open, close } => {
-            Ok(crate::lex_match::match_nested_delimiters_with_inspection(
-                open,
-                close,
-                input,
-                byte_position,
-            ))
-        }
-        CompiledLexExpr::AutoClose(_) => Ok(None),
-        CompiledLexExpr::Seq(members) => {
-            let mut position = byte_position;
-            let mut inspected_end = byte_position;
-            for member in members {
-                let Some(match_) = match_compiled_lex_expr(member, input, position)? else {
-                    return Ok(None);
-                };
-                position = match_.end;
-                inspected_end = inspected_end.max(match_.inspected_end);
-            }
-            Ok(Some(LexMatch::new(position, inspected_end)))
-        }
-        CompiledLexExpr::Choice(members) => {
-            let mut best = None::<LexMatch>;
-            for member in members {
-                if let Some(match_) = match_compiled_lex_expr(member, input, byte_position)?
-                    && best.is_none_or(|best| match_.end > best.end)
-                {
-                    best = Some(match_);
-                }
-            }
-            Ok(best)
-        }
-        CompiledLexExpr::Repeat(content) => {
-            let mut position = byte_position;
-            let mut inspected_end = byte_position;
-            while let Some(match_) = match_compiled_lex_expr(content, input, position)? {
-                inspected_end = inspected_end.max(match_.inspected_end);
-                if match_.end == position {
-                    break;
-                }
-                position = match_.end;
-            }
-            Ok(Some(LexMatch::new(position, inspected_end)))
-        }
-        CompiledLexExpr::Repeat1(content) => {
-            let Some(first) = match_compiled_lex_expr(content, input, byte_position)? else {
-                return Ok(None);
-            };
-            let mut position = first.end;
-            let mut inspected_end = first.inspected_end;
-            if position == byte_position {
-                return Ok(None);
-            }
-            while let Some(match_) = match_compiled_lex_expr(content, input, position)? {
-                inspected_end = inspected_end.max(match_.inspected_end);
-                if match_.end == position {
-                    break;
-                }
-                position = match_.end;
-            }
-            Ok(Some(LexMatch::new(position, inspected_end)))
-        }
-        CompiledLexExpr::UnsupportedSymbol(expr) => Err(ParserExecutionError::new(
-            ParserExecutionErrorKind::UnsupportedLexicalSymbol { expr: *expr },
-        )),
-    }
-}
-
 pub(crate) fn compile_lex_modes(
     grammar: &ValidatedGrammar,
     parser: &ParserGrammar,
@@ -4557,7 +4441,7 @@ pub(crate) fn compile_lex_modes(
         .lexical_modes()
         .iter()
         .map(|mode| {
-            let mut terminals = mode
+            let terminals = mode
                 .terminals()
                 .iter()
                 .map(|terminal| {
@@ -4570,24 +4454,12 @@ pub(crate) fn compile_lex_modes(
                         .clone()
                 })
                 .collect::<Vec<_>>();
-            assign_direct_pattern_indices(&mut terminals);
-            CompiledLexMode { terminals }
+            CompiledLexMode {
+                terminals,
+                external_count: mode.externals().len(),
+            }
         })
         .collect()
-}
-
-fn assign_direct_pattern_indices(terminals: &mut [CompiledLexTerminal]) {
-    let mut set_index = 0usize;
-    for terminal in terminals {
-        let CompiledTerminalMatcher::Expr(CompiledLexExpr::Pattern(pattern)) = &terminal.matcher
-        else {
-            continue;
-        };
-        if pattern.regex.is_some() {
-            terminal.direct_pattern_index = Some(set_index);
-            set_index += 1;
-        }
-    }
 }
 
 fn compile_lex_terminal(
@@ -4601,7 +4473,6 @@ fn compile_lex_terminal(
         literal: terminal.kind() == ParserTerminalKind::String,
         lexical_precedence: terminal_lexical_completion_precedence(grammar, terminal),
         implicit_precedence: terminal_lexical_implicit_precedence(grammar, terminal),
-        direct_pattern_index: None,
     }
 }
 
@@ -4634,14 +4505,12 @@ fn compile_terminal_matcher(
             }
             _ => CompiledTerminalMatcher::UnsupportedTerminal {
                 terminal: terminal.id(),
-                spelling: terminal.spelling().to_owned(),
             },
         },
         ParserTerminalKind::Token | ParserTerminalKind::ImmediateToken => {
             let Some(root) = terminal.lexical_root() else {
                 return CompiledTerminalMatcher::UnsupportedTerminal {
                     terminal: terminal.id(),
-                    spelling: terminal.spelling().to_owned(),
                 };
             };
             let (GrammarExpr::Token(content) | GrammarExpr::ImmediateToken(content)) =
@@ -4649,7 +4518,6 @@ fn compile_terminal_matcher(
             else {
                 return CompiledTerminalMatcher::UnsupportedTerminal {
                     terminal: terminal.id(),
-                    spelling: terminal.spelling().to_owned(),
                 };
             };
             CompiledTerminalMatcher::Expr(compile_lex_expr(grammar, *content))
@@ -4673,6 +4541,10 @@ fn compile_auto_close_rules(rules: &[ValidatedAutoCloseRule]) -> Vec<AutoCloseRu
                 .collect(),
         })
         .collect()
+}
+
+fn normalize_auto_close_tag(tag: &str) -> String {
+    tag.to_ascii_lowercase()
 }
 
 fn compile_lex_expr_inner(
@@ -4876,13 +4748,13 @@ impl LexMatch {
 /// `start_byte..old_end_byte` names the replaced range in the previous input.
 /// `start_byte..new_end_byte` names the replacement range in the new input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RuntimeInputEdit {
+pub struct ParserInputEdit {
     start_byte: usize,
     old_end_byte: usize,
     new_end_byte: usize,
 }
 
-impl RuntimeInputEdit {
+impl ParserInputEdit {
     /// Build a byte edit descriptor.
     pub const fn new(start_byte: usize, old_end_byte: usize, new_end_byte: usize) -> Self {
         Self {
@@ -4942,9 +4814,9 @@ impl RuntimeInputEdit {
     }
 }
 
-/// Lossless-enough runtime tree projection for CST/AST consumers.
+/// Lossless-enough parse tree projection for CST/AST consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeResolvedNode {
+pub struct ResolvedCstNode {
     kind: String,
     symbol: Option<ParserSymbol>,
     field: Option<String>,
@@ -4958,7 +4830,7 @@ pub struct RuntimeResolvedNode {
     children: Vec<Self>,
 }
 
-impl RuntimeResolvedNode {
+impl ResolvedCstNode {
     /// Node or terminal kind.
     pub fn kind(&self) -> &str {
         &self.kind
@@ -4974,7 +4846,7 @@ impl RuntimeResolvedNode {
         self.field.as_deref()
     }
 
-    /// Runtime tree node id, when this item materialized a tree node.
+    /// Parse tree node id, when this item materialized a tree node.
     pub const fn node(&self) -> Option<TreeNodeId> {
         self.node
     }
@@ -5016,7 +4888,7 @@ impl RuntimeResolvedNode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeResolvedItem {
+struct ResolvedCstItem {
     kind: String,
     symbol: Option<ParserSymbol>,
     field: Option<String>,
@@ -5031,32 +4903,42 @@ struct RuntimeResolvedItem {
     children: Vec<usize>,
 }
 
-pub(crate) fn resolved_tree_from_events<F>(
-    parser: &ParserGrammar,
-    input: &str,
-    tree_events: &[TreeEvent],
-    mut node_kind: F,
-) -> Option<RuntimeResolvedNode>
-where
-    F: FnMut(TreeNodeId) -> Option<String>,
-{
-    let field_by_child = tree_events
-        .iter()
-        .filter_map(|event| match event {
+pub(crate) struct ResolvedCstBuilder<'a> {
+    parser: &'a ParserGrammar,
+    input: &'a str,
+    field_by_child: HashMap<TreeNodeId, String>,
+    item_indices_by_node: HashMap<TreeNodeId, Vec<usize>>,
+    items: Vec<ResolvedCstItem>,
+}
+
+impl<'a> ResolvedCstBuilder<'a> {
+    pub(crate) fn new(parser: &'a ParserGrammar, input: &'a str) -> Self {
+        Self {
+            parser,
+            input,
+            field_by_child: HashMap::new(),
+            item_indices_by_node: HashMap::new(),
+            items: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, event: &TreeEvent) {
+        let order = self.items.len();
+        match event {
             TreeEvent::Field {
                 child: Some(child),
                 field,
                 ..
-            } => parser
-                .fields
-                .get(field.get() as usize)
-                .map(|decl| (*child, decl.name().to_owned())),
-            _ => None,
-        })
-        .collect::<HashMap<_, _>>();
-    let mut items = Vec::<RuntimeResolvedItem>::new();
-    for (order, event) in tree_events.iter().enumerate() {
-        match event {
+            } => {
+                if let Some(name) = self
+                    .parser
+                    .fields
+                    .get(field.get() as usize)
+                    .map(|decl| decl.name().to_owned())
+                {
+                    self.attach_field(*child, name);
+                }
+            }
             TreeEvent::Token {
                 symbol,
                 bytes,
@@ -5065,9 +4947,9 @@ where
                 named,
                 ..
             } => {
-                let text = source_slice(input, *bytes).map(str::to_owned);
-                items.push(RuntimeResolvedItem {
-                    kind: parser_symbol_kind(parser, *symbol, text.as_deref()),
+                let text = source_slice(self.input, *bytes).map(str::to_owned);
+                self.push_item(ResolvedCstItem {
+                    kind: parser_symbol_kind(self.parser, *symbol, text.as_deref()),
                     symbol: Some(*symbol),
                     field: None,
                     node: None,
@@ -5083,33 +4965,72 @@ where
             }
             TreeEvent::Reduce {
                 node,
-                bytes,
-                points,
-                ..
-            }
-            | TreeEvent::CloseNode {
-                node,
-                bytes,
-                points,
-                ..
-            }
-            | TreeEvent::Error {
-                node,
+                metadata,
                 bytes,
                 points,
                 ..
             } => {
-                let is_extra = matches!(event, TreeEvent::CloseNode { .. });
-                items.push(RuntimeResolvedItem {
-                    kind: node_kind(*node)?,
+                if let Some(public_node) =
+                    self.parser.production_metadata[metadata.get() as usize].public_node()
+                {
+                    self.push_item(ResolvedCstItem {
+                        kind: self.parser.public_node_kinds[public_node.get() as usize]
+                            .name()
+                            .to_owned(),
+                        symbol: None,
+                        field: self.field_by_child.get(node).cloned(),
+                        node: Some(*node),
+                        bytes: *bytes,
+                        points: *points,
+                        named: true,
+                        visible: true,
+                        extra: false,
+                        text: None,
+                        order,
+                        children: Vec::new(),
+                    });
+                }
+            }
+            TreeEvent::CloseNode {
+                node,
+                public_node: Some(public_node),
+                bytes,
+                points,
+                ..
+            } => {
+                self.push_item(ResolvedCstItem {
+                    kind: self.parser.public_node_kinds[public_node.get() as usize]
+                        .name()
+                        .to_owned(),
                     symbol: None,
-                    field: field_by_child.get(node).cloned(),
+                    field: self.field_by_child.get(node).cloned(),
                     node: Some(*node),
                     bytes: *bytes,
                     points: *points,
                     named: true,
                     visible: true,
-                    extra: is_extra,
+                    extra: true,
+                    text: None,
+                    order,
+                    children: Vec::new(),
+                });
+            }
+            TreeEvent::Error {
+                node,
+                bytes,
+                points,
+                ..
+            } => {
+                self.push_item(ResolvedCstItem {
+                    kind: "ERROR".to_owned(),
+                    symbol: None,
+                    field: self.field_by_child.get(node).cloned(),
+                    node: Some(*node),
+                    bytes: *bytes,
+                    points: *points,
+                    named: true,
+                    visible: true,
+                    extra: false,
                     text: None,
                     order,
                     children: Vec::new(),
@@ -5121,8 +5042,8 @@ where
                 points,
                 ..
             } => {
-                items.push(RuntimeResolvedItem {
-                    kind: parser_symbol_kind(parser, *symbol, None),
+                self.push_item(ResolvedCstItem {
+                    kind: parser_symbol_kind(self.parser, *symbol, None),
                     symbol: Some(*symbol),
                     field: None,
                     node: None,
@@ -5144,11 +5065,11 @@ where
                 points,
                 ..
             } => {
-                let kind = parser.aliases[alias.get() as usize].value().to_owned();
-                items.push(RuntimeResolvedItem {
+                let kind = self.parser.aliases[alias.get() as usize].value().to_owned();
+                self.push_item(ResolvedCstItem {
                     kind,
                     symbol: None,
-                    field: field_by_child.get(node).cloned(),
+                    field: self.field_by_child.get(node).cloned(),
                     node: Some(*node),
                     bytes: *bytes,
                     points: *points,
@@ -5160,90 +5081,127 @@ where
                     children: Vec::new(),
                 });
             }
-            TreeEvent::OpenNode { .. } | TreeEvent::Field { .. } | TreeEvent::ReuseNode { .. } => {}
-        }
-    }
-    if items.is_empty() {
-        return None;
-    }
-
-    let mut parents = vec![None; items.len()];
-    for child in 0..items.len() {
-        let mut best = None::<(usize, usize, usize)>;
-        for parent in 0..items.len() {
-            if parent == child
-                || items[parent].node.is_none()
-                || !resolved_item_contains(&items[parent], &items[child])
-            {
-                continue;
+            TreeEvent::OpenNode { .. }
+            | TreeEvent::Field { child: None, .. }
+            | TreeEvent::CloseNode {
+                public_node: None, ..
             }
-            let key = (
-                resolved_item_len(&items[parent]),
-                items[parent].order,
-                parent,
-            );
-            if best.is_none_or(|best| key < best) {
-                best = Some(key);
+            | TreeEvent::ReuseNode { .. } => {}
+        }
+    }
+
+    pub(crate) fn finish(mut self) -> Option<ResolvedCstNode> {
+        if self.items.is_empty() {
+            return None;
+        }
+
+        let mut parents = vec![None; self.items.len()];
+        for (child, parent_slot) in parents.iter_mut().enumerate() {
+            let mut best = None::<(usize, usize, usize)>;
+            for parent in 0..self.items.len() {
+                if parent == child
+                    || self.items[parent].node.is_none()
+                    || !resolved_item_contains(&self.items[parent], &self.items[child])
+                {
+                    continue;
+                }
+                let key = (
+                    resolved_item_len(&self.items[parent]),
+                    self.items[parent].order,
+                    parent,
+                );
+                if best.is_none_or(|best| key < best) {
+                    best = Some(key);
+                }
+            }
+            *parent_slot = best.map(|(_, _, parent)| parent);
+        }
+        for (child, parent) in parents.iter().enumerate() {
+            if let Some(parent) = *parent {
+                self.items[parent].children.push(child);
             }
         }
-        parents[child] = best.map(|(_, _, parent)| parent);
+
+        let mut roots = parents
+            .iter()
+            .enumerate()
+            .filter_map(|(index, parent)| parent.is_none().then_some(index))
+            .collect::<Vec<_>>();
+        if roots.is_empty() {
+            return None;
+        }
+        sort_resolved_children(&mut roots, &self.items);
+        if roots.len() == 1 {
+            return Some(build_resolved_node(roots[0], &self.items));
+        }
+
+        let first = roots[0];
+        let last = roots[roots.len() - 1];
+        let bytes = ByteRange::new(
+            self.items[first].bytes.start(),
+            self.items[last].bytes.end(),
+        )
+        .ok()?;
+        let points = PointRange::new(
+            self.items[first].points.start(),
+            self.items[last].points.end(),
+        )
+        .ok()?;
+        Some(ResolvedCstNode {
+            kind: "ROOT".to_owned(),
+            symbol: None,
+            field: None,
+            node: None,
+            bytes,
+            points,
+            named: true,
+            visible: true,
+            extra: false,
+            text: None,
+            children: roots
+                .into_iter()
+                .map(|root| build_resolved_node(root, &self.items))
+                .collect(),
+        })
     }
-    for (child, parent) in parents.iter().enumerate() {
-        if let Some(parent) = *parent {
-            items[parent].children.push(child);
+
+    fn attach_field(&mut self, node: TreeNodeId, name: String) {
+        self.field_by_child.insert(node, name.clone());
+        if let Some(indices) = self.item_indices_by_node.get(&node) {
+            for index in indices {
+                self.items[*index].field = Some(name.clone());
+            }
         }
     }
 
-    let mut roots = parents
-        .iter()
-        .enumerate()
-        .filter_map(|(index, parent)| parent.is_none().then_some(index))
-        .collect::<Vec<_>>();
-    if roots.is_empty() {
-        return None;
+    fn push_item(&mut self, item: ResolvedCstItem) {
+        let node = item.node;
+        let index = self.items.len();
+        self.items.push(item);
+        if let Some(node) = node {
+            self.item_indices_by_node
+                .entry(node)
+                .or_default()
+                .push(index);
+        }
     }
-    sort_resolved_children(&mut roots, &items);
-    if roots.len() == 1 {
-        return Some(build_resolved_node(roots[0], &items));
-    }
-
-    let first = roots[0];
-    let last = roots[roots.len() - 1];
-    let bytes = ByteRange::new(items[first].bytes.start(), items[last].bytes.end()).ok()?;
-    let points = PointRange::new(items[first].points.start(), items[last].points.end()).ok()?;
-    Some(RuntimeResolvedNode {
-        kind: "ROOT".to_owned(),
-        symbol: None,
-        field: None,
-        node: None,
-        bytes,
-        points,
-        named: true,
-        visible: true,
-        extra: false,
-        text: None,
-        children: roots
-            .into_iter()
-            .map(|root| build_resolved_node(root, &items))
-            .collect(),
-    })
 }
 
-fn resolved_item_contains(parent: &RuntimeResolvedItem, child: &RuntimeResolvedItem) -> bool {
+fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> bool {
     parent.order > child.order
         && parent.bytes.start() <= child.bytes.start()
         && child.bytes.end() <= parent.bytes.end()
 }
 
-fn resolved_item_len(item: &RuntimeResolvedItem) -> usize {
+fn resolved_item_len(item: &ResolvedCstItem) -> usize {
     item.bytes.end().get() as usize - item.bytes.start().get() as usize
 }
 
-fn build_resolved_node(index: usize, items: &[RuntimeResolvedItem]) -> RuntimeResolvedNode {
+fn build_resolved_node(index: usize, items: &[ResolvedCstItem]) -> ResolvedCstNode {
     let item = &items[index];
     let mut children = item.children.clone();
     sort_resolved_children(&mut children, items);
-    RuntimeResolvedNode {
+    ResolvedCstNode {
         kind: item.kind.clone(),
         symbol: item.symbol,
         field: item.field.clone(),
@@ -5261,7 +5219,7 @@ fn build_resolved_node(index: usize, items: &[RuntimeResolvedItem]) -> RuntimeRe
     }
 }
 
-fn sort_resolved_children(children: &mut [usize], items: &[RuntimeResolvedItem]) {
+fn sort_resolved_children(children: &mut [usize], items: &[ResolvedCstItem]) {
     children.sort_by_key(|child| {
         let item = &items[*child];
         (item.bytes.start().get(), item.bytes.end().get(), item.order)
@@ -5314,96 +5272,25 @@ fn parser_symbol_kind(
     }
 }
 
-pub(crate) fn auto_close_trigger_len(
-    spec: &AutoCloseSpec,
-    open_tag: &str,
-    input: &str,
-    byte_position: usize,
-) -> Option<usize> {
-    let literal_trigger = spec
-        .closed_by
-        .iter()
-        .filter(|marker| input[byte_position..].starts_with(marker.as_str()))
-        .map(String::len)
-        .max();
-    let tag_trigger = spec
-        .start_prefix
-        .as_deref()
-        .and_then(|prefix| scan_auto_close_tag(input, byte_position, prefix))
-        .and_then(|(tag, end_byte)| {
-            auto_close_closed_by_tags(spec, open_tag)?
-                .iter()
-                .any(|closed_by| normalize_auto_close_tag(closed_by) == tag)
-                .then_some(end_byte - byte_position)
-        });
-    literal_trigger.max(tag_trigger)
-}
-
-fn auto_close_closed_by_tags<'a>(spec: &'a AutoCloseSpec, open_tag: &str) -> Option<&'a [String]> {
-    let open_tag = normalize_auto_close_tag(open_tag);
-    if let Some(rule) = spec.rules.iter().find(|rule| rule.tag == open_tag) {
-        return Some(&rule.closed_by_tags);
-    }
-    (normalize_auto_close_tag(&spec.tag) == open_tag).then_some(&spec.closed_by_tags)
-}
-
-pub(crate) fn auto_close_has_rule_for_tag(spec: &AutoCloseSpec, open_tag: &str) -> bool {
-    auto_close_closed_by_tags(spec, open_tag).is_some()
-}
-
-pub(crate) fn scan_auto_close_tag_in_range(
-    input: &str,
-    start_byte: usize,
-    end_byte: usize,
-    prefix: &str,
-) -> Option<String> {
-    let (tag, tag_end) = scan_auto_close_tag(input, start_byte, prefix)?;
-    (tag_end <= end_byte).then_some(tag)
-}
-
-fn scan_auto_close_tag(input: &str, byte_position: usize, prefix: &str) -> Option<(String, usize)> {
-    let after_prefix = byte_position.checked_add(prefix.len())?;
-    if !input[byte_position..].starts_with(prefix) {
-        return None;
-    }
-    if prefix == "<" && input[after_prefix..].starts_with('/') {
-        return None;
-    }
-    let tag_start = after_prefix;
-    let tag_end = ascii_tag_name_end(input, tag_start);
-    (tag_end > tag_start).then(|| {
-        (
-            normalize_auto_close_tag(&input[tag_start..tag_end]),
-            tag_end,
-        )
-    })
-}
-
-fn ascii_tag_name_end(input: &str, byte_position: usize) -> usize {
-    input[byte_position..]
-        .char_indices()
-        .find_map(|(offset, ch)| {
-            (!(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == ':'))
-                .then_some(byte_position + offset)
-        })
-        .unwrap_or(input.len())
-}
-
-fn normalize_auto_close_tag(tag: &str) -> String {
-    tag.to_ascii_lowercase()
-}
-
-pub(crate) fn tree_events_for_version_lineage(
+pub(crate) fn visit_tree_events_for_version_lineage(
     accepted_version: StackVersionId,
     trace_events: &[TraceEvent],
     tree_events: &[TreeEvent],
-) -> Vec<TreeEvent> {
+    mut visit: impl FnMut(&TreeEvent),
+) {
+    if trace_events.is_empty() {
+        for event in tree_events {
+            visit(event);
+        }
+        return;
+    }
     let lineage = stack_version_lineage(accepted_version, trace_events);
-    tree_events
+    for event in tree_events
         .iter()
         .filter(|event| lineage.contains(&event.version()))
-        .cloned()
-        .collect()
+    {
+        visit(event);
+    }
 }
 
 fn stack_version_lineage(
@@ -5428,7 +5315,7 @@ fn stack_version_lineage(
     lineage
 }
 
-/// Error produced by shared parser execution support.
+/// Error produced by parser input/scanner support.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParserExecutionError {
     kind: ParserExecutionErrorKind,
@@ -5448,16 +5335,6 @@ impl ParserExecutionError {
 impl fmt::Display for ParserExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            ParserExecutionErrorKind::UnsupportedTerminal { terminal, spelling } => write!(
-                f,
-                "terminal {} is not supported by parser execution support: {spelling}",
-                terminal.get()
-            ),
-            ParserExecutionErrorKind::UnsupportedLexicalSymbol { expr } => write!(
-                f,
-                "lexical expression {} contains a symbol reference unsupported by this slice",
-                expr.get()
-            ),
             ParserExecutionErrorKind::InvalidInputEdit {
                 start_byte,
                 old_end_byte,
@@ -5474,22 +5351,10 @@ impl fmt::Display for ParserExecutionError {
 
 impl Error for ParserExecutionError {}
 
-/// Shared parser execution support error kind.
+/// Parser input/scanner support error kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ParserExecutionErrorKind {
-    /// Shared lexical support cannot match this terminal.
-    UnsupportedTerminal {
-        /// Terminal id.
-        terminal: TerminalId,
-        /// Terminal spelling.
-        spelling: String,
-    },
-    /// Shared lexical support does not execute symbol references.
-    UnsupportedLexicalSymbol {
-        /// Source expression id.
-        expr: GrammarExprId,
-    },
     /// Incremental edit coordinates did not describe the old and new inputs.
     InvalidInputEdit {
         /// Shared edit start byte.
@@ -5584,7 +5449,7 @@ pub enum ParseAction {
     },
 }
 
-/// GLR runtime table facts that are not specific to one stack version.
+/// GLR table facts that are not specific to one stack version.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GlrPlan {
     conflicts: Vec<ConflictPlan>,
@@ -5667,7 +5532,7 @@ impl BranchRanking {
         self.dynamic_precedence
     }
 
-    /// Runtime progress count used as a stable branch-ranking tiebreaker.
+    /// Branch progress count used as a stable branch-ranking tiebreaker.
     pub const fn progress(&self) -> u32 {
         self.progress
     }
@@ -5678,7 +5543,7 @@ impl BranchRanking {
     }
 }
 
-/// Runtime tree operation emitted by parser actions.
+/// Tree operation emitted by parser actions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TreeEvent {
@@ -5686,7 +5551,7 @@ pub enum TreeEvent {
     OpenNode {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Public or internal symbol.
         symbol: ParserSymbol,
@@ -5722,7 +5587,7 @@ pub enum TreeEvent {
         production: ProductionId,
         /// Reduced production metadata.
         metadata: ProductionMetadataId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Byte range.
         bytes: ByteRange,
@@ -5744,7 +5609,7 @@ pub enum TreeEvent {
     Error {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Byte range.
         bytes: ByteRange,
@@ -5757,7 +5622,7 @@ pub enum TreeEvent {
     CloseNode {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Public node kind, when this close event materializes a visible node.
         public_node: Option<PublicNodeKindId>,
@@ -5770,7 +5635,7 @@ pub enum TreeEvent {
     ReuseNode {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node.
+        /// Parser tree node.
         node: TreeNodeId,
         /// Byte range.
         bytes: ByteRange,
@@ -5783,20 +5648,20 @@ pub enum TreeEvent {
     Field {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Parent runtime tree node.
+        /// Parent parser tree node.
         node: TreeNodeId,
-        /// Visible child runtime tree node, when the fielded step emitted one.
+        /// Visible child parser tree node, when the fielded step emitted one.
         child: Option<TreeNodeId>,
         /// Field id.
         field: FieldId,
         /// Structural child index.
         structural_index: usize,
     },
-    /// An alias emitted or renamed a runtime tree node at a structural child index.
+    /// An alias emitted or renamed a parser tree node at a structural child index.
     Alias {
         /// Stack version that emitted this tree event.
         version: StackVersionId,
-        /// Runtime tree node carrying the alias.
+        /// Parser tree node carrying the alias.
         node: TreeNodeId,
         /// Alias id.
         alias: AliasId,
@@ -6000,10 +5865,7 @@ mod tests {
     use crate::{
         corpus::{SexpChild, SexpNode, SexpValue},
         grammar::RawGrammarJson,
-        lex_match::{
-            match_compiled_until_markers_with_inspection, match_pattern, match_pattern_with_flags,
-            match_until_markers_with_inspection,
-        },
+        lex_match::{match_pattern, match_pattern_with_flags},
         lexical::LexicalFacts,
         validated::ValidatedGrammar,
     };
@@ -6435,7 +6297,7 @@ extras (
 "#
     }
 
-    fn authored_gingembre_runtime_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
+    fn authored_gingembre_parser_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
         use facet_styx::RenderError;
 
         let source = authored_gingembre_styx();
@@ -6465,7 +6327,7 @@ extras (
         )> = OnceLock::new();
 
         FIXTURE.get_or_init(|| {
-            let (validated, parser, table) = authored_gingembre_runtime_fixture();
+            let (validated, parser, table) = authored_gingembre_parser_fixture();
             let plan =
                 crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
             (validated, parser, table, plan)
@@ -6519,7 +6381,7 @@ extras (
         })
     }
 
-    fn assert_styx_authored_gingembre_runtime(input: &str, expected_sexp: &str) {
+    fn assert_styx_authored_gingembre_parse(input: &str, expected_sexp: &str) {
         let (_, parser, table, plan) = authored_gingembre_weavy_fixture();
         let report =
             crate::lower::weavy::parse_prepared_weavy_with_report(plan, parser, table, input)
@@ -6532,10 +6394,7 @@ extras (
         assert_eq!(report.failure_count(), 0);
     }
 
-    fn collect_resolved_terminal_texts<'a>(
-        node: &'a RuntimeResolvedNode,
-        texts: &mut Vec<&'a str>,
-    ) {
+    fn collect_resolved_terminal_texts<'a>(node: &'a ResolvedCstNode, texts: &mut Vec<&'a str>) {
         if let Some(text) = node.text() {
             texts.push(text);
         }
@@ -6544,7 +6403,7 @@ extras (
         }
     }
 
-    fn resolved_terminal_texts(node: &RuntimeResolvedNode) -> Vec<&str> {
+    fn resolved_terminal_texts(node: &ResolvedCstNode) -> Vec<&str> {
         let mut texts = Vec::new();
         collect_resolved_terminal_texts(node, &mut texts);
         texts
@@ -6642,12 +6501,12 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_interpolation_like_gingembre() {
-        assert_styx_authored_gingembre_runtime("{{ x }}", "(template (interpolation (var_ref)))");
+        assert_styx_authored_gingembre_parse("{{ x }}", "(template (interpolation (var_ref)))");
     }
 
     #[test]
     fn parses_styx_authored_gingembre_trim_interpolation_like_gingembre() {
-        assert_styx_authored_gingembre_runtime("{{- x -}}", "(template (interpolation (var_ref)))");
+        assert_styx_authored_gingembre_parse("{{- x -}}", "(template (interpolation (var_ref)))");
     }
 
     #[test]
@@ -6697,25 +6556,16 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_literals_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
-            "{{ true }}",
-            "(template (interpolation (literal)))",
-        );
-        assert_styx_authored_gingembre_runtime(
-            "{{ none }}",
-            "(template (interpolation (literal)))",
-        );
-        assert_styx_authored_gingembre_runtime("{{ 42 }}", "(template (interpolation (literal)))");
-        assert_styx_authored_gingembre_runtime(
-            "{{ 1.25 }}",
-            "(template (interpolation (literal)))",
-        );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse("{{ true }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse("{{ none }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse("{{ 42 }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse("{{ 1.25 }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse(
             r#"{{ "x" }}"#,
             "(template (interpolation (literal)))",
         );
-        assert_styx_authored_gingembre_runtime("{{ 'x' }}", "(template (interpolation (literal)))");
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse("{{ 'x' }}", "(template (interpolation (literal)))");
+        assert_styx_authored_gingembre_parse(
             r#"{{ "a\"b" }}"#,
             "(template (interpolation (literal)))",
         );
@@ -6737,7 +6587,7 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_field_access_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ user.name }}",
             "(template (interpolation (field_expr (var_ref))))",
         );
@@ -6745,7 +6595,7 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_call_arguments_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet(user.name, suffix) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (field_expr (var_ref))) (arg (var_ref))))))",
         );
@@ -6753,15 +6603,15 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_call_arg_shapes_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet() }}",
             "(template (interpolation (call_expr (var_ref) (arg_list))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet(suffix,) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (arg (var_ref))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ greet(name=user.name) }}",
             "(template (interpolation (call_expr (var_ref) (arg_list (kw_arg (field_expr (var_ref)))))))",
         );
@@ -6769,15 +6619,15 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_index_postfix_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ items[1] }}",
             "(template (interpolation (index_expr (var_ref) (literal))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ items[1].name }}",
             "(template (interpolation (field_expr (index_expr (var_ref) (literal)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ fetch()[0] }}",
             "(template (interpolation (index_expr (call_expr (var_ref) (arg_list)) (literal))))",
         );
@@ -6785,15 +6635,15 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_optional_postfix_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ user? }}",
             "(template (interpolation (optional_expr (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ user?.name }}",
             "(template (interpolation (field_expr (optional_expr (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ fetch()[0]? | default(none) }}",
             "(template (interpolation (filter_expr (optional_expr (index_expr (call_expr (var_ref) (arg_list)) (literal))) (arg_list (arg (literal))))))",
         );
@@ -6801,17 +6651,17 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_compound_primaries_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ (a + b) * c }}",
             "(template (interpolation (binary_expr (paren_expr (binary_expr (var_ref) (var_ref))) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ [1, user.name, none,] }}",
             "(template (interpolation (list_lit (literal) (field_expr (var_ref)) (literal))))",
         );
-        assert_styx_authored_gingembre_runtime("{{ [] }}", "(template (interpolation (list_lit)))");
-        assert_styx_authored_gingembre_runtime("{{ {} }}", "(template (interpolation (dict_lit)))");
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse("{{ [] }}", "(template (interpolation (list_lit)))");
+        assert_styx_authored_gingembre_parse("{{ {} }}", "(template (interpolation (dict_lit)))");
+        assert_styx_authored_gingembre_parse(
             r#"{{ {"name": user.name, "ok": true,} }}"#,
             "(template (interpolation (dict_lit (literal) (field_expr (var_ref)) (literal) (literal))))",
         );
@@ -6819,39 +6669,39 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_binary_precedence_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a + b * c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a * b + c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a + b + c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a - b ~ c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a / b % c }}",
             "(template (interpolation (binary_expr (binary_expr (var_ref) (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a ** b ** c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a or b and c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a == b + c }}",
             "(template (interpolation (binary_expr (var_ref) (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a not in xs }}",
             "(template (interpolation (binary_expr (var_ref) (var_ref))))",
         );
@@ -6859,27 +6709,27 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_filters_and_tests_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ name | upper }}",
             "(template (interpolation (filter_expr (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ items | slice(0, 2) }}",
             "(template (interpolation (filter_expr (var_ref) (arg_list (arg (literal)) (arg (literal))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ value | default(fallback) is not none }}",
             "(template (interpolation (test_expr (filter_expr (var_ref) (arg_list (arg (var_ref)))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ value is none or fallback }}",
             "(template (interpolation (binary_expr (test_expr (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a + b is sameas(c) }}",
             "(template (interpolation (test_expr (binary_expr (var_ref) (var_ref)) (arg_list (arg (var_ref))))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ name | upper ** power }}",
             "(template (interpolation (binary_expr (filter_expr (var_ref)) (var_ref))))",
         );
@@ -6887,19 +6737,19 @@ extras (
 
     #[test]
     fn parses_styx_authored_gingembre_unary_precedence_like_gingembre() {
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ not a and b }}",
             "(template (interpolation (binary_expr (unary_expr (var_ref)) (var_ref))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ not a == b }}",
             "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ a * -b }}",
             "(template (interpolation (binary_expr (var_ref) (unary_expr (var_ref)))))",
         );
-        assert_styx_authored_gingembre_runtime(
+        assert_styx_authored_gingembre_parse(
             "{{ -a ** b }}",
             "(template (interpolation (unary_expr (binary_expr (var_ref) (var_ref)))))",
         );
@@ -6919,7 +6769,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn parses_styx_authored_gingembre_index_postfix_through_weavy_runtime() {
@@ -6936,7 +6785,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn parses_styx_authored_gingembre_optional_postfix_through_weavy_runtime() {
@@ -6953,7 +6801,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn parses_styx_authored_gingembre_compound_primaries_through_weavy_runtime() {
@@ -6970,7 +6817,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn parses_styx_authored_gingembre_filters_and_tests_through_weavy_runtime() {
@@ -6987,7 +6833,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn parses_styx_authored_gingembre_unary_precedence_through_weavy_runtime() {
@@ -7004,7 +6849,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn parses_styx_authored_gingembre_binary_precedence_through_weavy_runtime() {
@@ -7021,7 +6865,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]
@@ -7605,8 +7448,8 @@ extras (
     }
 
     #[test]
-    fn compiled_lexer_matches_expected_terminal_matches() {
-        let (validated, parser, _table) = prepared_with_validated(
+    fn weavy_lexer_matches_expected_terminal_matches() {
+        let (validated, parser, table) = prepared_with_validated(
             r##"{
               "name": "mini",
               "rules": {
@@ -7650,6 +7493,7 @@ extras (
               }
             }"##,
         );
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let input = "=> abc ab3bz yxy q";
         let byte_positions = [0usize, 3, 7, 8, 14, 18];
 
@@ -7661,10 +7505,10 @@ extras (
                 Ok((
                     terminal.kind(),
                     terminal.spelling().to_owned(),
-                    compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
+                    weavy_terminal_ends(&plan, terminal, input, &byte_positions)?,
                 ))
             })
-            .collect::<Result<Vec<_>, ParserExecutionError>>()
+            .collect::<Result<Vec<_>, crate::lower::weavy::WeavyParseError>>()
             .unwrap();
 
         assert!(observed.contains(&(
@@ -7825,7 +7669,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
     #[test]
     fn weavy_runtime_inserts_node_driven_declarative_auto_close_tokens() {
@@ -7845,7 +7688,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     fn flagged_regex_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
@@ -7984,32 +7826,35 @@ extras (
         reused_byte_ranges_from_events(report.tree_events())
     }
 
-    fn compiled_terminal_end(
-        validated: &ValidatedGrammar,
+    fn weavy_terminal_end(
+        plan: &crate::lower::weavy::WeavyParsePlan,
         terminal: &TerminalSymbol,
         input: &str,
         byte_position: usize,
-    ) -> Result<Option<usize>, ParserExecutionError> {
-        let compiled = compile_lex_terminal(validated, terminal);
-        match_compiled_lex_terminal(&compiled, input, byte_position)
-            .map(|result| result.map(|match_| match_.end))
+    ) -> Result<Option<usize>, crate::lower::weavy::WeavyParseError> {
+        match plan.match_terminal_for_tests(terminal.id(), input, byte_position) {
+            Ok(result) => Ok(result.map(|match_| match_.end)),
+            Err(crate::lower::weavy::WeavyParseError::MissingTerminal { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
-    fn compiled_terminal_ends(
-        validated: &ValidatedGrammar,
+    fn weavy_terminal_ends(
+        plan: &crate::lower::weavy::WeavyParsePlan,
         terminal: &TerminalSymbol,
         input: &str,
         byte_positions: &[usize],
-    ) -> Result<Vec<Option<usize>>, ParserExecutionError> {
+    ) -> Result<Vec<Option<usize>>, crate::lower::weavy::WeavyParseError> {
         byte_positions
             .iter()
-            .map(|byte_position| compiled_terminal_end(validated, terminal, input, *byte_position))
+            .map(|byte_position| weavy_terminal_end(plan, terminal, input, *byte_position))
             .collect()
     }
 
     #[test]
-    fn compiled_lexer_preserves_regex_flags() {
-        let (validated, parser, _table) = flagged_regex_fixture();
+    fn weavy_lexer_preserves_regex_flags() {
+        let (validated, parser, table) = flagged_regex_fixture();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let input = "ABCXYZ";
         let byte_positions = [0usize, 3];
         let insensitive = parser
@@ -8030,11 +7875,11 @@ extras (
             .unwrap();
 
         assert_eq!(
-            compiled_terminal_ends(&validated, insensitive, input, &byte_positions).unwrap(),
+            weavy_terminal_ends(&plan, insensitive, input, &byte_positions).unwrap(),
             vec![Some(3), None]
         );
         assert_eq!(
-            compiled_terminal_ends(&validated, wrapped, input, &byte_positions).unwrap(),
+            weavy_terminal_ends(&plan, wrapped, input, &byte_positions).unwrap(),
             vec![None, Some(6)]
         );
     }
@@ -8048,15 +7893,17 @@ extras (
             first.tree().to_sexp(),
             "(source_file (insensitive) (wrapped))"
         );
+        assert!(first.trace_events().is_empty());
         assert_eq!(session.last_input(), Some("ABCXYZ"));
 
-        let edit = RuntimeInputEdit::new(0, 3, 3);
+        let edit = ParserInputEdit::new(0, 3, 3);
         let reparsed = session.reparse(edit, "abcXYZ").unwrap().clone();
         let scratch =
             crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, "abcXYZ")
                 .unwrap();
 
         rediff::assert_same!(reparsed.tree(), scratch.tree());
+        assert!(reparsed.trace_events().is_empty());
         assert!(
             reparsed
                 .tree_events()
@@ -8074,7 +7921,7 @@ extras (
         let mut session = crate::lower::weavy::WeavyParseSession::new(&plan, &parser, &table);
         session.parse("ABCXYZ").unwrap();
 
-        let edit = RuntimeInputEdit::new(3, 6, 6);
+        let edit = ParserInputEdit::new(3, 6, 6);
         let reparsed = session.reparse(edit, "ABCxyz").unwrap().clone();
         let scratch =
             crate::lower::weavy::parse_prepared_weavy_with_report(&plan, &parser, &table, "ABCxyz")
@@ -8100,7 +7947,7 @@ extras (
             "(source_file (left) (comment) (right))"
         );
 
-        let edit = RuntimeInputEdit::new(2, 5, 5);
+        let edit = ParserInputEdit::new(2, 5, 5);
         let reparsed = session.reparse(edit, "a#new\nb").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan, &parser, &table, "a#new\nb",
@@ -8125,7 +7972,7 @@ extras (
             "(source_file (wrapper (left) (comment) (right)) (suffix))"
         );
 
-        let edit = RuntimeInputEdit::new(7, 8, 8);
+        let edit = ParserInputEdit::new(7, 8, 8);
         let reparsed = session.reparse(edit, "a#old\nb2").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
@@ -8153,7 +8000,7 @@ extras (
             "(source_file (wrapper (left) (ERROR) (right)) (suffix))"
         );
 
-        let edit = RuntimeInputEdit::new(4, 5, 5);
+        let edit = ParserInputEdit::new(4, 5, 5);
         let reparsed = session.reparse_recovering(edit, "a@\nb2").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_recovering_with_report_and_scanner(
             &plan, &parser, &table, "a@\nb2", None,
@@ -8199,7 +8046,7 @@ extras (
         let first = session.parse("alpha").unwrap().clone();
         assert_eq!(first.tree().to_sexp(), "(source_file (word))");
 
-        let edit = RuntimeInputEdit::new(5, 5, 10);
+        let edit = ParserInputEdit::new(5, 5, 10);
         let reparsed = session.reparse(edit, "alpha beta").unwrap().clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
             &plan,
@@ -8221,7 +8068,7 @@ extras (
         session.parse("ABCXYZ").unwrap();
 
         let error = session
-            .reparse(RuntimeInputEdit::new(0, 3, 3), "abcXYZZ")
+            .reparse(ParserInputEdit::new(0, 3, 3), "abcXYZZ")
             .unwrap_err();
         assert!(matches!(
             error,
@@ -8244,7 +8091,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     fn lexical_symbol_fixture() -> (ValidatedGrammar, ParserGrammar, ParseTable) {
@@ -8285,11 +8131,10 @@ extras (
         assert_eq!(weavy_report.tree().to_sexp(), "(source_file)");
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]
-    fn compiled_lexer_carries_precedence_inside_token_wrapper() {
+    fn lex_compiler_carries_precedence_inside_token_wrapper() {
         let (validated, parser, _table) = prepared_with_validated(
             r##"{
               "name": "mini",
@@ -8320,7 +8165,7 @@ extras (
     }
 
     #[test]
-    fn compiled_lexer_carries_implicit_precedence_through_symbol_reference() {
+    fn lex_compiler_carries_implicit_precedence_through_symbol_reference() {
         let (validated, parser, _table) = prepared_with_validated(
             r##"{
               "name": "mini",
@@ -8416,25 +8261,9 @@ extras (
     }
 
     #[test]
-    fn compiled_until_marker_matcher_matches_interpreted_oracle() {
-        let markers = ["{{".to_owned(), "{#".to_owned(), "{".to_owned()];
-        let compiled = compile_until_markers(&markers);
-        let input = "alpha {{ beta {# gamma";
-        for byte_position in [0usize, 6, 9, 14] {
-            let interpreted = match_until_markers_with_inspection(
-                markers.iter().map(String::as_str),
-                input,
-                byte_position,
-            );
-            let compiled =
-                match_compiled_until_markers_with_inspection(&compiled, input, byte_position);
-            assert_eq!(compiled, interpreted, "byte position {byte_position}");
-        }
-    }
-
-    #[test]
-    fn compiled_lexical_primitives_match_until_and_nested_tokens() {
-        let (validated, parser, _table) = lexical_primitives_fixture();
+    fn weavy_lexical_primitives_match_until_and_nested_tokens() {
+        let (validated, parser, table) = lexical_primitives_fixture();
+        let plan = crate::lower::weavy::WeavyParsePlan::new(&validated, &parser, &table).unwrap();
         let input = "hello {# outer {# inner #} done #}";
         let byte_positions = [0usize, 6, 15, 26];
 
@@ -8446,10 +8275,10 @@ extras (
                 Ok((
                     terminal.kind(),
                     terminal.spelling().to_owned(),
-                    compiled_terminal_ends(&validated, terminal, input, &byte_positions)?,
+                    weavy_terminal_ends(&plan, terminal, input, &byte_positions)?,
                 ))
             })
-            .collect::<Result<Vec<_>, ParserExecutionError>>()
+            .collect::<Result<Vec<_>, crate::lower::weavy::WeavyParseError>>()
             .unwrap();
 
         assert!(
@@ -8478,7 +8307,7 @@ extras (
             "(source_file (text) (interpolation (word)) (text))"
         );
 
-        let edit = RuntimeInputEdit::new(8, 12, 13);
+        let edit = ParserInputEdit::new(8, 12, 13);
         let reparsed = session
             .reparse(edit, "hello {{title}} tail")
             .unwrap()
@@ -8506,7 +8335,7 @@ extras (
         session.parse("hello {{name}} tail").unwrap();
 
         let first_reparse = session
-            .reparse(RuntimeInputEdit::new(8, 12, 13), "hello {{title}} tail")
+            .reparse(ParserInputEdit::new(8, 12, 13), "hello {{title}} tail")
             .unwrap()
             .clone();
         assert_eq!(
@@ -8515,7 +8344,7 @@ extras (
         );
 
         let second_reparse = session
-            .reparse(RuntimeInputEdit::new(16, 20, 19), "hello {{title}} end")
+            .reparse(ParserInputEdit::new(16, 20, 19), "hello {{title}} end")
             .unwrap()
             .clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
@@ -8542,13 +8371,13 @@ extras (
         session.parse("a#old\nb1").unwrap();
 
         let first_reparse = session
-            .reparse(RuntimeInputEdit::new(7, 8, 8), "a#old\nb2")
+            .reparse(ParserInputEdit::new(7, 8, 8), "a#old\nb2")
             .unwrap()
             .clone();
         assert_eq!(weavy_reused_byte_ranges(&first_reparse), vec![(0, 7)]);
 
         let second_reparse = session
-            .reparse(RuntimeInputEdit::new(2, 5, 5), "a#new\nb2")
+            .reparse(ParserInputEdit::new(2, 5, 5), "a#new\nb2")
             .unwrap()
             .clone();
         let scratch = crate::lower::weavy::parse_prepared_weavy_with_report(
@@ -8580,7 +8409,6 @@ extras (
         );
         assert_eq!(weavy_report.accepted_count(), 1);
         assert_eq!(weavy_report.failure_count(), 0);
-        assert!(weavy_report.stats().step_count > 0);
     }
 
     #[test]

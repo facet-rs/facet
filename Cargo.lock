@@ -3306,10 +3306,17 @@ dependencies = [
 name = "gingembre-snark-spike"
 version = "0.0.0"
 dependencies = [
+ "copypatch",
+ "facet",
+ "facet-core",
+ "facet-json",
+ "facet-reflect",
  "futures",
  "gingembre",
+ "phon",
  "snark",
  "snark-dsl",
+ "weavy",
 ]
 
 [[package]]

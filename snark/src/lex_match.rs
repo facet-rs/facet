@@ -1,4 +1,4 @@
-use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
+#[cfg(test)]
 use regex::Regex;
 
 use crate::parser::LexMatch;
@@ -9,7 +9,6 @@ pub(crate) const GINGEMBRE_IDENTIFIER_PATTERN: &str = "(?!if\\b|elif\\b|else\\b|
 pub(crate) struct CompiledPattern {
     pub(crate) source: String,
     pub(crate) flags: Option<String>,
-    pub(crate) regex: Option<Regex>,
     kind: CompiledPatternKind,
 }
 
@@ -17,7 +16,6 @@ pub(crate) struct CompiledPattern {
 pub(crate) enum CompiledPatternKind {
     Known,
     Regex,
-    Unsupported,
 }
 
 impl CompiledPattern {
@@ -73,7 +71,6 @@ impl KnownPattern {
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledUntilMatcher {
     pub(crate) markers: Vec<String>,
-    automaton: Option<AhoCorasick>,
 }
 
 pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPattern {
@@ -82,21 +79,14 @@ pub(crate) fn compile_pattern(pattern: &str, flags: Option<&str>) -> CompiledPat
         .is_none()
         .then(|| known_pattern_for_source(pattern))
         .flatten();
-    let regex = known
-        .is_none()
-        .then(|| compile_regex_leaf(pattern, flags.as_deref()))
-        .flatten();
     let kind = if known.is_some() {
         CompiledPatternKind::Known
-    } else if regex.is_some() {
-        CompiledPatternKind::Regex
     } else {
-        CompiledPatternKind::Unsupported
+        CompiledPatternKind::Regex
     };
     CompiledPattern {
         source: pattern.to_owned(),
         flags,
-        regex,
         kind,
     }
 }
@@ -107,15 +97,7 @@ pub(crate) fn compile_until_markers(markers: &[String]) -> CompiledUntilMatcher 
         .filter(|marker| !marker.is_empty())
         .cloned()
         .collect::<Vec<_>>();
-    let automaton = if markers.is_empty() {
-        None
-    } else {
-        AhoCorasickBuilder::new()
-            .match_kind(MatchKind::LeftmostFirst)
-            .build(&markers)
-            .ok()
-    };
-    CompiledUntilMatcher { markers, automaton }
+    CompiledUntilMatcher { markers }
 }
 
 #[cfg(test)]
@@ -138,27 +120,6 @@ pub(crate) fn match_pattern_with_flags(
     match_cached_regex_leaf(pattern, flags, input, byte_position)
 }
 
-#[cfg(test)]
-pub(crate) fn match_compiled_pattern(
-    pattern: &CompiledPattern,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    if pattern.kind == CompiledPatternKind::Known {
-        return match_known_pattern_source(&pattern.source, input, byte_position);
-    }
-    match_regex_leaf(pattern.regex.as_ref()?, input, byte_position)
-}
-
-#[cfg(test)]
-pub(crate) fn match_known_pattern_source(
-    pattern: &str,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    match_known_pattern(known_pattern_for_source(pattern)?, input, byte_position)
-}
-
 pub(crate) fn match_known_pattern(
     pattern: KnownPattern,
     input: &str,
@@ -166,75 +127,6 @@ pub(crate) fn match_known_pattern(
 ) -> Option<LexMatch> {
     let end = pattern.match_end(input, byte_position)?;
     Some(LexMatch::new(end, pattern_inspected_end(input, end)))
-}
-
-pub(crate) fn match_regex_leaf(
-    regex: &Regex,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    let haystack = input.get(byte_position..)?;
-    regex
-        .find(haystack)
-        .filter(|match_| match_.start() == 0)
-        .map(|match_| {
-            let end = byte_position + match_.end();
-            LexMatch::new(end, pattern_inspected_end(input, end))
-        })
-}
-
-#[cfg(test)]
-pub(crate) fn match_until_markers_with_inspection<'a>(
-    markers: impl IntoIterator<Item = &'a str>,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    let haystack = input.get(byte_position..)?;
-    let markers = markers
-        .into_iter()
-        .filter(|marker| !marker.is_empty())
-        .collect::<Vec<_>>();
-    if markers.iter().any(|marker| haystack.starts_with(*marker)) {
-        return None;
-    }
-    let end_and_marker_len = markers
-        .iter()
-        .filter_map(|marker| haystack.find(*marker).map(|offset| (offset, marker.len())))
-        .min()
-        .map_or((input.len() - byte_position, 0), |pair| pair);
-    let end = byte_position + end_and_marker_len.0;
-    let inspected_end = end + end_and_marker_len.1;
-    (end > byte_position).then_some(LexMatch::new(end, inspected_end))
-}
-
-pub(crate) fn match_compiled_until_markers_with_inspection(
-    matcher: &CompiledUntilMatcher,
-    input: &str,
-    byte_position: usize,
-) -> Option<LexMatch> {
-    let haystack = input.get(byte_position..)?;
-    if matcher
-        .markers
-        .iter()
-        .any(|marker| haystack.starts_with(marker.as_str()))
-    {
-        return None;
-    }
-    let Some(automaton) = &matcher.automaton else {
-        return (byte_position < input.len()).then_some(LexMatch::new(input.len(), input.len()));
-    };
-    let Some(match_) = automaton.find(haystack) else {
-        return (byte_position < input.len()).then_some(LexMatch::new(input.len(), input.len()));
-    };
-    let end = byte_position + match_.start();
-    let marker_len = matcher
-        .markers
-        .iter()
-        .filter(|marker| haystack[match_.start()..].starts_with(marker.as_str()))
-        .map(String::len)
-        .min()
-        .unwrap_or(match_.len());
-    (end > byte_position).then_some(LexMatch::new(end, end + marker_len))
 }
 
 pub(crate) fn match_nested_delimiters_with_inspection(
@@ -340,6 +232,7 @@ fn cached_regex(pattern: &str, flags: Option<&str>) -> Option<Regex> {
     entry.clone()
 }
 
+#[cfg(test)]
 fn compile_regex_leaf(pattern: &str, flags: Option<&str>) -> Option<Regex> {
     Regex::new(&anchored_regex_source(pattern, flags)?).ok()
 }
@@ -354,6 +247,7 @@ pub(crate) fn regex_automata_leaf_source(pattern: &str, flags: Option<&str>) -> 
     })
 }
 
+#[cfg(test)]
 fn anchored_regex_source(pattern: &str, flags: Option<&str>) -> Option<String> {
     let body = rust_regex_source(pattern);
     let flags = rust_regex_flags(flags)?;

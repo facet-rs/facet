@@ -3,10 +3,23 @@
 //! Two modes:
 //!
 //!   # single input, prepare once, parse N times, report best (min) ms
-//!   cargo run --release -p snark-ts-diff -- <grammar.js> <input-file> [iters]
+//!   cargo run --release -p snark-ts-diff -- <grammar.js|grammar.json> <input-file> [iters]
 //!
 //!   # recovering parse, prepare once, parse N times, report best (min) ms
-//!   cargo run --release -p snark-ts-diff -- recover <grammar.js> <input-file> [iters]
+//!   cargo run --release -p snark-ts-diff -- recover <grammar.js|grammar.json> <input-file> [iters]
+//!
+//!   # strict parse while collecting reusable-node metadata, matching the
+//!   # playground path that seeds incremental reparse.
+//!   cargo run --release -p snark-ts-diff -- collect <grammar.js|grammar.json> <input-file> [iters]
+//!
+//!   # strict parse to ranged CST, using the deterministic direct resolved-tree path
+//!   cargo run --release -p snark-ts-diff -- resolved <grammar.js|grammar.json> <input-file> [iters]
+//!
+//!   # strict parse through native host-call blocks; requires --features jit
+//!   cargo run --release -p snark-ts-diff --features jit -- native <grammar.js|grammar.json> <input-file> [iters]
+//!
+//!   # lowering/JIT readiness for one grammar
+//!   cargo run --release -p snark-ts-diff -- readiness <grammar.js|grammar.json>
 //!
 //!   # size ladder: prepare once, sweep JSON of growing object counts, print
 //!   # a table of ms + bytes/ms + ratio-vs-previous. The `x_prev` column is the
@@ -17,6 +30,7 @@
 //! Fixtures are generated with facet-json (never hand-emitted) as `[{"k":0,
 //! "v":"x0"},…]`, which the bundled `jsonb` grammar accepts.
 
+use std::io::{self, Write};
 use std::process::Command;
 use std::time::Instant;
 use std::{env, fs, path::Path, path::PathBuf};
@@ -26,12 +40,23 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyParseError, WeavyParsePlan, WeavyParseReport,
-        parse_prepared_weavy_recovering_with_report_and_scanner, parse_prepared_weavy_with_report,
+        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParseReport,
+        parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
+        parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_resolved_tree, parse_prepared_weavy_tree,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
 };
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+use snark::lower::weavy::parse_prepared_weavy_native_hostcalls_with_report;
 
 /// One prepared grammar: everything the parse entrypoint needs, built once so
 /// the timed loop measures only parsing, never grammar preparation.
@@ -41,8 +66,19 @@ struct Prepared {
     plan: WeavyParsePlan,
 }
 
+fn load_grammar_json(grammar_path: &str) -> String {
+    let path = Path::new(grammar_path);
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "json")
+    {
+        return fs::read_to_string(path).expect("read grammar.json");
+    }
+    snark_dsl::emit_with_boa(path).expect("emit grammar.js")
+}
+
 fn prepare(grammar_path: &str) -> Prepared {
-    let json = snark_dsl::emit_with_boa(Path::new(grammar_path)).expect("emit");
+    let json = load_grammar_json(grammar_path);
     let raw = RawGrammarJson::from_tree_sitter_json_str(&json).expect("import");
     let validated = ValidatedGrammar::from_raw(&raw).expect("validate");
     let lexical = LexicalFacts::from_grammar(&validated);
@@ -62,9 +98,9 @@ fn prepare(grammar_path: &str) -> Prepared {
 /// so a sampler (stax) can attach to the table build in isolation.
 fn run_tablebench(grammar_path: &str, iters: usize) {
     let t = Instant::now();
-    let json = snark_dsl::emit_with_boa(Path::new(grammar_path)).expect("emit");
+    let json = load_grammar_json(grammar_path);
     println!(
-        "emit_with_boa: {:.1} ms",
+        "load grammar json: {:.1} ms",
         t.elapsed().as_secs_f64() * 1000.0
     );
     let raw = RawGrammarJson::from_tree_sitter_json_str(&json).expect("import");
@@ -93,20 +129,49 @@ fn run_tablebench(grammar_path: &str, iters: usize) {
 
 /// Best (min) parse time in ms over `iters` runs, after one warm-up.
 fn best_parse_ms(p: &Prepared, input: &str, iters: usize) -> f64 {
-    let _ = parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, input);
+    let _ = parse_prepared_weavy_tree(&p.plan, &p.parser, &p.table, input);
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        let _ = parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, input);
+        let _ = parse_prepared_weavy_tree(&p.plan, &p.parser, &p.table, input);
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     best_ms
+}
+
+/// Best (min) ranged-CST parse time in ms over `iters` runs, after one warm-up.
+fn best_resolved_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
+    let _ = parse_prepared_weavy_resolved_tree(&p.plan, &p.parser, &p.table, input)?;
+    let mut best_ms = f64::INFINITY;
+    for _ in 0..iters.max(1) {
+        let start = Instant::now();
+        let _ = parse_prepared_weavy_resolved_tree(&p.plan, &p.parser, &p.table, input)?;
+        best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    Ok(best_ms)
 }
 
 fn recover_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
     parse_prepared_weavy_recovering_with_report_and_scanner(
         &p.plan, &p.parser, &p.table, input, None,
     )
+}
+
+fn collect_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
+        &p.plan, &p.parser, &p.table, input, None,
+    )
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+fn native_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_native_hostcalls_with_report(&p.plan, &p.parser, &p.table, input)
 }
 
 /// Best (min) recovering parse time in ms over `iters` runs, after one warm-up.
@@ -116,6 +181,36 @@ fn best_recover_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, Weavy
     for _ in 0..iters.max(1) {
         let start = Instant::now();
         let _ = recover_once(p, input)?;
+        best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    Ok(best_ms)
+}
+
+/// Best (min) collecting-reuse parse time in ms over `iters` runs, after one warm-up.
+fn best_collect_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
+    let _ = collect_once(p, input)?;
+    let mut best_ms = f64::INFINITY;
+    for _ in 0..iters.max(1) {
+        let start = Instant::now();
+        let _ = collect_once(p, input)?;
+        best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    Ok(best_ms)
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+fn best_native_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
+    let _ = native_once(p, input)?;
+    let mut best_ms = f64::INFINITY;
+    for _ in 0..iters.max(1) {
+        let start = Instant::now();
+        let _ = native_once(p, input)?;
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     Ok(best_ms)
@@ -165,6 +260,12 @@ fn iters_for(bytes: usize) -> usize {
 /// return it, or `None` if the `tree-sitter` CLI is missing / generate fails.
 /// The reference is tree-sitter's OUTPUT/behaviour, never its generated `.c`.
 fn tree_sitter_setup(grammar_path: &str) -> Option<PathBuf> {
+    if Path::new(grammar_path)
+        .extension()
+        .is_some_and(|extension| extension != "js")
+    {
+        return None;
+    }
     let ok = Command::new("tree-sitter")
         .arg("--version")
         .output()
@@ -260,13 +361,163 @@ fn run_ladder(grammar_path: &str, max_objects: u64) {
     }
 }
 
+fn run_readiness(grammar_path: &str) -> io::Result<()> {
+    let p = prepare(grammar_path);
+    let analysis = p.plan.analysis();
+    let readiness = &analysis.readiness;
+    let lexer = &readiness.lexer;
+    let native_blocks = &analysis.native_hostcall_blocks;
+    let mut out = io::stdout().lock();
+    writeln!(out, "grammar: {grammar_path}")?;
+    writeln!(
+        out,
+        "parser: neutral_ops={} snark_intrinsics={} lexer_graph={} sink={} dialect={} host_barriers={} opaque={} host_calls={} stencils_needed={} native_copy_patch_jit_available={}",
+        readiness.neutral_weavy_op_count,
+        readiness.snark_intrinsic_count,
+        readiness.lexer_graph_intrinsic_count,
+        readiness.sink_op_intrinsic_count,
+        readiness.dialect_op_intrinsic_count,
+        readiness.host_call_barrier_intrinsic_count,
+        readiness.opaque_intrinsic_count,
+        readiness.host_call_intrinsic_count,
+        readiness.needs_snark_stencils(),
+        readiness.native_copy_patch_jit_available
+    )?;
+    writeln!(
+        out,
+        "lexer: modes={} terminals={} literal_sets={}/{} pattern_sets={}/{} dfa_sets={}/{} leaf_rematch={} known_patterns={} regex_automata={} unsupported_patterns={} unsupported_terminals={} unsupported_symbols={} external_scanners={}",
+        analysis.lexer.mode_count,
+        analysis.lexer.terminal_count,
+        lexer.merged_literal_set_count,
+        lexer.merged_literal_terminal_count,
+        lexer.merged_pattern_set_count,
+        lexer.merged_pattern_terminal_count,
+        lexer.merged_pattern_dfa_set_count,
+        lexer.merged_pattern_dfa_terminal_count,
+        lexer.merged_pattern_leaf_rematch_terminal_count,
+        lexer.known_pattern_count,
+        lexer.regex_automata_count,
+        lexer.unsupported_pattern_count,
+        lexer.unsupported_terminal_count,
+        lexer.unsupported_symbol_count,
+        lexer.external_scanner_candidate_count
+    )?;
+    writeln!(
+        out,
+        "visibility: parser={} lexer={} full={} neutral_only={}",
+        readiness.is_parser_fully_visible(),
+        lexer.is_fully_visible(),
+        readiness.is_fully_visible(),
+        readiness.is_neutral_weavy_only()
+    )?;
+    writeln!(
+        out,
+        "native_hostcall_blocks: total={} compatible={} incompatible={} compatible_intrinsic_ops={} incompatible_intrinsic_ops={}",
+        native_blocks.total_blocks,
+        native_blocks.compatible_blocks,
+        native_blocks.incompatible_blocks,
+        native_blocks.compatible_intrinsic_ops,
+        native_blocks.incompatible_intrinsic_ops
+    )?;
+    if native_blocks.barrier_summaries.is_empty() {
+        writeln!(out, "native_hostcall_block_barriers: none")?;
+    } else {
+        writeln!(out, "native_hostcall_block_barriers:")?;
+        for summary in &native_blocks.barrier_summaries {
+            writeln!(out, "  {:?}: {}", summary.barrier, summary.count)?;
+        }
+    }
+    if analysis.lexer.op_counts.is_empty() {
+        writeln!(out, "lexer_ops: none")?;
+    } else {
+        writeln!(out, "lexer_ops:")?;
+        for (kind, count) in &analysis.lexer.op_counts {
+            writeln!(out, "  {kind:?}: {count}")?;
+        }
+    }
+    if readiness.barrier_summaries.is_empty() {
+        writeln!(out, "barriers: none")?;
+    } else {
+        writeln!(out, "barriers:")?;
+        for summary in &readiness.barrier_summaries {
+            writeln!(out, "  {:?}: {}", summary.barrier, summary.count)?;
+        }
+    }
+    if readiness.snark_stencil_summaries.is_empty() {
+        writeln!(out, "stencil_descriptors: none")?;
+    } else {
+        writeln!(out, "stencil_descriptors:")?;
+        for summary in &readiness.snark_stencil_summaries {
+            writeln!(
+                out,
+                "  {}.{} domain={:?} lowering={:?} family={:?} execution={:?} effect_order={:?} may_fail={} may_allocate={} calls_user_code={} opaque={} resources={:?} typed_memory={:?} state={:?} count={}",
+                summary.descriptor.dialect,
+                summary.descriptor.name,
+                summary.domain,
+                summary.lowering,
+                summary.stencil.family,
+                summary.stencil.execution,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque,
+                summary.effect.resources,
+                summary.effect.typed_memory,
+                summary.stencil.state,
+                summary.count
+            )?;
+        }
+    }
+    if readiness.snark_stencil_family_summaries.is_empty() {
+        writeln!(out, "stencil_families: none")?;
+    } else {
+        writeln!(out, "stencil_families:")?;
+        for summary in &readiness.snark_stencil_family_summaries {
+            writeln!(
+                out,
+                "  {:?}/{:?}: {}",
+                summary.family, summary.execution, summary.count
+            )?;
+        }
+    }
+    if readiness.snark_stencil_state_summaries.is_empty() {
+        writeln!(out, "stencil_state: none")?;
+    } else {
+        writeln!(out, "stencil_state:")?;
+        for summary in &readiness.snark_stencil_state_summaries {
+            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
+        }
+    }
+    let direct_no_trace_state =
+        readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+    if direct_no_trace_state.is_empty() {
+        writeln!(out, "direct_no_trace_stencil_state: none")?;
+    } else {
+        writeln!(out, "direct_no_trace_stencil_state:")?;
+        for summary in &direct_no_trace_state {
+            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_output(result: io::Result<()>) {
+    if let Err(error) = result
+        && error.kind() != io::ErrorKind::BrokenPipe
+    {
+        eprintln!("write output failed: {error}");
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.get(1).map(|s| s == "recover").unwrap_or(false) {
         let grammar_path = args
             .get(2)
-            .expect("usage: recover <grammar.js> <input> [iters]");
+            .expect("usage: recover <grammar.js|grammar.json> <input> [iters]");
         let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
         let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
         let p = prepare(grammar_path);
@@ -301,8 +552,136 @@ fn main() {
         return;
     }
 
+    if args.get(1).map(|s| s == "collect").unwrap_or(false) {
+        let grammar_path = args
+            .get(2)
+            .expect("usage: collect <grammar.js|grammar.json> <input> [iters]");
+        let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
+        let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+        let p = prepare(grammar_path);
+        let report = match collect_once(&p, &input) {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("collecting parse failed: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let best_ms = match best_collect_ms(&p, &input, iters) {
+            Ok(best_ms) => best_ms,
+            Err(error) => {
+                eprintln!("collecting parse failed during timing: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let bytes = input.len();
+        println!(
+            "snark weavy collecting parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
+            bytes as f64 / best_ms
+        );
+        println!(
+            "accepted={} failed={} max_live={} reusable_nodes={}",
+            report.accepted_count(),
+            report.failure_count(),
+            report.max_live_versions(),
+            report.reusable_node_count()
+        );
+        return;
+    }
+
+    if args.get(1).map(|s| s == "resolved").unwrap_or(false) {
+        let grammar_path = args
+            .get(2)
+            .expect("usage: resolved <grammar.js|grammar.json> <input> [iters]");
+        let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
+        let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+        let p = prepare(grammar_path);
+        let tree = match parse_prepared_weavy_resolved_tree(&p.plan, &p.parser, &p.table, &input) {
+            Ok(tree) => tree,
+            Err(error) => {
+                eprintln!("resolved parse failed: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let best_ms = match best_resolved_ms(&p, &input, iters) {
+            Ok(best_ms) => best_ms,
+            Err(error) => {
+                eprintln!("resolved parse failed during timing: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let bytes = input.len();
+        println!(
+            "snark weavy resolved parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
+            bytes as f64 / best_ms
+        );
+        println!(
+            "root_kind={} children={}",
+            tree.kind(),
+            tree.children().len()
+        );
+        return;
+    }
+
+    if args.get(1).map(|s| s == "native").unwrap_or(false) {
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        {
+            let grammar_path = args
+                .get(2)
+                .expect("usage: native <grammar.js|grammar.json> <input> [iters]");
+            let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
+            let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+            let p = prepare(grammar_path);
+            if let Err(error) = native_once(&p, &input) {
+                eprintln!("native hostcall parse failed: {error:?}");
+                std::process::exit(1);
+            }
+            let best_ms = match best_native_ms(&p, &input, iters) {
+                Ok(best_ms) => best_ms,
+                Err(error) => {
+                    eprintln!("native hostcall parse failed during timing: {error:?}");
+                    std::process::exit(1);
+                }
+            };
+            let bytes = input.len();
+            println!(
+                "snark weavy native-hostcall parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
+                bytes as f64 / best_ms
+            );
+            return;
+        }
+        #[cfg(not(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        )))]
+        {
+            eprintln!(
+                "native hostcall parse requires `--features jit` on a supported native target"
+            );
+            std::process::exit(1);
+        }
+    }
+
+    if args.get(1).map(|s| s == "readiness").unwrap_or(false) {
+        let grammar_path = args
+            .get(2)
+            .expect("usage: readiness <grammar.js|grammar.json>");
+        handle_output(run_readiness(grammar_path));
+        return;
+    }
+
     if args.get(1).map(|s| s == "tablebench").unwrap_or(false) {
-        let grammar_path = args.get(2).expect("usage: tablebench <grammar.js> [iters]");
+        let grammar_path = args
+            .get(2)
+            .expect("usage: tablebench <grammar.js|grammar.json> [iters]");
         let iters: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(50);
         run_tablebench(grammar_path, iters);
         return;
@@ -344,18 +723,20 @@ fn main() {
     if args.get(1).map(|s| s == "ladder").unwrap_or(false) {
         let grammar_path = args
             .get(2)
-            .expect("usage: ladder <grammar.js> [max_objects]");
+            .expect("usage: ladder <grammar.js|grammar.json> [max_objects]");
         let max_objects: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(8000);
         run_ladder(grammar_path, max_objects);
         return;
     }
 
-    let grammar_path = args.get(1).expect("usage: <grammar.js> <input> [iters]");
+    let grammar_path = args
+        .get(1)
+        .expect("usage: <grammar.js|grammar.json> <input> [iters]");
     let input = fs::read_to_string(args.get(2).expect("input file")).expect("read input");
     let iters: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
 
     let p = prepare(grammar_path);
-    if let Err(e) = parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, &input) {
+    if let Err(e) = parse_prepared_weavy_tree(&p.plan, &p.parser, &p.table, &input) {
         eprintln!("parse failed: {e:?}");
         std::process::exit(1);
     }

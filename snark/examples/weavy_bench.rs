@@ -2,7 +2,7 @@
 //! one-time setup from fresh-plan and warm-plan per-parse cost.
 //!
 //! Usage: cargo run --release -p snark --features json-import \
-//!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|strict|recovering]
+//!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|tree|resolved|report|recovering]
 
 use std::{
     env,
@@ -14,8 +14,9 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyParseError, WeavyParsePlan, WeavyParseReport,
+        SnarkStencilProfile, WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_recovering_with_report_and_scanner,
+        parse_prepared_weavy_resolved_tree_and_scanner, parse_prepared_weavy_tree_and_scanner,
         parse_prepared_weavy_with_report_and_scanner,
     },
     parser::{ParseTable, ParserGrammar},
@@ -30,7 +31,9 @@ fn ms(d: std::time::Duration) -> f64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BenchMode {
     All,
-    Strict,
+    StrictTree,
+    StrictResolvedTree,
+    StrictReport,
     Recovering,
 }
 
@@ -38,20 +41,32 @@ impl BenchMode {
     fn from_arg(arg: Option<String>) -> Self {
         match arg.as_deref() {
             None | Some("all") => Self::All,
-            Some("strict") => Self::Strict,
+            Some("strict" | "tree") => Self::StrictTree,
+            Some("resolved" | "resolved-tree") => Self::StrictResolvedTree,
+            Some("report" | "strict-report") => Self::StrictReport,
             Some("recovering") => Self::Recovering,
             Some(other) => {
-                panic!("unknown benchmark mode {other:?}; expected all|strict|recovering")
+                panic!(
+                    "unknown benchmark mode {other:?}; expected all|tree|resolved|report|recovering"
+                )
             }
         }
     }
 
-    const fn runs_strict_fresh(self) -> bool {
+    const fn runs_strict_tree_fresh(self) -> bool {
         matches!(self, Self::All)
     }
 
-    const fn runs_strict_warm(self) -> bool {
-        matches!(self, Self::All | Self::Strict)
+    const fn runs_strict_tree_warm(self) -> bool {
+        matches!(self, Self::All | Self::StrictTree)
+    }
+
+    const fn runs_strict_resolved_tree_warm(self) -> bool {
+        matches!(self, Self::All | Self::StrictResolvedTree)
+    }
+
+    const fn runs_strict_report_warm(self) -> bool {
+        matches!(self, Self::All | Self::StrictReport)
     }
 
     const fn runs_recovering_warm(self) -> bool {
@@ -65,6 +80,7 @@ struct BenchTotals {
     stats: RunStats,
     successes: usize,
     failures: usize,
+    runner_samples: usize,
 }
 
 fn add_run_stats(total: &mut RunStats, next: RunStats) {
@@ -86,7 +102,28 @@ where
         match parse() {
             Ok(report) => {
                 totals.successes += 1;
+                totals.runner_samples += 1;
                 add_run_stats(&mut totals.stats, report.stats());
+            }
+            Err(_) => {
+                totals.failures += 1;
+            }
+        }
+    }
+    totals.duration = t.elapsed();
+    totals
+}
+
+fn bench_tree_parse<F, T>(iters: usize, mut parse: F) -> BenchTotals
+where
+    F: FnMut() -> Result<T, WeavyParseError>,
+{
+    let t = Instant::now();
+    let mut totals = BenchTotals::default();
+    for _ in 0..iters {
+        match parse() {
+            Ok(_) => {
+                totals.successes += 1;
             }
             Err(_) => {
                 totals.failures += 1;
@@ -112,14 +149,14 @@ fn print_bench_totals(label: &str, totals: &BenchTotals, iters: usize) {
         totals.successes,
         totals.failures
     );
-    if totals.successes == 0 {
+    if totals.runner_samples == 0 {
         return;
     }
     println!(
         "      avg runner: steps {:>9.1}  block calls {:>9.1}  returns {:>9.1}  max depth {:>4}",
-        average_count(totals.stats.step_count, totals.successes),
-        average_count(totals.stats.block_call_count, totals.successes),
-        average_count(totals.stats.return_count, totals.successes),
+        average_count(totals.stats.step_count, totals.runner_samples),
+        average_count(totals.stats.block_call_count, totals.runner_samples),
+        average_count(totals.stats.return_count, totals.runner_samples),
         totals.stats.max_frame_depth
     );
 }
@@ -163,14 +200,26 @@ fn main() {
     let analysis = lowered_analysis(plan.program().lowered());
     let plan_analysis = plan.analysis();
 
-    let strict_fresh_plan_total = mode.runs_strict_fresh().then(|| {
-        bench_parse(iters, || {
+    let strict_tree_fresh_plan_total = mode.runs_strict_tree_fresh().then(|| {
+        bench_tree_parse(iters, || {
             let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
-            parse_prepared_weavy_with_report_and_scanner(&plan, &parser, &table, &input, None)
+            parse_prepared_weavy_tree_and_scanner(&plan, &parser, &table, &input, None)
         })
     });
 
-    let strict_warm_plan_total = mode.runs_strict_warm().then(|| {
+    let strict_tree_warm_plan_total = mode.runs_strict_tree_warm().then(|| {
+        bench_tree_parse(iters, || {
+            parse_prepared_weavy_tree_and_scanner(&plan, &parser, &table, &input, None)
+        })
+    });
+
+    let strict_resolved_tree_warm_plan_total = mode.runs_strict_resolved_tree_warm().then(|| {
+        bench_tree_parse(iters, || {
+            parse_prepared_weavy_resolved_tree_and_scanner(&plan, &parser, &table, &input, None)
+        })
+    });
+
+    let strict_report_warm_plan_total = mode.runs_strict_report_warm().then(|| {
         bench_parse(iters, || {
             parse_prepared_weavy_with_report_and_scanner(&plan, &parser, &table, &input, None)
         })
@@ -228,6 +277,10 @@ fn main() {
         readiness.needs_snark_stencils()
     );
     println!(
+        "  native copy-patch JIT available: {}",
+        readiness.native_copy_patch_jit_available
+    );
+    println!(
         "  parser lowering: dialect {:>6}  lexer-graph {:>6}  sinks {:>6}  host barriers {:>6}",
         readiness.dialect_op_intrinsic_count,
         readiness.lexer_graph_intrinsic_count,
@@ -249,8 +302,56 @@ fn main() {
             );
         }
     }
+    if !readiness.snark_stencil_family_summaries.is_empty() {
+        println!("  snark stencil families:");
+        for summary in &readiness.snark_stencil_family_summaries {
+            println!(
+                "    {:<18?} {:<16?} x{}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+                summary.family,
+                summary.execution,
+                summary.count,
+                summary.state,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque
+            );
+        }
+    }
+    if !readiness.snark_stencil_execution_summaries.is_empty() {
+        println!("  snark stencil execution lanes:");
+        for summary in &readiness.snark_stencil_execution_summaries {
+            println!(
+                "    {:<16?} x{}  families={:?}  state={:?}  effect={:?} fail={} alloc={} user={} opaque={}",
+                summary.execution,
+                summary.count,
+                summary.families,
+                summary.state,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque
+            );
+        }
+    }
+    if !readiness.snark_stencil_state_summaries.is_empty() {
+        println!("  snark stencil state surfaces:");
+        for summary in &readiness.snark_stencil_state_summaries {
+            println!("    {:<18?} x{}", summary.state, summary.count);
+        }
+    }
+    let direct_no_trace_states =
+        readiness.snark_stencil_state_summaries_for_profile(SnarkStencilProfile::DirectNoTrace);
+    if direct_no_trace_states != readiness.snark_stencil_state_summaries {
+        println!("  direct no-trace state surfaces:");
+        for summary in &direct_no_trace_states {
+            println!("    {:<18?} x{}", summary.state, summary.count);
+        }
+    }
     println!(
-        "  lexer lowering: literal sets {:>4}/{:<4}  pattern sets {:>4}/{:<4}  rematch {:>4}  known {:>4}  regex-auto {:>4}  fallback {:>4}  unsupported {:>4}",
+        "  lexer lowering: literal sets {:>4}/{:<4}  pattern sets {:>4}/{:<4}  rematch {:>4}  known {:>4}  regex-auto {:>4}  unsupported {:>4}",
         readiness.lexer.merged_literal_set_count,
         readiness.lexer.merged_literal_terminal_count,
         readiness.lexer.merged_pattern_set_count,
@@ -258,7 +359,6 @@ fn main() {
         readiness.lexer.merged_pattern_leaf_rematch_terminal_count,
         readiness.lexer.known_pattern_count,
         readiness.lexer.regex_automata_count,
-        readiness.lexer.rust_regex_fallback_count,
         readiness.lexer.unsupported_pattern_count
             + readiness.lexer.unsupported_terminal_count
             + readiness.lexer.unsupported_symbol_count
@@ -279,11 +379,17 @@ fn main() {
     }
 
     println!("\nper-parse (avg over {iters}):");
-    if let Some(totals) = strict_fresh_plan_total {
-        print_bench_totals("weavy strict, fresh plan", &totals, iters);
+    if let Some(totals) = strict_tree_fresh_plan_total {
+        print_bench_totals("weavy strict tree, fresh plan", &totals, iters);
     }
-    if let Some(totals) = strict_warm_plan_total {
-        print_bench_totals("weavy strict, warm plan", &totals, iters);
+    if let Some(totals) = strict_tree_warm_plan_total {
+        print_bench_totals("weavy strict tree, warm plan", &totals, iters);
+    }
+    if let Some(totals) = strict_resolved_tree_warm_plan_total {
+        print_bench_totals("weavy strict resolved, warm", &totals, iters);
+    }
+    if let Some(totals) = strict_report_warm_plan_total {
+        print_bench_totals("weavy strict report, warm", &totals, iters);
     }
     if let Some(totals) = recovering_warm_plan_total {
         print_bench_totals("weavy recovering, warm", &totals, iters);

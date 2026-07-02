@@ -546,7 +546,7 @@ where
 
     while !frames.is_empty() {
         let Some((control, current_finished)) =
-            step_current_frame(&mut frames, stepper, accounting)?
+            step_current_frame_until_control(&mut frames, stepper, accounting)?
         else {
             finish_frame(&mut frames, blocks, stepper, accounting)?;
             continue;
@@ -565,7 +565,7 @@ where
 }
 
 #[inline(always)]
-fn step_current_frame<'program, BlockId, Op, S, A>(
+fn step_current_frame_until_control<'program, BlockId, Op, S, A>(
     frames: &mut FrameStack<'program, Op, S::Continuation>,
     stepper: &mut S,
     accounting: &mut A,
@@ -576,18 +576,26 @@ where
 {
     let frame = frames
         .last_mut()
-        .expect("step_current_frame requires a live frame");
-    if frame.ip >= frame.program.len() {
-        return Ok(None);
-    }
+        .expect("step_current_frame_until_control requires a live frame");
+    loop {
+        if frame.ip >= frame.program.len() {
+            return Ok(None);
+        }
 
-    // SAFETY: The branch above proves that `ip` is in bounds.
-    let op = unsafe { frame.program.get_unchecked(frame.ip) };
-    frame.ip += 1;
-    let current_finished = frame.is_finished();
-    accounting.step();
-    let control = stepper.step(op).map_err(RunError::Step)?;
-    Ok(Some((control, current_finished)))
+        // SAFETY: The branch above proves that `ip` is in bounds.
+        let op = unsafe { frame.program.get_unchecked(frame.ip) };
+        frame.ip += 1;
+        let current_finished = frame.is_finished();
+        accounting.step();
+        let control = stepper.step(op).map_err(RunError::Step)?;
+        if matches!(control, Control::Continue) {
+            if current_finished {
+                return Ok(None);
+            }
+            continue;
+        }
+        return Ok(Some((control, current_finished)));
+    }
 }
 
 #[inline(always)]

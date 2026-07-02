@@ -63,6 +63,131 @@ impl<C> HostCallCtx<C> {
     }
 }
 
+/// Safe typed host-call body for copy-and-patch host-call chains.
+///
+/// The raw `extern "C"` trampoline and pointer casts stay inside Weavy's JIT
+/// module. Consumers provide typed metadata and a typed mutable execution
+/// context.
+pub trait HostCall<C> {
+    /// Execute one host-call metadata item against the caller's context.
+    ///
+    /// Returning `false` stops the copied chain immediately.
+    fn call(&self, cx: &mut C) -> bool;
+}
+
+/// Executable typed host-call chain over Weavy's shared copy-and-patch stencils.
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+pub struct HostCallChain<I> {
+    infos: Vec<I>,
+    call_slots: Vec<ProgSlot>,
+    calls: Vec<HostCallInfo>,
+    native: NativeProgram,
+}
+
+// SAFETY: The copied code and side program streams are owned by the chain and
+// remain immutable except through `&mut self` in `run`, where host-call records
+// are rebuilt for the caller's current context. Moving the chain to another
+// thread is sound when the consumer metadata is `Send`; sharing still requires
+// external synchronization because `run` takes `&mut self`.
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+unsafe impl<I: Send> Send for HostCallChain<I> {}
+
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+impl<I> HostCallChain<I> {
+    /// Build an executable chain that calls each metadata item in order.
+    ///
+    /// Empty chains are valid and immediately return.
+    #[must_use]
+    pub fn new(infos: Vec<I>) -> Self {
+        let mut layout = StencilLayout::new();
+        let root = layout.start_chain();
+        let mut previous = None;
+        let mut call_slots = Vec::with_capacity(infos.len());
+        for _ in &infos {
+            let slot = layout.reserve_prog_slot(root.prog_index);
+            call_slots.push(slot);
+            let current = layout.emit_stencil(stencils::HOSTCALL);
+            if let Some(previous) = previous {
+                layout.patch_hostcall_continuation(previous, current);
+            }
+            previous = Some(current);
+        }
+        let done = layout.emit_done();
+        if let Some(previous) = previous {
+            layout.patch_hostcall_continuation(previous, done);
+        }
+
+        Self {
+            infos,
+            call_slots,
+            calls: Vec::new(),
+            native: NativeProgram::new(layout, root),
+        }
+    }
+
+    /// Run the copied host-call chain against a typed context.
+    pub fn run<C>(&mut self, cx: &mut C)
+    where
+        I: HostCall<C>,
+    {
+        self.calls.clear();
+        self.calls
+            .extend(self.infos.iter().map(|info| HostCallInfo {
+                info: core::ptr::from_ref(info).cast(),
+                call: typed_hostcall::<C, I>,
+            }));
+        for (slot, call) in self.call_slots.iter().copied().zip(&self.calls) {
+            self.native
+                .fill_prog_slot(slot, core::ptr::from_ref(call) as u64);
+        }
+        let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
+        let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
+        unsafe {
+            entry(&mut host_ctx);
+        }
+    }
+
+    /// Metadata items in this chain.
+    #[must_use]
+    pub fn infos(&self) -> &[I] {
+        &self.infos
+    }
+
+    /// Number of raw host-call ABI records kept alive by this chain.
+    #[must_use]
+    pub fn hostcall_count(&self) -> usize {
+        self.calls.len()
+    }
+
+    /// Number of copied stencils emitted by this chain.
+    #[must_use]
+    pub fn stencil_count(&self) -> usize {
+        self.native.stencil_count()
+    }
+}
+
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+unsafe extern "C" fn typed_hostcall<C, I>(cx: *mut (), info: *const ()) -> bool
+where
+    I: HostCall<C>,
+{
+    let cx = unsafe { &mut *cx.cast::<C>() };
+    let info = unsafe { &*info.cast::<I>() };
+    info.call(cx)
+}
+
 /// A copied stencil chain's entry point and associated program stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Chain {
@@ -446,5 +571,82 @@ mod tests {
         }
 
         assert_eq!(state.value, 42);
+    }
+
+    #[cfg(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    ))]
+    #[test]
+    fn typed_hostcall_chain_runs_consumer_intrinsics_without_raw_abi() {
+        use super::{HostCall, HostCallChain};
+
+        struct State {
+            value: u64,
+        }
+
+        struct Add(u64);
+
+        impl HostCall<State> for Add {
+            fn call(&self, cx: &mut State) -> bool {
+                cx.value += self.0;
+                true
+            }
+        }
+
+        let mut chain = HostCallChain::new(vec![Add(20), Add(21)]);
+        let mut state = State { value: 1 };
+        chain.run(&mut state);
+
+        assert_eq!(state.value, 42);
+        assert_eq!(chain.infos().len(), 2);
+        assert_eq!(chain.hostcall_count(), 2);
+        assert_eq!(chain.stencil_count(), 3);
+    }
+
+    #[cfg(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    ))]
+    #[test]
+    fn typed_hostcall_chain_stops_when_consumer_returns_false() {
+        use super::{HostCall, HostCallChain};
+
+        struct State {
+            value: u64,
+        }
+
+        struct Step {
+            add: u64,
+            keep_running: bool,
+        }
+
+        impl HostCall<State> for Step {
+            fn call(&self, cx: &mut State) -> bool {
+                cx.value += self.add;
+                self.keep_running
+            }
+        }
+
+        let mut chain = HostCallChain::new(vec![
+            Step {
+                add: 1,
+                keep_running: true,
+            },
+            Step {
+                add: 10,
+                keep_running: false,
+            },
+            Step {
+                add: 100,
+                keep_running: true,
+            },
+        ]);
+        let mut state = State { value: 0 };
+        chain.run(&mut state);
+
+        assert_eq!(state.value, 11);
+        assert_eq!(chain.hostcall_count(), 3);
+        assert_eq!(chain.stencil_count(), 4);
     }
 }

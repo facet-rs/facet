@@ -44,13 +44,14 @@ The current module split already points at the final shape:
 - `scanner`: external scanner host ABI and scanner-state snapshots.
 - `runtime_input`: byte/point edits and included ranges.
 - `corpus`: corpus S-expression parsing and normalization oracle.
-- Weavy-side runtime pieces should stay final-shape and narrow:
-  `runtime::table`, `runtime::stack`, `runtime::tree`,
-  `runtime::recover`, `runtime::incremental`, and
-  `runtime::sexp`.
+- Weavy-carried runtime pieces should stay final-shape and narrow: table
+  access, stack/branch state, tree construction, recovery, incremental reuse,
+  and corpus S-expression normalization. They currently live in the Snark
+  Weavy dialect/runtime path; if they are split into modules later, that split
+  must preserve the same Weavy execution boundary.
 
-No side parser module should define runtime semantics. Runtime types should
-belong to the validated grammar to Weavy execution path.
+No side parser module should define runtime semantics. Runtime types belong to
+the validated grammar to Weavy execution path.
 
 ## Runtime Tables
 
@@ -89,8 +90,9 @@ converge. A stack node carries:
 - visible-node progress count;
 - accumulated dynamic precedence.
 
-Snark should model this as `runtime::stack::Stack` with `StackVersion` handles
-and immutable-ish stack nodes behind shared ids. Required operations:
+Snark should model this inside the Weavy-carried stack/branch state with
+version handles and immutable-ish stack nodes behind shared ids. Required
+operations:
 
 - `push(version, subtree, pending, state)`;
 - `pop_count(version, structural_count) -> Vec<StackSlice>`;
@@ -170,7 +172,7 @@ and alias its structural children.
 
 ## Node Construction
 
-Snark needs a concrete `runtime::tree::Subtree` before any public syntax tree
+Snark needs a concrete Weavy-produced tree store before any public syntax tree
 view:
 
 - symbol id;
@@ -352,8 +354,8 @@ matches:
 - included range differences;
 - padding positions around visible nodes.
 
-The public `changed_ranges` contract belongs in `runtime::incremental`, but it
-depends on `runtime::tree` and `runtime::cursor`.
+The public `changed_ranges` contract belongs on the incremental parse/session
+API, but it depends on the Weavy-produced tree store and cursor view.
 
 ## Corpus S-Expression Normalization
 
@@ -378,31 +380,25 @@ view:
 
 This gives Snark a mechanically testable pipeline:
 
-`grammar.json -> ValidatedGrammar -> runtime tables -> GLR parse -> Tree ->
-runtime::sexp::to_corpus_sexp -> corpus::SexpNode/to_sexp`.
+`grammar.json -> ValidatedGrammar -> ParseTable/WeavyParsePlan -> Weavy GLR
+parse -> Tree -> corpus::SexpNode/to_sexp`.
 
 ## Actionable Milestones
 
-The next implementation steps should keep final runtime boundaries:
+The early standalone runtime milestones have been folded into the Weavy path.
+The remaining implementation steps should keep that boundary:
 
-1. Add `runtime::symbol` types mirroring validated ids plus builtin ERROR,
-   ERROR_REPEAT, EOF, and public symbol mapping.
-2. Add `runtime::table` with typed parse actions, lex modes, symbol metadata,
-   production field maps, alias sequences, and `next_state`.
-3. Lower a small grammar slice from `ValidatedGrammar` into table fixtures and
-   assert table facts directly before parsing.
-4. Add `runtime::tree::Subtree` with leaf/parent/error/missing constructors and
-   summary recomputation.
-5. Add `runtime::stack::Stack` with version graph operations and merge
-   semantics.
-6. Implement shift/reduce/accept without recovery first, but with real
-   production ids, fields, aliases, extras, and subtree summaries.
-7. Add `runtime::sexp` and compare accepted trees to structured corpus
-   S-expressions.
-8. Add recovery with costed `ERROR`/`MISSING` construction.
-9. Add edit propagation, node reuse, and changed-ranges comparison.
-10. Keep these operations in the Weavy-carried execution path instead of
-    reintroducing a second native parser runtime.
+1. Keep parser execution routed through `WeavyParsePlan` and
+   `parse_prepared_weavy_*`.
+2. Keep recovery, dynamic precedence, incremental reuse, scanner snapshots,
+   fields, aliases, extras, and resolved tree output implemented in the
+   Weavy-carried runtime.
+3. Continue replacing interpreter-shaped helper code with Weavy lexer/parser
+   graph operations and explicit scratch/state objects.
+4. Add CST/cursor and changed-range APIs over the Weavy-produced tree store
+   without introducing another executor.
+5. Lower the same Snark dialect operations to copy-and-patch/JIT stencils when
+   performance work reaches that layer.
 
 Each implementation step should have an oracle that exercises the production
 path. A table fact test is fine for table lowering; parser execution work should
