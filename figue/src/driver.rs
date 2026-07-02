@@ -1914,6 +1914,7 @@ mod tests {
         match result {
             Err(DriverError::Help { text, .. }) => {
                 let text = strip_ansi_escapes::strip_str(&text);
+                println!("{text}");
                 let source_file = crate::help::implementation_source_for_subcommand_path(
                     ArgsWithImplementationHelp::SHAPE,
                     &[],
@@ -1950,6 +1951,7 @@ mod tests {
         match result {
             Err(DriverError::Help { text, .. }) => {
                 let text = strip_ansi_escapes::strip_str(&text);
+                println!("{text}");
                 let source_file = crate::help::implementation_source_for_subcommand_path(
                     ArgsWithImplementationHelp::SHAPE,
                     &["Serve".to_string()],
