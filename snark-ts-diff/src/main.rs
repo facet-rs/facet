@@ -446,7 +446,7 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
     writeln!(out, "grammar: {grammar_path}")?;
     writeln!(
         out,
-        "parser: neutral_ops={} snark_intrinsics={} lexer_graph={} sink={} dialect={} host_barriers={} opaque={} host_calls={} stencils_needed={} native_copy_patch_jit_available={}",
+        "parser: neutral_ops={} snark_intrinsics={} lexer_graph={} sink={} dialect={} host_barriers={} opaque={} host_calls={} stencils_needed={} lexer_stencils_needed={} native_copy_patch_jit_available={}",
         readiness.neutral_weavy_op_count,
         readiness.snark_intrinsic_count,
         readiness.lexer_graph_intrinsic_count,
@@ -456,6 +456,7 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
         readiness.opaque_intrinsic_count,
         readiness.host_call_intrinsic_count,
         readiness.needs_snark_stencils(),
+        readiness.needs_lexer_stencils(),
         readiness.native_copy_patch_jit_available
     )?;
     writeln!(
@@ -508,6 +509,18 @@ fn run_readiness(grammar_path: &str) -> io::Result<()> {
         writeln!(out, "lexer_ops:")?;
         for (kind, count) in &analysis.lexer.op_counts {
             writeln!(out, "  {kind:?}: {count}")?;
+        }
+    }
+    if readiness.lexer_stencil_summaries.is_empty() {
+        writeln!(out, "lexer_stencils: none")?;
+    } else {
+        writeln!(out, "lexer_stencils:")?;
+        for summary in &readiness.lexer_stencil_summaries {
+            writeln!(
+                out,
+                "  {:?} execution={:?} state={:?} count={}",
+                summary.kind, summary.execution, summary.state, summary.count
+            )?;
         }
     }
     if readiness.barrier_summaries.is_empty() {

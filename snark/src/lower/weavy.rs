@@ -537,6 +537,46 @@ pub struct WeavySnarkStencilStateSummary {
     pub count: usize,
 }
 
+/// Lexer graph operation that still needs a Snark-owned native stencil or
+/// further lowering into smaller Weavy ops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum WeavyLexerStencilKind {
+    /// Merged literal matcher for one lexical mode/state.
+    LiteralSet,
+    /// Merged direct-pattern matcher backed by one DFA.
+    PatternDfaSet,
+    /// Direct-pattern row that still replays its leaf after the set reports a match.
+    PatternLeafRematch,
+    /// Named Snark fast-path pattern leaf.
+    KnownPattern,
+    /// Regex-automata-backed pattern leaf.
+    RegexAutomata,
+    /// Declarative scan-until marker primitive.
+    Until,
+    /// Declarative balanced-delimiter primitive.
+    Nested,
+    /// Declarative implicit-close primitive.
+    AutoClose,
+    /// Composite regex matcher compiled from a sequence/repetition graph.
+    CompositeRegex,
+    /// Composite choice matcher compiled from multiple leaf expressions.
+    CompositeChoice,
+}
+
+/// Counted lexer-graph stencil obligation for backend/JIT prioritization.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavyLexerStencilSummary {
+    /// Distinct lexer graph operation.
+    pub kind: WeavyLexerStencilKind,
+    /// Execution strategy a backend/JIT must provide for this matcher op.
+    pub execution: SnarkStencilExecution,
+    /// Session state read by this matcher op.
+    pub state: Vec<SnarkStencilState>,
+    /// Number of lowered lexer graph ops represented by this summary.
+    pub count: usize,
+}
+
 /// Why a dense parser block cannot be represented by the current native
 /// host-call chain scaffold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1468,6 +1508,9 @@ pub struct WeavyParsePlanReadiness {
     pub snark_stencil_execution_summaries: Vec<WeavySnarkStencilExecutionSummary>,
     /// Snark stencil obligations grouped by session state for ABI prioritization.
     pub snark_stencil_state_summaries: Vec<WeavySnarkStencilStateSummary>,
+    /// Lexer graph matcher ops that still need Snark-owned stencils or further
+    /// lowering before the lexer can be optimized as neutral Weavy dataflow.
+    pub lexer_stencil_summaries: Vec<WeavyLexerStencilSummary>,
     /// True when Snark was built with Weavy's native copy-patch JIT support and
     /// the current target can execute those stencils.
     pub native_copy_patch_jit_available: bool,
@@ -1491,6 +1534,7 @@ impl WeavyParsePlanReadiness {
         let snark_stencil_execution_summaries =
             snark_stencil_execution_summaries(&snark_stencil_summaries);
         let snark_stencil_state_summaries = snark_stencil_state_summaries(&snark_stencil_summaries);
+        let lexer_stencil_summaries = lexer.stencil_summaries();
         Self {
             lexer: lexer_readiness,
             neutral_weavy_op_count: parser
@@ -1513,6 +1557,7 @@ impl WeavyParsePlanReadiness {
             snark_stencil_family_summaries,
             snark_stencil_execution_summaries,
             snark_stencil_state_summaries,
+            lexer_stencil_summaries,
             native_copy_patch_jit_available: native_copy_patch_jit_available(),
             parser_barrier_descriptors: parser_semantics.barrier_descriptors(),
             barrier_summaries,
@@ -1546,6 +1591,13 @@ impl WeavyParsePlanReadiness {
     #[must_use]
     pub const fn needs_snark_stencils(&self) -> bool {
         self.snark_intrinsic_count > 0
+    }
+
+    /// True when the lexer graph still has matcher ops that should become
+    /// native stencils or smaller neutral Weavy ops.
+    #[must_use]
+    pub fn needs_lexer_stencils(&self) -> bool {
+        !self.lexer_stencil_summaries.is_empty()
     }
 
     /// Return every parser/action and lexer blocker that still prevents fully-visible lowering.
@@ -2367,6 +2419,70 @@ impl WeavyLexerStats {
         self.op_counts.get(&kind).copied().unwrap_or_default()
     }
 
+    /// Return lexer graph matcher ops that still need native stencils or
+    /// further lowering before they are neutral Weavy dataflow.
+    #[must_use]
+    pub fn stencil_summaries(&self) -> Vec<WeavyLexerStencilSummary> {
+        let mut summaries = Vec::new();
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::LiteralSet,
+            self.direct_literal_set_count,
+        );
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::PatternDfaSet,
+            self.direct_pattern_dfa_set_count,
+        );
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::PatternLeafRematch,
+            self.direct_pattern_leaf_rematch_terminal_count,
+        );
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::KnownPattern,
+            self.known_pattern_count,
+        );
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::RegexAutomata,
+            self.regex_automata_count,
+        );
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::Until,
+            self.count(WeavyLexOpKind::Until),
+        );
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::Nested,
+            self.count(WeavyLexOpKind::Nested),
+        );
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::AutoClose,
+            self.count(WeavyLexOpKind::AutoClose),
+        );
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::CompositeRegex,
+            self.count(WeavyLexOpKind::CompositeRegex),
+        );
+        push_lexer_stencil_summary(
+            &mut summaries,
+            WeavyLexerStencilKind::CompositeChoice,
+            self.count(WeavyLexOpKind::CompositeChoice),
+        );
+        summaries.sort_by(|left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.kind.cmp(&right.kind))
+        });
+        summaries
+    }
+
     /// Return the unique lexer blocker kinds that remain opaque or unsupported.
     #[must_use]
     pub fn barrier_kinds(&self) -> Vec<WeavyLexerBarrierKind> {
@@ -2388,6 +2504,48 @@ impl WeavyLexerStats {
 
     fn record(&mut self, kind: WeavyLexOpKind) {
         *self.op_counts.entry(kind).or_default() += 1;
+    }
+}
+
+fn push_lexer_stencil_summary(
+    summaries: &mut Vec<WeavyLexerStencilSummary>,
+    kind: WeavyLexerStencilKind,
+    count: usize,
+) {
+    if count == 0 {
+        return;
+    }
+    summaries.push(WeavyLexerStencilSummary {
+        kind,
+        execution: SnarkStencilExecution::LexerGraph,
+        state: lexer_stencil_state(kind).to_vec(),
+        count,
+    });
+}
+
+fn lexer_stencil_state(kind: WeavyLexerStencilKind) -> &'static [SnarkStencilState] {
+    const MATCHER_STATE: &[SnarkStencilState] = &[
+        SnarkStencilState::SourceInput,
+        SnarkStencilState::LexerProgram,
+        SnarkStencilState::BranchCursor,
+    ];
+    const AUTO_CLOSE_STATE: &[SnarkStencilState] = &[
+        SnarkStencilState::SourceInput,
+        SnarkStencilState::LexerProgram,
+        SnarkStencilState::BranchCursor,
+        SnarkStencilState::AutoCloseStack,
+    ];
+    match kind {
+        WeavyLexerStencilKind::AutoClose => AUTO_CLOSE_STATE,
+        WeavyLexerStencilKind::LiteralSet
+        | WeavyLexerStencilKind::PatternDfaSet
+        | WeavyLexerStencilKind::PatternLeafRematch
+        | WeavyLexerStencilKind::KnownPattern
+        | WeavyLexerStencilKind::RegexAutomata
+        | WeavyLexerStencilKind::Until
+        | WeavyLexerStencilKind::Nested
+        | WeavyLexerStencilKind::CompositeRegex
+        | WeavyLexerStencilKind::CompositeChoice => MATCHER_STATE,
     }
 }
 
@@ -10168,6 +10326,72 @@ mod tests {
                 },
             ]
         );
+        assert_eq!(
+            stats.stencil_summaries(),
+            vec![
+                WeavyLexerStencilSummary {
+                    kind: WeavyLexerStencilKind::RegexAutomata,
+                    execution: SnarkStencilExecution::LexerGraph,
+                    state: vec![
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::BranchCursor,
+                    ],
+                    count: 2,
+                },
+                WeavyLexerStencilSummary {
+                    kind: WeavyLexerStencilKind::LiteralSet,
+                    execution: SnarkStencilExecution::LexerGraph,
+                    state: vec![
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::BranchCursor,
+                    ],
+                    count: 1,
+                },
+                WeavyLexerStencilSummary {
+                    kind: WeavyLexerStencilKind::PatternDfaSet,
+                    execution: SnarkStencilExecution::LexerGraph,
+                    state: vec![
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::BranchCursor,
+                    ],
+                    count: 1,
+                },
+                WeavyLexerStencilSummary {
+                    kind: WeavyLexerStencilKind::KnownPattern,
+                    execution: SnarkStencilExecution::LexerGraph,
+                    state: vec![
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::BranchCursor,
+                    ],
+                    count: 1,
+                },
+                WeavyLexerStencilSummary {
+                    kind: WeavyLexerStencilKind::Until,
+                    execution: SnarkStencilExecution::LexerGraph,
+                    state: vec![
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::BranchCursor,
+                    ],
+                    count: 1,
+                },
+                WeavyLexerStencilSummary {
+                    kind: WeavyLexerStencilKind::Nested,
+                    execution: SnarkStencilExecution::LexerGraph,
+                    state: vec![
+                        SnarkStencilState::SourceInput,
+                        SnarkStencilState::LexerProgram,
+                        SnarkStencilState::BranchCursor,
+                    ],
+                    count: 1,
+                },
+            ]
+        );
+        assert_eq!(stats.count(WeavyLexOpKind::AutoClose), 0);
         assert!(!readiness.is_fully_visible());
     }
 
@@ -10881,6 +11105,28 @@ mod tests {
                 .lexer
                 .merged_pattern_leaf_rematch_terminal_count,
             0
+        );
+        assert!(analysis.readiness.needs_lexer_stencils());
+        assert_eq!(
+            analysis.readiness.lexer_stencil_summaries,
+            analysis.lexer.stencil_summaries()
+        );
+        assert!(
+            analysis
+                .readiness
+                .lexer_stencil_summaries
+                .iter()
+                .any(
+                    |summary| summary.kind == WeavyLexerStencilKind::RegexAutomata
+                        && summary.execution == SnarkStencilExecution::LexerGraph
+                        && summary.state
+                            == vec![
+                                SnarkStencilState::SourceInput,
+                                SnarkStencilState::LexerProgram,
+                                SnarkStencilState::BranchCursor,
+                            ]
+                        && summary.count == 2
+                )
         );
         assert_eq!(
             analysis.readiness.lexer.barrier_kinds,

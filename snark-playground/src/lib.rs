@@ -142,14 +142,24 @@ struct PlanOutput {
     lexer_fully_visible: bool,
     neutral_weavy_only: bool,
     stencils_needed: bool,
+    lexer_stencils_needed: bool,
     native_copy_patch_jit_available: bool,
     neutral_weavy_op_count: usize,
     snark_intrinsic_count: usize,
     snark_stencils: Vec<PlanStencilOutput>,
+    lexer_stencils: Vec<PlanLexerStencilOutput>,
     snark_stencil_families: Vec<PlanStencilFamilyOutput>,
     snark_stencil_executions: Vec<PlanStencilExecutionOutput>,
     snark_stencil_states: Vec<PlanStencilStateOutput>,
     lowering_barriers: Vec<PlanBarrierOutput>,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct PlanLexerStencilOutput {
+    kind: String,
+    execution: String,
+    state: Vec<String>,
+    count: usize,
 }
 
 #[derive(Debug, Clone, Facet)]
@@ -849,6 +859,7 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
         lexer_fully_visible: readiness.lexer.is_fully_visible(),
         neutral_weavy_only: readiness.is_neutral_weavy_only(),
         stencils_needed: readiness.needs_snark_stencils(),
+        lexer_stencils_needed: readiness.needs_lexer_stencils(),
         native_copy_patch_jit_available: readiness.native_copy_patch_jit_available,
         neutral_weavy_op_count: readiness.neutral_weavy_op_count,
         snark_intrinsic_count: readiness.snark_intrinsic_count,
@@ -879,6 +890,20 @@ fn plan_output(plan: &WeavyParsePlan) -> PlanOutput {
                     calls_user_code: summary.effect.calls_user_code,
                     opaque: summary.effect.opaque,
                 },
+                count: summary.count,
+            })
+            .collect(),
+        lexer_stencils: readiness
+            .lexer_stencil_summaries
+            .iter()
+            .map(|summary| PlanLexerStencilOutput {
+                kind: format!("{:?}", summary.kind),
+                execution: format!("{:?}", summary.execution),
+                state: summary
+                    .state
+                    .iter()
+                    .map(|state| format!("{state:?}"))
+                    .collect(),
                 count: summary.count,
             })
             .collect(),
@@ -4944,6 +4969,24 @@ mod tests {
         assert_eq!(parse.accepted_missing_count, 0);
         let plan = response.plan.as_ref().expect("plan output");
         assert!(plan.stencils_needed);
+        assert!(plan.lexer_stencils_needed);
+        assert!(
+            plan.lexer_stencils
+                .iter()
+                .any(|summary| summary.kind == "RegexAutomata"
+                    && summary.execution == "LexerGraph"
+                    && summary.state.iter().any(|state| state == "SourceInput")
+                    && summary.state.iter().any(|state| state == "LexerProgram")
+                    && summary.state.iter().any(|state| state == "BranchCursor")
+                    && summary.count > 0)
+        );
+        assert!(
+            plan.lexer_stencils
+                .iter()
+                .any(|summary| summary.kind == "PatternDfaSet"
+                    && summary.execution == "LexerGraph"
+                    && summary.count > 0)
+        );
         assert!(
             plan.snark_stencil_families
                 .iter()
