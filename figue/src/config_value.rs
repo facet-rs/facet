@@ -131,6 +131,13 @@ impl ConfigValue {
                     path.pop();
                 }
             }
+            ConfigValue::Enum(e) => {
+                for (key, value) in &e.value.fields {
+                    path.push(key.clone());
+                    value.visit(visitor, path);
+                    path.pop();
+                }
+            }
             ConfigValue::ExplicitSome(sourced) => {
                 sourced.value.visit(visitor, path);
             }
@@ -355,6 +362,31 @@ impl ConfigValue {
 mod tests {
     use super::*;
     use facet_core::Facet;
+
+    #[derive(Default)]
+    struct RecordingVisitor {
+        paths: Vec<String>,
+    }
+
+    impl ConfigValueVisitor for RecordingVisitor {
+        fn enter_value(&mut self, path: &Path, _value: &ConfigValue) {
+            self.paths.push(path.join("."));
+        }
+    }
+
+    #[test]
+    fn test_visit_recurses_into_enum_fields() {
+        let value = cv_object([(
+            "command",
+            cv_enum("Run", [("dry_run", cv_bool(true))]),
+        )]);
+
+        let mut visitor = RecordingVisitor::default();
+        let mut path = Path::default();
+        value.visit(&mut visitor, &mut path);
+
+        assert_eq!(visitor.paths, vec!["", "command", "command.dry_run"]);
+    }
 
     #[test]
     fn test_unit_is_scalar() {

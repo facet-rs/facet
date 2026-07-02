@@ -664,14 +664,29 @@ impl<'a> ParseContext<'a> {
                 let prov_arg = format!("-{}", ch);
                 if is_last {
                     let flag_span = self.current_span();
-                    let value = self.optional_none_value(&prov_arg, flag_span);
-                    self.insert_value_path_to_with_span(
-                        target,
-                        &insertion_path,
-                        value,
-                        is_multiple,
-                        Some(flag_span),
-                    );
+                    if self.index + 1 < self.args.len() && !self.args[self.index + 1].starts_with('-') {
+                        self.index += 1;
+                        let value_span = self.current_span();
+                        let value_str = self.args[self.index];
+                        let value = self.parse_value_string(value_str, &prov_arg, value_span);
+                        let duplicate_span = Self::union_span(flag_span, value_span);
+                        self.insert_value_path_to_with_span(
+                            target,
+                            &insertion_path,
+                            Self::explicit_some(value),
+                            is_multiple,
+                            Some(duplicate_span),
+                        );
+                    } else {
+                        let value = self.optional_none_value(&prov_arg, flag_span);
+                        self.insert_value_path_to_with_span(
+                            target,
+                            &insertion_path,
+                            value,
+                            is_multiple,
+                            Some(flag_span),
+                        );
+                    }
                 } else {
                     let rest: String = chars[i + 1..].iter().collect();
                     let value_span = self.span_within_current(i + 1, rest.len());
