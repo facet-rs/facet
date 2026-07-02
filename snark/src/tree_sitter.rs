@@ -2743,9 +2743,10 @@ mod tests {
                 | crate::lower::weavy::WeavyParseError::MissingState { state }
                 | crate::lower::weavy::WeavyParseError::ExternalScannerError { state, .. }
                 | crate::lower::weavy::WeavyParseError::UnreducedStackEntry { state }
-                | crate::lower::weavy::WeavyParseError::UnsupportedConflict { state, .. } => {
-                    Some(state)
-                }
+                | crate::lower::weavy::WeavyParseError::UnexpectedConflictInActionBlock {
+                    state,
+                    ..
+                } => Some(state),
                 crate::lower::weavy::WeavyParseError::MissingGoto { state, .. } => Some(state),
                 _ => None,
             };

@@ -3001,8 +3001,8 @@ pub enum WeavyParseError {
         /// Missing dense block index.
         block: usize,
     },
-    /// Weavy runtime execution reached a multi-action cell.
-    UnsupportedConflict {
+    /// A state block tried to execute a conflict instead of returning through GLR dispatch.
+    UnexpectedConflictInActionBlock {
         /// Parse state containing the conflict.
         state: parser_ir::ParseStateId,
         /// Lookahead selecting the conflict.
@@ -3142,13 +3142,13 @@ impl fmt::Display for WeavyParseError {
             Self::MissingDenseRuntimeBlock { block } => {
                 write!(f, "dense Weavy block {block} is missing")
             }
-            Self::UnsupportedConflict {
+            Self::UnexpectedConflictInActionBlock {
                 state,
                 lookahead,
                 action_count,
             } => write!(
                 f,
-                "state {} lookahead {lookahead:?} has {action_count} actions; Weavy runtime path is deterministic",
+                "state {} lookahead {lookahead:?} has {action_count} actions inside an action block",
                 state.get()
             ),
             Self::MissingExternalScannerHost {
@@ -3297,11 +3297,11 @@ fn runtime_weavy_step_error_to_parse_error(
             WeavyParseError::MissingDenseRuntimeBlock { block }
         }
         RuntimeWeavyStepError::MissingLexMode { mode } => WeavyParseError::MissingLexMode { mode },
-        RuntimeWeavyStepError::UnsupportedConflict {
+        RuntimeWeavyStepError::UnexpectedConflictInActionBlock {
             state,
             lookahead,
             action_count,
-        } => WeavyParseError::UnsupportedConflict {
+        } => WeavyParseError::UnexpectedConflictInActionBlock {
             state,
             lookahead,
             action_count,
@@ -5832,7 +5832,7 @@ enum RuntimeWeavyStepError {
     MissingLexMode {
         mode: parser_ir::LexModeId,
     },
-    UnsupportedConflict {
+    UnexpectedConflictInActionBlock {
         state: parser_ir::ParseStateId,
         lookahead: parser_ir::LookaheadSymbol,
         action_count: usize,
@@ -6054,7 +6054,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     return Ok(Control::Return);
                 }
                 let [action] = entry.actions() else {
-                    return Err(RuntimeWeavyStepError::UnsupportedConflict {
+                    return Err(RuntimeWeavyStepError::UnexpectedConflictInActionBlock {
                         state,
                         lookahead: token.lookahead,
                         action_count: entry.actions().len(),
