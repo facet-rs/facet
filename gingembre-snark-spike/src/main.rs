@@ -119,6 +119,10 @@ fn main() {
         specialize();
         return;
     }
+    if args.get(1).map(|s| s == "--profile").unwrap_or(false) {
+        profile();
+        return;
+    }
     if let (Some(grammar), Some(input)) = (args.get(1), args.get(2)) {
         repro(grammar, input);
         return;
@@ -998,6 +1002,63 @@ fn specialize() {
          boxed cost is the tagged-union tax the specialization removes. Variables need the\n\
          guard+deopt (weavy branch chain) to enter this fast path speculatively — next.",
         boxed_ns as f64 / int_ns as f64
+    );
+}
+
+/// PROFILE: quantify what the rich parse collects, and split parse (report) vs resolved-tree
+/// materialization. Tests the hypothesis that the parse is slow because it collects observ-
+/// ability data (trace_events/tree_events/sexp) instead of building the AST efficiently.
+fn profile() {
+    use std::time::Instant;
+    let (parser, table, plan, _anns) = build_plan();
+
+    let cases = [
+        "{{ 1 + 2 * 3 }}",
+        "{% if user.active %}on{% else %}off{% endif %}",
+        "{% for x in [1, 2, 3] %}{{ x }};{% endfor %}",
+    ];
+    let n = 20_000u32;
+    println!(
+        "{:<48} {:>6} {:>4} {:>6} {:>6} {:>9} {:>9}",
+        "input", "steps", "fork", "trace", "tree", "parse_ns", "tree_ns"
+    );
+    for src in cases {
+        // One-shot: collection volume + peak live GLR branches.
+        let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).unwrap();
+        let stats = report.stats();
+        let n_trace = report.trace_events().len();
+        let n_tree = report.tree_events().len();
+        let forks = report.max_live_versions();
+
+        // Phase A: parse -> report.
+        let t = Instant::now();
+        for _ in 0..n {
+            std::hint::black_box(
+                parse_prepared_weavy_with_report(&plan, &parser, &table, src).unwrap(),
+            );
+        }
+        let parse_ns = t.elapsed().as_nanos() / n as u128;
+
+        // Phase B: report -> resolved tree (what we actually materialize from).
+        let t = Instant::now();
+        for _ in 0..n {
+            let report = parse_prepared_weavy_with_report(&plan, &parser, &table, src).unwrap();
+            std::hint::black_box(report.accepted_resolved_tree(&parser, src));
+        }
+        let a_and_b_ns = t.elapsed().as_nanos() / n as u128;
+        let tree_ns = a_and_b_ns.saturating_sub(parse_ns);
+
+        println!(
+            "{src:<48} {:>6} {forks:>4} {n_trace:>6} {n_tree:>6} {parse_ns:>9} {tree_ns:>9}",
+            stats.step_count
+        );
+    }
+    println!(
+        "\nfork = peak live GLR branches. If fork is ~1, every per-step branch.clone() (full LR\n\
+         stack copy) is pure overhead, and the trace/tree events are collected for nothing.\n\
+         The rich GLR+observability path is paying for ambiguity/recovery that valid input\n\
+         never uses -> a lean single-stack parse->AST lowering should win big; keep the rich\n\
+         parse only as the error/ambiguity fallback."
     );
 }
 
