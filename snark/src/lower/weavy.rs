@@ -4830,6 +4830,64 @@ pub fn parse_prepared_weavy_native_hostcalls_with_report_and_scanner(
     )
 }
 
+/// Execute a prepared Weavy plan through native host-call blocks and return only the tree.
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+pub fn parse_prepared_weavy_native_hostcalls_tree(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<SexpNode, WeavyParseError> {
+    parse_prepared_weavy_native_hostcalls_tree_and_scanner(plan, parser, table, input, None)
+}
+
+/// Execute a prepared Weavy plan through native host-call blocks with a scanner host and return
+/// only the tree.
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+pub fn parse_prepared_weavy_native_hostcalls_tree_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<SexpNode, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(tree) = parse_weavy_deterministic_tree_with_execution(
+        input_ctx,
+        RuntimeWeavyBlockExecution::NativeHostCalls,
+    )? {
+        return Ok(tree);
+    }
+    parse_weavy_with_lexer_program(
+        input_ctx,
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::NativeHostCalls,
+    )
+    .map(|report| report.tree)
+}
+
 /// Execute a prepared Weavy plan and collect reusable-node metadata.
 pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     plan: &WeavyParsePlan,
@@ -5132,25 +5190,40 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
 fn parse_weavy_deterministic_report_with_lexer_program(
     input_ctx: RuntimeWeavyInput<'_>,
 ) -> Result<Option<WeavyParseReport>, WeavyParseError> {
-    parse_weavy_deterministic_with_lexer_program::<RuntimeWeavyDeterministicReportSink>(input_ctx)
+    parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicReportSink>(
+        input_ctx,
+        RuntimeWeavyBlockExecution::Direct,
+    )
 }
 
 fn parse_weavy_deterministic_tree_with_lexer_program(
     input_ctx: RuntimeWeavyInput<'_>,
 ) -> Result<Option<SexpNode>, WeavyParseError> {
-    parse_weavy_deterministic_with_lexer_program::<RuntimeWeavyDeterministicTreeSink>(input_ctx)
+    parse_weavy_deterministic_tree_with_execution(input_ctx, RuntimeWeavyBlockExecution::Direct)
+}
+
+fn parse_weavy_deterministic_tree_with_execution(
+    input_ctx: RuntimeWeavyInput<'_>,
+    block_execution: RuntimeWeavyBlockExecution,
+) -> Result<Option<SexpNode>, WeavyParseError> {
+    parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicTreeSink>(
+        input_ctx,
+        block_execution,
+    )
 }
 
 fn parse_weavy_deterministic_resolved_tree_with_lexer_program(
     input_ctx: RuntimeWeavyInput<'_>,
 ) -> Result<Option<parser_ir::ResolvedCstNode>, WeavyParseError> {
-    parse_weavy_deterministic_with_lexer_program::<RuntimeWeavyDeterministicResolvedTreeSink>(
+    parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicResolvedTreeSink>(
         input_ctx,
+        RuntimeWeavyBlockExecution::Direct,
     )
 }
 
-fn parse_weavy_deterministic_with_lexer_program<S>(
+fn parse_weavy_deterministic_with_execution<S>(
     input_ctx: RuntimeWeavyInput<'_>,
+    block_execution: RuntimeWeavyBlockExecution,
 ) -> Result<Option<S::Output>, WeavyParseError>
 where
     S: RuntimeWeavyDeterministicSink,
@@ -5203,7 +5276,7 @@ where
                 input_points: &input_points,
                 next_lookahead_index: &mut next_lookahead_index,
                 stats: &mut stats,
-                block_execution: RuntimeWeavyBlockExecution::Direct,
+                block_execution,
                 external_scanner_errors: &external_scanner_errors,
             };
             let dispatch = match run_runtime_weavy_state_probe(input_ctx, &branch, &mut output) {
@@ -11281,6 +11354,15 @@ mod tests {
         let native_hostcalls =
             parse_prepared_weavy_native_hostcalls_with_report(&plan, &parser, &table, "ab")
                 .unwrap();
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        let native_hostcalls_tree =
+            parse_prepared_weavy_native_hostcalls_tree(&plan, &parser, &table, "ab").unwrap();
 
         assert_eq!(metered.tree(), default_direct.tree());
         assert_eq!(deterministic_direct.tree(), default_direct.tree());
@@ -11324,6 +11406,14 @@ mod tests {
             )
         ))]
         assert_eq!(metered.tree(), native_hostcalls.tree());
+        #[cfg(all(
+            feature = "jit",
+            any(
+                all(target_os = "macos", target_arch = "aarch64"),
+                all(target_os = "linux", target_arch = "x86_64")
+            )
+        ))]
+        assert_eq!(&native_hostcalls_tree, default_direct.tree());
         #[cfg(all(
             feature = "jit",
             any(
