@@ -3968,6 +3968,7 @@ struct RuntimeWeavyOutput<'a> {
     tree_store: &'a mut RuntimeWeavyTreeStore,
     trace_events: &'a mut RuntimeWeavyTraceSink,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
+    tree_event_collection: RuntimeWeavyTreeEventCollection,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     input_points: &'a RuntimeWeavyInputPoints,
     next_lookahead_index: &'a mut usize,
@@ -3981,9 +3982,16 @@ struct RuntimeWeavyStepperInput<'a> {
     tree_store: &'a mut RuntimeWeavyTreeStore,
     trace_events: &'a mut RuntimeWeavyTraceSink,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
+    tree_event_collection: RuntimeWeavyTreeEventCollection,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     input_points: &'a RuntimeWeavyInputPoints,
     external_scanner_errors: &'a RefCell<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeWeavyTreeEventCollection {
+    Disabled,
+    Enabled,
 }
 
 #[derive(Debug, Default)]
@@ -4263,7 +4271,10 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
         input,
         external_scanner,
     };
-    if let Some(report) = parse_weavy_deterministic_with_lexer_program(input_ctx)? {
+    if let Some(report) = parse_weavy_deterministic_with_lexer_program(
+        input_ctx,
+        RuntimeWeavyTreeEventCollection::Enabled,
+    )? {
         return Ok(report);
     }
     parse_weavy_with_lexer_program(
@@ -4273,6 +4284,53 @@ pub fn parse_prepared_weavy_with_report_and_scanner(
         RuntimeWeavyReuseCollection::Disabled,
         RuntimeWeavyBlockExecution::Direct,
     )
+}
+
+/// Execute a prepared parser plan through the direct Weavy runtime and return only the tree.
+///
+/// Deterministic parses skip tree-event journal collection; conflicts or errors fall back to the
+/// full report path so diagnostics and recovery behavior stay identical to
+/// [`parse_prepared_weavy_with_report`].
+pub fn parse_prepared_weavy_tree(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<SexpNode, WeavyParseError> {
+    parse_prepared_weavy_tree_and_scanner(plan, parser, table, input, None)
+}
+
+/// Execute a prepared parser plan with a scanner host and return only the tree.
+pub fn parse_prepared_weavy_tree_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<SexpNode, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(report) = parse_weavy_deterministic_with_lexer_program(
+        input_ctx,
+        RuntimeWeavyTreeEventCollection::Disabled,
+    )? {
+        return Ok(report.tree);
+    }
+    parse_weavy_with_lexer_program(
+        input_ctx,
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
+    )
+    .map(|report| report.tree)
 }
 
 /// Lex one token through a prepared Weavy plan at a concrete parse state.
@@ -4698,6 +4756,7 @@ pub fn reparse_prepared_weavy_recovering_with_report_and_scanner(
 
 fn parse_weavy_deterministic_with_lexer_program(
     input_ctx: RuntimeWeavyInput<'_>,
+    tree_event_collection: RuntimeWeavyTreeEventCollection,
 ) -> Result<Option<WeavyParseReport>, WeavyParseError> {
     if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
         return Err(WeavyParseError::WrongStage {
@@ -4741,6 +4800,7 @@ fn parse_weavy_deterministic_with_lexer_program(
             tree_store: &mut tree_store,
             trace_events: &mut trace_events,
             tree_journal: &mut tree_journal,
+            tree_event_collection,
             lexer_scratch: &lexer_scratch,
             input_points: &input_points,
             next_lookahead_index: &mut next_lookahead_index,
@@ -4851,6 +4911,7 @@ fn runtime_weavy_lex_one(
             tree_store: &mut tree_store,
             trace_events: &mut trace_events,
             tree_journal: &mut tree_journal,
+            tree_event_collection: RuntimeWeavyTreeEventCollection::Disabled,
             lexer_scratch: &lexer_scratch,
             input_points: &input_points,
             external_scanner_errors: &external_scanner_errors,
@@ -5276,6 +5337,7 @@ fn parse_weavy_with_lexer_program(
             tree_store: &mut tree_store,
             trace_events: &mut trace_events,
             tree_journal: &mut tree_journal,
+            tree_event_collection: RuntimeWeavyTreeEventCollection::Enabled,
             lexer_scratch: &lexer_scratch,
             input_points: &input_points,
             next_lookahead_index: &mut next_lookahead_index,
@@ -6110,6 +6172,7 @@ fn run_runtime_weavy_state_probe(
             tree_store: &mut *output.tree_store,
             trace_events: &mut *output.trace_events,
             tree_journal: &mut *output.tree_journal,
+            tree_event_collection: output.tree_event_collection,
             lexer_scratch: output.lexer_scratch,
             input_points: output.input_points,
             external_scanner_errors: output.external_scanner_errors,
@@ -6166,6 +6229,7 @@ fn run_runtime_weavy_action(
             tree_store: &mut *output.tree_store,
             trace_events: &mut *output.trace_events,
             tree_journal: &mut *output.tree_journal,
+            tree_event_collection: output.tree_event_collection,
             lexer_scratch: output.lexer_scratch,
             input_points: output.input_points,
             external_scanner_errors: output.external_scanner_errors,
@@ -6484,6 +6548,7 @@ fn runtime_weavy_lex_succeeds(
             tree_store: &mut tree_store,
             trace_events: &mut trace_events,
             tree_journal: &mut tree_journal,
+            tree_event_collection: RuntimeWeavyTreeEventCollection::Disabled,
             lexer_scratch,
             input_points,
             external_scanner_errors: &external_scanner_errors,
@@ -6600,6 +6665,7 @@ struct RuntimeWeavyStepper<'a> {
     tree_store: &'a mut RuntimeWeavyTreeStore,
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     tree_journal_head: RuntimeWeavyTreeJournalHead,
+    tree_event_collection: RuntimeWeavyTreeEventCollection,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
     trace_events: &'a mut RuntimeWeavyTraceSink,
@@ -6639,6 +6705,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_store: stepper_input.tree_store,
             tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
+            tree_event_collection: stepper_input.tree_event_collection,
             reusable_nodes: branch.reusable_nodes,
             lexer_scratch: stepper_input.lexer_scratch,
             trace_events: stepper_input.trace_events,
@@ -6677,6 +6744,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_store: stepper_input.tree_store,
             tree_journal: stepper_input.tree_journal,
             tree_journal_head: branch.tree_journal,
+            tree_event_collection: stepper_input.tree_event_collection,
             reusable_nodes: Vec::new(),
             lexer_scratch: stepper_input.lexer_scratch,
             trace_events: stepper_input.trace_events,
@@ -6807,13 +6875,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     named: false,
                     keyword: parser_ir::KeywordStatus::Unchecked,
                 };
-                if self.trace_events.is_enabled() {
-                    self.tree_journal
-                        .push(&mut self.tree_journal_head, event.clone());
-                    self.trace_events.push(parser_ir::TraceEvent::Tree(event));
-                } else {
-                    self.tree_journal.push(&mut self.tree_journal_head, event);
-                }
+                self.emit_runtime_tree_event(event);
                 trace_push!(
                     self.trace_events,
                     parser_ir::TraceEvent::Shift {
@@ -6864,8 +6926,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     token.inspected_end,
                     self.scanner_snapshot,
                 ) {
-                    self.tree_journal
-                        .extend(&mut self.tree_journal_head, events);
+                    self.emit_runtime_tree_events(events);
                     self.stack.to_mut().push(RuntimeWeavyStackEntry {
                         state,
                         fragment: Some(fragment),
@@ -7526,7 +7587,25 @@ impl<'a> RuntimeWeavyStepper<'a> {
     }
 
     fn emit_runtime_tree_event(&mut self, event: parser_ir::TreeEvent) {
-        self.tree_journal.push(&mut self.tree_journal_head, event);
+        if self.tree_event_collection == RuntimeWeavyTreeEventCollection::Disabled {
+            return;
+        }
+        if self.trace_events.is_enabled() {
+            self.tree_journal
+                .push(&mut self.tree_journal_head, event.clone());
+            self.trace_events.push(parser_ir::TraceEvent::Tree(event));
+        } else {
+            self.tree_journal.push(&mut self.tree_journal_head, event);
+        }
+    }
+
+    fn emit_runtime_tree_events<I>(&mut self, events: I)
+    where
+        I: IntoIterator<Item = parser_ir::TreeEvent>,
+    {
+        for event in events {
+            self.emit_runtime_tree_event(event);
+        }
     }
 
     fn runtime_extra_fragment(
@@ -10690,8 +10769,8 @@ mod tests {
 
         let metered =
             parse_prepared_weavy_metered_with_report(&plan, &parser, &table, "ab").unwrap();
-        let deterministic_direct =
-            parse_weavy_deterministic_with_lexer_program(RuntimeWeavyInput {
+        let deterministic_direct = parse_weavy_deterministic_with_lexer_program(
+            RuntimeWeavyInput {
                 plan: &plan,
                 lexer_program: &plan.lexer_program,
                 auto_close_index: &plan.auto_close_index,
@@ -10699,11 +10778,28 @@ mod tests {
                 table: &table,
                 input: "ab",
                 external_scanner: None,
-            })
-            .unwrap()
-            .expect("tiny grammar is deterministic");
+            },
+            RuntimeWeavyTreeEventCollection::Enabled,
+        )
+        .unwrap()
+        .expect("tiny grammar is deterministic");
+        let deterministic_tree_only = parse_weavy_deterministic_with_lexer_program(
+            RuntimeWeavyInput {
+                plan: &plan,
+                lexer_program: &plan.lexer_program,
+                auto_close_index: &plan.auto_close_index,
+                parser: &parser,
+                table: &table,
+                input: "ab",
+                external_scanner: None,
+            },
+            RuntimeWeavyTreeEventCollection::Disabled,
+        )
+        .unwrap()
+        .expect("tiny grammar is deterministic");
         let default_direct =
             parse_prepared_weavy_with_report(&plan, &parser, &table, "ab").unwrap();
+        let tree_only = parse_prepared_weavy_tree(&plan, &parser, &table, "ab").unwrap();
         let recovering_direct = parse_prepared_weavy_recovering_with_report_and_scanner(
             &plan, &parser, &table, "ab", None,
         )
@@ -10721,12 +10817,17 @@ mod tests {
 
         assert_eq!(metered.tree(), default_direct.tree());
         assert_eq!(deterministic_direct.tree(), default_direct.tree());
+        assert_eq!(deterministic_tree_only.tree(), default_direct.tree());
+        assert_eq!(&tree_only, default_direct.tree());
         assert_eq!(
             deterministic_direct.accepted_tree_events(),
             default_direct.accepted_tree_events()
         );
+        assert!(deterministic_tree_only.accepted_tree_events().is_empty());
+        assert!(deterministic_tree_only.tree_events().is_empty());
         assert!(!metered.trace_events().is_empty());
         assert!(deterministic_direct.trace_events().is_empty());
+        assert!(deterministic_tree_only.trace_events().is_empty());
         assert!(default_direct.trace_events().is_empty());
         assert!(recovering_direct.trace_events().is_empty());
         assert_eq!(
@@ -10826,15 +10927,18 @@ mod tests {
         let plan = WeavyParsePlan::new(&validated, &parser, &table).unwrap();
 
         assert!(
-            parse_weavy_deterministic_with_lexer_program(RuntimeWeavyInput {
-                plan: &plan,
-                lexer_program: &plan.lexer_program,
-                auto_close_index: &plan.auto_close_index,
-                parser: &parser,
-                table: &table,
-                input: "x",
-                external_scanner: None,
-            })
+            parse_weavy_deterministic_with_lexer_program(
+                RuntimeWeavyInput {
+                    plan: &plan,
+                    lexer_program: &plan.lexer_program,
+                    auto_close_index: &plan.auto_close_index,
+                    parser: &parser,
+                    table: &table,
+                    input: "x",
+                    external_scanner: None,
+                },
+                RuntimeWeavyTreeEventCollection::Enabled
+            )
             .unwrap()
             .is_none()
         );
