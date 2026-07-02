@@ -325,6 +325,14 @@ fn run_readiness(grammar_path: &str) {
         readiness.is_fully_visible(),
         readiness.is_neutral_weavy_only()
     );
+    if analysis.lexer.op_counts.is_empty() {
+        println!("lexer_ops: none");
+    } else {
+        println!("lexer_ops:");
+        for (kind, count) in &analysis.lexer.op_counts {
+            println!("  {kind:?}: {count}");
+        }
+    }
     if readiness.barrier_summaries.is_empty() {
         println!("barriers: none");
     } else {

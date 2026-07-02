@@ -289,6 +289,8 @@ fn readiness_accepts_frozen_grammar_json() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("visibility: parser=true lexer=false full=false"));
+    assert!(stdout.contains("lexer_ops:"));
+    assert!(stdout.contains("  Pattern:"));
     assert!(stdout.contains("stencil_descriptors:"));
     assert!(stdout.contains("snark.tree_sitter.lex domain=Lexing lowering=LexerGraph"));
     assert!(stdout.contains("snark.tree_sitter.reduce domain=Tree lowering=DialectOp"));
