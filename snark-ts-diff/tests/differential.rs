@@ -305,6 +305,39 @@ fn readiness_accepts_frozen_grammar_json() {
     assert!(stdout.contains("hostcall_block_barriers:"));
 }
 
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+#[test]
+fn hostcalls_print_execution_lanes() {
+    let grammar_path = bundled_path("json/grammar.js");
+    let input_path = bundled_path("json/samples/package.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_snark-ts-diff"))
+        .arg("hostcalls")
+        .arg(&grammar_path)
+        .arg(&input_path)
+        .arg("1")
+        .output()
+        .expect("run snark-ts-diff hostcalls");
+    assert!(
+        out.status.success(),
+        "hostcalls failed: stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("snark weavy hostcall parse:"));
+    assert!(stdout.contains("accepted=1 failed=0 max_live=1"));
+    assert!(stdout.contains("snark_execution: intrinsics="));
+    assert!(stdout.contains("snark_dominant_execution:"));
+    assert!(stdout.contains("lexer_execution: calls="));
+    assert!(stdout.contains("lexer_dominant_execution:"));
+}
+
 // ---------------------------------------------------------------------------
 
 fn tree_sitter_available() -> bool {
