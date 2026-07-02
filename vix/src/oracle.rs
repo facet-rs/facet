@@ -33,10 +33,13 @@ use crate::ast::{
 use crate::{VixParser, ast::Spanned};
 
 // ---------------------------------------------------------------------------
-// Values: hashable, totally ordered, canonical.
+// Values: hashable, totally ordered, canonical — and SHIPPABLE. Facet is the
+// data plane: a value serializes to postcard bytes and reconstitutes on
+// another host (or another oracle, which is the same thing minus the wire).
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(facet::Facet, Debug, Clone)]
+#[repr(u8)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -75,7 +78,8 @@ pub enum Value {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(facet::Facet, Debug, Clone)]
+#[repr(u8)]
 pub enum Payload {
     Unit,
     Tuple(Vec<Value>),
@@ -255,35 +259,37 @@ impl Ord for Value {
 }
 
 // ---------------------------------------------------------------------------
-// Canonical AST identity: Debug form with spans stripped. Comments and
-// whitespace never reach the AST; spans are the only position leak. Stripping
-// them makes the hash a content address: edits that don't change the function
-// don't change its identity.
+// Canonical AST identity: the generated `strip_spans` zeroes every span
+// (comments/whitespace never reach the AST; spans are the only position
+// leak), then facet-postcard bytes ARE the content address — the same bytes
+// that ship a closure to an executor. One canonical form for identity and
+// transport.
 // ---------------------------------------------------------------------------
 
-fn strip_spans(debug: &str) -> String {
-    let mut out = String::with_capacity(debug.len());
-    let mut rest = debug;
-    while let Some(at) = rest.find("span: Span {") {
-        out.push_str(&rest[..at]);
-        let after = &rest[at..];
-        let close = after.find('}').expect("Span debug always closes");
-        rest = &after[close + 1..];
-    }
-    out.push_str(rest);
-    out
-}
-
 fn canon_ast_hash(item: &ast::FnItem) -> u64 {
+    let mut canonical = item.clone();
+    canonical.strip_spans();
+    let bytes = facet_postcard::to_vec(&canonical).expect("AST serializes");
     let mut h = DefaultHasher::new();
-    strip_spans(&format!("{item:?}")).hash(&mut h);
+    bytes.hash(&mut h);
     h.finish()
 }
 
 fn canon_expr_hash(expr: &Expr) -> u64 {
+    let bytes = facet_postcard::to_vec(expr).expect("AST serializes");
     let mut h = DefaultHasher::new();
-    strip_spans(&format!("{expr:?}")).hash(&mut h);
+    bytes.hash(&mut h);
     h.finish()
+}
+
+/// Serialize a value for transport — the exec primitive's payload format.
+pub fn ship(value: &Value) -> Result<Vec<u8>, String> {
+    facet_postcard::to_vec(value).map_err(|e| format!("ship: {e}"))
+}
+
+/// Reconstitute a shipped value on the receiving side.
+pub fn receive(bytes: &[u8]) -> Result<Value, String> {
+    facet_postcard::from_slice(bytes).map_err(|e| format!("receive: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +440,12 @@ impl Oracle {
             .map(|(n, v)| (Some(n.to_string()), v.clone()))
             .collect();
         self.call_fn(func, given, false)
+    }
+
+    /// Invoke a callable VALUE (closure, fn, partial) — including one that
+    /// arrived over the wire via ship/receive.
+    pub fn invoke(&self, callee: Value, args: Vec<Value>) -> EvalResult {
+        self.call_value(callee, args.into_iter().map(|v| (None, v)).collect())
     }
 
     // -- calls & memo --------------------------------------------------------
@@ -726,10 +738,14 @@ impl Oracle {
                         env.push((n.clone(), v.clone()));
                     }
                 }
+                // The stored body IS the canonical form (spans zeroed): the
+                // closure's identity and its wire format are the same bytes.
+                let mut body = c.body.clone();
+                body.strip_spans();
                 Ok(Value::Closure {
-                    hash: canon_expr_hash(&c.body),
+                    hash: canon_expr_hash(&body),
                     params: c.params.iter().map(|p| p.value.clone()).collect(),
-                    body: Box::new(c.body.clone()),
+                    body: Box::new(body),
                     env,
                 })
             }

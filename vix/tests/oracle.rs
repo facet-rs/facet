@@ -158,6 +158,37 @@ fn src_tree(nonce: Int) -> Tree {
 }
 
 #[test]
+fn closures_ship_between_oracles() {
+    // exec = eval elsewhere. A closure serialized in one oracle and
+    // reconstituted in another must evaluate to the SAME value — that's
+    // purity, and it's the exec primitive minus the wire.
+    let src = r#"
+fn make_scaler(k: Int) -> fn(Int) -> Int {
+    |x| k * x
+}
+"#;
+    let a = Oracle::load(src).expect("load a");
+    let scaler = a.call("make_scaler", &[("k", Value::Int(3))]).unwrap();
+    assert!(matches!(scaler, Value::Closure { .. }));
+
+    let bytes = vix::oracle::ship(&scaler).expect("ship");
+    let b = Oracle::load(src).expect("load b");
+    let arrived = vix::oracle::receive(&bytes).expect("receive");
+
+    // Identity survives the wire: same canonical hash before and after.
+    assert_eq!(scaler.canon_hash(), arrived.canon_hash());
+    // And it computes: 3 * 14 on the remote side.
+    assert_eq!(b.invoke(arrived, vec![Value::Int(14)]).unwrap(), Value::Int(42));
+
+    // The closure's identity is its canonical AST: a differently-formatted
+    // but identical source yields a closure with the SAME hash.
+    let reformatted = src.replace("|x| k * x", "|x|   k   *   x   // comment");
+    let c = Oracle::load(&reformatted).expect("load c");
+    let scaler2 = c.call("make_scaler", &[("k", Value::Int(3))]).unwrap();
+    assert_eq!(scaler.canon_hash(), scaler2.canon_hash());
+}
+
+#[test]
 fn values_are_totally_ordered_canonically() {
     let oracle = Oracle::load(&sample("types.vix")).expect("load");
 

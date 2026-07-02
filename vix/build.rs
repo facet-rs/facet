@@ -577,6 +577,38 @@ impl<'a> Model<'a> {
         }
     }
 
+    /// Statement zeroing one field's spans, by shape and cardinality.
+    fn strip_field(&self, f: &FieldDef) -> Option<String> {
+        let name = &f.rust_name;
+        let inner = match &f.shape {
+            Shape::TokenSet(_) => return None,
+            Shape::Enum(_) | Shape::Struct(_) | Shape::AdHoc(_) => "x.strip_spans();",
+            Shape::Leaf(Decode::Unit) => "*x = crate::support::Span { start: 0, end: 0 };",
+            Shape::Leaf(_) => "x.span = crate::support::Span { start: 0, end: 0 };",
+        };
+        Some(match f.mult {
+            Mult::One => format!("{{ let x = &mut self.{name}; {inner} }}"),
+            Mult::Opt => format!("if let Some(x) = &mut self.{name} {{ {inner} }}"),
+            Mult::Many => format!("for x in &mut self.{name} {{ {inner} }}"),
+        })
+    }
+
+    /// Match arm body zeroing one enum variant's payload spans.
+    fn strip_variant_arm(&self, enum_name: &str, kind: &str, variant: &str) -> String {
+        if self.is_struct_kind(kind) {
+            format!("{enum_name}::{variant}(x) => x.strip_spans(),")
+        } else {
+            match self.leaf_decode(kind) {
+                Decode::Unit => format!(
+                    "{enum_name}::{variant}(x) => *x = crate::support::Span {{ start: 0, end: 0 }},"
+                ),
+                _ => format!(
+                    "{enum_name}::{variant}(x) => x.span = crate::support::Span {{ start: 0, end: 0 }},"
+                ),
+            }
+        }
+    }
+
     fn emit_enum(&self, out: &mut String, e: &EnumDef) {
         writeln!(
             out,
@@ -650,6 +682,33 @@ impl<'a> Model<'a> {
             e.kind
         )
         .unwrap();
+
+        // Canonicalization: zero every span so serialized bytes are a content
+        // address (identity survives whitespace/comment edits).
+        writeln!(
+            out,
+            "impl {} {{\n    pub fn strip_spans(&mut self) {{\n        match self {{",
+            e.name
+        )
+        .unwrap();
+        for kind in &e.member_kinds {
+            if let Some(inner) = self.hidden_enum(kind) {
+                let variant = self
+                    .ann(kind)
+                    .and_then(|a| a.as_variant.clone())
+                    .unwrap_or_else(|| inner.name.clone());
+                writeln!(out, "            {}::{variant}(x) => x.strip_spans(),", e.name)
+                    .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "            {}",
+                    self.strip_variant_arm(&e.name, kind, &self.variant_name(kind))
+                )
+                .unwrap();
+            }
+        }
+        writeln!(out, "        }}\n    }}\n}}\n").unwrap();
     }
 
     fn emit_adhoc(&self, out: &mut String, _idx: usize, a: &AdHocDef) {
@@ -718,6 +777,28 @@ impl<'a> Model<'a> {
             a.name
         )
         .unwrap();
+
+        writeln!(
+            out,
+            "impl {} {{\n    pub fn strip_spans(&mut self) {{\n        match self {{",
+            a.name
+        )
+        .unwrap();
+        for alt in &a.alts {
+            match alt {
+                AdHocAlt::Visible(kind) => writeln!(
+                    out,
+                    "            {}",
+                    self.strip_variant_arm(&a.name, kind, &self.variant_name(kind))
+                )
+                .unwrap(),
+                AdHocAlt::Hidden(_, enum_name) => {
+                    writeln!(out, "            {}::{enum_name}(x) => x.strip_spans(),", a.name)
+                        .unwrap()
+                }
+            }
+        }
+        writeln!(out, "        }}\n    }}\n}}\n").unwrap();
     }
 
     fn field_type(&self, f: &FieldDef) -> String {
@@ -803,6 +884,20 @@ impl<'a> Model<'a> {
                 }
             };
             writeln!(out, "        {}: {expr},", f.rust_name).unwrap();
+        }
+        writeln!(out, "    }}\n}}\n").unwrap();
+
+        writeln!(
+            out,
+            "impl {} {{\n    pub fn strip_spans(&mut self) {{\n        \
+             self.span = crate::support::Span {{ start: 0, end: 0 }};",
+            s.name
+        )
+        .unwrap();
+        for f in &s.fields {
+            if let Some(stmt) = self.strip_field(f) {
+                writeln!(out, "        {stmt}").unwrap();
+            }
         }
         writeln!(out, "    }}\n}}\n").unwrap();
     }
