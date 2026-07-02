@@ -6,8 +6,9 @@
 //! state. It is not a recursive recognizer and it never consumes generated
 //! Tree-sitter implementation files.
 
+#[cfg(debug_assertions)]
+use std::cmp::Reverse;
 use std::{
-    cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
@@ -5165,18 +5166,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
 
-        let parents = resolved_parent_slots(&self.items);
-        for (child, parent) in parents.iter().enumerate() {
-            if let Some(parent) = *parent {
-                self.items[parent].children.push(child);
-            }
-        }
-
-        let mut roots = parents
-            .iter()
-            .enumerate()
-            .filter_map(|(index, parent)| parent.is_none().then_some(index))
-            .collect::<Vec<_>>();
+        let mut roots = attach_resolved_children_from_event_order(&mut self.items);
         if roots.is_empty() {
             return None;
         }
@@ -5303,7 +5293,43 @@ fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> 
         && child.bytes.end() <= parent.bytes.end()
 }
 
-fn resolved_parent_slots(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
+fn attach_resolved_children_from_event_order(items: &mut [ResolvedCstItem]) -> Vec<usize> {
+    let mut roots = Vec::<usize>::new();
+    #[cfg(debug_assertions)]
+    let mut parents = vec![None; items.len()];
+
+    for index in 0..items.len() {
+        if items[index].node.is_none() {
+            roots.push(index);
+            continue;
+        }
+
+        let mut first_child = roots.len();
+        while first_child > 0
+            && resolved_item_contains(&items[index], &items[roots[first_child - 1]])
+        {
+            first_child -= 1;
+        }
+
+        let children = roots.split_off(first_child);
+        #[cfg(debug_assertions)]
+        for child in &children {
+            parents[*child] = Some(index);
+        }
+        items[index].children = children;
+        roots.push(index);
+    }
+
+    #[cfg(debug_assertions)]
+    if items.len() <= 4096 {
+        debug_assert_eq!(parents, resolved_parent_slots_by_range_sort(items));
+    }
+
+    roots
+}
+
+#[cfg(debug_assertions)]
+fn resolved_parent_slots_by_range_sort(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
     let mut indices = (0..items.len()).collect::<Vec<_>>();
     indices.sort_unstable_by_key(|index| {
         let item = &items[*index];
