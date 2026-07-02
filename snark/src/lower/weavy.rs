@@ -750,6 +750,74 @@ impl WeavyLexerExecutionStats {
     }
 }
 
+/// Runtime execution count for one Snark parser/action stencil family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeavySnarkExecutionSummary {
+    /// Executed Snark stencil family.
+    pub family: SnarkStencilFamily,
+    /// Execution strategy used by the family.
+    pub execution: SnarkStencilExecution,
+    /// Number of runtime executions observed for this family.
+    pub count: usize,
+}
+
+/// Runtime execution counters for Snark's parser/action dialect ops.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeavySnarkExecutionStats {
+    /// Total Snark dialect intrinsic executions.
+    pub intrinsic_count: usize,
+    /// Runtime executions grouped by stable dialect/name identity.
+    pub descriptor_executions: BTreeMap<IntrinsicDescriptor, usize>,
+    /// Runtime executions grouped by semantic domain.
+    pub domain_executions: BTreeMap<SnarkIntrinsicDomain, usize>,
+    /// Runtime executions grouped by native stencil family and execution lane.
+    pub family_executions: BTreeMap<(SnarkStencilFamily, SnarkStencilExecution), usize>,
+}
+
+impl WeavySnarkExecutionStats {
+    fn record_intrinsic(&mut self, intrinsic: &SnarkIntrinsic) {
+        let semantics = intrinsic.semantics();
+        self.intrinsic_count += 1;
+        *self
+            .descriptor_executions
+            .entry(semantics.descriptor)
+            .or_default() += 1;
+        *self.domain_executions.entry(semantics.domain).or_default() += 1;
+        *self
+            .family_executions
+            .entry((semantics.stencil.family, semantics.stencil.execution))
+            .or_default() += 1;
+    }
+
+    /// Runtime executions sorted by descending count.
+    #[must_use]
+    pub fn family_execution_summaries(&self) -> Vec<WeavySnarkExecutionSummary> {
+        let mut summaries = self
+            .family_executions
+            .iter()
+            .map(|((family, execution), count)| WeavySnarkExecutionSummary {
+                family: *family,
+                execution: *execution,
+                count: *count,
+            })
+            .collect::<Vec<_>>();
+        summaries.sort_by(|left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.family.cmp(&right.family))
+                .then_with(|| left.execution.cmp(&right.execution))
+        });
+        summaries
+    }
+
+    /// Most frequently executed parser/action stencil family.
+    #[must_use]
+    pub fn dominant_family_execution(&self) -> Option<WeavySnarkExecutionSummary> {
+        self.family_execution_summaries().into_iter().next()
+    }
+}
+
 /// Why a dense parser block cannot be represented by the current host-call
 /// chain scaffold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -4572,6 +4640,7 @@ struct RuntimeWeavyOutput<'a> {
     input_points: &'a RuntimeWeavyInputPoints,
     next_lookahead_index: &'a mut usize,
     stats: &'a mut RunStats,
+    snark_stats: &'a mut WeavySnarkExecutionStats,
     block_execution: RuntimeWeavyBlockExecution,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
@@ -4583,6 +4652,7 @@ struct RuntimeWeavyStepperInput<'a> {
     tree_journal: &'a mut RuntimeWeavyTreeJournal,
     tree_event_collection: RuntimeWeavyTreeEventCollection,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
+    snark_stats: &'a mut WeavySnarkExecutionStats,
     input_points: &'a RuntimeWeavyInputPoints,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
@@ -4606,6 +4676,7 @@ trait RuntimeWeavyDeterministicSink {
         tree_journal: RuntimeWeavyTreeJournal,
         stats: RunStats,
         lexer_stats: WeavyLexerExecutionStats,
+        snark_stats: WeavySnarkExecutionStats,
         version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
         error_cost: u32,
@@ -4629,6 +4700,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicTreeSink {
         _tree_journal: RuntimeWeavyTreeJournal,
         _stats: RunStats,
         _lexer_stats: WeavyLexerExecutionStats,
+        _snark_stats: WeavySnarkExecutionStats,
         _version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
         _error_cost: u32,
@@ -4654,6 +4726,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
         tree_journal: RuntimeWeavyTreeJournal,
         _stats: RunStats,
         _lexer_stats: WeavyLexerExecutionStats,
+        _snark_stats: WeavySnarkExecutionStats,
         _version: parser_ir::StackVersionId,
         _root: parser_ir::TreeNodeId,
         _error_cost: u32,
@@ -4681,6 +4754,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
         tree_journal: RuntimeWeavyTreeJournal,
         stats: RunStats,
         lexer_stats: WeavyLexerExecutionStats,
+        snark_stats: WeavySnarkExecutionStats,
         version: parser_ir::StackVersionId,
         root: parser_ir::TreeNodeId,
         error_cost: u32,
@@ -4695,6 +4769,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
             tree,
             stats,
             lexer_stats,
+            snark_stats,
             trace_events: trace_events.into_events(),
             tree_events,
             tree_store,
@@ -5724,6 +5799,7 @@ where
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let external_scanner_errors = RefCell::new(Vec::new());
     let mut stats = RunStats::default();
+    let mut snark_stats = WeavySnarkExecutionStats::default();
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
     let step_limit = runtime_weavy_step_limit(input_ctx.table, input_ctx.input);
@@ -5759,6 +5835,7 @@ where
                 input_points: &input_points,
                 next_lookahead_index: &mut next_lookahead_index,
                 stats: &mut stats,
+                snark_stats: &mut snark_stats,
                 block_execution,
                 external_scanner_errors: &external_scanner_errors,
             };
@@ -5816,6 +5893,7 @@ where
                     tree_journal,
                     stats,
                     lexer_scratch.execution_stats(),
+                    snark_stats,
                     version,
                     root,
                     error_cost,
@@ -5846,6 +5924,7 @@ fn runtime_weavy_lex_one(
     let lexer_scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let external_scanner_errors = RefCell::new(Vec::new());
+    let mut snark_stats = WeavySnarkExecutionStats::default();
     let branch = RuntimeWeavyBranch {
         version: parser_ir::StackVersionId::from_index(0),
         stack: vec![RuntimeWeavyStackEntry {
@@ -5869,6 +5948,7 @@ fn runtime_weavy_lex_one(
             tree_journal: &mut tree_journal,
             tree_event_collection: RuntimeWeavyTreeEventCollection::Disabled,
             lexer_scratch: &lexer_scratch,
+            snark_stats: &mut snark_stats,
             input_points: &input_points,
             external_scanner_errors: &external_scanner_errors,
         },
@@ -6182,6 +6262,7 @@ fn parse_weavy_with_lexer_program(
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(block_execution.collects_traces());
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
+    let mut snark_stats = WeavySnarkExecutionStats::default();
     let external_scanner_errors = RefCell::new(Vec::new());
     trace_push!(
         trace_events,
@@ -6304,6 +6385,7 @@ fn parse_weavy_with_lexer_program(
             input_points: &input_points,
             next_lookahead_index: &mut next_lookahead_index,
             stats: &mut stats,
+            snark_stats: &mut snark_stats,
             block_execution,
             external_scanner_errors: &external_scanner_errors,
         };
@@ -6426,6 +6508,7 @@ fn parse_weavy_with_lexer_program(
             tree: first_node,
             stats,
             lexer_stats: lexer_scratch.execution_stats(),
+            snark_stats,
             trace_events: trace_events.into_events(),
             tree_events: first_tree_events,
             tree_store,
@@ -6463,6 +6546,7 @@ pub struct WeavyParseReport {
     tree: SexpNode,
     stats: RunStats,
     lexer_stats: WeavyLexerExecutionStats,
+    snark_stats: WeavySnarkExecutionStats,
     trace_events: Vec<parser_ir::TraceEvent>,
     tree_events: Vec<parser_ir::TreeEvent>,
     tree_store: RuntimeWeavyTreeStore,
@@ -6502,6 +6586,11 @@ impl WeavyParseReport {
     /// Runtime lexer graph counters accumulated while producing this report.
     pub const fn lexer_stats(&self) -> &WeavyLexerExecutionStats {
         &self.lexer_stats
+    }
+
+    /// Runtime Snark parser/action intrinsic counters accumulated while producing this report.
+    pub const fn snark_stats(&self) -> &WeavySnarkExecutionStats {
+        &self.snark_stats
     }
 
     /// Structured parser trace events emitted during runtime execution.
@@ -6893,6 +6982,7 @@ fn step_runtime_weavy_branch(
                         branch.clone(),
                         output.lexer_scratch,
                         output.input_points,
+                        output.snark_stats,
                         output.trace_events,
                     )
                 {
@@ -7185,6 +7275,7 @@ fn run_runtime_weavy_state_probe(
             tree_journal: &mut *output.tree_journal,
             tree_event_collection: output.tree_event_collection,
             lexer_scratch: output.lexer_scratch,
+            snark_stats: &mut *output.snark_stats,
             input_points: output.input_points,
             external_scanner_errors: output.external_scanner_errors,
         },
@@ -7242,6 +7333,7 @@ fn run_runtime_weavy_action(
             tree_journal: &mut *output.tree_journal,
             tree_event_collection: output.tree_event_collection,
             lexer_scratch: output.lexer_scratch,
+            snark_stats: &mut *output.snark_stats,
             input_points: output.input_points,
             external_scanner_errors: output.external_scanner_errors,
         },
@@ -7386,6 +7478,7 @@ fn recover_runtime_weavy_to_viable_stack(
     mut branch: RuntimeWeavyBranch,
     lexer_scratch: &RuntimeWeavyLexerScratch,
     input_points: &RuntimeWeavyInputPoints,
+    snark_stats: &mut WeavySnarkExecutionStats,
     trace_events: &mut RuntimeWeavyTraceSink,
 ) -> Option<RuntimeWeavyBranch> {
     if input_ctx.external_scanner.is_some() || branch.stack.len() <= 1 {
@@ -7394,7 +7487,14 @@ fn recover_runtime_weavy_to_viable_stack(
     let original_len = branch.stack.len();
     for len in (1..original_len).rev() {
         let state = branch.stack[len - 1].state;
-        if runtime_weavy_lex_succeeds(input_ctx, &branch, state, lexer_scratch, input_points) {
+        if runtime_weavy_lex_succeeds(
+            input_ctx,
+            &branch,
+            state,
+            lexer_scratch,
+            input_points,
+            snark_stats,
+        ) {
             branch.stack.truncate(len);
             branch.error_cost = branch
                 .error_cost
@@ -7548,6 +7648,7 @@ fn runtime_weavy_lex_succeeds(
     state: parser_ir::ParseStateId,
     lexer_scratch: &RuntimeWeavyLexerScratch,
     input_points: &RuntimeWeavyInputPoints,
+    snark_stats: &mut WeavySnarkExecutionStats,
 ) -> bool {
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(false);
@@ -7564,6 +7665,7 @@ fn runtime_weavy_lex_succeeds(
             tree_journal: &mut tree_journal,
             tree_event_collection: RuntimeWeavyTreeEventCollection::Disabled,
             lexer_scratch,
+            snark_stats,
             input_points,
             external_scanner_errors: &external_scanner_errors,
         },
@@ -7682,6 +7784,7 @@ struct RuntimeWeavyStepper<'a> {
     tree_event_collection: RuntimeWeavyTreeEventCollection,
     reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     lexer_scratch: &'a RuntimeWeavyLexerScratch,
+    snark_stats: &'a mut WeavySnarkExecutionStats,
     trace_events: &'a mut RuntimeWeavyTraceSink,
     external_scanner_errors: &'a RefCell<Vec<String>>,
 }
@@ -7722,6 +7825,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_event_collection: stepper_input.tree_event_collection,
             reusable_nodes: branch.reusable_nodes,
             lexer_scratch: stepper_input.lexer_scratch,
+            snark_stats: stepper_input.snark_stats,
             trace_events: stepper_input.trace_events,
             external_scanner_errors: stepper_input.external_scanner_errors,
         }
@@ -7761,6 +7865,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             tree_event_collection: stepper_input.tree_event_collection,
             reusable_nodes: Vec::new(),
             lexer_scratch: stepper_input.lexer_scratch,
+            snark_stats: stepper_input.snark_stats,
             trace_events: stepper_input.trace_events,
             external_scanner_errors: stepper_input.external_scanner_errors,
         }
@@ -7771,6 +7876,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         intrinsic: &SnarkIntrinsic,
     ) -> Result<Control<'program, BlockRef, DenseSnarkWeavyOp, BlockRef>, RuntimeWeavyStepError>
     {
+        self.snark_stats.record_intrinsic(intrinsic);
         match intrinsic {
             SnarkIntrinsic::Lex { .. } => {
                 let state = self
@@ -12202,6 +12308,22 @@ mod tests {
                 kind: WeavyLexerStencilKind::LiteralSet,
                 count: lexer_stats.stencil_execution_count(WeavyLexerStencilKind::LiteralSet),
             })
+        );
+        let snark_stats = default_direct.snark_stats();
+        assert!(snark_stats.intrinsic_count > 0);
+        assert!(
+            snark_stats
+                .family_execution_summaries()
+                .iter()
+                .any(
+                    |summary| summary.execution == SnarkStencilExecution::DirectStencil
+                        && summary.count > 0
+                )
+        );
+        assert!(
+            snark_stats
+                .dominant_family_execution()
+                .is_some_and(|summary| summary.count > 0)
         );
         #[cfg(all(
             feature = "jit",

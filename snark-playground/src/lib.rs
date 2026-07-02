@@ -19,7 +19,7 @@ use snark::{
     lexical::LexicalFacts,
     lower::weavy::{
         SnarkStencilProfile, WeavyLexerExecutionStats, WeavyLoweringBarrier, WeavyParseError,
-        WeavyParsePlan, WeavyParseReport,
+        WeavyParsePlan, WeavyParseReport, WeavySnarkExecutionStats,
         parse_prepared_weavy_collecting_reuse_with_report_and_scanner,
         parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner,
         reparse_prepared_weavy_recovering_with_report_and_scanner,
@@ -238,6 +238,9 @@ struct ParseOutput {
     lexer_direct_set_cache_misses: usize,
     lexer_stencil_executions: Vec<ParseLexerStencilExecutionOutput>,
     dominant_lexer_stencil_execution: Option<ParseLexerStencilExecutionOutput>,
+    snark_intrinsic_count: usize,
+    snark_stencil_executions: Vec<ParseSnarkStencilExecutionOutput>,
+    dominant_snark_stencil_execution: Option<ParseSnarkStencilExecutionOutput>,
     trace_event_count: usize,
     tree_event_count: usize,
     reuse_node_count: usize,
@@ -249,6 +252,13 @@ struct ParseOutput {
 #[derive(Debug, Clone, Facet)]
 struct ParseLexerStencilExecutionOutput {
     kind: String,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct ParseSnarkStencilExecutionOutput {
+    family: String,
+    execution: String,
     count: usize,
 }
 
@@ -441,6 +451,10 @@ impl WeavyPlaygroundReport {
 
     fn lexer_stats(&self) -> &WeavyLexerExecutionStats {
         self.0.lexer_stats()
+    }
+
+    fn snark_stats(&self) -> &WeavySnarkExecutionStats {
+        self.0.snark_stats()
     }
 
     fn accepted_resolved_tree(
@@ -861,6 +875,7 @@ fn parse_output(
     accepted_tree_events: &[TreeEvent],
 ) -> ParseOutput {
     let lexer_stats = report.lexer_stats();
+    let snark_stats = report.snark_stats();
     ParseOutput {
         sexp: report.tree_sexp(),
         tree: report
@@ -883,6 +898,23 @@ fn parse_output(
         dominant_lexer_stencil_execution: lexer_stats.dominant_stencil_execution().map(|summary| {
             ParseLexerStencilExecutionOutput {
                 kind: format!("{:?}", summary.kind),
+                count: summary.count,
+            }
+        }),
+        snark_intrinsic_count: snark_stats.intrinsic_count,
+        snark_stencil_executions: snark_stats
+            .family_execution_summaries()
+            .into_iter()
+            .map(|summary| ParseSnarkStencilExecutionOutput {
+                family: format!("{:?}", summary.family),
+                execution: format!("{:?}", summary.execution),
+                count: summary.count,
+            })
+            .collect(),
+        dominant_snark_stencil_execution: snark_stats.dominant_family_execution().map(|summary| {
+            ParseSnarkStencilExecutionOutput {
+                family: format!("{:?}", summary.family),
+                execution: format!("{:?}", summary.execution),
                 count: summary.count,
             }
         }),
@@ -5042,6 +5074,19 @@ mod tests {
         assert!(
             parse
                 .dominant_lexer_stencil_execution
+                .as_ref()
+                .is_some_and(|summary| summary.count > 0)
+        );
+        assert!(parse.snark_intrinsic_count > 0);
+        assert!(
+            parse
+                .snark_stencil_executions
+                .iter()
+                .any(|summary| summary.execution == "DirectStencil" && summary.count > 0)
+        );
+        assert!(
+            parse
+                .dominant_snark_stencil_execution
                 .as_ref()
                 .is_some_and(|summary| summary.count > 0)
         );

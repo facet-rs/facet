@@ -50,6 +50,9 @@ type ParseOutput = {
   lexer_direct_set_cache_misses: number;
   lexer_stencil_executions: ParseLexerStencilExecutionOutput[];
   dominant_lexer_stencil_execution: ParseLexerStencilExecutionOutput | null;
+  snark_intrinsic_count: number;
+  snark_stencil_executions: ParseSnarkStencilExecutionOutput[];
+  dominant_snark_stencil_execution: ParseSnarkStencilExecutionOutput | null;
   trace_event_count: number;
   tree_event_count: number;
   reuse_node_count: number;
@@ -60,6 +63,12 @@ type ParseOutput = {
 
 type ParseLexerStencilExecutionOutput = {
   kind: string;
+  count: number;
+};
+
+type ParseSnarkStencilExecutionOutput = {
+  family: string;
+  execution: string;
   count: number;
 };
 
@@ -1014,6 +1023,7 @@ function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | nul
   const totalStencilWork = parserStencilTotal + lexerStencilTotal;
   const dominant = plan.dominant_backend_execution;
   const dominantLexerExecution = parse?.dominant_lexer_stencil_execution ?? null;
+  const dominantSnarkExecution = parse?.dominant_snark_stencil_execution ?? null;
   const backendExecutionItems = plan.backend_executions.map((summary) => ({
     ...summary,
     count: summary.total_count,
@@ -1053,6 +1063,17 @@ function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | nul
         </div>
       ) : null}
 
+      {dominantSnarkExecution ? (
+        <div className="plan-row">
+          <span>Runtime parser hot lane</span>
+          <strong>{dominantSnarkExecution.family}</strong>
+          <code>
+            {dominantSnarkExecution.execution} · {dominantSnarkExecution.count} executions ·{" "}
+            {parse?.snark_intrinsic_count ?? 0} intrinsics
+          </code>
+        </div>
+      ) : null}
+
       {dominantLexerExecution ? (
         <div className="plan-row">
           <span>Runtime lexer hot lane</span>
@@ -1065,6 +1086,13 @@ function PlanPanel({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | nul
       ) : null}
 
       <PlanTopList title="Parser stencil families" items={plan.snark_stencil_families} />
+      <PlanTopList
+        title="Runtime parser executions"
+        items={(parse?.snark_stencil_executions ?? []).map((summary) => ({
+          kind: `${summary.family} · ${summary.execution}`,
+          count: summary.count,
+        }))}
+      />
       <PlanTopList
         title="Runtime lexer executions"
         items={(parse?.lexer_stencil_executions ?? []).map((summary) => ({

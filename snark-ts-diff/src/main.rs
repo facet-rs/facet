@@ -386,6 +386,37 @@ fn print_lexer_execution_stats(report: &WeavyParseReport) {
     }
 }
 
+fn print_snark_execution_stats(report: &WeavyParseReport) {
+    let stats = report.snark_stats();
+    let summaries = stats.family_execution_summaries();
+    let families = if summaries.is_empty() {
+        "none".to_owned()
+    } else {
+        summaries
+            .iter()
+            .map(|summary| {
+                format!(
+                    "{:?}/{:?}={}",
+                    summary.family, summary.execution, summary.count
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    println!(
+        "snark_execution: intrinsics={} families={}",
+        stats.intrinsic_count, families
+    );
+    if let Some(summary) = stats.dominant_family_execution() {
+        println!(
+            "snark_dominant_execution: {:?}/{:?} count={}",
+            summary.family, summary.execution, summary.count
+        );
+    } else {
+        println!("snark_dominant_execution: none");
+    }
+}
+
 #[derive(Facet)]
 struct Row {
     k: u64,
@@ -716,6 +747,7 @@ fn main() {
             errors,
             missing
         );
+        print_snark_execution_stats(&report);
         print_lexer_execution_stats(&report);
         return;
     }
@@ -753,6 +785,7 @@ fn main() {
             report.max_live_versions(),
             report.reusable_node_count()
         );
+        print_snark_execution_stats(&report);
         print_lexer_execution_stats(&report);
         return;
     }
