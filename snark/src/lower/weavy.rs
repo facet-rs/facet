@@ -2315,7 +2315,21 @@ fn regex_source_for_weavy_lex_expr(expr: &WeavyLexExpr) -> Option<String> {
             }
             Some(source)
         }
-        WeavyLexExpr::Choice(_) | WeavyLexExpr::Repeat(_) | WeavyLexExpr::Repeat1(_) => None,
+        WeavyLexExpr::Choice(_) => None,
+        WeavyLexExpr::Repeat(content) => {
+            let source = regex_source_for_weavy_lex_expr(content)?;
+            if source.is_empty() {
+                return None;
+            }
+            Some(format!("(?:{source})*"))
+        }
+        WeavyLexExpr::Repeat1(content) => {
+            let source = regex_source_for_weavy_lex_expr(content)?;
+            if source.is_empty() || regex_source_matches_empty(&source) {
+                return None;
+            }
+            Some(format!("(?:{source})+"))
+        }
         WeavyLexExpr::CompositeRegex { matcher, .. } => Some(matcher.source().to_owned()),
         WeavyLexExpr::CompositeChoice { .. } => None,
         WeavyLexExpr::Until(_)
@@ -2323,6 +2337,14 @@ fn regex_source_for_weavy_lex_expr(expr: &WeavyLexExpr) -> Option<String> {
         | WeavyLexExpr::AutoClose(_)
         | WeavyLexExpr::UnsupportedSymbol(_) => None,
     }
+}
+
+fn regex_source_matches_empty(source: &str) -> bool {
+    AutomataRegex::new(source).ok().and_then(|regex| {
+        regex
+            .find(Input::new("").anchored(Anchored::Yes))
+            .map(|match_| match_.end())
+    }) == Some(0)
 }
 
 #[derive(Clone, Debug)]
@@ -8388,6 +8410,53 @@ mod tests {
         );
         assert_eq!(
             match_weavy_lex_expr_for_tests(&expr, "nope", 0).expect("match"),
+            None
+        );
+    }
+
+    #[test]
+    fn composite_regex_lowers_repeat_matchers() {
+        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Repeat(Box::new(
+            WeavyLexExpr::String("a".to_owned()),
+        )));
+
+        assert!(matches!(expr, WeavyLexExpr::CompositeRegex { .. }));
+        assert_eq!(
+            match_weavy_lex_expr_for_tests(&expr, "aaab", 0).expect("match"),
+            Some(parser_ir::LexMatch::new(3, 4))
+        );
+        assert_eq!(
+            match_weavy_lex_expr_for_tests(&expr, "bbb", 0).expect("match"),
+            Some(parser_ir::LexMatch::new(0, 1))
+        );
+    }
+
+    #[test]
+    fn composite_regex_lowers_non_empty_repeat1_matchers() {
+        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Repeat1(Box::new(
+            WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("[a-z]", None).into()),
+        )));
+
+        assert!(matches!(expr, WeavyLexExpr::CompositeRegex { .. }));
+        assert_eq!(
+            match_weavy_lex_expr_for_tests(&expr, "abc1", 0).expect("match"),
+            Some(parser_ir::LexMatch::new(3, 4))
+        );
+        assert_eq!(
+            match_weavy_lex_expr_for_tests(&expr, "123", 0).expect("match"),
+            None
+        );
+    }
+
+    #[test]
+    fn composite_regex_keeps_empty_repeat1_structural() {
+        let expr = WeavyLexExpr::compile_composite_regex(WeavyLexExpr::Repeat1(Box::new(
+            WeavyLexExpr::Pattern(crate::lex_match::compile_pattern("a*", None).into()),
+        )));
+
+        assert!(matches!(expr, WeavyLexExpr::Repeat1(_)));
+        assert_eq!(
+            match_weavy_lex_expr_for_tests(&expr, "bbb", 0).expect("match"),
             None
         );
     }
