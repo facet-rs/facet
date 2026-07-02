@@ -32,7 +32,8 @@ use crate::dump::dump_config_with_schema;
 use crate::enum_conflicts::detect_enum_conflicts;
 use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
 use crate::help::{
-    generate_help_for_subcommand_with_config_formats, generate_help_list_for_subcommand,
+    generate_help_for_subcommand_with_config_formats,
+    generate_help_list_for_subcommand_with_config_formats,
     generate_root_html_help_with_config_formats_and_anchor, html_help_anchor_for_subcommand_path,
     open_html_help_file, write_html_help_to_temp_file,
 };
@@ -263,11 +264,12 @@ impl<T: Facet<'static>> Driver<T> {
 
                 let config_file_extensions = self.config_file_extensions();
                 let text = if let Some(mode) = layers.cli.help_list_mode {
-                    generate_help_list_for_subcommand(
+                    generate_help_list_for_subcommand_with_config_formats(
                         &self.config.schema,
                         &subcommand_path,
                         &help_config,
                         mode,
+                        &config_file_extensions,
                     )
                 } else {
                     generate_help_for_subcommand_with_config_formats(

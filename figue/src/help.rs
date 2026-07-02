@@ -346,6 +346,22 @@ pub(crate) fn generate_help_list_for_subcommand(
     config: &HelpConfig,
     mode: HelpListMode,
 ) -> String {
+    generate_help_list_for_subcommand_with_config_formats(
+        schema,
+        subcommand_path,
+        config,
+        mode,
+        DEFAULT_CONFIG_FILE_EXTENSIONS,
+    )
+}
+
+pub(crate) fn generate_help_list_for_subcommand_with_config_formats(
+    schema: &Schema,
+    subcommand_path: &[String],
+    config: &HelpConfig,
+    mode: HelpListMode,
+    config_file_extensions: &[&str],
+) -> String {
     let program_name = config
         .program_name
         .clone()
@@ -406,11 +422,19 @@ pub(crate) fn generate_help_list_for_subcommand(
         HelpListMode::Full => {
             let mut sections = Vec::new();
             let mut leaf_paths = Vec::new();
+            if current_args.subcommand_optional() {
+                leaf_paths.push(resolved_path.clone());
+            }
             let mut working_path = resolved_path.clone();
             collect_leaf_subcommand_paths(&mut leaf_paths, &mut working_path, current_args);
 
             for child_path in leaf_paths {
-                sections.push(generate_help_for_subcommand(schema, &child_path, config));
+                sections.push(generate_help_for_subcommand_with_config_formats(
+                    schema,
+                    &child_path,
+                    config,
+                    config_file_extensions,
+                ));
             }
             sections.join("\n\n")
         }
@@ -3237,6 +3261,49 @@ mod tests {
         assert!(output.contains("myapp cache show"));
         assert!(!output.contains("myapp home\n\n"));
         assert!(!output.contains("myapp cache\n\n"));
+    }
+
+    #[test]
+    fn test_help_list_full_includes_optional_current_command_and_custom_formats() {
+        #[derive(Facet)]
+        struct Args {
+            #[facet(args::config)]
+            config: Config,
+
+            #[facet(args::subcommand)]
+            command: Option<Command>,
+        }
+
+        #[derive(Facet)]
+        struct Config {
+            #[facet(default = "localhost")]
+            host: String,
+        }
+
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[allow(dead_code)]
+        enum Command {
+            Serve,
+            Status,
+        }
+
+        let schema = Schema::from_shape(Args::SHAPE).unwrap();
+        let output = generate_help_list_for_subcommand_with_config_formats(
+            &schema,
+            &[],
+            &HelpConfig {
+                program_name: Some("tool".to_string()),
+                ..HelpConfig::default()
+            },
+            HelpListMode::Full,
+            &["json", "jsonc"],
+        );
+
+        assert!(output.contains("tool\n"));
+        assert!(output.contains("Supported file formats: .json, .jsonc."));
+        assert!(output.contains("tool serve"));
+        assert!(output.contains("tool status"));
     }
 
     #[test]
