@@ -6521,36 +6521,47 @@ where
                 block_execution,
                 external_scanner_errors: &external_scanner_errors,
             };
-            let dispatch = match run_runtime_weavy_state_probe(input_ctx, &branch, &mut output) {
-                Ok(dispatch) => dispatch,
-                Err(_) => return Ok(None),
-            };
-            let Some(action) = dispatch.first_action.filter(|_| dispatch.action_count == 1) else {
-                return Ok(None);
-            };
-            let block = match runtime_weavy_action_block_for_execution(
-                input_ctx,
-                block_execution,
-                dispatch.state,
-                dispatch.entry_index,
-                0,
-                action,
-            ) {
-                Ok(block) => block,
-                Err(_) => return Ok(None),
-            };
-            run_runtime_weavy_action(
-                input_ctx,
-                branch,
-                RuntimeWeavyAction {
-                    token: dispatch.token,
-                    lookahead: dispatch.lookahead,
-                    block,
+            if block_execution == RuntimeWeavyBlockExecution::Direct {
+                let Some(outcome) =
+                    run_runtime_weavy_direct_deterministic_step(input_ctx, branch, &mut output)
+                else {
+                    return Ok(None);
+                };
+                outcome
+            } else {
+                let dispatch = match run_runtime_weavy_state_probe(input_ctx, &branch, &mut output)
+                {
+                    Ok(dispatch) => dispatch,
+                    Err(_) => return Ok(None),
+                };
+                let Some(action) = dispatch.first_action.filter(|_| dispatch.action_count == 1)
+                else {
+                    return Ok(None);
+                };
+                let block = match runtime_weavy_action_block_for_execution(
+                    input_ctx,
+                    block_execution,
+                    dispatch.state,
+                    dispatch.entry_index,
+                    0,
                     action,
-                },
-                RuntimeWeavyReuseCollection::Disabled,
-                &mut output,
-            )
+                ) {
+                    Ok(block) => block,
+                    Err(_) => return Ok(None),
+                };
+                run_runtime_weavy_action(
+                    input_ctx,
+                    branch,
+                    RuntimeWeavyAction {
+                        token: dispatch.token,
+                        lookahead: dispatch.lookahead,
+                        block,
+                        action,
+                    },
+                    RuntimeWeavyReuseCollection::Disabled,
+                    &mut output,
+                )
+            }
         };
         match outcome {
             RuntimeWeavyStepOutcome::Branch(next) => branch = next,
@@ -8100,6 +8111,74 @@ fn run_runtime_weavy_state_probe(
         *output.next_lookahead_index += 1;
     }
     Ok(dispatch)
+}
+
+fn run_runtime_weavy_direct_deterministic_step(
+    input_ctx: RuntimeWeavyInput<'_>,
+    branch: RuntimeWeavyBranch,
+    output: &mut RuntimeWeavyOutput<'_>,
+) -> Option<RuntimeWeavyStepOutcome> {
+    let mut stepper = RuntimeWeavyStepper::from_branch(
+        RuntimeWeavyStepperInput {
+            input: input_ctx,
+            tree_store: &mut *output.tree_store,
+            trace_events: &mut *output.trace_events,
+            tree_journal: &mut *output.tree_journal,
+            tree_event_collection: output.tree_event_collection,
+            lexer_scratch: output.lexer_scratch,
+            snark_stats: &mut *output.snark_stats,
+            input_points: output.input_points,
+            external_scanner_errors: output.external_scanner_errors,
+        },
+        branch,
+        parser_ir::LookaheadTokenId::from_index(*output.next_lookahead_index),
+        RuntimeWeavyMode::ApplyAction,
+        RuntimeWeavyReuseCollection::Disabled,
+    );
+    let version = stepper.version;
+    let state = match stepper.stack.last() {
+        Some(entry) => entry.state,
+        None => {
+            return Some(RuntimeWeavyStepOutcome::Failed {
+                version,
+                failure: runtime_weavy_failure(RuntimeWeavyStepError::EmptyStack, Vec::new()),
+            });
+        }
+    };
+    let dispatch = stepper.probe_state_direct(state).ok()?;
+    if stepper.lookahead.is_some() {
+        *output.next_lookahead_index += 1;
+    }
+    let action = dispatch
+        .first_action
+        .filter(|_| dispatch.action_count == 1)?;
+    if let Err(error) = stepper.apply_action_direct(action) {
+        let state_stack = stepper.stack.iter().map(|entry| entry.state).collect();
+        return Some(RuntimeWeavyStepOutcome::Failed {
+            version,
+            failure: runtime_weavy_failure(error, state_stack),
+        });
+    }
+    Some(if let Some(root) = stepper.accepted_root {
+        RuntimeWeavyStepOutcome::Accepted {
+            version,
+            root,
+            error_cost: stepper.error_cost,
+            tree_journal_head: stepper.tree_journal_head,
+            reusable_nodes: stepper.reusable_nodes,
+        }
+    } else {
+        RuntimeWeavyStepOutcome::Branch(RuntimeWeavyBranch {
+            version,
+            stack: stepper.stack.into_owned(),
+            byte_position: stepper.byte_position,
+            scanner_snapshot: stepper.scanner_snapshot,
+            auto_close_stack: stepper.auto_close_stack.into_owned(),
+            error_cost: stepper.error_cost,
+            tree_journal: stepper.tree_journal_head,
+            reusable_nodes: stepper.reusable_nodes,
+        })
+    })
 }
 
 /// Total dynamic precedence of an accepted tree: the sum of each reduced
