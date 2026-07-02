@@ -24,6 +24,7 @@
 //! Fixtures are generated with facet-json (never hand-emitted) as `[{"k":0,
 //! "v":"x0"},…]`, which the bundled `jsonb` grammar accepts.
 
+use std::io::{self, Write};
 use std::process::Command;
 use std::time::Instant;
 use std::{env, fs, path::Path, path::PathBuf};
@@ -303,13 +304,15 @@ fn run_ladder(grammar_path: &str, max_objects: u64) {
     }
 }
 
-fn run_readiness(grammar_path: &str) {
+fn run_readiness(grammar_path: &str) -> io::Result<()> {
     let p = prepare(grammar_path);
     let analysis = p.plan.analysis();
     let readiness = &analysis.readiness;
     let lexer = &readiness.lexer;
-    println!("grammar: {grammar_path}");
-    println!(
+    let mut out = io::stdout().lock();
+    writeln!(out, "grammar: {grammar_path}")?;
+    writeln!(
+        out,
         "parser: neutral_ops={} snark_intrinsics={} lexer_graph={} sink={} dialect={} host_barriers={} opaque={} host_calls={} stencils_needed={} native_copy_patch_jit_available={}",
         readiness.neutral_weavy_op_count,
         readiness.snark_intrinsic_count,
@@ -321,8 +324,9 @@ fn run_readiness(grammar_path: &str) {
         readiness.host_call_intrinsic_count,
         readiness.needs_snark_stencils(),
         readiness.native_copy_patch_jit_available
-    );
-    println!(
+    )?;
+    writeln!(
+        out,
         "lexer: modes={} terminals={} literal_sets={}/{} pattern_sets={}/{} dfa_sets={}/{} leaf_rematch={} known_patterns={} regex_automata={} unsupported_patterns={} unsupported_terminals={} unsupported_symbols={} external_scanners={}",
         analysis.lexer.mode_count,
         analysis.lexer.terminal_count,
@@ -339,36 +343,38 @@ fn run_readiness(grammar_path: &str) {
         lexer.unsupported_terminal_count,
         lexer.unsupported_symbol_count,
         lexer.external_scanner_candidate_count
-    );
-    println!(
+    )?;
+    writeln!(
+        out,
         "visibility: parser={} lexer={} full={} neutral_only={}",
         readiness.is_parser_fully_visible(),
         lexer.is_fully_visible(),
         readiness.is_fully_visible(),
         readiness.is_neutral_weavy_only()
-    );
+    )?;
     if analysis.lexer.op_counts.is_empty() {
-        println!("lexer_ops: none");
+        writeln!(out, "lexer_ops: none")?;
     } else {
-        println!("lexer_ops:");
+        writeln!(out, "lexer_ops:")?;
         for (kind, count) in &analysis.lexer.op_counts {
-            println!("  {kind:?}: {count}");
+            writeln!(out, "  {kind:?}: {count}")?;
         }
     }
     if readiness.barrier_summaries.is_empty() {
-        println!("barriers: none");
+        writeln!(out, "barriers: none")?;
     } else {
-        println!("barriers:");
+        writeln!(out, "barriers:")?;
         for summary in &readiness.barrier_summaries {
-            println!("  {:?}: {}", summary.barrier, summary.count);
+            writeln!(out, "  {:?}: {}", summary.barrier, summary.count)?;
         }
     }
     if readiness.snark_stencil_summaries.is_empty() {
-        println!("stencil_descriptors: none");
+        writeln!(out, "stencil_descriptors: none")?;
     } else {
-        println!("stencil_descriptors:");
+        writeln!(out, "stencil_descriptors:")?;
         for summary in &readiness.snark_stencil_summaries {
-            println!(
+            writeln!(
+                out,
                 "  {}.{} domain={:?} lowering={:?} family={:?} execution={:?} effect_order={:?} may_fail={} may_allocate={} calls_user_code={} opaque={} resources={:?} typed_memory={:?} state={:?} count={}",
                 summary.descriptor.dialect,
                 summary.descriptor.name,
@@ -385,27 +391,38 @@ fn run_readiness(grammar_path: &str) {
                 summary.effect.typed_memory,
                 summary.stencil.state,
                 summary.count
-            );
+            )?;
         }
     }
     if readiness.snark_stencil_family_summaries.is_empty() {
-        println!("stencil_families: none");
+        writeln!(out, "stencil_families: none")?;
     } else {
-        println!("stencil_families:");
+        writeln!(out, "stencil_families:")?;
         for summary in &readiness.snark_stencil_family_summaries {
-            println!(
+            writeln!(
+                out,
                 "  {:?}/{:?}: {}",
                 summary.family, summary.execution, summary.count
-            );
+            )?;
         }
     }
     if readiness.snark_stencil_state_summaries.is_empty() {
-        println!("stencil_state: none");
+        writeln!(out, "stencil_state: none")?;
     } else {
-        println!("stencil_state:");
+        writeln!(out, "stencil_state:")?;
         for summary in &readiness.snark_stencil_state_summaries {
-            println!("  {:?}: {}", summary.state, summary.count);
+            writeln!(out, "  {:?}: {}", summary.state, summary.count)?;
         }
+    }
+    Ok(())
+}
+
+fn handle_output(result: io::Result<()>) {
+    if let Err(error) = result
+        && error.kind() != io::ErrorKind::BrokenPipe
+    {
+        eprintln!("write output failed: {error}");
+        std::process::exit(1);
     }
 }
 
@@ -490,7 +507,7 @@ fn main() {
         let grammar_path = args
             .get(2)
             .expect("usage: readiness <grammar.js|grammar.json>");
-        run_readiness(grammar_path);
+        handle_output(run_readiness(grammar_path));
         return;
     }
 
