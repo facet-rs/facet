@@ -333,6 +333,24 @@ fn run_readiness(grammar_path: &str) {
             println!("  {:?}: {}", summary.barrier, summary.count);
         }
     }
+    if readiness.snark_stencil_summaries.is_empty() {
+        println!("stencil_descriptors: none");
+    } else {
+        println!("stencil_descriptors:");
+        for summary in &readiness.snark_stencil_summaries {
+            println!(
+                "  {}.{} domain={:?} lowering={:?} family={:?} execution={:?} state={:?} count={}",
+                summary.descriptor.dialect,
+                summary.descriptor.name,
+                summary.domain,
+                summary.lowering,
+                summary.stencil.family,
+                summary.stencil.execution,
+                summary.stencil.state,
+                summary.count
+            );
+        }
+    }
     if readiness.snark_stencil_family_summaries.is_empty() {
         println!("stencil_families: none");
     } else {
