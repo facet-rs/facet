@@ -359,13 +359,13 @@ fn error_counts(report: &WeavyParseReport) -> (usize, usize) {
 
 fn print_lexer_execution_stats(report: &WeavyParseReport) {
     let stats = report.lexer_stats();
-    let stencils = if stats.stencil_executions.is_empty() {
+    let summaries = stats.stencil_execution_summaries();
+    let stencils = if summaries.is_empty() {
         "none".to_owned()
     } else {
-        stats
-            .stencil_executions
+        summaries
             .iter()
-            .map(|(kind, count)| format!("{kind:?}={count}"))
+            .map(|summary| format!("{:?}={}", summary.kind, summary.count))
             .collect::<Vec<_>>()
             .join(",")
     };
@@ -376,6 +376,14 @@ fn print_lexer_execution_stats(report: &WeavyParseReport) {
         stats.direct_set_cache_miss_count,
         stencils
     );
+    if let Some(summary) = stats.dominant_stencil_execution() {
+        println!(
+            "lexer_dominant_execution: {:?} count={}",
+            summary.kind, summary.count
+        );
+    } else {
+        println!("lexer_dominant_execution: none");
+    }
 }
 
 #[derive(Facet)]

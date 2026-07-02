@@ -687,6 +687,15 @@ pub struct WeavyLexerStencilSummary {
     pub count: usize,
 }
 
+/// Runtime execution count for one lowered lexer graph matcher family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeavyLexerExecutionSummary {
+    /// Executed lexer graph matcher family.
+    pub kind: WeavyLexerStencilKind,
+    /// Number of runtime executions observed for this family.
+    pub count: usize,
+}
+
 /// Runtime execution counters for Snark's lowered lexer graph.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WeavyLexerExecutionStats {
@@ -712,6 +721,32 @@ impl WeavyLexerExecutionStats {
             .get(&kind)
             .copied()
             .unwrap_or_default()
+    }
+
+    /// Runtime lexer matcher executions sorted by descending count.
+    #[must_use]
+    pub fn stencil_execution_summaries(&self) -> Vec<WeavyLexerExecutionSummary> {
+        let mut summaries = self
+            .stencil_executions
+            .iter()
+            .map(|(kind, count)| WeavyLexerExecutionSummary {
+                kind: *kind,
+                count: *count,
+            })
+            .collect::<Vec<_>>();
+        summaries.sort_by(|left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.kind.cmp(&right.kind))
+        });
+        summaries
+    }
+
+    /// Most frequently executed lowered lexer matcher family.
+    #[must_use]
+    pub fn dominant_stencil_execution(&self) -> Option<WeavyLexerExecutionSummary> {
+        self.stencil_execution_summaries().into_iter().next()
     }
 }
 
@@ -12152,20 +12187,21 @@ mod tests {
         assert_eq!(default_direct.accepted_count(), 1);
         assert_eq!(default_direct.failure_count(), 0);
         assert_eq!(default_direct.stats().step_count, 0);
-        assert!(default_direct.lexer_stats().lex_call_count > 0);
-        assert!(default_direct.lexer_stats().direct_set_cache_miss_count > 0);
-        assert_eq!(default_direct.lexer_stats().direct_set_cache_hit_count, 0);
-        assert!(
-            default_direct
-                .lexer_stats()
-                .stencil_execution_count(WeavyLexerStencilKind::LiteralSet)
-                > 0
+        let lexer_stats = default_direct.lexer_stats();
+        assert!(lexer_stats.lex_call_count > 0);
+        assert!(lexer_stats.direct_set_cache_miss_count > 0);
+        assert_eq!(lexer_stats.direct_set_cache_hit_count, 0);
+        assert!(lexer_stats.stencil_execution_count(WeavyLexerStencilKind::LiteralSet) > 0);
+        assert_eq!(
+            lexer_stats.stencil_execution_count(WeavyLexerStencilKind::PatternDfaSet),
+            0
         );
         assert_eq!(
-            default_direct
-                .lexer_stats()
-                .stencil_execution_count(WeavyLexerStencilKind::PatternDfaSet),
-            0
+            lexer_stats.dominant_stencil_execution(),
+            Some(WeavyLexerExecutionSummary {
+                kind: WeavyLexerStencilKind::LiteralSet,
+                count: lexer_stats.stencil_execution_count(WeavyLexerStencilKind::LiteralSet),
+            })
         );
         #[cfg(all(
             feature = "jit",
