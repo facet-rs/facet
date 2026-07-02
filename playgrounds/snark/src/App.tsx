@@ -287,10 +287,34 @@ type PlaygroundResponse = {
 };
 
 const defaultFiles: BundleFile[] = vendoredFiles;
-const defaultGrammarRoot = defaultVendoredRootId;
 // One frame (~60fps). Leading-edge throttle interval for live re-parsing.
 const PARSE_THROTTLE_MS = 16;
-const defaultSample = preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
+
+// Hash routes: `#/vix` selects a grammar root, `#/vix/samples/lua.vix` a sample too.
+// Kept in sync both ways (replaceState on UI changes; hashchange applies inbound edits).
+function parseHashRoute(): { root: string; sample: string } | null {
+  const raw = window.location.hash.replace(/^#\/?/, "");
+  if (!raw) return null;
+  const [root, ...rest] = raw.split("/");
+  if (!root) return null;
+  return { root: decodeURIComponent(root), sample: rest.map(decodeURIComponent).join("/") };
+}
+
+function writeHashRoute(root: string, sample: string) {
+  const suffix = sample ? `/${sample.split("/").map(encodeURIComponent).join("/")}` : "";
+  window.history.replaceState(null, "", `#/${encodeURIComponent(root)}${suffix}`);
+}
+
+const initialRoute = parseHashRoute();
+const initialRouteValid =
+  initialRoute != null && discoverGrammarRoots(defaultFiles).some((root) => root.id === initialRoute.root);
+const defaultGrammarRoot = initialRouteValid ? initialRoute.root : defaultVendoredRootId;
+const routedSample = initialRouteValid
+  ? sourceExamplesForGrammarRootId(defaultFiles, defaultGrammarRoot).find(
+      (file) => file.path === initialRoute.sample,
+    )
+  : undefined;
+const defaultSample = routedSample ?? preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
 
 type PendingSourceEdit = {
   oldInput: string;
@@ -328,6 +352,36 @@ export function App() {
   const lastParseAtRef = useRef(0);
 
   const grammarRoots = useMemo(() => discoverGrammarRoots(files), [files]);
+
+  const applyGrammarRoot = (nextGrammarRoot: string, samplePath?: string) => {
+    const sample =
+      (samplePath
+        ? sourceExamplesForGrammarRootId(files, nextGrammarRoot).find((file) => file.path === samplePath)
+        : undefined) ?? preferredSampleForGrammarRootId(files, nextGrammarRoot);
+    autoTestedKeyRef.current = null;
+    bundledTestSnapshotRef.current = null;
+    preparedKeyRef.current = null;
+    baselineInputRef.current = null;
+    pendingSourceEditRef.current = null;
+    setSelectedGrammarRoot(nextGrammarRoot);
+    setSelectedSamplePath(sample?.path ?? "");
+    setInput(sample?.text ?? "");
+    setResult(null);
+    writeHashRoute(nextGrammarRoot, sample?.path ?? "");
+  };
+  const applyGrammarRootRef = useRef(applyGrammarRoot);
+  applyGrammarRootRef.current = applyGrammarRoot;
+
+  // Inbound routing: editing the URL hash (or following a #/vix link) applies the route.
+  useEffect(() => {
+    const onHashChange = () => {
+      const route = parseHashRoute();
+      if (!route) return;
+      applyGrammarRootRef.current(route.root, route.sample || undefined);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
   const activeGrammarRoot = useMemo(
     () => grammarRootForId(files, selectedGrammarRoot),
     [files, selectedGrammarRoot],
@@ -652,19 +706,7 @@ export function App() {
                 aria-label="Grammar root"
                 className="select"
                 value={activeGrammarRoot?.id ?? ""}
-                onChange={(event) => {
-                  const nextGrammarRoot = event.currentTarget.value;
-                  const nextSample = preferredSampleForGrammarRootId(files, nextGrammarRoot);
-                  autoTestedKeyRef.current = null;
-                  bundledTestSnapshotRef.current = null;
-                  preparedKeyRef.current = null;
-                  baselineInputRef.current = null;
-                  pendingSourceEditRef.current = null;
-                  setSelectedGrammarRoot(nextGrammarRoot);
-                  setSelectedSamplePath(nextSample?.path ?? "");
-                  setInput(nextSample?.text ?? "");
-                  setResult(null);
-                }}
+                onChange={(event) => applyGrammarRoot(event.currentTarget.value)}
               >
                 {grammarRoots.map((root) => (
                   <option key={root.id} value={root.id}>
@@ -682,6 +724,7 @@ export function App() {
                   const sample = sourceInputs.find((file) => file.path === event.currentTarget.value);
                   if (sample) {
                     updateSourceInput(sample.text, sample.path);
+                    writeHashRoute(selectedGrammarRoot, sample.path);
                   } else {
                     setSelectedSamplePath("");
                   }
