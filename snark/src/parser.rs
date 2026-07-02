@@ -4830,9 +4830,38 @@ pub struct ResolvedCstNode {
     named: bool,
     visible: bool,
     extra: bool,
-    text: Option<Arc<str>>,
+    text: Option<ResolvedCstText>,
     children: Vec<Self>,
 }
+
+#[derive(Clone)]
+struct ResolvedCstText {
+    source: Arc<str>,
+    bytes: ByteRange,
+}
+
+impl ResolvedCstText {
+    fn as_str(&self) -> Option<&str> {
+        source_slice(&self.source, self.bytes)
+    }
+}
+
+impl fmt::Debug for ResolvedCstText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.as_str() {
+            Some(text) => f.debug_tuple("ResolvedCstText").field(&text).finish(),
+            None => f.debug_tuple("ResolvedCstText").field(&self.bytes).finish(),
+        }
+    }
+}
+
+impl PartialEq for ResolvedCstText {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for ResolvedCstText {}
 
 impl ResolvedCstNode {
     /// Node or terminal kind.
@@ -4882,7 +4911,7 @@ impl ResolvedCstNode {
 
     /// Source text for terminal leaves.
     pub fn text(&self) -> Option<&str> {
-        self.text.as_deref()
+        self.text.as_ref().and_then(ResolvedCstText::as_str)
     }
 
     /// Child items, including anonymous terminals.
@@ -4902,7 +4931,7 @@ struct ResolvedCstItem {
     named: bool,
     visible: bool,
     extra: bool,
-    text: Option<Arc<str>>,
+    text: Option<ResolvedCstText>,
     order: usize,
     children: Vec<usize>,
 }
@@ -4910,6 +4939,7 @@ struct ResolvedCstItem {
 pub(crate) struct ResolvedCstBuilder<'a> {
     parser: &'a ParserGrammar,
     input: &'a str,
+    source: Arc<str>,
     names: ResolvedCstNames,
     field_by_child: Vec<Option<Arc<str>>>,
     item_indices_by_node: Vec<SmallVec<[usize; 1]>>,
@@ -4996,6 +5026,7 @@ impl<'a> ResolvedCstBuilder<'a> {
         Self {
             parser,
             input,
+            source: Arc::<str>::from(input),
             names: ResolvedCstNames::from_parser(parser),
             field_by_child: Vec::new(),
             item_indices_by_node: Vec::new(),
@@ -5023,9 +5054,8 @@ impl<'a> ResolvedCstBuilder<'a> {
                 named,
                 ..
             } => {
-                let text = source_slice(self.input, *bytes).map(Arc::<str>::from);
                 self.push_item(ResolvedCstItem {
-                    kind: self.symbol_kind(*symbol, text.as_deref()),
+                    kind: self.symbol_kind(*symbol, source_slice(self.input, *bytes)),
                     symbol: Some(*symbol),
                     field: None,
                     node: None,
@@ -5034,7 +5064,10 @@ impl<'a> ResolvedCstBuilder<'a> {
                     named: *named,
                     visible: true,
                     extra: *extra,
-                    text,
+                    text: Some(ResolvedCstText {
+                        source: Arc::clone(&self.source),
+                        bytes: *bytes,
+                    }),
                     order,
                     children: Vec::new(),
                 });
