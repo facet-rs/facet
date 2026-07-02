@@ -2011,7 +2011,6 @@ impl WeavyLexModeProgram {
         input: &str,
         byte_position: usize,
         ends: &mut Vec<Option<parser_ir::LexMatch>>,
-        matches: &mut PatternSet,
         terminal_indices: &mut Vec<usize>,
     ) {
         let Some(literal_set) = &self.direct_literal_set else {
@@ -2023,7 +2022,6 @@ impl WeavyLexModeProgram {
             literal_set,
             byte_position,
             ends,
-            matches,
             terminal_indices,
         );
     }
@@ -2427,8 +2425,8 @@ fn match_regex_automata_leaf(
 
 #[derive(Clone, Debug)]
 struct WeavyLiteralSet {
-    automaton: AutomataRegex,
-    literal_lengths: Vec<usize>,
+    literals: Vec<String>,
+    first_byte_indices: Vec<Vec<usize>>,
     terminal_indices: Vec<usize>,
 }
 
@@ -2467,53 +2465,54 @@ impl WeavyLiteralSet {
         if entries.is_empty() {
             return None;
         }
-        let literal_lengths = entries
+        let literals = entries
             .iter()
-            .map(|entry| entry.literal.len())
+            .map(|entry| entry.literal.clone())
             .collect::<Vec<_>>();
-        let regex_sources = entries
-            .iter()
-            .map(|entry| regex::escape(&entry.literal))
-            .collect::<Vec<_>>();
-        let regex_source_refs = regex_sources.iter().map(String::as_str).collect::<Vec<_>>();
-        let automaton = AutomataRegex::builder()
-            .configure(AutomataRegex::config().match_kind(RegexMatchKind::All))
-            .build_many(&regex_source_refs)
-            .ok()?;
+        let mut first_byte_indices = vec![Vec::new(); 256];
+        for (index, literal) in literals.iter().enumerate() {
+            let first = *literal
+                .as_bytes()
+                .first()
+                .expect("literal-set entries exclude empty strings");
+            first_byte_indices[first as usize].push(index);
+        }
         let terminal_indices = entries
             .iter()
             .map(|entry| entry.terminal_index)
             .collect::<Vec<_>>();
         Some(Self {
-            automaton,
-            literal_lengths,
+            literals,
+            first_byte_indices,
             terminal_indices,
         })
     }
 
     fn len(&self) -> usize {
-        self.automaton.pattern_len()
+        self.literals.len()
     }
 
-    fn for_each_match_with_set(
+    fn for_each_match(
         &self,
         input: &str,
         byte_position: usize,
-        matches: &mut PatternSet,
         mut visit: impl FnMut(usize, usize, usize),
     ) {
         let Some(haystack) = input.get(byte_position..) else {
             return;
         };
-        matches.clear();
-        let search = Input::new(haystack).anchored(Anchored::Yes);
-        self.automaton.which_overlapping_matches(&search, matches);
-        for pattern_id in matches.iter() {
-            let set_index = pattern_id.as_usize();
+        let Some(first) = input.as_bytes().get(byte_position) else {
+            return;
+        };
+        for &set_index in &self.first_byte_indices[*first as usize] {
+            let literal = &self.literals[set_index];
+            if !haystack.starts_with(literal) {
+                continue;
+            }
             visit(
                 set_index,
                 self.terminal_indices[set_index],
-                byte_position + self.literal_lengths[set_index],
+                byte_position + literal.len(),
             );
         }
     }
@@ -3625,7 +3624,6 @@ struct RuntimeWeavyStepperInput<'a> {
 struct RuntimeWeavyLexerScratch {
     cache_policy: RuntimeWeavyLexSetCachePolicy,
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
-    direct_literal_matches: RefCell<Vec<Option<PatternSet>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_matches: RefCell<Vec<Option<PatternSet>>>,
     direct_terminal_indices: RefCell<Vec<usize>>,
@@ -3639,7 +3637,6 @@ impl RuntimeWeavyLexerScratch {
         Self {
             cache_policy,
             direct_literal_ends: RefCell::default(),
-            direct_literal_matches: RefCell::default(),
             direct_pattern_ends: RefCell::default(),
             direct_pattern_matches: RefCell::default(),
             direct_terminal_indices: RefCell::default(),
@@ -3736,17 +3733,12 @@ impl RuntimeWeavyLexerScratch {
         self.direct_terminal_indices.borrow_mut().clear();
         {
             let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
-            let mut direct_literal_matches = self.direct_literal_matches.borrow_mut();
             let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
-            if let Some(literal_set) = &mode_program.direct_literal_set {
-                let direct_literal_matches =
-                    runtime_weavy_mode_slot(&mut direct_literal_matches, mode)
-                        .get_or_insert_with(|| PatternSet::new(literal_set.len()));
+            if mode_program.direct_literal_set.is_some() {
                 mode_program.match_direct_literals_with_set(
                     input,
                     byte_position,
                     &mut direct_literal_ends,
-                    direct_literal_matches,
                     &mut direct_terminal_indices,
                 );
             } else {
@@ -6852,21 +6844,14 @@ fn match_weavy_literal_set(
     mode: &WeavyLexModeProgram,
     byte_position: usize,
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
-    matches: &mut Option<PatternSet>,
+    _matches: &mut Option<PatternSet>,
     terminal_indices: &mut Vec<usize>,
 ) {
     let Some(literal_set) = &mode.direct_literal_set else {
         ends.clear();
         return;
     };
-    match_weavy_literal_set_with_matches(
-        input,
-        literal_set,
-        byte_position,
-        ends,
-        runtime_weavy_pattern_set(matches, literal_set.len()),
-        terminal_indices,
-    );
+    match_weavy_literal_set_with_matches(input, literal_set, byte_position, ends, terminal_indices);
 }
 
 fn match_weavy_literal_set_with_matches(
@@ -6874,22 +6859,16 @@ fn match_weavy_literal_set_with_matches(
     literal_set: &WeavyLiteralSet,
     byte_position: usize,
     ends: &mut Vec<Option<parser_ir::LexMatch>>,
-    matches: &mut PatternSet,
     terminal_indices: &mut Vec<usize>,
 ) {
     ends.clear();
     ends.resize(literal_set.len(), None);
-    literal_set.for_each_match_with_set(
-        input,
-        byte_position,
-        matches,
-        |set_index, terminal_index, end| {
-            if ends[set_index].is_none() {
-                terminal_indices.push(terminal_index);
-            }
-            ends[set_index] = Some(parser_ir::LexMatch::new(end, end));
-        },
-    );
+    literal_set.for_each_match(input, byte_position, |set_index, terminal_index, end| {
+        if ends[set_index].is_none() {
+            terminal_indices.push(terminal_index);
+        }
+        ends[set_index] = Some(parser_ir::LexMatch::new(end, end));
+    });
 }
 
 #[cfg(test)]
