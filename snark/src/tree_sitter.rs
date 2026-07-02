@@ -1175,7 +1175,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[0].name, "Universal selectors");
-        let weavy_report = parse_weavy_report_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1183,7 +1183,7 @@ mod tests {
             &selector_cases[0].input,
         );
 
-        assert_same!(weavy_report.tree(), &selector_cases[0].expected);
+        assert_same!(actual_tree, selector_cases[0].expected);
     }
 
     #[test]
@@ -1278,7 +1278,7 @@ mod tests {
         let selector_cases = selector_fixture.parse_cases().unwrap();
 
         assert_eq!(selector_cases[2].name, "Class selectors");
-        let weavy_report = parse_weavy_report_or_panic(
+        let actual_tree = parse_weavy_or_panic(
             grammar,
             &validated,
             &parser_grammar,
@@ -1286,7 +1286,7 @@ mod tests {
             &selector_cases[2].input,
         );
 
-        assert_same!(weavy_report.tree(), &selector_cases[2].expected);
+        assert_same!(actual_tree, selector_cases[2].expected);
     }
 
     #[test]
@@ -2501,14 +2501,14 @@ mod tests {
         let cases = main_fixture.parse_cases().unwrap();
 
         assert_eq!(cases[4].name, "Comments");
-        let weavy_report = parse_weavy_report_without_external_scanner_or_panic(
+        let actual_tree = parse_weavy_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
             &cases[4].input,
         );
 
-        assert_same!(weavy_report.tree(), &cases[4].expected);
+        assert_same!(actual_tree, cases[4].expected);
     }
     #[test]
     fn parses_json_leading_visible_extra_through_weavy_lowering() {
@@ -2526,7 +2526,7 @@ mod tests {
             .unwrap();
         let parse_table = ParseTable::from_grammar(&parser_grammar).unwrap();
         let input = "// leading\n{\"a\": 1}";
-        let weavy_report = parse_weavy_report_without_external_scanner_or_panic(
+        let actual_tree = parse_weavy_without_external_scanner_or_panic(
             &validated,
             &parser_grammar,
             &parse_table,
@@ -2534,7 +2534,7 @@ mod tests {
         );
 
         assert_eq!(
-            weavy_report.tree().to_sexp(),
+            actual_tree.to_sexp(),
             "(document (comment) (object (pair (string (string_content)) (number))))"
         );
     }
@@ -2700,27 +2700,6 @@ mod tests {
                 parse_table,
                 input,
                 None,
-            ),
-            parser_grammar,
-            parse_table,
-        )
-    }
-
-    fn parse_weavy_report_or_panic(
-        grammar: &ImportedGrammar,
-        validated: &ValidatedGrammar,
-        parser_grammar: &ParserGrammar,
-        parse_table: &ParseTable,
-        input: &str,
-    ) -> WeavyParseReport {
-        let scanner = CssExternalScannerHost::new(grammar, parser_grammar);
-        unwrap_weavy_report_or_panic(
-            parse_prepared_weavy_with_report_and_scanner(
-                &WeavyParsePlan::new(validated, parser_grammar, parse_table).unwrap(),
-                parser_grammar,
-                parse_table,
-                input,
-                Some(&scanner),
             ),
             parser_grammar,
             parse_table,
