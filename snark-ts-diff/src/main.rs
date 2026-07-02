@@ -57,7 +57,9 @@ use snark::{
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
-use snark::lower::weavy::parse_prepared_weavy_hostcalls_tree;
+use snark::lower::weavy::{
+    parse_prepared_weavy_hostcalls_tree, parse_prepared_weavy_hostcalls_with_report,
+};
 
 /// One prepared grammar: everything the parse entrypoint needs, built once so
 /// the timed loop measures only parsing, never grammar preparation.
@@ -302,6 +304,17 @@ fn collect_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyPars
 ))]
 fn hostcalls_once(p: &Prepared, input: &str) -> Result<(), WeavyParseError> {
     parse_prepared_weavy_hostcalls_tree(&p.plan, &p.parser, &p.table, input).map(|_| ())
+}
+
+#[cfg(all(
+    feature = "jit",
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+))]
+fn hostcalls_report_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_hostcalls_with_report(&p.plan, &p.parser, &p.table, input)
 }
 
 /// Best (min) recovering parse time in ms over `iters` runs, after one warm-up.
@@ -839,10 +852,13 @@ fn main() {
             let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
             let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
             let p = prepare(grammar_path);
-            if let Err(error) = hostcalls_once(&p, &input) {
-                eprintln!("Weavy hostcall parse failed: {error:?}");
-                std::process::exit(1);
-            }
+            let report = match hostcalls_report_once(&p, &input) {
+                Ok(report) => report,
+                Err(error) => {
+                    eprintln!("Weavy hostcall parse failed: {error:?}");
+                    std::process::exit(1);
+                }
+            };
             let best_ms = match best_hostcalls_ms(&p, &input, iters) {
                 Ok(best_ms) => best_ms,
                 Err(error) => {
@@ -855,6 +871,14 @@ fn main() {
                 "snark weavy hostcall parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
                 bytes as f64 / best_ms
             );
+            println!(
+                "accepted={} failed={} max_live={}",
+                report.accepted_count(),
+                report.failure_count(),
+                report.max_live_versions()
+            );
+            print_snark_execution_stats(&report);
+            print_lexer_execution_stats(&report);
             return;
         }
         #[cfg(not(all(
