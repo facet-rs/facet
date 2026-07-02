@@ -1016,6 +1016,7 @@ impl WeavySnarkExecutionStats {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RuntimeWeavySnarkExecutionStats {
+    enabled: bool,
     intrinsic_count: usize,
     descriptor_executions: [usize; SNARK_INTRINSIC_DESCRIPTOR_COUNT],
     domain_executions: [usize; SNARK_INTRINSIC_DOMAIN_COUNT],
@@ -1025,6 +1026,7 @@ struct RuntimeWeavySnarkExecutionStats {
 impl Default for RuntimeWeavySnarkExecutionStats {
     fn default() -> Self {
         Self {
+            enabled: true,
             intrinsic_count: 0,
             descriptor_executions: [0; SNARK_INTRINSIC_DESCRIPTOR_COUNT],
             domain_executions: [0; SNARK_INTRINSIC_DOMAIN_COUNT],
@@ -1034,7 +1036,17 @@ impl Default for RuntimeWeavySnarkExecutionStats {
 }
 
 impl RuntimeWeavySnarkExecutionStats {
+    fn disabled() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     fn record_intrinsic(&mut self, intrinsic: &SnarkIntrinsic) {
+        if !self.enabled {
+            return;
+        }
         let keys = intrinsic.runtime_execution_keys();
         self.intrinsic_count += 1;
         self.descriptor_executions[snark_intrinsic_descriptor_index(keys.descriptor)] += 1;
@@ -5271,6 +5283,7 @@ trait RuntimeWeavyDeterministicSink {
     type Output;
 
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection;
+    const SNARK_STAT_COLLECTION: bool;
 
     #[allow(clippy::too_many_arguments)]
     fn accepted(
@@ -5298,6 +5311,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicTreeSink {
 
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
         RuntimeWeavyTreeEventCollection::Disabled;
+    const SNARK_STAT_COLLECTION: bool = false;
 
     fn accepted(
         _input_ctx: RuntimeWeavyInput<'_>,
@@ -5326,6 +5340,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
 
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
         RuntimeWeavyTreeEventCollection::Enabled;
+    const SNARK_STAT_COLLECTION: bool = false;
 
     fn accepted(
         input_ctx: RuntimeWeavyInput<'_>,
@@ -5356,6 +5371,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
 
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
         RuntimeWeavyTreeEventCollection::Enabled;
+    const SNARK_STAT_COLLECTION: bool = true;
 
     fn accepted(
         _input_ctx: RuntimeWeavyInput<'_>,
@@ -6479,7 +6495,11 @@ where
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let external_scanner_errors = RefCell::new(Vec::new());
     let mut stats = RunStats::default();
-    let mut snark_stats = RuntimeWeavySnarkExecutionStats::default();
+    let mut snark_stats = if S::SNARK_STAT_COLLECTION {
+        RuntimeWeavySnarkExecutionStats::default()
+    } else {
+        RuntimeWeavySnarkExecutionStats::disabled()
+    };
     let mut hostcall_stats = WeavyHostCallExecutionStats::default();
     let mut next_lookahead_index = 0usize;
     let mut step_count = 0usize;
