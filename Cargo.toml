@@ -2,6 +2,7 @@
 members = [
   "gingembre-snark-spike",
   "snark-ts-diff",
+  "vix",
   # core
   "facet-core",
   "facet",

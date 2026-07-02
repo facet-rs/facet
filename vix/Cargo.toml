@@ -1,0 +1,22 @@
+# vix — the build language. v0: the grammar-derived typed AST over snark's parser.
+#
+# The grammar (playgrounds/snark/src/bundled/vix/grammar.js) is the single source of
+# truth: build.rs derives the typed AST *and* its resolved-CST lowering from it. The
+# same grammar file drives the playground. Nobody hand-writes the AST.
+
+[package]
+name = "vix"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "The vix build language: grammar-derived typed AST over snark."
+
+[dependencies]
+snark = { path = "../snark", features = ["json-import"] }
+facet = { path = "../facet" }
+
+[build-dependencies]
+snark = { path = "../snark", features = ["json-import"] }
+snark-dsl = { path = "../snark-dsl", features = ["native"] }
+facet = { path = "../facet" }
+facet-json = { path = "../facet-json" }
