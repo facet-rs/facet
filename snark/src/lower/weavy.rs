@@ -5324,6 +5324,21 @@ pub struct WeavyParseReport {
     max_live_versions: usize,
 }
 
+/// Consumer for accepted Weavy tree events.
+pub trait WeavyTreeEventSink {
+    /// Consume one tree event from the accepted branch lineage.
+    fn tree_event(&mut self, event: &parser_ir::TreeEvent);
+}
+
+impl<F> WeavyTreeEventSink for F
+where
+    F: FnMut(&parser_ir::TreeEvent),
+{
+    fn tree_event(&mut self, event: &parser_ir::TreeEvent) {
+        self(event);
+    }
+}
+
 impl WeavyParseReport {
     /// Corpus-normalized accepted runtime tree.
     pub const fn tree(&self) -> &SexpNode {
@@ -5350,16 +5365,23 @@ impl WeavyParseReport {
         self.accepted_version
     }
 
-    /// Tree events emitted by the accepted branch lineage.
-    pub fn accepted_tree_events(&self) -> Vec<parser_ir::TreeEvent> {
-        if self.trace_events.is_empty() {
-            return self.tree_events.clone();
-        }
-        parser_ir::tree_events_for_version_lineage(
+    /// Replay tree events from the accepted branch lineage into a caller-owned sink.
+    pub fn replay_accepted_tree_events(&self, sink: &mut impl WeavyTreeEventSink) {
+        parser_ir::visit_tree_events_for_version_lineage(
             self.accepted_version,
             &self.trace_events,
             &self.tree_events,
-        )
+            |event| sink.tree_event(event),
+        );
+    }
+
+    /// Tree events emitted by the accepted branch lineage.
+    pub fn accepted_tree_events(&self) -> Vec<parser_ir::TreeEvent> {
+        let mut events = Vec::new();
+        self.replay_accepted_tree_events(&mut |event: &parser_ir::TreeEvent| {
+            events.push(event.clone());
+        });
+        events
     }
 
     /// Accepted runtime tree with anonymous terminals and source ranges preserved.
@@ -10569,6 +10591,16 @@ mod tests {
             metered.accepted_tree_events(),
             default_direct.accepted_tree_events()
         );
+        let mut replayed_metered = Vec::new();
+        metered.replay_accepted_tree_events(&mut |event: &parser_ir::TreeEvent| {
+            replayed_metered.push(event.clone());
+        });
+        assert_eq!(replayed_metered, metered.accepted_tree_events());
+        let mut replayed_direct = Vec::new();
+        default_direct.replay_accepted_tree_events(&mut |event: &parser_ir::TreeEvent| {
+            replayed_direct.push(event.clone());
+        });
+        assert_eq!(replayed_direct, default_direct.accepted_tree_events());
         assert_eq!(metered.tree(), recovering_direct.tree());
         assert_eq!(recovering_direct.accepted_count(), 1);
         assert_eq!(recovering_direct.failure_count(), 0);

@@ -5222,17 +5222,25 @@ fn parser_symbol_kind(
     }
 }
 
-pub(crate) fn tree_events_for_version_lineage(
+pub(crate) fn visit_tree_events_for_version_lineage(
     accepted_version: StackVersionId,
     trace_events: &[TraceEvent],
     tree_events: &[TreeEvent],
-) -> Vec<TreeEvent> {
+    mut visit: impl FnMut(&TreeEvent),
+) {
+    if trace_events.is_empty() {
+        for event in tree_events {
+            visit(event);
+        }
+        return;
+    }
     let lineage = stack_version_lineage(accepted_version, trace_events);
-    tree_events
+    for event in tree_events
         .iter()
         .filter(|event| lineage.contains(&event.version()))
-        .cloned()
-        .collect()
+    {
+        visit(event);
+    }
 }
 
 fn stack_version_lineage(
