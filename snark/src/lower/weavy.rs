@@ -8995,18 +8995,19 @@ impl<'a> RuntimeWeavyStepper<'a> {
             expected: RuntimeWeavyExpected::Empty,
         })?;
         let start = self.committed_start.take().unwrap_or(self.byte_position);
-        let (bytes, points) = runtime_weavy_input_ranges(self.input_points, start, token.end);
-        let event = parser_ir::TreeEvent::Token {
-            version: self.version,
-            symbol: runtime_weavy_lookahead_parser_symbol(token.lookahead),
-            lookahead: self.lookahead_id,
-            bytes,
-            points,
-            extra: false,
-            named: false,
-            keyword: parser_ir::KeywordStatus::Unchecked,
-        };
-        self.emit_runtime_tree_event(event);
+        if self.collects_runtime_tree_events() {
+            let (bytes, points) = runtime_weavy_input_ranges(self.input_points, start, token.end);
+            self.emit_runtime_tree_event(parser_ir::TreeEvent::Token {
+                version: self.version,
+                symbol: runtime_weavy_lookahead_parser_symbol(token.lookahead),
+                lookahead: self.lookahead_id,
+                bytes,
+                points,
+                extra: false,
+                named: false,
+                keyword: parser_ir::KeywordStatus::Unchecked,
+            });
+        }
         trace_push!(
             self.trace_events,
             parser_ir::TraceEvent::Shift {
@@ -9049,7 +9050,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             expected: RuntimeWeavyExpected::Empty,
         })?;
         let start = self.committed_start.take().unwrap_or(self.byte_position);
-        if let Some((fragment, events)) = self.runtime_extra_fragment(
+        if let Some(fragment) = self.runtime_extra_fragment(
             self.version,
             token.lookahead,
             start,
@@ -9057,7 +9058,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
             token.inspected_end,
             self.scanner_snapshot,
         ) {
-            self.emit_runtime_tree_events(events);
             self.stack.to_mut().push(RuntimeWeavyStackEntry {
                 state,
                 fragment: Some(fragment),
@@ -9726,6 +9726,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut lookahead_end_byte = end_byte;
         let mut start_scanner_snapshot = None;
         let mut saw_fragment = false;
+        let collect_tree_events = self.collects_runtime_tree_events();
         let mut field_events = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
@@ -9763,23 +9764,28 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         }
                     }
                     let alias_node = self.tree_store.push_empty_node(alias_name);
-                    let (bytes, points) =
-                        runtime_weavy_input_ranges(self.input_points, alias_range.0, alias_range.1);
-                    self.emit_runtime_tree_event(parser_ir::TreeEvent::Alias {
-                        version: self.version,
-                        node: alias_node,
-                        alias,
-                        named,
-                        structural_index: remaining_children,
-                        bytes,
-                        points,
-                    });
+                    if collect_tree_events {
+                        let (bytes, points) = runtime_weavy_input_ranges(
+                            self.input_points,
+                            alias_range.0,
+                            alias_range.1,
+                        );
+                        self.emit_runtime_tree_event(parser_ir::TreeEvent::Alias {
+                            version: self.version,
+                            node: alias_node,
+                            alias,
+                            named,
+                            structural_index: remaining_children,
+                            bytes,
+                            points,
+                        });
+                    }
                     if named {
                         field_child = Some(alias_node);
                         step_visible_nodes = self.tree_store.child_node(None, alias_node);
                     }
                 }
-                if let Some(field) = step.field() {
+                if collect_tree_events && let Some(field) = step.field() {
                     field_events.push((remaining_children, field, field_child));
                 }
                 visible_nodes = self
@@ -9807,24 +9813,26 @@ impl<'a> RuntimeWeavyStepper<'a> {
         if let Some(public_node) = metadata_row.public_node() {
             let kind = Arc::clone(&self.plan.public_node_kind_names[public_node.get() as usize]);
             let node = self.tree_store.push_node(kind, children);
-            let (bytes, points) =
-                runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
-            self.emit_runtime_tree_event(parser_ir::TreeEvent::Reduce {
-                version: self.version,
-                production,
-                metadata,
-                node,
-                bytes,
-                points,
-            });
-            for (structural_index, field, child) in field_events {
-                self.emit_runtime_tree_event(parser_ir::TreeEvent::Field {
+            if collect_tree_events {
+                let (bytes, points) =
+                    runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
+                self.emit_runtime_tree_event(parser_ir::TreeEvent::Reduce {
                     version: self.version,
+                    production,
+                    metadata,
                     node,
-                    child,
-                    field,
-                    structural_index,
+                    bytes,
+                    points,
                 });
+                for (structural_index, field, child) in field_events {
+                    self.emit_runtime_tree_event(parser_ir::TreeEvent::Field {
+                        version: self.version,
+                        node,
+                        child,
+                        field,
+                        structural_index,
+                    });
+                }
             }
             Ok(RuntimeWeavyReduction {
                 fragment: RuntimeWeavyFragment::Node {
@@ -9851,6 +9859,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
         }
     }
 
+    fn collects_runtime_tree_events(&self) -> bool {
+        self.tree_event_collection == RuntimeWeavyTreeEventCollection::Enabled
+    }
+
     fn emit_runtime_tree_event(&mut self, event: parser_ir::TreeEvent) {
         if self.tree_event_collection == RuntimeWeavyTreeEventCollection::Disabled {
             return;
@@ -9864,15 +9876,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
         }
     }
 
-    fn emit_runtime_tree_events<I>(&mut self, events: I)
-    where
-        I: IntoIterator<Item = parser_ir::TreeEvent>,
-    {
-        for event in events {
-            self.emit_runtime_tree_event(event);
-        }
-    }
-
     fn runtime_extra_fragment(
         &mut self,
         version: parser_ir::StackVersionId,
@@ -9881,29 +9884,29 @@ impl<'a> RuntimeWeavyStepper<'a> {
         end_byte: usize,
         lookahead_end_byte: usize,
         start_scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
-    ) -> Option<(RuntimeWeavyFragment, Vec<parser_ir::TreeEvent>)> {
+    ) -> Option<RuntimeWeavyFragment> {
         let extra_node = self.plan.extra_node_index.get(lookahead)?;
         let node = self
             .tree_store
             .push_empty_node(Arc::clone(&extra_node.kind));
-        let (bytes, points) = runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
-        let tree_event = parser_ir::TreeEvent::CloseNode {
-            version,
-            node,
-            public_node: Some(extra_node.public_node),
-            bytes,
-            points,
-        };
-        Some((
-            RuntimeWeavyFragment::Node {
+        if self.collects_runtime_tree_events() {
+            let (bytes, points) =
+                runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
+            self.emit_runtime_tree_event(parser_ir::TreeEvent::CloseNode {
+                version,
                 node,
-                start_byte,
-                end_byte,
-                lookahead_end_byte,
-                start_scanner_snapshot,
-            },
-            vec![tree_event],
-        ))
+                public_node: Some(extra_node.public_node),
+                bytes,
+                points,
+            });
+        }
+        Some(RuntimeWeavyFragment::Node {
+            node,
+            start_byte,
+            end_byte,
+            lookahead_end_byte,
+            start_scanner_snapshot,
+        })
     }
 
     fn finish_runtime_root(
