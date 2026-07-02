@@ -1719,12 +1719,12 @@ fn debug_jit() {
     );
     println!(
         "\nRegistered with the GDB/LLDB JIT interface (in-memory ELF + .symtab + .debug_line).\n\
-         Tool-independent proof (any DWARF consumer): dump + dwarfdump the JIT ELF —\n\
-         \x20 KAJIT_DEBUG_DUMP_ELF_DIR=/tmp/jitelf <this-bin> --debug\n\
-         \x20 dwarfdump --debug-line /tmp/jitelf/*.elf     # addr -> listing line, verified\n\
-         gdb (Linux) source-steps the JIT'd code line-by-line through the listing; macOS lldb's\n\
-         gdb-jit loader is finicky (needs `settings set plugin.jit-loader.gdb.enable on`), but\n\
-         the emitted DWARF is standard + correct.\n"
+         Source-level debug the JIT'd code (VERIFIED in lldb — stops in the stencil for `2 * 3`):\n\
+         \x20 lldb -o 'settings set plugin.jit-loader.gdb.enable on' -o 'b {file_name}:4' \\\n\
+         \x20      -o run -o 'source list' -o 'bt' -- <this-bin> --debug\n\
+         The breakpoint binds when the JIT registers; lldb stops IN the native stencil at listing\n\
+         line 4 (op3 `2 * 3`) and the backtrace threads the JIT frame back into Rust `main`.\n\
+         Tool-independent too: KAJIT_DEBUG_DUMP_ELF_DIR=/tmp/jitelf then dwarfdump --debug-line.\n"
     );
 
     // Run the JIT'd code once (a live registration exists while `_reg` is in scope).
