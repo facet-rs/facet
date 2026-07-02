@@ -9325,9 +9325,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 Ok(())
             },
         )?;
-        if let Some(candidate) = best {
+        if let Some(candidate) = &best {
             best_rejected = best_rejected.filter(|rejected| {
-                runtime_weavy_candidate_order(*rejected, candidate)
+                runtime_weavy_candidate_order(rejected, candidate)
                     == RuntimeWeavyCandidateOrder::Greater
             });
         }
@@ -9895,7 +9895,7 @@ struct RuntimeWeavyToken {
     scanner: Option<ExternalScanResult>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct RuntimeWeavyTokenCandidate {
     lookahead: parser_ir::LookaheadSymbol,
     end: usize,
@@ -9917,8 +9917,8 @@ enum RuntimeWeavyCandidateOrder {
 }
 
 fn runtime_weavy_candidate_order(
-    left: RuntimeWeavyTokenCandidate,
-    right: RuntimeWeavyTokenCandidate,
+    left: &RuntimeWeavyTokenCandidate,
+    right: &RuntimeWeavyTokenCandidate,
 ) -> RuntimeWeavyCandidateOrder {
     if left.immediate && !left.extra && right.extra {
         return RuntimeWeavyCandidateOrder::Greater;
@@ -9968,7 +9968,7 @@ fn push_runtime_weavy_candidate(
 ) {
     match candidate_slot {
         Some(current)
-            if runtime_weavy_candidate_order(*current, candidate)
+            if runtime_weavy_candidate_order(current, &candidate)
                 != RuntimeWeavyCandidateOrder::Less => {}
         _ => *candidate_slot = Some(candidate),
     }
@@ -11828,11 +11828,11 @@ mod tests {
         );
 
         assert_eq!(
-            runtime_weavy_candidate_order(immediate_string, direct_string),
+            runtime_weavy_candidate_order(&immediate_string, &direct_string),
             RuntimeWeavyCandidateOrder::Greater
         );
         assert_eq!(
-            runtime_weavy_candidate_order(direct_string, immediate_string),
+            runtime_weavy_candidate_order(&direct_string, &immediate_string),
             RuntimeWeavyCandidateOrder::Less
         );
     }
@@ -11858,11 +11858,11 @@ mod tests {
         );
 
         assert_eq!(
-            runtime_weavy_candidate_order(structured_line, low_precedence_context),
+            runtime_weavy_candidate_order(&structured_line, &low_precedence_context),
             RuntimeWeavyCandidateOrder::Greater
         );
         assert_eq!(
-            runtime_weavy_candidate_order(low_precedence_context, structured_line),
+            runtime_weavy_candidate_order(&low_precedence_context, &structured_line),
             RuntimeWeavyCandidateOrder::Less
         );
     }
@@ -11889,11 +11889,11 @@ mod tests {
         );
 
         assert_eq!(
-            runtime_weavy_candidate_order(external_token, internal_string),
+            runtime_weavy_candidate_order(&external_token, &internal_string),
             RuntimeWeavyCandidateOrder::Greater
         );
         assert_eq!(
-            runtime_weavy_candidate_order(internal_string, external_token),
+            runtime_weavy_candidate_order(&internal_string, &external_token),
             RuntimeWeavyCandidateOrder::Less
         );
     }
@@ -11919,11 +11919,11 @@ mod tests {
         );
 
         assert_eq!(
-            runtime_weavy_candidate_order(immediate_content, comment_extra),
+            runtime_weavy_candidate_order(&immediate_content, &comment_extra),
             RuntimeWeavyCandidateOrder::Greater
         );
         assert_eq!(
-            runtime_weavy_candidate_order(comment_extra, immediate_content),
+            runtime_weavy_candidate_order(&comment_extra, &immediate_content),
             RuntimeWeavyCandidateOrder::Less
         );
     }
