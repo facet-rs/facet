@@ -852,7 +852,13 @@ fn diagnose(
     // — wide glyphs (CJK/emoji) take two cells, combining marks take zero, so the caret stays
     // aligned regardless of what precedes the error.
     use unicode_width::UnicodeWidthChar;
-    let caret_pad: String = line_text[..(byte_col - 1).min(line_text.len())]
+    // Defensive: error offsets come from the lexer and sit on char boundaries, but a diagnostic
+    // renderer must never panic — walk back to a boundary if a bad offset ever arrives.
+    let mut prefix_end = (byte_col - 1).min(line_text.len());
+    while !line_text.is_char_boundary(prefix_end) {
+        prefix_end -= 1;
+    }
+    let caret_pad: String = line_text[..prefix_end]
         .chars()
         .flat_map(|c| {
             if c == '\t' {
@@ -871,7 +877,15 @@ fn diagnose(
     writeln!(out, "{line} | {line_text}").unwrap();
     writeln!(out, "{pad} | {caret_pad}^").unwrap();
     if !expected.is_empty() {
-        writeln!(out, "{pad} = expected: {}", expected.join(", ")).unwrap();
+        // Cap the detail list: past a dozen candidates it's a wall, not guidance.
+        const MAX_EXPECTED: usize = 12;
+        let shown = expected.len().min(MAX_EXPECTED);
+        let more = expected.len() - shown;
+        let mut list = expected[..shown].join(", ");
+        if more > 0 {
+            list.push_str(&format!(" (+{more} more)"));
+        }
+        writeln!(out, "{pad} = expected: {list}").unwrap();
     }
     if !in_progress.is_empty() {
         writeln!(out, "{pad} = while parsing: {}", in_progress.join(", ")).unwrap();
@@ -1689,10 +1703,9 @@ fn speculate() {
     // the guard stencil before the bet is taken.
     let _spec_reg = register_spec_program(&native, &ops, &vars, &starts, done, "snark-spec.listing", "i64");
     println!("expr: {expr}   speculative program: {ops:?}   vars: {vars:?}");
-    println!(
-        "debugger: registered (break ON the guard: `breakpoint set -f snark-spec.listing -l 1 -K false`\n\
-         \x20— -K false stops at the stencil's first instruction instead of sliding past it)\n"
-    );
+    // (Every line-table row carries prologue_end, so a plain source breakpoint stops at the
+    // stencil's first instruction — no prologue slide, no `-K false`.)
+    println!("debugger: registered (break ON the guard: `b snark-spec.listing:1`)\n");
 
     // Resolve each variable to a guard slot (tag + unboxed bits) from a gingembre value.
     let slots_for = |x: &Value| -> Vec<SpecVarSlot> { vars.iter().map(|_| tag_of(x)).collect() };
@@ -2054,7 +2067,7 @@ fn debug_jit() {
          \x20      -o 'breakpoint set -f {file_name} -l 1 -u 8' \\\n\
          \x20      -o run -o 'frame info' -o 'bt' -- <this-bin> --debug\n\
          (column 8 = `2 * 3`; lldb stops in that op's native stencil.)\n\
-         Tool-independent: KAJIT_DEBUG_DUMP_ELF_DIR=/tmp/jitelf then dwarfdump --debug-line shows\n\
+         Tool-independent: WEAVY_JIT_DUMP_ELF_DIR=/tmp/jitelf then dwarfdump --debug-line shows\n\
          the Column field populated per op.\n"
     );
 

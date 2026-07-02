@@ -1,12 +1,24 @@
-//! DWARF preparation utilities for JIT code.
+//! Hand-rolled DWARF v4 emission for JIT code (no gimli dependency).
 //!
-//! This module has two layers:
-//! - `JitDebugInfo`, a structured debug-info model owned by the compiler.
-//! - a DWARF v4 serializer that lowers that model to ELF sections.
+//! Two layers:
+//! - [`JitDebugInfo`], a structured debug-info model (line table, subprogram, variables,
+//!   lexical blocks) owned by the compiler that produced the code.
+//! - a DWARF v4 serializer lowering that model to ELF section bytes
+//!   (`.debug_line`/`.debug_abbrev`/`.debug_info`/`.debug_loc`/`.debug_ranges`), consumed by
+//!   [`super::debug::register_jit_code_with_dwarf`].
 //!
-//! SALVAGED from bearcove/kajit (scrapped): hand-rolled DWARF v4 (.debug_line PC->source line,
-//! abbrev, info). We use the `build_jit_dwarf_sections` line-mapping subset for the stencil JIT.
-//! Style lints allowed as vendored code (we call a subset; the shape is kajit's).
+//! The common entry is [`build_jit_dwarf_sections`]: a `source_map` of
+//! `(code_offset, line_index, column)` triples (line = index + 1; column 1-based, 0 = none)
+//! becomes a `.debug_line` program of `advance_pc`/`advance_line`/`set_column` rows. Columns
+//! let one source line carry many JIT regions — each sub-expression of a template line, say —
+//! so the *real* source file can be the debug source. Every row also sets `prologue_end`
+//! (JIT stencils have no prologue; without it debuggers slide breakpoints past a region's
+//! first instruction). Offsets must be strictly increasing;
+//! [`super::debug::register_jit_source`] sorts for you.
+//!
+//! Provenance: salvaged from bearcove/kajit (scrapped) and adopted here; the variable/location
+//! machinery (`DwarfVariable`, `.debug_loc`) is carried along unused for now. Style lints
+//! allowed as vendored code.
 #![allow(dead_code, clippy::too_many_arguments, clippy::enum_variant_names)]
 
 /// A relocation needed in a DWARF section: an 8-byte absolute address
@@ -145,6 +157,7 @@ const DW_LNS_COPY: u8 = 1;
 const DW_LNS_ADVANCE_PC: u8 = 2;
 const DW_LNS_ADVANCE_LINE: u8 = 3;
 const DW_LNS_SET_COLUMN: u8 = 5;
+const DW_LNS_SET_PROLOGUE_END: u8 = 10;
 
 const DW_LNE_END_SEQUENCE: u8 = 1;
 const DW_LNE_SET_ADDRESS: u8 = 2;
@@ -1027,6 +1040,10 @@ pub fn build_debug_line_section(
             current_column = column;
         }
 
+        // Every row is a recommended breakpoint location: JIT stencils have no prologue, so
+        // without this debuggers "skip the prologue" past a region's first instruction (lldb
+        // otherwise needs `breakpoint set ... -K false`).
+        program.push(DW_LNS_SET_PROLOGUE_END);
         program.push(DW_LNS_COPY);
     }
 
@@ -1178,6 +1195,7 @@ mod tests {
                 DW_LNS_SET_COLUMN => {
                     column = parse_uleb(section, &mut program_i);
                 }
+                DW_LNS_SET_PROLOGUE_END => {}
                 DW_LNS_COPY => rows.push((address, line, column)),
                 other => panic!("unexpected standard opcode {other}"),
             }

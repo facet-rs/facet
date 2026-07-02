@@ -1,27 +1,37 @@
-//! GDB JIT Interface — registers JIT-compiled code with debuggers.
+//! GDB/LLDB JIT interface + profiler artifacts for Weavy JIT'd code.
 //!
-//! Generates a minimal in-memory ELF with symbol table entries so that GDB/LLDB
-//! can display function names in backtraces instead of `???`.
+//! Three ways out of "anonymous executable buffer", from highest- to lowest-level tooling:
+//!
+//! - [`register_jit_source`] — the facade. Builds an in-memory ELF (`.symtab` per region +
+//!   DWARF `.debug_line` mapping code ranges to source line:column) and registers it through
+//!   the GDB JIT interface (`__jit_debug_descriptor` + `__jit_debug_register_code`), so
+//!   debuggers resolve JIT'd PCs to source, take source/column breakpoints, and backtrace
+//!   through JIT frames. Keep the returned [`JitRegistration`] alive while the code can run;
+//!   dropping it unregisters. Also appends `/tmp/perf-<pid>.map`.
+//! - [`write_jitdump`] — a perf **jitdump** (`/tmp/jit-<pid>.dump`, one `JIT_CODE_LOAD` per
+//!   region with the actual code bytes), which `perf` and stax tail to symbolicate and
+//!   per-instruction-annotate JIT'd code. Timestamps use wall-clock nanoseconds, not
+//!   `CLOCK_MONOTONIC` as the spec strictly wants — fine for consumers that don't order
+//!   samples against load records (stax), before-the-samples loads, or same-clock setups.
+//! - [`register_jit_code`]/[`register_jit_code_with_dwarf`] — the underlying ELF builder for
+//!   callers that construct their own [`jit_dwarf` sections](super::dwarf).
 //!
 //! Reference: <https://sourceware.org/gdb/current/onlinedocs/gdb.html/JIT-Interface.html>
 //!
 //! LLDB notes (macOS)
 //! ------------------
-//! LLDB keeps the GDB JIT loader disabled by default on macOS. Enable it:
+//! LLDB keeps the GDB JIT loader disabled by default on macOS. Enable it first:
 //!
 //! `settings set plugin.jit-loader.gdb.enable on`
 //!
-//! This module emits a minimal JIT ELF (`.text` + symbol table). Symbol names
-//! are available (for example `kajit::decode::...`), but `thread backtrace` may
-//! still show raw PCs for top JIT frames. Use explicit lookup when debugging:
+//! Then source breakpoints on the registered file bind when the JIT registers
+//! (`b template.jinja:4`, or by column: `breakpoint set -f template.jinja -l 1 -u 8`), and
+//! `image lookup -a <pc>` resolves a crashing JIT PC to its symbol + source line. Set
+//! `WEAVY_JIT_DUMP_ELF_DIR=<dir>` to dump each registered ELF for offline inspection
+//! (`dwarfdump --debug-line <dir>/*.elf`).
 //!
-//! - `image list` (confirm a `JIT(...)` image is loaded)
-//! - `image lookup -a <pc>` (resolve the crashing JIT PC)
-//! - `image lookup -rn 'kajit::decode::'` (list registered decode symbols)
-//! - `image lookup -rn 'kajit::encode::'` (list registered encode symbols)
-//!
-//! SALVAGED from bearcove/kajit (scrapped): the GDB/LLDB JIT interface + in-memory ELF builder,
-//! reused ~verbatim to give the stencil JIT real debugger support.
+//! Provenance: salvaged from bearcove/kajit (scrapped) and adopted here; `allow(dead_code)`
+//! because consumers use a subset of the salvaged API.
 #![allow(dead_code)]
 
 use std::io::Write;
@@ -232,6 +242,11 @@ pub fn register_jit_source(
     directory: Option<&str>,
     symbols: &[JitSourceSymbol],
 ) -> Result<JitRegistration, super::dwarf::DwarfPrepError> {
+    // The DWARF line program requires strictly increasing code offsets; callers emit stencils
+    // in whatever order suits them, so sort here instead of making it their problem.
+    let mut symbols: Vec<&JitSourceSymbol> = symbols.iter().collect();
+    symbols.sort_by_key(|s| s.offset);
+
     let entries: Vec<JitSymbolEntry> = symbols
         .iter()
         .map(|s| JitSymbolEntry { name: s.name.clone(), offset: s.offset, size: s.size })
@@ -307,7 +322,7 @@ const ELF_MACHINE_JITDUMP: u32 = 62; // EM_X86_64
 const ELF_MACHINE_JITDUMP: u32 = 0;
 
 fn maybe_dump_jit_elf(elf: &[u8], symbols: &[JitSymbolEntry]) {
-    let Ok(dir) = std::env::var("KAJIT_DEBUG_DUMP_ELF_DIR") else {
+    let Ok(dir) = std::env::var("WEAVY_JIT_DUMP_ELF_DIR") else {
         return;
     };
     let path = std::path::Path::new(&dir);
@@ -859,5 +874,74 @@ mod tests {
         assert!(mangled.starts_with("_R"));
         assert!(mangled.contains("Nv"));
         assert!(mangled.contains("C5kajit"));
+    }
+
+    #[test]
+    fn register_jit_source_accepts_unsorted_symbols_and_unregisters_on_drop() {
+        // A stand-in "code buffer" — registration never executes it.
+        let code = vec![0u8; 24];
+        // Deliberately UNSORTED by offset: the facade must sort before building .debug_line
+        // (which requires strictly increasing offsets).
+        let symbols = vec![
+            JitSourceSymbol { name: "jit::b".into(), offset: 8, size: 8, line: 1, column: 9 },
+            JitSourceSymbol { name: "jit::a".into(), offset: 0, size: 8, line: 1, column: 4 },
+            JitSourceSymbol { name: "jit::c".into(), offset: 16, size: 8, line: 2, column: 0 },
+        ];
+        let reg = register_jit_source(code.as_ptr(), code.len(), "t.jinja", None, &symbols)
+            .expect("register with unsorted symbols");
+
+        // The registration is linked into the GDB JIT descriptor while alive...
+        unsafe {
+            let first = __jit_debug_descriptor.first_entry;
+            assert!(!first.is_null());
+            assert_eq!((*first).symfile_size as usize, reg._elf.len());
+        }
+        drop(reg);
+        // ...and unlinked once dropped (nextest = one process per test, no cross-talk).
+        unsafe {
+            assert!(__jit_debug_descriptor.first_entry.is_null());
+        }
+    }
+
+    #[test]
+    fn write_jitdump_round_trips_records() {
+        let code: Vec<u8> = (0u8..32).collect();
+        let symbols = vec![
+            JitSourceSymbol { name: "jit::op0 [1 + 2]".into(), offset: 0, size: 16, line: 1, column: 4 },
+            JitSourceSymbol { name: "jit::op1 [3]".into(), offset: 16, size: 16, line: 1, column: 8 },
+        ];
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("weavy-jitdump-test-{}.dump", std::process::id()));
+        let path = path.to_str().unwrap();
+        // SAFETY: offsets/sizes lie within `code`, which outlives the call.
+        unsafe { write_jitdump(path, code.as_ptr(), &symbols) }.expect("write jitdump");
+
+        // Re-parse per the perf jitdump spec (and stax's tailer): 40-byte header with the
+        // "JiTD" magic, then JIT_CODE_LOAD records: id/total_size/timestamp + payload of
+        // pid/tid/vma/code_addr/code_size/code_index + name\0 + code bytes.
+        let bytes = std::fs::read(path).unwrap();
+        std::fs::remove_file(path).ok();
+        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 0x4A69_5444);
+        let mut cur = 40;
+        let mut seen = Vec::new();
+        while cur + 16 <= bytes.len() {
+            let id = u32::from_le_bytes(bytes[cur..cur + 4].try_into().unwrap());
+            let total = u32::from_le_bytes(bytes[cur + 4..cur + 8].try_into().unwrap()) as usize;
+            assert_eq!(id, 0, "JIT_CODE_LOAD");
+            let p = &bytes[cur + 16..cur + total];
+            let vma = u64::from_le_bytes(p[8..16].try_into().unwrap());
+            let size = u64::from_le_bytes(p[24..32].try_into().unwrap());
+            let nul = p[40..].iter().position(|&b| b == 0).unwrap();
+            let name = String::from_utf8_lossy(&p[40..40 + nul]).into_owned();
+            let code_bytes = &p[40 + nul + 1..40 + nul + 1 + size as usize];
+            seen.push((vma, size, name, code_bytes.to_vec()));
+            cur += total;
+        }
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].0, code.as_ptr() as u64);
+        assert_eq!(seen[0].2, "jit::op0 [1 + 2]");
+        assert_eq!(seen[0].3, &code[0..16], "record carries the actual code bytes");
+        assert_eq!(seen[1].0, code.as_ptr() as u64 + 16);
+        assert_eq!(seen[1].3, &code[16..32]);
     }
 }

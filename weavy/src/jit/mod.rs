@@ -1,8 +1,63 @@
 //! Opt-in copy-and-patch JIT support shared by Weavy consumers.
 //!
-//! This module is still format- and IR-agnostic. Callers own their stencil
-//! functions, state ABI, host calls, and lowering policy; Weavy only exposes the
-//! neutral mechanics that multiple backends need.
+//! This module is format- and IR-agnostic. Callers own their stencil functions, state ABI,
+//! host calls, and lowering policy; Weavy only exposes the neutral mechanics that multiple
+//! backends need. Feature-gated behind `jit`; native execution is available on
+//! macos-aarch64 and linux-x86_64 ([`NATIVE_COPY_PATCH_AVAILABLE`]).
+//!
+//! # The layers
+//!
+//! 1. **Stencil extraction (build time).** A consumer writes each op as an `extern "C" fn`
+//!    in a standalone stencil source file, ending in a tail call to an *undefined* symbol
+//!    (conventionally `weavy_cont`) — that call's relocation is the "continuation hole".
+//!    Its build script compiles the file with `rustc --emit=obj` and pulls each function's
+//!    machine code + hole offsets via `copypatch::extract::{compile_object, extract_stencil}`
+//!    (`extract_stencil_n` for multi-successor stencils like conditional guards).
+//!    Per-op immediates ride in a side program stream, not in the code, so stencil bytes stay
+//!    position-independent. Compile with `--cfg tailcall` (works on stable via
+//!    `RUSTC_BOOTSTRAP=1` in the build script) to make continuations guaranteed tail calls
+//!    (`become`) — at `-O` the bytes are the same as the plain call (LLVM already
+//!    tail-call-optimizes), so this is a *guard*: a stencil that can't tail-call fails to
+//!    compile instead of silently regressing to a call chain.
+//!
+//! 2. **Assembly (run time).** [`StencilLayout`]: `start_chain`, then per op
+//!    `push_prog_word` (immediates) + `emit_stencil` (copy the bytes), then
+//!    [`StencilLayout::patch_continuation`] each hole to its successor's offset.
+//!    [`NativeProgram`] maps the result executable and hands out entry function pointers;
+//!    the caller owns the context ABI (`extern "C" fn(*mut C)`).
+//!
+//! 3. **Two execution lanes.**
+//!    - **Host-call lane** ([`HostCallInfo`]/[`HostCallCtx`]/[`HostCallChain`], plus the shared
+//!      `HOSTCALL`/`DONE` stencils in [`stencils`]): control flow is copied native code, but
+//!      each site makes an indirect call back into a Rust intrinsic. This is an *unrolled
+//!      threaded interpreter* — it removes dispatch, not op-body cost. Expect roughly
+//!      interpreter-class speed; it can even lose to a tight interpreter loop for heavy ops.
+//!    - **Dedicated stencils**: the op body IS compiled code (an add stencil is a native add).
+//!      This is where copy-and-patch actually pays, and only for *small* ops where dispatch
+//!      would have dominated. Measured on a 23-op integer expression: interpreter ~1.3µs/eval,
+//!      host-call chain ~60ns, dedicated stencils ~25ns.
+//!
+//! # Observability ([`debug`], [`dwarf`])
+//!
+//! JIT'd code is an anonymous executable buffer until you register it. One call makes it
+//! debuggable and profilable:
+//!
+//! ```ignore
+//! let reg = weavy::jit::debug::register_jit_source(
+//!     native.code_ptr(), code_len,
+//!     "template.jinja", Some(dir),          // a real source file
+//!     &symbols,                             // per-op: name, offset, size, line, column
+//! )?;                                        // keep `reg` alive while the code can run
+//! ```
+//!
+//! That builds an in-memory ELF (`.symtab` per op + DWARF `.debug_line` mapping each op's
+//! code range to source line:column) and registers it through the GDB JIT interface
+//! (`__jit_debug_register_code`). Verified end-to-end: lldb resolves JIT'd PCs, takes source
+//! and column breakpoints (`b file:4`, `breakpoint set -f file -l 1 -u 8`), and backtraces
+//! through JIT frames (macOS needs `settings set plugin.jit-loader.gdb.enable on`). Every
+//! line-table row carries `prologue_end`, so breakpoints stop at a region's first instruction.
+//! For profilers, [`debug::write_jitdump`] emits a perf jitdump (`/tmp/jit-<pid>.dump`) that
+//! `perf` and stax consume to symbolicate and per-instruction-annotate JIT'd code.
 
 pub use copypatch::{patch_branch26, patch_x86_rel32};
 
@@ -21,11 +76,10 @@ pub mod stencils {
     include!(concat!(env!("OUT_DIR"), "/weavy_stencils.rs"));
 }
 
-/// DWARF v4 emission (`.debug_line`/abbrev/info) for JIT'd code. Salvaged from bearcove/kajit.
-pub mod dwarf;
-/// GDB/LLDB JIT interface + in-memory ELF builder + jitdump/perf-map emission, so debuggers and
-/// profilers (lldb, gdb, perf, stax) resolve JIT'd PCs to source. Salvaged from bearcove/kajit.
+// NB: module docs live INSIDE these files (`//!`); an outer `///` here would make rustdoc
+// resolve the merged doc's intra-doc links in THIS scope and break them.
 pub mod debug;
+pub mod dwarf;
 
 /// Whether this build can allocate and run native copy-and-patch code.
 pub const NATIVE_COPY_PATCH_AVAILABLE: bool = cfg!(any(
