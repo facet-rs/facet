@@ -2,7 +2,7 @@
 //! one-time setup from fresh-plan and warm-plan per-parse cost.
 //!
 //! Usage: cargo run --release -p snark --features json-import \
-//!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|strict|recovering]
+//!          --example weavy_bench -- [GRAMMAR_JS] [INPUT_FILE] [ITERS] [all|tree|report|recovering]
 
 use std::{
     env,
@@ -16,7 +16,7 @@ use snark::{
     lower::weavy::{
         WeavyParseError, WeavyParsePlan, WeavyParseReport,
         parse_prepared_weavy_recovering_with_report_and_scanner,
-        parse_prepared_weavy_with_report_and_scanner,
+        parse_prepared_weavy_tree_and_scanner, parse_prepared_weavy_with_report_and_scanner,
     },
     parser::{ParseTable, ParserGrammar},
     validated::ValidatedGrammar,
@@ -30,7 +30,8 @@ fn ms(d: std::time::Duration) -> f64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BenchMode {
     All,
-    Strict,
+    StrictTree,
+    StrictReport,
     Recovering,
 }
 
@@ -38,20 +39,25 @@ impl BenchMode {
     fn from_arg(arg: Option<String>) -> Self {
         match arg.as_deref() {
             None | Some("all") => Self::All,
-            Some("strict") => Self::Strict,
+            Some("strict" | "tree") => Self::StrictTree,
+            Some("report" | "strict-report") => Self::StrictReport,
             Some("recovering") => Self::Recovering,
             Some(other) => {
-                panic!("unknown benchmark mode {other:?}; expected all|strict|recovering")
+                panic!("unknown benchmark mode {other:?}; expected all|tree|report|recovering")
             }
         }
     }
 
-    const fn runs_strict_fresh(self) -> bool {
+    const fn runs_strict_tree_fresh(self) -> bool {
         matches!(self, Self::All)
     }
 
-    const fn runs_strict_warm(self) -> bool {
-        matches!(self, Self::All | Self::Strict)
+    const fn runs_strict_tree_warm(self) -> bool {
+        matches!(self, Self::All | Self::StrictTree)
+    }
+
+    const fn runs_strict_report_warm(self) -> bool {
+        matches!(self, Self::All | Self::StrictReport)
     }
 
     const fn runs_recovering_warm(self) -> bool {
@@ -65,6 +71,7 @@ struct BenchTotals {
     stats: RunStats,
     successes: usize,
     failures: usize,
+    runner_samples: usize,
 }
 
 fn add_run_stats(total: &mut RunStats, next: RunStats) {
@@ -86,7 +93,28 @@ where
         match parse() {
             Ok(report) => {
                 totals.successes += 1;
+                totals.runner_samples += 1;
                 add_run_stats(&mut totals.stats, report.stats());
+            }
+            Err(_) => {
+                totals.failures += 1;
+            }
+        }
+    }
+    totals.duration = t.elapsed();
+    totals
+}
+
+fn bench_tree_parse<F, T>(iters: usize, mut parse: F) -> BenchTotals
+where
+    F: FnMut() -> Result<T, WeavyParseError>,
+{
+    let t = Instant::now();
+    let mut totals = BenchTotals::default();
+    for _ in 0..iters {
+        match parse() {
+            Ok(_) => {
+                totals.successes += 1;
             }
             Err(_) => {
                 totals.failures += 1;
@@ -112,14 +140,14 @@ fn print_bench_totals(label: &str, totals: &BenchTotals, iters: usize) {
         totals.successes,
         totals.failures
     );
-    if totals.successes == 0 {
+    if totals.runner_samples == 0 {
         return;
     }
     println!(
         "      avg runner: steps {:>9.1}  block calls {:>9.1}  returns {:>9.1}  max depth {:>4}",
-        average_count(totals.stats.step_count, totals.successes),
-        average_count(totals.stats.block_call_count, totals.successes),
-        average_count(totals.stats.return_count, totals.successes),
+        average_count(totals.stats.step_count, totals.runner_samples),
+        average_count(totals.stats.block_call_count, totals.runner_samples),
+        average_count(totals.stats.return_count, totals.runner_samples),
         totals.stats.max_frame_depth
     );
 }
@@ -163,14 +191,20 @@ fn main() {
     let analysis = lowered_analysis(plan.program().lowered());
     let plan_analysis = plan.analysis();
 
-    let strict_fresh_plan_total = mode.runs_strict_fresh().then(|| {
-        bench_parse(iters, || {
+    let strict_tree_fresh_plan_total = mode.runs_strict_tree_fresh().then(|| {
+        bench_tree_parse(iters, || {
             let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
-            parse_prepared_weavy_with_report_and_scanner(&plan, &parser, &table, &input, None)
+            parse_prepared_weavy_tree_and_scanner(&plan, &parser, &table, &input, None)
         })
     });
 
-    let strict_warm_plan_total = mode.runs_strict_warm().then(|| {
+    let strict_tree_warm_plan_total = mode.runs_strict_tree_warm().then(|| {
+        bench_tree_parse(iters, || {
+            parse_prepared_weavy_tree_and_scanner(&plan, &parser, &table, &input, None)
+        })
+    });
+
+    let strict_report_warm_plan_total = mode.runs_strict_report_warm().then(|| {
         bench_parse(iters, || {
             parse_prepared_weavy_with_report_and_scanner(&plan, &parser, &table, &input, None)
         })
@@ -322,11 +356,14 @@ fn main() {
     }
 
     println!("\nper-parse (avg over {iters}):");
-    if let Some(totals) = strict_fresh_plan_total {
-        print_bench_totals("weavy strict, fresh plan", &totals, iters);
+    if let Some(totals) = strict_tree_fresh_plan_total {
+        print_bench_totals("weavy strict tree, fresh plan", &totals, iters);
     }
-    if let Some(totals) = strict_warm_plan_total {
-        print_bench_totals("weavy strict, warm plan", &totals, iters);
+    if let Some(totals) = strict_tree_warm_plan_total {
+        print_bench_totals("weavy strict tree, warm plan", &totals, iters);
+    }
+    if let Some(totals) = strict_report_warm_plan_total {
+        print_bench_totals("weavy strict report, warm", &totals, iters);
     }
     if let Some(totals) = recovering_warm_plan_total {
         print_bench_totals("weavy recovering, warm", &totals, iters);
