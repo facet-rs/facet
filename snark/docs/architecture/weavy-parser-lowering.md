@@ -9,10 +9,10 @@ programs.
 
 Weavy is the lowering and execution carrier. Snark owns parser semantics.
 There is one parser executor: the Weavy-carried Snark machine. Retired native
-parser interpreters such as the earlier `ReducedParser`/`RuntimeParser` spikes
-are not reference runtimes, production fallbacks, or parity targets. Native
-copy-and-patch, host-call chains, and JIT support are Weavy execution lanes for
-the same lowered Snark machine, not separate parser executors.
+parser-interpreter spikes are not reference runtimes, production fallbacks, or
+parity targets. Native copy-and-patch, host-call chains, and JIT support are
+Weavy execution lanes for the same lowered Snark machine, not separate parser
+executors.
 
 ## Boundary
 
