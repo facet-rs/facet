@@ -20,6 +20,7 @@ pub mod ast {
 
 pub mod binder;
 pub mod ide;
+pub mod oracle;
 
 /// The tree-sitter grammar.json emitted from grammar.js at build time, embedded so
 /// the runtime parser needs no JS engine.
