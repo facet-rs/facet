@@ -213,15 +213,23 @@ impl<I> HostCallChain<I> {
     where
         I: HostCall<C>,
     {
-        self.calls.clear();
-        self.calls
-            .extend(self.infos.iter().map(|info| HostCallInfo {
-                info: core::ptr::from_ref(info).cast(),
-                call: typed_hostcall::<C, I>,
-            }));
-        for (slot, call) in self.call_slots.iter().copied().zip(&self.calls) {
-            self.native
-                .fill_prog_slot(slot, core::ptr::from_ref(call) as u64);
+        let call: unsafe extern "C" fn(*mut (), *const ()) -> bool = typed_hostcall::<C, I>;
+        let calls_bound = self.calls.len() == self.infos.len()
+            && self
+                .calls
+                .iter()
+                .all(|record| core::ptr::fn_addr_eq(record.call, call));
+        if !calls_bound {
+            self.calls.clear();
+            self.calls
+                .extend(self.infos.iter().map(|info| HostCallInfo {
+                    info: core::ptr::from_ref(info).cast(),
+                    call,
+                }));
+            for (slot, call) in self.call_slots.iter().copied().zip(&self.calls) {
+                self.native
+                    .fill_prog_slot(slot, core::ptr::from_ref(call) as u64);
+            }
         }
         let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
         let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
@@ -243,6 +251,117 @@ impl<I> HostCallChain<I> {
     }
 
     /// Number of raw host-call ABI records materialized for the most recent run.
+    #[must_use]
+    pub fn hostcall_count(&self) -> usize {
+        self.calls.len()
+    }
+
+    /// Number of copied stencils emitted by this chain.
+    #[must_use]
+    pub fn stencil_count(&self) -> usize {
+        self.native.stencil_count()
+    }
+}
+
+/// Executable host-call chain whose raw ABI records are fixed at construction.
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+pub struct RawHostCallChain<I> {
+    infos: Vec<I>,
+    calls: Vec<HostCallInfo>,
+    native: NativeProgram,
+}
+
+// SAFETY: The copied code, metadata, and side program streams are immutable
+// after construction. Moving the chain to another thread is sound when the
+// consumer metadata is `Send`.
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+unsafe impl<I: Send> Send for RawHostCallChain<I> {}
+
+// SAFETY: `run` only mutates caller-provided context; the chain itself is
+// immutable after construction. Sharing is sound when consumer metadata is
+// `Sync` and its raw callback upholds its own context-safety contract.
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+unsafe impl<I: Sync> Sync for RawHostCallChain<I> {}
+
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+impl<I> RawHostCallChain<I> {
+    /// Build an executable chain using one erased callback for each metadata item.
+    ///
+    /// `call` receives the caller's `HostCallCtx::inner` pointer and a pointer
+    /// to the corresponding metadata item. The caller owns the erased ABI.
+    #[must_use]
+    pub fn new(
+        infos: Vec<I>,
+        call: unsafe extern "C" fn(cx: *mut (), info: *const ()) -> bool,
+    ) -> Self {
+        let calls: Vec<_> = infos
+            .iter()
+            .map(|info| HostCallInfo {
+                info: core::ptr::from_ref(info).cast(),
+                call,
+            })
+            .collect();
+        let mut layout = StencilLayout::new();
+        let root = layout.start_chain();
+        let mut previous = None;
+        for call in &calls {
+            let current = layout.emit_hostcall(root, core::ptr::from_ref(call));
+            if let Some(previous) = previous {
+                layout.patch_hostcall_continuation(previous, current);
+            }
+            previous = Some(current);
+        }
+        let done = layout.emit_done();
+        if let Some(previous) = previous {
+            layout.patch_hostcall_continuation(previous, done);
+        }
+
+        Self {
+            infos,
+            calls,
+            native: NativeProgram::new(layout, root),
+        }
+    }
+
+    /// Run the copied host-call chain against a caller-owned context.
+    ///
+    /// # Safety
+    ///
+    /// The erased callback supplied to [`Self::new`] must accept a pointer to
+    /// `C` as its first argument for this chain execution.
+    pub unsafe fn run<C>(&self, cx: &mut C) {
+        let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
+        let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
+        unsafe {
+            entry(&mut host_ctx);
+        }
+    }
+
+    /// Metadata items in this chain.
+    #[must_use]
+    pub fn infos(&self) -> &[I] {
+        &self.infos
+    }
+
+    /// Number of host-call stencil sites emitted by this chain.
+    #[must_use]
+    pub fn hostcall_site_count(&self) -> usize {
+        HostCallChainLayout::for_hostcall_sites(self.infos.len()).hostcall_sites
+    }
+
+    /// Number of raw host-call ABI records materialized in this chain.
     #[must_use]
     pub fn hostcall_count(&self) -> usize {
         self.calls.len()
@@ -684,8 +803,9 @@ mod tests {
         assert_eq!(chain.hostcall_count(), 0);
         let mut state = State { value: 1 };
         chain.run(&mut state);
+        chain.run(&mut state);
 
-        assert_eq!(state.value, 42);
+        assert_eq!(state.value, 83);
         assert_eq!(chain.infos().len(), 2);
         assert_eq!(chain.hostcall_count(), 2);
         assert_eq!(chain.stencil_count(), 3);
@@ -742,5 +862,47 @@ mod tests {
         assert_eq!(state.value, 11);
         assert_eq!(chain.hostcall_count(), 3);
         assert_eq!(chain.stencil_count(), 4);
+    }
+
+    #[cfg(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    ))]
+    #[test]
+    fn raw_hostcall_chain_runs_without_rebuilding_call_records() {
+        use super::{HostCallChainLayout, RawHostCallChain};
+
+        struct State {
+            value: u64,
+        }
+
+        struct Add(u64);
+
+        unsafe extern "C" fn add(cx: *mut (), info: *const ()) -> bool {
+            let cx = unsafe { &mut *cx.cast::<State>() };
+            let info = unsafe { &*info.cast::<Add>() };
+            cx.value += info.0;
+            true
+        }
+
+        let chain = RawHostCallChain::new(vec![Add(20), Add(21)], add);
+        assert_eq!(
+            HostCallChainLayout::for_hostcall_sites(2).copied_stencils,
+            3
+        );
+        assert_eq!(chain.hostcall_site_count(), 2);
+        assert_eq!(chain.hostcall_count(), 2);
+        assert_eq!(chain.stencil_count(), 3);
+
+        let mut state = State { value: 1 };
+        unsafe {
+            chain.run(&mut state);
+            chain.run(&mut state);
+        }
+
+        assert_eq!(state.value, 83);
+        assert_eq!(chain.infos().len(), 2);
+        assert_eq!(chain.hostcall_count(), 2);
+        assert_eq!(chain.stencil_count(), 3);
     }
 }
