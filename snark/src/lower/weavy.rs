@@ -11067,7 +11067,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let stack = self.stack.to_mut();
         let mut children = tree_store.empty_children();
         let mut visible_nodes = tree_store.empty_children();
-        let mut trailing_extras = Vec::new();
+        let mut trailing_extras = SmallVec::<[RuntimeWeavyFragment; 2]>::new();
         if !include_trailing_extras {
             while stack.last().is_some_and(|entry| entry.extra) {
                 let entry = stack.pop().ok_or(RuntimeWeavyStepError::EmptyStack)?;
@@ -11084,7 +11084,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut start_scanner_snapshot = None;
         let mut saw_fragment = false;
         let collect_tree_events = tree_event_collection == RuntimeWeavyTreeEventCollection::Enabled;
-        let mut field_events = Vec::new();
+        let mut field_events = SmallVec::<[RuntimeWeavyFieldEvent; 2]>::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
             let entry = stack.pop().ok_or(RuntimeWeavyStepError::EmptyStack)?;
@@ -11100,9 +11100,11 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     return Err(RuntimeWeavyStepError::EmptyStack);
                 };
                 let alias_range = fragment.byte_range();
-                let mut step_visible_nodes = fragment.visible_nodes(tree_store);
-                let mut field_child = tree_store.single_child_node(step_visible_nodes);
-                let mut step_children = fragment.into_children(tree_store);
+                let fragment_children = fragment.into_child_lists(tree_store);
+                let mut step_visible_nodes = fragment_children.visible_nodes;
+                let mut step_children = fragment_children.children;
+                let step_field = step.field();
+                let mut field_child = None;
                 if let (Some(alias), Some(named)) = (step.alias(), step.alias_named()) {
                     let alias_name = Arc::clone(&plan.alias_names[alias.get() as usize]);
                     if named {
@@ -11139,16 +11141,18 @@ impl<'a> RuntimeWeavyStepper<'a> {
                         step_visible_nodes = tree_store.child_node(None, alias_node);
                     }
                 }
-                if collect_tree_events && let Some(field) = step.field() {
+                if collect_tree_events && let Some(field) = step_field {
+                    let field_child =
+                        field_child.or_else(|| tree_store.single_child_node(step_visible_nodes));
                     field_events.push((remaining_children, field, field_child));
                 }
                 visible_nodes = tree_store.concat_children(step_visible_nodes, visible_nodes);
                 children = tree_store.concat_children(step_children, children);
             } else {
-                let step_visible_nodes = fragment.visible_nodes(tree_store);
-                let step_children = fragment.into_children(tree_store);
-                visible_nodes = tree_store.concat_children(step_visible_nodes, visible_nodes);
-                children = tree_store.concat_children(step_children, children);
+                let fragment_children = fragment.into_child_lists(tree_store);
+                visible_nodes =
+                    tree_store.concat_children(fragment_children.visible_nodes, visible_nodes);
+                children = tree_store.concat_children(fragment_children.children, children);
             }
             start_byte = fragment_start;
             if !saw_fragment {
@@ -11737,17 +11741,22 @@ enum RuntimeWeavyFragment {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RuntimeWeavyReduction {
     fragment: RuntimeWeavyFragment,
-    trailing_extras: Vec<RuntimeWeavyFragment>,
+    trailing_extras: SmallVec<[RuntimeWeavyFragment; 2]>,
+}
+
+type RuntimeWeavyFieldEvent = (
+    usize,
+    crate::validated::FieldId,
+    Option<parser_ir::TreeNodeId>,
+);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RuntimeWeavyFragmentChildLists {
+    children: RuntimeWeavyChildListId,
+    visible_nodes: RuntimeWeavyChildListId,
 }
 
 impl RuntimeWeavyFragment {
-    fn visible_nodes(&self, tree_store: &mut RuntimeWeavyTreeStore) -> RuntimeWeavyChildListId {
-        match self {
-            Self::Hidden { visible_nodes, .. } => *visible_nodes,
-            Self::Node { node, .. } => tree_store.child_node(None, *node),
-        }
-    }
-
     const fn byte_range(&self) -> (usize, usize) {
         match self {
             Self::Hidden {
@@ -11791,6 +11800,30 @@ impl RuntimeWeavyFragment {
         match self {
             Self::Hidden { children, .. } => children,
             Self::Node { node, .. } => tree_store.child_node(None, node),
+        }
+    }
+
+    #[inline]
+    fn into_child_lists(
+        self,
+        tree_store: &mut RuntimeWeavyTreeStore,
+    ) -> RuntimeWeavyFragmentChildLists {
+        match self {
+            Self::Hidden {
+                children,
+                visible_nodes,
+                ..
+            } => RuntimeWeavyFragmentChildLists {
+                children,
+                visible_nodes,
+            },
+            Self::Node { node, .. } => {
+                let child = tree_store.child_node(None, node);
+                RuntimeWeavyFragmentChildLists {
+                    children: child,
+                    visible_nodes: child,
+                }
+            }
         }
     }
 }
@@ -12204,6 +12237,7 @@ impl RuntimeWeavyTreeStore {
         self.child_node_with_kind_override(field, node, None)
     }
 
+    #[inline]
     fn child_node_with_kind_override(
         &mut self,
         field: Option<String>,
@@ -12248,6 +12282,7 @@ impl RuntimeWeavyTreeStore {
         id
     }
 
+    #[inline]
     fn concat_children(
         &mut self,
         left: RuntimeWeavyChildListId,
@@ -12268,6 +12303,7 @@ impl RuntimeWeavyTreeStore {
         id
     }
 
+    #[inline]
     fn children_is_empty(&self, children: RuntimeWeavyChildListId) -> bool {
         if children == RuntimeWeavyChildListId::EMPTY {
             return true;
