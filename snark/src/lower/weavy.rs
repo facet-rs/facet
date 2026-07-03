@@ -6584,6 +6584,14 @@ impl RuntimeWeavyLexerScratch {
         let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
         if let Some(pattern_set) = &mode_program.direct_pattern_set {
             self.record_stencil_execution(WeavyLexerStencilKind::PatternDfaSet);
+            let pattern_leaf_rematch_count = if self.stats_enabled.get() {
+                Some(
+                    &self.stencil_executions
+                        [weavy_lexer_stencil_kind_index(WeavyLexerStencilKind::PatternLeafRematch)],
+                )
+            } else {
+                None
+            };
             let direct_pattern_dfa_cache =
                 runtime_weavy_lexer_scratch_slot(&mut direct_pattern_dfa_caches, cache_slot)
                     .get_or_insert_with(|| pattern_set.create_dfa_cache())
@@ -6599,11 +6607,7 @@ impl RuntimeWeavyLexerScratch {
                 WeavyDirectPatternSetScratch {
                     matches: direct_pattern_matches,
                     dfa_cache: direct_pattern_dfa_cache,
-                    pattern_leaf_rematch_count: Some(
-                        &self.stencil_executions[weavy_lexer_stencil_kind_index(
-                            WeavyLexerStencilKind::PatternLeafRematch,
-                        )],
-                    ),
+                    pattern_leaf_rematch_count,
                 },
             );
         } else {
@@ -14530,6 +14534,57 @@ mod tests {
         assert_eq!(stats.direct_set_cache_hit_count, 0);
         assert_eq!(stats.direct_set_cache_miss_count, 0);
         assert_eq!(stats.direct_set_uncached_count, 2);
+    }
+
+    #[test]
+    fn lexer_scratch_skips_rematch_accounting_when_stats_disabled() {
+        let mut terminals = vec![WeavyLexTerminal {
+            terminal: parser_ir::TerminalId::from_index(0),
+            matcher: WeavyTerminalMatcher::Expr(WeavyLexExpr::Pattern(
+                crate::lex_match::compile_pattern("[a-z]+", None).into(),
+            )),
+            lookahead: None,
+            immediate: false,
+            literal: false,
+            lexical_precedence: 0,
+            implicit_precedence: 0,
+            direct_literal_index: None,
+            direct_pattern_index: None,
+        }];
+        let mode = WeavyLexModeProgram {
+            direct_pattern_set: WeavyDirectPatternSet::from_terminals(&mut terminals),
+            terminals,
+            non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
+            external_count: 0,
+            direct_literal_set: None,
+        };
+        let scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
+        scratch.reset_for_parse(RuntimeWeavyLexSetCachePolicy::Disabled, false);
+        let cache_slot = 0;
+        {
+            let mut caches = scratch.direct_pattern_dfa_caches.borrow_mut();
+            *runtime_weavy_lexer_scratch_slot(&mut caches, cache_slot) = Some(None);
+        }
+
+        let matches = scratch.with_direct_set_matches(
+            "abcd",
+            cache_slot,
+            &mode,
+            0,
+            |literal, pattern, terminals| (literal.to_vec(), pattern.to_vec(), terminals.to_vec()),
+        );
+
+        assert!(matches.0.is_empty());
+        assert_eq!(matches.1, vec![Some(parser_ir::LexMatch::new(4, 4))]);
+        assert_eq!(matches.2, vec![0]);
+        assert_eq!(
+            scratch.stencil_executions
+                [weavy_lexer_stencil_kind_index(WeavyLexerStencilKind::PatternLeafRematch)]
+            .get(),
+            0
+        );
     }
 
     #[test]
