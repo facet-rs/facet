@@ -4714,16 +4714,19 @@ struct RuntimeWeavyStateTerminalLookaheads {
 impl RuntimeWeavyStateTerminalLookaheads {
     fn from_state(state: &parser_ir::ParseState) -> Self {
         let mut entries = Vec::new();
+        let mut seen_terminals = Vec::new();
         for entry in state.entries() {
             let Some(terminal) = runtime_weavy_lookahead_terminal(entry.lookahead()) else {
                 continue;
             };
-            if entries
-                .iter()
-                .any(|candidate: &RuntimeWeavyTerminalLookahead| candidate.terminal == terminal)
-            {
+            let terminal_index = terminal.get() as usize;
+            if seen_terminals.len() <= terminal_index {
+                seen_terminals.resize(terminal_index + 1, false);
+            }
+            if seen_terminals[terminal_index] {
                 continue;
             }
+            seen_terminals[terminal_index] = true;
             entries.push(RuntimeWeavyTerminalLookahead {
                 terminal,
                 lookahead: entry.lookahead(),
