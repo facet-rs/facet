@@ -7,7 +7,6 @@
 //! Tree-sitter implementation files.
 
 use std::{
-    cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
@@ -5152,6 +5151,7 @@ pub(crate) struct ResolvedCstBuilder<'a> {
     field_by_child: Vec<Option<Arc<str>>>,
     item_indices_by_node: Vec<SmallVec<[usize; 1]>>,
     items: Vec<ResolvedCstItem>,
+    roots: Vec<usize>,
 }
 
 struct ResolvedCstNames {
@@ -5248,6 +5248,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             field_by_child: vec![None; node_capacity],
             item_indices_by_node: Vec::with_capacity(node_capacity),
             items: Vec::with_capacity(capacity),
+            roots: Vec::new(),
         }
     }
 
@@ -5416,11 +5417,11 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
 
-        let mut roots = attach_resolved_children_from_ranges(&mut self.items);
+        self.debug_assert_online_attachment_matches_range_sort();
+        let roots = std::mem::take(&mut self.roots);
         if roots.is_empty() {
             return None;
         }
-        sort_resolved_children(&mut roots, &self.items);
         if roots.len() == 1 {
             return Some(build_resolved_node(roots[0], &self.items));
         }
@@ -5460,15 +5461,10 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
 
-        let mut roots = attach_resolved_children_from_ranges(&mut self.items);
+        self.debug_assert_online_attachment_matches_range_sort();
+        let roots = std::mem::take(&mut self.roots);
         if roots.is_empty() {
             return None;
-        }
-        sort_resolved_children(&mut roots, &self.items);
-        for index in 0..self.items.len() {
-            let mut children = std::mem::take(&mut self.items[index].children);
-            sort_resolved_children(&mut children, &self.items);
-            self.items[index].children = children;
         }
         Some(ResolvedCstTree {
             roots,
@@ -5492,7 +5488,107 @@ impl<'a> ResolvedCstBuilder<'a> {
             let slot = self.ensure_node_slot(node);
             self.item_indices_by_node[slot].push(index);
         }
+        self.attach_item_to_roots(index);
     }
+
+    fn attach_item_to_roots(&mut self, item_index: usize) {
+        if self.items[item_index].node.is_none() {
+            let insert_at = self.root_insert_position(item_index);
+            self.roots.insert(insert_at, item_index);
+            return;
+        }
+
+        if let Some(last) = self.roots.last().copied()
+            && resolved_item_contains(&self.items[item_index], &self.items[last])
+        {
+            let mut first_child = self.roots.len() - 1;
+            while first_child > 0
+                && resolved_item_contains(
+                    &self.items[item_index],
+                    &self.items[self.roots[first_child - 1]],
+                )
+            {
+                first_child -= 1;
+            }
+            self.items[item_index].children = self.roots.drain(first_child..).collect();
+            self.roots.push(item_index);
+            return;
+        }
+
+        let parent_start = self.items[item_index].bytes.start().get();
+        let parent_end = self.items[item_index].bytes.end().get();
+        let mut first_child = self
+            .roots
+            .partition_point(|root| self.items[*root].bytes.start().get() < parent_start);
+        while first_child < self.roots.len()
+            && self.items[self.roots[first_child]].bytes.start().get() <= parent_end
+            && !resolved_item_contains(
+                &self.items[item_index],
+                &self.items[self.roots[first_child]],
+            )
+        {
+            first_child += 1;
+        }
+
+        let mut after_children = first_child;
+        while after_children < self.roots.len()
+            && resolved_item_contains(
+                &self.items[item_index],
+                &self.items[self.roots[after_children]],
+            )
+        {
+            after_children += 1;
+        }
+
+        if first_child == after_children {
+            let insert_at = self.root_insert_position(item_index);
+            self.roots.insert(insert_at, item_index);
+            return;
+        }
+
+        self.items[item_index].children = self.roots.drain(first_child..after_children).collect();
+        self.roots.insert(first_child, item_index);
+    }
+
+    fn root_insert_position(&self, item_index: usize) -> usize {
+        let key = resolved_item_order_key(&self.items[item_index]);
+        if self
+            .roots
+            .last()
+            .is_none_or(|root| resolved_item_order_key(&self.items[*root]) < key)
+        {
+            return self.roots.len();
+        }
+        self.roots
+            .partition_point(|root| resolved_item_order_key(&self.items[*root]) < key)
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_assert_online_attachment_matches_range_sort(&self) {
+        if self.items.len() > 4096 {
+            return;
+        }
+
+        let mut items = self.items.clone();
+        let mut roots = attach_resolved_children_from_ranges(&mut items);
+        sort_resolved_children(&mut roots, &items);
+        for index in 0..items.len() {
+            let mut children = std::mem::take(&mut items[index].children);
+            sort_resolved_children(&mut children, &items);
+            items[index].children = children;
+        }
+
+        debug_assert_eq!(self.roots, roots);
+        for (index, (actual, expected)) in self.items.iter().zip(&items).enumerate() {
+            debug_assert_eq!(
+                actual.children, expected.children,
+                "resolved CST child attachment mismatch at item {index}"
+            );
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn debug_assert_online_attachment_matches_range_sort(&self) {}
 
     fn ensure_node_slot(&mut self, node: TreeNodeId) -> usize {
         let slot = node.get() as usize;
@@ -5566,6 +5662,11 @@ fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> 
         && child.bytes.end() <= parent.bytes.end()
 }
 
+fn resolved_item_order_key(item: &ResolvedCstItem) -> (u32, u32, usize) {
+    (item.bytes.start().get(), item.bytes.end().get(), item.order)
+}
+
+#[cfg(any(debug_assertions, test))]
 fn attach_resolved_children_from_ranges(items: &mut [ResolvedCstItem]) -> Vec<usize> {
     let parents = resolved_parent_slots_by_range_sort(items);
     let mut child_counts = vec![0usize; items.len()];
@@ -5596,15 +5697,16 @@ fn attach_resolved_children_from_ranges(items: &mut [ResolvedCstItem]) -> Vec<us
     roots
 }
 
+#[cfg(any(debug_assertions, test))]
 fn resolved_parent_slots_by_range_sort(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
     let mut indices = (0..items.len()).collect::<Vec<_>>();
     indices.sort_unstable_by_key(|index| {
         let item = &items[*index];
         (
             item.bytes.start().get(),
-            Reverse(item.bytes.end().get()),
-            Reverse(item.order),
-            Reverse(*index),
+            std::cmp::Reverse(item.bytes.end().get()),
+            std::cmp::Reverse(item.order),
+            std::cmp::Reverse(*index),
         )
     });
 
@@ -5664,8 +5766,6 @@ fn resolved_item_len(item: &ResolvedCstItem) -> usize {
 
 fn build_resolved_node(index: usize, items: &[ResolvedCstItem]) -> ResolvedCstNode {
     let item = &items[index];
-    let mut children = item.children.clone();
-    sort_resolved_children(&mut children, items);
     ResolvedCstNode {
         kind: item.kind.clone(),
         symbol: item.symbol,
@@ -5677,13 +5777,16 @@ fn build_resolved_node(index: usize, items: &[ResolvedCstItem]) -> ResolvedCstNo
         visible: item.visible,
         extra: item.extra,
         text: item.text.clone(),
-        children: children
-            .into_iter()
+        children: item
+            .children
+            .iter()
+            .copied()
             .map(|child| build_resolved_node(child, items))
             .collect(),
     }
 }
 
+#[cfg(any(debug_assertions, test))]
 fn sort_resolved_children(children: &mut [usize], items: &[ResolvedCstItem]) {
     if children.len() < 2 {
         return;
