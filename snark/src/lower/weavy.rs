@@ -717,6 +717,8 @@ pub struct WeavyLexerStencilSummary {
     pub execution: SnarkStencilExecution,
     /// Session state read by this matcher op.
     pub state: Vec<SnarkStencilState>,
+    /// Conservative effect contract that bounds legal scheduling/fusion.
+    pub effect: EffectContract,
     /// Number of lowered lexer graph ops represented by this summary.
     pub count: usize,
 }
@@ -3343,6 +3345,7 @@ fn push_lexer_stencil_summary(
         kind,
         execution: SnarkStencilExecution::LexerGraph,
         state: lexer_stencil_state(kind).to_vec(),
+        effect: lexer_stencil_effect(kind),
         count,
     });
 }
@@ -3370,6 +3373,27 @@ fn lexer_stencil_state(kind: WeavyLexerStencilKind) -> &'static [SnarkStencilSta
         | WeavyLexerStencilKind::Nested
         | WeavyLexerStencilKind::CompositeRegex
         | WeavyLexerStencilKind::CompositeChoice => MATCHER_STATE,
+    }
+}
+
+fn lexer_stencil_effect(kind: WeavyLexerStencilKind) -> EffectContract {
+    let effect = EffectContract::new()
+        .read_resource(EffectResource::Input("source"))
+        .read_resource(EffectResource::SideChannel("branch_cursor"))
+        .may_fail();
+    match kind {
+        WeavyLexerStencilKind::AutoClose => {
+            effect.read_resource(EffectResource::SideChannel("auto_close_stack"))
+        }
+        WeavyLexerStencilKind::LiteralSet
+        | WeavyLexerStencilKind::PatternDfaSet
+        | WeavyLexerStencilKind::PatternLeafRematch
+        | WeavyLexerStencilKind::KnownPattern
+        | WeavyLexerStencilKind::RegexAutomata
+        | WeavyLexerStencilKind::Until
+        | WeavyLexerStencilKind::Nested
+        | WeavyLexerStencilKind::CompositeRegex
+        | WeavyLexerStencilKind::CompositeChoice => effect,
     }
 }
 
@@ -12588,6 +12612,7 @@ mod tests {
                         SnarkStencilState::LexerProgram,
                         SnarkStencilState::BranchCursor,
                     ],
+                    effect: lexer_stencil_effect(WeavyLexerStencilKind::RegexAutomata),
                     count: 2,
                 },
                 WeavyLexerStencilSummary {
@@ -12598,6 +12623,7 @@ mod tests {
                         SnarkStencilState::LexerProgram,
                         SnarkStencilState::BranchCursor,
                     ],
+                    effect: lexer_stencil_effect(WeavyLexerStencilKind::LiteralSet),
                     count: 1,
                 },
                 WeavyLexerStencilSummary {
@@ -12608,6 +12634,7 @@ mod tests {
                         SnarkStencilState::LexerProgram,
                         SnarkStencilState::BranchCursor,
                     ],
+                    effect: lexer_stencil_effect(WeavyLexerStencilKind::PatternDfaSet),
                     count: 1,
                 },
                 WeavyLexerStencilSummary {
@@ -12618,6 +12645,7 @@ mod tests {
                         SnarkStencilState::LexerProgram,
                         SnarkStencilState::BranchCursor,
                     ],
+                    effect: lexer_stencil_effect(WeavyLexerStencilKind::KnownPattern),
                     count: 1,
                 },
                 WeavyLexerStencilSummary {
@@ -12628,6 +12656,7 @@ mod tests {
                         SnarkStencilState::LexerProgram,
                         SnarkStencilState::BranchCursor,
                     ],
+                    effect: lexer_stencil_effect(WeavyLexerStencilKind::Until),
                     count: 1,
                 },
                 WeavyLexerStencilSummary {
@@ -12638,6 +12667,7 @@ mod tests {
                         SnarkStencilState::LexerProgram,
                         SnarkStencilState::BranchCursor,
                     ],
+                    effect: lexer_stencil_effect(WeavyLexerStencilKind::Nested),
                     count: 1,
                 },
             ]

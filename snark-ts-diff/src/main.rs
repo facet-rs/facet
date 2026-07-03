@@ -272,8 +272,18 @@ fn write_lexer_stencils(
         for summary in summaries {
             writeln!(
                 out,
-                "  {:?} execution={:?} state={:?} count={}",
-                summary.kind, summary.execution, summary.state, summary.count
+                "  {:?} execution={:?} effect_order={:?} may_fail={} may_allocate={} calls_user_code={} opaque={} resources={:?} typed_memory={:?} state={:?} count={}",
+                summary.kind,
+                summary.execution,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque,
+                summary.effect.resources,
+                summary.effect.typed_memory,
+                summary.state,
+                summary.count
             )?;
         }
     }
