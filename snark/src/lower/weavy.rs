@@ -934,9 +934,13 @@ pub struct WeavySnarkExecutionStats {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SnarkIntrinsicExecutionKeys {
     descriptor: IntrinsicDescriptor,
+    descriptor_index: usize,
     domain: SnarkIntrinsicDomain,
+    domain_index: usize,
     family: SnarkStencilFamily,
+    family_index: usize,
     execution: SnarkStencilExecution,
+    execution_index: usize,
 }
 
 const fn snark_intrinsic_descriptor(name: &'static str) -> IntrinsicDescriptor {
@@ -967,129 +971,113 @@ const SNARK_EMIT_TREE_EVENT_DESCRIPTOR: IntrinsicDescriptor =
     snark_intrinsic_descriptor("emit_tree_event");
 
 const fn snark_intrinsic_execution_keys(
-    descriptor: IntrinsicDescriptor,
-    domain: SnarkIntrinsicDomain,
-    family: SnarkStencilFamily,
-    execution: SnarkStencilExecution,
+    descriptor: (IntrinsicDescriptor, usize),
+    domain: (SnarkIntrinsicDomain, usize),
+    family: (SnarkStencilFamily, usize),
+    execution: (SnarkStencilExecution, usize),
 ) -> SnarkIntrinsicExecutionKeys {
     SnarkIntrinsicExecutionKeys {
-        descriptor,
-        domain,
-        family,
-        execution,
+        descriptor: descriptor.0,
+        descriptor_index: descriptor.1,
+        domain: domain.0,
+        domain_index: domain.1,
+        family: family.0,
+        family_index: family.1,
+        execution: execution.0,
+        execution_index: execution.1,
     }
 }
 
 const SNARK_LEX_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_LEX_DESCRIPTOR,
-    SnarkIntrinsicDomain::Lexing,
-    SnarkStencilFamily::Lexer,
-    SnarkStencilExecution::LexerGraph,
+    (SNARK_LEX_DESCRIPTOR, 0),
+    (SnarkIntrinsicDomain::Lexing, 0),
+    (SnarkStencilFamily::Lexer, 0),
+    (SnarkStencilExecution::LexerGraph, 0),
 );
 const SNARK_CALL_EXTERNAL_SCANNER_KEYS: SnarkIntrinsicExecutionKeys =
     snark_intrinsic_execution_keys(
-        SNARK_CALL_EXTERNAL_SCANNER_DESCRIPTOR,
-        SnarkIntrinsicDomain::ExternalScanner,
-        SnarkStencilFamily::ExternalScanner,
-        SnarkStencilExecution::HostCall,
+        (SNARK_CALL_EXTERNAL_SCANNER_DESCRIPTOR, 1),
+        (SnarkIntrinsicDomain::ExternalScanner, 1),
+        (SnarkStencilFamily::ExternalScanner, 1),
+        (SnarkStencilExecution::HostCall, 2),
     );
 const SNARK_DISPATCH_ACTIONS_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_DISPATCH_ACTIONS_DESCRIPTOR,
-    SnarkIntrinsicDomain::ParserControl,
-    SnarkStencilFamily::ParserDispatch,
-    SnarkStencilExecution::DirectStencil,
+    (SNARK_DISPATCH_ACTIONS_DESCRIPTOR, 2),
+    (SnarkIntrinsicDomain::ParserControl, 2),
+    (SnarkStencilFamily::ParserDispatch, 2),
+    (SnarkStencilExecution::DirectStencil, 1),
 );
 const SNARK_COMMIT_LOOKAHEAD_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR,
-    SnarkIntrinsicDomain::ParserControl,
-    SnarkStencilFamily::ParserCursor,
-    SnarkStencilExecution::DirectStencil,
+    (SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR, 3),
+    (SnarkIntrinsicDomain::ParserControl, 2),
+    (SnarkStencilFamily::ParserCursor, 3),
+    (SnarkStencilExecution::DirectStencil, 1),
 );
 const SNARK_SHIFT_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_SHIFT_DESCRIPTOR,
-    SnarkIntrinsicDomain::ParserControl,
-    SnarkStencilFamily::ParserStack,
-    SnarkStencilExecution::DirectStencil,
+    (SNARK_SHIFT_DESCRIPTOR, 4),
+    (SnarkIntrinsicDomain::ParserControl, 2),
+    (SnarkStencilFamily::ParserStack, 4),
+    (SnarkStencilExecution::DirectStencil, 1),
 );
 const SNARK_SHIFT_EXTRA_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_SHIFT_EXTRA_DESCRIPTOR,
-    SnarkIntrinsicDomain::ParserControl,
-    SnarkStencilFamily::ParserStack,
-    SnarkStencilExecution::DirectStencil,
+    (SNARK_SHIFT_EXTRA_DESCRIPTOR, 5),
+    (SnarkIntrinsicDomain::ParserControl, 2),
+    (SnarkStencilFamily::ParserStack, 4),
+    (SnarkStencilExecution::DirectStencil, 1),
 );
 const SNARK_REDUCE_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_REDUCE_DESCRIPTOR,
-    SnarkIntrinsicDomain::Tree,
-    SnarkStencilFamily::TreeBuilder,
-    SnarkStencilExecution::DirectStencil,
+    (SNARK_REDUCE_DESCRIPTOR, 6),
+    (SnarkIntrinsicDomain::Tree, 5),
+    (SnarkStencilFamily::TreeBuilder, 6),
+    (SnarkStencilExecution::DirectStencil, 1),
 );
 const SNARK_SPLIT_GLR_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_SPLIT_GLR_DESCRIPTOR,
-    SnarkIntrinsicDomain::GlrControl,
-    SnarkStencilFamily::GlrScheduler,
-    SnarkStencilExecution::DirectStencil,
+    (SNARK_SPLIT_GLR_DESCRIPTOR, 7),
+    (SnarkIntrinsicDomain::GlrControl, 3),
+    (SnarkStencilFamily::GlrScheduler, 5),
+    (SnarkStencilExecution::DirectStencil, 1),
 );
 const SNARK_MERGE_GLR_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_MERGE_GLR_DESCRIPTOR,
-    SnarkIntrinsicDomain::GlrControl,
-    SnarkStencilFamily::GlrScheduler,
-    SnarkStencilExecution::DirectStencil,
+    (SNARK_MERGE_GLR_DESCRIPTOR, 8),
+    (SnarkIntrinsicDomain::GlrControl, 3),
+    (SnarkStencilFamily::GlrScheduler, 5),
+    (SnarkStencilExecution::DirectStencil, 1),
 );
 const SNARK_RETIRE_BRANCH_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_RETIRE_BRANCH_DESCRIPTOR,
-    SnarkIntrinsicDomain::GlrControl,
-    SnarkStencilFamily::GlrScheduler,
-    SnarkStencilExecution::DirectStencil,
+    (SNARK_RETIRE_BRANCH_DESCRIPTOR, 9),
+    (SnarkIntrinsicDomain::GlrControl, 3),
+    (SnarkStencilFamily::GlrScheduler, 5),
+    (SnarkStencilExecution::DirectStencil, 1),
 );
 const SNARK_ACCEPT_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_ACCEPT_DESCRIPTOR,
-    SnarkIntrinsicDomain::ParserControl,
-    SnarkStencilFamily::TreeBuilder,
-    SnarkStencilExecution::DirectStencil,
+    (SNARK_ACCEPT_DESCRIPTOR, 10),
+    (SnarkIntrinsicDomain::ParserControl, 2),
+    (SnarkStencilFamily::TreeBuilder, 6),
+    (SnarkStencilExecution::DirectStencil, 1),
 );
 const SNARK_EMIT_TRACE_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_EMIT_TRACE_DESCRIPTOR,
-    SnarkIntrinsicDomain::Trace,
-    SnarkStencilFamily::Sink,
-    SnarkStencilExecution::SinkAdapter,
+    (SNARK_EMIT_TRACE_DESCRIPTOR, 11),
+    (SnarkIntrinsicDomain::Trace, 6),
+    (SnarkStencilFamily::Sink, 7),
+    (SnarkStencilExecution::SinkAdapter, 3),
 );
 const SNARK_EMIT_NODE_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_EMIT_NODE_DESCRIPTOR,
-    SnarkIntrinsicDomain::Tree,
-    SnarkStencilFamily::Sink,
-    SnarkStencilExecution::SinkAdapter,
+    (SNARK_EMIT_NODE_DESCRIPTOR, 12),
+    (SnarkIntrinsicDomain::Tree, 5),
+    (SnarkStencilFamily::Sink, 7),
+    (SnarkStencilExecution::SinkAdapter, 3),
 );
 const SNARK_EMIT_TREE_EVENT_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
-    SNARK_EMIT_TREE_EVENT_DESCRIPTOR,
-    SnarkIntrinsicDomain::Tree,
-    SnarkStencilFamily::Sink,
-    SnarkStencilExecution::SinkAdapter,
+    (SNARK_EMIT_TREE_EVENT_DESCRIPTOR, 13),
+    (SnarkIntrinsicDomain::Tree, 5),
+    (SnarkStencilFamily::Sink, 7),
+    (SnarkStencilExecution::SinkAdapter, 3),
 );
 
 const SNARK_INTRINSIC_DESCRIPTOR_COUNT: usize = 14;
 const SNARK_INTRINSIC_DOMAIN_COUNT: usize = 7;
 const SNARK_STENCIL_FAMILY_COUNT: usize = 8;
 const SNARK_STENCIL_EXECUTION_COUNT: usize = 4;
-
-fn snark_intrinsic_descriptor_index(descriptor: IntrinsicDescriptor) -> usize {
-    match descriptor.name {
-        "lex" => 0,
-        "call_external_scanner" => 1,
-        "dispatch_actions" => 2,
-        "commit_lookahead" => 3,
-        "shift" => 4,
-        "shift_extra" => 5,
-        "reduce" => 6,
-        "split_glr" => 7,
-        "merge_glr" => 8,
-        "retire_branch" => 9,
-        "accept" => 10,
-        "emit_trace" => 11,
-        "emit_node" => 12,
-        "emit_tree_event" => 13,
-        _ => unreachable!("unknown Snark intrinsic descriptor"),
-    }
-}
 
 fn snark_intrinsic_descriptor_from_index(index: usize) -> Option<IntrinsicDescriptor> {
     Some(IntrinsicDescriptor {
@@ -1139,18 +1127,6 @@ fn snark_intrinsic_execution_keys_for_descriptor(
     }
 }
 
-fn snark_intrinsic_domain_index(domain: SnarkIntrinsicDomain) -> usize {
-    match domain {
-        SnarkIntrinsicDomain::Lexing => 0,
-        SnarkIntrinsicDomain::ExternalScanner => 1,
-        SnarkIntrinsicDomain::ParserControl => 2,
-        SnarkIntrinsicDomain::GlrControl => 3,
-        SnarkIntrinsicDomain::Recovery => 4,
-        SnarkIntrinsicDomain::Tree => 5,
-        SnarkIntrinsicDomain::Trace => 6,
-    }
-}
-
 fn snark_intrinsic_domain_from_index(index: usize) -> Option<SnarkIntrinsicDomain> {
     Some(match index {
         0 => SnarkIntrinsicDomain::Lexing,
@@ -1162,19 +1138,6 @@ fn snark_intrinsic_domain_from_index(index: usize) -> Option<SnarkIntrinsicDomai
         6 => SnarkIntrinsicDomain::Trace,
         _ => return None,
     })
-}
-
-fn snark_stencil_family_index(family: SnarkStencilFamily) -> usize {
-    match family {
-        SnarkStencilFamily::Lexer => 0,
-        SnarkStencilFamily::ExternalScanner => 1,
-        SnarkStencilFamily::ParserDispatch => 2,
-        SnarkStencilFamily::ParserCursor => 3,
-        SnarkStencilFamily::ParserStack => 4,
-        SnarkStencilFamily::GlrScheduler => 5,
-        SnarkStencilFamily::TreeBuilder => 6,
-        SnarkStencilFamily::Sink => 7,
-    }
 }
 
 fn snark_stencil_family_from_index(index: usize) -> Option<SnarkStencilFamily> {
@@ -1189,15 +1152,6 @@ fn snark_stencil_family_from_index(index: usize) -> Option<SnarkStencilFamily> {
         7 => SnarkStencilFamily::Sink,
         _ => return None,
     })
-}
-
-fn snark_stencil_execution_index(execution: SnarkStencilExecution) -> usize {
-    match execution {
-        SnarkStencilExecution::LexerGraph => 0,
-        SnarkStencilExecution::DirectStencil => 1,
-        SnarkStencilExecution::HostCall => 2,
-        SnarkStencilExecution::SinkAdapter => 3,
-    }
 }
 
 fn snark_stencil_execution_from_index(index: usize) -> Option<SnarkStencilExecution> {
@@ -1351,6 +1305,7 @@ impl RuntimeWeavySnarkExecutionStats {
         }
     }
 
+    #[inline(always)]
     fn record_intrinsic(&mut self, intrinsic: &SnarkIntrinsic) {
         if !self.enabled {
             return;
@@ -1358,6 +1313,7 @@ impl RuntimeWeavySnarkExecutionStats {
         self.record_execution_keys(intrinsic.runtime_execution_keys());
     }
 
+    #[inline(always)]
     fn record_keys(&mut self, keys: SnarkIntrinsicExecutionKeys) {
         if !self.enabled {
             return;
@@ -1365,12 +1321,12 @@ impl RuntimeWeavySnarkExecutionStats {
         self.record_execution_keys(keys);
     }
 
+    #[inline(always)]
     fn record_execution_keys(&mut self, keys: SnarkIntrinsicExecutionKeys) {
         self.intrinsic_count += 1;
-        self.descriptor_executions[snark_intrinsic_descriptor_index(keys.descriptor)] += 1;
-        self.domain_executions[snark_intrinsic_domain_index(keys.domain)] += 1;
-        self.family_executions[snark_stencil_family_index(keys.family)]
-            [snark_stencil_execution_index(keys.execution)] += 1;
+        self.descriptor_executions[keys.descriptor_index] += 1;
+        self.domain_executions[keys.domain_index] += 1;
+        self.family_executions[keys.family_index][keys.execution_index] += 1;
     }
 
     fn to_public(&self) -> WeavySnarkExecutionStats {
@@ -12945,6 +12901,22 @@ mod tests {
             assert_eq!(keys.domain, semantics.domain);
             assert_eq!(keys.family, semantics.stencil.family);
             assert_eq!(keys.execution, semantics.stencil.execution);
+            assert_eq!(
+                snark_intrinsic_descriptor_from_index(keys.descriptor_index),
+                Some(keys.descriptor)
+            );
+            assert_eq!(
+                snark_intrinsic_domain_from_index(keys.domain_index),
+                Some(keys.domain)
+            );
+            assert_eq!(
+                snark_stencil_family_from_index(keys.family_index),
+                Some(keys.family)
+            );
+            assert_eq!(
+                snark_stencil_execution_from_index(keys.execution_index),
+                Some(keys.execution)
+            );
         }
     }
 
