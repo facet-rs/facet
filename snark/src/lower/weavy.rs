@@ -901,6 +901,21 @@ pub struct WeavySnarkExecutionSummary {
     pub count: usize,
 }
 
+/// Runtime execution count for one stable Snark parser/action intrinsic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeavySnarkDescriptorExecutionSummary {
+    /// Stable dialect/name identity for the executed intrinsic.
+    pub descriptor: IntrinsicDescriptor,
+    /// Semantic lane used by optimizer and JIT planning.
+    pub domain: SnarkIntrinsicDomain,
+    /// Native stencil family used by the intrinsic.
+    pub family: SnarkStencilFamily,
+    /// Execution strategy used by the family.
+    pub execution: SnarkStencilExecution,
+    /// Number of runtime executions observed for this descriptor.
+    pub count: usize,
+}
+
 /// Runtime execution counters for Snark's parser/action dialect ops.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WeavySnarkExecutionStats {
@@ -967,6 +982,73 @@ fn snark_intrinsic_descriptor_from_index(index: usize) -> Option<IntrinsicDescri
             13 => "emit_tree_event",
             _ => return None,
         },
+    })
+}
+
+fn snark_intrinsic_execution_keys_for_descriptor(
+    descriptor: IntrinsicDescriptor,
+) -> Option<SnarkIntrinsicExecutionKeys> {
+    if descriptor.dialect != SnarkIntrinsic::DIALECT {
+        return None;
+    }
+    let (domain, family, execution) = match descriptor.name {
+        "lex" => (
+            SnarkIntrinsicDomain::Lexing,
+            SnarkStencilFamily::Lexer,
+            SnarkStencilExecution::LexerGraph,
+        ),
+        "call_external_scanner" => (
+            SnarkIntrinsicDomain::ExternalScanner,
+            SnarkStencilFamily::ExternalScanner,
+            SnarkStencilExecution::HostCall,
+        ),
+        "dispatch_actions" => (
+            SnarkIntrinsicDomain::ParserControl,
+            SnarkStencilFamily::ParserDispatch,
+            SnarkStencilExecution::DirectStencil,
+        ),
+        "commit_lookahead" => (
+            SnarkIntrinsicDomain::ParserControl,
+            SnarkStencilFamily::ParserCursor,
+            SnarkStencilExecution::DirectStencil,
+        ),
+        "shift" | "shift_extra" => (
+            SnarkIntrinsicDomain::ParserControl,
+            SnarkStencilFamily::ParserStack,
+            SnarkStencilExecution::DirectStencil,
+        ),
+        "reduce" => (
+            SnarkIntrinsicDomain::Tree,
+            SnarkStencilFamily::TreeBuilder,
+            SnarkStencilExecution::DirectStencil,
+        ),
+        "split_glr" | "merge_glr" | "retire_branch" => (
+            SnarkIntrinsicDomain::GlrControl,
+            SnarkStencilFamily::GlrScheduler,
+            SnarkStencilExecution::DirectStencil,
+        ),
+        "accept" => (
+            SnarkIntrinsicDomain::ParserControl,
+            SnarkStencilFamily::TreeBuilder,
+            SnarkStencilExecution::DirectStencil,
+        ),
+        "emit_trace" => (
+            SnarkIntrinsicDomain::Trace,
+            SnarkStencilFamily::Sink,
+            SnarkStencilExecution::SinkAdapter,
+        ),
+        "emit_node" | "emit_tree_event" => (
+            SnarkIntrinsicDomain::Tree,
+            SnarkStencilFamily::Sink,
+            SnarkStencilExecution::SinkAdapter,
+        ),
+        _ => return None,
+    };
+    Some(SnarkIntrinsicExecutionKeys {
+        descriptor,
+        domain,
+        family,
+        execution,
     })
 }
 
@@ -1059,6 +1141,38 @@ pub struct WeavyHostCallExecutionStats {
 }
 
 impl WeavySnarkExecutionStats {
+    /// Runtime executions by stable dialect/name identity, sorted by descending count.
+    #[must_use]
+    pub fn descriptor_execution_summaries(&self) -> Vec<WeavySnarkDescriptorExecutionSummary> {
+        let mut summaries = self
+            .descriptor_executions
+            .iter()
+            .filter_map(|(descriptor, count)| {
+                let keys = snark_intrinsic_execution_keys_for_descriptor(*descriptor)?;
+                Some(WeavySnarkDescriptorExecutionSummary {
+                    descriptor: *descriptor,
+                    domain: keys.domain,
+                    family: keys.family,
+                    execution: keys.execution,
+                    count: *count,
+                })
+            })
+            .collect::<Vec<_>>();
+        summaries.sort_by(|left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.descriptor.cmp(&right.descriptor))
+        });
+        summaries
+    }
+
+    /// Most frequently executed stable Snark parser/action intrinsic.
+    #[must_use]
+    pub fn dominant_descriptor_execution(&self) -> Option<WeavySnarkDescriptorExecutionSummary> {
+        self.descriptor_execution_summaries().into_iter().next()
+    }
+
     /// Runtime executions sorted by descending count.
     #[must_use]
     pub fn family_execution_summaries(&self) -> Vec<WeavySnarkExecutionSummary> {
@@ -1347,64 +1461,8 @@ impl SnarkIntrinsic {
 
     fn runtime_execution_keys(&self) -> SnarkIntrinsicExecutionKeys {
         let descriptor = self.descriptor();
-        let (domain, family, execution) = match self {
-            Self::Lex { .. } => (
-                SnarkIntrinsicDomain::Lexing,
-                SnarkStencilFamily::Lexer,
-                SnarkStencilExecution::LexerGraph,
-            ),
-            Self::CallExternalScanner { .. } => (
-                SnarkIntrinsicDomain::ExternalScanner,
-                SnarkStencilFamily::ExternalScanner,
-                SnarkStencilExecution::HostCall,
-            ),
-            Self::DispatchActions { .. } => (
-                SnarkIntrinsicDomain::ParserControl,
-                SnarkStencilFamily::ParserDispatch,
-                SnarkStencilExecution::DirectStencil,
-            ),
-            Self::CommitLookahead { .. } => (
-                SnarkIntrinsicDomain::ParserControl,
-                SnarkStencilFamily::ParserCursor,
-                SnarkStencilExecution::DirectStencil,
-            ),
-            Self::Shift { .. } | Self::ShiftExtra { .. } => (
-                SnarkIntrinsicDomain::ParserControl,
-                SnarkStencilFamily::ParserStack,
-                SnarkStencilExecution::DirectStencil,
-            ),
-            Self::Reduce { .. } => (
-                SnarkIntrinsicDomain::Tree,
-                SnarkStencilFamily::TreeBuilder,
-                SnarkStencilExecution::DirectStencil,
-            ),
-            Self::SplitGlr { .. } | Self::MergeGlr { .. } | Self::RetireBranch { .. } => (
-                SnarkIntrinsicDomain::GlrControl,
-                SnarkStencilFamily::GlrScheduler,
-                SnarkStencilExecution::DirectStencil,
-            ),
-            Self::Accept { .. } => (
-                SnarkIntrinsicDomain::ParserControl,
-                SnarkStencilFamily::TreeBuilder,
-                SnarkStencilExecution::DirectStencil,
-            ),
-            Self::EmitTrace { .. } => (
-                SnarkIntrinsicDomain::Trace,
-                SnarkStencilFamily::Sink,
-                SnarkStencilExecution::SinkAdapter,
-            ),
-            Self::EmitNode { .. } | Self::EmitTreeEvent { .. } => (
-                SnarkIntrinsicDomain::Tree,
-                SnarkStencilFamily::Sink,
-                SnarkStencilExecution::SinkAdapter,
-            ),
-        };
-        SnarkIntrinsicExecutionKeys {
-            descriptor,
-            domain,
-            family,
-            execution,
-        }
+        snark_intrinsic_execution_keys_for_descriptor(descriptor)
+            .expect("Snark intrinsic descriptor has runtime execution keys")
     }
 
     /// Optimizer-facing semantic metadata for this Snark dialect op.
@@ -14491,6 +14549,34 @@ mod tests {
         );
         let snark_stats = default_direct.snark_stats();
         assert!(snark_stats.intrinsic_count > 0);
+        let descriptor_summaries = snark_stats.descriptor_execution_summaries();
+        assert_eq!(
+            snark_stats.dominant_descriptor_execution(),
+            descriptor_summaries.first().cloned()
+        );
+        assert_eq!(
+            descriptor_summaries
+                .iter()
+                .map(|summary| summary.count)
+                .sum::<usize>(),
+            snark_stats.intrinsic_count
+        );
+        assert!(
+            descriptor_summaries
+                .iter()
+                .any(|summary| summary.descriptor.name == "dispatch_actions"
+                    && summary.family == SnarkStencilFamily::ParserDispatch
+                    && summary.execution == SnarkStencilExecution::DirectStencil
+                    && summary.count > 0)
+        );
+        assert!(
+            descriptor_summaries
+                .iter()
+                .any(|summary| summary.descriptor.name == "lex"
+                    && summary.family == SnarkStencilFamily::Lexer
+                    && summary.execution == SnarkStencilExecution::LexerGraph
+                    && summary.count > 0)
+        );
         assert!(
             snark_stats
                 .family_execution_summaries()

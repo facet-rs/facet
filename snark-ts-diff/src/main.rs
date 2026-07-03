@@ -49,9 +49,10 @@ use snark::{
         SnarkStencilProfile, WeavyHostCallExecutionStats, WeavyLexerExecutionStats,
         WeavyLexerStencilSummary, WeavyParseError, WeavyParseExecutionLane, WeavyParsePlan,
         WeavyParseReport, WeavyParseWorkspace, WeavyResolvedCstReport,
-        WeavyRuntimeBackendExecutionSummary, WeavySnarkExecutionStats,
-        WeavySnarkProfileStencilReadiness, parse_prepared_weavy_resolved_cst,
-        parse_prepared_weavy_resolved_cst_report, parse_prepared_weavy_resolved_tree,
+        WeavyRuntimeBackendExecutionSummary, WeavySnarkDescriptorExecutionSummary,
+        WeavySnarkExecutionStats, WeavySnarkProfileStencilReadiness,
+        parse_prepared_weavy_resolved_cst, parse_prepared_weavy_resolved_cst_report,
+        parse_prepared_weavy_resolved_tree,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
@@ -542,6 +543,7 @@ fn print_snark_execution_stats_from(
         "snark_execution: intrinsics={} families={}",
         stats.intrinsic_count, families
     );
+    print_snark_descriptor_execution_stats(stats.descriptor_execution_summaries());
     println!("parse_execution_lane: {execution_lane:?}");
     if let Some(summary) = stats.dominant_family_execution() {
         println!(
@@ -560,6 +562,41 @@ fn print_snark_execution_stats_from(
         hostcalls.executed_hostcall_sites,
         hostcalls.executed_hostcall_stencils
     );
+}
+
+fn print_snark_descriptor_execution_stats(summaries: Vec<WeavySnarkDescriptorExecutionSummary>) {
+    if let Some(summary) = summaries.first() {
+        println!(
+            "snark_dominant_descriptor_execution: {}.{} domain={:?} family={:?} execution={:?} count={}",
+            summary.descriptor.dialect,
+            summary.descriptor.name,
+            summary.domain,
+            summary.family,
+            summary.execution,
+            summary.count
+        );
+    } else {
+        println!("snark_dominant_descriptor_execution: none");
+    }
+    if summaries.is_empty() {
+        println!("snark_descriptor_execution: none");
+        return;
+    }
+    let descriptors = summaries
+        .iter()
+        .map(|summary| {
+            format!(
+                "{}.{}:{:?}/{:?}={}",
+                summary.descriptor.dialect,
+                summary.descriptor.name,
+                summary.family,
+                summary.execution,
+                summary.count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    println!("snark_descriptor_execution: {descriptors}");
 }
 
 #[derive(Facet)]
