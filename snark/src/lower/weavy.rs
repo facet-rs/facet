@@ -11930,7 +11930,7 @@ fn replay_reused_runtime_weavy_tree_events(
     input_points: &RuntimeWeavyInputPoints,
     tree_store: &mut RuntimeWeavyTreeStore,
 ) -> Vec<parser_ir::TreeEvent> {
-    let mut node_map = BTreeMap::from([(reusable.source_node, root_node)]);
+    let mut node_map = HashMap::from([(reusable.source_node, root_node)]);
     runtime_weavy_subtree_tree_events(
         reuse_index.tree_events,
         reusable.source_start_byte,
@@ -11956,7 +11956,7 @@ fn replay_reused_runtime_weavy_tree_event(
     version: parser_ir::StackVersionId,
     input_points: &RuntimeWeavyInputPoints,
     tree_store: &mut RuntimeWeavyTreeStore,
-    node_map: &mut BTreeMap<parser_ir::TreeNodeId, parser_ir::TreeNodeId>,
+    node_map: &mut HashMap<parser_ir::TreeNodeId, parser_ir::TreeNodeId>,
 ) -> parser_ir::TreeEvent {
     let repoint = |bytes: ByteRange| {
         runtime_weavy_input_ranges(
@@ -12109,7 +12109,7 @@ fn replay_reused_runtime_weavy_tree_event(
 fn remap_reused_runtime_weavy_node(
     node: parser_ir::TreeNodeId,
     tree_store: &mut RuntimeWeavyTreeStore,
-    node_map: &mut BTreeMap<parser_ir::TreeNodeId, parser_ir::TreeNodeId>,
+    node_map: &mut HashMap<parser_ir::TreeNodeId, parser_ir::TreeNodeId>,
 ) -> parser_ir::TreeNodeId {
     if let Some(remapped) = node_map.get(&node) {
         *remapped
@@ -12393,7 +12393,7 @@ impl RuntimeWeavyTreeStore {
         source: &RuntimeWeavyTreeStore,
         id: parser_ir::TreeNodeId,
     ) -> parser_ir::TreeNodeId {
-        let mut node_map = BTreeMap::new();
+        let mut node_map = HashMap::new();
         self.clone_node_from_with_map(source, id, &mut node_map)
     }
 
@@ -12401,7 +12401,7 @@ impl RuntimeWeavyTreeStore {
         &mut self,
         source: &RuntimeWeavyTreeStore,
         id: parser_ir::TreeNodeId,
-        node_map: &mut BTreeMap<parser_ir::TreeNodeId, parser_ir::TreeNodeId>,
+        node_map: &mut HashMap<parser_ir::TreeNodeId, parser_ir::TreeNodeId>,
     ) -> parser_ir::TreeNodeId {
         if let Some(cloned) = node_map.get(&id) {
             return *cloned;
@@ -12417,7 +12417,7 @@ impl RuntimeWeavyTreeStore {
         &mut self,
         source: &RuntimeWeavyTreeStore,
         id: RuntimeWeavyChildListId,
-        node_map: &mut BTreeMap<parser_ir::TreeNodeId, parser_ir::TreeNodeId>,
+        node_map: &mut HashMap<parser_ir::TreeNodeId, parser_ir::TreeNodeId>,
     ) -> RuntimeWeavyChildListId {
         match &source.child_lists[id.0].kind {
             RuntimeWeavyChildListKind::Empty => self.empty_children(),
