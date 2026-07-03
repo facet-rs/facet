@@ -867,10 +867,6 @@ struct RuntimeWeavyLexerExecutionStats {
 }
 
 impl RuntimeWeavyLexerExecutionStats {
-    fn record_stencil(&mut self, kind: WeavyLexerStencilKind) {
-        self.stencil_executions[weavy_lexer_stencil_kind_index(kind)] += 1;
-    }
-
     fn to_public(&self) -> WeavyLexerExecutionStats {
         let mut stats = WeavyLexerExecutionStats {
             lex_call_count: self.lex_call_count,
@@ -6268,7 +6264,11 @@ macro_rules! trace_push {
 struct RuntimeWeavyLexerScratch {
     cache_policy: Cell<RuntimeWeavyLexSetCachePolicy>,
     stats_enabled: Cell<bool>,
-    execution_stats: RefCell<RuntimeWeavyLexerExecutionStats>,
+    lex_call_count: Cell<usize>,
+    direct_set_cache_hit_count: Cell<usize>,
+    direct_set_cache_miss_count: Cell<usize>,
+    direct_set_uncached_count: Cell<usize>,
+    stencil_executions: [Cell<usize>; WEAVY_LEXER_STENCIL_KIND_COUNT],
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_matches: RefCell<Vec<Option<PatternSet>>>,
@@ -6285,7 +6285,11 @@ impl RuntimeWeavyLexerScratch {
         Self {
             cache_policy: Cell::new(cache_policy),
             stats_enabled: Cell::new(true),
-            execution_stats: RefCell::default(),
+            lex_call_count: Cell::new(0),
+            direct_set_cache_hit_count: Cell::new(0),
+            direct_set_cache_miss_count: Cell::new(0),
+            direct_set_uncached_count: Cell::new(0),
+            stencil_executions: std::array::from_fn(|_| Cell::new(0)),
             direct_literal_ends: RefCell::default(),
             direct_pattern_ends: RefCell::default(),
             direct_pattern_matches: RefCell::default(),
@@ -6300,7 +6304,13 @@ impl RuntimeWeavyLexerScratch {
     fn reset_for_parse(&self, cache_policy: RuntimeWeavyLexSetCachePolicy, stats_enabled: bool) {
         self.cache_policy.set(cache_policy);
         self.stats_enabled.set(stats_enabled);
-        *self.execution_stats.borrow_mut() = RuntimeWeavyLexerExecutionStats::default();
+        self.lex_call_count.set(0);
+        self.direct_set_cache_hit_count.set(0);
+        self.direct_set_cache_miss_count.set(0);
+        self.direct_set_uncached_count.set(0);
+        for count in &self.stencil_executions {
+            count.set(0);
+        }
         self.direct_literal_ends.borrow_mut().clear();
         self.direct_pattern_ends.borrow_mut().clear();
         self.direct_terminal_indices.borrow_mut().clear();
@@ -6311,44 +6321,53 @@ impl RuntimeWeavyLexerScratch {
         if !self.stats_enabled.get() {
             return WeavyLexerExecutionStats::default();
         }
-        self.execution_stats.borrow().to_public()
+        let stats = RuntimeWeavyLexerExecutionStats {
+            lex_call_count: self.lex_call_count.get(),
+            direct_set_cache_hit_count: self.direct_set_cache_hit_count.get(),
+            direct_set_cache_miss_count: self.direct_set_cache_miss_count.get(),
+            direct_set_uncached_count: self.direct_set_uncached_count.get(),
+            stencil_executions: std::array::from_fn(|index| self.stencil_executions[index].get()),
+        };
+        stats.to_public()
     }
 
     fn record_lex_call(&self) {
         if !self.stats_enabled.get() {
             return;
         }
-        self.execution_stats.borrow_mut().lex_call_count += 1;
+        self.lex_call_count.set(self.lex_call_count.get() + 1);
     }
 
     fn record_direct_set_cache_hit(&self) {
         if !self.stats_enabled.get() {
             return;
         }
-        self.execution_stats.borrow_mut().direct_set_cache_hit_count += 1;
+        self.direct_set_cache_hit_count
+            .set(self.direct_set_cache_hit_count.get() + 1);
     }
 
     fn record_direct_set_cache_miss(&self) {
         if !self.stats_enabled.get() {
             return;
         }
-        self.execution_stats
-            .borrow_mut()
-            .direct_set_cache_miss_count += 1;
+        self.direct_set_cache_miss_count
+            .set(self.direct_set_cache_miss_count.get() + 1);
     }
 
     fn record_direct_set_uncached(&self) {
         if !self.stats_enabled.get() {
             return;
         }
-        self.execution_stats.borrow_mut().direct_set_uncached_count += 1;
+        self.direct_set_uncached_count
+            .set(self.direct_set_uncached_count.get() + 1);
     }
 
     fn record_stencil_execution(&self, kind: WeavyLexerStencilKind) {
         if !self.stats_enabled.get() {
             return;
         }
-        self.execution_stats.borrow_mut().record_stencil(kind);
+        let count = &self.stencil_executions[weavy_lexer_stencil_kind_index(kind)];
+        count.set(count.get() + 1);
     }
 
     fn match_regex_leaf(
@@ -6504,7 +6523,11 @@ impl RuntimeWeavyLexerScratch {
                     WeavyDirectPatternSetScratch {
                         matches: direct_pattern_matches,
                         dfa_cache: direct_pattern_dfa_cache,
-                        execution_stats: &self.execution_stats,
+                        pattern_leaf_rematch_count: Some(
+                            &self.stencil_executions[weavy_lexer_stencil_kind_index(
+                                WeavyLexerStencilKind::PatternLeafRematch,
+                            )],
+                        ),
                     },
                 );
             } else {
@@ -11401,7 +11424,7 @@ fn match_weavy_direct_pattern_set(
         WeavyDirectPatternSetScratch {
             matches: runtime_weavy_pattern_set(matches, pattern_set.pattern_len()),
             dfa_cache,
-            execution_stats: &RefCell::default(),
+            pattern_leaf_rematch_count: None,
         },
     );
 }
@@ -11409,7 +11432,7 @@ fn match_weavy_direct_pattern_set(
 struct WeavyDirectPatternSetScratch<'a> {
     matches: &'a mut PatternSet,
     dfa_cache: Option<&'a mut HybridDfaCache>,
-    execution_stats: &'a RefCell<RuntimeWeavyLexerExecutionStats>,
+    pattern_leaf_rematch_count: Option<&'a Cell<usize>>,
 }
 
 fn match_weavy_direct_pattern_set_with_matches(
@@ -11446,10 +11469,9 @@ fn match_weavy_direct_pattern_set_with_matches(
             let WeavyTerminalMatcher::Expr(expr) = &terminal.matcher else {
                 return;
             };
-            scratch
-                .execution_stats
-                .borrow_mut()
-                .record_stencil(WeavyLexerStencilKind::PatternLeafRematch);
+            if let Some(count) = scratch.pattern_leaf_rematch_count {
+                count.set(count.get() + 1);
+            }
             let match_ = match_weavy_direct_pattern_fallback(expr, input, byte_position);
             let replace = match_.is_some_and(|match_| {
                 ends[set_index].is_none_or(|current| match_.end > current.end)
@@ -13848,7 +13870,7 @@ mod tests {
         let mut ends = Vec::new();
         let mut matches = None;
         let mut terminal_indices = Vec::new();
-        let execution_stats = RefCell::<RuntimeWeavyLexerExecutionStats>::default();
+        let pattern_leaf_rematch_count = Cell::new(0);
 
         match_weavy_direct_pattern_set_with_matches(
             "abcd",
@@ -13862,7 +13884,7 @@ mod tests {
                     mode.direct_pattern_set.as_ref().unwrap().pattern_len(),
                 ),
                 dfa_cache: None,
-                execution_stats: &execution_stats,
+                pattern_leaf_rematch_count: Some(&pattern_leaf_rematch_count),
             },
         );
 
@@ -13870,13 +13892,7 @@ mod tests {
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
         assert_eq!(ends[1], Some(parser_ir::LexMatch::new(2, 3)));
         assert_eq!(terminal_indices, vec![0, 1]);
-        assert_eq!(
-            execution_stats
-                .borrow()
-                .to_public()
-                .stencil_execution_count(WeavyLexerStencilKind::PatternLeafRematch),
-            2
-        );
+        assert_eq!(pattern_leaf_rematch_count.get(), 2);
     }
 
     #[test]
