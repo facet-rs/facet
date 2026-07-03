@@ -939,6 +939,23 @@ struct SnarkIntrinsicExecutionKeys {
     execution: SnarkStencilExecution,
 }
 
+const fn snark_intrinsic_descriptor(name: &'static str) -> IntrinsicDescriptor {
+    IntrinsicDescriptor {
+        dialect: SnarkIntrinsic::DIALECT,
+        name,
+    }
+}
+
+const SNARK_LEX_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("lex");
+const SNARK_DISPATCH_ACTIONS_DESCRIPTOR: IntrinsicDescriptor =
+    snark_intrinsic_descriptor("dispatch_actions");
+const SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR: IntrinsicDescriptor =
+    snark_intrinsic_descriptor("commit_lookahead");
+const SNARK_SHIFT_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("shift");
+const SNARK_SHIFT_EXTRA_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("shift_extra");
+const SNARK_REDUCE_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("reduce");
+const SNARK_ACCEPT_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("accept");
+
 const SNARK_INTRINSIC_DESCRIPTOR_COUNT: usize = 14;
 const SNARK_INTRINSIC_DOMAIN_COUNT: usize = 7;
 const SNARK_STENCIL_FAMILY_COUNT: usize = 8;
@@ -1270,7 +1287,19 @@ impl RuntimeWeavySnarkExecutionStats {
         if !self.enabled {
             return;
         }
-        let keys = intrinsic.runtime_execution_keys();
+        self.record_execution_keys(intrinsic.runtime_execution_keys());
+    }
+
+    fn record_descriptor(&mut self, descriptor: IntrinsicDescriptor) {
+        if !self.enabled {
+            return;
+        }
+        let keys = snark_intrinsic_execution_keys_for_descriptor(descriptor)
+            .expect("Snark intrinsic descriptor has runtime execution keys");
+        self.record_execution_keys(keys);
+    }
+
+    fn record_execution_keys(&mut self, keys: SnarkIntrinsicExecutionKeys) {
         self.intrinsic_count += 1;
         self.descriptor_executions[snark_intrinsic_descriptor_index(keys.descriptor)] += 1;
         self.domain_executions[snark_intrinsic_domain_index(keys.domain)] += 1;
@@ -9753,11 +9782,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let (token, lexed) = if let Some(token) = self.lookahead {
             (token, false)
         } else {
-            self.snark_stats.record_intrinsic(&SnarkIntrinsic::Lex {
-                version: StackVersionId::from_index(self.version.get() as usize),
-                mode: LexModeId::from_index(mode_id.get() as usize),
-                output: LookaheadTokenId::from_index(self.lookahead_id.get() as usize),
-            });
+            self.snark_stats.record_descriptor(SNARK_LEX_DESCRIPTOR);
             let state_row = self.parse_state(state)?;
             (self.lex(state_row, self.byte_position)?, true)
         };
@@ -9788,11 +9813,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         }
         self.lookahead = Some(token);
         self.snark_stats
-            .record_intrinsic(&SnarkIntrinsic::DispatchActions {
-                version: StackVersionId::from_index(self.version.get() as usize),
-                state: ParseStateId::from_index(state.get() as usize),
-                lookahead: LookaheadTokenId::from_index(self.lookahead_id.get() as usize),
-            });
+            .record_descriptor(SNARK_DISPATCH_ACTIONS_DESCRIPTOR);
         let action_entry =
             if let Some(action_entry) = self.plan.action_entry(state, token.lookahead) {
                 action_entry
@@ -9819,20 +9840,13 @@ impl<'a> RuntimeWeavyStepper<'a> {
         &mut self,
         action: parser_ir::ParseAction,
     ) -> Result<(), RuntimeWeavyStepError> {
-        let version = StackVersionId::from_index(self.version.get() as usize);
-        let lookahead = LookaheadTokenId::from_index(self.lookahead_id.get() as usize);
         match action {
             parser_ir::ParseAction::Shift { state, .. } => {
                 let state = parser_ir::ParseStateId::from_index(state.get() as usize);
-                let commit = SnarkIntrinsic::CommitLookahead { version, lookahead };
-                let shift = SnarkIntrinsic::Shift {
-                    version,
-                    state: ParseStateId::from_index(state.get() as usize),
-                    lookahead,
-                };
-                self.snark_stats.record_intrinsic(&commit);
+                self.snark_stats
+                    .record_descriptor(SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR);
                 self.commit_lookahead_direct()?;
-                self.snark_stats.record_intrinsic(&shift);
+                self.snark_stats.record_descriptor(SNARK_SHIFT_DESCRIPTOR);
                 self.shift_direct(state)?;
                 self.lookahead = None;
             }
@@ -9842,15 +9856,11 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     .last()
                     .ok_or(RuntimeWeavyStepError::EmptyStack)?
                     .state;
-                let commit = SnarkIntrinsic::CommitLookahead { version, lookahead };
-                let shift_extra = SnarkIntrinsic::ShiftExtra {
-                    version,
-                    state: ParseStateId::from_index(state.get() as usize),
-                    lookahead,
-                };
-                self.snark_stats.record_intrinsic(&commit);
+                self.snark_stats
+                    .record_descriptor(SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR);
                 self.commit_lookahead_direct()?;
-                self.snark_stats.record_intrinsic(&shift_extra);
+                self.snark_stats
+                    .record_descriptor(SNARK_SHIFT_EXTRA_DESCRIPTOR);
                 self.shift_extra_direct(state)?;
                 self.lookahead = None;
             }
@@ -9859,36 +9869,19 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 metadata,
                 symbol,
                 child_count,
-                dynamic_precedence,
+                dynamic_precedence: _,
             } => {
-                let reduce = SnarkIntrinsic::Reduce {
-                    version,
-                    production: ProductionId::from_index(production.get() as usize),
-                    metadata: ProductionMetadataId::from_index(metadata.get() as usize),
-                    symbol: NonterminalId::from_index(symbol.get() as usize),
-                    child_count,
-                    dynamic_precedence,
-                    aliases: None,
-                };
-                self.snark_stats.record_intrinsic(&reduce);
+                self.snark_stats.record_descriptor(SNARK_REDUCE_DESCRIPTOR);
                 let _ = self.reduce_direct(production, metadata, symbol, child_count)?;
             }
             parser_ir::ParseAction::Accept {
                 production,
                 metadata,
-                symbol,
                 child_count,
-                dynamic_precedence,
+                symbol: _,
+                dynamic_precedence: _,
             } => {
-                let accept = SnarkIntrinsic::Accept {
-                    version,
-                    production: ProductionId::from_index(production.get() as usize),
-                    metadata: ProductionMetadataId::from_index(metadata.get() as usize),
-                    symbol: NonterminalId::from_index(symbol.get() as usize),
-                    child_count,
-                    dynamic_precedence,
-                };
-                self.snark_stats.record_intrinsic(&accept);
+                self.snark_stats.record_descriptor(SNARK_ACCEPT_DESCRIPTOR);
                 self.accept_direct(production, metadata, child_count)?;
             }
         }
