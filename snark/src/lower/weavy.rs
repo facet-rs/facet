@@ -522,6 +522,8 @@ pub struct WeavySnarkProfileStencilReadiness {
 pub struct WeavySnarkProfileBackendExecutionSummary {
     /// Execution strategy a backend/JIT must provide.
     pub execution: SnarkStencilExecution,
+    /// Conservative union of parser and lexer session state in this execution lane.
+    pub state: Vec<SnarkStencilState>,
     /// Conservative union of parser and lexer effects in this execution lane.
     pub effect: EffectContract,
     /// Parser/action Snark intrinsic stencil ops in this lane.
@@ -578,22 +580,28 @@ impl WeavySnarkProfileStencilReadiness {
     /// Count backend stencil obligations by execution lane, including lexer matcher ops.
     #[must_use]
     pub fn backend_execution_summaries(&self) -> Vec<WeavySnarkProfileBackendExecutionSummary> {
-        let mut counts = BTreeMap::<SnarkStencilExecution, (usize, usize, EffectContract)>::new();
+        let mut counts = BTreeMap::<
+            SnarkStencilExecution,
+            (usize, usize, BTreeSet<SnarkStencilState>, EffectContract),
+        >::new();
         for summary in &self.execution_summaries {
-            let (parser_count, _, effect) = counts.entry(summary.execution).or_default();
+            let (parser_count, _, state, effect) = counts.entry(summary.execution).or_default();
             *parser_count += summary.count;
+            state.extend(summary.state.iter().copied());
             accumulate_effect_union(effect, summary.effect.clone());
         }
         for summary in &self.lexer_summaries {
-            let (_, lexer_count, effect) = counts.entry(summary.execution).or_default();
+            let (_, lexer_count, state, effect) = counts.entry(summary.execution).or_default();
             *lexer_count += summary.count;
+            state.extend(summary.state.iter().copied());
             accumulate_effect_union(effect, summary.effect.clone());
         }
         let mut summaries = counts
             .into_iter()
-            .map(|(execution, (parser_count, lexer_count, effect))| {
+            .map(|(execution, (parser_count, lexer_count, state, effect))| {
                 WeavySnarkProfileBackendExecutionSummary {
                     execution,
+                    state: state.into_iter().collect(),
                     effect,
                     parser_count,
                     lexer_count,
@@ -13609,13 +13617,23 @@ mod tests {
             1 + lexer_stencil_count
         );
         let mut expected_backend_effect = lex.effect();
+        let mut expected_backend_state = lex
+            .semantics()
+            .stencil
+            .state
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
         for summary in &analysis.readiness.lexer_stencil_summaries {
+            expected_backend_state.extend(summary.state.iter().copied());
             accumulate_effect_union(&mut expected_backend_effect, summary.effect.clone());
         }
+        let expected_backend_state = expected_backend_state.into_iter().collect::<Vec<_>>();
         assert_eq!(
             direct_no_trace_profile.backend_execution_summaries(),
             vec![WeavySnarkProfileBackendExecutionSummary {
                 execution: SnarkStencilExecution::LexerGraph,
+                state: expected_backend_state.clone(),
                 effect: expected_backend_effect.clone(),
                 parser_count: 1,
                 lexer_count: lexer_stencil_count,
@@ -13626,6 +13644,7 @@ mod tests {
             direct_no_trace_profile.dominant_backend_execution(),
             Some(WeavySnarkProfileBackendExecutionSummary {
                 execution: SnarkStencilExecution::LexerGraph,
+                state: expected_backend_state,
                 effect: expected_backend_effect,
                 parser_count: 1,
                 lexer_count: lexer_stencil_count,
