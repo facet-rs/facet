@@ -2340,16 +2340,26 @@ impl WeavyParseWorkspace {
         input: &str,
         external_scanner: Option<&dyn ExternalScannerHost>,
     ) -> Result<WeavyParseReport, WeavyParseError> {
+        let input_ctx = RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        };
+        if let Some(report) = parse_weavy_deterministic_with_execution_and_scratch::<
+            RuntimeWeavyDeterministicCollectingReportSink,
+        >(
+            input_ctx,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )? {
+            return Ok(report);
+        }
         parse_weavy_with_lexer_program_and_scratch(
-            RuntimeWeavyInput {
-                plan,
-                lexer_program: &plan.lexer_program,
-                auto_close_index: &plan.auto_close_index,
-                parser,
-                table,
-                input,
-                external_scanner,
-            },
+            input_ctx,
             RuntimeWeavyRecoveryMode::Strict,
             None,
             RuntimeWeavyReuseCollection::Enabled,
@@ -5727,6 +5737,7 @@ trait RuntimeWeavyDeterministicSink {
 
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection;
     const SNARK_STAT_COLLECTION: bool;
+    const REUSE_COLLECTION: RuntimeWeavyReuseCollection;
 
     #[allow(clippy::too_many_arguments)]
     fn accepted(
@@ -5755,6 +5766,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicTreeSink {
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
         RuntimeWeavyTreeEventCollection::Disabled;
     const SNARK_STAT_COLLECTION: bool = false;
+    const REUSE_COLLECTION: RuntimeWeavyReuseCollection = RuntimeWeavyReuseCollection::Disabled;
 
     fn accepted(
         _input_ctx: RuntimeWeavyInput<'_>,
@@ -5784,6 +5796,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
         RuntimeWeavyTreeEventCollection::Enabled;
     const SNARK_STAT_COLLECTION: bool = false;
+    const REUSE_COLLECTION: RuntimeWeavyReuseCollection = RuntimeWeavyReuseCollection::Disabled;
 
     fn accepted(
         input_ctx: RuntimeWeavyInput<'_>,
@@ -5820,6 +5833,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedCstSink 
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
         RuntimeWeavyTreeEventCollection::Enabled;
     const SNARK_STAT_COLLECTION: bool = false;
+    const REUSE_COLLECTION: RuntimeWeavyReuseCollection = RuntimeWeavyReuseCollection::Disabled;
 
     fn accepted(
         input_ctx: RuntimeWeavyInput<'_>,
@@ -5858,6 +5872,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedCstRepor
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
         RuntimeWeavyTreeEventCollection::Enabled;
     const SNARK_STAT_COLLECTION: bool = true;
+    const REUSE_COLLECTION: RuntimeWeavyReuseCollection = RuntimeWeavyReuseCollection::Disabled;
 
     fn accepted(
         input_ctx: RuntimeWeavyInput<'_>,
@@ -5904,6 +5919,7 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
     const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
         RuntimeWeavyTreeEventCollection::Enabled;
     const SNARK_STAT_COLLECTION: bool = true;
+    const REUSE_COLLECTION: RuntimeWeavyReuseCollection = RuntimeWeavyReuseCollection::Disabled;
 
     fn accepted(
         _input_ctx: RuntimeWeavyInput<'_>,
@@ -5921,27 +5937,104 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     ) -> Result<Self::Output, WeavyParseError> {
-        let tree_events = tree_journal.collect(tree_journal_head);
-        let reusable_nodes =
-            mark_runtime_weavy_reusable_nodes_with_errors(reusable_nodes, &tree_events);
-        let tree = tree_store.materialize_node(root);
-        Ok(WeavyParseReport {
-            tree,
+        accepted_runtime_weavy_report(
+            tree_store,
+            trace_events,
+            tree_journal,
             stats,
             lexer_stats,
-            snark_stats: snark_stats.to_public(),
+            snark_stats,
             hostcall_stats,
             execution_lane,
-            trace_events: trace_events.into_events(),
-            tree_events,
-            tree_store,
+            version,
+            root,
+            error_cost,
+            tree_journal_head,
             reusable_nodes,
-            accepted_version: version,
-            accepted_count: 1,
-            failure_count: usize::from(error_cost != 0),
-            max_live_versions: 1,
-        })
+        )
     }
+}
+
+struct RuntimeWeavyDeterministicCollectingReportSink;
+
+impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicCollectingReportSink {
+    type Output = WeavyParseReport;
+
+    const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
+        RuntimeWeavyTreeEventCollection::Enabled;
+    const SNARK_STAT_COLLECTION: bool = true;
+    const REUSE_COLLECTION: RuntimeWeavyReuseCollection = RuntimeWeavyReuseCollection::Enabled;
+
+    fn accepted(
+        _input_ctx: RuntimeWeavyInput<'_>,
+        tree_store: RuntimeWeavyTreeStore,
+        trace_events: RuntimeWeavyTraceSink,
+        tree_journal: RuntimeWeavyTreeJournal,
+        stats: RunStats,
+        lexer_stats: WeavyLexerExecutionStats,
+        snark_stats: RuntimeWeavySnarkExecutionStats,
+        hostcall_stats: WeavyHostCallExecutionStats,
+        execution_lane: WeavyParseExecutionLane,
+        version: parser_ir::StackVersionId,
+        root: parser_ir::TreeNodeId,
+        error_cost: u32,
+        tree_journal_head: RuntimeWeavyTreeJournalHead,
+        reusable_nodes: Vec<RuntimeWeavyReusableNode>,
+    ) -> Result<Self::Output, WeavyParseError> {
+        accepted_runtime_weavy_report(
+            tree_store,
+            trace_events,
+            tree_journal,
+            stats,
+            lexer_stats,
+            snark_stats,
+            hostcall_stats,
+            execution_lane,
+            version,
+            root,
+            error_cost,
+            tree_journal_head,
+            reusable_nodes,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accepted_runtime_weavy_report(
+    tree_store: RuntimeWeavyTreeStore,
+    trace_events: RuntimeWeavyTraceSink,
+    tree_journal: RuntimeWeavyTreeJournal,
+    stats: RunStats,
+    lexer_stats: WeavyLexerExecutionStats,
+    snark_stats: RuntimeWeavySnarkExecutionStats,
+    hostcall_stats: WeavyHostCallExecutionStats,
+    execution_lane: WeavyParseExecutionLane,
+    version: parser_ir::StackVersionId,
+    root: parser_ir::TreeNodeId,
+    error_cost: u32,
+    tree_journal_head: RuntimeWeavyTreeJournalHead,
+    reusable_nodes: Vec<RuntimeWeavyReusableNode>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    let tree_events = tree_journal.collect(tree_journal_head);
+    let reusable_nodes =
+        mark_runtime_weavy_reusable_nodes_with_errors(reusable_nodes, &tree_events);
+    let tree = tree_store.materialize_node(root);
+    Ok(WeavyParseReport {
+        tree,
+        stats,
+        lexer_stats,
+        snark_stats: snark_stats.to_public(),
+        hostcall_stats,
+        execution_lane,
+        trace_events: trace_events.into_events(),
+        tree_events,
+        tree_store,
+        reusable_nodes,
+        accepted_version: version,
+        accepted_count: 1,
+        failure_count: usize::from(error_cost != 0),
+        max_live_versions: 1,
+    })
 }
 
 #[derive(Debug, Default)]
@@ -6770,16 +6863,22 @@ pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(report) =
+        parse_weavy_deterministic_collecting_reuse_report_with_lexer_program(input_ctx)?
+    {
+        return Ok(report);
+    }
     parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
+        input_ctx,
         RuntimeWeavyRecoveryMode::Strict,
         None,
         RuntimeWeavyReuseCollection::Enabled,
@@ -7077,6 +7176,15 @@ fn parse_weavy_deterministic_report_with_execution(
     )
 }
 
+fn parse_weavy_deterministic_collecting_reuse_report_with_lexer_program(
+    input_ctx: RuntimeWeavyInput<'_>,
+) -> Result<Option<WeavyParseReport>, WeavyParseError> {
+    parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicCollectingReportSink>(
+        input_ctx,
+        RuntimeWeavyBlockExecution::Direct,
+    )
+}
+
 fn parse_weavy_deterministic_tree_with_lexer_program(
     input_ctx: RuntimeWeavyInput<'_>,
 ) -> Result<Option<SexpNode>, WeavyParseError> {
@@ -7246,9 +7354,12 @@ where
                 external_scanner_errors: &external_scanner_errors,
             };
             if block_execution == RuntimeWeavyBlockExecution::Direct {
-                let Some(outcome) =
-                    run_runtime_weavy_direct_deterministic_step(input_ctx, branch, &mut output)
-                else {
+                let Some(outcome) = run_runtime_weavy_direct_deterministic_step(
+                    input_ctx,
+                    branch,
+                    S::REUSE_COLLECTION,
+                    &mut output,
+                ) else {
                     return Ok(None);
                 };
                 outcome
@@ -7282,7 +7393,7 @@ where
                         block,
                         action,
                     },
-                    RuntimeWeavyReuseCollection::Disabled,
+                    S::REUSE_COLLECTION,
                     &mut output,
                 )
             }
@@ -7382,7 +7493,7 @@ where
             initial_branch,
             parser_ir::LookaheadTokenId::from_index(0),
             RuntimeWeavyMode::ApplyAction,
-            RuntimeWeavyReuseCollection::Disabled,
+            S::REUSE_COLLECTION,
         );
         loop {
             step_count += 1;
@@ -9094,6 +9205,7 @@ fn run_runtime_weavy_state_probe(
 fn run_runtime_weavy_direct_deterministic_step(
     input_ctx: RuntimeWeavyInput<'_>,
     branch: RuntimeWeavyBranch,
+    reuse_collection: RuntimeWeavyReuseCollection,
     output: &mut RuntimeWeavyOutput<'_>,
 ) -> Option<RuntimeWeavyStepOutcome> {
     let mut stepper = RuntimeWeavyStepper::from_branch(
@@ -9111,7 +9223,7 @@ fn run_runtime_weavy_direct_deterministic_step(
         branch,
         parser_ir::LookaheadTokenId::from_index(*output.next_lookahead_index),
         RuntimeWeavyMode::ApplyAction,
-        RuntimeWeavyReuseCollection::Disabled,
+        reuse_collection,
     );
     let version = stepper.version;
     let state = match stepper.stack.last() {
