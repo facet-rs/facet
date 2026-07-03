@@ -295,6 +295,9 @@ pub enum ExecEvent {
     Tier2Cutoff { verified: usize },
     /// Ran the tool.
     Ran,
+    /// Attached to an identical live run (wire executors only — the local
+    /// cache is single-demand).
+    Joined,
 }
 
 pub struct ExecCache {

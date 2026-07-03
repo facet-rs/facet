@@ -341,6 +341,19 @@ struct StructInfo {
 
 type Frame = Vec<(String, Value)>;
 
+/// Where command blocks actually run. The oracle's local two-tier cache is
+/// the default; a fleet of wire executors plugs in here (sync on purpose —
+/// the oracle is sync and wasm-clean; the async wire bridges on its side).
+pub trait ExecBackend {
+    fn exec(
+        &self,
+        command: &str,
+        plan: &crate::exec::ExecPlan,
+        capability: u64,
+        mounts: &[crate::exec::Mount],
+    ) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String>;
+}
+
 pub struct Oracle {
     fns: HashMap<String, ast::FnItem>,
     fn_hashes: HashMap<String, u64>,
@@ -350,6 +363,7 @@ pub struct Oracle {
     journal: RefCell<BTreeMap<String, Value>>,
     events: RefCell<Vec<Event>>,
     exec_cache: RefCell<crate::exec::ExecCache>,
+    backend: Option<Box<dyn ExecBackend>>,
 }
 
 type EvalResult = Result<Value, String>;
@@ -413,7 +427,14 @@ impl Oracle {
             journal: RefCell::new(BTreeMap::new()),
             events: RefCell::new(Vec::new()),
             exec_cache: RefCell::new(crate::exec::ExecCache::new()),
+            backend: None,
         })
+    }
+
+    /// Route command blocks through a fleet instead of the local cache.
+    pub fn with_backend(mut self, backend: Box<dyn ExecBackend>) -> Self {
+        self.backend = Some(backend);
+        self
     }
 
     /// The canonical identity of a top-level function (AST modulo spans).
@@ -1088,23 +1109,30 @@ impl Oracle {
         }
 
         let plan = assign_roles(&c.command.value, &argv)?;
-        let tool = tool_for(&c.command.value)?;
-        let outcome = self
-            .exec_cache
-            .borrow_mut()
-            .exec(&plan, cap_fp, &mounts, tool)?;
-        let event = self
-            .exec_cache
-            .borrow()
-            .events
-            .last()
-            .cloned()
-            .expect("exec pushed an event");
+
+        // A fleet backend, if plugged in; otherwise the local two-tier cache.
+        let (outputs, event) = if let Some(backend) = &self.backend {
+            backend.exec(&c.command.value, &plan, cap_fp, &mounts)?
+        } else {
+            let tool = tool_for(&c.command.value)?;
+            let outcome = self
+                .exec_cache
+                .borrow_mut()
+                .exec(&plan, cap_fp, &mounts, tool)?;
+            let event = self
+                .exec_cache
+                .borrow()
+                .events
+                .last()
+                .cloned()
+                .expect("exec pushed an event");
+            (outcome.outputs, event)
+        };
         self.events.borrow_mut().push(Event::Exec {
             command: c.command.value.clone(),
             event,
         });
-        Ok(Value::Tree(outcome.outputs))
+        Ok(Value::Tree(outputs))
     }
 
     // -- primitives: observations pinned in the journal ----------------------

@@ -635,6 +635,225 @@ impl ExecutorService {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The fleet: the oracle's ExecBackend over N wire executors. Placement is
+// gravity-first (run where the inputs already live); missing mounts move
+// EXECUTOR→EXECUTOR when any peer has them; the orchestrator uploads only
+// trees it created itself. v0 gap, on purpose: result trees materialize back
+// at the orchestrator (Value::Tree carries bytes) — remote-handle Trees in
+// the language are the next step; observers are already the way around it.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Transfer {
+    /// Orchestrator → executor (a tree born at the orchestrator).
+    Upload { to: usize, tree: u64 },
+    /// Executor → executor (gravity: bytes never touch the orchestrator).
+    GravityPull { from: usize, to: usize, tree: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// Run where the most input trees already live (ties: fewest runs so far).
+    Gravity,
+    /// Alternate executors (tests: forces cross-machine traffic).
+    RoundRobin,
+}
+
+pub struct FleetBackend {
+    handle: tokio::runtime::Handle,
+    executors: Vec<(String, ExecutorClient)>,
+    placement: Placement,
+    state: std::sync::Mutex<FleetState>,
+}
+
+#[derive(Default)]
+struct FleetState {
+    /// Which executors hold which trees (learned from puts/pulls/outputs).
+    locations: HashMap<u64, Vec<usize>>,
+    /// Every byte movement — the scheduler's future food.
+    pub transfers: Vec<Transfer>,
+    placements: u64,
+    run_ids: u64,
+}
+
+impl FleetBackend {
+    pub async fn connect(placement: Placement, addrs: &[String]) -> Result<Self, String> {
+        let mut executors = Vec::new();
+        for addr in addrs {
+            let client: ExecutorClient = vox::connect_lane(addr)
+                .await
+                .map_err(|e| format!("connect {addr}: {e:?}"))?;
+            executors.push((addr.clone(), client));
+        }
+        Ok(FleetBackend {
+            handle: tokio::runtime::Handle::current(),
+            executors,
+            placement,
+            state: std::sync::Mutex::new(FleetState::default()),
+        })
+    }
+
+    pub fn transfers(&self) -> Vec<Transfer> {
+        self.state.lock().unwrap().transfers.clone()
+    }
+
+    fn choose(&self, mount_hashes: &[u64]) -> usize {
+        let mut state = self.state.lock().unwrap();
+        let chosen = match self.placement {
+            Placement::RoundRobin => (state.placements as usize) % self.executors.len(),
+            Placement::Gravity => (0..self.executors.len())
+                .max_by_key(|idx| {
+                    mount_hashes
+                        .iter()
+                        .filter(|h| {
+                            state.locations.get(h).is_some_and(|locs| locs.contains(idx))
+                        })
+                        .count()
+                })
+                .unwrap_or(0),
+        };
+        state.placements += 1;
+        chosen
+    }
+
+    async fn ensure_mount(&self, target: usize, tree: &Tree) -> Result<u64, String> {
+        let hash = tree.fingerprint();
+        let holders: Vec<usize> = {
+            let state = self.state.lock().unwrap();
+            state.locations.get(&hash).cloned().unwrap_or_default()
+        };
+        if holders.contains(&target) {
+            return Ok(hash);
+        }
+        let client = &self.executors[target].1;
+        if let Some(&from) = holders.first() {
+            // Gravity: the peer has it; bytes go executor→executor.
+            let peer_addr = self.executors[from].0.clone();
+            let ok = client
+                .pull_from(peer_addr, hash)
+                .await
+                .map_err(|e| format!("pull_from: {e:?}"))?;
+            if ok {
+                let mut state = self.state.lock().unwrap();
+                state.locations.entry(hash).or_default().push(target);
+                state.transfers.push(Transfer::GravityPull {
+                    from,
+                    to: target,
+                    tree: hash,
+                });
+                return Ok(hash);
+            }
+        }
+        // Orchestrator-born (fetch/extract/merge results): upload once.
+        let put = client
+            .put_tree(tree_to_bytes(tree))
+            .await
+            .map_err(|e| format!("put_tree: {e:?}"))?;
+        let mut state = self.state.lock().unwrap();
+        state.locations.entry(hash).or_default().push(target);
+        state.transfers.push(Transfer::Upload {
+            to: target,
+            tree: hash,
+        });
+        Ok(put)
+    }
+}
+
+impl vix::oracle::ExecBackend for FleetBackend {
+    fn exec(
+        &self,
+        command: &str,
+        plan: &ExecPlan,
+        capability: u64,
+        mounts: &[vix::exec::Mount],
+    ) -> Result<(Tree, vix::exec::ExecEvent), String> {
+        // The oracle is sync; bridge onto the runtime this fleet was born on.
+        tokio::task::block_in_place(|| {
+            self.handle.clone().block_on(async {
+                let mount_hashes: Vec<u64> =
+                    mounts.iter().map(|m| m.tree.fingerprint()).collect();
+                let target = self.choose(&mount_hashes);
+                let client = self.executors[target].1.clone();
+
+                let mut wire_mounts = Vec::new();
+                for m in mounts {
+                    let hash = self.ensure_mount(target, &m.tree).await?;
+                    wire_mounts.push(WireMount {
+                        at: m.at.clone(),
+                        tree: hash,
+                    });
+                }
+
+                let run_id = {
+                    let mut state = self.state.lock().unwrap();
+                    state.run_ids += 1;
+                    state.run_ids
+                };
+                let request = WireExecRequest {
+                    plan: plan.clone(),
+                    mounts: wire_mounts,
+                    capability,
+                    command: command.to_string(),
+                    observer: None,
+                    module: String::new(),
+                };
+                let (tx, mut rx) = vox::channel::<WireExecEvent>();
+                let exec_call = {
+                    let client = client.clone();
+                    tokio::spawn(async move { client.exec(request, run_id, tx).await })
+                };
+
+                let mut source = vix::exec::ExecEvent::Ran;
+                let mut finished = None;
+                while let Ok(Some(event)) = rx.recv().await {
+                    match event.get().clone() {
+                        WireExecEvent::Serving { source: s } => {
+                            source = match s {
+                                CacheSource::Fresh => vix::exec::ExecEvent::Ran,
+                                CacheSource::Joined => vix::exec::ExecEvent::Joined,
+                                CacheSource::Tier1 => vix::exec::ExecEvent::Tier1Hit,
+                                CacheSource::Tier2 { verified } => {
+                                    vix::exec::ExecEvent::Tier2Cutoff {
+                                        verified: verified as usize,
+                                    }
+                                }
+                            };
+                        }
+                        WireExecEvent::Finished { ok, tree, .. } => {
+                            if !ok {
+                                return Err("run failed".to_string());
+                            }
+                            finished = Some(tree);
+                            break;
+                        }
+                        WireExecEvent::Failed { error } => return Err(error),
+                        _ => {}
+                    }
+                }
+                exec_call
+                    .await
+                    .map_err(|e| format!("exec task: {e}"))?
+                    .map_err(|e| format!("exec rpc: {e:?}"))?;
+
+                let tree_hash = finished.ok_or("run ended without Finished")?;
+                {
+                    let mut state = self.state.lock().unwrap();
+                    state.locations.entry(tree_hash).or_default().push(target);
+                }
+                // v0: materialize the result back (the flagged gap).
+                let bytes = client
+                    .fetch_tree(tree_hash)
+                    .await
+                    .map_err(|e| format!("fetch_tree: {e:?}"))?
+                    .ok_or("finished tree missing from CAS")?;
+                let tree = tree_from_bytes(&bytes)?;
+                Ok((tree, source))
+            })
+        })
+    }
+}
+
 /// Executor-side observer evaluation: reconstitute the closure, bind the Run
 /// value, invoke, ship the result. The observer is generic over its return
 /// type — whatever it returns is what the exec node IS to the graph.
