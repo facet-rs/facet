@@ -5189,7 +5189,7 @@ impl RuntimeWeavyStateGotoIndex {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct RuntimeWeavyStateGotos {
-    entries: Vec<RuntimeWeavyGotoEntry>,
+    entries: RuntimeWeavyStateGotoEntries,
 }
 
 impl RuntimeWeavyStateGotos {
@@ -5203,15 +5203,52 @@ impl RuntimeWeavyStateGotos {
             })
             .collect::<Vec<_>>();
         entries.sort_by_key(|entry| entry.nonterminal);
-        Self { entries }
+        Self {
+            entries: RuntimeWeavyStateGotoEntries::from_entries(entries),
+        }
     }
 
     fn get(&self, nonterminal: parser_ir::NonterminalId) -> Option<parser_ir::ParseStateId> {
-        let index = self
-            .entries
-            .binary_search_by_key(&nonterminal, |entry| entry.nonterminal)
-            .ok()?;
-        self.entries.get(index).map(|entry| entry.state)
+        self.entries.get(nonterminal)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum RuntimeWeavyStateGotoEntries {
+    #[default]
+    Empty,
+    Dense(Vec<Option<parser_ir::ParseStateId>>),
+    Sparse(Vec<RuntimeWeavyGotoEntry>),
+}
+
+impl RuntimeWeavyStateGotoEntries {
+    fn from_entries(entries: Vec<RuntimeWeavyGotoEntry>) -> Self {
+        let Some(max_nonterminal) = entries.last().map(|entry| entry.nonterminal.get() as usize)
+        else {
+            return Self::Empty;
+        };
+        let dense_len = max_nonterminal + 1;
+        if dense_len <= entries.len().saturating_mul(8).max(16) {
+            let mut dense = vec![None; dense_len];
+            for entry in entries {
+                dense[entry.nonterminal.get() as usize] = Some(entry.state);
+            }
+            return Self::Dense(dense);
+        }
+        Self::Sparse(entries)
+    }
+
+    fn get(&self, nonterminal: parser_ir::NonterminalId) -> Option<parser_ir::ParseStateId> {
+        match self {
+            Self::Empty => None,
+            Self::Dense(entries) => entries.get(nonterminal.get() as usize).copied().flatten(),
+            Self::Sparse(entries) => {
+                let index = entries
+                    .binary_search_by_key(&nonterminal, |entry| entry.nonterminal)
+                    .ok()?;
+                entries.get(index).map(|entry| entry.state)
+            }
+        }
     }
 }
 
