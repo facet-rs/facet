@@ -22,3 +22,8 @@ snark = { path = "../snark", features = ["json-import"] }
 snark-dsl = { path = "../snark-dsl", features = ["native"] }
 facet = { path = "../facet" }
 facet-json = { path = "../facet-json" }
+
+# The graph demand engine's driver uses only core::future (vix stays
+# wasm-clean); tokio is DEV-only, an executor + timers for the demand tests.
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
