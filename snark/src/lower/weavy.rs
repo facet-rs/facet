@@ -12085,7 +12085,7 @@ impl RuntimeWeavyInputPoints {
         Self {
             input_len: input.len(),
             enabled: false,
-            line_starts: vec![0],
+            line_starts: Vec::new(),
             cached_line_index: Cell::new(0),
         }
     }
