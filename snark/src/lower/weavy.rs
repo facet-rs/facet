@@ -12722,6 +12722,12 @@ impl RuntimeWeavyInputPoints {
     fn point_at(&self, byte: usize) -> PointBytes {
         debug_assert!(self.enabled, "point lookup used disabled input points");
         let byte = byte.min(self.input_len);
+        if self.line_starts.len() == 1 {
+            return PointBytes::new(
+                Row::new(0),
+                Utf8ColumnBytes::new(u32::try_from(byte).expect("runtime column fits u32")),
+            );
+        }
         let mut line_index = self
             .cached_line_index
             .get()
@@ -12815,6 +12821,24 @@ mod tests {
         assert_eq!(
             points.point_at(1),
             PointBytes::new(Row::new(0), Utf8ColumnBytes::new(1))
+        );
+    }
+
+    #[test]
+    fn runtime_weavy_input_points_fast_path_handles_single_line_inputs() {
+        let points = RuntimeWeavyInputPoints::new("abcdef");
+
+        assert_eq!(
+            points.point_at(0),
+            PointBytes::new(Row::new(0), Utf8ColumnBytes::new(0))
+        );
+        assert_eq!(
+            points.point_at(3),
+            PointBytes::new(Row::new(0), Utf8ColumnBytes::new(3))
+        );
+        assert_eq!(
+            points.point_at(99),
+            PointBytes::new(Row::new(0), Utf8ColumnBytes::new(6))
         );
     }
 
