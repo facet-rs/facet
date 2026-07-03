@@ -54,8 +54,24 @@ pub struct WireExecRequest {
 
 #[derive(Facet, Debug, Clone, PartialEq)]
 #[repr(u8)]
+pub enum CacheSource {
+    /// A process actually ran for this request.
+    Fresh,
+    /// Joined a LIVE identical run mid-flight (one process, many demands).
+    Joined,
+    /// Served from a completed run under the same coarse key.
+    Tier1,
+    /// Coarse key missed; a prior run's read-set verified against the
+    /// current mounts — reused without running.
+    Tier2 { verified: u64 },
+}
+
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[repr(u8)]
 pub enum WireExecEvent {
     Started,
+    /// How this demand is being served (right after Started).
+    Serving { source: CacheSource },
     /// An output path landed — fetchable NOW via fetch_path, before Finished.
     PathReady { path: String, content_hash: u64 },
     /// The observer's result (oracle::ship bytes of the vix value).
@@ -64,8 +80,8 @@ pub enum WireExecEvent {
     Failed { error: String },
 }
 
-// Owned DTO — the streamed channel payload needs a lifetime-shortening view.
-vox_schema::impl_reborrow_owned!(WireExecEvent);
+// Owned DTOs — streamed channel payloads need a lifetime-shortening view.
+vox_schema::impl_reborrow_owned!(WireExecEvent, CacheSource);
 
 // ---------------------------------------------------------------------------
 // The service.
@@ -121,13 +137,53 @@ impl<T: vix::exec::Tool + Send + Sync> WireTool for Atomic<T> {
 #[derive(Default)]
 struct Cas {
     trees: HashMap<u64, Tree>,
-    /// Output spaces of runs, filled progressively while the tool executes.
+    /// Output spaces of runs (keyed by run IDENTITY), filled progressively
+    /// while the tool executes.
     runs: HashMap<u64, Tree>,
+    /// Caller-chosen run ids alias onto run identities (joiners and the
+    /// spawner share one output space — one process, one producing tree).
+    run_aliases: HashMap<u64, u64>,
+}
+
+/// A finished run — what a cache entry points at AFTER the flush. Mid-flight
+/// there is no entry: there is a live run to JOIN (the producing-vs-L1
+/// answer: serve-before-cache; the journal records only completed runs).
+#[derive(Clone)]
+struct CompletedRun {
+    paths: Vec<(String, u64)>,
+    tree: u64,
+    read_set: ReadSet,
+}
+
+/// A live run: the event log so far (for late joiners) + a broadcast for the
+/// rest. Identical demands ATTACH here — one process, many observers.
+struct LiveRun {
+    log: Vec<WireExecEvent>,
+    feed: tokio::sync::broadcast::Sender<WireExecEvent>,
+}
+
+enum RunState {
+    InFlight(LiveRun),
+    Complete(CompletedRun),
+    Failed(String),
+}
+
+#[derive(Default)]
+struct RunTable {
+    /// By FULL identity: plan × capability × coarse mounts.
+    states: HashMap<u64, RunState>,
+    /// Tier-2 candidates by computation identity (plan × capability only —
+    /// the mounts are what verification relaxes).
+    candidates: HashMap<u64, Vec<CompletedRun>>,
+    /// Observer results by (full run identity × observer canonical hash):
+    /// one run, many observers, each a distinct memoized VALUE.
+    observers: HashMap<(u64, u64), Vec<u8>>,
 }
 
 #[derive(Clone)]
 pub struct ExecutorService {
     cas: Arc<Mutex<Cas>>,
+    runs_table: Arc<Mutex<RunTable>>,
     tools: Arc<HashMap<String, Arc<dyn WireTool>>>,
 }
 
@@ -135,6 +191,7 @@ impl ExecutorService {
     pub fn new(tools: HashMap<String, Arc<dyn WireTool>>) -> Self {
         ExecutorService {
             cas: Arc::new(Mutex::new(Cas::default())),
+            runs_table: Arc::new(Mutex::new(RunTable::default())),
             tools: Arc::new(tools),
         }
     }
@@ -186,7 +243,10 @@ impl Executor for ExecutorService {
 
     async fn fetch_path(&self, run: u64, path: String) -> Option<String> {
         let cas = self.cas.lock().await;
-        cas.runs.get(&run).and_then(|t| t.entries.get(&path).cloned())
+        let identity = cas.run_aliases.get(&run).copied().unwrap_or(run);
+        cas.runs
+            .get(&identity)
+            .and_then(|t| t.entries.get(&path).cloned())
     }
 
     async fn pull_from(&self, peer: String, hash: u64) -> bool {
@@ -222,17 +282,289 @@ impl Executor for ExecutorService {
             }
         }
 
+        // Run identity: plan × capability × coarse mounts. Computation
+        // identity (for tier-2 candidates): plan × capability only.
+        let comp_identity = {
+            use std::hash::{DefaultHasher, Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            request.plan.hash().hash(&mut h);
+            request.capability.hash(&mut h);
+            h.finish()
+        };
+        let identity = {
+            use std::hash::{DefaultHasher, Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            comp_identity.hash(&mut h);
+            for m in &mounts {
+                m.at.hash(&mut h);
+                m.tree.fingerprint().hash(&mut h);
+            }
+            h.finish()
+        };
+        self.cas.lock().await.run_aliases.insert(run, identity);
+
+        // Decide this demand's role under ONE lock: replay a completed run,
+        // JOIN a live one, or drive a fresh process. Mid-flight there is no
+        // cache entry — there is a run to attach to (serve-before-cache).
+        enum ServeRole {
+            Replay(CompletedRun, CacheSource),
+            Join {
+                log: Vec<WireExecEvent>,
+                feed: tokio::sync::broadcast::Receiver<WireExecEvent>,
+            },
+            Drive(tokio::sync::broadcast::Sender<WireExecEvent>),
+        }
+
+        let role = {
+            let mut table = self.runs_table.lock().await;
+            match table.states.get(&identity) {
+                Some(RunState::Complete(done)) => {
+                    ServeRole::Replay(done.clone(), CacheSource::Tier1)
+                }
+                Some(RunState::Failed(error)) => {
+                    let _ = events
+                        .send(WireExecEvent::Failed { error: error.clone() })
+                        .await;
+                    return;
+                }
+                Some(RunState::InFlight(live)) => ServeRole::Join {
+                    log: live.log.clone(),
+                    feed: live.feed.subscribe(),
+                },
+                None => {
+                    // Tier 2: a prior run of the same COMPUTATION whose
+                    // read-set verifies against the current world.
+                    let world = MountedWorld::new(&mounts);
+                    let cutoff = table.candidates.get(&comp_identity).and_then(|cands| {
+                        cands
+                            .iter()
+                            .find(|c| vix::exec::verify(&c.read_set, &world))
+                            .cloned()
+                    });
+                    match cutoff {
+                        Some(done) => {
+                            let verified = done.read_set.entries.len() as u64;
+                            table.states.insert(identity, RunState::Complete(done.clone()));
+                            ServeRole::Replay(done, CacheSource::Tier2 { verified })
+                        }
+                        None => {
+                            let (feed, _) = tokio::sync::broadcast::channel(1024);
+                            table.states.insert(
+                                identity,
+                                RunState::InFlight(LiveRun {
+                                    log: Vec::new(),
+                                    feed: feed.clone(),
+                                }),
+                            );
+                            ServeRole::Drive(feed)
+                        }
+                    }
+                }
+            }
+        };
+
+        match role {
+            ServeRole::Replay(done, source) => {
+                let _ = events.send(WireExecEvent::Serving { source }).await;
+                // Re-open the output space so fetch_path works on replays too.
+                {
+                    let mut cas = self.cas.lock().await;
+                    if let Some(tree) = cas.trees.get(&done.tree).cloned() {
+                        cas.runs.insert(identity, tree);
+                    }
+                }
+                for (path, content_hash) in &done.paths {
+                    let _ = events
+                        .send(WireExecEvent::PathReady {
+                            path: path.clone(),
+                            content_hash: *content_hash,
+                        })
+                        .await;
+                }
+                self.finish_with_observer(&request, identity, &done, &events).await;
+            }
+            ServeRole::Join { log, mut feed } => {
+                let _ = events
+                    .send(WireExecEvent::Serving {
+                        source: CacheSource::Joined,
+                    })
+                    .await;
+                for event in log {
+                    let _ = events.send(event).await;
+                }
+                loop {
+                    match feed.recv().await {
+                        Ok(WireExecEvent::Finished { .. }) => {
+                            let done = {
+                                let table = self.runs_table.lock().await;
+                                match table.states.get(&identity) {
+                                    Some(RunState::Complete(done)) => done.clone(),
+                                    _ => {
+                                        drop(table);
+                                        let _ = events
+                                            .send(WireExecEvent::Failed {
+                                                error: "run completed without a record".into(),
+                                            })
+                                            .await;
+                                        return;
+                                    }
+                                }
+                            };
+                            self.finish_with_observer(&request, identity, &done, &events)
+                                .await;
+                            return;
+                        }
+                        Ok(WireExecEvent::Failed { error }) => {
+                            let _ = events.send(WireExecEvent::Failed { error }).await;
+                            return;
+                        }
+                        Ok(event) => {
+                            let _ = events.send(event).await;
+                        }
+                        Err(_) => {
+                            let _ = events
+                                .send(WireExecEvent::Failed {
+                                    error: "live run feed lagged or closed".into(),
+                                })
+                                .await;
+                            return;
+                        }
+                    }
+                }
+            }
+            ServeRole::Drive(feed) => {
+                let _ = events
+                    .send(WireExecEvent::Serving {
+                        source: CacheSource::Fresh,
+                    })
+                    .await;
+                self.drive(&request, identity, mounts, feed, &events).await;
+            }
+        }
+    }
+}
+
+impl ExecutorService {
+    /// Append to the live run's log and fan out to joiners — atomically with
+    /// respect to joiner subscription (same lock), so no event is lost or
+    /// duplicated across the log/feed boundary.
+    async fn broadcast(
+        &self,
+        identity: u64,
+        feed: &tokio::sync::broadcast::Sender<WireExecEvent>,
+        event: WireExecEvent,
+    ) {
+        let mut table = self.runs_table.lock().await;
+        if let Some(RunState::InFlight(live)) = table.states.get_mut(&identity) {
+            live.log.push(event.clone());
+        }
+        let _ = feed.send(event);
+    }
+
+    /// Evaluate THIS demand's observer (memoized by run identity × observer
+    /// hash) and finish the stream. One run, many observers, each its own
+    /// memoized value — the L1-proof discipline: distinct observers never
+    /// alias.
+    async fn finish_with_observer(
+        &self,
+        request: &WireExecRequest,
+        identity: u64,
+        done: &CompletedRun,
+        events: &Tx<WireExecEvent>,
+    ) {
+        if let Some(observer_bytes) = &request.observer {
+            let obs_hash = {
+                use std::hash::{DefaultHasher, Hash, Hasher};
+                let mut h = DefaultHasher::new();
+                observer_bytes.hash(&mut h);
+                h.finish()
+            };
+            let memo = self
+                .runs_table
+                .lock()
+                .await
+                .observers
+                .get(&(identity, obs_hash))
+                .cloned();
+            let value = match memo {
+                Some(v) => Ok(v),
+                None => {
+                    let outputs = self
+                        .cas
+                        .lock()
+                        .await
+                        .trees
+                        .get(&done.tree)
+                        .cloned()
+                        .unwrap_or_default();
+                    let module = request.module.clone();
+                    let bytes = observer_bytes.clone();
+                    let evaluated = tokio::task::spawn_blocking(move || {
+                        evaluate_observer(&module, &bytes, &outputs)
+                    })
+                    .await
+                    .expect("observer task joins");
+                    if let Ok(v) = &evaluated {
+                        self.runs_table
+                            .lock()
+                            .await
+                            .observers
+                            .insert((identity, obs_hash), v.clone());
+                    }
+                    evaluated
+                }
+            };
+            match value {
+                Ok(v) => {
+                    let _ = events.send(WireExecEvent::ObserverResult { value: v }).await;
+                }
+                Err(error) => {
+                    let _ = events.send(WireExecEvent::Failed { error }).await;
+                    return;
+                }
+            }
+        }
+        let _ = events
+            .send(WireExecEvent::Finished {
+                ok: true,
+                tree: done.tree,
+                read_set_len: done.read_set.entries.len() as u64,
+            })
+            .await;
+    }
+
+    /// Actually run the tool: the one process behind however many demands.
+    async fn drive(
+        &self,
+        request: &WireExecRequest,
+        identity: u64,
+        mounts: Vec<vix::exec::Mount>,
+        feed: tokio::sync::broadcast::Sender<WireExecEvent>,
+        events: &Tx<WireExecEvent>,
+    ) {
+        let comp_identity = {
+            use std::hash::{DefaultHasher, Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            request.plan.hash().hash(&mut h);
+            request.capability.hash(&mut h);
+            h.finish()
+        };
+
+        let fail = |error: String| async {
+            self.runs_table
+                .lock()
+                .await
+                .states
+                .insert(identity, RunState::Failed(error.clone()));
+            let _ = feed.send(WireExecEvent::Failed { error: error.clone() });
+            let _ = events.send(WireExecEvent::Failed { error }).await;
+        };
+
         let Some(tool) = self.tools.get(&request.command).cloned() else {
-            let _ = events
-                .send(WireExecEvent::Failed {
-                    error: format!("no tool for `{}`", request.command),
-                })
-                .await;
+            fail(format!("no tool for `{}`", request.command)).await;
             return;
         };
 
-        // Run the tool on a blocking thread; forward each produced path into
-        // the run's PRODUCING output space + the event stream immediately.
         let (path_tx, mut path_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String)>();
         let plan = request.plan.clone();
         let tool_task = tokio::task::spawn_blocking(move || {
@@ -246,59 +578,60 @@ impl Executor for ExecutorService {
         });
 
         let mut produced = Tree::default();
+        let mut paths = Vec::new();
         while let Some((path, contents)) = path_rx.recv().await {
             let hash = content_hash(&contents);
             produced.entries.insert(path.clone(), contents.clone());
+            paths.push((path.clone(), hash));
             self.cas
                 .lock()
                 .await
                 .runs
-                .entry(run)
+                .entry(identity)
                 .or_default()
                 .entries
                 .insert(path.clone(), contents);
-            let _ = events
-                .send(WireExecEvent::PathReady {
-                    path,
-                    content_hash: hash,
-                })
-                .await;
+            let event = WireExecEvent::PathReady {
+                path,
+                content_hash: hash,
+            };
+            self.broadcast(identity, &feed, event.clone()).await;
+            let _ = events.send(event).await;
         }
 
         let (result, read_set): (Result<(), String>, ReadSet) =
             tool_task.await.expect("tool task joins");
         if let Err(error) = result {
-            let _ = events.send(WireExecEvent::Failed { error }).await;
+            fail(error).await;
             return;
         }
 
-        // Flush: the finished output space becomes an immutable CAS tree.
+        // FLUSH: only now does a cache entry exist. The journal records
+        // completed runs; in-flight state evaporates on failure/crash.
         let final_hash = tree_hash(&produced);
-        self.cas.lock().await.trees.insert(final_hash, produced.clone());
-
-        // The observer: a shipped vix closure, evaluated HERE against the Run
-        // value. Only its result crosses.
-        if let Some(observer_bytes) = &request.observer {
-            match evaluate_observer(&request.module, observer_bytes, &produced) {
-                Ok(value_bytes) => {
-                    let _ = events
-                        .send(WireExecEvent::ObserverResult { value: value_bytes })
-                        .await;
-                }
-                Err(error) => {
-                    let _ = events.send(WireExecEvent::Failed { error }).await;
-                    return;
-                }
-            }
+        self.cas.lock().await.trees.insert(final_hash, produced);
+        let done = CompletedRun {
+            paths,
+            tree: final_hash,
+            read_set,
+        };
+        {
+            let mut table = self.runs_table.lock().await;
+            table.states.insert(identity, RunState::Complete(done.clone()));
+            table
+                .candidates
+                .entry(comp_identity)
+                .or_default()
+                .push(done.clone());
         }
+        // Wake the joiners (state is Complete BEFORE the marker lands).
+        let _ = feed.send(WireExecEvent::Finished {
+            ok: true,
+            tree: done.tree,
+            read_set_len: done.read_set.entries.len() as u64,
+        });
 
-        let _ = events
-            .send(WireExecEvent::Finished {
-                ok: true,
-                tree: final_hash,
-                read_set_len: read_set.entries.len() as u64,
-            })
-            .await;
+        self.finish_with_observer(request, identity, &done, events).await;
     }
 }
 
