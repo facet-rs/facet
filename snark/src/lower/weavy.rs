@@ -3040,12 +3040,22 @@ impl WeavyLexerProgram {
             .into_iter()
             .map(|mode| WeavyLexModeProgram::from_compiled(mode, &mut compiler))
             .collect::<Vec<_>>();
+        let terminal_indices = modes
+            .iter()
+            .map(WeavyLexModeProgram::terminal_indices)
+            .collect::<Vec<_>>();
         let state_modes = table
             .states()
             .iter()
             .map(|state| {
-                let mode = &modes[state.lex_mode().get() as usize];
-                WeavyLexModeProgram::from_state(state, mode, &mut compiler)
+                let mode_index = state.lex_mode().get() as usize;
+                let mode = &modes[mode_index];
+                WeavyLexModeProgram::from_state(
+                    state,
+                    mode,
+                    &terminal_indices[mode_index],
+                    &mut compiler,
+                )
             })
             .collect();
         Self { modes, state_modes }
@@ -3588,6 +3598,7 @@ impl WeavyLexModeProgram {
     fn from_state(
         state: &parser_ir::ParseState,
         mode: &WeavyLexModeProgram,
+        terminal_indices: &[Option<usize>],
         compiler: &mut WeavyLexerCompiler,
     ) -> Self {
         let mut terminals = Vec::new();
@@ -3604,7 +3615,7 @@ impl WeavyLexModeProgram {
                 continue;
             }
             seen_terminals[terminal_index] = true;
-            if let Some(row) = mode.terminal(terminal) {
+            if let Some(row) = mode.terminal_at(terminal, terminal_indices) {
                 let mut row = row.clone();
                 row.lookahead = Some(RuntimeWeavyTerminalLookahead {
                     terminal,
@@ -3648,6 +3659,31 @@ impl WeavyLexModeProgram {
         &self.terminals
     }
 
+    fn terminal_indices(&self) -> Vec<Option<usize>> {
+        let mut indices = Vec::new();
+        for (index, row) in self.terminals.iter().enumerate() {
+            let terminal_index = row.terminal.get() as usize;
+            if indices.len() <= terminal_index {
+                indices.resize(terminal_index + 1, None);
+            }
+            indices[terminal_index] = Some(index);
+        }
+        indices
+    }
+
+    fn terminal_at(
+        &self,
+        terminal: parser_ir::TerminalId,
+        terminal_indices: &[Option<usize>],
+    ) -> Option<&WeavyLexTerminal> {
+        let index = terminal_indices
+            .get(terminal.get() as usize)
+            .copied()
+            .flatten()?;
+        self.terminals.get(index)
+    }
+
+    #[cfg(test)]
     fn terminal(&self, terminal: parser_ir::TerminalId) -> Option<&WeavyLexTerminal> {
         self.terminals.iter().find(|row| row.terminal == terminal)
     }
