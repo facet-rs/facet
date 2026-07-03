@@ -529,6 +529,11 @@ pub struct Oracle {
     memo: RefCell<HashMap<(u64, u64), Value>>,
     journal: RefCell<BTreeMap<String, Value>>,
     events: RefCell<Vec<Event>>,
+    /// A LIVE sink invoked on every event as it happens — the daemon uses this
+    /// to STREAM demand events to an IDE and to GATE them (block the oracle
+    /// thread until the client steps). `events` above is the post-hoc log; the
+    /// sink is the real-time tap. Both are fed by `emit`.
+    sink: Option<Box<dyn Fn(&Event)>>,
     exec_cache: RefCell<crate::exec::ExecCache>,
     backend: Option<Box<dyn ExecBackend>>,
     /// Run ids this oracle spawned that haven't logged their Exec event yet
@@ -597,6 +602,7 @@ impl Oracle {
             memo: RefCell::new(HashMap::new()),
             journal: RefCell::new(BTreeMap::new()),
             events: RefCell::new(Vec::new()),
+            sink: None,
             exec_cache: RefCell::new(crate::exec::ExecCache::new()),
             backend: None,
             unlogged_runs: RefCell::new(HashMap::new()),
@@ -609,9 +615,35 @@ impl Oracle {
         self
     }
 
+    /// Install a live event sink (the daemon streams + gates through it).
+    pub fn with_sink(mut self, sink: Box<dyn Fn(&Event)>) -> Self {
+        self.sink = Some(sink);
+        self
+    }
+
+    /// Record an event: append to the log AND tap the live sink (in that
+    /// order, so the log is consistent when the sink blocks for a step).
+    fn emit(&self, event: Event) {
+        self.events.borrow_mut().push(event.clone());
+        if let Some(sink) = &self.sink {
+            sink(&event);
+        }
+    }
+
     /// The canonical identity of a top-level function (AST modulo spans).
     pub fn fn_hash(&self, name: &str) -> Option<u64> {
         self.fn_hashes.get(name).copied()
+    }
+
+    /// Whether `func`'s single parameter is typed `Target` (so a caller can
+    /// supply a canned target). True only for a one-param fn whose type path
+    /// ends in `Target`.
+    pub fn fn_param_is_target(&self, func: &str) -> bool {
+        self.fns.get(func).is_some_and(|f| {
+            f.params.params.len() == 1
+                && matches!(&f.params.params[0].ty, ast::Type::Path(p)
+                    if p.segments.last().map(|s| s.value.as_str()) == Some("Target"))
+        })
     }
 
     pub fn events(&self) -> Vec<Event> {
@@ -731,12 +763,12 @@ impl Oracle {
         }
         let key = (self.fn_hashes[func], h.finish());
         if let Some(hit) = self.memo.borrow().get(&key) {
-            self.events.borrow_mut().push(Event::Hit {
+            self.emit(Event::Hit {
                 func: func.to_string(),
-            });
+                });
             return Ok(hit.clone());
         }
-        self.events.borrow_mut().push(Event::Miss {
+        self.emit(Event::Miss {
             func: func.to_string(),
         });
 
@@ -1340,7 +1372,7 @@ impl Oracle {
         self.unlogged_runs
             .borrow_mut()
             .insert(id, c.command.value.clone());
-        self.events.borrow_mut().push(Event::Spawn {
+        self.emit(Event::Spawn {
             command: c.command.value.clone(),
         });
         Ok(Value::PendingTree { run: id })
@@ -1350,7 +1382,7 @@ impl Oracle {
     fn force_and_note(&self, id: u64) -> Result<crate::exec::Tree, String> {
         let (tree, event) = force_run(id)?;
         if let Some(command) = self.unlogged_runs.borrow_mut().remove(&id) {
-            self.events.borrow_mut().push(Event::Exec { command, event });
+            self.emit(Event::Exec { command, event });
         }
         Ok(tree)
     }
@@ -1367,7 +1399,7 @@ impl Oracle {
 
     fn observe(&self, key: String, produce: impl FnOnce() -> Value) -> Value {
         if let Some(pinned) = self.journal.borrow().get(&key) {
-            self.events.borrow_mut().push(Event::Observation {
+            self.emit(Event::Observation {
                 key,
                 replayed: true,
             });
@@ -1375,7 +1407,7 @@ impl Oracle {
         }
         let value = produce();
         self.journal.borrow_mut().insert(key.clone(), value.clone());
-        self.events.borrow_mut().push(Event::Observation {
+        self.emit(Event::Observation {
             key,
             replayed: false,
         });

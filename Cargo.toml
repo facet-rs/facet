@@ -4,6 +4,7 @@ members = [
   "snark-ts-diff",
   "vix",
   "vix-wire",
+  "vix-daemon",
   # core
   "facet-core",
   "facet",

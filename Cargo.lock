@@ -8158,6 +8158,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "vix-daemon"
+version = "0.0.0"
+dependencies = [
+ "eyre",
+ "facet",
+ "tokio",
+ "vix",
+ "vox",
+ "vox-schema",
+]
+
+[[package]]
 name = "vix-wire"
 version = "0.0.0"
 dependencies = [
