@@ -305,6 +305,35 @@ fn readiness_accepts_frozen_grammar_json() {
     assert!(stdout.contains("hostcall_block_barriers:"));
 }
 
+#[test]
+fn report_prints_direct_execution_lanes() {
+    let grammar_path = bundled_path("json/grammar.js");
+    let input_path = bundled_path("json/samples/package.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_snark-ts-diff"))
+        .arg("report")
+        .arg(&grammar_path)
+        .arg(&input_path)
+        .arg("1")
+        .output()
+        .expect("run snark-ts-diff report");
+    assert!(
+        out.status.success(),
+        "report failed: stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("snark weavy report parse:"));
+    assert!(stdout.contains("accepted=1 failed=0 max_live=1"));
+    assert!(stdout.contains("snark_execution: intrinsics="));
+    assert!(stdout.contains("parse_execution_lane: Direct"));
+    assert!(stdout.contains("snark_dominant_execution:"));
+    assert!(stdout.contains("runtime_backend_execution:"));
+    assert!(stdout.contains("lexer_execution: calls="));
+    assert!(stdout.contains("direct_set_uncached="));
+    assert!(stdout.contains("lexer_dominant_execution:"));
+}
+
 #[cfg(all(
     feature = "jit",
     any(

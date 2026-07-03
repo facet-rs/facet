@@ -21,6 +21,9 @@
 //!   # strict parse to arena-backed ranged CST while retaining execution counters
 //!   cargo run --release -p snark-ts-diff -- resolved-cst-report <grammar.js|grammar.json> <input-file> [iters]
 //!
+//!   # strict parse with the same execution counters as hostcalls mode
+//!   cargo run --release -p snark-ts-diff -- report <grammar.js|grammar.json> <input-file> [iters]
+//!
 //!   # strict parse through Weavy host-call blocks; requires --features jit
 //!   cargo run --release -p snark-ts-diff --features jit -- hostcalls <grammar.js|grammar.json> <input-file> [iters]
 //!
@@ -51,6 +54,7 @@ use snark::{
         WeavyParseReport, WeavyParseWorkspace, WeavyResolvedCstReport,
         WeavyRuntimeBackendExecutionSummary, WeavySnarkDescriptorExecutionSummary,
         WeavySnarkExecutionStats, WeavySnarkProfileStencilReadiness,
+        parse_prepared_weavy_with_report,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
@@ -376,6 +380,10 @@ fn collect_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyPars
         .parse_collecting_reuse_with_report_and_scanner(&p.plan, &p.parser, &p.table, input, None)
 }
 
+fn report_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, input)
+}
+
 #[cfg(all(
     feature = "jit",
     any(
@@ -417,6 +425,17 @@ fn best_collect_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, Weavy
     for _ in 0..iters.max(1) {
         let start = Instant::now();
         let _ = collect_once(p, input)?;
+        best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    Ok(best_ms)
+}
+
+fn best_report_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
+    let _ = report_once(p, input)?;
+    let mut best_ms = f64::INFINITY;
+    for _ in 0..iters.max(1) {
+        let start = Instant::now();
+        let _ = report_once(p, input)?;
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     Ok(best_ms)
@@ -1098,6 +1117,43 @@ fn main() {
             tree.len()
         );
         print_resolved_cst_execution_stats(&report);
+        return;
+    }
+
+    if args.get(1).map(|s| s == "report").unwrap_or(false) {
+        let grammar_path = args
+            .get(2)
+            .expect("usage: report <grammar.js|grammar.json> <input> [iters]");
+        let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
+        let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+        let p = prepare(grammar_path);
+        let report = match report_once(&p, &input) {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("Weavy report parse failed: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let best_ms = match best_report_ms(&p, &input, iters) {
+            Ok(best_ms) => best_ms,
+            Err(error) => {
+                eprintln!("Weavy report parse failed during timing: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let bytes = input.len();
+        println!(
+            "snark weavy report parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
+            bytes as f64 / best_ms
+        );
+        println!(
+            "accepted={} failed={} max_live={}",
+            report.accepted_count(),
+            report.failure_count(),
+            report.max_live_versions()
+        );
+        print_snark_execution_stats(&report);
+        print_lexer_execution_stats(&report);
         return;
     }
 
