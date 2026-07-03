@@ -34,6 +34,10 @@ fn lua_builds_end_to_end() {
     assert!(bin.entries["lua"].starts_with("obj("));
 
     let events = oracle.events();
+    let spawns = events
+        .iter()
+        .filter(|e| matches!(e, Event::Spawn { .. }))
+        .count();
     let execs: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
@@ -41,11 +45,14 @@ fn lua_builds_end_to_end() {
             _ => None,
         })
         .collect();
-    // 3 compiles (lapi, lauxlib, lua.c main) + 1 archive + 1 link — all cold.
-    assert_eq!(execs.len(), 5, "{execs:?}");
-    assert!(execs.iter().all(|(_, e)| *e == ExecEvent::Ran));
-    assert_eq!(execs.iter().filter(|(c, _)| *c == "cc").count(), 4);
-    assert_eq!(execs.iter().filter(|(c, _)| *c == "ar").count(), 1);
+    // DEMAND-TRUTHFUL accounting: 5 dispatches (3 compiles + ar + link), but
+    // only 3 FLUSHES — the two unit objects (collect merges them) and the
+    // link (forced at the edge). `main`'s object and the archive were only
+    // ever PROJECTED (`x / p"…"` pulls one path), so they never flush and
+    // never log completion. Projection doesn't force.
+    assert_eq!(spawns, 5, "{events:?}");
+    assert_eq!(execs.len(), 3, "{execs:?}");
+    assert!(execs.iter().all(|(c, e)| *c == "cc" && *e == ExecEvent::Ran));
 
     // Warm: the WHOLE build is one fn-level memo hit; no exec even consulted.
     let before = oracle.events().len();
@@ -105,10 +112,10 @@ fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
         "fn memo misses (the tree value changed): {warm:?}"
     );
     assert!(
-        matches!(
-            &warm[1],
+        warm.iter().any(|e| matches!(
+            e,
             Event::Exec { command, event: ExecEvent::Tier2Cutoff { .. } } if command == "cc"
-        ),
+        )),
         "exec tier-2 cuts off (nothing read changed): {warm:?}"
     );
 
@@ -124,8 +131,9 @@ fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
         .unwrap();
     assert_ne!(first, third, "new header, new object");
     let warm = &oracle.events()[before..];
-    assert!(matches!(
-        &warm[1],
-        Event::Exec { event: ExecEvent::Ran, .. }
-    ));
+    assert!(
+        warm.iter()
+            .any(|e| matches!(e, Event::Exec { event: ExecEvent::Ran, .. })),
+        "{warm:?}"
+    );
 }

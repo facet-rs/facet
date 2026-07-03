@@ -81,6 +81,10 @@ pub enum Value {
     /// Tree VALUE is pure (it's a value, not the world); only mounted trees
     /// at exec time are observed.
     Tree(crate::exec::Tree),
+    /// A tree STILL BEING PRODUCED by a live run. Projection (`pending / path`)
+    /// demands one path; identity (hash/cmp/ship) and whole-tree uses (mount,
+    /// glob, merge) force the flush. The id points into the run registry.
+    PendingTree { run: u64 },
 }
 
 #[derive(facet::Facet, Debug, Clone)]
@@ -108,7 +112,20 @@ impl Value {
             Value::Fn { .. } => 11,
             Value::Closure { .. } => 12,
             Value::Partial { .. } => 13,
-            Value::Tree(_) => 14,
+            // Pending trees rank AS trees: identity forces them into one.
+            Value::Tree(_) | Value::PendingTree { .. } => 14,
+        }
+    }
+
+    /// Identity forces: a pending tree resolves to its flushed tree before
+    /// hashing/comparison. Panics if the registry lost the run (oracle-grade).
+    fn forced_tree(&self) -> Option<crate::exec::Tree> {
+        match self {
+            Value::Tree(t) => Some(t.clone()),
+            Value::PendingTree { run } => {
+                Some(force_run(*run).expect("pending run flushes").0)
+            }
+            _ => None,
         }
     }
 
@@ -178,7 +195,9 @@ impl Value {
                     v.hash_into(h);
                 }
             }
-            Value::Tree(t) => t.fingerprint().hash(h),
+            Value::Tree(_) | Value::PendingTree { .. } => {
+                self.forced_tree().expect("tree rank").fingerprint().hash(h)
+            }
         }
     }
 
@@ -260,7 +279,14 @@ impl Ord for Value {
             | (Value::Partial { .. }, Value::Partial { .. }) => {
                 self.canon_hash().cmp(&other.canon_hash())
             }
-            (Value::Tree(a), Value::Tree(b)) => a.entries.cmp(&b.entries),
+            (
+                Value::Tree(_) | Value::PendingTree { .. },
+                Value::Tree(_) | Value::PendingTree { .. },
+            ) => {
+                let a = self.forced_tree().expect("tree rank");
+                let b = other.forced_tree().expect("tree rank");
+                a.entries.cmp(&b.entries)
+            }
             _ => self.rank().cmp(&other.rank()),
         }
     }
@@ -291,8 +317,74 @@ fn canon_expr_hash(expr: &Expr) -> u64 {
 }
 
 /// Serialize a value for transport — the exec primitive's payload format.
+/// Shipping is an IDENTITY use: pending trees force first.
 pub fn ship(value: &Value) -> Result<Vec<u8>, String> {
-    phon::api::encode(value).map_err(|e| format!("ship: {e}"))
+    let forced = deep_force(value.clone())?;
+    phon::api::encode(&forced).map_err(|e| format!("ship: {e}"))
+}
+
+/// Replace every pending tree in a value with its flushed tree (identity
+/// forces, recursively). The edge of the graph — `Oracle::call` — does this
+/// to its result: DEMAND ENTERS AT THE EDGE.
+pub fn deep_force(value: Value) -> Result<Value, String> {
+    deep_force_with(value, &|id| force_run(id).map(|(t, _)| t))
+}
+
+fn deep_force_with(
+    value: Value,
+    force: &impl Fn(u64) -> Result<crate::exec::Tree, String>,
+) -> Result<Value, String> {
+    Ok(match value {
+        Value::PendingTree { run } => Value::Tree(force(run)?),
+        Value::Tuple(vs) => Value::Tuple(
+            vs.into_iter()
+                .map(|v| deep_force_with(v, force))
+                .collect::<Result<_, _>>()?,
+        ),
+        Value::Array(vs) => Value::Array(
+            vs.into_iter()
+                .map(|v| deep_force_with(v, force))
+                .collect::<Result<_, _>>()?,
+        ),
+        Value::Map(m) => Value::Map(
+            m.into_iter()
+                .map(|(k, v)| {
+                    Ok::<_, String>((deep_force_with(k, force)?, deep_force_with(v, force)?))
+                })
+                .collect::<Result<_, _>>()?,
+        ),
+        Value::Struct { name, fields } => Value::Struct {
+            name,
+            fields: fields
+                .into_iter()
+                .map(|(n, v)| Ok::<_, String>((n, deep_force_with(v, force)?)))
+                .collect::<Result<_, _>>()?,
+        },
+        Value::Variant {
+            enum_name,
+            index,
+            name,
+            payload,
+        } => Value::Variant {
+            enum_name,
+            index,
+            name,
+            payload: match payload {
+                Payload::Unit => Payload::Unit,
+                Payload::Tuple(vs) => Payload::Tuple(
+                    vs.into_iter()
+                        .map(|v| deep_force_with(v, force))
+                        .collect::<Result<_, _>>()?,
+                ),
+                Payload::Record(fs) => Payload::Record(
+                    fs.into_iter()
+                        .map(|(n, v)| Ok::<_, String>((n, deep_force_with(v, force)?)))
+                        .collect::<Result<_, _>>()?,
+                ),
+            },
+        },
+        other => other,
+    })
 }
 
 /// Reconstitute a shipped value on the receiving side.
@@ -311,6 +403,10 @@ pub enum Event {
     Miss { func: String },
     /// A memoized call was served from cache.
     Hit { func: String },
+    /// A command block DISPATCHED (demand-driven: evaluation continues while
+    /// the run produces; the matching Exec event fires when something forces
+    /// the flush).
+    Spawn { command: String },
     /// A primitive observed the outside world (cold) or replayed its pin.
     Observation { key: String, replayed: bool },
     /// A command block went through the exec cache. The language-level memo
@@ -344,14 +440,85 @@ type Frame = Vec<(String, Value)>;
 /// Where command blocks actually run. The oracle's local two-tier cache is
 /// the default; a fleet of wire executors plugs in here (sync on purpose —
 /// the oracle is sync and wasm-clean; the async wire bridges on its side).
-pub trait ExecBackend {
-    fn exec(
+///
+/// DEMAND-DRIVEN: spawn returns immediately with a live run. The language
+/// rule is "projection doesn't force; identity does" — demanding one path
+/// blocks only until the producer writes it; hashing/comparing/shipping/
+/// mounting a pending tree forces its flush.
+pub trait ExecBackend: Send + Sync {
+    fn spawn(
         &self,
         command: &str,
         plan: &crate::exec::ExecPlan,
         capability: u64,
         mounts: &[crate::exec::Mount],
-    ) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String>;
+    ) -> Result<std::sync::Arc<dyn PendingRun>, String>;
+}
+
+/// A live (or completed) run. Values hold these through the run REGISTRY so
+/// Value stays plain facet data (a run id), and context-free forcing (Ord,
+/// Hash, ship) still works.
+pub trait PendingRun: Send + Sync {
+    /// Block until the producer writes this path (or fails/finishes without it).
+    fn demand_path(&self, path: &str) -> Result<String, String>;
+    /// Block until completion; idempotent. Returns the flushed tree and how
+    /// the run was served.
+    fn flush(&self) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String>;
+}
+
+/// The process-global run registry: PendingTree values carry a u64 into this
+/// table. Oracle-grade shortcut (the real engine owns runs in its graph);
+/// std-only so the crate stays wasm-clean — blocking lives in backends.
+mod runs {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use super::PendingRun;
+
+    fn table() -> &'static Mutex<HashMap<u64, Arc<dyn PendingRun>>> {
+        static TABLE: OnceLock<Mutex<HashMap<u64, Arc<dyn PendingRun>>>> = OnceLock::new();
+        TABLE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub fn register(run: Arc<dyn PendingRun>) -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, Ordering::SeqCst);
+        table().lock().unwrap().insert(id, run);
+        id
+    }
+
+    pub fn get(id: u64) -> Option<Arc<dyn PendingRun>> {
+        table().lock().unwrap().get(&id).cloned()
+    }
+}
+
+/// Force a pending tree to its flushed value ("identity forces").
+fn force_run(id: u64) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String> {
+    runs::get(id)
+        .ok_or_else(|| format!("pending run {id} not in the registry"))?
+        .flush()
+}
+
+/// The local cache's "pending" run: already complete at spawn time (the
+/// local path is the caching oracle; the wire is where demand overlaps).
+struct LocalRun {
+    outputs: crate::exec::Tree,
+    event: crate::exec::ExecEvent,
+}
+
+impl PendingRun for LocalRun {
+    fn demand_path(&self, path: &str) -> Result<String, String> {
+        self.outputs
+            .entries
+            .get(path)
+            .cloned()
+            .ok_or_else(|| format!("no `{path}` in outputs"))
+    }
+
+    fn flush(&self) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String> {
+        Ok((self.outputs.clone(), self.event.clone()))
+    }
 }
 
 pub struct Oracle {
@@ -364,6 +531,10 @@ pub struct Oracle {
     events: RefCell<Vec<Event>>,
     exec_cache: RefCell<crate::exec::ExecCache>,
     backend: Option<Box<dyn ExecBackend>>,
+    /// Run ids this oracle spawned that haven't logged their Exec event yet
+    /// (logged on the first oracle-side force; identity-side forces from
+    /// Ord/Hash are silent — they have no oracle in scope).
+    unlogged_runs: RefCell<HashMap<u64, String>>,
 }
 
 type EvalResult = Result<Value, String>;
@@ -428,6 +599,7 @@ impl Oracle {
             events: RefCell::new(Vec::new()),
             exec_cache: RefCell::new(crate::exec::ExecCache::new()),
             backend: None,
+            unlogged_runs: RefCell::new(HashMap::new()),
         })
     }
 
@@ -471,19 +643,29 @@ impl Oracle {
         })
     }
 
-    /// Call a top-level function with named arguments.
+    /// Call a top-level function with named arguments. This is the EDGE:
+    /// demand enters here, so the result is deep-forced (every pending tree
+    /// resolves) — inner evaluation stays lazy.
     pub fn call(&self, func: &str, args: &[(&str, Value)]) -> EvalResult {
         let given = args
             .iter()
             .map(|(n, v)| (Some(n.to_string()), v.clone()))
             .collect();
-        self.call_fn(func, given, false)
+        let result = self.call_fn(func, given, false)?;
+        self.deep_force_value(result)
     }
 
     /// Invoke a callable VALUE (closure, fn, partial) — including one that
-    /// arrived over the wire via ship/receive.
+    /// arrived over the wire via ship/receive. Also an edge: deep-forced.
     pub fn invoke(&self, callee: Value, args: Vec<Value>) -> EvalResult {
-        self.call_value(callee, args.into_iter().map(|v| (None, v)).collect())
+        let result =
+            self.call_value(callee, args.into_iter().map(|v| (None, v)).collect())?;
+        self.deep_force_value(result)
+    }
+
+    /// Deep force with event logging (the oracle-side twin of `deep_force`).
+    fn deep_force_value(&self, value: Value) -> Result<Value, String> {
+        deep_force_with(value, &|id| self.force_and_note(id))
     }
 
     // -- calls & memo --------------------------------------------------------
@@ -877,6 +1059,20 @@ impl Oracle {
                 (Value::Tree(t), Value::Path(p)) if op == "/" => {
                     subtree(&t, &p).map(Value::Tree)
                 }
+                // PROJECTION DOESN'T FORCE: cutting one path out of a tree
+                // still being produced waits only for THAT path (the language-
+                // level rmeta move). Directory cuts fall back to the flush.
+                (Value::PendingTree { run }, Value::Path(p)) if op == "/" => {
+                    let live = runs::get(run)
+                        .ok_or_else(|| format!("pending run {run} not registered"))?;
+                    match live.demand_path(&p) {
+                        Ok(contents) => {
+                            let base = p.rsplit_once('/').map(|(_, b)| b).unwrap_or(&p);
+                            Ok(Value::Tree(crate::exec::Tree::of(&[(base, contents.as_str())])))
+                        }
+                        Err(_) => subtree(&self.force_and_note(run)?, &p).map(Value::Tree),
+                    }
+                }
                 (l, r) => Err(format!("`{op}` not defined on {l:?} and {r:?}")),
             },
         }
@@ -1102,7 +1298,11 @@ impl Oracle {
             match part {
                 CommandPart::Token(t) => argv.push(t.value.clone()),
                 CommandPart::Splice(s) => {
+                    // Splicing INTO a command is a mount (whole-tree use):
+                    // pending trees force here. Note the asymmetry with
+                    // `pending / path`, which only waits for the one path.
                     let v = self.eval(&s.expr, frames)?;
+                    let v = self.force_value(v)?;
                     splice_into(v, &mut argv, &mut mounts)?;
                 }
             }
@@ -1110,10 +1310,15 @@ impl Oracle {
 
         let plan = assign_roles(&c.command.value, &argv)?;
 
-        // A fleet backend, if plugged in; otherwise the local two-tier cache.
-        let (outputs, event) = if let Some(backend) = &self.backend {
-            backend.exec(&c.command.value, &plan, cap_fp, &mounts)?
+        // DEMAND-DRIVEN: dispatch and return a PENDING tree immediately.
+        // Evaluation continues; whoever projects a path waits only for that
+        // path; whoever needs identity forces the flush.
+        let run: std::sync::Arc<dyn PendingRun> = if let Some(backend) = &self.backend {
+            backend.spawn(&c.command.value, &plan, cap_fp, &mounts)?
         } else {
+            // The local cache is synchronous: the "pending" run is already
+            // complete (the design oracle for caching; the wire is where
+            // demand overlaps in time).
             let tool = tool_for(&c.command.value)?;
             let outcome = self
                 .exec_cache
@@ -1126,13 +1331,36 @@ impl Oracle {
                 .last()
                 .cloned()
                 .expect("exec pushed an event");
-            (outcome.outputs, event)
+            std::sync::Arc::new(LocalRun {
+                outputs: outcome.outputs,
+                event,
+            })
         };
-        self.events.borrow_mut().push(Event::Exec {
+        let id = runs::register(run);
+        self.unlogged_runs
+            .borrow_mut()
+            .insert(id, c.command.value.clone());
+        self.events.borrow_mut().push(Event::Spawn {
             command: c.command.value.clone(),
-            event,
         });
-        Ok(Value::Tree(outputs))
+        Ok(Value::PendingTree { run: id })
+    }
+
+    /// Oracle-side force: flush the run and log its Exec event exactly once.
+    fn force_and_note(&self, id: u64) -> Result<crate::exec::Tree, String> {
+        let (tree, event) = force_run(id)?;
+        if let Some(command) = self.unlogged_runs.borrow_mut().remove(&id) {
+            self.events.borrow_mut().push(Event::Exec { command, event });
+        }
+        Ok(tree)
+    }
+
+    /// Whole-tree uses (methods, splices, merges) force pending trees.
+    fn force_value(&self, value: Value) -> Result<Value, String> {
+        match value {
+            Value::PendingTree { run } => Ok(Value::Tree(self.force_and_note(run)?)),
+            other => Ok(other),
+        }
     }
 
     // -- primitives: observations pinned in the journal ----------------------
@@ -1206,6 +1434,8 @@ impl Oracle {
         name: &str,
         args: Vec<(Option<String>, Value)>,
     ) -> EvalResult {
+        // Method calls are whole-value uses: a pending receiver forces.
+        let recv = self.force_value(recv)?;
         let positional: Vec<Value> = args.into_iter().map(|(_, v)| v).collect();
         match (recv, name) {
             (Value::Map(m), "get") => {
@@ -1259,9 +1489,20 @@ impl Oracle {
             }
             // Collect is CANONICAL total order, never arrival order — and an
             // array of TREES collects into their merge (the aggregation that
-            // makes `units.map(object).collect()` a Tree).
+            // makes `units.map(object).collect()` a Tree). Merging is a
+            // whole-tree use: pending elements force HERE — which is the
+            // demand-driven payoff: map spawned them all, collect awaits them
+            // all (parallel fan-out, sequential-looking source).
             (Value::Array(mut vs), "collect") => {
-                if !vs.is_empty() && vs.iter().all(|v| matches!(v, Value::Tree(_))) {
+                if !vs.is_empty()
+                    && vs
+                        .iter()
+                        .all(|v| matches!(v, Value::Tree(_) | Value::PendingTree { .. }))
+                {
+                    let mut vs = vs
+                        .into_iter()
+                        .map(|v| self.force_value(v))
+                        .collect::<Result<Vec<_>, _>>()?;
                     let mut merged = crate::exec::Tree::default();
                     vs.sort();
                     for v in vs {
@@ -1404,6 +1645,16 @@ fn assign_roles(command: &str, argv: &[String]) -> Result<crate::exec::ExecPlan,
                     Role::Flag
                 } else {
                     Role::Output
+                };
+                out.push((arg.clone(), role));
+            }
+        }
+        "rustc" => {
+            for arg in argv {
+                let role = if arg.starts_with("/m/") {
+                    Role::Input
+                } else {
+                    Role::Flag
                 };
                 out.push((arg.clone(), role));
             }

@@ -760,14 +760,130 @@ impl FleetBackend {
     }
 }
 
+/// A live wire run the oracle can DEMAND from: paths land as PathReady events
+/// arrive; demand_path blocks until its path exists (or the run ends without
+/// it); flush blocks until Finished and materializes the tree (the flagged
+/// v0 gap). std sync primitives on purpose — the oracle blocks a thread, the
+/// event feeder runs on the fleet's runtime.
+struct FleetRun {
+    fleet_run_id: u64,
+    client: ExecutorClient,
+    handle: tokio::runtime::Handle,
+    state: std::sync::Mutex<FleetRunState>,
+    wake: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct FleetRunState {
+    ready_paths: std::collections::HashSet<String>,
+    source: Option<vix::exec::ExecEvent>,
+    finished: Option<Result<u64, String>>,
+    flushed: Option<Tree>,
+}
+
+impl FleetRun {
+    fn note(&self, event: WireExecEvent) {
+        let mut state = self.state.lock().unwrap();
+        match event {
+            WireExecEvent::Serving { source } => {
+                state.source = Some(match source {
+                    CacheSource::Fresh => vix::exec::ExecEvent::Ran,
+                    CacheSource::Joined => vix::exec::ExecEvent::Joined,
+                    CacheSource::Tier1 => vix::exec::ExecEvent::Tier1Hit,
+                    CacheSource::Tier2 { verified } => vix::exec::ExecEvent::Tier2Cutoff {
+                        verified: verified as usize,
+                    },
+                });
+            }
+            WireExecEvent::PathReady { path, .. } => {
+                state.ready_paths.insert(path);
+            }
+            WireExecEvent::Finished { ok, tree, .. } => {
+                state.finished = Some(if ok {
+                    Ok(tree)
+                } else {
+                    Err("run failed".to_string())
+                });
+            }
+            WireExecEvent::Failed { error } => {
+                state.finished = Some(Err(error));
+            }
+            _ => {}
+        }
+        self.wake.notify_all();
+    }
+}
+
+impl vix::oracle::PendingRun for FleetRun {
+    fn demand_path(&self, path: &str) -> Result<String, String> {
+        // Wait only for THIS path — the language-level rmeta move.
+        {
+            let mut state = self.state.lock().unwrap();
+            loop {
+                if state.ready_paths.contains(path) {
+                    break;
+                }
+                if let Some(finished) = &state.finished {
+                    finished.clone()?;
+                    return Err(format!("run finished without producing `{path}`"));
+                }
+                state = self.wake.wait(state).unwrap();
+            }
+        }
+        tokio::task::block_in_place(|| {
+            self.handle.clone().block_on(async {
+                self.client
+                    .fetch_path(self.fleet_run_id, path.to_string())
+                    .await
+                    .map_err(|e| format!("fetch_path: {e:?}"))?
+                    .ok_or_else(|| format!("`{path}` vanished from the producing space"))
+            })
+        })
+    }
+
+    fn flush(&self) -> Result<(Tree, vix::exec::ExecEvent), String> {
+        let (tree_hash, source) = {
+            let mut state = self.state.lock().unwrap();
+            loop {
+                if let Some(finished) = &state.finished {
+                    let hash = finished.clone()?;
+                    if let Some(tree) = &state.flushed {
+                        return Ok((
+                            tree.clone(),
+                            state.source.clone().unwrap_or(vix::exec::ExecEvent::Ran),
+                        ));
+                    }
+                    break (hash, state.source.clone().unwrap_or(vix::exec::ExecEvent::Ran));
+                }
+                state = self.wake.wait(state).unwrap();
+            }
+        };
+        // v0: materialize the result back (the flagged gap — remote-handle
+        // Trees in the language are the next step).
+        let tree = tokio::task::block_in_place(|| {
+            self.handle.clone().block_on(async {
+                let bytes = self
+                    .client
+                    .fetch_tree(tree_hash)
+                    .await
+                    .map_err(|e| format!("fetch_tree: {e:?}"))?
+                    .ok_or("finished tree missing from CAS")?;
+                tree_from_bytes(&bytes)
+            })
+        })?;
+        self.state.lock().unwrap().flushed = Some(tree.clone());
+        Ok((tree, source))
+    }
+}
+
 impl vix::oracle::ExecBackend for FleetBackend {
-    fn exec(
+    fn spawn(
         &self,
         command: &str,
         plan: &ExecPlan,
         capability: u64,
         mounts: &[vix::exec::Mount],
-    ) -> Result<(Tree, vix::exec::ExecEvent), String> {
+    ) -> Result<Arc<dyn vix::oracle::PendingRun>, String> {
         // The oracle is sync; bridge onto the runtime this fleet was born on.
         tokio::task::block_in_place(|| {
             self.handle.clone().block_on(async {
@@ -798,57 +914,38 @@ impl vix::oracle::ExecBackend for FleetBackend {
                     observer: None,
                     module: String::new(),
                 };
-                let (tx, mut rx) = vox::channel::<WireExecEvent>();
-                let exec_call = {
-                    let client = client.clone();
-                    tokio::spawn(async move { client.exec(request, run_id, tx).await })
-                };
 
-                let mut source = vix::exec::ExecEvent::Ran;
-                let mut finished = None;
-                while let Ok(Some(event)) = rx.recv().await {
-                    match event.get().clone() {
-                        WireExecEvent::Serving { source: s } => {
-                            source = match s {
-                                CacheSource::Fresh => vix::exec::ExecEvent::Ran,
-                                CacheSource::Joined => vix::exec::ExecEvent::Joined,
-                                CacheSource::Tier1 => vix::exec::ExecEvent::Tier1Hit,
-                                CacheSource::Tier2 { verified } => {
-                                    vix::exec::ExecEvent::Tier2Cutoff {
-                                        verified: verified as usize,
-                                    }
-                                }
-                            };
-                        }
-                        WireExecEvent::Finished { ok, tree, .. } => {
-                            if !ok {
-                                return Err("run failed".to_string());
-                            }
-                            finished = Some(tree);
+                let run = Arc::new(FleetRun {
+                    fleet_run_id: run_id,
+                    client: client.clone(),
+                    handle: self.handle.clone(),
+                    state: std::sync::Mutex::new(FleetRunState::default()),
+                    wake: std::sync::Condvar::new(),
+                });
+
+                // Dispatch; the feeder task keeps the run state live while
+                // evaluation continues elsewhere. THIS is the demand shape.
+                let (tx, mut rx) = vox::channel::<WireExecEvent>();
+                let exec_client = client.clone();
+                tokio::spawn(async move {
+                    let _ = exec_client.exec(request, run_id, tx).await;
+                });
+                let feeder_run = run.clone();
+                tokio::spawn(async move {
+                    while let Ok(Some(event)) = rx.recv().await {
+                        let event = event.get().clone();
+                        let done = matches!(
+                            event,
+                            WireExecEvent::Finished { .. } | WireExecEvent::Failed { .. }
+                        );
+                        feeder_run.note(event);
+                        if done {
                             break;
                         }
-                        WireExecEvent::Failed { error } => return Err(error),
-                        _ => {}
                     }
-                }
-                exec_call
-                    .await
-                    .map_err(|e| format!("exec task: {e}"))?
-                    .map_err(|e| format!("exec rpc: {e:?}"))?;
+                });
 
-                let tree_hash = finished.ok_or("run ended without Finished")?;
-                {
-                    let mut state = self.state.lock().unwrap();
-                    state.locations.entry(tree_hash).or_default().push(target);
-                }
-                // v0: materialize the result back (the flagged gap).
-                let bytes = client
-                    .fetch_tree(tree_hash)
-                    .await
-                    .map_err(|e| format!("fetch_tree: {e:?}"))?
-                    .ok_or("finished tree missing from CAS")?;
-                let tree = tree_from_bytes(&bytes)?;
-                Ok((tree, source))
+                Ok(run as Arc<dyn vix::oracle::PendingRun>)
             })
         })
     }
