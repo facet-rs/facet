@@ -19,6 +19,7 @@ pub mod ast {
 }
 
 pub mod binder;
+pub mod engine;
 pub mod exec;
 pub mod graph;
 pub mod ide;
