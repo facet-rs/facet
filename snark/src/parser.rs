@@ -6991,9 +6991,20 @@ extras (
         let arena =
             crate::lower::weavy::parse_prepared_weavy_resolved_cst(plan, parser, table, input)
                 .unwrap();
+        let report = crate::lower::weavy::parse_prepared_weavy_resolved_cst_report(
+            plan, parser, table, input,
+        )
+        .unwrap();
 
         assert_eq!(arena.root_kind(), Some("template"));
-        assert_eq!(arena.to_owned_node(), Some(tree));
+        assert_eq!(arena.to_owned_node(), Some(tree.clone()));
+        assert_eq!(report.tree().to_owned_node(), Some(tree));
+        assert!(report.lexer_stats().lex_call_count > 0);
+        assert!(report.snark_stats().intrinsic_count > 0);
+        assert_eq!(
+            report.execution_lane(),
+            crate::lower::weavy::WeavyParseExecutionLane::Direct
+        );
     }
 
     #[test]

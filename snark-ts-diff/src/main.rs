@@ -18,6 +18,9 @@
 //!   # strict parse to arena-backed ranged CST, skipping owned recursive materialization
 //!   cargo run --release -p snark-ts-diff -- resolved-cst <grammar.js|grammar.json> <input-file> [iters]
 //!
+//!   # strict parse to arena-backed ranged CST while retaining execution counters
+//!   cargo run --release -p snark-ts-diff -- resolved-cst-report <grammar.js|grammar.json> <input-file> [iters]
+//!
 //!   # strict parse through Weavy host-call blocks; requires --features jit
 //!   cargo run --release -p snark-ts-diff --features jit -- hostcalls <grammar.js|grammar.json> <input-file> [iters]
 //!
@@ -43,9 +46,11 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        SnarkStencilProfile, WeavyLexerStencilSummary, WeavyParseError, WeavyParsePlan,
-        WeavyParseReport, WeavyParseWorkspace, WeavySnarkProfileStencilReadiness,
-        parse_prepared_weavy_resolved_cst, parse_prepared_weavy_resolved_tree,
+        SnarkStencilProfile, WeavyHostCallExecutionStats, WeavyLexerExecutionStats,
+        WeavyLexerStencilSummary, WeavyParseError, WeavyParseExecutionLane, WeavyParsePlan,
+        WeavyParseReport, WeavyParseWorkspace, WeavyResolvedCstReport, WeavySnarkExecutionStats,
+        WeavySnarkProfileStencilReadiness, parse_prepared_weavy_resolved_cst,
+        parse_prepared_weavy_resolved_cst_report, parse_prepared_weavy_resolved_tree,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
@@ -299,6 +304,22 @@ fn best_resolved_cst_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, 
     Ok(best_ms)
 }
 
+/// Best (min) arena-CST report parse time in ms over `iters` runs, after one warm-up.
+fn best_resolved_cst_report_ms(
+    p: &Prepared,
+    input: &str,
+    iters: usize,
+) -> Result<f64, WeavyParseError> {
+    let _ = parse_prepared_weavy_resolved_cst_report(&p.plan, &p.parser, &p.table, input)?;
+    let mut best_ms = f64::INFINITY;
+    for _ in 0..iters.max(1) {
+        let start = Instant::now();
+        let _ = parse_prepared_weavy_resolved_cst_report(&p.plan, &p.parser, &p.table, input)?;
+        best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    Ok(best_ms)
+}
+
 fn recover_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
     p.workspace
         .parse_recovering_collecting_reuse_with_report_and_scanner(
@@ -387,7 +408,10 @@ fn error_counts(report: &WeavyParseReport) -> (usize, usize) {
 }
 
 fn print_lexer_execution_stats(report: &WeavyParseReport) {
-    let stats = report.lexer_stats();
+    print_lexer_execution_stats_from(report.lexer_stats());
+}
+
+fn print_lexer_execution_stats_from(stats: &WeavyLexerExecutionStats) {
     let summaries = stats.stencil_execution_summaries();
     let stencils = if summaries.is_empty() {
         "none".to_owned()
@@ -417,7 +441,27 @@ fn print_lexer_execution_stats(report: &WeavyParseReport) {
 }
 
 fn print_snark_execution_stats(report: &WeavyParseReport) {
-    let stats = report.snark_stats();
+    print_snark_execution_stats_from(
+        report.snark_stats(),
+        report.execution_lane(),
+        report.hostcall_stats(),
+    );
+}
+
+fn print_resolved_cst_execution_stats(report: &WeavyResolvedCstReport) {
+    print_snark_execution_stats_from(
+        report.snark_stats(),
+        report.execution_lane(),
+        report.hostcall_stats(),
+    );
+    print_lexer_execution_stats_from(report.lexer_stats());
+}
+
+fn print_snark_execution_stats_from(
+    stats: &WeavySnarkExecutionStats,
+    execution_lane: WeavyParseExecutionLane,
+    hostcalls: &WeavyHostCallExecutionStats,
+) {
     let summaries = stats.family_execution_summaries();
     let families = if summaries.is_empty() {
         "none".to_owned()
@@ -437,7 +481,7 @@ fn print_snark_execution_stats(report: &WeavyParseReport) {
         "snark_execution: intrinsics={} families={}",
         stats.intrinsic_count, families
     );
-    println!("parse_execution_lane: {:?}", report.execution_lane());
+    println!("parse_execution_lane: {execution_lane:?}");
     if let Some(summary) = stats.dominant_family_execution() {
         println!(
             "snark_dominant_execution: {:?}/{:?} count={}",
@@ -446,7 +490,6 @@ fn print_snark_execution_stats(report: &WeavyParseReport) {
     } else {
         println!("snark_dominant_execution: none");
     }
-    let hostcalls = report.hostcall_stats();
     println!(
         "hostcall_execution: attempted_blocks={} executed_blocks={} fallback_blocks={} errored_blocks={} sites={} stencils={}",
         hostcalls.attempted_blocks,
@@ -897,6 +940,48 @@ fn main() {
             tree.root_count(),
             tree.len()
         );
+        return;
+    }
+
+    if args
+        .get(1)
+        .map(|s| s == "resolved-cst-report")
+        .unwrap_or(false)
+    {
+        let grammar_path = args
+            .get(2)
+            .expect("usage: resolved-cst-report <grammar.js|grammar.json> <input> [iters]");
+        let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
+        let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+        let p = prepare(grammar_path);
+        let report =
+            match parse_prepared_weavy_resolved_cst_report(&p.plan, &p.parser, &p.table, &input) {
+                Ok(report) => report,
+                Err(error) => {
+                    eprintln!("resolved-cst report parse failed: {error:?}");
+                    std::process::exit(1);
+                }
+            };
+        let best_ms = match best_resolved_cst_report_ms(&p, &input, iters) {
+            Ok(best_ms) => best_ms,
+            Err(error) => {
+                eprintln!("resolved-cst report parse failed during timing: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let bytes = input.len();
+        let tree = report.tree();
+        println!(
+            "snark weavy resolved-cst report parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
+            bytes as f64 / best_ms
+        );
+        println!(
+            "root_kind={} roots={} items={}",
+            tree.root_kind().unwrap_or("<empty>"),
+            tree.root_count(),
+            tree.len()
+        );
+        print_resolved_cst_execution_stats(&report);
         return;
     }
 

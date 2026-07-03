@@ -5408,6 +5408,52 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedCstSink 
     }
 }
 
+struct RuntimeWeavyDeterministicResolvedCstReportSink;
+
+impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedCstReportSink {
+    type Output = WeavyResolvedCstReport;
+
+    const TREE_EVENT_COLLECTION: RuntimeWeavyTreeEventCollection =
+        RuntimeWeavyTreeEventCollection::Enabled;
+    const SNARK_STAT_COLLECTION: bool = true;
+
+    fn accepted(
+        input_ctx: RuntimeWeavyInput<'_>,
+        tree_store: RuntimeWeavyTreeStore,
+        _trace_events: RuntimeWeavyTraceSink,
+        tree_journal: RuntimeWeavyTreeJournal,
+        stats: RunStats,
+        lexer_stats: WeavyLexerExecutionStats,
+        snark_stats: RuntimeWeavySnarkExecutionStats,
+        hostcall_stats: WeavyHostCallExecutionStats,
+        execution_lane: WeavyParseExecutionLane,
+        _version: parser_ir::StackVersionId,
+        _root: parser_ir::TreeNodeId,
+        _error_cost: u32,
+        tree_journal_head: RuntimeWeavyTreeJournalHead,
+        _reusable_nodes: Vec<RuntimeWeavyReusableNode>,
+    ) -> Result<Self::Output, WeavyParseError> {
+        let mut builder = parser_ir::ResolvedCstBuilder::with_node_capacity(
+            input_ctx.parser,
+            input_ctx.input,
+            tree_journal_head.len,
+            tree_store.node_count(),
+        );
+        tree_journal.visit(tree_journal_head, |event| builder.push(event));
+        let tree = builder
+            .finish_tree()
+            .ok_or(WeavyParseError::MissingResolvedTree)?;
+        Ok(WeavyResolvedCstReport {
+            tree,
+            stats,
+            lexer_stats,
+            snark_stats: snark_stats.to_public(),
+            hostcall_stats,
+            execution_lane,
+        })
+    }
+}
+
 struct RuntimeWeavyDeterministicReportSink;
 
 impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicReportSink {
@@ -5945,6 +5991,62 @@ pub fn parse_prepared_weavy_resolved_cst_and_scanner(
         report
             .accepted_resolved_cst(parser, input)
             .ok_or(WeavyParseError::MissingResolvedTree)
+    })
+}
+
+/// Execute a prepared parser plan and return an arena CST plus execution counters.
+///
+/// This is a measurement-oriented sibling of [`parse_prepared_weavy_resolved_cst`].
+/// It uses the same strict Weavy parse semantics but keeps the runner, lexer,
+/// parser-action, and host-call counters that the tree-only path discards.
+pub fn parse_prepared_weavy_resolved_cst_report(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<WeavyResolvedCstReport, WeavyParseError> {
+    parse_prepared_weavy_resolved_cst_report_and_scanner(plan, parser, table, input, None)
+}
+
+/// Execute a prepared parser plan with a scanner host and return an arena CST report.
+pub fn parse_prepared_weavy_resolved_cst_report_and_scanner(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+    external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyResolvedCstReport, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(report) =
+        parse_weavy_deterministic_resolved_cst_report_with_lexer_program(input_ctx)?
+    {
+        return Ok(report);
+    }
+    let report = parse_weavy_with_lexer_program(
+        input_ctx,
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
+    )?;
+    let tree = report
+        .accepted_resolved_cst(parser, input)
+        .ok_or(WeavyParseError::MissingResolvedTree)?;
+    Ok(WeavyResolvedCstReport {
+        tree,
+        stats: report.stats(),
+        lexer_stats: report.lexer_stats().clone(),
+        snark_stats: report.snark_stats().clone(),
+        hostcall_stats: report.hostcall_stats().clone(),
+        execution_lane: report.execution_lane(),
     })
 }
 
@@ -6561,6 +6663,25 @@ fn parse_weavy_deterministic_resolved_cst_with_execution(
     block_execution: RuntimeWeavyBlockExecution,
 ) -> Result<Option<parser_ir::ResolvedCstTree>, WeavyParseError> {
     parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicResolvedCstSink>(
+        input_ctx,
+        block_execution,
+    )
+}
+
+fn parse_weavy_deterministic_resolved_cst_report_with_lexer_program(
+    input_ctx: RuntimeWeavyInput<'_>,
+) -> Result<Option<WeavyResolvedCstReport>, WeavyParseError> {
+    parse_weavy_deterministic_resolved_cst_report_with_execution(
+        input_ctx,
+        RuntimeWeavyBlockExecution::Direct,
+    )
+}
+
+fn parse_weavy_deterministic_resolved_cst_report_with_execution(
+    input_ctx: RuntimeWeavyInput<'_>,
+    block_execution: RuntimeWeavyBlockExecution,
+) -> Result<Option<WeavyResolvedCstReport>, WeavyParseError> {
+    parse_weavy_deterministic_with_execution::<RuntimeWeavyDeterministicResolvedCstReportSink>(
         input_ctx,
         block_execution,
     )
@@ -7574,6 +7695,49 @@ fn parse_weavy_with_lexer_program_and_scratch(
         accepted_count,
         accepted: accepted_sexps,
     })
+}
+
+/// Arena-CST parse report produced through lowered Weavy blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeavyResolvedCstReport {
+    tree: parser_ir::ResolvedCstTree,
+    stats: RunStats,
+    lexer_stats: WeavyLexerExecutionStats,
+    snark_stats: WeavySnarkExecutionStats,
+    hostcall_stats: WeavyHostCallExecutionStats,
+    execution_lane: WeavyParseExecutionLane,
+}
+
+impl WeavyResolvedCstReport {
+    /// Accepted arena CST with anonymous terminals and source ranges preserved.
+    pub const fn tree(&self) -> &parser_ir::ResolvedCstTree {
+        &self.tree
+    }
+
+    /// Weavy runner execution counters accumulated over block runs.
+    pub const fn stats(&self) -> RunStats {
+        self.stats
+    }
+
+    /// Runtime lexer graph counters accumulated while producing this report.
+    pub const fn lexer_stats(&self) -> &WeavyLexerExecutionStats {
+        &self.lexer_stats
+    }
+
+    /// Runtime Snark parser/action intrinsic counters accumulated while producing this report.
+    pub const fn snark_stats(&self) -> &WeavySnarkExecutionStats {
+        &self.snark_stats
+    }
+
+    /// Runtime host-call block counters accumulated while producing this report.
+    pub const fn hostcall_stats(&self) -> &WeavyHostCallExecutionStats {
+        &self.hostcall_stats
+    }
+
+    /// Runtime execution lane used to produce this report.
+    pub const fn execution_lane(&self) -> WeavyParseExecutionLane {
+        self.execution_lane
+    }
 }
 
 /// Runtime stack/tree parse report produced through lowered Weavy blocks.
