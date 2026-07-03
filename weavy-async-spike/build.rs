@@ -19,7 +19,7 @@ fn main() {
         ("macos", "aarch64") | ("linux", "x86_64")
     );
     if !native {
-        let empty = ["PUSH", "AWAIT", "ADD", "DONE"]
+        let empty = ["PUSH", "AWAIT", "ADD", "MUL", "DONE"]
             .iter()
             .map(|n| format!("pub const {n}: &[u8] = &[];\npub const {n}_CONT: &[usize] = &[];\n"))
             .collect::<String>();
@@ -48,7 +48,13 @@ fn main() {
     );
 
     let bytes = fs::read(&obj).expect("read stencil object");
-    let symbols = ["weavy_push", "weavy_await", "weavy_add", "weavy_done"];
+    let symbols = [
+        "weavy_push",
+        "weavy_await",
+        "weavy_add",
+        "weavy_mul",
+        "weavy_done",
+    ];
     let get = |sym: &str| copypatch::extract::extract_stencil(&bytes, &symbols, sym, "weavy_cont");
 
     let mut s = String::new();
@@ -57,6 +63,7 @@ fn main() {
         ("PUSH", "weavy_push"),
         ("AWAIT", "weavy_await"),
         ("ADD", "weavy_add"),
+        ("MUL", "weavy_mul"),
         ("DONE", "weavy_done"),
     ] {
         let st = get(sym);
