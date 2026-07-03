@@ -8053,11 +8053,13 @@ struct RuntimeWeavyReuseIndex<'a> {
 impl<'a> RuntimeWeavyReuseIndex<'a> {
     fn from_report(report: &'a WeavyParseReport, edit: parser_ir::ParserInputEdit) -> Self {
         let delta = edit.new_end_byte() as isize - edit.old_end_byte() as isize;
-        let mut nodes = HashMap::<RuntimeWeavyReuseKey, RuntimeWeavyReusableNode>::new();
-        for node in report.reusable_nodes.iter().filter(|node| {
-            !node.contains_error
-                && runtime_weavy_reuse_position(edit, node.start_byte, node.end_byte).is_some()
-        }) {
+        let mut nodes = HashMap::<RuntimeWeavyReuseKey, RuntimeWeavyReusableNode>::with_capacity(
+            report.reusable_nodes.len(),
+        );
+        for node in &report.reusable_nodes {
+            if node.contains_error {
+                continue;
+            }
             let Some((start_byte, end_byte)) =
                 runtime_weavy_reuse_position(edit, node.start_byte, node.end_byte)
             else {
