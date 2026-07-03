@@ -22,6 +22,7 @@ pub mod binder;
 pub mod exec;
 pub mod graph;
 pub mod ide;
+pub(crate) mod module;
 pub mod oracle;
 
 /// The tree-sitter grammar.json emitted from grammar.js at build time, embedded so

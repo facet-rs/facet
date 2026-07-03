@@ -28,10 +28,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::ast::{
-    self, Arg, ArrayElem, Block, CommandPart, Expr, Item, Member, PathRef, Pattern, SourceFile,
-    Stmt,
+    self, Arg, ArrayElem, Block, CommandPart, Expr, Member, PathRef, Pattern, Stmt,
 };
-use crate::{VixParser, ast::Spanned};
+use crate::ast::Spanned;
+use crate::module::{EnumInfo, ModuleTables, StructInfo, VariantShape, load_module_tables};
 
 // ---------------------------------------------------------------------------
 // Values: hashable, totally ordered, canonical — and SHIPPABLE. Facet is the
@@ -334,15 +334,6 @@ impl Ord for Value {
 // transport, and eventually the journal.
 // ---------------------------------------------------------------------------
 
-fn canon_ast_hash(item: &ast::FnItem) -> u64 {
-    let mut canonical = item.clone();
-    canonical.strip_spans();
-    let bytes = phon::api::encode(&canonical).expect("AST serializes");
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
-}
-
 fn canon_expr_hash(expr: &Expr) -> u64 {
     let bytes = phon::api::encode(expr).expect("AST serializes");
     let mut h = DefaultHasher::new();
@@ -495,30 +486,6 @@ pub enum Event {
 /// beside the event instead of inside it (the post-hoc log stays timeless).
 pub type EventSink = Box<dyn Fn(u64, &Event) + Send>;
 
-struct EnumInfo {
-    variants: Vec<(String, VariantShape)>,
-}
-
-#[derive(Clone)]
-enum VariantShape {
-    Unit,
-    Tuple(usize),
-    Record(Vec<String>),
-}
-
-struct StructInfo {
-    /// Field names in declaration order, with optional default exprs.
-    fields: Vec<(String, Option<Expr>)>,
-    is_unit: bool,
-}
-
-struct ModuleTables {
-    fns: HashMap<String, ast::FnItem>,
-    fn_hashes: HashMap<String, u64>,
-    enums: HashMap<String, EnumInfo>,
-    structs: HashMap<String, StructInfo>,
-}
-
 type Frame = Vec<(String, Value)>;
 
 /// Where command blocks actually run. The oracle's local two-tier cache is
@@ -634,67 +601,6 @@ pub struct Oracle {
 }
 
 type EvalResult = Result<Value, String>;
-
-fn load_module_tables(source: &str) -> Result<ModuleTables, String> {
-    // Table construction is the expensive part (seconds in dev profile);
-    // the parser itself is immutable after build — share one per process.
-    static PARSER: std::sync::OnceLock<VixParser> = std::sync::OnceLock::new();
-    let parser = PARSER.get_or_init(VixParser::new);
-    let file: SourceFile = parser.parse(source).map_err(|e| e.message)?;
-    let mut fns = HashMap::new();
-    let mut fn_hashes = HashMap::new();
-    let mut enums = HashMap::new();
-    let mut structs = HashMap::new();
-    for item in &file.items {
-        match item {
-            Item::Fn(f) => {
-                fn_hashes.insert(f.name.value.clone(), canon_ast_hash(f));
-                fns.insert(f.name.value.clone(), (**f).clone());
-            }
-            Item::Enum(e) => {
-                let variants = e
-                    .variants
-                    .iter()
-                    .map(|v| {
-                        let shape = if let Some(t) = &v.tuple {
-                            VariantShape::Tuple(t.types.len())
-                        } else if let Some(fl) = &v.fields {
-                            VariantShape::Record(
-                                fl.fields.iter().map(|f| f.name.value.clone()).collect(),
-                            )
-                        } else {
-                            VariantShape::Unit
-                        };
-                        (v.name.value.clone(), shape)
-                    })
-                    .collect();
-                enums.insert(e.name.value.clone(), EnumInfo { variants });
-            }
-            Item::Struct(s) => {
-                let fields = s
-                    .fields
-                    .iter()
-                    .flat_map(|fl| &fl.fields)
-                    .map(|f| (f.name.value.clone(), f.default.clone()))
-                    .collect();
-                structs.insert(
-                    s.name.value.clone(),
-                    StructInfo {
-                        fields,
-                        is_unit: s.fields.is_none() && s.tuple.is_none(),
-                    },
-                );
-            }
-            Item::Use(_) => {}
-        }
-    }
-    Ok(ModuleTables {
-        fns,
-        fn_hashes,
-        enums,
-        structs,
-    })
-}
 
 impl Oracle {
     pub fn load(source: &str) -> Result<Oracle, String> {
