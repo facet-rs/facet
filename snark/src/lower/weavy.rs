@@ -6225,6 +6225,13 @@ impl RuntimeWeavyTraceSink {
         }
     }
 
+    fn with_capacity(enabled: bool, capacity: usize) -> Self {
+        Self {
+            events: Vec::with_capacity(if enabled { capacity } else { 0 }),
+            enabled,
+        }
+    }
+
     fn push(&mut self, event: parser_ir::TraceEvent) {
         if self.enabled {
             self.events.push(event);
@@ -7482,9 +7489,14 @@ where
         S::SNARK_STAT_COLLECTION,
     );
 
-    let mut tree_store = RuntimeWeavyTreeStore::default();
-    let mut trace_events = RuntimeWeavyTraceSink::new(false);
-    let mut tree_journal = RuntimeWeavyTreeJournal::default();
+    let mut tree_store = RuntimeWeavyTreeStore::with_capacity(
+        runtime_weavy_initial_tree_node_capacity(input_ctx.input),
+        runtime_weavy_initial_child_list_capacity(input_ctx.input),
+    );
+    let mut trace_events = RuntimeWeavyTraceSink::with_capacity(false, 0);
+    let mut tree_journal = RuntimeWeavyTreeJournal::with_capacity(
+        runtime_weavy_initial_tree_event_capacity(input_ctx.input, S::TREE_EVENT_COLLECTION),
+    );
     let input_points = if S::TREE_EVENT_COLLECTION == RuntimeWeavyTreeEventCollection::Enabled {
         RuntimeWeavyInputPoints::new(input_ctx.input)
     } else {
@@ -7627,9 +7639,14 @@ where
         S::SNARK_STAT_COLLECTION,
     );
 
-    let mut tree_store = RuntimeWeavyTreeStore::default();
-    let mut trace_events = RuntimeWeavyTraceSink::new(false);
-    let mut tree_journal = RuntimeWeavyTreeJournal::default();
+    let mut tree_store = RuntimeWeavyTreeStore::with_capacity(
+        runtime_weavy_initial_tree_node_capacity(input_ctx.input),
+        runtime_weavy_initial_child_list_capacity(input_ctx.input),
+    );
+    let mut trace_events = RuntimeWeavyTraceSink::with_capacity(false, 0);
+    let mut tree_journal = RuntimeWeavyTreeJournal::with_capacity(
+        runtime_weavy_initial_tree_event_capacity(input_ctx.input, S::TREE_EVENT_COLLECTION),
+    );
     let input_points = if S::TREE_EVENT_COLLECTION == RuntimeWeavyTreeEventCollection::Enabled {
         RuntimeWeavyInputPoints::new(input_ctx.input)
     } else {
@@ -8192,9 +8209,15 @@ fn parse_weavy_with_lexer_program_and_scratch(
         true,
     );
 
-    let mut tree_store = RuntimeWeavyTreeStore::default();
-    let mut trace_events = RuntimeWeavyTraceSink::new(block_execution.collects_traces());
-    let mut tree_journal = RuntimeWeavyTreeJournal::default();
+    let mut tree_store = RuntimeWeavyTreeStore::with_capacity(
+        runtime_weavy_initial_tree_node_capacity(input_ctx.input),
+        runtime_weavy_initial_child_list_capacity(input_ctx.input),
+    );
+    let mut trace_events = RuntimeWeavyTraceSink::with_capacity(
+        block_execution.collects_traces(),
+        input_ctx.input.len().max(32),
+    );
+    let mut tree_journal = RuntimeWeavyTreeJournal::with_capacity(input_ctx.input.len().max(32));
     let mut snark_stats = RuntimeWeavySnarkExecutionStats::default();
     let external_scanner_errors = RefCell::new(Vec::new());
     trace_push!(
@@ -8763,6 +8786,24 @@ fn runtime_weavy_recovery_end(input: &str, start_byte: usize) -> Option<usize> {
     (end > start_byte).then_some(end)
 }
 
+fn runtime_weavy_initial_tree_node_capacity(input: &str) -> usize {
+    input.len().saturating_div(4).max(32)
+}
+
+fn runtime_weavy_initial_child_list_capacity(input: &str) -> usize {
+    input.len().max(32)
+}
+
+fn runtime_weavy_initial_tree_event_capacity(
+    input: &str,
+    collection: RuntimeWeavyTreeEventCollection,
+) -> usize {
+    match collection {
+        RuntimeWeavyTreeEventCollection::Disabled => 0,
+        RuntimeWeavyTreeEventCollection::Enabled => input.len().max(32),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeWeavyRecoveryMode {
     Strict,
@@ -8889,6 +8930,12 @@ struct RuntimeWeavyTreeJournal {
 }
 
 impl RuntimeWeavyTreeJournal {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(capacity),
+        }
+    }
+
     fn push(&mut self, head: &mut RuntimeWeavyTreeJournalHead, event: parser_ir::TreeEvent) {
         let parent = *head;
         let index = self.entries.len();
@@ -11976,6 +12023,15 @@ enum RuntimeWeavyChildListKind {
 }
 
 impl RuntimeWeavyTreeStore {
+    fn with_capacity(node_capacity: usize, child_list_capacity: usize) -> Self {
+        let mut store = Self {
+            nodes: Vec::with_capacity(node_capacity),
+            child_lists: Vec::with_capacity(child_list_capacity.max(1)),
+        };
+        store.empty_children();
+        store
+    }
+
     fn node_count(&self) -> usize {
         self.nodes.len()
     }
