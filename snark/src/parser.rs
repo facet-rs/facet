@@ -6,9 +6,8 @@
 //! state. It is not a recursive recognizer and it never consumes generated
 //! Tree-sitter implementation files.
 
-#[cfg(debug_assertions)]
-use std::cmp::Reverse;
 use std::{
+    cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     error::Error,
     fmt,
@@ -5417,7 +5416,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
 
-        let mut roots = attach_resolved_children_from_event_order(&mut self.items);
+        let mut roots = attach_resolved_children_from_ranges(&mut self.items);
         if roots.is_empty() {
             return None;
         }
@@ -5461,7 +5460,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
 
-        let mut roots = attach_resolved_children_from_event_order(&mut self.items);
+        let mut roots = attach_resolved_children_from_ranges(&mut self.items);
         if roots.is_empty() {
             return None;
         }
@@ -5567,42 +5566,23 @@ fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> 
         && child.bytes.end() <= parent.bytes.end()
 }
 
-fn attach_resolved_children_from_event_order(items: &mut [ResolvedCstItem]) -> Vec<usize> {
+fn attach_resolved_children_from_ranges(items: &mut [ResolvedCstItem]) -> Vec<usize> {
+    let parents = resolved_parent_slots_by_range_sort(items);
+    for item in items.iter_mut() {
+        item.children.clear();
+    }
+
     let mut roots = Vec::<usize>::with_capacity(items.len());
-    #[cfg(debug_assertions)]
-    let mut parents = vec![None; items.len()];
-
-    for index in 0..items.len() {
-        if items[index].node.is_none() {
-            roots.push(index);
-            continue;
+    for (child, parent) in parents.into_iter().enumerate() {
+        if let Some(parent) = parent {
+            items[parent].children.push(child);
+        } else {
+            roots.push(child);
         }
-
-        let mut first_child = roots.len();
-        while first_child > 0
-            && resolved_item_contains(&items[index], &items[roots[first_child - 1]])
-        {
-            first_child -= 1;
-        }
-
-        let children = roots.split_off(first_child);
-        #[cfg(debug_assertions)]
-        for child in &children {
-            parents[*child] = Some(index);
-        }
-        items[index].children = children;
-        roots.push(index);
     }
-
-    #[cfg(debug_assertions)]
-    if items.len() <= 4096 {
-        debug_assert_eq!(parents, resolved_parent_slots_by_range_sort(items));
-    }
-
     roots
 }
 
-#[cfg(debug_assertions)]
 fn resolved_parent_slots_by_range_sort(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
     let mut indices = (0..items.len()).collect::<Vec<_>>();
     indices.sort_unstable_by_key(|index| {
@@ -6839,6 +6819,57 @@ extras (
         let mut texts = Vec::new();
         collect_resolved_terminal_texts(node, &mut texts);
         texts
+    }
+
+    fn test_resolved_range(start: u32, end: u32) -> (ByteRange, PointRange) {
+        use crate::runtime_input::{ByteOffset, PointBytes, Row, Utf8ColumnBytes};
+
+        let bytes = ByteRange::new(ByteOffset::new(start), ByteOffset::new(end)).unwrap();
+        let points = PointRange::new(
+            PointBytes::new(Row::new(0), Utf8ColumnBytes::new(start)),
+            PointBytes::new(Row::new(0), Utf8ColumnBytes::new(end)),
+        )
+        .unwrap();
+        (bytes, points)
+    }
+
+    fn test_resolved_item(
+        kind: &str,
+        node: Option<TreeNodeId>,
+        start: u32,
+        end: u32,
+        order: usize,
+    ) -> ResolvedCstItem {
+        let (bytes, points) = test_resolved_range(start, end);
+        ResolvedCstItem {
+            kind: Arc::<str>::from(kind),
+            symbol: None,
+            field: None,
+            node,
+            bytes,
+            points,
+            named: node.is_some(),
+            visible: true,
+            extra: false,
+            text: None,
+            order,
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn resolved_cst_attachment_handles_interleaved_event_order_roots() {
+        let mut items = vec![
+            test_resolved_item("child", None, 0, 1, 0),
+            test_resolved_item("later_sibling", None, 5, 6, 1),
+            test_resolved_item("parent", Some(TreeNodeId::from_index(0)), 0, 2, 2),
+        ];
+
+        let mut roots = attach_resolved_children_from_ranges(&mut items);
+        sort_resolved_children(&mut roots, &items);
+
+        assert_eq!(items[2].children, vec![0]);
+        assert_eq!(roots, vec![2, 1]);
     }
 
     fn assert_styx_authored_gingembre_rejects_like_gingembre(input: &str) {
