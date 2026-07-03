@@ -13583,6 +13583,20 @@ mod tests {
         assert_eq!(ends[0], Some(parser_ir::LexMatch::new(4, 4)));
         assert_eq!(ends[1], None);
         assert_eq!(terminal_indices, vec![0]);
+
+        terminal_indices.clear();
+        match_weavy_direct_pattern_set(
+            "!!!!",
+            &mode,
+            0,
+            &mut ends,
+            &mut matches,
+            dfa_cache.as_mut(),
+            &mut terminal_indices,
+        );
+
+        assert_eq!(ends, vec![None, None]);
+        assert!(terminal_indices.is_empty());
     }
 
     #[test]
