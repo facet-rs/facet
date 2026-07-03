@@ -3578,6 +3578,7 @@ struct WeavyLexModeProgram {
     terminals: Vec<WeavyLexTerminal>,
     non_direct_terminal_indices: Vec<usize>,
     auto_close_terminal_indices: Vec<usize>,
+    external_lookaheads: Vec<RuntimeWeavyExternalLookahead>,
     external_count: usize,
     direct_literal_set: Option<WeavyLiteralSet>,
     direct_pattern_set: Option<WeavyDirectPatternSet>,
@@ -3593,7 +3594,7 @@ impl WeavyLexModeProgram {
             .into_iter()
             .map(|terminal| WeavyLexTerminal::from_compiled(terminal, compiler))
             .collect::<Vec<_>>();
-        Self::from_terminals(terminals, compiled.external_count, compiler)
+        Self::from_terminals(terminals, Vec::new(), compiled.external_count, compiler)
     }
 
     fn from_state(
@@ -3604,36 +3605,59 @@ impl WeavyLexModeProgram {
     ) -> Self {
         let mut terminals = Vec::new();
         let mut seen_terminals = Vec::new();
+        let mut external_lookaheads = Vec::new();
+        let mut seen_externals = Vec::new();
         for entry in state.entries() {
-            let Some(terminal) = runtime_weavy_lookahead_terminal(entry.lookahead()) else {
-                continue;
-            };
-            let terminal_index = terminal.get() as usize;
-            if seen_terminals.len() <= terminal_index {
-                seen_terminals.resize(terminal_index + 1, false);
-            }
-            if seen_terminals[terminal_index] {
-                continue;
-            }
-            seen_terminals[terminal_index] = true;
-            if let Some(row) = mode.terminal_at(terminal, terminal_indices) {
-                let mut row = row.clone();
-                row.lookahead = Some(RuntimeWeavyTerminalLookahead {
-                    terminal,
-                    lookahead: entry.lookahead(),
-                    shifts_only_extra: entry
-                        .actions()
-                        .iter()
-                        .all(|action| matches!(action, parser_ir::ParseAction::ShiftExtra)),
-                });
-                terminals.push(row);
+            match entry.lookahead() {
+                lookahead @ parser_ir::LookaheadSymbol::Terminal(_)
+                | lookahead @ parser_ir::LookaheadSymbol::ReservedWord { .. } => {
+                    let Some(terminal) = runtime_weavy_lookahead_terminal(lookahead) else {
+                        continue;
+                    };
+                    let terminal_index = terminal.get() as usize;
+                    if seen_terminals.len() <= terminal_index {
+                        seen_terminals.resize(terminal_index + 1, false);
+                    }
+                    if seen_terminals[terminal_index] {
+                        continue;
+                    }
+                    seen_terminals[terminal_index] = true;
+                    if let Some(row) = mode.terminal_at(terminal, terminal_indices) {
+                        let mut row = row.clone();
+                        row.lookahead = Some(RuntimeWeavyTerminalLookahead {
+                            terminal,
+                            lookahead,
+                            shifts_only_extra: entry
+                                .actions()
+                                .iter()
+                                .all(|action| matches!(action, parser_ir::ParseAction::ShiftExtra)),
+                        });
+                        terminals.push(row);
+                    }
+                }
+                lookahead @ parser_ir::LookaheadSymbol::External(external) => {
+                    let external_index = external.get() as usize;
+                    if seen_externals.len() <= external_index {
+                        seen_externals.resize(external_index + 1, false);
+                    }
+                    if seen_externals[external_index] {
+                        continue;
+                    }
+                    seen_externals[external_index] = true;
+                    external_lookaheads.push(RuntimeWeavyExternalLookahead {
+                        external,
+                        lookahead,
+                    });
+                }
+                _ => {}
             }
         }
-        Self::from_terminals(terminals, 0, compiler)
+        Self::from_terminals(terminals, external_lookaheads, 0, compiler)
     }
 
     fn from_terminals(
         mut terminals: Vec<WeavyLexTerminal>,
+        external_lookaheads: Vec<RuntimeWeavyExternalLookahead>,
         external_count: usize,
         compiler: &mut WeavyLexerCompiler,
     ) -> Self {
@@ -3662,6 +3686,7 @@ impl WeavyLexModeProgram {
             terminals,
             non_direct_terminal_indices,
             auto_close_terminal_indices,
+            external_lookaheads,
             external_count,
             direct_literal_set,
             direct_pattern_set,
@@ -4767,6 +4792,12 @@ struct RuntimeWeavyTerminalLookahead {
     terminal: parser_ir::TerminalId,
     lookahead: parser_ir::LookaheadSymbol,
     shifts_only_extra: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RuntimeWeavyExternalLookahead {
+    external: parser_ir::ExternalId,
+    lookahead: parser_ir::LookaheadSymbol,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -10202,14 +10233,14 @@ impl<'a> RuntimeWeavyStepper<'a> {
             });
         }
         if self.external_scanner.is_some() {
-            for external in mode.externals() {
+            for external_lookahead in &mode_program.external_lookaheads {
                 let Some(scanner_result) =
-                    self.match_external(state, mode, *external, byte_position)?
+                    self.match_external(state, mode, external_lookahead.external, byte_position)?
                 else {
                     continue;
                 };
                 let candidate = RuntimeWeavyTokenCandidate {
-                    lookahead: parser_ir::LookaheadSymbol::External(*external),
+                    lookahead: external_lookahead.lookahead,
                     end: scanner_result.end_byte(),
                     inspected_end: scanner_result.end_byte(),
                     extra: false,
@@ -10220,14 +10251,6 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     implicit_precedence: 0,
                     scanner: Some(scanner_result),
                 };
-                if !state
-                    .entries()
-                    .iter()
-                    .any(|entry| entry.lookahead() == candidate.lookahead)
-                {
-                    push_runtime_weavy_candidate(&mut best_rejected, candidate);
-                    continue;
-                }
                 push_runtime_weavy_candidate(&mut best, candidate);
             }
         }
@@ -10239,10 +10262,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 scanner: candidate.scanner,
             });
         }
-        if !mode.externals().is_empty() {
+        if !mode_program.external_lookaheads.is_empty() {
             return Err(RuntimeWeavyStepError::MissingExternalScannerHost {
                 state: state.id(),
-                external_count: mode.externals().len(),
+                external_count: mode_program.external_lookaheads.len(),
             });
         }
         if let Some(rejected) = best_rejected {
@@ -13064,6 +13087,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
@@ -13118,6 +13142,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
@@ -13193,6 +13218,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
@@ -13264,6 +13290,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set: None,
         };
@@ -13329,6 +13356,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set: None,
         };
@@ -13404,6 +13432,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set: None,
         };
@@ -13463,6 +13492,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set: None,
             direct_pattern_set,
@@ -13528,6 +13558,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set: None,
             direct_pattern_set,
@@ -13603,6 +13634,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set,
@@ -13663,6 +13695,7 @@ mod tests {
             terminals,
             non_direct_terminal_indices: vec![],
             auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set,
@@ -15398,6 +15431,7 @@ mod tests {
                     terminals: vec![],
                     non_direct_terminal_indices: vec![],
                     auto_close_terminal_indices: vec![],
+                    external_lookaheads: vec![],
                     external_count: 3,
                     direct_literal_set: None,
                     direct_pattern_set: None,
@@ -15525,6 +15559,7 @@ mod tests {
                 terminals,
                 non_direct_terminal_indices: vec![],
                 auto_close_terminal_indices: vec![],
+                external_lookaheads: vec![],
                 external_count: 0,
                 direct_literal_set,
                 direct_pattern_set,
