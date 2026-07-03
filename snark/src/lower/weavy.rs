@@ -1777,6 +1777,7 @@ pub struct WeavyParserProgram {
     state_blocks: Vec<SnarkBlockId>,
     state_block_refs: Vec<BlockRef>,
     action_blocks: Vec<Vec<Vec<WeavyParserActionBlock>>>,
+    action_entry_index: RuntimeWeavyStateActionEntryIndex,
     extra_node_index: RuntimeWeavyExtraNodeIndex,
     terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex,
     public_node_kind_names: Vec<Arc<str>>,
@@ -1843,6 +1844,14 @@ impl WeavyParserProgram {
                 action,
             })?;
         Ok(block)
+    }
+
+    fn action_entry(
+        &self,
+        state: parser_ir::ParseStateId,
+        lookahead: parser_ir::LookaheadSymbol,
+    ) -> Option<RuntimeWeavyActionEntry> {
+        self.action_entry_index.get(state, lookahead)
     }
 
     fn terminal_lookahead(
@@ -4807,6 +4816,72 @@ struct WeavyParserActionBlock {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RuntimeWeavyActionEntry {
+    lookahead: parser_ir::LookaheadSymbol,
+    entry_index: usize,
+    action_count: usize,
+    first_action: Option<parser_ir::ParseAction>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RuntimeWeavyStateActionEntryIndex {
+    states: Vec<RuntimeWeavyStateActionEntries>,
+}
+
+impl RuntimeWeavyStateActionEntryIndex {
+    fn new(table: &parser_ir::ParseTable) -> Self {
+        Self {
+            states: table
+                .states()
+                .iter()
+                .map(RuntimeWeavyStateActionEntries::from_state)
+                .collect(),
+        }
+    }
+
+    fn get(
+        &self,
+        state: parser_ir::ParseStateId,
+        lookahead: parser_ir::LookaheadSymbol,
+    ) -> Option<RuntimeWeavyActionEntry> {
+        self.states
+            .get(state.get() as usize)
+            .and_then(|entries| entries.get(lookahead))
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RuntimeWeavyStateActionEntries {
+    entries: Vec<RuntimeWeavyActionEntry>,
+}
+
+impl RuntimeWeavyStateActionEntries {
+    fn from_state(state: &parser_ir::ParseState) -> Self {
+        let mut entries = state
+            .entries()
+            .iter()
+            .enumerate()
+            .map(|(entry_index, entry)| RuntimeWeavyActionEntry {
+                lookahead: entry.lookahead(),
+                entry_index,
+                action_count: entry.actions().len(),
+                first_action: entry.actions().first().copied(),
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.lookahead);
+        Self { entries }
+    }
+
+    fn get(&self, lookahead: parser_ir::LookaheadSymbol) -> Option<RuntimeWeavyActionEntry> {
+        let index = self
+            .entries
+            .binary_search_by_key(&lookahead, |entry| entry.lookahead)
+            .ok()?;
+        self.entries.get(index).copied()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SymbolicWeavyParserActionBlock {
     action: parser_ir::ParseAction,
     block: SnarkBlockId,
@@ -5424,6 +5499,7 @@ fn lower_weavy_parser_program(
         .iter()
         .map(|alias| Arc::<str>::from(alias.value()))
         .collect::<Vec<_>>();
+    let action_entry_index = RuntimeWeavyStateActionEntryIndex::new(table);
     let extra_node_index = RuntimeWeavyExtraNodeIndex::new(parser, &public_node_kind_names);
     let terminal_lookahead_index = RuntimeWeavyStateTerminalLookaheadIndex::new(table);
 
@@ -5433,6 +5509,7 @@ fn lower_weavy_parser_program(
         state_blocks,
         state_block_refs,
         action_blocks,
+        action_entry_index,
         extra_node_index,
         terminal_lookahead_index,
         public_node_kind_names,
@@ -9659,32 +9736,25 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 state: ParseStateId::from_index(state.get() as usize),
                 lookahead: LookaheadTokenId::from_index(self.lookahead_id.get() as usize),
             });
-        let (entry_index, action_count, first_action) = {
-            let state_row = self.parse_state(state)?;
-            let (entry_index, entry) = state_row
-                .entries()
-                .iter()
-                .enumerate()
-                .find(|(_, entry)| entry.lookahead() == token.lookahead)
-                .ok_or(RuntimeWeavyStepError::NoAction {
+        let action_entry =
+            if let Some(action_entry) = self.plan.action_entry(state, token.lookahead) {
+                action_entry
+            } else {
+                self.parse_state(state)?;
+                return Err(RuntimeWeavyStepError::NoAction {
                     state,
                     lookahead: token.lookahead,
                     byte_position: self.byte_position,
-                })?;
-            (
-                entry_index,
-                entry.actions().len(),
-                entry.actions().first().copied(),
-            )
-        };
+                });
+            };
         Ok(RuntimeWeavyDispatch {
             state,
             token,
             lookahead: self.lookahead_id,
             lexed,
-            entry_index,
-            action_count,
-            first_action,
+            entry_index: action_entry.entry_index,
+            action_count: action_entry.action_count,
+            first_action: action_entry.first_action,
         })
     }
 
@@ -10037,39 +10107,46 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     byte_position: self.byte_position,
                     expected: RuntimeWeavyExpected::Empty,
                 })?;
-                let state_row = self.parse_state(state)?;
-                let (entry_index, entry) = state_row
-                    .entries()
-                    .iter()
-                    .enumerate()
-                    .find(|(_, entry)| entry.lookahead() == token.lookahead)
-                    .ok_or(RuntimeWeavyStepError::NoAction {
-                        state,
-                        lookahead: token.lookahead,
-                        byte_position: self.byte_position,
-                    })?;
+                let action_entry =
+                    if let Some(action_entry) = self.plan.action_entry(state, token.lookahead) {
+                        action_entry
+                    } else {
+                        self.parse_state(state)?;
+                        return Err(RuntimeWeavyStepError::NoAction {
+                            state,
+                            lookahead: token.lookahead,
+                            byte_position: self.byte_position,
+                        });
+                    };
                 if self.mode == RuntimeWeavyMode::ProbeState {
                     self.dispatch = Some(RuntimeWeavyDispatch {
                         state,
                         token,
                         lookahead: self.lookahead_id,
                         lexed: true,
-                        entry_index,
-                        action_count: entry.actions().len(),
-                        first_action: entry.actions().first().copied(),
+                        entry_index: action_entry.entry_index,
+                        action_count: action_entry.action_count,
+                        first_action: action_entry.first_action,
                     });
                     return Ok(Control::Return);
                 }
-                let [action] = entry.actions() else {
+                let Some(action) = action_entry.first_action else {
+                    return Err(RuntimeWeavyStepError::NoAction {
+                        state,
+                        lookahead: token.lookahead,
+                        byte_position: self.byte_position,
+                    });
+                };
+                if action_entry.action_count != 1 {
                     return Err(RuntimeWeavyStepError::UnexpectedConflictInActionBlock {
                         state,
                         lookahead: token.lookahead,
-                        action_count: entry.actions().len(),
+                        action_count: action_entry.action_count,
                     });
-                };
-                let block = self
-                    .plan
-                    .runtime_action_block(state, entry_index, 0, *action)?;
+                }
+                let block =
+                    self.plan
+                        .runtime_action_block(state, action_entry.entry_index, 0, action)?;
                 Ok(Control::CallBlock(block))
             }
             SnarkIntrinsic::CommitLookahead { .. } => {
@@ -13745,6 +13822,7 @@ mod tests {
                 state_blocks: vec![],
                 state_block_refs: vec![],
                 action_blocks: vec![],
+                action_entry_index: RuntimeWeavyStateActionEntryIndex::default(),
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
                 terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
                 public_node_kind_names: vec![],
@@ -14065,6 +14143,7 @@ mod tests {
                 state_blocks: vec![],
                 state_block_refs: vec![],
                 action_blocks: vec![],
+                action_entry_index: RuntimeWeavyStateActionEntryIndex::default(),
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
                 terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
                 public_node_kind_names: vec![],
@@ -14127,6 +14206,7 @@ mod tests {
                 state_blocks: vec![],
                 state_block_refs: vec![],
                 action_blocks: vec![],
+                action_entry_index: RuntimeWeavyStateActionEntryIndex::default(),
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
                 terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
                 public_node_kind_names: vec![],
@@ -14262,6 +14342,7 @@ mod tests {
                 state_blocks: vec![],
                 state_block_refs: vec![],
                 action_blocks: vec![],
+                action_entry_index: RuntimeWeavyStateActionEntryIndex::default(),
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
                 terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
                 public_node_kind_names: vec![],
@@ -14402,6 +14483,7 @@ mod tests {
                 state_blocks: vec![],
                 state_block_refs: vec![],
                 action_blocks: vec![],
+                action_entry_index: RuntimeWeavyStateActionEntryIndex::default(),
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
                 terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
                 public_node_kind_names: vec![],
@@ -14931,6 +15013,7 @@ mod tests {
                 state_blocks: vec![],
                 state_block_refs: vec![],
                 action_blocks: vec![],
+                action_entry_index: RuntimeWeavyStateActionEntryIndex::default(),
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
                 terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
                 public_node_kind_names: vec![],
@@ -15361,6 +15444,7 @@ mod tests {
                 state_blocks: vec![],
                 state_block_refs: vec![],
                 action_blocks: vec![],
+                action_entry_index: RuntimeWeavyStateActionEntryIndex::default(),
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
                 terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
                 public_node_kind_names: vec![],
@@ -15421,6 +15505,7 @@ mod tests {
                 state_blocks: vec![],
                 state_block_refs: vec![],
                 action_blocks: vec![],
+                action_entry_index: RuntimeWeavyStateActionEntryIndex::default(),
                 extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
                 terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
                 public_node_kind_names: vec![],
