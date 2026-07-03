@@ -84,19 +84,57 @@ impl From<ExecEvent> for Serving {
     }
 }
 
+/// A half-open byte range into the evaluated module — the IDE's handle for
+/// cross-highlighting between the graph and the editor.
+#[derive(Facet, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl From<vix::support::Span> for Span {
+    fn from(s: vix::support::Span) -> Self {
+        Span {
+            start: s.start,
+            end: s.end,
+        }
+    }
+}
+
 /// One observable step of demand-driven evaluation, streamed to the IDE. This
-/// is simultaneously the debugger's step feed and the graph-viz's edge feed.
+/// is simultaneously the debugger's step feed and the graph-viz's edge feed:
+/// `run` pairs Spawn↔Exec exactly, `caller`/`in_fn` give demand ancestry, and
+/// spans link every node back into the source.
 #[derive(Facet, Debug, Clone, PartialEq)]
 #[repr(u8)]
 pub enum DemandEvent {
-    /// A memoized call ran cold.
-    Miss { func: String },
+    /// A memoized call ran cold. `span` is the fn declaration.
+    Miss {
+        func: String,
+        span: Span,
+        caller: Option<String>,
+    },
     /// A memoized call was served from the language-level cache.
-    Hit { func: String },
+    Hit {
+        func: String,
+        span: Span,
+        caller: Option<String>,
+    },
     /// A command block DISPATCHED (evaluation continues; a pending tree).
-    Spawn { command: String },
+    /// `span` is the `cmd! { … }` block.
+    Spawn {
+        command: String,
+        run: u64,
+        span: Span,
+        in_fn: Option<String>,
+    },
     /// A command block resolved through the two-tier exec cache.
-    Exec { command: String, serving: Serving },
+    Exec {
+        command: String,
+        run: u64,
+        span: Span,
+        serving: Serving,
+    },
     /// A primitive observed the world (cold) or replayed its pin.
     Observation { key: String, replayed: bool },
     /// Evaluation finished. `result` is the value's Debug form (v1).
@@ -110,13 +148,36 @@ vox_schema::impl_reborrow_owned!(DemandEvent, StepCommand);
 impl DemandEvent {
     fn from_oracle(event: &Event) -> DemandEvent {
         match event {
-            Event::Miss { func } => DemandEvent::Miss { func: func.clone() },
-            Event::Hit { func } => DemandEvent::Hit { func: func.clone() },
-            Event::Spawn { command } => DemandEvent::Spawn {
-                command: command.clone(),
+            Event::Miss { func, span, caller } => DemandEvent::Miss {
+                func: func.clone(),
+                span: (*span).into(),
+                caller: caller.clone(),
             },
-            Event::Exec { command, event } => DemandEvent::Exec {
+            Event::Hit { func, span, caller } => DemandEvent::Hit {
+                func: func.clone(),
+                span: (*span).into(),
+                caller: caller.clone(),
+            },
+            Event::Spawn {
+                command,
+                run,
+                span,
+                in_fn,
+            } => DemandEvent::Spawn {
                 command: command.clone(),
+                run: *run,
+                span: (*span).into(),
+                in_fn: in_fn.clone(),
+            },
+            Event::Exec {
+                command,
+                run,
+                span,
+                event,
+            } => DemandEvent::Exec {
+                command: command.clone(),
+                run: *run,
+                span: (*span).into(),
                 serving: event.clone().into(),
             },
             Event::Observation { key, replayed } => DemandEvent::Observation {

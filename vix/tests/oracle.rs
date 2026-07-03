@@ -29,7 +29,11 @@ fn memo_hits_and_identity_survives_trivia() {
     // Second call: served entirely from the memo — ONE hit, zero new misses.
     oracle.call("demo", &[]).unwrap();
     let warm = &oracle.events()[cold_misses..];
-    assert_eq!(warm, &[Event::Hit { func: "demo".to_string() }]);
+    assert_eq!(warm.len(), 1, "{warm:?}");
+    assert!(
+        matches!(&warm[0], Event::Hit { func, .. } if func == "demo"),
+        "{warm:?}"
+    );
 
     // Identity is the AST modulo spans: comments and whitespace anywhere —
     // including inside the fn — don't change a function's hash.

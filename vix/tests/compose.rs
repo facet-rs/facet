@@ -41,7 +41,7 @@ fn lua_builds_end_to_end() {
     let execs: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Exec { command, event } => Some((command.as_str(), event.clone())),
+            Event::Exec { command, event, .. } => Some((command.as_str(), event.clone())),
             _ => None,
         })
         .collect();
@@ -59,7 +59,11 @@ fn lua_builds_end_to_end() {
     let again = oracle.call("lua", &[("target", target())]).unwrap();
     assert_eq!(out, again);
     let warm = &oracle.events()[before..];
-    assert_eq!(warm, &[Event::Hit { func: "lua".into() }]);
+    assert_eq!(warm.len(), 1, "{warm:?}");
+    assert!(
+        matches!(&warm[0], Event::Hit { func, .. } if func == "lua"),
+        "{warm:?}"
+    );
 }
 
 #[test]
@@ -108,13 +112,13 @@ fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
     assert_eq!(first, second, "same object, no recompile");
     let warm = &oracle.events()[before..];
     assert!(
-        matches!(&warm[0], Event::Miss { func } if func == "object"),
+        matches!(&warm[0], Event::Miss { func, .. } if func == "object"),
         "fn memo misses (the tree value changed): {warm:?}"
     );
     assert!(
         warm.iter().any(|e| matches!(
             e,
-            Event::Exec { command, event: ExecEvent::Tier2Cutoff { .. } } if command == "cc"
+            Event::Exec { command, event: ExecEvent::Tier2Cutoff { .. }, .. } if command == "cc"
         )),
         "exec tier-2 cuts off (nothing read changed): {warm:?}"
     );

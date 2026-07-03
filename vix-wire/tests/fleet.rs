@@ -71,7 +71,7 @@ async fn lua_builds_across_two_machines() {
     let execs: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Exec { command, event } => Some((command.clone(), event.clone())),
+            Event::Exec { command, event, .. } => Some((command.clone(), event.clone())),
             _ => None,
         })
         .collect();
@@ -84,9 +84,11 @@ async fn lua_builds_across_two_machines() {
     let before = oracle.events().len();
     let again = oracle.call("lua", &[("target", target())]).unwrap();
     assert_eq!(out, again);
-    assert_eq!(
-        &oracle.events()[before..],
-        &[Event::Hit { func: "lua".into() }]
+    let warm = &oracle.events()[before..];
+    assert_eq!(warm.len(), 1, "{warm:?}");
+    assert!(
+        matches!(&warm[0], Event::Hit { func, .. } if func == "lua"),
+        "{warm:?}"
     );
 }
 
@@ -239,7 +241,7 @@ pub fn pipeline(rustc: Rustc, cc: Cc, a_src: Tree, b_src: Tree) -> Tree {
     let spawns: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Spawn { command } => Some(command.as_str()),
+            Event::Spawn { command, .. } => Some(command.as_str()),
             _ => None,
         })
         .collect();

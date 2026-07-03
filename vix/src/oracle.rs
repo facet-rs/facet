@@ -396,17 +396,33 @@ pub fn receive(bytes: &[u8]) -> Result<Value, String> {
 // The oracle.
 // ---------------------------------------------------------------------------
 
-/// Observable evaluation events — the oracle's whole point.
+/// Observable evaluation events — the oracle's whole point. Each carries
+/// enough IDENTITY to reconstruct the build graph and enough SOURCE (spans)
+/// to link back into the editor: run ids pair Spawn↔Exec exactly; `caller`/
+/// `in_fn` give demand ancestry; spans are byte ranges into the module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    /// A memoized call ran (cold).
-    Miss { func: String },
+    /// A memoized call ran (cold). `span` is the fn's declaration.
+    Miss {
+        func: String,
+        span: crate::support::Span,
+        caller: Option<String>,
+    },
     /// A memoized call was served from cache.
-    Hit { func: String },
+    Hit {
+        func: String,
+        span: crate::support::Span,
+        caller: Option<String>,
+    },
     /// A command block DISPATCHED (demand-driven: evaluation continues while
     /// the run produces; the matching Exec event fires when something forces
-    /// the flush).
-    Spawn { command: String },
+    /// the flush). `span` is the `cmd! { … }` block; `run` pairs with Exec.
+    Spawn {
+        command: String,
+        run: u64,
+        span: crate::support::Span,
+        in_fn: Option<String>,
+    },
     /// A primitive observed the outside world (cold) or replayed its pin.
     Observation { key: String, replayed: bool },
     /// A command block went through the exec cache. The language-level memo
@@ -414,12 +430,14 @@ pub enum Event {
     /// resolve to a tier-2 cutoff below it.
     Exec {
         command: String,
+        run: u64,
+        span: crate::support::Span,
         event: crate::exec::ExecEvent,
     },
 }
 
 /// A live tap on [`Event`]s as they happen (see [`Oracle::with_sink`]).
-pub type EventSink = Box<dyn Fn(&Event)>;
+pub type EventSink = Box<dyn Fn(&Event) + Send>;
 
 struct EnumInfo {
     variants: Vec<(String, VariantShape)>,
@@ -542,7 +560,10 @@ pub struct Oracle {
     /// Run ids this oracle spawned that haven't logged their Exec event yet
     /// (logged on the first oracle-side force; identity-side forces from
     /// Ord/Hash are silent — they have no oracle in scope).
-    unlogged_runs: RefCell<HashMap<u64, String>>,
+    unlogged_runs: RefCell<HashMap<u64, (String, crate::support::Span)>>,
+    /// The stack of fn names currently evaluating (cold path only) — demand
+    /// ancestry for events: who demanded this call, whose body spawned this.
+    fn_stack: RefCell<Vec<String>>,
 }
 
 type EvalResult = Result<Value, String>;
@@ -609,6 +630,7 @@ impl Oracle {
             exec_cache: RefCell::new(crate::exec::ExecCache::new()),
             backend: None,
             unlogged_runs: RefCell::new(HashMap::new()),
+            fn_stack: RefCell::new(Vec::new()),
         })
     }
 
@@ -765,18 +787,26 @@ impl Oracle {
             value.hash_into(&mut h);
         }
         let key = (self.fn_hashes[func], h.finish());
+        let caller = self.fn_stack.borrow().last().cloned();
         if let Some(hit) = self.memo.borrow().get(&key) {
             self.emit(Event::Hit {
                 func: func.to_string(),
-                });
+                span: f.span,
+                caller,
+            });
             return Ok(hit.clone());
         }
         self.emit(Event::Miss {
             func: func.to_string(),
+            span: f.span,
+            caller,
         });
 
         let mut frames = vec![bound];
-        let result = self.block(&f.body, &mut frames)?;
+        self.fn_stack.borrow_mut().push(func.to_string());
+        let result = self.block(&f.body, &mut frames);
+        self.fn_stack.borrow_mut().pop();
+        let result = result?;
         self.memo.borrow_mut().insert(key, result.clone());
         Ok(result)
     }
@@ -1374,9 +1404,12 @@ impl Oracle {
         let id = runs::register(run);
         self.unlogged_runs
             .borrow_mut()
-            .insert(id, c.command.value.clone());
+            .insert(id, (c.command.value.clone(), c.span));
         self.emit(Event::Spawn {
             command: c.command.value.clone(),
+            run: id,
+            span: c.span,
+            in_fn: self.fn_stack.borrow().last().cloned(),
         });
         Ok(Value::PendingTree { run: id })
     }
@@ -1384,8 +1417,13 @@ impl Oracle {
     /// Oracle-side force: flush the run and log its Exec event exactly once.
     fn force_and_note(&self, id: u64) -> Result<crate::exec::Tree, String> {
         let (tree, event) = force_run(id)?;
-        if let Some(command) = self.unlogged_runs.borrow_mut().remove(&id) {
-            self.emit(Event::Exec { command, event });
+        if let Some((command, span)) = self.unlogged_runs.borrow_mut().remove(&id) {
+            self.emit(Event::Exec {
+                command,
+                run: id,
+                span,
+                event,
+            });
         }
         Ok(tree)
     }
