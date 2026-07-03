@@ -8,7 +8,7 @@
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap},
+    collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet},
     error::Error,
     fmt,
     sync::Arc,
@@ -11898,7 +11898,8 @@ fn runtime_weavy_subtree_tree_events(
     end_byte: usize,
     root_node: parser_ir::TreeNodeId,
 ) -> Vec<parser_ir::TreeEvent> {
-    let mut nodes = BTreeSet::from([root_node]);
+    let mut nodes = HashSet::with_capacity(1);
+    nodes.insert(root_node);
     for event in tree_events {
         if let Some((start, end)) = runtime_weavy_tree_event_byte_range(event)
             && start_byte <= start
