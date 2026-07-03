@@ -103,40 +103,58 @@ impl From<vix::support::Span> for Span {
 
 /// One observable step of demand-driven evaluation, streamed to the IDE. This
 /// is simultaneously the debugger's step feed and the graph-viz's edge feed:
-/// `run` pairs Spawn↔Exec exactly, `caller`/`in_fn` give demand ancestry, and
-/// spans link every node back into the source.
+/// `run` pairs Spawn↔Exec exactly, `caller`/`in_fn` give demand ancestry,
+/// spans link every node back into the source, `at` is the eval-relative
+/// timestamp in microseconds (the rails/lanes view feeds on it), and the
+/// artifact payloads (args/argv/describe/outputs) say WHAT is being built.
 #[derive(Facet, Debug, Clone, PartialEq)]
 #[repr(u8)]
 pub enum DemandEvent {
-    /// A memoized call ran cold. `span` is the fn declaration.
+    /// A memoized call ran cold. `span` is the fn declaration; `args` render
+    /// each bound argument shortly.
     Miss {
+        at: u64,
         func: String,
         span: Span,
         caller: Option<String>,
+        args: Vec<(String, String)>,
     },
     /// A memoized call was served from the language-level cache.
     Hit {
+        at: u64,
         func: String,
         span: Span,
         caller: Option<String>,
+        args: Vec<(String, String)>,
     },
     /// A command block DISPATCHED (evaluation continues; a pending tree).
-    /// `span` is the `cmd! { … }` block.
+    /// `span` is the `cmd! { … }` block; `describe` is the command grammar's
+    /// important-first description (level 0 = verb + object; last = argv).
     Spawn {
+        at: u64,
         command: String,
         run: u64,
         span: Span,
         in_fn: Option<String>,
+        argv: Vec<String>,
+        describe: Vec<String>,
     },
-    /// A command block resolved through the two-tier exec cache.
+    /// A command block resolved through the two-tier exec cache. `outputs`
+    /// is the flushed tree — the artifacts, observable path by path.
     Exec {
+        at: u64,
         command: String,
         run: u64,
         span: Span,
         serving: Serving,
+        outputs: Vec<(String, String)>,
     },
     /// A primitive observed the world (cold) or replayed its pin.
-    Observation { key: String, replayed: bool },
+    Observation {
+        at: u64,
+        key: String,
+        replayed: bool,
+    },
     /// Evaluation finished. `result` is the value's Debug form (v1).
     Done { result: String },
     /// Evaluation failed.
@@ -146,41 +164,64 @@ pub enum DemandEvent {
 vox_schema::impl_reborrow_owned!(DemandEvent, StepCommand);
 
 impl DemandEvent {
-    fn from_oracle(event: &Event) -> DemandEvent {
+    fn from_oracle(at: u64, event: &Event) -> DemandEvent {
         match event {
-            Event::Miss { func, span, caller } => DemandEvent::Miss {
+            Event::Miss {
+                func,
+                span,
+                caller,
+                args,
+            } => DemandEvent::Miss {
+                at,
                 func: func.clone(),
                 span: (*span).into(),
                 caller: caller.clone(),
+                args: args.clone(),
             },
-            Event::Hit { func, span, caller } => DemandEvent::Hit {
+            Event::Hit {
+                func,
+                span,
+                caller,
+                args,
+            } => DemandEvent::Hit {
+                at,
                 func: func.clone(),
                 span: (*span).into(),
                 caller: caller.clone(),
+                args: args.clone(),
             },
             Event::Spawn {
                 command,
                 run,
                 span,
                 in_fn,
+                argv,
+                describe,
             } => DemandEvent::Spawn {
+                at,
                 command: command.clone(),
                 run: *run,
                 span: (*span).into(),
                 in_fn: in_fn.clone(),
+                argv: argv.clone(),
+                describe: describe.clone(),
             },
             Event::Exec {
                 command,
                 run,
                 span,
                 event,
+                outputs,
             } => DemandEvent::Exec {
+                at,
                 command: command.clone(),
                 run: *run,
                 span: (*span).into(),
                 serving: event.clone().into(),
+                outputs: outputs.clone(),
             },
             Event::Observation { key, replayed } => DemandEvent::Observation {
+                at,
                 key: key.clone(),
                 replayed: *replayed,
             },
@@ -229,8 +270,8 @@ impl Daemon for DaemonService {
         let oracle_task = tokio::task::spawn_blocking(move || {
             let sink_evt = evt_tx_for_oracle.clone();
             let sink_gate = gate_tx_for_oracle.clone();
-            let sink = move |event: &Event| {
-                let de = DemandEvent::from_oracle(event);
+            let sink = move |at: u64, event: &Event| {
+                let de = DemandEvent::from_oracle(at, event);
                 if mode == StepMode::Step {
                     // Ask the async side for permission and block until granted.
                     let (permit_tx, permit_rx) = oneshot::channel::<()>();

@@ -129,6 +129,40 @@ impl Value {
         }
     }
 
+    /// A SHORT human rendering — event payloads say what is being computed
+    /// without dumping whole trees. Paths/strings verbatim, aggregates
+    /// summarized, trees by identity.
+    pub fn short(&self) -> String {
+        match self {
+            Value::Int(v) => v.to_string(),
+            Value::Float(v) => v.to_string(),
+            Value::Bool(v) => v.to_string(),
+            Value::Str(v) => format!("{v:?}"),
+            Value::Path(v) => v.clone(),
+            Value::Flag(v) => v.clone(),
+            Value::Tuple(vs) => format!(
+                "({})",
+                vs.iter().map(|v| v.short()).collect::<Vec<_>>().join(", ")
+            ),
+            Value::Array(vs) => format!(
+                "[{}]",
+                vs.iter().map(|v| v.short()).collect::<Vec<_>>().join(", ")
+            ),
+            Value::Map(entries) => format!("{{…{} entries}}", entries.len()),
+            Value::Struct { name, fields } => format!("{name}{{…{}}}", fields.len()),
+            Value::Variant { enum_name, name, .. } => format!("{enum_name}::{name}"),
+            Value::Fn { name, .. } => format!("fn {name}"),
+            Value::Closure { .. } => "closure".to_string(),
+            Value::Partial { func, .. } => format!("partial {func}"),
+            Value::Tree(t) => {
+                let mut h = DefaultHasher::new();
+                self.hash_into(&mut h);
+                format!("tree({:08x}, {} paths)", h.finish() as u32, t.entries.len())
+            }
+            Value::PendingTree { run } => format!("pending(run {run})"),
+        }
+    }
+
     /// Structural hash — the canonical identity of a value.
     pub fn hash_into(&self, h: &mut DefaultHasher) {
         self.rank().hash(h);
@@ -402,42 +436,54 @@ pub fn receive(bytes: &[u8]) -> Result<Value, String> {
 /// `in_fn` give demand ancestry; spans are byte ranges into the module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    /// A memoized call ran (cold). `span` is the fn's declaration.
+    /// A memoized call ran (cold). `span` is the fn's declaration; `args`
+    /// renders each bound argument SHORTLY — what is being computed.
     Miss {
         func: String,
         span: crate::support::Span,
         caller: Option<String>,
+        args: Vec<(String, String)>,
     },
     /// A memoized call was served from cache.
     Hit {
         func: String,
         span: crate::support::Span,
         caller: Option<String>,
+        args: Vec<(String, String)>,
     },
     /// A command block DISPATCHED (demand-driven: evaluation continues while
     /// the run produces; the matching Exec event fires when something forces
     /// the flush). `span` is the `cmd! { … }` block; `run` pairs with Exec.
+    /// `describe` is the command grammar's important-first description
+    /// (level 0 = verb + object; deeper = modifiers; last = full argv).
     Spawn {
         command: String,
         run: u64,
         span: crate::support::Span,
         in_fn: Option<String>,
+        argv: Vec<String>,
+        describe: Vec<String>,
     },
     /// A primitive observed the outside world (cold) or replayed its pin.
     Observation { key: String, replayed: bool },
     /// A command block went through the exec cache. The language-level memo
     /// and the exec-level two-tier cache COMPOSE: a fn-level miss can still
-    /// resolve to a tier-2 cutoff below it.
+    /// resolve to a tier-2 cutoff below it. `outputs` is the flushed tree —
+    /// the artifacts, observable path by path.
     Exec {
         command: String,
         run: u64,
         span: crate::support::Span,
         event: crate::exec::ExecEvent,
+        outputs: Vec<(String, String)>,
     },
 }
 
-/// A live tap on [`Event`]s as they happen (see [`Oracle::with_sink`]).
-pub type EventSink = Box<dyn Fn(&Event) + Send>;
+/// A live tap on [`Event`]s as they happen (see [`Oracle::with_sink`]). The
+/// first argument is the eval-relative timestamp in microseconds — timing is
+/// an OBSERVATION about evaluation, not part of the pure event, so it rides
+/// beside the event instead of inside it (the post-hoc log stays timeless).
+pub type EventSink = Box<dyn Fn(u64, &Event) + Send>;
 
 struct EnumInfo {
     variants: Vec<(String, VariantShape)>,
@@ -564,6 +610,8 @@ pub struct Oracle {
     /// The stack of fn names currently evaluating (cold path only) — demand
     /// ancestry for events: who demanded this call, whose body spawned this.
     fn_stack: RefCell<Vec<String>>,
+    /// When this oracle was created — sink timestamps are relative to it.
+    epoch: std::time::Instant,
 }
 
 type EvalResult = Result<Value, String>;
@@ -631,6 +679,7 @@ impl Oracle {
             backend: None,
             unlogged_runs: RefCell::new(HashMap::new()),
             fn_stack: RefCell::new(Vec::new()),
+            epoch: std::time::Instant::now(),
         })
     }
 
@@ -651,7 +700,8 @@ impl Oracle {
     fn emit(&self, event: Event) {
         self.events.borrow_mut().push(event.clone());
         if let Some(sink) = &self.sink {
-            sink(&event);
+            let at_micros = self.epoch.elapsed().as_micros() as u64;
+            sink(at_micros, &event);
         }
     }
 
@@ -788,11 +838,19 @@ impl Oracle {
         }
         let key = (self.fn_hashes[func], h.finish());
         let caller = self.fn_stack.borrow().last().cloned();
+        let args: Vec<(String, String)> = params
+            .iter()
+            .map(|param| {
+                let value = &bound.iter().find(|(b, _)| b == *param).unwrap().1;
+                (param.to_string(), value.short())
+            })
+            .collect();
         if let Some(hit) = self.memo.borrow().get(&key) {
             self.emit(Event::Hit {
                 func: func.to_string(),
                 span: f.span,
                 caller,
+                args,
             });
             return Ok(hit.clone());
         }
@@ -800,6 +858,7 @@ impl Oracle {
             func: func.to_string(),
             span: f.span,
             caller,
+            args,
         });
 
         let mut frames = vec![bound];
@@ -1410,6 +1469,8 @@ impl Oracle {
             run: id,
             span: c.span,
             in_fn: self.fn_stack.borrow().last().cloned(),
+            argv: argv.clone(),
+            describe: crate::exec::describe(&c.command.value, &plan),
         });
         Ok(Value::PendingTree { run: id })
     }
@@ -1418,11 +1479,17 @@ impl Oracle {
     fn force_and_note(&self, id: u64) -> Result<crate::exec::Tree, String> {
         let (tree, event) = force_run(id)?;
         if let Some((command, span)) = self.unlogged_runs.borrow_mut().remove(&id) {
+            let outputs = tree
+                .entries
+                .iter()
+                .map(|(p, h)| (p.clone(), h.clone()))
+                .collect();
             self.emit(Event::Exec {
                 command,
                 run: id,
                 span,
                 event,
+                outputs,
             });
         }
         Ok(tree)

@@ -107,6 +107,139 @@ impl ExecPlan {
         }
         h.finish()
     }
+
+    /// The NORMALIZED plan: canonical argv ordering, so equivalent
+    /// invocations share cache identity — `cc -c x.c -O2` == `cc -O2 -c x.c`.
+    ///
+    /// Toy stand-in for the snark command grammars (synthesis §3⅞): the real
+    /// grammar marks which argument classes commute; here, standalone
+    /// behavior flags (-O*, -W*, -D*) commute and sort among their own
+    /// positions, while everything position-sensitive (inputs, -o/-I pairs,
+    /// search order) stays put.
+    pub fn normalized(&self) -> ExecPlan {
+        let commutes = |i: usize| -> bool {
+            let (arg, role) = &self.argv[i];
+            if *role != Role::Flag {
+                return false;
+            }
+            // A flag that OWNS the next argument (-o out, -I dir) or is
+            // owned by the previous one must not move.
+            if arg == "-o" || arg == "-I" {
+                return false;
+            }
+            if i > 0 {
+                let prev = &self.argv[i - 1].0;
+                if prev == "-o" || prev == "-I" {
+                    return false;
+                }
+            }
+            arg.starts_with("-O") || arg.starts_with("-W") || arg.starts_with("-D")
+        };
+        let slots: Vec<usize> = (0..self.argv.len()).filter(|&i| commutes(i)).collect();
+        let mut movable: Vec<(String, Role)> =
+            slots.iter().map(|&i| self.argv[i].clone()).collect();
+        movable.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut argv = self.argv.clone();
+        for (&slot, item) in slots.iter().zip(movable) {
+            argv[slot] = item;
+        }
+        ExecPlan { argv }
+    }
+
+    /// Identity hash: the normalized plan's hash. Cache keys are
+    /// semantics-shaped, not byte-shaped.
+    pub fn identity_hash(&self) -> u64 {
+        self.normalized().hash()
+    }
+}
+
+/// The command grammar's important-first description of an invocation:
+/// level 0 = verb + object, deeper levels = modifiers, last = full argv.
+///
+/// Toy stand-in for the snark command grammars (synthesis §3⅞), which will
+/// derive this from salience queries over the parsed invocation.
+pub fn describe(command: &str, plan: &ExecPlan) -> Vec<String> {
+    let base = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+    let output = plan
+        .argv
+        .iter()
+        .find(|(_, r)| *r == Role::Output)
+        .map(|(a, _)| base(a));
+    let inputs: Vec<String> = plan
+        .argv
+        .iter()
+        .filter(|(_, r)| *r == Role::Input)
+        .map(|(a, _)| base(a))
+        .collect();
+    let flags: Vec<&str> = plan
+        .argv
+        .iter()
+        .filter(|(a, r)| *r == Role::Flag && a.starts_with('-'))
+        .map(|(a, _)| a.as_str())
+        .collect();
+    let search: Vec<String> = plan
+        .argv
+        .iter()
+        .filter(|(_, r)| *r == Role::SearchDir)
+        .map(|(a, _)| a.clone())
+        .collect();
+
+    let level0 = match command {
+        "cc" if flags.contains(&"-c") => format!(
+            "compile {} → {}",
+            inputs.join(", "),
+            output.clone().unwrap_or_else(|| "?".into())
+        ),
+        "cc" => format!(
+            "link {} → {}",
+            inputs.join(" + "),
+            output.clone().unwrap_or_else(|| "?".into())
+        ),
+        "ar" => format!(
+            "archive {} object{} → {}",
+            inputs.len(),
+            if inputs.len() == 1 { "" } else { "s" },
+            output.clone().unwrap_or_else(|| "?".into())
+        ),
+        _ => format!(
+            "{command} {} → {}",
+            inputs.join(", "),
+            output.clone().unwrap_or_else(|| "?".into())
+        ),
+    };
+
+    let mut level1 = Vec::new();
+    if flags.contains(&"-O2") {
+        level1.push("optimized (-O2)".to_string());
+    }
+    if flags.contains(&"-Wall") {
+        level1.push("all warnings".to_string());
+    }
+    let defines: Vec<&str> = flags
+        .iter()
+        .filter(|f| f.starts_with("-D"))
+        .copied()
+        .collect();
+    if !defines.is_empty() {
+        level1.push(format!("defines {}", defines.join(" ")));
+    }
+    if !search.is_empty() {
+        level1.push(format!("headers from {}", search.join(", ")));
+    }
+
+    let full = plan
+        .argv
+        .iter()
+        .map(|(a, _)| a.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut out = vec![level0];
+    if !level1.is_empty() {
+        out.push(level1.join(", "));
+    }
+    out.push(format!("{command} {full}"));
+    out
 }
 
 /// One observed interaction with the world. Deletions are observable because
@@ -327,7 +460,9 @@ impl ExecCache {
 
     fn keys(&self, plan: &ExecPlan, capability: u64, mounts: &[Mount]) -> (u64, u64) {
         let mut h = DefaultHasher::new();
-        plan.hash().hash(&mut h);
+        // NORMALIZED plan identity: equivalent invocations share both tiers
+        // (`cc -c x.c -O2` == `cc -O2 -c x.c`). See ExecPlan::normalized.
+        plan.identity_hash().hash(&mut h);
         capability.hash(&mut h);
         let identity = h.finish();
 

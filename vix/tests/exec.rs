@@ -211,3 +211,51 @@ fn listings_pin_additions_and_deletions() {
     let mounts3 = vec![Mount { at: "/src".into(), tree: bigger }];
     assert!(!verify(&rs, &MountedWorld::new(&mounts3)));
 }
+
+#[test]
+fn normalization_makes_reordered_flags_share_identity() {
+    // `cc -c x -O2` == `cc -O2 -c x`: commuting flags sort into one
+    // canonical order, so both spellings hit the SAME tier-1 entry. The toy
+    // commutativity table stands in for the snark command grammars.
+    let a = ExecPlan {
+        argv: vec![
+            ("-O2".into(), Role::Flag),
+            ("-Wall".into(), Role::Flag),
+            ("/src/lua.c".into(), Role::Input),
+            ("/vendor/include".into(), Role::SearchDir),
+            ("/sys/include".into(), Role::SearchDir),
+            ("/out/lua.o".into(), Role::Output),
+        ],
+    };
+    let b = ExecPlan {
+        argv: vec![
+            ("-Wall".into(), Role::Flag),
+            ("-O2".into(), Role::Flag),
+            ("/src/lua.c".into(), Role::Input),
+            ("/vendor/include".into(), Role::SearchDir),
+            ("/sys/include".into(), Role::SearchDir),
+            ("/out/lua.o".into(), Role::Output),
+        ],
+    };
+    assert_ne!(a.hash(), b.hash(), "byte-shaped hashes differ");
+    assert_eq!(a.identity_hash(), b.identity_hash(), "semantic identity agrees");
+
+    let mut cache = ExecCache::new();
+    cache.exec(&a, CC_FINGERPRINT, &world(), &FakeCc).unwrap();
+    cache.exec(&b, CC_FINGERPRINT, &world(), &FakeCc).unwrap();
+    assert_eq!(cache.events, vec![ExecEvent::Ran, ExecEvent::Tier1Hit]);
+
+    // Position-sensitive args do NOT commute: swapped search dirs are a
+    // DIFFERENT invocation (header shadowing order changes semantics).
+    let swapped = ExecPlan {
+        argv: vec![
+            ("-O2".into(), Role::Flag),
+            ("-Wall".into(), Role::Flag),
+            ("/src/lua.c".into(), Role::Input),
+            ("/sys/include".into(), Role::SearchDir),
+            ("/vendor/include".into(), Role::SearchDir),
+            ("/out/lua.o".into(), Role::Output),
+        ],
+    };
+    assert_ne!(a.identity_hash(), swapped.identity_hash());
+}
