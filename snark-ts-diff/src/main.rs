@@ -51,8 +51,6 @@ use snark::{
         WeavyParseReport, WeavyParseWorkspace, WeavyResolvedCstReport,
         WeavyRuntimeBackendExecutionSummary, WeavySnarkDescriptorExecutionSummary,
         WeavySnarkExecutionStats, WeavySnarkProfileStencilReadiness,
-        parse_prepared_weavy_resolved_cst, parse_prepared_weavy_resolved_cst_report,
-        parse_prepared_weavy_resolved_tree,
     },
     parser::{ParseTable, ParserGrammar, TreeEvent},
     validated::ValidatedGrammar,
@@ -316,11 +314,15 @@ fn write_lexer_stencils(
 
 /// Best (min) ranged-CST parse time in ms over `iters` runs, after one warm-up.
 fn best_resolved_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
-    let _ = parse_prepared_weavy_resolved_tree(&p.plan, &p.parser, &p.table, input)?;
+    let _ = p
+        .workspace
+        .parse_resolved_tree(&p.plan, &p.parser, &p.table, input)?;
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        let _ = parse_prepared_weavy_resolved_tree(&p.plan, &p.parser, &p.table, input)?;
+        let _ = p
+            .workspace
+            .parse_resolved_tree(&p.plan, &p.parser, &p.table, input)?;
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     Ok(best_ms)
@@ -328,11 +330,15 @@ fn best_resolved_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, Weav
 
 /// Best (min) arena-CST parse time in ms over `iters` runs, after one warm-up.
 fn best_resolved_cst_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
-    let _ = parse_prepared_weavy_resolved_cst(&p.plan, &p.parser, &p.table, input)?;
+    let _ = p
+        .workspace
+        .parse_resolved_cst(&p.plan, &p.parser, &p.table, input)?;
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        let _ = parse_prepared_weavy_resolved_cst(&p.plan, &p.parser, &p.table, input)?;
+        let _ = p
+            .workspace
+            .parse_resolved_cst(&p.plan, &p.parser, &p.table, input)?;
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     Ok(best_ms)
@@ -344,11 +350,15 @@ fn best_resolved_cst_report_ms(
     input: &str,
     iters: usize,
 ) -> Result<f64, WeavyParseError> {
-    let _ = parse_prepared_weavy_resolved_cst_report(&p.plan, &p.parser, &p.table, input)?;
+    let _ = p
+        .workspace
+        .parse_resolved_cst_report(&p.plan, &p.parser, &p.table, input)?;
     let mut best_ms = f64::INFINITY;
     for _ in 0..iters.max(1) {
         let start = Instant::now();
-        let _ = parse_prepared_weavy_resolved_cst_report(&p.plan, &p.parser, &p.table, input)?;
+        let _ = p
+            .workspace
+            .parse_resolved_cst_report(&p.plan, &p.parser, &p.table, input)?;
         best_ms = best_ms.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     Ok(best_ms)
@@ -979,7 +989,10 @@ fn main() {
         let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
         let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
         let p = prepare(grammar_path);
-        let tree = match parse_prepared_weavy_resolved_tree(&p.plan, &p.parser, &p.table, &input) {
+        let tree = match p
+            .workspace
+            .parse_resolved_tree(&p.plan, &p.parser, &p.table, &input)
+        {
             Ok(tree) => tree,
             Err(error) => {
                 eprintln!("resolved parse failed: {error:?}");
@@ -1013,7 +1026,10 @@ fn main() {
         let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
         let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
         let p = prepare(grammar_path);
-        let tree = match parse_prepared_weavy_resolved_cst(&p.plan, &p.parser, &p.table, &input) {
+        let tree = match p
+            .workspace
+            .parse_resolved_cst(&p.plan, &p.parser, &p.table, &input)
+        {
             Ok(tree) => tree,
             Err(error) => {
                 eprintln!("resolved-cst parse failed: {error:?}");
@@ -1052,14 +1068,16 @@ fn main() {
         let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
         let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
         let p = prepare(grammar_path);
-        let report =
-            match parse_prepared_weavy_resolved_cst_report(&p.plan, &p.parser, &p.table, &input) {
-                Ok(report) => report,
-                Err(error) => {
-                    eprintln!("resolved-cst report parse failed: {error:?}");
-                    std::process::exit(1);
-                }
-            };
+        let report = match p
+            .workspace
+            .parse_resolved_cst_report(&p.plan, &p.parser, &p.table, &input)
+        {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("resolved-cst report parse failed: {error:?}");
+                std::process::exit(1);
+            }
+        };
         let best_ms = match best_resolved_cst_report_ms(&p, &input, iters) {
             Ok(best_ms) => best_ms,
             Err(error) => {

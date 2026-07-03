@@ -2322,6 +2322,171 @@ impl WeavyParseWorkspace {
         .map(|report| report.tree)
     }
 
+    /// Execute a prepared parser plan through the direct Weavy runtime and return the ranged CST.
+    pub fn parse_resolved_tree(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+    ) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+        self.parse_resolved_tree_and_scanner(plan, parser, table, input, None)
+    }
+
+    /// Execute a prepared parser plan with a scanner host and return the ranged CST.
+    pub fn parse_resolved_tree_and_scanner(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+        external_scanner: Option<&dyn ExternalScannerHost>,
+    ) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+        let input_ctx = RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        };
+        if let Some(tree) = parse_weavy_deterministic_with_execution_and_scratch::<
+            RuntimeWeavyDeterministicResolvedTreeSink,
+        >(
+            input_ctx,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )? {
+            return Ok(tree);
+        }
+        parse_weavy_with_lexer_program_and_scratch(
+            input_ctx,
+            RuntimeWeavyRecoveryMode::Strict,
+            None,
+            RuntimeWeavyReuseCollection::Disabled,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )
+        .and_then(|report| {
+            report
+                .accepted_resolved_tree(parser, input)
+                .ok_or(WeavyParseError::MissingResolvedTree)
+        })
+    }
+
+    /// Execute a prepared parser plan through the direct Weavy runtime and return an arena CST.
+    pub fn parse_resolved_cst(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+    ) -> Result<parser_ir::ResolvedCstTree, WeavyParseError> {
+        self.parse_resolved_cst_and_scanner(plan, parser, table, input, None)
+    }
+
+    /// Execute a prepared parser plan with a scanner host and return an arena CST.
+    pub fn parse_resolved_cst_and_scanner(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+        external_scanner: Option<&dyn ExternalScannerHost>,
+    ) -> Result<parser_ir::ResolvedCstTree, WeavyParseError> {
+        let input_ctx = RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        };
+        if let Some(tree) = parse_weavy_deterministic_with_execution_and_scratch::<
+            RuntimeWeavyDeterministicResolvedCstSink,
+        >(
+            input_ctx,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )? {
+            return Ok(tree);
+        }
+        parse_weavy_with_lexer_program_and_scratch(
+            input_ctx,
+            RuntimeWeavyRecoveryMode::Strict,
+            None,
+            RuntimeWeavyReuseCollection::Disabled,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )
+        .and_then(|report| {
+            report
+                .accepted_resolved_cst(parser, input)
+                .ok_or(WeavyParseError::MissingResolvedTree)
+        })
+    }
+
+    /// Execute a prepared Weavy plan and return an arena CST plus execution counters.
+    pub fn parse_resolved_cst_report(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+    ) -> Result<WeavyResolvedCstReport, WeavyParseError> {
+        self.parse_resolved_cst_report_and_scanner(plan, parser, table, input, None)
+    }
+
+    /// Execute a prepared parser plan with a scanner host and return an arena CST report.
+    pub fn parse_resolved_cst_report_and_scanner(
+        &self,
+        plan: &WeavyParsePlan,
+        parser: &parser_ir::ParserGrammar,
+        table: &parser_ir::ParseTable,
+        input: &str,
+        external_scanner: Option<&dyn ExternalScannerHost>,
+    ) -> Result<WeavyResolvedCstReport, WeavyParseError> {
+        let input_ctx = RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        };
+        if let Some(report) = parse_weavy_deterministic_with_execution_and_scratch::<
+            RuntimeWeavyDeterministicResolvedCstReportSink,
+        >(
+            input_ctx,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )? {
+            return Ok(report);
+        }
+        let report = parse_weavy_with_lexer_program_and_scratch(
+            input_ctx,
+            RuntimeWeavyRecoveryMode::Strict,
+            None,
+            RuntimeWeavyReuseCollection::Disabled,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )?;
+        let tree = report
+            .accepted_resolved_cst(parser, input)
+            .ok_or(WeavyParseError::MissingResolvedTree)?;
+        Ok(WeavyResolvedCstReport {
+            tree,
+            stats: report.stats(),
+            lexer_stats: report.lexer_stats().clone(),
+            snark_stats: report.snark_stats().clone(),
+            hostcall_stats: report.hostcall_stats().clone(),
+            execution_lane: report.execution_lane(),
+        })
+    }
+
     /// Execute a prepared Weavy plan and collect reusable-node metadata.
     pub fn parse_collecting_reuse_with_report_and_scanner(
         &self,
