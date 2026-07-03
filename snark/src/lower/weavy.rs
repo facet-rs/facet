@@ -8922,7 +8922,7 @@ struct RuntimeWeavyTreeJournalHead {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeWeavyTreeJournalEntry {
-    parent: RuntimeWeavyTreeJournalHead,
+    parent: Option<usize>,
     event: parser_ir::TreeEvent,
 }
 
@@ -8941,8 +8941,10 @@ impl RuntimeWeavyTreeJournal {
     fn push(&mut self, head: &mut RuntimeWeavyTreeJournalHead, event: parser_ir::TreeEvent) {
         let parent = *head;
         let index = self.entries.len();
-        self.entries
-            .push(RuntimeWeavyTreeJournalEntry { parent, event });
+        self.entries.push(RuntimeWeavyTreeJournalEntry {
+            parent: parent.index,
+            event,
+        });
         *head = RuntimeWeavyTreeJournalHead {
             index: Some(index),
             len: parent.len + 1,
@@ -8964,7 +8966,7 @@ impl RuntimeWeavyTreeJournal {
         while let Some(index) = cursor {
             let entry = &self.entries[index];
             events.push(entry.event.clone());
-            cursor = entry.parent.index;
+            cursor = entry.parent;
         }
         events.reverse();
         events
@@ -8985,7 +8987,7 @@ impl RuntimeWeavyTreeJournal {
         let mut cursor = head.index;
         while let Some(index) = cursor {
             indices.push(index);
-            cursor = self.entries[index].parent.index;
+            cursor = self.entries[index].parent;
         }
         for index in indices.into_iter().rev() {
             visitor(&self.entries[index].event);
@@ -8993,12 +8995,7 @@ impl RuntimeWeavyTreeJournal {
     }
 
     fn head_is_linear(&self, head: RuntimeWeavyTreeJournalHead) -> bool {
-        head.len == self.entries.len()
-            && head.index == self.entries.len().checked_sub(1)
-            && self
-                .entries
-                .last()
-                .is_none_or(|entry| entry.parent.len + 1 == head.len)
+        head.len == self.entries.len() && head.index == self.entries.len().checked_sub(1)
     }
 }
 
