@@ -8442,7 +8442,6 @@ fn step_runtime_weavy_branch(
         });
         return;
     }
-    let branch_state_stack = runtime_weavy_branch_state_stack(&branch);
     if let Some(reuse_index) = step.reuse_index
         && let Some(branch) =
             try_reuse_runtime_weavy_node(branch.clone(), reuse_index, input_ctx, output)
@@ -8511,7 +8510,7 @@ fn step_runtime_weavy_branch(
             }
             step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
                 version: source_version,
-                failure: runtime_weavy_failure(error, branch_state_stack),
+                failure: runtime_weavy_failure(error, runtime_weavy_branch_state_stack(&branch)),
             });
             return;
         }
@@ -8527,6 +8526,7 @@ fn step_runtime_weavy_branch(
         ) {
             Ok(actions) => actions,
             Err(error) => {
+                let branch_state_stack = runtime_weavy_branch_state_stack(&branch);
                 if step.recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput
                     && let RuntimeWeavyStepError::NoAction {
                         lookahead: parser_ir::LookaheadSymbol::Eof,
@@ -8551,6 +8551,7 @@ fn step_runtime_weavy_branch(
                 return;
             }
         };
+        let branch_state_stack = runtime_weavy_branch_state_stack(&branch);
         let versions = (0..actions.len())
             .map(|_| {
                 let version = parser_ir::StackVersionId::from_index(*step.next_version_index);
@@ -8617,7 +8618,7 @@ fn step_runtime_weavy_branch(
                     lookahead: dispatch.token.lookahead,
                     byte_position: branch.byte_position,
                 },
-                branch_state_stack,
+                runtime_weavy_branch_state_stack(&branch),
             ),
         });
         return;
@@ -8634,7 +8635,7 @@ fn step_runtime_weavy_branch(
         Err(error) => {
             step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
                 version: source_version,
-                failure: runtime_weavy_failure(error, branch_state_stack),
+                failure: runtime_weavy_failure(error, runtime_weavy_branch_state_stack(&branch)),
             });
             return;
         }
