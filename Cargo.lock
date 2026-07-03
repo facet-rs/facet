@@ -8157,6 +8157,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vix-wire"
+version = "0.0.0"
+dependencies = [
+ "eyre",
+ "facet",
+ "facet-postcard",
+ "tokio",
+ "vix",
+ "vox",
+ "vox-schema",
+]
+
+[[package]]
 name = "vox"
 version = "0.10.0-rc.5"
 dependencies = [
