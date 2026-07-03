@@ -10428,6 +10428,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 end_byte: token.end,
                 lookahead_end_byte: token.inspected_end,
                 start_scanner_snapshot: self.scanner_snapshot,
+                field_events: Vec::new(),
             }),
             extra: false,
             end_byte: token.end,
@@ -11131,12 +11132,15 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mut remaining_children = child_count;
         while remaining_children > 0 {
             let entry = stack.pop().ok_or(RuntimeWeavyStepError::EmptyStack)?;
-            let Some(fragment) = entry.fragment else {
+            let Some(mut fragment) = entry.fragment else {
                 return Err(RuntimeWeavyStepError::EmptyStack);
             };
             let (fragment_start, fragment_end) = fragment.byte_range();
             let fragment_lookahead_end = fragment.lookahead_end_byte();
             let fragment_start_scanner_snapshot = fragment.start_scanner_snapshot();
+            for (field, child) in fragment.take_field_events() {
+                field_events.push((remaining_children.saturating_sub(1), field, child));
+            }
             if !entry.extra {
                 remaining_children -= 1;
                 let Some(step) = production_row.steps().get(remaining_children) else {
@@ -11262,6 +11266,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     end_byte,
                     lookahead_end_byte,
                     start_scanner_snapshot,
+                    field_events: field_events
+                        .into_iter()
+                        .map(|(_, field, child)| (field, child))
+                        .collect(),
                 },
                 trailing_extras,
             })
@@ -11771,6 +11779,7 @@ enum RuntimeWeavyFragment {
         end_byte: usize,
         lookahead_end_byte: usize,
         start_scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
+        field_events: Vec<RuntimeWeavyPendingFieldEvent>,
     },
     Node {
         node: parser_ir::TreeNodeId,
@@ -11792,6 +11801,7 @@ type RuntimeWeavyFieldEvent = (
     crate::validated::FieldId,
     Option<parser_ir::TreeNodeId>,
 );
+type RuntimeWeavyPendingFieldEvent = (crate::validated::FieldId, Option<parser_ir::TreeNodeId>);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RuntimeWeavyFragmentChildLists {
@@ -11867,6 +11877,13 @@ impl RuntimeWeavyFragment {
                     visible_nodes: child,
                 }
             }
+        }
+    }
+
+    fn take_field_events(&mut self) -> Vec<RuntimeWeavyPendingFieldEvent> {
+        match self {
+            Self::Hidden { field_events, .. } => core::mem::take(field_events),
+            Self::Node { .. } => Vec::new(),
         }
     }
 }
