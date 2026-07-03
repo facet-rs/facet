@@ -28,7 +28,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::ast::{
-    self, Arg, ArrayElem, Block, Expr, Item, Member, PathRef, Pattern, SourceFile, Stmt,
+    self, Arg, ArrayElem, Block, CommandPart, Expr, Item, Member, PathRef, Pattern, SourceFile,
+    Stmt,
 };
 use crate::{VixParser, ast::Spanned};
 
@@ -76,6 +77,10 @@ pub enum Value {
         func: String,
         given: Vec<(String, Value)>,
     },
+    /// A content-addressed tree — the currency of exec composition. Reading a
+    /// Tree VALUE is pure (it's a value, not the world); only mounted trees
+    /// at exec time are observed.
+    Tree(crate::exec::Tree),
 }
 
 #[derive(facet::Facet, Debug, Clone)]
@@ -103,6 +108,7 @@ impl Value {
             Value::Fn { .. } => 11,
             Value::Closure { .. } => 12,
             Value::Partial { .. } => 13,
+            Value::Tree(_) => 14,
         }
     }
 
@@ -172,6 +178,7 @@ impl Value {
                     v.hash_into(h);
                 }
             }
+            Value::Tree(t) => t.fingerprint().hash(h),
         }
     }
 
@@ -253,6 +260,7 @@ impl Ord for Value {
             | (Value::Partial { .. }, Value::Partial { .. }) => {
                 self.canon_hash().cmp(&other.canon_hash())
             }
+            (Value::Tree(a), Value::Tree(b)) => a.entries.cmp(&b.entries),
             _ => self.rank().cmp(&other.rank()),
         }
     }
@@ -305,6 +313,13 @@ pub enum Event {
     Hit { func: String },
     /// A primitive observed the outside world (cold) or replayed its pin.
     Observation { key: String, replayed: bool },
+    /// A command block went through the exec cache. The language-level memo
+    /// and the exec-level two-tier cache COMPOSE: a fn-level miss can still
+    /// resolve to a tier-2 cutoff below it.
+    Exec {
+        command: String,
+        event: crate::exec::ExecEvent,
+    },
 }
 
 struct EnumInfo {
@@ -334,6 +349,7 @@ pub struct Oracle {
     memo: RefCell<HashMap<(u64, u64), Value>>,
     journal: RefCell<BTreeMap<String, Value>>,
     events: RefCell<Vec<Event>>,
+    exec_cache: RefCell<crate::exec::ExecCache>,
 }
 
 type EvalResult = Result<Value, String>;
@@ -396,6 +412,7 @@ impl Oracle {
             memo: RefCell::new(HashMap::new()),
             journal: RefCell::new(BTreeMap::new()),
             events: RefCell::new(Vec::new()),
+            exec_cache: RefCell::new(crate::exec::ExecCache::new()),
         })
     }
 
@@ -749,10 +766,7 @@ impl Oracle {
                     env,
                 })
             }
-            Expr::Command(c) => Err(format!(
-                "command blocks (`{}!`) need the exec layer — not in the oracle yet",
-                c.command.value
-            )),
+            Expr::Command(c) => self.command_block(c, frames),
         }
     }
 
@@ -836,6 +850,11 @@ impl Oracle {
                 // is a design probe — the oracle reports, we decide).
                 (Value::Path(a), Value::Path(b)) if op == "/" => {
                     Ok(Value::Path(format!("{a}/{b}")))
+                }
+                // Tree / Path = subtree selection: a directory re-rooted, or a
+                // single file cut out (keyed by its basename).
+                (Value::Tree(t), Value::Path(p)) if op == "/" => {
+                    subtree(&t, &p).map(Value::Tree)
                 }
                 (l, r) => Err(format!("`{op}` not defined on {l:?} and {r:?}")),
             },
@@ -1042,6 +1061,52 @@ impl Oracle {
         })
     }
 
+    // -- command blocks: the exec seam, composed -----------------------------
+
+    /// `cc! { -O2 {defines} -I {src} -c {src / unit} -o {out} }` — the command
+    /// name resolves to a capability VALUE in scope (its fingerprint keys the
+    /// cache); splices evaluate; Trees become MOUNTS at role-stable paths
+    /// (/m/0, /m/1 — never content-derived, or tier-2 could never match);
+    /// the toy role table stands in for the snark command grammar; the
+    /// two-tier exec cache does the rest.
+    fn command_block(&self, c: &ast::CommandBlock, frames: &mut Vec<Frame>) -> EvalResult {
+        let capability = self
+            .lookup(frames, &c.command.value)
+            .ok_or_else(|| format!("no capability `{}` in scope", c.command.value))?;
+        let cap_fp = capability.canon_hash();
+
+        let mut argv: Vec<String> = Vec::new();
+        let mut mounts: Vec<crate::exec::Mount> = Vec::new();
+        for part in &c.parts {
+            match part {
+                CommandPart::Token(t) => argv.push(t.value.clone()),
+                CommandPart::Splice(s) => {
+                    let v = self.eval(&s.expr, frames)?;
+                    splice_into(v, &mut argv, &mut mounts)?;
+                }
+            }
+        }
+
+        let plan = assign_roles(&c.command.value, &argv)?;
+        let tool = tool_for(&c.command.value)?;
+        let outcome = self
+            .exec_cache
+            .borrow_mut()
+            .exec(&plan, cap_fp, &mounts, tool)?;
+        let event = self
+            .exec_cache
+            .borrow()
+            .events
+            .last()
+            .cloned()
+            .expect("exec pushed an event");
+        self.events.borrow_mut().push(Event::Exec {
+            command: c.command.value.clone(),
+            event,
+        });
+        Ok(Value::Tree(outcome.outputs))
+    }
+
     // -- primitives: observations pinned in the journal ----------------------
 
     fn observe(&self, key: String, produce: impl FnOnce() -> Value) -> Value {
@@ -1072,22 +1137,26 @@ impl Oracle {
             return Err("sha256 must be a string".to_string());
         };
         Ok(self.observe(format!("fetch:{sha}"), || {
-            Value::Struct {
-                name: "Tree".to_string(),
-                fields: vec![("hash".to_string(), Value::Str(sha.clone()))],
-            }
+            Value::Tree(crate::exec::Tree::of(&[("tarball", sha.as_str())]))
         }))
     }
 
+    /// `extract(tar)` — pure function of the tarball's content. The oracle
+    /// fabricates a lua-shaped source tree (deterministic in the tar hash) so
+    /// the whole build pipeline has something real to chew.
     fn extract(&self, args: Vec<(Option<String>, Value)>) -> EvalResult {
-        let Some((_, tree)) = args.first() else {
+        let Some((_, tar)) = args.first() else {
             return Err("extract takes a tree".to_string());
         };
-        let hash = tree.canon_hash();
-        Ok(Value::Struct {
-            name: "Tree".to_string(),
-            fields: vec![("hash".to_string(), Value::Str(format!("extract:{hash:x}")))],
-        })
+        let tar_hash = tar.canon_hash();
+        let header = format!("// lua.h api ({tar_hash:016x})");
+        Ok(Value::Tree(crate::exec::Tree::of(&[
+            ("lua-5.4.8/src/lua.h", header.as_str()),
+            ("lua-5.4.8/src/lua.c", "#include \"lua.h\"\n// interpreter main"),
+            ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
+            ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
+            ("lua-5.4.8/src/luac.c", "#include \"lua.h\"\n// compiler main"),
+        ])))
     }
 
     /// `Cc::acquire(target)` — capability acquisition IS an observation; the
@@ -1160,10 +1229,45 @@ impl Oracle {
                 }
                 Ok(Value::Array(out))
             }
-            // Collect is CANONICAL total order, never arrival order.
+            // Collect is CANONICAL total order, never arrival order — and an
+            // array of TREES collects into their merge (the aggregation that
+            // makes `units.map(object).collect()` a Tree).
             (Value::Array(mut vs), "collect") => {
+                if !vs.is_empty() && vs.iter().all(|v| matches!(v, Value::Tree(_))) {
+                    let mut merged = crate::exec::Tree::default();
+                    vs.sort();
+                    for v in vs {
+                        let Value::Tree(t) = v else { unreachable!() };
+                        for (path, contents) in t.entries {
+                            if let Some(prior) = merged.entries.get(&path)
+                                && *prior != contents
+                            {
+                                return Err(format!("collect: conflicting entry `{path}`"));
+                            }
+                            merged.entries.insert(path, contents);
+                        }
+                    }
+                    return Ok(Value::Tree(merged));
+                }
                 vs.sort();
                 Ok(Value::Array(vs))
+            }
+            (Value::Tree(t), "glob") => {
+                let [Value::Str(pattern)] = positional.as_slice() else {
+                    return Err("glob takes a pattern string".to_string());
+                };
+                let suffix = pattern
+                    .strip_prefix('*')
+                    .ok_or("glob v0 supports `*.ext` patterns")?;
+                // Top level only, canonical (sorted) order.
+                let mut paths: Vec<Value> = t
+                    .entries
+                    .keys()
+                    .filter(|k| !k.contains('/') && k.ends_with(suffix))
+                    .map(|k| Value::Path(k.clone()))
+                    .collect();
+                paths.sort();
+                Ok(Value::Array(paths))
             }
             (Value::Path(p), "with_ext") => {
                 let [Value::Str(ext)] = positional.as_slice() else {
@@ -1189,6 +1293,104 @@ fn path_names_variant(path: &PathRef, enum_name: &str, variant: &str) -> bool {
 
 fn path_names_struct(path: &PathRef, name: &str) -> bool {
     matches!(path, PathRef::Identifier(n) if n.value == name)
+}
+
+/// Tree / Path: a directory re-rooted, or one file cut out by basename.
+fn subtree(tree: &crate::exec::Tree, path: &str) -> Result<crate::exec::Tree, String> {
+    if let Some(contents) = tree.entries.get(path) {
+        let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
+        return Ok(crate::exec::Tree::of(&[(base, contents.as_str())]));
+    }
+    let prefix = format!("{path}/");
+    let entries: BTreeMap<String, String> = tree
+        .entries
+        .iter()
+        .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|r| (r.to_string(), v.clone())))
+        .collect();
+    if entries.is_empty() {
+        return Err(format!("no `{path}` in tree"));
+    }
+    Ok(crate::exec::Tree { entries })
+}
+
+/// Splice a value into a command: paths/strings/flags become argv text,
+/// arrays flatten, and TREES become mounts. Mount paths are ROLE-STABLE
+/// (/m/0, /m/1 by splice order): the plan is the identity, the world is what
+/// varies — a content-derived path would leak the world into the identity
+/// and tier-2 could never match. A single-file tree splices as the file's
+/// path inside its mount; a directory splices as the mount root.
+fn splice_into(
+    value: Value,
+    argv: &mut Vec<String>,
+    mounts: &mut Vec<crate::exec::Mount>,
+) -> Result<(), String> {
+    match value {
+        Value::Path(p) | Value::Str(p) | Value::Flag(p) => argv.push(p),
+        Value::Int(i) => argv.push(i.to_string()),
+        Value::Float(f) => argv.push(f.to_string()),
+        Value::Array(vs) => {
+            for v in vs {
+                splice_into(v, argv, mounts)?;
+            }
+        }
+        Value::Tree(t) => {
+            let root = format!("/m/{}", mounts.len());
+            let text = if t.entries.len() == 1 {
+                format!("{root}/{}", t.entries.keys().next().unwrap())
+            } else {
+                root.clone()
+            };
+            mounts.push(crate::exec::Mount { at: root, tree: t });
+            argv.push(text);
+        }
+        other => return Err(format!("cannot splice {other:?} into a command")),
+    }
+    Ok(())
+}
+
+/// The toy role tables — stand-ins for snark command grammars (which will
+/// assign these roles from real grammar productions, versioned with the
+/// capability).
+fn assign_roles(command: &str, argv: &[String]) -> Result<crate::exec::ExecPlan, String> {
+    use crate::exec::Role;
+    let mut out = Vec::new();
+    match command {
+        "cc" => {
+            let mut prev: Option<&str> = None;
+            for arg in argv {
+                let role = match prev {
+                    Some("-o") => Role::Output,
+                    Some("-I") => Role::SearchDir,
+                    _ if arg.starts_with("/m/") => Role::Input,
+                    _ => Role::Flag,
+                };
+                out.push((arg.clone(), role));
+                prev = Some(arg.as_str());
+            }
+        }
+        "ar" => {
+            for arg in argv {
+                let role = if arg.starts_with("/m/") {
+                    crate::exec::Role::Input
+                } else if arg == "rcs" {
+                    Role::Flag
+                } else {
+                    Role::Output
+                };
+                out.push((arg.clone(), role));
+            }
+        }
+        other => return Err(format!("no command grammar for `{other}`")),
+    }
+    Ok(crate::exec::ExecPlan { argv: out })
+}
+
+fn tool_for(command: &str) -> Result<&'static dyn crate::exec::Tool, String> {
+    match command {
+        "cc" => Ok(&crate::exec::FakeCc),
+        "ar" => Ok(&crate::exec::FakeAr),
+        other => Err(format!("no tool for `{other}`")),
+    }
 }
 
 fn parse_number(text: &str) -> Value {

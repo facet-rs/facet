@@ -96,7 +96,9 @@ fn unread_change_cuts_off_at_tier2_the_anti_nix_test() {
     );
     let second = cache.exec(&plan(), CC_FINGERPRINT, &new_world, &FakeCc).unwrap();
 
-    assert!(matches!(cache.events[1], ExecEvent::Tier2Cutoff { verified } if verified == 3));
+    // 4 entries: the source, its own-dir probe (C quoted-include semantics),
+    // the vendored miss, and the system hit.
+    assert!(matches!(cache.events[1], ExecEvent::Tier2Cutoff { verified } if verified == 4));
     assert_eq!(first.outputs, second.outputs);
 
     // And the cutoff RE-PINNED under the new coarse key: third time is tier-1.

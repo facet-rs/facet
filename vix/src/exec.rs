@@ -413,16 +413,23 @@ impl Tool for FakeCc {
                 .read(input)
                 .ok_or_else(|| format!("cc: cannot read `{input}` (outside the mounts?)"))?;
             source.hash(&mut digest);
+            // Quoted includes probe the including file's own directory FIRST
+            // (C semantics), then the -I dirs, in order. Misses pin Absent.
+            let own_dir = input.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
             for line in source.lines() {
                 if let Some(header) = line
                     .trim()
                     .strip_prefix("#include \"")
                     .and_then(|r| r.strip_suffix('"'))
                 {
+                    let mut probes: Vec<String> = Vec::new();
+                    if !own_dir.is_empty() {
+                        probes.push(format!("{own_dir}/{header}"));
+                    }
+                    probes.extend(search_dirs.iter().map(|d| format!("{d}/{header}")));
                     let mut found = false;
-                    for dir in &search_dirs {
-                        // Probing IS the point: misses pin Absent entries.
-                        if let Some(contents) = world.read(&format!("{dir}/{header}")) {
+                    for probe in &probes {
+                        if let Some(contents) = world.read(probe) {
                             contents.hash(&mut digest);
                             found = true;
                             break;
@@ -438,6 +445,48 @@ impl Tool for FakeCc {
         Ok(Tree::of(&[(
             output.as_str(),
             &format!("obj({:016x})", digest.finish()),
+        )]))
+    }
+}
+
+/// A fake archiver/linker sibling: concatenates what it reads. Enough to
+/// exercise OUTPUTS-AS-MOUNTS composition (`ar!` consuming `cc!` products).
+pub struct FakeAr;
+
+impl Tool for FakeAr {
+    fn run(&self, plan: &ExecPlan, world: &mut ObservedWorld<'_>) -> Result<Tree, String> {
+        let output = plan
+            .argv
+            .iter()
+            .find(|(_, r)| *r == Role::Output)
+            .map(|(a, _)| a.clone())
+            .ok_or("ar: no output")?;
+        let mut digest = DefaultHasher::new();
+        for (arg, role) in &plan.argv {
+            if *role == Role::Flag {
+                arg.hash(&mut digest);
+            }
+        }
+        for (input, _) in plan.argv.iter().filter(|(_, r)| *r == Role::Input) {
+            if let Some(contents) = world.read(input) {
+                contents.hash(&mut digest);
+                continue;
+            }
+            // A directory input: enumerate it (a LISTING observation — new
+            // members will diverge the pin) and archive every file.
+            let names = world
+                .list(input)
+                .ok_or_else(|| format!("ar: cannot read `{input}` (outside the mounts?)"))?;
+            for name in names {
+                let contents = world
+                    .read(&format!("{input}/{name}"))
+                    .ok_or_else(|| format!("ar: `{input}/{name}` vanished mid-run"))?;
+                contents.hash(&mut digest);
+            }
+        }
+        Ok(Tree::of(&[(
+            output.as_str(),
+            &format!("archive({:016x})", digest.finish()),
         )]))
     }
 }

@@ -73,14 +73,14 @@ fn lua_sketch_lowers_to_typed_ast() {
         panic!("object tail is cc! {{…}}");
     };
     assert_eq!(cc.command.value, "cc");
-    // -O2 -Wall {defines} -c {src / unit} -o {unit.with_ext("o")}
-    assert_eq!(cc.parts.len(), 7);
+    // -O2 -Wall {defines} -I {src} -c {src / unit} -o {unit.with_ext("o")}
+    assert_eq!(cc.parts.len(), 9);
     assert_eq!(
         cc.parts
             .iter()
             .filter(|p| matches!(p, CommandPart::Splice(_)))
             .count(),
-        3
+        4
     );
 
     // pub fn lua(target: Target) -> Tree

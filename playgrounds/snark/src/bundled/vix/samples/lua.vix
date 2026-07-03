@@ -14,9 +14,14 @@ fn sources() -> Tree {
 }
 
 /// One translation unit -> one object file, wherever `cc` lives.
+/// `-I {src}` mounts the whole tree for header probes; `{src / unit}` cuts
+/// the single unit out of it. (The oracle caught the original sketch
+/// compiling a unit WITHOUT its headers — a file cut from its tree loses
+/// its neighbors.)
 fn object(cc: Cc, src: Tree, unit: Path, defines: [Flag]) -> Tree {
     cc! {
         -O2 -Wall {defines}
+        -I {src}
         -c {src / unit}
         -o {unit.with_ext("o")}
     }
@@ -39,7 +44,8 @@ pub fn lua(target: Target) -> Tree {
 
     let objs: Tree = units.map(|u| object(cc, src, u, defines)).collect();
 
-    let lib  = ar! { rcs liblua.a {objs.glob("*.o")} };
+    // The TREE splices (anchoring mount); bare relative paths would dangle.
+    let lib  = ar! { rcs liblua.a {objs} };
     let main = object(cc, src, p"lua.c", defines);
     cc! { -o lua {main / p"lua.o"} {lib / p"liblua.a"} -lm }
 }
