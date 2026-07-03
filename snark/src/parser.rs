@@ -5568,11 +5568,24 @@ fn resolved_item_contains(parent: &ResolvedCstItem, child: &ResolvedCstItem) -> 
 
 fn attach_resolved_children_from_ranges(items: &mut [ResolvedCstItem]) -> Vec<usize> {
     let parents = resolved_parent_slots_by_range_sort(items);
+    let mut child_counts = vec![0usize; items.len()];
+    let mut root_count = 0usize;
+    for parent in &parents {
+        if let Some(parent) = parent {
+            child_counts[*parent] += 1;
+        } else {
+            root_count += 1;
+        }
+    }
+
     for item in items.iter_mut() {
         item.children.clear();
     }
+    for (item, child_count) in items.iter_mut().zip(child_counts) {
+        item.children.reserve(child_count);
+    }
 
-    let mut roots = Vec::<usize>::with_capacity(items.len());
+    let mut roots = Vec::<usize>::with_capacity(root_count);
     for (child, parent) in parents.into_iter().enumerate() {
         if let Some(parent) = parent {
             items[parent].children.push(child);
