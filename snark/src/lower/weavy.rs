@@ -11985,6 +11985,10 @@ const fn runtime_weavy_tree_event_node(
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RuntimeWeavyChildListId(usize);
 
+impl RuntimeWeavyChildListId {
+    const EMPTY: Self = Self(0);
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct RuntimeWeavyTreeStore {
     nodes: Vec<RuntimeWeavyTreeNode>,
@@ -12046,7 +12050,7 @@ impl RuntimeWeavyTreeStore {
                 len: 0,
             });
         }
-        RuntimeWeavyChildListId::default()
+        RuntimeWeavyChildListId::EMPTY
     }
 
     fn push(&mut self, node: SexpNode) -> parser_ir::TreeNodeId {
@@ -12145,10 +12149,10 @@ impl RuntimeWeavyTreeStore {
         left: RuntimeWeavyChildListId,
         right: RuntimeWeavyChildListId,
     ) -> RuntimeWeavyChildListId {
-        if self.children_is_empty(left) {
+        if left == RuntimeWeavyChildListId::EMPTY {
             return right;
         }
-        if self.children_is_empty(right) {
+        if right == RuntimeWeavyChildListId::EMPTY {
             return left;
         }
         let id = RuntimeWeavyChildListId(self.child_lists.len());
@@ -12161,6 +12165,9 @@ impl RuntimeWeavyTreeStore {
     }
 
     fn children_is_empty(&self, children: RuntimeWeavyChildListId) -> bool {
+        if children == RuntimeWeavyChildListId::EMPTY {
+            return true;
+        }
         self.child_lists[children.0].len == 0
     }
 
