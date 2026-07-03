@@ -5140,8 +5140,10 @@ struct ResolvedCstItem {
     extra: bool,
     text: Option<ResolvedCstText>,
     order: usize,
-    children: Vec<usize>,
+    children: ResolvedCstChildren,
 }
+
+type ResolvedCstChildren = SmallVec<[usize; 4]>;
 
 pub(crate) struct ResolvedCstBuilder<'a> {
     parser: &'a ParserGrammar,
@@ -5287,7 +5289,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                         bytes: *bytes,
                     }),
                     order,
-                    children: Vec::new(),
+                    children: SmallVec::new(),
                 });
             }
             TreeEvent::Reduce {
@@ -5312,7 +5314,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                         extra: false,
                         text: None,
                         order,
-                        children: Vec::new(),
+                        children: SmallVec::new(),
                     });
                 }
             }
@@ -5335,7 +5337,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     extra: true,
                     text: None,
                     order,
-                    children: Vec::new(),
+                    children: SmallVec::new(),
                 });
             }
             TreeEvent::Error {
@@ -5356,7 +5358,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     extra: false,
                     text: None,
                     order,
-                    children: Vec::new(),
+                    children: SmallVec::new(),
                 });
             }
             TreeEvent::Missing {
@@ -5377,7 +5379,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     extra: false,
                     text: None,
                     order,
-                    children: Vec::new(),
+                    children: SmallVec::new(),
                 });
             }
             TreeEvent::Alias {
@@ -5400,7 +5402,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     extra: false,
                     text: None,
                     order,
-                    children: Vec::new(),
+                    children: SmallVec::new(),
                 });
             }
             TreeEvent::OpenNode { .. }
@@ -6969,7 +6971,7 @@ extras (
             extra: false,
             text: None,
             order,
-            children: Vec::new(),
+            children: SmallVec::new(),
         }
     }
 
@@ -6984,7 +6986,7 @@ extras (
         let mut roots = attach_resolved_children_from_ranges(&mut items);
         sort_resolved_children(&mut roots, &items);
 
-        assert_eq!(items[2].children, vec![0]);
+        assert_eq!(items[2].children.as_slice(), &[0]);
         assert_eq!(roots, vec![2, 1]);
     }
 
