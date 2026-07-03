@@ -4149,7 +4149,6 @@ impl WeavyRegexLeaf {
 #[derive(Clone, Debug)]
 struct WeavyRegexChoiceMatcher {
     id: usize,
-    sources: Arc<[String]>,
     dfa: HybridDfa,
 }
 
@@ -4163,19 +4162,11 @@ impl WeavyRegexChoiceMatcher {
             .configure(HybridDfa::config().match_kind(RegexMatchKind::All))
             .build_many(&regex_source_refs)
             .ok()?;
-        Some(Self {
-            id,
-            sources: Arc::from(regex_sources),
-            dfa,
-        })
+        Some(Self { id, dfa })
     }
 
     fn create_dfa_cache(&self) -> HybridDfaCache {
         self.dfa.create_cache()
-    }
-
-    fn sources(&self) -> &[String] {
-        &self.sources
     }
 
     fn match_input(
@@ -10948,10 +10939,20 @@ fn direct_pattern_set_regex_sources(expr: &WeavyLexExpr) -> Option<Vec<String>> 
             let source = matcher.source().to_owned();
             (!regex_source_matches_empty(&source)).then_some(vec![source])
         }
-        WeavyLexExpr::CompositeChoice { matcher, .. } => {
-            let sources = matcher.sources();
-            (!sources.is_empty()).then(|| sources.to_vec())
-        }
+        WeavyLexExpr::CompositeChoice { original, .. } => match original.as_ref() {
+            WeavyLexExpr::Choice(members) => {
+                let mut sources = Vec::with_capacity(members.len());
+                for member in members {
+                    let source = regex_source_for_weavy_lex_expr(member)?;
+                    if source.is_empty() {
+                        return None;
+                    }
+                    sources.push(source);
+                }
+                (!sources.is_empty()).then_some(sources)
+            }
+            _ => None,
+        },
         _ => None,
     }
 }
