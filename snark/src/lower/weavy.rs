@@ -10999,16 +10999,21 @@ impl<'a> RuntimeWeavyStepper<'a> {
     ) -> Result<RuntimeWeavyReduction, RuntimeWeavyStepError> {
         let production_row = &self.parser.productions()[production.get() as usize];
         let metadata_row = &self.parser.production_metadata()[metadata.get() as usize];
-        let mut children = self.tree_store.empty_children();
-        let mut visible_nodes = self.tree_store.empty_children();
+        let plan = self.plan;
+        let version = self.version;
+        let input_points = self.input_points;
+        let tree_event_collection = self.tree_event_collection;
+        let tree_journal = &mut *self.tree_journal;
+        let tree_journal_head = &mut self.tree_journal_head;
+        let trace_events = &mut *self.trace_events;
+        let tree_store = &mut *self.tree_store;
+        let stack = self.stack.to_mut();
+        let mut children = tree_store.empty_children();
+        let mut visible_nodes = tree_store.empty_children();
         let mut trailing_extras = Vec::new();
         if !include_trailing_extras {
-            while self.stack.last().is_some_and(|entry| entry.extra) {
-                let entry = self
-                    .stack
-                    .to_mut()
-                    .pop()
-                    .ok_or(RuntimeWeavyStepError::EmptyStack)?;
+            while stack.last().is_some_and(|entry| entry.extra) {
+                let entry = stack.pop().ok_or(RuntimeWeavyStepError::EmptyStack)?;
                 let Some(fragment) = entry.fragment else {
                     return Err(RuntimeWeavyStepError::EmptyStack);
                 };
@@ -11016,20 +11021,16 @@ impl<'a> RuntimeWeavyStepper<'a> {
             }
             trailing_extras.reverse();
         }
-        let mut start_byte = self.stack.last().map(|entry| entry.end_byte).unwrap_or(0);
+        let mut start_byte = stack.last().map(|entry| entry.end_byte).unwrap_or(0);
         let mut end_byte = start_byte;
         let mut lookahead_end_byte = end_byte;
         let mut start_scanner_snapshot = None;
         let mut saw_fragment = false;
-        let collect_tree_events = self.collects_runtime_tree_events();
+        let collect_tree_events = tree_event_collection == RuntimeWeavyTreeEventCollection::Enabled;
         let mut field_events = Vec::new();
         let mut remaining_children = child_count;
         while remaining_children > 0 {
-            let entry = self
-                .stack
-                .to_mut()
-                .pop()
-                .ok_or(RuntimeWeavyStepError::EmptyStack)?;
+            let entry = stack.pop().ok_or(RuntimeWeavyStepError::EmptyStack)?;
             let Some(fragment) = entry.fragment else {
                 return Err(RuntimeWeavyStepError::EmptyStack);
             };
@@ -11042,58 +11043,55 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     return Err(RuntimeWeavyStepError::EmptyStack);
                 };
                 let alias_range = fragment.byte_range();
-                let mut step_visible_nodes = fragment.visible_nodes(self.tree_store);
-                let mut field_child = self.tree_store.single_child_node(step_visible_nodes);
-                let mut step_children = fragment.into_children(self.tree_store);
+                let mut step_visible_nodes = fragment.visible_nodes(tree_store);
+                let mut field_child = tree_store.single_child_node(step_visible_nodes);
+                let mut step_children = fragment.into_children(tree_store);
                 if let (Some(alias), Some(named)) = (step.alias(), step.alias_named()) {
-                    let alias_name = Arc::clone(&self.plan.alias_names[alias.get() as usize]);
+                    let alias_name = Arc::clone(&plan.alias_names[alias.get() as usize]);
                     if named {
-                        if self.tree_store.children_is_empty(step_children) {
-                            let alias_child =
-                                self.tree_store.push_empty_node(Arc::clone(&alias_name));
-                            step_children = self.tree_store.child_node(None, alias_child);
+                        if tree_store.children_is_empty(step_children) {
+                            let alias_child = tree_store.push_empty_node(Arc::clone(&alias_name));
+                            step_children = tree_store.child_node(None, alias_child);
                         } else {
-                            step_children = self
-                                .tree_store
-                                .alias_children(step_children, Arc::clone(&alias_name));
+                            step_children =
+                                tree_store.alias_children(step_children, Arc::clone(&alias_name));
                         }
                     }
-                    let alias_node = self.tree_store.push_empty_node(alias_name);
+                    let alias_node = tree_store.push_empty_node(alias_name);
                     if collect_tree_events {
-                        let (bytes, points) = runtime_weavy_input_ranges(
-                            self.input_points,
-                            alias_range.0,
-                            alias_range.1,
+                        let (bytes, points) =
+                            runtime_weavy_input_ranges(input_points, alias_range.0, alias_range.1);
+                        emit_runtime_tree_event_to(
+                            tree_event_collection,
+                            trace_events,
+                            tree_journal,
+                            tree_journal_head,
+                            parser_ir::TreeEvent::Alias {
+                                version,
+                                node: alias_node,
+                                alias,
+                                named,
+                                structural_index: remaining_children,
+                                bytes,
+                                points,
+                            },
                         );
-                        self.emit_runtime_tree_event(parser_ir::TreeEvent::Alias {
-                            version: self.version,
-                            node: alias_node,
-                            alias,
-                            named,
-                            structural_index: remaining_children,
-                            bytes,
-                            points,
-                        });
                     }
                     if named {
                         field_child = Some(alias_node);
-                        step_visible_nodes = self.tree_store.child_node(None, alias_node);
+                        step_visible_nodes = tree_store.child_node(None, alias_node);
                     }
                 }
                 if collect_tree_events && let Some(field) = step.field() {
                     field_events.push((remaining_children, field, field_child));
                 }
-                visible_nodes = self
-                    .tree_store
-                    .concat_children(step_visible_nodes, visible_nodes);
-                children = self.tree_store.concat_children(step_children, children);
+                visible_nodes = tree_store.concat_children(step_visible_nodes, visible_nodes);
+                children = tree_store.concat_children(step_children, children);
             } else {
-                let step_visible_nodes = fragment.visible_nodes(self.tree_store);
-                let step_children = fragment.into_children(self.tree_store);
-                visible_nodes = self
-                    .tree_store
-                    .concat_children(step_visible_nodes, visible_nodes);
-                children = self.tree_store.concat_children(step_children, children);
+                let step_visible_nodes = fragment.visible_nodes(tree_store);
+                let step_children = fragment.into_children(tree_store);
+                visible_nodes = tree_store.concat_children(step_visible_nodes, visible_nodes);
+                children = tree_store.concat_children(step_children, children);
             }
             start_byte = fragment_start;
             if !saw_fragment {
@@ -11106,27 +11104,39 @@ impl<'a> RuntimeWeavyStepper<'a> {
         field_events.reverse();
 
         if let Some(public_node) = metadata_row.public_node() {
-            let kind = Arc::clone(&self.plan.public_node_kind_names[public_node.get() as usize]);
-            let node = self.tree_store.push_node(kind, children);
+            let kind = Arc::clone(&plan.public_node_kind_names[public_node.get() as usize]);
+            let node = tree_store.push_node(kind, children);
             if collect_tree_events {
                 let (bytes, points) =
-                    runtime_weavy_input_ranges(self.input_points, start_byte, end_byte);
-                self.emit_runtime_tree_event(parser_ir::TreeEvent::Reduce {
-                    version: self.version,
-                    production,
-                    metadata,
-                    node,
-                    bytes,
-                    points,
-                });
-                for (structural_index, field, child) in field_events {
-                    self.emit_runtime_tree_event(parser_ir::TreeEvent::Field {
-                        version: self.version,
+                    runtime_weavy_input_ranges(input_points, start_byte, end_byte);
+                emit_runtime_tree_event_to(
+                    tree_event_collection,
+                    trace_events,
+                    tree_journal,
+                    tree_journal_head,
+                    parser_ir::TreeEvent::Reduce {
+                        version,
+                        production,
+                        metadata,
                         node,
-                        child,
-                        field,
-                        structural_index,
-                    });
+                        bytes,
+                        points,
+                    },
+                );
+                for (structural_index, field, child) in field_events {
+                    emit_runtime_tree_event_to(
+                        tree_event_collection,
+                        trace_events,
+                        tree_journal,
+                        tree_journal_head,
+                        parser_ir::TreeEvent::Field {
+                            version,
+                            node,
+                            child,
+                            field,
+                            structural_index,
+                        },
+                    );
                 }
             }
             Ok(RuntimeWeavyReduction {
@@ -11159,17 +11169,13 @@ impl<'a> RuntimeWeavyStepper<'a> {
     }
 
     fn emit_runtime_tree_event(&mut self, event: parser_ir::TreeEvent) {
-        debug_assert_eq!(
+        emit_runtime_tree_event_to(
             self.tree_event_collection,
-            RuntimeWeavyTreeEventCollection::Enabled
+            self.trace_events,
+            self.tree_journal,
+            &mut self.tree_journal_head,
+            event,
         );
-        if self.trace_events.is_enabled() {
-            self.tree_journal
-                .push(&mut self.tree_journal_head, event.clone());
-            self.trace_events.push(parser_ir::TraceEvent::Tree(event));
-        } else {
-            self.tree_journal.push(&mut self.tree_journal_head, event);
-        }
     }
 
     fn runtime_extra_fragment(
@@ -11246,6 +11252,25 @@ impl<'a> RuntimeWeavyStepper<'a> {
         }
         self.parse_state(state)?;
         Err(RuntimeWeavyStepError::MissingGoto { state, nonterminal })
+    }
+}
+
+fn emit_runtime_tree_event_to(
+    tree_event_collection: RuntimeWeavyTreeEventCollection,
+    trace_events: &mut RuntimeWeavyTraceSink,
+    tree_journal: &mut RuntimeWeavyTreeJournal,
+    tree_journal_head: &mut RuntimeWeavyTreeJournalHead,
+    event: parser_ir::TreeEvent,
+) {
+    debug_assert_eq!(
+        tree_event_collection,
+        RuntimeWeavyTreeEventCollection::Enabled
+    );
+    if trace_events.is_enabled() {
+        tree_journal.push(tree_journal_head, event.clone());
+        trace_events.push(parser_ir::TraceEvent::Tree(event));
+    } else {
+        tree_journal.push(tree_journal_head, event);
     }
 }
 
