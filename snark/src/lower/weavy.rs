@@ -534,6 +534,19 @@ pub struct WeavySnarkProfileBackendExecutionSummary {
     pub total_count: usize,
 }
 
+/// Runtime parser and lexer executions grouped by backend execution lane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeavyRuntimeBackendExecutionSummary {
+    /// Execution strategy that ran during this parse.
+    pub execution: SnarkStencilExecution,
+    /// Parser/action Snark intrinsic executions in this lane.
+    pub parser_count: usize,
+    /// Lexer-graph matcher executions in this lane.
+    pub lexer_count: usize,
+    /// Total runtime executions in this lane.
+    pub total_count: usize,
+}
+
 impl WeavySnarkProfileStencilReadiness {
     /// Count parser/action Snark intrinsic stencil obligations in this profile.
     #[must_use]
@@ -712,6 +725,25 @@ pub enum WeavyLexerStencilKind {
     CompositeRegex,
     /// Composite choice matcher compiled from multiple leaf expressions.
     CompositeChoice,
+}
+
+impl WeavyLexerStencilKind {
+    /// Backend execution lane for this lowered lexer matcher family.
+    #[must_use]
+    pub const fn execution(self) -> SnarkStencilExecution {
+        match self {
+            Self::LiteralSet
+            | Self::PatternDfaSet
+            | Self::PatternLeafRematch
+            | Self::KnownPattern
+            | Self::RegexAutomata
+            | Self::Until
+            | Self::Nested
+            | Self::AutoClose
+            | Self::CompositeRegex
+            | Self::CompositeChoice => SnarkStencilExecution::LexerGraph,
+        }
+    }
 }
 
 const WEAVY_LEXER_STENCIL_KIND_COUNT: usize = 10;
@@ -1054,6 +1086,39 @@ impl WeavySnarkExecutionStats {
     pub fn dominant_family_execution(&self) -> Option<WeavySnarkExecutionSummary> {
         self.family_execution_summaries().into_iter().next()
     }
+}
+
+fn runtime_backend_execution_summaries(
+    snark_stats: &WeavySnarkExecutionStats,
+    lexer_stats: &WeavyLexerExecutionStats,
+) -> Vec<WeavyRuntimeBackendExecutionSummary> {
+    let mut counts = BTreeMap::<SnarkStencilExecution, (usize, usize)>::new();
+    for ((_, execution), count) in &snark_stats.family_executions {
+        let (parser_count, _) = counts.entry(*execution).or_default();
+        *parser_count += *count;
+    }
+    for (kind, count) in &lexer_stats.stencil_executions {
+        let (_, lexer_count) = counts.entry(kind.execution()).or_default();
+        *lexer_count += *count;
+    }
+    let mut summaries = counts
+        .into_iter()
+        .map(
+            |(execution, (parser_count, lexer_count))| WeavyRuntimeBackendExecutionSummary {
+                execution,
+                parser_count,
+                lexer_count,
+                total_count: parser_count + lexer_count,
+            },
+        )
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .total_count
+            .cmp(&left.total_count)
+            .then_with(|| left.execution.cmp(&right.execution))
+    });
+    summaries
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -7801,6 +7866,18 @@ impl WeavyResolvedCstReport {
     pub const fn execution_lane(&self) -> WeavyParseExecutionLane {
         self.execution_lane
     }
+
+    /// Runtime parser and lexer executions grouped by backend execution lane.
+    #[must_use]
+    pub fn backend_execution_summaries(&self) -> Vec<WeavyRuntimeBackendExecutionSummary> {
+        runtime_backend_execution_summaries(&self.snark_stats, &self.lexer_stats)
+    }
+
+    /// Most frequently executed backend lane in this parse.
+    #[must_use]
+    pub fn dominant_backend_execution(&self) -> Option<WeavyRuntimeBackendExecutionSummary> {
+        self.backend_execution_summaries().into_iter().next()
+    }
 }
 
 /// Runtime stack/tree parse report produced through lowered Weavy blocks.
@@ -7885,6 +7962,18 @@ impl WeavyParseReport {
     /// Runtime execution lane used to produce this report.
     pub const fn execution_lane(&self) -> WeavyParseExecutionLane {
         self.execution_lane
+    }
+
+    /// Runtime parser and lexer executions grouped by backend execution lane.
+    #[must_use]
+    pub fn backend_execution_summaries(&self) -> Vec<WeavyRuntimeBackendExecutionSummary> {
+        runtime_backend_execution_summaries(&self.snark_stats, &self.lexer_stats)
+    }
+
+    /// Most frequently executed backend lane in this parse.
+    #[must_use]
+    pub fn dominant_backend_execution(&self) -> Option<WeavyRuntimeBackendExecutionSummary> {
+        self.backend_execution_summaries().into_iter().next()
     }
 
     /// Structured parser trace events emitted during runtime execution.
@@ -14416,6 +14505,29 @@ mod tests {
                 .dominant_family_execution()
                 .is_some_and(|summary| summary.count > 0)
         );
+        let backend_summaries = default_direct.backend_execution_summaries();
+        assert_eq!(
+            default_direct.dominant_backend_execution(),
+            backend_summaries.first().cloned()
+        );
+        assert_eq!(
+            backend_summaries
+                .iter()
+                .map(|summary| summary.total_count)
+                .sum::<usize>(),
+            snark_stats.intrinsic_count
+                + lexer_stats
+                    .stencil_execution_summaries()
+                    .iter()
+                    .map(|summary| summary.count)
+                    .sum::<usize>()
+        );
+        assert!(backend_summaries.iter().any(|summary| summary.execution
+            == SnarkStencilExecution::DirectStencil
+            && summary.parser_count > 0));
+        assert!(backend_summaries.iter().any(|summary| summary.execution
+            == SnarkStencilExecution::LexerGraph
+            && summary.lexer_count > 0));
         #[cfg(all(
             feature = "jit",
             any(

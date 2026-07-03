@@ -48,7 +48,8 @@ use snark::{
     lower::weavy::{
         SnarkStencilProfile, WeavyHostCallExecutionStats, WeavyLexerExecutionStats,
         WeavyLexerStencilSummary, WeavyParseError, WeavyParseExecutionLane, WeavyParsePlan,
-        WeavyParseReport, WeavyParseWorkspace, WeavyResolvedCstReport, WeavySnarkExecutionStats,
+        WeavyParseReport, WeavyParseWorkspace, WeavyResolvedCstReport,
+        WeavyRuntimeBackendExecutionSummary, WeavySnarkExecutionStats,
         WeavySnarkProfileStencilReadiness, parse_prepared_weavy_resolved_cst,
         parse_prepared_weavy_resolved_cst_report, parse_prepared_weavy_resolved_tree,
     },
@@ -478,6 +479,7 @@ fn print_snark_execution_stats(report: &WeavyParseReport) {
         report.execution_lane(),
         report.hostcall_stats(),
     );
+    print_runtime_backend_execution_stats(report.backend_execution_summaries());
 }
 
 fn print_resolved_cst_execution_stats(report: &WeavyResolvedCstReport) {
@@ -487,6 +489,33 @@ fn print_resolved_cst_execution_stats(report: &WeavyResolvedCstReport) {
         report.hostcall_stats(),
     );
     print_lexer_execution_stats_from(report.lexer_stats());
+    print_runtime_backend_execution_stats(report.backend_execution_summaries());
+}
+
+fn print_runtime_backend_execution_stats(summaries: Vec<WeavyRuntimeBackendExecutionSummary>) {
+    if let Some(summary) = summaries.first() {
+        println!(
+            "runtime_dominant_backend_execution: {:?} parser={} lexer={} total={}",
+            summary.execution, summary.parser_count, summary.lexer_count, summary.total_count
+        );
+    } else {
+        println!("runtime_dominant_backend_execution: none");
+    }
+    if summaries.is_empty() {
+        println!("runtime_backend_execution: none");
+        return;
+    }
+    let lanes = summaries
+        .iter()
+        .map(|summary| {
+            format!(
+                "{:?}=parser:{},lexer:{},total:{}",
+                summary.execution, summary.parser_count, summary.lexer_count, summary.total_count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    println!("runtime_backend_execution: {lanes}");
 }
 
 fn print_snark_execution_stats_from(
