@@ -68,6 +68,23 @@ struct MissingArgsAnnotation {
 }
 
 #[derive(Facet)]
+struct NestedMissingArgsPayload {
+    dir: String,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum NestedMissingArgsCommand {
+    Add(NestedMissingArgsPayload),
+}
+
+#[derive(Facet)]
+struct NestedMissingArgsRoot {
+    #[facet(args::subcommand)]
+    command: NestedMissingArgsCommand,
+}
+
+#[derive(Facet)]
 #[repr(u8)]
 enum SubA {
     A,
@@ -198,6 +215,10 @@ fn snapshot_schema_missing_args_annotation() {
     assert_schema_snapshot!(Schema::from_shape(MissingArgsAnnotation::SHAPE));
 }
 
+#[test]
+fn snapshot_schema_missing_args_annotation_in_tuple_subcommand_payload() {
+    assert_schema_snapshot!(Schema::from_shape(NestedMissingArgsRoot::SHAPE));
+}
 #[test]
 fn snapshot_schema_multiple_subcommands() {
     assert_schema_snapshot!(Schema::from_shape(MultipleSubcommands::SHAPE));

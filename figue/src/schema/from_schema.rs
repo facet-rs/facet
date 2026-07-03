@@ -153,8 +153,7 @@ fn discover_config_fields(
             };
 
             for variant in enum_type.variants {
-                let variant_ctx =
-                    SchemaErrorContext::root(enum_shape).with_variant(variant_cli_name(variant));
+                let variant_ctx = variant_payload_context(enum_shape, variant);
                 let variant_fields = variant_fields_for_schema(variant);
                 discover_config_fields(variant_fields, &variant_ctx, true)?;
             }
@@ -764,6 +763,14 @@ fn is_flattened_tuple_variant(variant: &Variant) -> bool {
     }
 }
 
+fn variant_payload_context(enum_shape: &'static Shape, variant: &Variant) -> SchemaErrorContext {
+    if is_flattened_tuple_variant(variant) {
+        SchemaErrorContext::root(variant.data.fields[0].shape())
+    } else {
+        SchemaErrorContext::root(enum_shape).with_variant(variant_cli_name(variant))
+    }
+}
+
 fn arg_level_from_fields(
     fields: &'static [Field],
     ctx: &SchemaErrorContext,
@@ -1046,7 +1053,8 @@ fn arg_level_from_fields_with_prefix(
                 let variant_fields = variant_fields_for_schema(variant);
                 let variant_ctx =
                     SchemaErrorContext::root(enum_shape).with_variant(cli_name.clone());
-                let args_schema = arg_level_from_fields(variant_fields, &variant_ctx)?;
+                let payload_ctx = variant_payload_context(enum_shape, variant);
+                let args_schema = arg_level_from_fields(variant_fields, &payload_ctx)?;
                 let is_flattened_tuple = is_flattened_tuple_variant(variant);
 
                 if let Some(short) = short {
