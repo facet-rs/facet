@@ -536,7 +536,7 @@ pub struct WeavySnarkProfileBackendExecutionSummary {
     pub total_count: usize,
 }
 
-/// Runtime parser and lexer executions grouped by backend execution lane.
+/// Weavy parser and lexer executions grouped by backend execution lane.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeavyRuntimeBackendExecutionSummary {
     /// Execution strategy that ran during this parse.
@@ -7972,7 +7972,7 @@ impl WeavyResolvedCstReport {
         self.execution_lane
     }
 
-    /// Runtime parser and lexer executions grouped by backend execution lane.
+    /// Weavy parser and lexer executions grouped by backend execution lane.
     #[must_use]
     pub fn backend_execution_summaries(&self) -> Vec<WeavyRuntimeBackendExecutionSummary> {
         runtime_backend_execution_summaries(&self.snark_stats, &self.lexer_stats)
@@ -8069,7 +8069,7 @@ impl WeavyParseReport {
         self.execution_lane
     }
 
-    /// Runtime parser and lexer executions grouped by backend execution lane.
+    /// Weavy parser and lexer executions grouped by backend execution lane.
     #[must_use]
     pub fn backend_execution_summaries(&self) -> Vec<WeavyRuntimeBackendExecutionSummary> {
         runtime_backend_execution_summaries(&self.snark_stats, &self.lexer_stats)
