@@ -3591,16 +3591,19 @@ impl WeavyLexModeProgram {
         compiler: &mut WeavyLexerCompiler,
     ) -> Self {
         let mut terminals = Vec::new();
+        let mut seen_terminals = Vec::new();
         for entry in state.entries() {
             let Some(terminal) = runtime_weavy_lookahead_terminal(entry.lookahead()) else {
                 continue;
             };
-            if terminals
-                .iter()
-                .any(|row: &WeavyLexTerminal| row.terminal == terminal)
-            {
+            let terminal_index = terminal.get() as usize;
+            if seen_terminals.len() <= terminal_index {
+                seen_terminals.resize(terminal_index + 1, false);
+            }
+            if seen_terminals[terminal_index] {
                 continue;
             }
+            seen_terminals[terminal_index] = true;
             if let Some(row) = mode.terminal(terminal) {
                 let mut row = row.clone();
                 row.lookahead = Some(RuntimeWeavyTerminalLookahead {
