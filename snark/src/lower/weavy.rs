@@ -1279,6 +1279,9 @@ impl RuntimeWeavySnarkExecutionStats {
     }
 
     fn to_public(&self) -> WeavySnarkExecutionStats {
+        if !self.enabled {
+            return WeavySnarkExecutionStats::default();
+        }
         let mut stats = WeavySnarkExecutionStats {
             intrinsic_count: self.intrinsic_count,
             descriptor_executions: BTreeMap::new(),
@@ -5773,6 +5776,9 @@ impl RuntimeWeavyLexerScratch {
     }
 
     fn execution_stats(&self) -> WeavyLexerExecutionStats {
+        if !self.stats_enabled.get() {
+            return WeavyLexerExecutionStats::default();
+        }
         self.execution_stats.borrow().to_public()
     }
 
