@@ -4348,6 +4348,7 @@ impl WeavyDirectPatternSet {
 
     fn entries_from_terminals(terminals: &[WeavyLexTerminal]) -> Vec<WeavyDirectPatternSetEntry> {
         let mut entries = Vec::new();
+        let mut next_direct_pattern_index = 0;
         for (terminal_index, terminal) in terminals.iter().enumerate() {
             if terminal.direct_literal_index.is_some() {
                 continue;
@@ -4358,11 +4359,8 @@ impl WeavyDirectPatternSet {
             let Some(regex_sources) = direct_pattern_set_regex_sources(expr) else {
                 continue;
             };
-            let direct_pattern_index = entries
-                .iter()
-                .map(|entry: &WeavyDirectPatternSetEntry| entry.direct_pattern_index)
-                .max()
-                .map_or(0, |index| index + 1);
+            let direct_pattern_index = next_direct_pattern_index;
+            next_direct_pattern_index += 1;
             for regex_source in regex_sources {
                 entries.push(WeavyDirectPatternSetEntry {
                     direct_pattern_index,
@@ -4392,11 +4390,10 @@ impl WeavyDirectPatternSet {
         if entries.is_empty() {
             return None;
         }
-        let regex_sources = entries
+        let regex_source_refs = entries
             .iter()
-            .map(|entry| entry.regex_source.clone())
+            .map(|entry| entry.regex_source.as_str())
             .collect::<Vec<_>>();
-        let regex_source_refs = regex_sources.iter().map(String::as_str).collect::<Vec<_>>();
         let automaton = AutomataRegex::builder()
             .configure(AutomataRegex::config().match_kind(RegexMatchKind::All))
             .build_many(&regex_source_refs)
