@@ -66,12 +66,12 @@ async fn lua_builds_across_two_machines() {
     let events = oracle.events();
     let spawns = events
         .iter()
-        .filter(|e| matches!(e, Event::Spawn { .. }))
+        .filter(|e| matches!(e, Event::Created { .. }))
         .count();
     let execs: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Exec { command, event, .. } => Some((command.clone(), event.clone())),
+            Event::Finished { command, event, .. } => Some((command.clone(), event.clone())),
             _ => None,
         })
         .collect();
@@ -241,14 +241,14 @@ pub fn pipeline(rustc: Rustc, cc: Cc, a_src: Tree, b_src: Tree) -> Tree {
     let spawns: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Spawn { command, .. } => Some(command.as_str()),
+            Event::Created { command, .. } => Some(command.as_str()),
             _ => None,
         })
         .collect();
     let flushes: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Exec { command, .. } => Some(command.as_str()),
+            Event::Finished { command, .. } => Some(command.as_str()),
             _ => None,
         })
         .collect();

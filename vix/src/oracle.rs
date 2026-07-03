@@ -451,12 +451,11 @@ pub enum Event {
         caller: Option<String>,
         args: Vec<(String, String)>,
     },
-    /// A command block DISPATCHED (demand-driven: evaluation continues while
-    /// the run produces; the matching Exec event fires when something forces
-    /// the flush). `span` is the `cmd! { … }` block; `run` pairs with Exec.
-    /// `describe` is the command grammar's important-first description
-    /// (level 0 = verb + object; deeper = modifiers; last = full argv).
-    Spawn {
+    /// THUNK CREATED: the `cmd! { … }` block evaluated to a pending tree.
+    /// Nothing has run, nothing has been demanded — a value exists. `describe`
+    /// is the command grammar's important-first description (level 0 = verb +
+    /// object; deeper = modifiers; last = full argv).
+    Created {
         command: String,
         run: u64,
         span: crate::support::Span,
@@ -464,13 +463,24 @@ pub enum Event {
         argv: Vec<String>,
         describe: Vec<String>,
     },
+    /// EXECUTION SCHEDULED: the first demand touched this run — a path
+    /// projection or an identity force. This is when we start PAYING. Fires
+    /// at most once per run. (Locally execution is synchronous so Scheduled
+    /// and Finished are adjacent; on the wire they have real extent — this
+    /// pair is the rectangle in the lanes view.)
+    Scheduled {
+        command: String,
+        run: u64,
+        span: crate::support::Span,
+    },
     /// A primitive observed the outside world (cold) or replayed its pin.
     Observation { key: String, replayed: bool },
-    /// A command block went through the exec cache. The language-level memo
-    /// and the exec-level two-tier cache COMPOSE: a fn-level miss can still
-    /// resolve to a tier-2 cutoff below it. `outputs` is the flushed tree —
-    /// the artifacts, observable path by path.
-    Exec {
+    /// EXECUTION FINISHED: the run resolved through the two-tier exec cache
+    /// (the language-level memo and exec-level cache COMPOSE: a fn-level miss
+    /// can still cut off at tier-2 below). `outputs` is the produced tree —
+    /// the artifacts, observable path by path. A run that was only ever
+    /// projected may never log Finished even though it was Scheduled.
+    Finished {
         command: String,
         run: u64,
         span: crate::support::Span,
@@ -607,6 +617,8 @@ pub struct Oracle {
     /// (logged on the first oracle-side force; identity-side forces from
     /// Ord/Hash are silent — they have no oracle in scope).
     unlogged_runs: RefCell<HashMap<u64, (String, crate::support::Span)>>,
+    /// Runs whose Scheduled event already fired (first-demand latch).
+    scheduled: RefCell<std::collections::HashSet<u64>>,
     /// The stack of fn names currently evaluating (cold path only) — demand
     /// ancestry for events: who demanded this call, whose body spawned this.
     fn_stack: RefCell<Vec<String>>,
@@ -618,7 +630,11 @@ type EvalResult = Result<Value, String>;
 
 impl Oracle {
     pub fn load(source: &str) -> Result<Oracle, String> {
-        let file: SourceFile = VixParser::new().parse(source).map_err(|e| e.message)?;
+        // Table construction is the expensive part (seconds in dev profile);
+        // the parser itself is immutable after build — share one per process.
+        static PARSER: std::sync::OnceLock<VixParser> = std::sync::OnceLock::new();
+        let parser = PARSER.get_or_init(VixParser::new);
+        let file: SourceFile = parser.parse(source).map_err(|e| e.message)?;
         let mut fns = HashMap::new();
         let mut fn_hashes = HashMap::new();
         let mut enums = HashMap::new();
@@ -678,6 +694,7 @@ impl Oracle {
             exec_cache: RefCell::new(crate::exec::ExecCache::new()),
             backend: None,
             unlogged_runs: RefCell::new(HashMap::new()),
+            scheduled: RefCell::new(std::collections::HashSet::new()),
             fn_stack: RefCell::new(Vec::new()),
             epoch: std::time::Instant::now(),
         })
@@ -1187,6 +1204,9 @@ impl Oracle {
                 // still being produced waits only for THAT path (the language-
                 // level rmeta move). Directory cuts fall back to the flush.
                 (Value::PendingTree { run }, Value::Path(p)) if op == "/" => {
+                    // Projection doesn't FORCE — but it does SCHEDULE: the
+                    // run must execute enough to serve the path.
+                    self.note_scheduled(run);
                     let live = runs::get(run)
                         .ok_or_else(|| format!("pending run {run} not registered"))?;
                     match live.demand_path(&p) {
@@ -1464,7 +1484,7 @@ impl Oracle {
         self.unlogged_runs
             .borrow_mut()
             .insert(id, (c.command.value.clone(), c.span));
-        self.emit(Event::Spawn {
+        self.emit(Event::Created {
             command: c.command.value.clone(),
             run: id,
             span: c.span,
@@ -1475,8 +1495,26 @@ impl Oracle {
         Ok(Value::PendingTree { run: id })
     }
 
-    /// Oracle-side force: flush the run and log its Exec event exactly once.
+    /// First demand on a run: emit Scheduled exactly once. Execution starts
+    /// being PAID FOR here — a projection schedules just like a force.
+    fn note_scheduled(&self, id: u64) {
+        if !self.scheduled.borrow_mut().insert(id) {
+            return;
+        }
+        let info = self.unlogged_runs.borrow().get(&id).cloned();
+        if let Some((command, span)) = info {
+            self.emit(Event::Scheduled {
+                command,
+                run: id,
+                span,
+            });
+        }
+    }
+
+    /// Oracle-side force: flush the run and log its Finished event exactly
+    /// once (identity demanded ⇒ the whole tree, so completion is knowable).
     fn force_and_note(&self, id: u64) -> Result<crate::exec::Tree, String> {
+        self.note_scheduled(id);
         let (tree, event) = force_run(id)?;
         if let Some((command, span)) = self.unlogged_runs.borrow_mut().remove(&id) {
             let outputs = tree
@@ -1484,7 +1522,7 @@ impl Oracle {
                 .iter()
                 .map(|(p, h)| (p.clone(), h.clone()))
                 .collect();
-            self.emit(Event::Exec {
+            self.emit(Event::Finished {
                 command,
                 run: id,
                 span,

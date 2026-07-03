@@ -127,10 +127,10 @@ pub enum DemandEvent {
         caller: Option<String>,
         args: Vec<(String, String)>,
     },
-    /// A command block DISPATCHED (evaluation continues; a pending tree).
-    /// `span` is the `cmd! { … }` block; `describe` is the command grammar's
+    /// THUNK CREATED: the `cmd! { … }` block evaluated to a pending tree —
+    /// nothing demanded yet. `describe` is the command grammar's
     /// important-first description (level 0 = verb + object; last = argv).
-    Spawn {
+    Created {
         at: u64,
         command: String,
         run: u64,
@@ -139,9 +139,18 @@ pub enum DemandEvent {
         argv: Vec<String>,
         describe: Vec<String>,
     },
-    /// A command block resolved through the two-tier exec cache. `outputs`
-    /// is the flushed tree — the artifacts, observable path by path.
-    Exec {
+    /// EXECUTION SCHEDULED: the first demand touched this run (projection or
+    /// identity) — paying starts here. Scheduled→Finished is the rectangle
+    /// in the lanes view; Created is where a click links back to.
+    Scheduled {
+        at: u64,
+        command: String,
+        run: u64,
+        span: Span,
+    },
+    /// EXECUTION FINISHED: resolved through the two-tier exec cache;
+    /// `outputs` is the produced tree — artifacts, path by path.
+    Finished {
         at: u64,
         command: String,
         run: u64,
@@ -190,14 +199,14 @@ impl DemandEvent {
                 caller: caller.clone(),
                 args: args.clone(),
             },
-            Event::Spawn {
+            Event::Created {
                 command,
                 run,
                 span,
                 in_fn,
                 argv,
                 describe,
-            } => DemandEvent::Spawn {
+            } => DemandEvent::Created {
                 at,
                 command: command.clone(),
                 run: *run,
@@ -206,13 +215,19 @@ impl DemandEvent {
                 argv: argv.clone(),
                 describe: describe.clone(),
             },
-            Event::Exec {
+            Event::Scheduled { command, run, span } => DemandEvent::Scheduled {
+                at,
+                command: command.clone(),
+                run: *run,
+                span: (*span).into(),
+            },
+            Event::Finished {
                 command,
                 run,
                 span,
                 event,
                 outputs,
-            } => DemandEvent::Exec {
+            } => DemandEvent::Finished {
                 at,
                 command: command.clone(),
                 run: *run,

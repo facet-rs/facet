@@ -68,9 +68,9 @@ async fn daemon_evaluates_lua_over_the_wire() {
     // The demand stream shows real work: fn miss for `lua`, exec dispatches,
     // exec serving classes, and fetch/acquire observations.
     assert!(events.iter().any(|e| matches!(e, DemandEvent::Miss { func, .. } if func == "lua")));
-    assert!(events.iter().any(|e| matches!(e, DemandEvent::Spawn { command, .. } if command == "cc")));
+    assert!(events.iter().any(|e| matches!(e, DemandEvent::Created { command, .. } if command == "cc")));
     assert!(events.iter().any(
-        |e| matches!(e, DemandEvent::Exec { serving: Serving::Ran, .. })
+        |e| matches!(e, DemandEvent::Finished { serving: Serving::Ran, .. })
     ));
     assert!(events.iter().any(|e| matches!(e, DemandEvent::Observation { .. })));
 }

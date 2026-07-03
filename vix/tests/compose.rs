@@ -36,21 +36,26 @@ fn lua_builds_end_to_end() {
     let events = oracle.events();
     let spawns = events
         .iter()
-        .filter(|e| matches!(e, Event::Spawn { .. }))
+        .filter(|e| matches!(e, Event::Created { .. }))
         .count();
     let execs: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Exec { command, event, .. } => Some((command.as_str(), event.clone())),
+            Event::Finished { command, event, .. } => Some((command.as_str(), event.clone())),
             _ => None,
         })
         .collect();
-    // DEMAND-TRUTHFUL accounting: 5 dispatches (3 compiles + ar + link), but
-    // only 3 FLUSHES — the two unit objects (collect merges them) and the
-    // link (forced at the edge). `main`'s object and the archive were only
-    // ever PROJECTED (`x / p"…"` pulls one path), so they never flush and
-    // never log completion. Projection doesn't force.
+    // DEMAND-TRUTHFUL accounting, three moments per run: 5 CREATED
+    // (3 compiles + ar + link); 5 SCHEDULED (every run was demanded — the
+    // archive and main's object by path PROJECTION, the rest by identity);
+    // only 3 FINISHED logged — projection doesn't force, so projected-only
+    // runs never log completion.
     assert_eq!(spawns, 5, "{events:?}");
+    let scheduled = events
+        .iter()
+        .filter(|e| matches!(e, Event::Scheduled { .. }))
+        .count();
+    assert_eq!(scheduled, 5, "{events:?}");
     assert_eq!(execs.len(), 3, "{execs:?}");
     assert!(execs.iter().all(|(c, e)| *c == "cc" && *e == ExecEvent::Ran));
 
@@ -118,7 +123,7 @@ fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
     assert!(
         warm.iter().any(|e| matches!(
             e,
-            Event::Exec { command, event: ExecEvent::Tier2Cutoff { .. }, .. } if command == "cc"
+            Event::Finished { command, event: ExecEvent::Tier2Cutoff { .. }, .. } if command == "cc"
         )),
         "exec tier-2 cuts off (nothing read changed): {warm:?}"
     );
@@ -137,7 +142,7 @@ fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
     let warm = &oracle.events()[before..];
     assert!(
         warm.iter()
-            .any(|e| matches!(e, Event::Exec { event: ExecEvent::Ran, .. })),
+            .any(|e| matches!(e, Event::Finished { event: ExecEvent::Ran, .. })),
         "{warm:?}"
     );
 }
