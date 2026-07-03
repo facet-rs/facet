@@ -6303,8 +6303,7 @@ struct RuntimeWeavyAction {
 /// Execute a prepared parser plan through the direct Weavy runtime.
 ///
 /// This is the production path: it builds tree output but skips debug trace
-/// collection and runner counters. Use [`parse_prepared_weavy_metered_with_report`]
-/// when trace events or runner stats are part of the requested output.
+/// collection and runner counters.
 pub fn parse_prepared_weavy_with_report(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
@@ -6574,6 +6573,7 @@ pub fn lex_one_with_scanner(
 }
 
 /// Execute a prepared Weavy plan with debug trace collection enabled.
+#[cfg(test)]
 pub fn parse_prepared_weavy_metered_with_report(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
@@ -6584,6 +6584,7 @@ pub fn parse_prepared_weavy_metered_with_report(
 }
 
 /// Execute a prepared Weavy plan with a scanner host and debug trace collection enabled.
+#[cfg(test)]
 pub fn parse_prepared_weavy_metered_with_report_and_scanner(
     plan: &WeavyParsePlan,
     parser: &parser_ir::ParserGrammar,
@@ -7511,6 +7512,7 @@ fn runtime_weavy_action_block_for_execution(
 ) -> Result<Option<BlockRef>, RuntimeWeavyStepError> {
     match block_execution {
         RuntimeWeavyBlockExecution::Direct => Ok(None),
+        #[cfg(test)]
         RuntimeWeavyBlockExecution::Metered => input_ctx
             .plan
             .program
@@ -7538,6 +7540,7 @@ fn runtime_weavy_state_block_for_execution(
 ) -> Result<Option<BlockRef>, RuntimeWeavyStepError> {
     match block_execution {
         RuntimeWeavyBlockExecution::Direct => Ok(None),
+        #[cfg(test)]
         RuntimeWeavyBlockExecution::Metered => {
             input_ctx.plan.program.runtime_state_block(state).map(Some)
         }
@@ -8313,6 +8316,7 @@ pub enum WeavyParseExecutionLane {
     /// Direct Weavy block interpreter with trace collection disabled.
     Direct,
     /// Direct Weavy block interpreter with debug trace collection enabled.
+    #[cfg(test)]
     Metered,
     /// Copy-and-patch host-call block runner.
     #[cfg(all(
@@ -8529,6 +8533,7 @@ enum RuntimeWeavyReuseCollection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeWeavyBlockExecution {
     Direct,
+    #[cfg(test)]
     Metered,
     #[cfg(all(
         feature = "jit",
@@ -8542,12 +8547,17 @@ enum RuntimeWeavyBlockExecution {
 
 impl RuntimeWeavyBlockExecution {
     const fn collects_traces(self) -> bool {
-        matches!(self, Self::Metered)
+        match self {
+            #[cfg(test)]
+            Self::Metered => true,
+            _ => false,
+        }
     }
 
     const fn parse_execution_lane(self) -> WeavyParseExecutionLane {
         match self {
             Self::Direct => WeavyParseExecutionLane::Direct,
+            #[cfg(test)]
             Self::Metered => WeavyParseExecutionLane::Metered,
             #[cfg(all(
                 feature = "jit",
@@ -9343,6 +9353,7 @@ fn run_runtime_weavy_block(
     let parser_program = &plan.program;
     let program = parser_program.runtime_dense_block(block)?;
     let result = match block_execution {
+        #[cfg(test)]
         RuntimeWeavyBlockExecution::Metered => {
             weavy::run_dense_program_with_stats(program, &parser_program.dense.blocks, stepper)
         }
