@@ -19,6 +19,7 @@ pub mod ast {
 }
 
 pub mod binder;
+pub mod exec;
 pub mod ide;
 pub mod oracle;
 
