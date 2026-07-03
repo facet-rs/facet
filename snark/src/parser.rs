@@ -5283,13 +5283,15 @@ impl<'a> ResolvedCstBuilder<'a> {
         node_capacity: usize,
         names: ResolvedCstNames,
     ) -> Self {
+        let mut item_indices_by_node = Vec::with_capacity(node_capacity);
+        item_indices_by_node.resize_with(node_capacity, SmallVec::new);
         Self {
             parser,
             input,
             source: Arc::<str>::from(input),
             names,
             field_by_child: vec![None; node_capacity],
-            item_indices_by_node: Vec::with_capacity(node_capacity),
+            item_indices_by_node,
             items: Vec::with_capacity(capacity),
             roots: Vec::new(),
         }
