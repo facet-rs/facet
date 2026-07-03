@@ -8151,7 +8151,7 @@ version = "0.0.0"
 dependencies = [
  "facet",
  "facet-json",
- "facet-postcard",
+ "phon",
  "snark",
  "snark-dsl",
 ]
@@ -8162,7 +8162,7 @@ version = "0.0.0"
 dependencies = [
  "eyre",
  "facet",
- "facet-postcard",
+ "phon",
  "tokio",
  "vix",
  "vox",

@@ -269,22 +269,22 @@ impl Ord for Value {
 // ---------------------------------------------------------------------------
 // Canonical AST identity: the generated `strip_spans` zeroes every span
 // (comments/whitespace never reach the AST; spans are the only position
-// leak), then facet-postcard bytes ARE the content address — the same bytes
-// that ship a closure to an executor. One canonical form for identity and
-// transport.
+// leak), then PHON bytes ARE the content address — the same bytes that ship
+// a closure to an executor. One codec (schema'd, evolvable) for identity,
+// transport, and eventually the journal.
 // ---------------------------------------------------------------------------
 
 fn canon_ast_hash(item: &ast::FnItem) -> u64 {
     let mut canonical = item.clone();
     canonical.strip_spans();
-    let bytes = facet_postcard::to_vec(&canonical).expect("AST serializes");
+    let bytes = phon::api::encode(&canonical).expect("AST serializes");
     let mut h = DefaultHasher::new();
     bytes.hash(&mut h);
     h.finish()
 }
 
 fn canon_expr_hash(expr: &Expr) -> u64 {
-    let bytes = facet_postcard::to_vec(expr).expect("AST serializes");
+    let bytes = phon::api::encode(expr).expect("AST serializes");
     let mut h = DefaultHasher::new();
     bytes.hash(&mut h);
     h.finish()
@@ -292,12 +292,12 @@ fn canon_expr_hash(expr: &Expr) -> u64 {
 
 /// Serialize a value for transport — the exec primitive's payload format.
 pub fn ship(value: &Value) -> Result<Vec<u8>, String> {
-    facet_postcard::to_vec(value).map_err(|e| format!("ship: {e}"))
+    phon::api::encode(value).map_err(|e| format!("ship: {e}"))
 }
 
 /// Reconstitute a shipped value on the receiving side.
 pub fn receive(bytes: &[u8]) -> Result<Value, String> {
-    facet_postcard::from_slice(bytes).map_err(|e| format!("receive: {e}"))
+    phon::api::decode(bytes).map_err(|e| format!("receive: {e}"))
 }
 
 // ---------------------------------------------------------------------------

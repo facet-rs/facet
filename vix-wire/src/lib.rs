@@ -319,13 +319,13 @@ fn evaluate_observer(module: &str, observer: &[u8], outputs: &Tree) -> Result<Ve
     vix::oracle::ship(&result)
 }
 
-// v0 helpers: whole-tree postcard (chunking later).
+// v0 helpers: whole-tree phon bytes (chunking later).
 pub fn tree_to_bytes(tree: &Tree) -> Vec<u8> {
-    facet_postcard::to_vec(tree).expect("tree serializes")
+    phon::api::encode(tree).expect("tree serializes")
 }
 
 pub fn tree_from_bytes(bytes: &[u8]) -> Result<Tree, String> {
-    facet_postcard::from_slice(bytes).map_err(|e| format!("wire decode: {e}"))
+    phon::api::decode(bytes).map_err(|e| format!("wire decode: {e}"))
 }
 
 /// A progressive fake rustc: writes `lib.rmeta`, then WAITS for a green light

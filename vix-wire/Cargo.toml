@@ -18,7 +18,7 @@ vix = { path = "../vix" }
 vox = { path = "../vox/rust/vox" }
 vox-schema = { path = "../vox/rust/vox-schema" }
 facet = { path = "../facet" }
-facet-postcard = { path = "../facet-postcard" }
+phon = { path = "../phon/rust/phon", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 
 [dev-dependencies]
