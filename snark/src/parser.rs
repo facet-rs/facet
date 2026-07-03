@@ -5156,7 +5156,8 @@ pub(crate) struct ResolvedCstBuilder<'a> {
     roots: Vec<usize>,
 }
 
-struct ResolvedCstNames {
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedCstNames {
     fields: Vec<Arc<str>>,
     public_nodes: Vec<Arc<str>>,
     aliases: Vec<Arc<str>>,
@@ -5170,7 +5171,7 @@ struct ResolvedCstNames {
 }
 
 impl ResolvedCstNames {
-    fn from_parser(parser: &ParserGrammar) -> Self {
+    pub(crate) fn from_parser(parser: &ParserGrammar) -> Self {
         Self {
             fields: parser
                 .fields
@@ -5225,6 +5226,22 @@ impl ResolvedCstNames {
             recovery: Arc::<str>::from("RECOVERY"),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn empty_for_tests() -> Self {
+        Self {
+            fields: Vec::new(),
+            public_nodes: Vec::new(),
+            aliases: Vec::new(),
+            terminals: Vec::new(),
+            nonterminals: Vec::new(),
+            externals: Vec::new(),
+            eof: Arc::<str>::from("EOF"),
+            error: Arc::<str>::from("ERROR"),
+            missing: Arc::<str>::from("MISSING"),
+            recovery: Arc::<str>::from("RECOVERY"),
+        }
+    }
 }
 
 impl<'a> ResolvedCstBuilder<'a> {
@@ -5242,11 +5259,27 @@ impl<'a> ResolvedCstBuilder<'a> {
         capacity: usize,
         node_capacity: usize,
     ) -> Self {
+        Self::with_names_and_node_capacity(
+            parser,
+            input,
+            capacity,
+            node_capacity,
+            ResolvedCstNames::from_parser(parser),
+        )
+    }
+
+    pub(crate) fn with_names_and_node_capacity(
+        parser: &'a ParserGrammar,
+        input: &'a str,
+        capacity: usize,
+        node_capacity: usize,
+        names: ResolvedCstNames,
+    ) -> Self {
         Self {
             parser,
             input,
             source: Arc::<str>::from(input),
-            names: ResolvedCstNames::from_parser(parser),
+            names,
             field_by_child: vec![None; node_capacity],
             item_indices_by_node: Vec::with_capacity(node_capacity),
             items: Vec::with_capacity(capacity),

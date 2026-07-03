@@ -2196,6 +2196,7 @@ fn add_snark_intrinsic_semantic_stats(
 pub struct WeavyParsePlan {
     program: WeavyParserProgram,
     lexer_program: WeavyLexerProgram,
+    resolved_cst_names: parser_ir::ResolvedCstNames,
     auto_close_index: RuntimeWeavyAutoCloseIndex,
     #[cfg(all(
         feature = "jit",
@@ -2217,6 +2218,7 @@ impl WeavyParsePlan {
         let program = lower_weavy_parser_program(parser, table)?;
         let compiled_lex_modes = parser_ir::compile_lex_modes(grammar, parser, table);
         let lexer_program = WeavyLexerProgram::from_compiled_modes(compiled_lex_modes, table);
+        let resolved_cst_names = parser_ir::ResolvedCstNames::from_parser(parser);
         let auto_close_index = RuntimeWeavyAutoCloseIndex::new(parser, &lexer_program);
         #[cfg(all(
             feature = "jit",
@@ -2229,6 +2231,7 @@ impl WeavyParsePlan {
         Ok(Self {
             program,
             lexer_program,
+            resolved_cst_names,
             auto_close_index,
             #[cfg(all(
                 feature = "jit",
@@ -5988,11 +5991,12 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedTreeSink
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         _reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     ) -> Result<Self::Output, WeavyParseError> {
-        let mut builder = parser_ir::ResolvedCstBuilder::with_node_capacity(
+        let mut builder = parser_ir::ResolvedCstBuilder::with_names_and_node_capacity(
             input_ctx.parser,
             input_ctx.input,
             tree_journal_head.len,
             tree_store.node_count(),
+            input_ctx.plan.resolved_cst_names.clone(),
         );
         tree_journal.visit(tree_journal_head, |event| builder.push(event));
         builder.finish().ok_or(WeavyParseError::MissingResolvedTree)
@@ -6025,11 +6029,12 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedCstSink 
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         _reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     ) -> Result<Self::Output, WeavyParseError> {
-        let mut builder = parser_ir::ResolvedCstBuilder::with_node_capacity(
+        let mut builder = parser_ir::ResolvedCstBuilder::with_names_and_node_capacity(
             input_ctx.parser,
             input_ctx.input,
             tree_journal_head.len,
             tree_store.node_count(),
+            input_ctx.plan.resolved_cst_names.clone(),
         );
         tree_journal.visit(tree_journal_head, |event| builder.push(event));
         builder
@@ -6064,11 +6069,12 @@ impl RuntimeWeavyDeterministicSink for RuntimeWeavyDeterministicResolvedCstRepor
         tree_journal_head: RuntimeWeavyTreeJournalHead,
         _reusable_nodes: Vec<RuntimeWeavyReusableNode>,
     ) -> Result<Self::Output, WeavyParseError> {
-        let mut builder = parser_ir::ResolvedCstBuilder::with_node_capacity(
+        let mut builder = parser_ir::ResolvedCstBuilder::with_names_and_node_capacity(
             input_ctx.parser,
             input_ctx.input,
             tree_journal_head.len,
             tree_store.node_count(),
+            input_ctx.plan.resolved_cst_names.clone(),
         );
         tree_journal.visit(tree_journal_head, |event| builder.push(event));
         let tree = builder
@@ -12773,6 +12779,10 @@ mod tests {
     use super::*;
     use weavy::ir::{EffectOrdering, EffectResource, ResourceAccess, ResourceEffect};
 
+    fn empty_resolved_cst_names() -> parser_ir::ResolvedCstNames {
+        parser_ir::ResolvedCstNames::empty_for_tests()
+    }
+
     #[test]
     fn intrinsic_descriptors_use_snark_tree_sitter_dialect() {
         let descriptor = SnarkIntrinsic::Shift {
@@ -14263,6 +14273,7 @@ mod tests {
                 alias_names: vec![],
             },
             lexer_program: sample_lexer_program(),
+            resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
                 feature = "jit",
@@ -14587,6 +14598,7 @@ mod tests {
                 modes: vec![],
                 state_modes: vec![],
             },
+            resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
                 feature = "jit",
@@ -14650,6 +14662,7 @@ mod tests {
                 modes: vec![],
                 state_modes: vec![],
             },
+            resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
                 feature = "jit",
@@ -14783,6 +14796,7 @@ mod tests {
                 alias_names: vec![],
             },
             lexer_program: sample_lexer_program(),
+            resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
                 feature = "jit",
@@ -14927,6 +14941,7 @@ mod tests {
                 modes: vec![],
                 state_modes: vec![],
             },
+            resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
                 feature = "jit",
@@ -15457,6 +15472,7 @@ mod tests {
                 modes: vec![],
                 state_modes: vec![],
             },
+            resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
                 feature = "jit",
@@ -15888,6 +15904,7 @@ mod tests {
                 modes: vec![],
                 state_modes: vec![],
             },
+            resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
                 feature = "jit",
@@ -15957,6 +15974,7 @@ mod tests {
                 }],
                 state_modes: vec![],
             },
+            resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
                 feature = "jit",
