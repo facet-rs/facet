@@ -7673,10 +7673,14 @@ fn parse_weavy_with_lexer_program_and_scratch(
         reusable_nodes: Vec::new(),
     };
     let mut queued_recovery_costs = HashMap::new();
-    if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
-        queued_recovery_costs.insert(RuntimeWeavyBranchKey::from_branch(&initial_branch), 0);
-    }
-    let mut branches = BinaryHeap::from([CostOrderedBranch(initial_branch)]);
+    let initial_branch = if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
+        let key = RuntimeWeavyBranchKey::from_branch(&initial_branch);
+        queued_recovery_costs.insert(key.clone(), 0);
+        CostOrderedBranch::recovering(initial_branch, key)
+    } else {
+        CostOrderedBranch::strict(initial_branch)
+    };
+    let mut branches = BinaryHeap::from([initial_branch]);
     // Lowest error_cost among accepted parses so far. Once the frontier's cheapest
     // branch exceeds it, no cheaper repair can exist and we stop expanding.
     let mut min_accepted_cost: Option<u32> = None;
@@ -7705,7 +7709,11 @@ fn parse_weavy_with_lexer_program_and_scratch(
     let mut hostcall_stats = WeavyHostCallExecutionStats::default();
     let mut branch_outcomes = Vec::new();
 
-    while let Some(CostOrderedBranch(branch)) = branches.pop() {
+    while let Some(CostOrderedBranch {
+        branch,
+        recovery_key,
+    }) = branches.pop()
+    {
         // Best-first termination: branches pop cheapest-first, so once we've accepted a
         // parse at cost C and the next branch already costs more, no cheaper repair
         // remains — every min-cost parse has been collected.
@@ -7713,9 +7721,11 @@ fn parse_weavy_with_lexer_program_and_scratch(
             break;
         }
         if recovery == RuntimeWeavyRecoveryMode::SkipInvalidInput {
-            let key = RuntimeWeavyBranchKey::from_branch(&branch);
+            let key = recovery_key
+                .as_ref()
+                .expect("recovering Weavy branches carry recovery keys");
             if queued_recovery_costs
-                .get(&key)
+                .get(key)
                 .is_some_and(|best_cost| branch.error_cost > *best_cost)
             {
                 trace_push!(
@@ -8259,11 +8269,30 @@ struct RuntimeWeavyBranch {
 /// (uniform-cost) recovery search. The cheapest repair completes first, so once a
 /// complete parse is accepted every remaining branch that costs more can be pruned
 /// instead of ground through in FIFO order (which let the live set explode).
-struct CostOrderedBranch(RuntimeWeavyBranch);
+struct CostOrderedBranch {
+    branch: RuntimeWeavyBranch,
+    recovery_key: Option<RuntimeWeavyBranchKey>,
+}
+
+impl CostOrderedBranch {
+    fn strict(branch: RuntimeWeavyBranch) -> Self {
+        Self {
+            branch,
+            recovery_key: None,
+        }
+    }
+
+    fn recovering(branch: RuntimeWeavyBranch, recovery_key: RuntimeWeavyBranchKey) -> Self {
+        Self {
+            branch,
+            recovery_key: Some(recovery_key),
+        }
+    }
+}
 
 impl PartialEq for CostOrderedBranch {
     fn eq(&self, other: &Self) -> bool {
-        self.0.error_cost == other.0.error_cost
+        self.branch.error_cost == other.branch.error_cost
     }
 }
 impl Eq for CostOrderedBranch {}
@@ -8275,7 +8304,7 @@ impl PartialOrd for CostOrderedBranch {
 impl Ord for CostOrderedBranch {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Reversed: lower error_cost sorts as "greater" so the max-heap yields it first.
-        other.0.error_cost.cmp(&self.0.error_cost)
+        other.branch.error_cost.cmp(&self.branch.error_cost)
     }
 }
 
@@ -9083,7 +9112,7 @@ fn enqueue_runtime_weavy_branch(
     branches: &mut BinaryHeap<CostOrderedBranch>,
 ) {
     if recovery == RuntimeWeavyRecoveryMode::Strict {
-        branches.push(CostOrderedBranch(branch));
+        branches.push(CostOrderedBranch::strict(branch));
         return;
     }
     let key = RuntimeWeavyBranchKey::from_branch(&branch);
@@ -9098,8 +9127,8 @@ fn enqueue_runtime_weavy_branch(
             );
         }
         _ => {
-            queued_recovery_costs.insert(key, branch.error_cost);
-            branches.push(CostOrderedBranch(branch));
+            queued_recovery_costs.insert(key.clone(), branch.error_cost);
+            branches.push(CostOrderedBranch::recovering(branch, key));
         }
     }
 }
