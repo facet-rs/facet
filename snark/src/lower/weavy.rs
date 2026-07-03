@@ -8443,8 +8443,7 @@ fn step_runtime_weavy_branch(
         return;
     }
     if let Some(reuse_index) = step.reuse_index
-        && let Some(branch) =
-            try_reuse_runtime_weavy_node(branch.clone(), reuse_index, input_ctx, output)
+        && let Some(branch) = try_reuse_runtime_weavy_node(&branch, reuse_index, input_ctx, output)
     {
         step.outcomes.push(RuntimeWeavyStepOutcome::Branch(branch));
         return;
@@ -8655,7 +8654,7 @@ fn step_runtime_weavy_branch(
 }
 
 fn try_reuse_runtime_weavy_node(
-    mut branch: RuntimeWeavyBranch,
+    branch: &RuntimeWeavyBranch,
     reuse_index: &RuntimeWeavyReuseIndex<'_>,
     input_ctx: RuntimeWeavyInput<'_>,
     output: &mut RuntimeWeavyOutput<'_>,
@@ -8664,6 +8663,7 @@ fn try_reuse_runtime_weavy_node(
     let reusable = reuse_index.get(branch.byte_position, entry_state, branch.scanner_snapshot)?;
     let goto_state =
         runtime_weavy_goto_state(input_ctx.table, entry_state, reusable.symbol).ok()?;
+    let mut branch = branch.clone();
     let node = output
         .tree_store
         .clone_node_from(reuse_index.tree_store, reusable.source_node);
