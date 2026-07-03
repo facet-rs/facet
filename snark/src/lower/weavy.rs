@@ -7261,6 +7261,7 @@ fn runtime_weavy_lex_one(
     let mut trace_events = RuntimeWeavyTraceSink::new(false);
     let mut tree_journal = RuntimeWeavyTreeJournal::default();
     let lexer_scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
+    lexer_scratch.reset_for_parse(RuntimeWeavyLexSetCachePolicy::Disabled, false);
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let external_scanner_errors = RefCell::new(Vec::new());
     let mut snark_stats = RuntimeWeavySnarkExecutionStats::disabled();
