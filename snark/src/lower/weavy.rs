@@ -4312,6 +4312,56 @@ fn regex_source_for_weavy_lex_expr(expr: &WeavyLexExpr) -> Option<String> {
     }
 }
 
+fn direct_set_regex_source_for_weavy_lex_expr(expr: &WeavyLexExpr) -> Option<String> {
+    match expr {
+        WeavyLexExpr::Blank => Some(String::new()),
+        WeavyLexExpr::String(value) => Some(regex::escape(value)),
+        WeavyLexExpr::Pattern(pattern) => pattern.regex_source().map(Cow::into_owned),
+        WeavyLexExpr::Seq(members) => {
+            let mut source = String::new();
+            for member in members {
+                source.push_str(&direct_set_regex_source_for_weavy_lex_expr(member)?);
+            }
+            Some(source)
+        }
+        WeavyLexExpr::Choice(members) => direct_set_choice_regex_source(members),
+        WeavyLexExpr::Repeat(content) => {
+            let source = direct_set_regex_source_for_weavy_lex_expr(content)?;
+            if source.is_empty() {
+                return None;
+            }
+            Some(format!("(?:{source})*"))
+        }
+        WeavyLexExpr::Repeat1(content) => {
+            let source = direct_set_regex_source_for_weavy_lex_expr(content)?;
+            if source.is_empty() || regex_source_matches_empty(&source) {
+                return None;
+            }
+            Some(format!("(?:{source})+"))
+        }
+        WeavyLexExpr::CompositeRegex { matcher, .. } => Some(matcher.source().to_owned()),
+        WeavyLexExpr::CompositeChoice { original, .. } => match original.as_ref() {
+            WeavyLexExpr::Choice(members) => direct_set_choice_regex_source(members),
+            _ => None,
+        },
+        WeavyLexExpr::Until(_)
+        | WeavyLexExpr::Nested { .. }
+        | WeavyLexExpr::AutoClose(_)
+        | WeavyLexExpr::UnsupportedSymbol(_) => None,
+    }
+}
+
+fn direct_set_choice_regex_source(members: &[WeavyLexExpr]) -> Option<String> {
+    let mut sources = Vec::with_capacity(members.len());
+    for member in members {
+        sources.push(direct_set_regex_source_for_weavy_lex_expr(member)?);
+    }
+    if sources.is_empty() {
+        return None;
+    }
+    Some(format!("(?:{})", sources.join("|")))
+}
+
 fn regex_source_matches_empty(source: &str) -> bool {
     AutomataRegex::new(source).ok().and_then(|regex| {
         regex
@@ -7793,20 +7843,20 @@ struct RuntimeWeavyAccepted {
 }
 
 fn runtime_weavy_action_block_for_execution(
-    input_ctx: RuntimeWeavyInput<'_>,
+    _input_ctx: RuntimeWeavyInput<'_>,
     block_execution: RuntimeWeavyBlockExecution,
-    state: parser_ir::ParseStateId,
-    entry_index: usize,
-    action_index: usize,
-    action: parser_ir::ParseAction,
+    _state: parser_ir::ParseStateId,
+    _entry_index: usize,
+    _action_index: usize,
+    _action: parser_ir::ParseAction,
 ) -> Result<Option<BlockRef>, RuntimeWeavyStepError> {
     match block_execution {
         RuntimeWeavyBlockExecution::Direct => Ok(None),
         #[cfg(test)]
-        RuntimeWeavyBlockExecution::Metered => input_ctx
+        RuntimeWeavyBlockExecution::Metered => _input_ctx
             .plan
             .program
-            .runtime_action_block(state, entry_index, action_index, action)
+            .runtime_action_block(_state, _entry_index, _action_index, _action)
             .map(Some),
         #[cfg(all(
             feature = "jit",
@@ -7815,25 +7865,27 @@ fn runtime_weavy_action_block_for_execution(
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        RuntimeWeavyBlockExecution::HostCalls => input_ctx
+        RuntimeWeavyBlockExecution::HostCalls => _input_ctx
             .plan
             .program
-            .runtime_action_block(state, entry_index, action_index, action)
+            .runtime_action_block(_state, _entry_index, _action_index, _action)
             .map(Some),
     }
 }
 
 fn runtime_weavy_state_block_for_execution(
-    input_ctx: RuntimeWeavyInput<'_>,
+    _input_ctx: RuntimeWeavyInput<'_>,
     block_execution: RuntimeWeavyBlockExecution,
-    state: parser_ir::ParseStateId,
+    _state: parser_ir::ParseStateId,
 ) -> Result<Option<BlockRef>, RuntimeWeavyStepError> {
     match block_execution {
         RuntimeWeavyBlockExecution::Direct => Ok(None),
         #[cfg(test)]
-        RuntimeWeavyBlockExecution::Metered => {
-            input_ctx.plan.program.runtime_state_block(state).map(Some)
-        }
+        RuntimeWeavyBlockExecution::Metered => _input_ctx
+            .plan
+            .program
+            .runtime_state_block(_state)
+            .map(Some),
         #[cfg(all(
             feature = "jit",
             any(
@@ -7841,9 +7893,11 @@ fn runtime_weavy_state_block_for_execution(
                 all(target_os = "linux", target_arch = "x86_64")
             )
         ))]
-        RuntimeWeavyBlockExecution::HostCalls => {
-            input_ctx.plan.program.runtime_state_block(state).map(Some)
-        }
+        RuntimeWeavyBlockExecution::HostCalls => _input_ctx
+            .plan
+            .program
+            .runtime_state_block(_state)
+            .map(Some),
     }
 }
 
@@ -11543,7 +11597,7 @@ fn direct_pattern_set_regex_sources(expr: &WeavyLexExpr) -> Option<Vec<String>> 
             WeavyLexExpr::Choice(members) => {
                 let mut sources = Vec::with_capacity(members.len());
                 for member in members {
-                    let source = regex_source_for_weavy_lex_expr(member)?;
+                    let source = direct_set_regex_source_for_weavy_lex_expr(member)?;
                     if source.is_empty() {
                         return None;
                     }
@@ -11553,7 +11607,10 @@ fn direct_pattern_set_regex_sources(expr: &WeavyLexExpr) -> Option<Vec<String>> 
             }
             _ => None,
         },
-        _ => None,
+        _ => {
+            let source = direct_set_regex_source_for_weavy_lex_expr(expr)?;
+            (!regex_source_matches_empty(&source)).then_some(vec![source])
+        }
     }
 }
 
@@ -14127,6 +14184,70 @@ mod tests {
         );
 
         assert_eq!(ends, vec![Some(parser_ir::LexMatch::new(7, 8))]);
+        assert_eq!(terminal_indices, vec![0]);
+    }
+
+    #[test]
+    fn direct_pattern_set_covers_nested_choice_inside_sequence_terminals() {
+        let mut compiler = WeavyLexerCompiler::default();
+        let expr = WeavyLexExpr::from_compiled(
+            parser_ir::CompiledLexExpr::Seq(vec![
+                parser_ir::CompiledLexExpr::String("@".to_owned()),
+                parser_ir::CompiledLexExpr::Choice(vec![
+                    parser_ir::CompiledLexExpr::Pattern(crate::lex_match::compile_pattern(
+                        "[a-z]+", None,
+                    )),
+                    parser_ir::CompiledLexExpr::Seq(vec![
+                        parser_ir::CompiledLexExpr::Pattern(crate::lex_match::compile_pattern(
+                            "[0-9]+", None,
+                        )),
+                        parser_ir::CompiledLexExpr::String("x".to_owned()),
+                    ]),
+                ]),
+            ]),
+            &mut compiler,
+        );
+        assert!(matches!(expr, WeavyLexExpr::Seq(_)));
+        let mut terminals = vec![WeavyLexTerminal {
+            terminal: parser_ir::TerminalId::from_index(0),
+            matcher: WeavyTerminalMatcher::Expr(expr),
+            lookahead: None,
+            immediate: false,
+            literal: false,
+            lexical_precedence: 0,
+            implicit_precedence: 0,
+            direct_literal_index: None,
+            direct_pattern_index: None,
+        }];
+        let direct_pattern_set = WeavyDirectPatternSet::from_terminals(&mut terminals);
+        let mode = WeavyLexModeProgram {
+            terminals,
+            non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
+            external_lookaheads: vec![],
+            external_count: 0,
+            direct_literal_set: None,
+            direct_pattern_set,
+        };
+        assert_eq!(mode.non_direct_terminal_indices, Vec::<usize>::new());
+        let direct_pattern_set = mode.direct_pattern_set.as_ref().unwrap();
+        assert_eq!(direct_pattern_set.len(), 1);
+        let mut ends = Vec::new();
+        let mut matches = None;
+        let mut dfa_cache = direct_pattern_set.create_dfa_cache();
+        let mut terminal_indices = Vec::new();
+
+        match_weavy_direct_pattern_set(
+            "@42x rest",
+            &mode,
+            0,
+            &mut ends,
+            &mut matches,
+            dfa_cache.as_mut(),
+            &mut terminal_indices,
+        );
+
+        assert_eq!(ends, vec![Some(parser_ir::LexMatch::new(4, 5))]);
         assert_eq!(terminal_indices, vec![0]);
     }
 
