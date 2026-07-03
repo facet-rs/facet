@@ -512,6 +512,13 @@ struct StructInfo {
     is_unit: bool,
 }
 
+struct ModuleTables {
+    fns: HashMap<String, ast::FnItem>,
+    fn_hashes: HashMap<String, u64>,
+    enums: HashMap<String, EnumInfo>,
+    structs: HashMap<String, StructInfo>,
+}
+
 type Frame = Vec<(String, Value)>;
 
 /// Where command blocks actually run. The oracle's local two-tier cache is
@@ -628,60 +635,75 @@ pub struct Oracle {
 
 type EvalResult = Result<Value, String>;
 
+fn load_module_tables(source: &str) -> Result<ModuleTables, String> {
+    // Table construction is the expensive part (seconds in dev profile);
+    // the parser itself is immutable after build — share one per process.
+    static PARSER: std::sync::OnceLock<VixParser> = std::sync::OnceLock::new();
+    let parser = PARSER.get_or_init(VixParser::new);
+    let file: SourceFile = parser.parse(source).map_err(|e| e.message)?;
+    let mut fns = HashMap::new();
+    let mut fn_hashes = HashMap::new();
+    let mut enums = HashMap::new();
+    let mut structs = HashMap::new();
+    for item in &file.items {
+        match item {
+            Item::Fn(f) => {
+                fn_hashes.insert(f.name.value.clone(), canon_ast_hash(f));
+                fns.insert(f.name.value.clone(), (**f).clone());
+            }
+            Item::Enum(e) => {
+                let variants = e
+                    .variants
+                    .iter()
+                    .map(|v| {
+                        let shape = if let Some(t) = &v.tuple {
+                            VariantShape::Tuple(t.types.len())
+                        } else if let Some(fl) = &v.fields {
+                            VariantShape::Record(
+                                fl.fields.iter().map(|f| f.name.value.clone()).collect(),
+                            )
+                        } else {
+                            VariantShape::Unit
+                        };
+                        (v.name.value.clone(), shape)
+                    })
+                    .collect();
+                enums.insert(e.name.value.clone(), EnumInfo { variants });
+            }
+            Item::Struct(s) => {
+                let fields = s
+                    .fields
+                    .iter()
+                    .flat_map(|fl| &fl.fields)
+                    .map(|f| (f.name.value.clone(), f.default.clone()))
+                    .collect();
+                structs.insert(
+                    s.name.value.clone(),
+                    StructInfo {
+                        fields,
+                        is_unit: s.fields.is_none() && s.tuple.is_none(),
+                    },
+                );
+            }
+            Item::Use(_) => {}
+        }
+    }
+    Ok(ModuleTables {
+        fns,
+        fn_hashes,
+        enums,
+        structs,
+    })
+}
+
 impl Oracle {
     pub fn load(source: &str) -> Result<Oracle, String> {
-        // Table construction is the expensive part (seconds in dev profile);
-        // the parser itself is immutable after build — share one per process.
-        static PARSER: std::sync::OnceLock<VixParser> = std::sync::OnceLock::new();
-        let parser = PARSER.get_or_init(VixParser::new);
-        let file: SourceFile = parser.parse(source).map_err(|e| e.message)?;
-        let mut fns = HashMap::new();
-        let mut fn_hashes = HashMap::new();
-        let mut enums = HashMap::new();
-        let mut structs = HashMap::new();
-        for item in &file.items {
-            match item {
-                Item::Fn(f) => {
-                    fn_hashes.insert(f.name.value.clone(), canon_ast_hash(f));
-                    fns.insert(f.name.value.clone(), (**f).clone());
-                }
-                Item::Enum(e) => {
-                    let variants = e
-                        .variants
-                        .iter()
-                        .map(|v| {
-                            let shape = if let Some(t) = &v.tuple {
-                                VariantShape::Tuple(t.types.len())
-                            } else if let Some(fl) = &v.fields {
-                                VariantShape::Record(
-                                    fl.fields.iter().map(|f| f.name.value.clone()).collect(),
-                                )
-                            } else {
-                                VariantShape::Unit
-                            };
-                            (v.name.value.clone(), shape)
-                        })
-                        .collect();
-                    enums.insert(e.name.value.clone(), EnumInfo { variants });
-                }
-                Item::Struct(s) => {
-                    let fields = s
-                        .fields
-                        .iter()
-                        .flat_map(|fl| &fl.fields)
-                        .map(|f| (f.name.value.clone(), f.default.clone()))
-                        .collect();
-                    structs.insert(
-                        s.name.value.clone(),
-                        StructInfo {
-                            fields,
-                            is_unit: s.fields.is_none() && s.tuple.is_none(),
-                        },
-                    );
-                }
-                Item::Use(_) => {}
-            }
-        }
+        let ModuleTables {
+            fns,
+            fn_hashes,
+            enums,
+            structs,
+        } = load_module_tables(source)?;
         Ok(Oracle {
             fns,
             fn_hashes,
@@ -700,6 +722,28 @@ impl Oracle {
         })
     }
 
+    /// Reload the module tables while preserving warm state. Memo entries are
+    /// keyed by canonical function hash plus argument hash, so unchanged
+    /// functions keep hitting and edited functions miss under their new hash.
+    /// The event log, live sink, call stack, and timestamp epoch are per eval.
+    pub fn reload(&mut self, source: &str) -> Result<(), String> {
+        let ModuleTables {
+            fns,
+            fn_hashes,
+            enums,
+            structs,
+        } = load_module_tables(source)?;
+        self.fns = fns;
+        self.fn_hashes = fn_hashes;
+        self.enums = enums;
+        self.structs = structs;
+        self.events.borrow_mut().clear();
+        self.sink = None;
+        self.fn_stack.borrow_mut().clear();
+        self.epoch = std::time::Instant::now();
+        Ok(())
+    }
+
     /// Route command blocks through a fleet instead of the local cache.
     pub fn with_backend(mut self, backend: Box<dyn ExecBackend>) -> Self {
         self.backend = Some(backend);
@@ -710,6 +754,11 @@ impl Oracle {
     pub fn with_sink(mut self, sink: EventSink) -> Self {
         self.sink = Some(sink);
         self
+    }
+
+    /// Replace or remove the live event sink for the next evaluation.
+    pub fn set_sink(&mut self, sink: Option<EventSink>) {
+        self.sink = sink;
     }
 
     /// Record an event: append to the log AND tap the live sink (in that

@@ -26,6 +26,8 @@
 //! is the reusable part.)
 
 use facet::Facet;
+use std::sync::mpsc as std_mpsc;
+
 use tokio::sync::{mpsc, oneshot};
 use vix::exec::ExecEvent;
 use vix::oracle::{Event, Oracle};
@@ -254,17 +256,90 @@ pub trait Daemon {
     async fn eval(&self, req: EvalRequest, control: Rx<StepCommand>, events: Tx<DemandEvent>);
 }
 
-/// The daemon: owns evaluation. (v1 evaluates a fresh oracle per request via
-/// its local two-tier cache; a fleet backend + the real graph engine + a warm
-/// oracle ACTOR THREAD — the correct home for cross-eval warmth, which the
-/// !Send oracle can't get from an async service directly — slot in behind the
-/// same RPC surface next.)
-#[derive(Clone, Default)]
-pub struct DaemonService {}
+struct EvalJob {
+    source: String,
+    entry: String,
+    sink: vix::oracle::EventSink,
+    reply: std_mpsc::Sender<Result<String, String>>,
+}
+
+#[derive(Clone)]
+struct OracleActor {
+    jobs: std_mpsc::Sender<EvalJob>,
+}
+
+impl OracleActor {
+    fn start() -> Self {
+        let (jobs, rx) = std_mpsc::channel::<EvalJob>();
+        std::thread::spawn(move || {
+            let mut oracle: Option<Oracle> = None;
+            for job in rx {
+                let result = eval_on_actor(&mut oracle, job.source, &job.entry, job.sink);
+                let _ = job.reply.send(result);
+            }
+        });
+        Self { jobs }
+    }
+
+    fn eval(
+        &self,
+        source: String,
+        entry: String,
+        sink: vix::oracle::EventSink,
+    ) -> Result<String, String> {
+        let (reply, rx) = std_mpsc::channel::<Result<String, String>>();
+        let job = EvalJob {
+            source,
+            entry,
+            sink,
+            reply,
+        };
+        self.jobs
+            .send(job)
+            .map_err(|_| "oracle actor stopped".to_string())?;
+        rx.recv()
+            .map_err(|_| "oracle actor stopped before replying".to_string())?
+    }
+}
+
+fn eval_on_actor(
+    oracle: &mut Option<Oracle>,
+    source: String,
+    entry: &str,
+    sink: vix::oracle::EventSink,
+) -> Result<String, String> {
+    if let Some(oracle) = oracle {
+        oracle.reload(&source)?;
+    } else {
+        *oracle = Some(Oracle::load(&source)?);
+    }
+    let oracle = oracle.as_mut().expect("oracle loaded or reloaded");
+    oracle.set_sink(Some(sink));
+    let args = target_args_for(oracle, entry);
+    let result = oracle.call(entry, &args).map(|v| format!("{v:?}"));
+    oracle.set_sink(None);
+    result
+}
+
+/// The daemon owns one warm oracle actor per service instance. Cloned service
+/// handles share the same actor sender, so concurrent evals across connections
+/// serialize through one dedicated Oracle thread for v1 warmth.
+#[derive(Clone)]
+pub struct DaemonService {
+    actor: OracleActor,
+}
 
 impl DaemonService {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            actor: OracleActor::start(),
+        }
+    }
+}
+
+impl Default for DaemonService {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -277,10 +352,9 @@ impl Daemon for DaemonService {
         let (gate_tx, gate_rx) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let mode = req.mode;
 
-        let source = req.source.clone();
-        let entry = req.entry.clone();
         let gate_tx_for_oracle = gate_tx.clone();
         let evt_tx_for_oracle = evt_tx.clone();
+        let actor = self.actor.clone();
 
         let oracle_task = tokio::task::spawn_blocking(move || {
             let sink_evt = evt_tx_for_oracle.clone();
@@ -300,14 +374,7 @@ impl Daemon for DaemonService {
                     let _ = sink_evt.send(de);
                 }
             };
-            let oracle = match Oracle::load(&source) {
-                Ok(o) => o.with_sink(Box::new(sink)),
-                Err(e) => return Err(e),
-            };
-            // If the entry takes a Target, supply a canned one (the IDE will
-            // offer target selection later).
-            let args = target_args_for(&oracle, &entry);
-            oracle.call(&entry, &args).map(|v| format!("{v:?}"))
+            actor.eval(req.source, req.entry, Box::new(sink))
         });
 
         // Drop our own sender halves: the oracle thread holds the only clones

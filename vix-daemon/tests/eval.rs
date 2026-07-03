@@ -76,6 +76,65 @@ async fn daemon_evaluates_lua_over_the_wire() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn warm_daemon_whitespace_edit_is_one_hit() {
+    let addr = serve().await;
+    let client: DaemonClient = vox::connect_lane(&addr).await.unwrap();
+
+    let first = collect(&client, LUA, "lua", StepMode::Run).await;
+    assert!(
+        matches!(first.last(), Some(DemandEvent::Done { .. })),
+        "first eval did not finish cleanly: {first:?}"
+    );
+
+    let warm_source = format!("// warm\n{LUA}");
+    let second = collect(&client, &warm_source, "lua", StepMode::Run).await;
+
+    assert_eq!(second.len(), 2, "warm eval events: {second:?}");
+    assert!(
+        matches!(&second[0], DemandEvent::Hit { func, .. } if func == "lua"),
+        "first warm event: {:?}",
+        second[0]
+    );
+    assert!(
+        matches!(&second[1], DemandEvent::Done { .. }),
+        "second warm event: {:?}",
+        second[1]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn warm_daemon_edited_fn_reruns() {
+    let addr = serve().await;
+    let client: DaemonClient = vox::connect_lane(&addr).await.unwrap();
+
+    let first = collect(&client, LUA, "lua", StepMode::Run).await;
+    assert!(
+        matches!(first.last(), Some(DemandEvent::Done { .. })),
+        "first eval did not finish cleanly: {first:?}"
+    );
+
+    let edited = LUA.replace(
+        "Linux => [-DLUA_USE_LINUX],",
+        "Linux => [-DLUA_USE_LINUX, -DVIX_WARM_RERUN],",
+    );
+    assert_ne!(edited, LUA, "semantic edit fixture must change lua.vix");
+    let second = collect(&client, &edited, "lua", StepMode::Run).await;
+
+    assert!(
+        second
+            .iter()
+            .any(|e| matches!(e, DemandEvent::Miss { .. })),
+        "edited eval did not miss: {second:?}"
+    );
+    assert!(
+        second
+            .iter()
+            .any(|e| matches!(e, DemandEvent::Finished { serving: Serving::Ran, .. })),
+        "edited eval did not run work: {second:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn stepping_gates_the_demand_one_event_at_a_time() {
     let addr = serve().await;
     let client: DaemonClient = vox::connect_lane(&addr).await.unwrap();
