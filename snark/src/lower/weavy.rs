@@ -12762,6 +12762,34 @@ impl RuntimeWeavyInputPoints {
             ),
         )
     }
+
+    fn range(&self, start: usize, end: usize) -> (ByteRange, PointRange) {
+        debug_assert!(self.enabled, "range lookup used disabled input points");
+        let start = start.min(self.input_len);
+        let end = end.min(self.input_len).max(start);
+        let bytes = ByteRange::new(
+            ByteOffset::new(u32::try_from(start).expect("runtime byte offset fits u32")),
+            ByteOffset::new(u32::try_from(end).expect("runtime byte offset fits u32")),
+        )
+        .expect("runtime byte range is ordered");
+        if self.line_starts.len() == 1 {
+            let points = PointRange::new(
+                PointBytes::new(
+                    Row::new(0),
+                    Utf8ColumnBytes::new(u32::try_from(start).expect("runtime column fits u32")),
+                ),
+                PointBytes::new(
+                    Row::new(0),
+                    Utf8ColumnBytes::new(u32::try_from(end).expect("runtime column fits u32")),
+                ),
+            )
+            .expect("runtime point range is ordered");
+            return (bytes, points);
+        }
+        let points = PointRange::new(self.point_at(start), self.point_at(end))
+            .expect("runtime point range is ordered");
+        (bytes, points)
+    }
 }
 
 fn runtime_weavy_input_ranges(
@@ -12769,16 +12797,7 @@ fn runtime_weavy_input_ranges(
     start: usize,
     end: usize,
 ) -> (ByteRange, PointRange) {
-    let start = start.min(input_points.input_len);
-    let end = end.min(input_points.input_len).max(start);
-    let bytes = ByteRange::new(
-        ByteOffset::new(u32::try_from(start).expect("runtime byte offset fits u32")),
-        ByteOffset::new(u32::try_from(end).expect("runtime byte offset fits u32")),
-    )
-    .expect("runtime byte range is ordered");
-    let points = PointRange::new(input_points.point_at(start), input_points.point_at(end))
-        .expect("runtime point range is ordered");
-    (bytes, points)
+    input_points.range(start, end)
 }
 
 #[cfg(test)]

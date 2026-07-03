@@ -4962,6 +4962,7 @@ impl ParseNode for ResolvedCstNode {
 /// Arena-backed resolved CST with anonymous terminals and source ranges preserved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedCstTree {
+    source: Arc<str>,
     roots: Vec<usize>,
     items: Vec<ResolvedCstItem>,
 }
@@ -5023,7 +5024,11 @@ impl ResolvedCstTree {
             return None;
         }
         if self.roots.len() == 1 {
-            return Some(build_resolved_node(self.roots[0], &self.items));
+            return Some(build_resolved_node(
+                self.roots[0],
+                &self.items,
+                &self.source,
+            ));
         }
 
         let first = self.roots[0];
@@ -5053,7 +5058,7 @@ impl ResolvedCstTree {
                 .roots
                 .iter()
                 .copied()
-                .map(|root| build_resolved_node(root, &self.items))
+                .map(|root| build_resolved_node(root, &self.items, &self.source))
                 .collect(),
         })
     }
@@ -5111,7 +5116,10 @@ impl<'a> ResolvedCstTreeNode<'a> {
 
     /// Source text for terminal leaves.
     pub fn text(&self) -> Option<&'a str> {
-        self.item().text.as_ref().and_then(ResolvedCstText::as_str)
+        self.item()
+            .has_text
+            .then(|| source_slice(&self.tree.source, self.item().bytes))
+            .flatten()
     }
 
     /// Child items in source order.
@@ -5138,7 +5146,7 @@ struct ResolvedCstItem {
     named: bool,
     visible: bool,
     extra: bool,
-    text: Option<ResolvedCstText>,
+    has_text: bool,
     order: usize,
     children: ResolvedCstChildren,
 }
@@ -5317,10 +5325,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     named: *named,
                     visible: true,
                     extra: *extra,
-                    text: Some(ResolvedCstText {
-                        source: Arc::clone(&self.source),
-                        bytes: *bytes,
-                    }),
+                    has_text: true,
                     order,
                     children: SmallVec::new(),
                 });
@@ -5345,7 +5350,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                         named: true,
                         visible: true,
                         extra: false,
-                        text: None,
+                        has_text: false,
                         order,
                         children: SmallVec::new(),
                     });
@@ -5368,7 +5373,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     named: true,
                     visible: true,
                     extra: true,
-                    text: None,
+                    has_text: false,
                     order,
                     children: SmallVec::new(),
                 });
@@ -5389,7 +5394,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     named: true,
                     visible: true,
                     extra: false,
-                    text: None,
+                    has_text: false,
                     order,
                     children: SmallVec::new(),
                 });
@@ -5410,7 +5415,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     named: false,
                     visible: true,
                     extra: false,
-                    text: None,
+                    has_text: false,
                     order,
                     children: SmallVec::new(),
                 });
@@ -5433,7 +5438,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                     named: *named,
                     visible: true,
                     extra: false,
-                    text: None,
+                    has_text: false,
                     order,
                     children: SmallVec::new(),
                 });
@@ -5458,7 +5463,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
         if roots.len() == 1 {
-            return Some(build_resolved_node(roots[0], &self.items));
+            return Some(build_resolved_node(roots[0], &self.items, &self.source));
         }
 
         let first = roots[0];
@@ -5486,7 +5491,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             text: None,
             children: roots
                 .into_iter()
-                .map(|root| build_resolved_node(root, &self.items))
+                .map(|root| build_resolved_node(root, &self.items, &self.source))
                 .collect(),
         })
     }
@@ -5502,6 +5507,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
         Some(ResolvedCstTree {
+            source: self.source,
             roots,
             items: self.items,
         })
@@ -5814,7 +5820,11 @@ fn resolved_item_len(item: &ResolvedCstItem) -> usize {
     item.bytes.end().get() as usize - item.bytes.start().get() as usize
 }
 
-fn build_resolved_node(index: usize, items: &[ResolvedCstItem]) -> ResolvedCstNode {
+fn build_resolved_node(
+    index: usize,
+    items: &[ResolvedCstItem],
+    source: &Arc<str>,
+) -> ResolvedCstNode {
     let item = &items[index];
     ResolvedCstNode {
         kind: item.kind.clone(),
@@ -5826,12 +5836,15 @@ fn build_resolved_node(index: usize, items: &[ResolvedCstItem]) -> ResolvedCstNo
         named: item.named,
         visible: item.visible,
         extra: item.extra,
-        text: item.text.clone(),
+        text: item.has_text.then(|| ResolvedCstText {
+            source: Arc::clone(source),
+            bytes: item.bytes,
+        }),
         children: item
             .children
             .iter()
             .copied()
-            .map(|child| build_resolved_node(child, items))
+            .map(|child| build_resolved_node(child, items, source))
             .collect(),
     }
 }
@@ -7017,7 +7030,7 @@ extras (
             named: node.is_some(),
             visible: true,
             extra: false,
-            text: None,
+            has_text: false,
             order,
             children: SmallVec::new(),
         }
