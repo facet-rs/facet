@@ -11139,9 +11139,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
     }
 
     fn emit_runtime_tree_event(&mut self, event: parser_ir::TreeEvent) {
-        if self.tree_event_collection == RuntimeWeavyTreeEventCollection::Disabled {
-            return;
-        }
+        debug_assert_eq!(
+            self.tree_event_collection,
+            RuntimeWeavyTreeEventCollection::Enabled
+        );
         if self.trace_events.is_enabled() {
             self.tree_journal
                 .push(&mut self.tree_journal_head, event.clone());
