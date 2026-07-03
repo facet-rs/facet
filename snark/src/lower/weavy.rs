@@ -2583,10 +2583,10 @@ fn snark_stencil_family_summaries_for_profile(
             summary.stencil.state,
             profile,
         ));
-        effect.accumulate(snark_stencil_effect_for_profile(
-            summary.effect.clone(),
-            profile,
-        ));
+        accumulate_effect_union(
+            effect,
+            snark_stencil_effect_for_profile(summary.effect.clone(), profile),
+        );
     }
     let mut summaries = counts
         .into_iter()
@@ -2672,10 +2672,10 @@ fn snark_stencil_execution_summaries_for_profile(
             summary.stencil.state,
             profile,
         ));
-        effect.accumulate(snark_stencil_effect_for_profile(
-            summary.effect.clone(),
-            profile,
-        ));
+        accumulate_effect_union(
+            effect,
+            snark_stencil_effect_for_profile(summary.effect.clone(), profile),
+        );
     }
     let mut summaries = counts
         .into_iter()
@@ -14636,7 +14636,7 @@ mod tests {
             ]
         );
         let mut expected_direct_effect = reduce.effect();
-        expected_direct_effect.accumulate(commit.effect());
+        accumulate_effect_union(&mut expected_direct_effect, commit.effect());
         assert_eq!(
             readiness.snark_stencil_execution_summaries,
             vec![
