@@ -6391,13 +6391,23 @@ impl RuntimeWeavyLexerScratch {
             &[usize],
         ) -> R,
     ) -> R {
+        if self.cache_policy.get() == RuntimeWeavyLexSetCachePolicy::Disabled {
+            self.record_direct_set_uncached();
+            self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
+            let direct_literal_ends = self.direct_literal_ends.borrow();
+            let direct_pattern_ends = self.direct_pattern_ends.borrow();
+            let direct_terminal_indices = self.direct_terminal_indices.borrow();
+            return visit(
+                &direct_literal_ends,
+                &direct_pattern_ends,
+                &direct_terminal_indices,
+            );
+        }
         let key = RuntimeWeavyLexSetCacheKey {
             slot: cache_slot,
             byte_position,
         };
-        if self.cache_policy.get() == RuntimeWeavyLexSetCachePolicy::Enabled
-            && let Some(matches) = self.direct_set_cache.borrow().get(&key)
-        {
+        if let Some(matches) = self.direct_set_cache.borrow().get(&key) {
             self.record_direct_set_cache_hit();
             return visit(
                 &matches.literal_ends,
@@ -6405,34 +6415,20 @@ impl RuntimeWeavyLexerScratch {
                 &matches.terminal_indices,
             );
         }
-        if self.cache_policy.get() == RuntimeWeavyLexSetCachePolicy::Enabled {
-            self.record_direct_set_cache_miss();
-        } else {
-            self.record_direct_set_uncached();
-        }
+        self.record_direct_set_cache_miss();
         self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
-        if self.cache_policy.get() == RuntimeWeavyLexSetCachePolicy::Enabled {
-            let matches = Arc::new(RuntimeWeavyDirectSetMatches {
-                literal_ends: self.direct_literal_ends.borrow().clone(),
-                pattern_ends: self.direct_pattern_ends.borrow().clone(),
-                terminal_indices: self.direct_terminal_indices.borrow().clone(),
-            });
-            self.direct_set_cache
-                .borrow_mut()
-                .insert(key, Arc::clone(&matches));
-            return visit(
-                &matches.literal_ends,
-                &matches.pattern_ends,
-                &matches.terminal_indices,
-            );
-        }
-        let direct_literal_ends = self.direct_literal_ends.borrow();
-        let direct_pattern_ends = self.direct_pattern_ends.borrow();
-        let direct_terminal_indices = self.direct_terminal_indices.borrow();
+        let matches = Arc::new(RuntimeWeavyDirectSetMatches {
+            literal_ends: self.direct_literal_ends.borrow().clone(),
+            pattern_ends: self.direct_pattern_ends.borrow().clone(),
+            terminal_indices: self.direct_terminal_indices.borrow().clone(),
+        });
+        self.direct_set_cache
+            .borrow_mut()
+            .insert(key, Arc::clone(&matches));
         visit(
-            &direct_literal_ends,
-            &direct_pattern_ends,
-            &direct_terminal_indices,
+            &matches.literal_ends,
+            &matches.pattern_ends,
+            &matches.terminal_indices,
         )
     }
 
