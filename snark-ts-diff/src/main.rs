@@ -201,8 +201,18 @@ fn write_stencil_profile(
     if let Some(summary) = profile.dominant_backend_execution() {
         writeln!(
             out,
-            "{label}_dominant_backend_execution: {:?} parser={} lexer={} total={}",
-            summary.execution, summary.parser_count, summary.lexer_count, summary.total_count
+            "{label}_dominant_backend_execution: {:?} parser={} lexer={} total={} effect_order={:?} may_fail={} may_allocate={} calls_user_code={} opaque={} resources={:?} typed_memory={:?}",
+            summary.execution,
+            summary.parser_count,
+            summary.lexer_count,
+            summary.total_count,
+            summary.effect.ordering,
+            summary.effect.may_fail,
+            summary.effect.may_allocate,
+            summary.effect.calls_user_code,
+            summary.effect.opaque,
+            summary.effect.resources,
+            summary.effect.typed_memory
         )?;
     } else {
         writeln!(out, "{label}_dominant_backend_execution: none")?;
@@ -216,8 +226,18 @@ fn write_stencil_profile(
         for summary in backend_execution {
             writeln!(
                 out,
-                "  {:?}: parser={} lexer={} total={}",
-                summary.execution, summary.parser_count, summary.lexer_count, summary.total_count
+                "  {:?}: parser={} lexer={} total={} effect_order={:?} may_fail={} may_allocate={} calls_user_code={} opaque={} resources={:?} typed_memory={:?}",
+                summary.execution,
+                summary.parser_count,
+                summary.lexer_count,
+                summary.total_count,
+                summary.effect.ordering,
+                summary.effect.may_fail,
+                summary.effect.may_allocate,
+                summary.effect.calls_user_code,
+                summary.effect.opaque,
+                summary.effect.resources,
+                summary.effect.typed_memory
             )?;
         }
     }
