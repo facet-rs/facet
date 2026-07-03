@@ -11892,18 +11892,14 @@ fn mark_runtime_weavy_reusable_nodes_with_errors(
     nodes
 }
 
-fn runtime_weavy_subtree_tree_events_from_iter<'a, I>(
-    tree_events: I,
+fn runtime_weavy_subtree_tree_events(
+    tree_events: &[parser_ir::TreeEvent],
     start_byte: usize,
     end_byte: usize,
     root_node: parser_ir::TreeNodeId,
-) -> Vec<parser_ir::TreeEvent>
-where
-    I: IntoIterator<Item = &'a parser_ir::TreeEvent>,
-{
-    let tree_events = tree_events.into_iter().collect::<Vec<_>>();
+) -> Vec<parser_ir::TreeEvent> {
     let mut nodes = BTreeSet::from([root_node]);
-    for event in &tree_events {
+    for event in tree_events {
         if let Some((start, end)) = runtime_weavy_tree_event_byte_range(event)
             && start_byte <= start
             && end <= end_byte
@@ -11935,8 +11931,8 @@ fn replay_reused_runtime_weavy_tree_events(
     tree_store: &mut RuntimeWeavyTreeStore,
 ) -> Vec<parser_ir::TreeEvent> {
     let mut node_map = BTreeMap::from([(reusable.source_node, root_node)]);
-    runtime_weavy_subtree_tree_events_from_iter(
-        reuse_index.tree_events.iter(),
+    runtime_weavy_subtree_tree_events(
+        reuse_index.tree_events,
         reusable.source_start_byte,
         reusable.source_end_byte,
         reusable.source_node,
