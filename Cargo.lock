@@ -8581,6 +8581,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "weavy-async-spike"
+version = "0.0.0"
+dependencies = [
+ "copypatch",
+ "tokio",
+ "weavy",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
