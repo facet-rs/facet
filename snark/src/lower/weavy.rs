@@ -6269,10 +6269,8 @@ struct RuntimeWeavyLexerScratch {
     direct_set_cache_miss_count: Cell<usize>,
     direct_set_uncached_count: Cell<usize>,
     stencil_executions: [Cell<usize>; WEAVY_LEXER_STENCIL_KIND_COUNT],
-    direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
-    direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
+    direct_set_buffers: RefCell<RuntimeWeavyDirectSetScratchBuffers>,
     direct_pattern_matches: RefCell<Vec<Option<PatternSet>>>,
-    direct_terminal_indices: RefCell<Vec<usize>>,
     direct_pattern_dfa_caches: RefCell<Vec<Option<Option<HybridDfaCache>>>>,
     regex_leaf_dfa_caches: RefCell<Vec<Option<Option<HybridDfaCache>>>>,
     choice_dfa_caches: RefCell<Vec<Option<HybridDfaCache>>>,
@@ -6290,10 +6288,8 @@ impl RuntimeWeavyLexerScratch {
             direct_set_cache_miss_count: Cell::new(0),
             direct_set_uncached_count: Cell::new(0),
             stencil_executions: std::array::from_fn(|_| Cell::new(0)),
-            direct_literal_ends: RefCell::default(),
-            direct_pattern_ends: RefCell::default(),
+            direct_set_buffers: RefCell::default(),
             direct_pattern_matches: RefCell::default(),
-            direct_terminal_indices: RefCell::default(),
             direct_pattern_dfa_caches: RefCell::default(),
             regex_leaf_dfa_caches: RefCell::default(),
             choice_dfa_caches: RefCell::default(),
@@ -6311,9 +6307,7 @@ impl RuntimeWeavyLexerScratch {
         for count in &self.stencil_executions {
             count.set(0);
         }
-        self.direct_literal_ends.borrow_mut().clear();
-        self.direct_pattern_ends.borrow_mut().clear();
-        self.direct_terminal_indices.borrow_mut().clear();
+        self.direct_set_buffers.borrow_mut().clear();
         self.direct_set_cache.borrow_mut().clear();
     }
 
@@ -6413,13 +6407,11 @@ impl RuntimeWeavyLexerScratch {
         if self.cache_policy.get() == RuntimeWeavyLexSetCachePolicy::Disabled {
             self.record_direct_set_uncached();
             self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
-            let direct_literal_ends = self.direct_literal_ends.borrow();
-            let direct_pattern_ends = self.direct_pattern_ends.borrow();
-            let direct_terminal_indices = self.direct_terminal_indices.borrow();
+            let buffers = self.direct_set_buffers.borrow();
             return visit(
-                &direct_literal_ends,
-                &direct_pattern_ends,
-                &direct_terminal_indices,
+                &buffers.literal_ends,
+                &buffers.pattern_ends,
+                &buffers.terminal_indices,
             );
         }
         let key = RuntimeWeavyLexSetCacheKey {
@@ -6436,10 +6428,11 @@ impl RuntimeWeavyLexerScratch {
         }
         self.record_direct_set_cache_miss();
         self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
+        let buffers = self.direct_set_buffers.borrow();
         let matches = Arc::new(RuntimeWeavyDirectSetMatches {
-            literal_ends: self.direct_literal_ends.borrow().clone(),
-            pattern_ends: self.direct_pattern_ends.borrow().clone(),
-            terminal_indices: self.direct_terminal_indices.borrow().clone(),
+            literal_ends: buffers.literal_ends.clone(),
+            pattern_ends: buffers.pattern_ends.clone(),
+            terminal_indices: buffers.terminal_indices.clone(),
         });
         self.direct_set_cache
             .borrow_mut()
@@ -6467,10 +6460,11 @@ impl RuntimeWeavyLexerScratch {
             return Arc::clone(matches);
         }
         self.compute_direct_set_matches(input, cache_slot, mode_program, byte_position);
+        let buffers = self.direct_set_buffers.borrow();
         let matches = Arc::new(RuntimeWeavyDirectSetMatches {
-            literal_ends: self.direct_literal_ends.borrow().clone(),
-            pattern_ends: self.direct_pattern_ends.borrow().clone(),
-            terminal_indices: self.direct_terminal_indices.borrow().clone(),
+            literal_ends: buffers.literal_ends.clone(),
+            pattern_ends: buffers.pattern_ends.clone(),
+            terminal_indices: buffers.terminal_indices.clone(),
         });
         self.direct_set_cache
             .borrow_mut()
@@ -6485,55 +6479,64 @@ impl RuntimeWeavyLexerScratch {
         mode_program: &WeavyLexModeProgram,
         byte_position: usize,
     ) {
-        self.direct_terminal_indices.borrow_mut().clear();
-        {
-            let mut direct_literal_ends = self.direct_literal_ends.borrow_mut();
-            let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
-            if mode_program.direct_literal_set.is_some() {
-                self.record_stencil_execution(WeavyLexerStencilKind::LiteralSet);
-                mode_program.match_direct_literals_with_set(
-                    input,
-                    byte_position,
-                    &mut direct_literal_ends,
-                    &mut direct_terminal_indices,
-                );
-            } else {
-                direct_literal_ends.clear();
-            }
+        let mut buffers = self.direct_set_buffers.borrow_mut();
+        let buffers = &mut *buffers;
+        buffers.terminal_indices.clear();
+        if mode_program.direct_literal_set.is_some() {
+            self.record_stencil_execution(WeavyLexerStencilKind::LiteralSet);
+            mode_program.match_direct_literals_with_set(
+                input,
+                byte_position,
+                &mut buffers.literal_ends,
+                &mut buffers.terminal_indices,
+            );
+        } else {
+            buffers.literal_ends.clear();
         }
-        {
-            let mut direct_pattern_ends = self.direct_pattern_ends.borrow_mut();
-            let mut direct_pattern_matches = self.direct_pattern_matches.borrow_mut();
-            let mut direct_terminal_indices = self.direct_terminal_indices.borrow_mut();
-            let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
-            if let Some(pattern_set) = &mode_program.direct_pattern_set {
-                self.record_stencil_execution(WeavyLexerStencilKind::PatternDfaSet);
-                let direct_pattern_dfa_cache =
-                    runtime_weavy_lexer_scratch_slot(&mut direct_pattern_dfa_caches, cache_slot)
-                        .get_or_insert_with(|| pattern_set.create_dfa_cache())
-                        .as_mut();
-                let direct_pattern_matches =
-                    runtime_weavy_lexer_scratch_slot(&mut direct_pattern_matches, cache_slot)
-                        .get_or_insert_with(|| PatternSet::new(pattern_set.pattern_len()));
-                mode_program.match_direct_patterns_with_set(
-                    input,
-                    byte_position,
-                    &mut direct_pattern_ends,
-                    &mut direct_terminal_indices,
-                    WeavyDirectPatternSetScratch {
-                        matches: direct_pattern_matches,
-                        dfa_cache: direct_pattern_dfa_cache,
-                        pattern_leaf_rematch_count: Some(
-                            &self.stencil_executions[weavy_lexer_stencil_kind_index(
-                                WeavyLexerStencilKind::PatternLeafRematch,
-                            )],
-                        ),
-                    },
-                );
-            } else {
-                direct_pattern_ends.clear();
-            }
+        let mut direct_pattern_matches = self.direct_pattern_matches.borrow_mut();
+        let mut direct_pattern_dfa_caches = self.direct_pattern_dfa_caches.borrow_mut();
+        if let Some(pattern_set) = &mode_program.direct_pattern_set {
+            self.record_stencil_execution(WeavyLexerStencilKind::PatternDfaSet);
+            let direct_pattern_dfa_cache =
+                runtime_weavy_lexer_scratch_slot(&mut direct_pattern_dfa_caches, cache_slot)
+                    .get_or_insert_with(|| pattern_set.create_dfa_cache())
+                    .as_mut();
+            let direct_pattern_matches =
+                runtime_weavy_lexer_scratch_slot(&mut direct_pattern_matches, cache_slot)
+                    .get_or_insert_with(|| PatternSet::new(pattern_set.pattern_len()));
+            mode_program.match_direct_patterns_with_set(
+                input,
+                byte_position,
+                &mut buffers.pattern_ends,
+                &mut buffers.terminal_indices,
+                WeavyDirectPatternSetScratch {
+                    matches: direct_pattern_matches,
+                    dfa_cache: direct_pattern_dfa_cache,
+                    pattern_leaf_rematch_count: Some(
+                        &self.stencil_executions[weavy_lexer_stencil_kind_index(
+                            WeavyLexerStencilKind::PatternLeafRematch,
+                        )],
+                    ),
+                },
+            );
+        } else {
+            buffers.pattern_ends.clear();
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RuntimeWeavyDirectSetScratchBuffers {
+    literal_ends: Vec<Option<parser_ir::LexMatch>>,
+    pattern_ends: Vec<Option<parser_ir::LexMatch>>,
+    terminal_indices: Vec<usize>,
+}
+
+impl RuntimeWeavyDirectSetScratchBuffers {
+    fn clear(&mut self) {
+        self.literal_ends.clear();
+        self.pattern_ends.clear();
+        self.terminal_indices.clear();
     }
 }
 
@@ -14249,8 +14252,7 @@ mod tests {
         let lex_mode = parser_ir::LexModeId::from_index(0);
 
         let first = scratch.direct_set_matches("abcd", lex_mode.get() as usize, &mode, 0);
-        scratch.direct_literal_ends.borrow_mut().clear();
-        scratch.direct_pattern_ends.borrow_mut().clear();
+        scratch.direct_set_buffers.borrow_mut().clear();
         let second = scratch.direct_set_matches("zzzz", lex_mode.get() as usize, &mode, 0);
 
         assert_eq!(scratch.direct_set_cache.borrow().len(), 1);
