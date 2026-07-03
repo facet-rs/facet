@@ -3577,6 +3577,7 @@ fn lexer_stencil_effect(kind: WeavyLexerStencilKind) -> EffectContract {
 struct WeavyLexModeProgram {
     terminals: Vec<WeavyLexTerminal>,
     non_direct_terminal_indices: Vec<usize>,
+    auto_close_terminal_indices: Vec<usize>,
     external_count: usize,
     direct_literal_set: Option<WeavyLiteralSet>,
     direct_pattern_set: Option<WeavyDirectPatternSet>,
@@ -3646,9 +3647,21 @@ impl WeavyLexModeProgram {
                     .then_some(index)
             })
             .collect();
+        let auto_close_terminal_indices = terminals
+            .iter()
+            .enumerate()
+            .filter_map(|(index, terminal)| {
+                matches!(
+                    terminal.matcher,
+                    WeavyTerminalMatcher::Expr(WeavyLexExpr::AutoClose(_))
+                )
+                .then_some(index)
+            })
+            .collect();
         Self {
             terminals,
             non_direct_terminal_indices,
+            auto_close_terminal_indices,
             external_count,
             direct_literal_set,
             direct_pattern_set,
@@ -10264,7 +10277,10 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let mode_program = self
             .lexer_program
             .runtime_state_mode(state.id(), mode.id())?;
-        for terminal_row in mode_program.terminals() {
+        for terminal_index in mode_program.auto_close_terminal_indices.iter().copied() {
+            let Some(terminal_row) = mode_program.terminals().get(terminal_index) else {
+                continue;
+            };
             let Some(lookahead) = self.runtime_terminal_lookahead(state.id(), terminal_row) else {
                 continue;
             };
@@ -13047,6 +13063,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
@@ -13100,6 +13117,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
@@ -13174,6 +13192,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set: None,
@@ -13244,6 +13263,7 @@ mod tests {
             direct_pattern_set,
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set: None,
         };
@@ -13308,6 +13328,7 @@ mod tests {
             direct_pattern_set,
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set: None,
         };
@@ -13382,6 +13403,7 @@ mod tests {
             direct_pattern_set,
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set: None,
         };
@@ -13440,6 +13462,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set: None,
             direct_pattern_set,
@@ -13504,6 +13527,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set: None,
             direct_pattern_set,
@@ -13578,6 +13602,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set,
@@ -13637,6 +13662,7 @@ mod tests {
         let mode = WeavyLexModeProgram {
             terminals,
             non_direct_terminal_indices: vec![],
+            auto_close_terminal_indices: vec![],
             external_count: 0,
             direct_literal_set,
             direct_pattern_set,
@@ -15371,6 +15397,7 @@ mod tests {
                 modes: vec![WeavyLexModeProgram {
                     terminals: vec![],
                     non_direct_terminal_indices: vec![],
+                    auto_close_terminal_indices: vec![],
                     external_count: 3,
                     direct_literal_set: None,
                     direct_pattern_set: None,
@@ -15497,6 +15524,7 @@ mod tests {
             modes: vec![WeavyLexModeProgram {
                 terminals,
                 non_direct_terminal_indices: vec![],
+                auto_close_terminal_indices: vec![],
                 external_count: 0,
                 direct_literal_set,
                 direct_pattern_set,
