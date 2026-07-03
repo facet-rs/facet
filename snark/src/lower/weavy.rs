@@ -7238,7 +7238,7 @@ fn runtime_weavy_lex_one(
     let lexer_scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
     let input_points = RuntimeWeavyInputPoints::new(input_ctx.input);
     let external_scanner_errors = RefCell::new(Vec::new());
-    let mut snark_stats = RuntimeWeavySnarkExecutionStats::default();
+    let mut snark_stats = RuntimeWeavySnarkExecutionStats::disabled();
     let branch = RuntimeWeavyBranch {
         version: parser_ir::StackVersionId::from_index(0),
         stack: vec![RuntimeWeavyStackEntry {
