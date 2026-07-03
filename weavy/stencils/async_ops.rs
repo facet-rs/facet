@@ -1,30 +1,23 @@
-//! Copy-and-patch stencils with MULTIPLE SUSPEND POINTS — a real resumable
-//! state machine.
+//! Async copy-and-patch stencils: suspend points for the demand-driven lane.
 //!
-//! The insight (proven in phase 1): a copy-and-patch chain keeps its state OFF
-//! the C stack (`Ctx` is an explicit struct), and `become` (guaranteed tail
-//! calls) means no stencil holds live C-stack state across its continuation.
-//! So the whole chain runs in ONE driver-owned stack frame; a stencil SUSPENDS
-//! by returning up (losing nothing) and RESUMES by re-entering at a saved
-//! offset.
+//! The insight these encode: a copy-and-patch chain keeps its state OFF the C
+//! stack (`Ctx` is an explicit struct — the operand stack is a separate
+//! buffer), and the guaranteed-tail-call discipline means no stencil holds
+//! live C-stack state across its continuation. So the whole chain runs in one
+//! driver-owned frame; a stencil SUSPENDS by returning up (losing nothing) and
+//! RESUMES by re-entering at a saved chain offset. This is the two-successor
+//! type-speculation GUARD stencil with the slow path repurposed from "deopt to
+//! interpreter" to "yield Pending to the async executor".
 //!
-//! Phase 2 generalizes to N awaits. A stencil can't know its own address, so
-//! the compiler BAKES each await's resume offset (its own chain offset) and
-//! its await index into the immediate stream. On suspend the await writes both
-//! into `Ctx` (the driver re-enters at `resume`, and `await_index` tells the
-//! driver which future parked). On ready it consumes those two immediates and
-//! continues. Readiness/values are HOST ARRAYS indexed by await index, so
-//! independent awaits resolve concurrently even though the chain visits them
-//! in order.
-//!
-//! build.rs compiles this with `rustc --emit=obj` and extracts each op's
-//! machine code + its `weavy_cont` relocation, like the intop lane.
+//! build.rs compiles this with `rustc --emit=obj` (guaranteed tail calls via
+//! `become`, so suspension is sound for arbitrary-length chains) and extracts
+//! each op's machine code plus its `weavy_cont` relocation.
 
 #![cfg_attr(tailcall, feature(explicit_tail_calls))]
 #![allow(clippy::missing_safety_doc)]
 #![allow(incomplete_features)]
 
-/// Threaded state — MUST match `Ctx` in src/lib.rs (repr(C), same order).
+/// Threaded state — MUST match `Ctx` in src/jit/async.rs (repr(C), same order).
 #[repr(C)]
 pub struct Ctx {
     /// Immediate stream (push reads values; await reads [resume_off, index]).
@@ -66,7 +59,7 @@ macro_rules! cont {
 
 /// Push one immediate onto the operand stack.
 #[no_mangle]
-pub unsafe extern "C" fn weavy_push(cx: *mut Ctx) {
+pub unsafe extern "C" fn weavy_async_push(cx: *mut Ctx) {
     let c = &mut *cx;
     *c.sp = *c.prog as i64;
     c.sp = c.sp.add(1);
@@ -74,11 +67,11 @@ pub unsafe extern "C" fn weavy_push(cx: *mut Ctx) {
     cont!(cx);
 }
 
-/// AWAIT #index. Reads two immediates WITHOUT advancing on the pending path,
-/// so a resume re-reads the same [resume_off, index] — the state machine is
-/// idempotent per suspend point.
+/// AWAIT #index — the suspend point. Reads two immediates WITHOUT advancing on
+/// the pending path, so a resume re-reads the same [resume_off, index]: the
+/// state machine is idempotent per suspend point.
 #[no_mangle]
-pub unsafe extern "C" fn weavy_await(cx: *mut Ctx) {
+pub unsafe extern "C" fn weavy_async_await(cx: *mut Ctx) {
     let c = &mut *cx;
     let resume_off = *c.prog;
     let index = *c.prog.add(1) as usize;
@@ -99,7 +92,7 @@ pub unsafe extern "C" fn weavy_await(cx: *mut Ctx) {
 
 /// Pop two, push their sum.
 #[no_mangle]
-pub unsafe extern "C" fn weavy_add(cx: *mut Ctx) {
+pub unsafe extern "C" fn weavy_async_add(cx: *mut Ctx) {
     let c = &mut *cx;
     let b = *c.sp.sub(1);
     let a = *c.sp.sub(2);
@@ -108,10 +101,9 @@ pub unsafe extern "C" fn weavy_add(cx: *mut Ctx) {
     cont!(cx);
 }
 
-/// Pop two, push their product (a second op, to prove chains of real work
-/// survive multiple suspends unchanged).
+/// Pop two, push their product.
 #[no_mangle]
-pub unsafe extern "C" fn weavy_mul(cx: *mut Ctx) {
+pub unsafe extern "C" fn weavy_async_mul(cx: *mut Ctx) {
     let c = &mut *cx;
     let b = *c.sp.sub(1);
     let a = *c.sp.sub(2);
@@ -122,4 +114,4 @@ pub unsafe extern "C" fn weavy_mul(cx: *mut Ctx) {
 
 /// End of chain: return to the driver with the result on the stack.
 #[no_mangle]
-pub unsafe extern "C" fn weavy_done(_cx: *mut Ctx) {}
+pub unsafe extern "C" fn weavy_async_done(_cx: *mut Ctx) {}

@@ -4,7 +4,6 @@ members = [
   "snark-ts-diff",
   "vix",
   "vix-wire",
-  "weavy-async-spike",
   # core
   "facet-core",
   "facet",

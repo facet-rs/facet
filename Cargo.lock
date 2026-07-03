@@ -8578,15 +8578,7 @@ name = "weavy"
 version = "0.2.2"
 dependencies = [
  "copypatch",
-]
-
-[[package]]
-name = "weavy-async-spike"
-version = "0.0.0"
-dependencies = [
- "copypatch",
  "tokio",
- "weavy",
 ]
 
 [[package]]
