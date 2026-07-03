@@ -2377,16 +2377,26 @@ impl WeavyParseWorkspace {
         input: &str,
         external_scanner: Option<&dyn ExternalScannerHost>,
     ) -> Result<WeavyParseReport, WeavyParseError> {
+        let input_ctx = RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner,
+        };
+        if let Some(report) = parse_weavy_deterministic_with_execution_and_scratch::<
+            RuntimeWeavyDeterministicCollectingReportSink,
+        >(
+            input_ctx,
+            RuntimeWeavyBlockExecution::Direct,
+            &self.lexer_scratch,
+        )? {
+            return Ok(report);
+        }
         parse_weavy_with_lexer_program_and_scratch(
-            RuntimeWeavyInput {
-                plan,
-                lexer_program: &plan.lexer_program,
-                auto_close_index: &plan.auto_close_index,
-                parser,
-                table,
-                input,
-                external_scanner,
-            },
+            input_ctx,
             RuntimeWeavyRecoveryMode::SkipInvalidInput,
             None,
             RuntimeWeavyReuseCollection::Enabled,
@@ -6894,16 +6904,20 @@ pub fn parse_prepared_weavy_recovering_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(report) = parse_weavy_deterministic_report_with_lexer_program(input_ctx)? {
+        return Ok(report);
+    }
     parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
+        input_ctx,
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
         RuntimeWeavyReuseCollection::Disabled,
@@ -6919,16 +6933,22 @@ pub fn parse_prepared_weavy_recovering_collecting_reuse_with_report_and_scanner(
     input: &str,
     external_scanner: Option<&dyn ExternalScannerHost>,
 ) -> Result<WeavyParseReport, WeavyParseError> {
+    let input_ctx = RuntimeWeavyInput {
+        plan,
+        lexer_program: &plan.lexer_program,
+        auto_close_index: &plan.auto_close_index,
+        parser,
+        table,
+        input,
+        external_scanner,
+    };
+    if let Some(report) =
+        parse_weavy_deterministic_collecting_reuse_report_with_lexer_program(input_ctx)?
+    {
+        return Ok(report);
+    }
     parse_weavy_with_lexer_program(
-        RuntimeWeavyInput {
-            plan,
-            lexer_program: &plan.lexer_program,
-            auto_close_index: &plan.auto_close_index,
-            parser,
-            table,
-            input,
-            external_scanner,
-        },
+        input_ctx,
         RuntimeWeavyRecoveryMode::SkipInvalidInput,
         None,
         RuntimeWeavyReuseCollection::Enabled,
