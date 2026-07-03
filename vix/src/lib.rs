@@ -28,6 +28,11 @@ pub mod oracle;
 /// the runtime parser needs no JS engine.
 pub const GRAMMAR_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/vix_grammar.json"));
 
+/// The highlights query, embedded from the same bundle as the grammar — vix
+/// owns its whole editor surface; clients need no grammar assets.
+pub const HIGHLIGHTS_SCM: &str =
+    include_str!("../../playgrounds/snark/src/bundled/vix/queries/highlights.scm");
+
 /// A prepared vix parser: tables built once, reused across parses.
 pub struct VixParser {
     parser: ParserGrammar,
@@ -69,6 +74,33 @@ impl VixParser {
             table,
             plan,
         }
+    }
+
+    /// Run the embedded highlights query over `src`: (capture name, byte
+    /// start, byte end) per capture, in document order.
+    pub fn highlights(&self, src: &str) -> Result<Vec<(String, u32, u32)>, ParseError> {
+        let report = parse_prepared_weavy_with_report(&self.plan, &self.parser, &self.table, src)
+            .map_err(|e| ParseError {
+                message: format!("parse failed: {e:?}"),
+            })?;
+        let events = report.accepted_tree_events();
+        let query = snark::query::QuerySource(HIGHLIGHTS_SCM.to_string());
+        let mut captures: Vec<(String, u32, u32)> = query
+            .execute_highlights_from_tree_events(&self.parser, &events, src)
+            .into_iter()
+            .map(|c| {
+                let bytes = c.bytes();
+                (
+                    c.capture_name().to_string(),
+                    bytes.start().get(),
+                    bytes.end().get(),
+                )
+            })
+            .collect();
+        // The query engine emits per-pattern; clients (editor decorations)
+        // want document order.
+        captures.sort_by_key(|&(_, start, end)| (start, end));
+        Ok(captures)
     }
 
     /// Parse vix source into the typed AST.

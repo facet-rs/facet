@@ -80,6 +80,43 @@ pub fn bindings_json(source: &str) -> String {
     facet_json::to_string(&out).expect("IdeBindings serializes (plain structs, no maps)")
 }
 
+#[derive(Facet, Debug)]
+struct IdeHighlight {
+    /// Capture name from the highlights query ("keyword", "function.call", …).
+    capture: String,
+    start: u32,
+    end: u32,
+}
+
+#[derive(Facet, Debug)]
+struct IdeHighlights {
+    error: Option<String>,
+    highlights: Vec<IdeHighlight>,
+}
+
+/// Run the embedded highlights query over `source`, returning captures as
+/// JSON — the editor surface twin of [`bindings_json`].
+pub fn highlights_json(source: &str) -> String {
+    let out = match with_parser(|p| p.highlights(source)) {
+        Ok(captures) => IdeHighlights {
+            error: None,
+            highlights: captures
+                .into_iter()
+                .map(|(capture, start, end)| IdeHighlight {
+                    capture,
+                    start,
+                    end,
+                })
+                .collect(),
+        },
+        Err(e) => IdeHighlights {
+            error: Some(e.message),
+            highlights: Vec::new(),
+        },
+    };
+    facet_json::to_string(&out).expect("IdeHighlights serializes (plain structs, no maps)")
+}
+
 fn bindings_of(file: &ast::SourceFile) -> IdeBindings {
     let b = binder::bind(file);
     IdeBindings {

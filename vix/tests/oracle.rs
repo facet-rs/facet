@@ -222,3 +222,22 @@ fn values_are_totally_ordered_canonically() {
     // Variant payloads participate: Some(1) < Some(2) < None (decl order).
     let _ = Payload::Unit; // (re-exported shape used across the suite)
 }
+
+#[test]
+fn highlights_query_captures_lua_sample() {
+    let parser = vix::VixParser::new();
+    let caps = parser.highlights(&sample("lua.vix")).expect("highlights");
+    assert!(!caps.is_empty());
+    // The oracle for the oracle: known tokens land in known captures.
+    let has = |name: &str, text: &str| {
+        let src = sample("lua.vix");
+        caps.iter().any(|(cap, s, e)| {
+            cap == name && &src[*s as usize..*e as usize] == text
+        })
+    };
+    assert!(has("keyword", "fn"), "{caps:?}");
+    assert!(has("function", "sources"), "fn decl name: {caps:?}");
+    assert!(has("string.special.path", "p\"lua.c\""), "{caps:?}");
+    // Captures are byte ranges in document order, usable directly as spans.
+    assert!(caps.windows(2).all(|w| w[0].1 <= w[1].1), "sorted starts");
+}

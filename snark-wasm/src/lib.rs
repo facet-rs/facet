@@ -39,3 +39,10 @@ impl SnarkPlaygroundSession {
 pub fn vix_bindings(source: &str) -> String {
     vix::ide::bindings_json(source)
 }
+
+/// vix syntax highlighting: the embedded highlights query over the embedded
+/// grammar — clients need no grammar assets at all.
+#[wasm_bindgen(js_name = vixHighlights)]
+pub fn vix_highlights(source: &str) -> String {
+    vix::ide::highlights_json(source)
+}
