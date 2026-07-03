@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use crate::ast::{self, Expr, Item, SourceFile};
 use crate::VixParser;
+use crate::ast::{self, Expr, Item, SourceFile};
 
 #[derive(Clone)]
 pub(crate) struct EnumInfo {

@@ -70,10 +70,16 @@ fn types_tour_parses_and_binds_clean() {
     let pair = &structs[3];
     let generics = pair.generics.as_ref().expect("Pair is generic");
     assert_eq!(
-        generics.params.iter().map(|p| p.value.as_str()).collect::<Vec<_>>(),
+        generics
+            .params
+            .iter()
+            .map(|p| p.value.as_str())
+            .collect::<Vec<_>>(),
         ["A", "B"]
     );
-    let a_param = b.symbol_at(generics.params[0].span.start).expect("A defined");
+    let a_param = b
+        .symbol_at(generics.params[0].span.start)
+        .expect("A defined");
     assert_eq!(b.symbol(a_param).kind, SymbolKind::TypeParam);
     assert_eq!(b.references(a_param).len(), 1); // `first: A`
 

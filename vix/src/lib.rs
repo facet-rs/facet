@@ -83,8 +83,8 @@ impl VixParser {
     pub fn highlights(&self, src: &str) -> Result<Vec<(String, u32, u32)>, ParseError> {
         let report = parse_prepared_weavy_with_report(&self.plan, &self.parser, &self.table, src)
             .map_err(|e| ParseError {
-                message: format!("parse failed: {e:?}"),
-            })?;
+            message: format!("parse failed: {e:?}"),
+        })?;
         let events = report.accepted_tree_events();
         let query = snark::query::QuerySource(HIGHLIGHTS_SCM.to_string());
         let mut captures: Vec<(String, u32, u32)> = query
@@ -109,8 +109,8 @@ impl VixParser {
     pub fn parse(&self, src: &str) -> Result<ast::SourceFile, ParseError> {
         let report = parse_prepared_weavy_with_report(&self.plan, &self.parser, &self.table, src)
             .map_err(|e| ParseError {
-                message: format!("parse failed: {e:?}"),
-            })?;
+            message: format!("parse failed: {e:?}"),
+        })?;
         let resolved = report
             .accepted_resolved_tree(&self.parser, src)
             .ok_or_else(|| ParseError {

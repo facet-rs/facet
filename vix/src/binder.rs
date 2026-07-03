@@ -73,7 +73,10 @@ impl Bindings {
     }
 
     pub fn symbols(&self) -> impl Iterator<Item = (SymbolId, &Symbol)> {
-        self.symbols.iter().enumerate().map(|(i, s)| (SymbolId(i), s))
+        self.symbols
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (SymbolId(i), s))
     }
 
     /// Every resolved reference occurrence.

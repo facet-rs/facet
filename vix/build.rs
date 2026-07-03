@@ -136,12 +136,7 @@ impl Fields {
         for (name, _, mult) in &mut out.0 {
             let occurrences: Vec<Option<Mult>> = arms
                 .iter()
-                .map(|arm| {
-                    arm.0
-                        .iter()
-                        .find(|(n, _, _)| n == name)
-                        .map(|(_, _, m)| *m)
-                })
+                .map(|arm| arm.0.iter().find(|(n, _, _)| n == name).map(|(_, _, m)| *m))
                 .collect();
             let any_many = occurrences.iter().flatten().any(|m| *m == Mult::Many);
             let everywhere_one = occurrences.iter().all(|m| *m == Some(Mult::One));
@@ -697,8 +692,12 @@ impl<'a> Model<'a> {
                     .ann(kind)
                     .and_then(|a| a.as_variant.clone())
                     .unwrap_or_else(|| inner.name.clone());
-                writeln!(out, "            {}::{variant}(x) => x.strip_spans(),", e.name)
-                    .unwrap();
+                writeln!(
+                    out,
+                    "            {}::{variant}(x) => x.strip_spans(),",
+                    e.name
+                )
+                .unwrap();
             } else {
                 writeln!(
                     out,
@@ -792,10 +791,12 @@ impl<'a> Model<'a> {
                     self.strip_variant_arm(&a.name, kind, &self.variant_name(kind))
                 )
                 .unwrap(),
-                AdHocAlt::Hidden(_, enum_name) => {
-                    writeln!(out, "            {}::{enum_name}(x) => x.strip_spans(),", a.name)
-                        .unwrap()
-                }
+                AdHocAlt::Hidden(_, enum_name) => writeln!(
+                    out,
+                    "            {}::{enum_name}(x) => x.strip_spans(),",
+                    a.name
+                )
+                .unwrap(),
             }
         }
         writeln!(out, "        }}\n    }}\n}}\n").unwrap();

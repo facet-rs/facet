@@ -94,7 +94,9 @@ fn lua_sketch_binds() {
         );
     }
     // …and nothing that IS in scope leaks into it.
-    for bound in ["cc", "ar", "src", "defines", "units", "objs", "lib", "main", "u"] {
+    for bound in [
+        "cc", "ar", "src", "defines", "units", "objs", "lib", "main", "u",
+    ] {
         assert!(
             !unresolved.contains(&bound),
             "`{bound}` should resolve, unresolved: {unresolved:?}"

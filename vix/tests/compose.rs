@@ -30,7 +30,10 @@ fn lua_builds_end_to_end() {
     let Value::Tree(bin) = &out else {
         panic!("lua() returns a Tree, got {out:?}");
     };
-    assert!(bin.entries.contains_key("lua"), "the linked binary: {bin:?}");
+    assert!(
+        bin.entries.contains_key("lua"),
+        "the linked binary: {bin:?}"
+    );
     assert!(bin.entries["lua"].starts_with("obj("));
 
     let events = oracle.events();
@@ -57,7 +60,11 @@ fn lua_builds_end_to_end() {
         .count();
     assert_eq!(scheduled, 5, "{events:?}");
     assert_eq!(execs.len(), 3, "{execs:?}");
-    assert!(execs.iter().all(|(c, e)| *c == "cc" && *e == ExecEvent::Ran));
+    assert!(
+        execs
+            .iter()
+            .all(|(c, e)| *c == "cc" && *e == ExecEvent::Ran)
+    );
 
     // Warm: the WHOLE build is one fn-level memo hit; no exec even consulted.
     let before = oracle.events().len();
@@ -99,7 +106,10 @@ fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
     let unit = Value::Path("lapi.c".into());
 
     let first = oracle
-        .call("object", &[("cc", cc.clone()), ("src", tree_v1), ("unit", unit.clone())])
+        .call(
+            "object",
+            &[("cc", cc.clone()), ("src", tree_v1), ("unit", unit.clone())],
+        )
         .unwrap();
 
     // Edit the UNREAD README: the src tree VALUE changes, so the fn memo key
@@ -111,7 +121,10 @@ fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
     ]));
     let before = oracle.events().len();
     let second = oracle
-        .call("object", &[("cc", cc.clone()), ("src", tree_v2), ("unit", unit.clone())])
+        .call(
+            "object",
+            &[("cc", cc.clone()), ("src", tree_v2), ("unit", unit.clone())],
+        )
         .unwrap();
 
     assert_eq!(first, second, "same object, no recompile");
@@ -141,8 +154,13 @@ fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
     assert_ne!(first, third, "new header, new object");
     let warm = &oracle.events()[before..];
     assert!(
-        warm.iter()
-            .any(|e| matches!(e, Event::Finished { event: ExecEvent::Ran, .. })),
+        warm.iter().any(|e| matches!(
+            e,
+            Event::Finished {
+                event: ExecEvent::Ran,
+                ..
+            }
+        )),
         "{warm:?}"
     );
 }

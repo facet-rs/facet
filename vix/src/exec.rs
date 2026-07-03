@@ -338,7 +338,8 @@ impl Snapshot for MountedWorld<'_> {
                     .entries
                     .keys()
                     .filter(|k| {
-                        prefix.is_empty() || k.strip_prefix(prefix).is_some_and(|r| r.starts_with('/'))
+                        prefix.is_empty()
+                            || k.strip_prefix(prefix).is_some_and(|r| r.starts_with('/'))
                     })
                     .cloned()
                     .collect();
@@ -410,7 +411,9 @@ pub fn verify(read_set: &ReadSet, world: &dyn Snapshot) -> bool {
         }
         ReadObservation::Listing(hash) => {
             let dir = path.strip_suffix('/').unwrap_or(path);
-            world.list(dir).is_some_and(|names| listing_hash(&names) == *hash)
+            world
+                .list(dir)
+                .is_some_and(|names| listing_hash(&names) == *hash)
         }
     })
 }
@@ -512,7 +515,10 @@ impl ExecCache {
         };
         self.events.push(ExecEvent::Ran);
         self.tier1.insert(coarse, outcome.clone());
-        self.candidates.entry(identity).or_default().push(outcome.clone());
+        self.candidates
+            .entry(identity)
+            .or_default()
+            .push(outcome.clone());
         Ok(outcome)
     }
 }

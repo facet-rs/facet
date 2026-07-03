@@ -3,8 +3,8 @@
 //! (content reads, search-path probes, negative lookups).
 
 use vix::exec::{
-    ExecCache, ExecEvent, ExecPlan, FakeCc, Mount, MountedWorld, ReadObservation, ReadSet, Role, Snapshot,
-    Tree, verify,
+    ExecCache, ExecEvent, ExecPlan, FakeCc, Mount, MountedWorld, ReadObservation, ReadSet, Role,
+    Snapshot, Tree, verify,
 };
 
 const CC_FINGERPRINT: u64 = 0xcc_15_fa_5e;
@@ -30,9 +30,18 @@ fn src_tree() -> Tree {
 
 fn mounts(src: Tree, vendor: Tree, sys: Tree) -> Vec<Mount> {
     vec![
-        Mount { at: "/src".into(), tree: src },
-        Mount { at: "/vendor/include".into(), tree: vendor },
-        Mount { at: "/sys/include".into(), tree: sys },
+        Mount {
+            at: "/src".into(),
+            tree: src,
+        },
+        Mount {
+            at: "/vendor/include".into(),
+            tree: vendor,
+        },
+        Mount {
+            at: "/sys/include".into(),
+            tree: sys,
+        },
     ]
 }
 
@@ -49,7 +58,9 @@ fn world() -> Vec<Mount> {
 #[test]
 fn cold_run_pins_reads_and_negative_lookups() {
     let mut cache = ExecCache::new();
-    let out = cache.exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc).unwrap();
+    let out = cache
+        .exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc)
+        .unwrap();
 
     assert_eq!(cache.events, vec![ExecEvent::Ran]);
     assert!(out.outputs.entries.contains_key("/out/lua.o"));
@@ -57,7 +68,10 @@ fn cold_run_pins_reads_and_negative_lookups() {
     // The read-set holds: the source, the MISSED probe in /vendor/include,
     // and the hit in /sys/include. The unread README is NOT in it.
     let rs = &out.read_set.entries;
-    assert!(matches!(rs.get("/src/lua.c"), Some(ReadObservation::Content(_))));
+    assert!(matches!(
+        rs.get("/src/lua.c"),
+        Some(ReadObservation::Content(_))
+    ));
     assert_eq!(
         rs.get("/vendor/include/lauxlib.h"),
         Some(&ReadObservation::Absent),
@@ -73,8 +87,12 @@ fn cold_run_pins_reads_and_negative_lookups() {
 #[test]
 fn tier1_hits_when_nothing_changed() {
     let mut cache = ExecCache::new();
-    cache.exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc).unwrap();
-    let again = cache.exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc).unwrap();
+    cache
+        .exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc)
+        .unwrap();
+    let again = cache
+        .exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc)
+        .unwrap();
     assert_eq!(cache.events, vec![ExecEvent::Ran, ExecEvent::Tier1Hit]);
     assert!(again.outputs.entries.contains_key("/out/lua.o"));
 }
@@ -82,19 +100,25 @@ fn tier1_hits_when_nothing_changed() {
 #[test]
 fn unread_change_cuts_off_at_tier2_the_anti_nix_test() {
     let mut cache = ExecCache::new();
-    let first = cache.exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc).unwrap();
+    let first = cache
+        .exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc)
+        .unwrap();
 
     // Touch a file the compile NEVER read: the coarse tier-1 fingerprint of
     // /src changes (Nix would rebuild), but the read-set still verifies —
     // reuse WITHOUT running.
     let mut touched = src_tree();
-    touched.entries.insert("README".into(), "edited docs".into());
+    touched
+        .entries
+        .insert("README".into(), "edited docs".into());
     let new_world = mounts(
         touched,
         Tree::of(&[("zlib.h", "// unrelated vendored header")]),
         Tree::of(&[("lauxlib.h", "// system lauxlib v1")]),
     );
-    let second = cache.exec(&plan(), CC_FINGERPRINT, &new_world, &FakeCc).unwrap();
+    let second = cache
+        .exec(&plan(), CC_FINGERPRINT, &new_world, &FakeCc)
+        .unwrap();
 
     // 4 entries: the source, its own-dir probe (C quoted-include semantics),
     // the vendored miss, and the system hit.
@@ -102,21 +126,27 @@ fn unread_change_cuts_off_at_tier2_the_anti_nix_test() {
     assert_eq!(first.outputs, second.outputs);
 
     // And the cutoff RE-PINNED under the new coarse key: third time is tier-1.
-    cache.exec(&plan(), CC_FINGERPRINT, &new_world, &FakeCc).unwrap();
+    cache
+        .exec(&plan(), CC_FINGERPRINT, &new_world, &FakeCc)
+        .unwrap();
     assert_eq!(cache.events[2], ExecEvent::Tier1Hit);
 }
 
 #[test]
 fn read_header_change_reruns() {
     let mut cache = ExecCache::new();
-    let first = cache.exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc).unwrap();
+    let first = cache
+        .exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc)
+        .unwrap();
 
     let new_world = mounts(
         src_tree(),
         Tree::of(&[("zlib.h", "// unrelated vendored header")]),
         Tree::of(&[("lauxlib.h", "// system lauxlib v2 — CHANGED")]),
     );
-    let second = cache.exec(&plan(), CC_FINGERPRINT, &new_world, &FakeCc).unwrap();
+    let second = cache
+        .exec(&plan(), CC_FINGERPRINT, &new_world, &FakeCc)
+        .unwrap();
 
     assert_eq!(cache.events, vec![ExecEvent::Ran, ExecEvent::Ran]);
     assert_ne!(first.outputs, second.outputs, "new header, new object");
@@ -129,7 +159,9 @@ fn shadowing_header_diverges_the_pinned_absence() {
     // PROBED and found absent now exists. The pinned Absent diverges; rerun
     // picks up the shadowing header and produces a different object.
     let mut cache = ExecCache::new();
-    let first = cache.exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc).unwrap();
+    let first = cache
+        .exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc)
+        .unwrap();
 
     let new_world = mounts(
         src_tree(),
@@ -139,7 +171,9 @@ fn shadowing_header_diverges_the_pinned_absence() {
         ]),
         Tree::of(&[("lauxlib.h", "// system lauxlib v1")]),
     );
-    let second = cache.exec(&plan(), CC_FINGERPRINT, &new_world, &FakeCc).unwrap();
+    let second = cache
+        .exec(&plan(), CC_FINGERPRINT, &new_world, &FakeCc)
+        .unwrap();
 
     assert_eq!(cache.events, vec![ExecEvent::Ran, ExecEvent::Ran]);
     assert_ne!(first.outputs, second.outputs, "the shadow is real input");
@@ -156,7 +190,9 @@ fn capability_change_disables_tier2_reuse() {
     // the computation identity differs — the candidate index keys on the
     // capability fingerprint, so tier 2 must NOT reuse across it.
     let mut cache = ExecCache::new();
-    cache.exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc).unwrap();
+    cache
+        .exec(&plan(), CC_FINGERPRINT, &world(), &FakeCc)
+        .unwrap();
     cache.exec(&plan(), 0xdeadbeef, &world(), &FakeCc).unwrap();
     assert_eq!(cache.events, vec![ExecEvent::Ran, ExecEvent::Ran]);
 }
@@ -172,7 +208,9 @@ fn ceiling_is_the_mount_set() {
             ("/out/x.o".into(), Role::Output),
         ],
     };
-    let err = cache.exec(&escape, CC_FINGERPRINT, &world(), &FakeCc).unwrap_err();
+    let err = cache
+        .exec(&escape, CC_FINGERPRINT, &world(), &FakeCc)
+        .unwrap_err();
     assert!(err.contains("outside the mounts"), "{err}");
 }
 
@@ -181,7 +219,10 @@ fn listings_pin_additions_and_deletions() {
     // Directory enumeration is an observation: adding OR removing an entry
     // diverges the pinned listing (the jade.fyi case).
     let tree = Tree::of(&[("a.c", "x"), ("b.c", "y")]);
-    let mounts = vec![Mount { at: "/src".into(), tree: tree.clone() }];
+    let mounts = vec![Mount {
+        at: "/src".into(),
+        tree: tree.clone(),
+    }];
     let world = MountedWorld::new(&mounts);
 
     let mut rs = ReadSet::default();
@@ -202,13 +243,19 @@ fn listings_pin_additions_and_deletions() {
     // Deletion diverges.
     let mut smaller = tree.clone();
     smaller.entries.remove("b.c");
-    let mounts2 = vec![Mount { at: "/src".into(), tree: smaller }];
+    let mounts2 = vec![Mount {
+        at: "/src".into(),
+        tree: smaller,
+    }];
     assert!(!verify(&rs, &MountedWorld::new(&mounts2)));
 
     // Addition diverges too.
     let mut bigger = tree;
     bigger.entries.insert("c.c".into(), "z".into());
-    let mounts3 = vec![Mount { at: "/src".into(), tree: bigger }];
+    let mounts3 = vec![Mount {
+        at: "/src".into(),
+        tree: bigger,
+    }];
     assert!(!verify(&rs, &MountedWorld::new(&mounts3)));
 }
 
@@ -238,7 +285,11 @@ fn normalization_makes_reordered_flags_share_identity() {
         ],
     };
     assert_ne!(a.hash(), b.hash(), "byte-shaped hashes differ");
-    assert_eq!(a.identity_hash(), b.identity_hash(), "semantic identity agrees");
+    assert_eq!(
+        a.identity_hash(),
+        b.identity_hash(),
+        "semantic identity agrees"
+    );
 
     let mut cache = ExecCache::new();
     cache.exec(&a, CC_FINGERPRINT, &world(), &FakeCc).unwrap();

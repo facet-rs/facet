@@ -80,7 +80,10 @@ fn types_vix_partials_guards_and_tuple_indexing() {
 
     // apply(f: scaled(k: 2, ..), x: 21) — a Partial is a first-class callable.
     let partial = oracle.call("scaled", &[("k", Value::Int(2))]).err();
-    assert!(partial.is_some(), "scaled without x and without `..` errors");
+    assert!(
+        partial.is_some(),
+        "scaled without x and without `..` errors"
+    );
 }
 
 #[test]
@@ -121,7 +124,10 @@ fn toolchain_acquires_capabilities_and_updates_records() {
     assert_eq!(obs.len(), 2);
     assert!(obs.iter().all(|e| matches!(
         e,
-        Event::Observation { replayed: false, .. }
+        Event::Observation {
+            replayed: false,
+            ..
+        }
     )));
 }
 
@@ -138,10 +144,14 @@ fn src_tree(nonce: Int) -> Tree {
 }
 "#;
     let oracle = Oracle::load(src).expect("load");
-    let a = oracle.call("src_tree", &[("nonce", Value::Int(1))]).unwrap();
+    let a = oracle
+        .call("src_tree", &[("nonce", Value::Int(1))])
+        .unwrap();
     // Different args = memo miss = fetch runs again — but the OBSERVATION is
     // pinned by its checksum, so the second run REPLAYS the pin.
-    let b = oracle.call("src_tree", &[("nonce", Value::Int(2))]).unwrap();
+    let b = oracle
+        .call("src_tree", &[("nonce", Value::Int(2))])
+        .unwrap();
     assert_eq!(a, b, "the checksum IS the identity");
 
     let obs: Vec<_> = oracle
@@ -182,7 +192,10 @@ fn make_scaler(k: Int) -> fn(Int) -> Int {
     // Identity survives the wire: same canonical hash before and after.
     assert_eq!(scaler.canon_hash(), arrived.canon_hash());
     // And it computes: 3 * 14 on the remote side.
-    assert_eq!(b.invoke(arrived, vec![Value::Int(14)]).unwrap(), Value::Int(42));
+    assert_eq!(
+        b.invoke(arrived, vec![Value::Int(14)]).unwrap(),
+        Value::Int(42)
+    );
 
     // The closure's identity is its canonical AST: a differently-formatted
     // but identical source yields a closure with the SAME hash.
@@ -231,9 +244,8 @@ fn highlights_query_captures_lua_sample() {
     // The oracle for the oracle: known tokens land in known captures.
     let has = |name: &str, text: &str| {
         let src = sample("lua.vix");
-        caps.iter().any(|(cap, s, e)| {
-            cap == name && &src[*s as usize..*e as usize] == text
-        })
+        caps.iter()
+            .any(|(cap, s, e)| cap == name && &src[*s as usize..*e as usize] == text)
     };
     assert!(has("keyword", "fn"), "{caps:?}");
     assert!(has("function", "sources"), "fn decl name: {caps:?}");

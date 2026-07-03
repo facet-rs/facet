@@ -94,11 +94,7 @@ impl Graph {
     }
 
     /// A pure operation over inputs.
-    pub fn apply(
-        &mut self,
-        op: impl Fn(&[i64]) -> i64 + 'static,
-        inputs: Vec<NodeId>,
-    ) -> NodeId {
+    pub fn apply(&mut self, op: impl Fn(&[i64]) -> i64 + 'static, inputs: Vec<NodeId>) -> NodeId {
         self.push(Node::Apply {
             op: Box::new(op),
             inputs,
@@ -356,7 +352,11 @@ mod tests {
         let (result, _) = eval(Demand::new(&g, used, vec![])).await;
         assert_eq!(result, 42);
         assert_eq!(ran_used.get(), 1);
-        assert_eq!(ran_unused.get(), 0, "nothing forces locally: unused node never ran");
+        assert_eq!(
+            ran_unused.get(),
+            0,
+            "nothing forces locally: unused node never ran"
+        );
     }
 
     #[tokio::test]
@@ -389,7 +389,11 @@ mod tests {
 
         let (result, _) = eval(Demand::new(&g, top, vec![])).await;
         assert_eq!(result, (7 + 1) + (7 + 2));
-        assert_eq!(ran.get(), 1, "the shared node memoized: computed exactly once");
+        assert_eq!(
+            ran.get(),
+            1,
+            "the shared node memoized: computed exactly once"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

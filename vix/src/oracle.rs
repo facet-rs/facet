@@ -27,10 +27,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use crate::ast::{
-    self, Arg, ArrayElem, Block, CommandPart, Expr, Member, PathRef, Pattern, Stmt,
-};
 use crate::ast::Spanned;
+use crate::ast::{self, Arg, ArrayElem, Block, CommandPart, Expr, Member, PathRef, Pattern, Stmt};
 use crate::module::{EnumInfo, ModuleTables, StructInfo, VariantShape, load_module_tables};
 
 // ---------------------------------------------------------------------------
@@ -64,7 +62,10 @@ pub enum Value {
         payload: Payload,
     },
     /// A top-level function as a value.
-    Fn { name: String, hash: u64 },
+    Fn {
+        name: String,
+        hash: u64,
+    },
     /// A closure: canonical body hash + captured environment.
     Closure {
         hash: u64,
@@ -84,7 +85,9 @@ pub enum Value {
     /// A tree STILL BEING PRODUCED by a live run. Projection (`pending / path`)
     /// demands one path; identity (hash/cmp/ship) and whole-tree uses (mount,
     /// glob, merge) force the flush. The id points into the run registry.
-    PendingTree { run: u64 },
+    PendingTree {
+        run: u64,
+    },
 }
 
 #[derive(facet::Facet, Debug, Clone)]
@@ -122,9 +125,7 @@ impl Value {
     fn forced_tree(&self) -> Option<crate::exec::Tree> {
         match self {
             Value::Tree(t) => Some(t.clone()),
-            Value::PendingTree { run } => {
-                Some(force_run(*run).expect("pending run flushes").0)
-            }
+            Value::PendingTree { run } => Some(force_run(*run).expect("pending run flushes").0),
             _ => None,
         }
     }
@@ -150,7 +151,9 @@ impl Value {
             ),
             Value::Map(entries) => format!("{{…{} entries}}", entries.len()),
             Value::Struct { name, fields } => format!("{name}{{…{}}}", fields.len()),
-            Value::Variant { enum_name, name, .. } => format!("{enum_name}::{name}"),
+            Value::Variant {
+                enum_name, name, ..
+            } => format!("{enum_name}::{name}"),
             Value::Fn { name, .. } => format!("fn {name}"),
             Value::Closure { .. } => "closure".to_string(),
             Value::Partial { func, .. } => format!("partial {func}"),
@@ -283,8 +286,14 @@ impl Ord for Value {
             (Value::Tuple(a), Value::Tuple(b)) | (Value::Array(a), Value::Array(b)) => a.cmp(b),
             (Value::Map(a), Value::Map(b)) => a.cmp(b),
             (
-                Value::Struct { name: an, fields: af },
-                Value::Struct { name: bn, fields: bf },
+                Value::Struct {
+                    name: an,
+                    fields: af,
+                },
+                Value::Struct {
+                    name: bn,
+                    fields: bf,
+                },
             ) => an.cmp(bn).then_with(|| af.cmp(bf)),
             (
                 Value::Variant {
@@ -520,7 +529,7 @@ pub trait PendingRun: Send + Sync {
 /// The process-global run registry: PendingTree values carry a u64 into this
 /// table. Oracle-grade shortcut (the real engine owns runs in its graph);
 /// std-only so the crate stays wasm-clean — blocking lives in backends.
-mod runs {
+pub(crate) mod runs {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -553,9 +562,9 @@ fn force_run(id: u64) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), Str
 
 /// The local cache's "pending" run: already complete at spawn time (the
 /// local path is the caching oracle; the wire is where demand overlaps).
-struct LocalRun {
-    outputs: crate::exec::Tree,
-    event: crate::exec::ExecEvent,
+pub(crate) struct LocalRun {
+    pub(crate) outputs: crate::exec::Tree,
+    pub(crate) event: crate::exec::ExecEvent,
 }
 
 impl PendingRun for LocalRun {
@@ -712,7 +721,11 @@ impl Oracle {
         let payload = match shape {
             VariantShape::Unit if payload.is_empty() => Payload::Unit,
             VariantShape::Tuple(n) if payload.len() == *n => Payload::Tuple(payload),
-            _ => return Err(format!("payload shape mismatch for `{enum_name}::{variant}`")),
+            _ => {
+                return Err(format!(
+                    "payload shape mismatch for `{enum_name}::{variant}`"
+                ));
+            }
         };
         Ok(Value::Variant {
             enum_name: enum_name.to_string(),
@@ -737,8 +750,7 @@ impl Oracle {
     /// Invoke a callable VALUE (closure, fn, partial) — including one that
     /// arrived over the wire via ship/receive. Also an edge: deep-forced.
     pub fn invoke(&self, callee: Value, args: Vec<Value>) -> EvalResult {
-        let result =
-            self.call_value(callee, args.into_iter().map(|v| (None, v)).collect())?;
+        let result = self.call_value(callee, args.into_iter().map(|v| (None, v)).collect())?;
         self.deep_force_value(result)
     }
 
@@ -749,17 +761,17 @@ impl Oracle {
 
     // -- calls & memo --------------------------------------------------------
 
-    fn call_fn(
-        &self,
-        func: &str,
-        args: Vec<(Option<String>, Value)>,
-        partial: bool,
-    ) -> EvalResult {
+    fn call_fn(&self, func: &str, args: Vec<(Option<String>, Value)>, partial: bool) -> EvalResult {
         let f = self
             .fns
             .get(func)
             .ok_or_else(|| format!("unknown function `{func}`"))?;
-        let params: Vec<&str> = f.params.params.iter().map(|p| p.name.value.as_str()).collect();
+        let params: Vec<&str> = f
+            .params
+            .params
+            .iter()
+            .map(|p| p.name.value.as_str())
+            .collect();
 
         // Positional args fill params in order; kwargs fill by name.
         let mut bound: Vec<(String, Value)> = Vec::new();
@@ -769,6 +781,9 @@ impl Oracle {
                 Some(name) => {
                     if !params.contains(&name.as_str()) {
                         return Err(format!("`{func}` has no parameter `{name}`"));
+                    }
+                    if bound.iter().any(|(b, _)| b == &name) {
+                        return Err(format!("`{func}` got duplicate argument `{name}`"));
                     }
                     bound.push((name, value));
                 }
@@ -780,6 +795,9 @@ impl Oracle {
                                 && params.iter().position(|q| q == *p) >= Some(positional)
                         })
                         .ok_or_else(|| format!("too many arguments for `{func}`"))?;
+                    if bound.iter().any(|(b, _)| b == *param) {
+                        return Err(format!("`{func}` got duplicate argument `{param}`"));
+                    }
                     positional += 1;
                     bound.push((param.to_string(), value));
                 }
@@ -887,7 +905,10 @@ impl Oracle {
                             return e;
                         }
                     };
-                    frames.last_mut().unwrap().push((l.name.value.clone(), value));
+                    frames
+                        .last_mut()
+                        .unwrap()
+                        .push((l.name.value.clone(), value));
                 }
                 Stmt::Expr(e) => {
                     if let Err(err) = self.eval(&e.expr, frames) {
@@ -990,12 +1011,10 @@ impl Oracle {
                         }
                     }
                     PathRef::Scoped(s) => {
-                        let segs: Vec<&str> =
-                            s.segments.iter().map(|x| x.value.as_str()).collect();
+                        let segs: Vec<&str> = s.segments.iter().map(|x| x.value.as_str()).collect();
                         match segs.as_slice() {
                             [enum_name, variant] if self.enums.contains_key(*enum_name) => {
-                                let payload =
-                                    args.into_iter().map(|(_, v)| v).collect::<Vec<_>>();
+                                let payload = args.into_iter().map(|(_, v)| v).collect::<Vec<_>>();
                                 self.variant(enum_name, variant, payload)
                             }
                             [kind, "acquire"] => self.acquire(kind, args),
@@ -1152,9 +1171,7 @@ impl Oracle {
                 }
                 // Tree / Path = subtree selection: a directory re-rooted, or a
                 // single file cut out (keyed by its basename).
-                (Value::Tree(t), Value::Path(p)) if op == "/" => {
-                    subtree(&t, &p).map(Value::Tree)
-                }
+                (Value::Tree(t), Value::Path(p)) if op == "/" => subtree(&t, &p).map(Value::Tree),
                 // PROJECTION DOESN'T FORCE: cutting one path out of a tree
                 // still being produced waits only for THAT path (the language-
                 // level rmeta move). Directory cuts fall back to the flush.
@@ -1167,7 +1184,10 @@ impl Oracle {
                     match live.demand_path(&p) {
                         Ok(contents) => {
                             let base = p.rsplit_once('/').map(|(_, b)| b).unwrap_or(&p);
-                            Ok(Value::Tree(crate::exec::Tree::of(&[(base, contents.as_str())])))
+                            Ok(Value::Tree(crate::exec::Tree::of(&[(
+                                base,
+                                contents.as_str(),
+                            )])))
                         }
                         Err(_) => subtree(&self.force_and_note(run)?, &p).map(Value::Tree),
                     }
@@ -1289,24 +1309,39 @@ impl Oracle {
                         .is_some_and(|e| e.variants.iter().any(|(n, _)| n == &name.value));
                     if is_variant {
                         return Ok(match scrutinee {
-                            Value::Variant { name: vn, payload: Payload::Unit, .. }
-                                if *vn == name.value =>
-                            {
-                                Some(Vec::new())
-                            }
+                            Value::Variant {
+                                name: vn,
+                                payload: Payload::Unit,
+                                ..
+                            } if *vn == name.value => Some(Vec::new()),
                             _ => None,
                         });
                     }
                 }
                 Some(vec![(name.value.clone(), scrutinee.clone())])
             }
-            (Pattern::Scoped(s), Value::Variant { enum_name, name, payload, .. }) => {
+            (
+                Pattern::Scoped(s),
+                Value::Variant {
+                    enum_name,
+                    name,
+                    payload,
+                    ..
+                },
+            ) => {
                 let segs: Vec<&str> = s.segments.iter().map(|x| x.value.as_str()).collect();
-                (segs == [enum_name.as_str(), name.as_str()]
-                    && matches!(payload, Payload::Unit))
-                .then(Vec::new)
+                (segs == [enum_name.as_str(), name.as_str()] && matches!(payload, Payload::Unit))
+                    .then(Vec::new)
             }
-            (Pattern::Variant(vp), Value::Variant { enum_name, name, payload, .. }) => {
+            (
+                Pattern::Variant(vp),
+                Value::Variant {
+                    enum_name,
+                    name,
+                    payload,
+                    ..
+                },
+            ) => {
                 if !path_names_variant(&vp.path, enum_name, name) {
                     return Ok(None);
                 }
@@ -1327,7 +1362,12 @@ impl Oracle {
             }
             (Pattern::Struct(sp), value) => {
                 let fields: &[(String, Value)] = match value {
-                    Value::Variant { enum_name, name, payload: Payload::Record(fields), .. } => {
+                    Value::Variant {
+                        enum_name,
+                        name,
+                        payload: Payload::Record(fields),
+                        ..
+                    } => {
                         if !path_names_variant(&sp.path, enum_name, name) {
                             return Ok(None);
                         }
@@ -1343,8 +1383,7 @@ impl Oracle {
                 };
                 let mut bindings = Vec::new();
                 for fp in &sp.fields {
-                    let Some((_, value)) = fields.iter().find(|(n, _)| n == &fp.name.value)
-                    else {
+                    let Some((_, value)) = fields.iter().find(|(n, _)| n == &fp.name.value) else {
                         return Ok(None);
                     };
                     match &fp.pattern {
@@ -1541,10 +1580,16 @@ impl Oracle {
         let header = format!("// lua.h api ({tar_hash:016x})");
         Ok(Value::Tree(crate::exec::Tree::of(&[
             ("lua-5.4.8/src/lua.h", header.as_str()),
-            ("lua-5.4.8/src/lua.c", "#include \"lua.h\"\n// interpreter main"),
+            (
+                "lua-5.4.8/src/lua.c",
+                "#include \"lua.h\"\n// interpreter main",
+            ),
             ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
             ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
-            ("lua-5.4.8/src/luac.c", "#include \"lua.h\"\n// compiler main"),
+            (
+                "lua-5.4.8/src/luac.c",
+                "#include \"lua.h\"\n// compiler main",
+            ),
         ])))
     }
 
@@ -1561,12 +1606,7 @@ impl Oracle {
 
     // -- builtin methods ------------------------------------------------------
 
-    fn method(
-        &self,
-        recv: Value,
-        name: &str,
-        args: Vec<(Option<String>, Value)>,
-    ) -> EvalResult {
+    fn method(&self, recv: Value, name: &str, args: Vec<(Option<String>, Value)>) -> EvalResult {
         // Method calls are whole-value uses: a pending receiver forces.
         let recv = self.force_value(recv)?;
         let positional: Vec<Value> = args.into_iter().map(|(_, v)| v).collect();
@@ -1588,14 +1628,18 @@ impl Oracle {
                 m.insert(k.clone(), v.clone());
                 Ok(Value::Map(m))
             }
-            (Value::Variant { enum_name, name, payload, .. }, "unwrap")
-                if enum_name == "Option" =>
-            {
-                match (name.as_str(), payload) {
-                    ("Some", Payload::Tuple(mut vs)) => Ok(vs.remove(0)),
-                    _ => Err("unwrap on None".to_string()),
-                }
-            }
+            (
+                Value::Variant {
+                    enum_name,
+                    name,
+                    payload,
+                    ..
+                },
+                "unwrap",
+            ) if enum_name == "Option" => match (name.as_str(), payload) {
+                ("Some", Payload::Tuple(mut vs)) => Ok(vs.remove(0)),
+                _ => Err("unwrap on None".to_string()),
+            },
             (Value::Array(vs), "map") => {
                 let [f] = positional.as_slice() else {
                     return Err("map takes a function".to_string());
@@ -1698,7 +1742,7 @@ fn path_names_struct(path: &PathRef, name: &str) -> bool {
 }
 
 /// Tree / Path: a directory re-rooted, or one file cut out by basename.
-fn subtree(tree: &crate::exec::Tree, path: &str) -> Result<crate::exec::Tree, String> {
+pub(crate) fn subtree(tree: &crate::exec::Tree, path: &str) -> Result<crate::exec::Tree, String> {
     if let Some(contents) = tree.entries.get(path) {
         let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
         return Ok(crate::exec::Tree::of(&[(base, contents.as_str())]));
@@ -1721,7 +1765,7 @@ fn subtree(tree: &crate::exec::Tree, path: &str) -> Result<crate::exec::Tree, St
 /// varies — a content-derived path would leak the world into the identity
 /// and tier-2 could never match. A single-file tree splices as the file's
 /// path inside its mount; a directory splices as the mount root.
-fn splice_into(
+pub(crate) fn splice_into(
     value: Value,
     argv: &mut Vec<String>,
     mounts: &mut Vec<crate::exec::Mount>,
@@ -1753,7 +1797,10 @@ fn splice_into(
 /// The toy role tables — stand-ins for snark command grammars (which will
 /// assign these roles from real grammar productions, versioned with the
 /// capability).
-fn assign_roles(command: &str, argv: &[String]) -> Result<crate::exec::ExecPlan, String> {
+pub(crate) fn assign_roles(
+    command: &str,
+    argv: &[String],
+) -> Result<crate::exec::ExecPlan, String> {
     use crate::exec::Role;
     let mut out = Vec::new();
     match command {
@@ -1797,7 +1844,7 @@ fn assign_roles(command: &str, argv: &[String]) -> Result<crate::exec::ExecPlan,
     Ok(crate::exec::ExecPlan { argv: out })
 }
 
-fn tool_for(command: &str) -> Result<&'static dyn crate::exec::Tool, String> {
+pub(crate) fn tool_for(command: &str) -> Result<&'static dyn crate::exec::Tool, String> {
     match command {
         "cc" => Ok(&crate::exec::FakeCc),
         "ar" => Ok(&crate::exec::FakeAr),

@@ -1,10 +1,13 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hasher};
 use std::rc::Rc;
+use std::sync::Arc;
 
-use crate::ast::{self, Arg, ArrayElem, Block, Expr, Member, PathRef, Pattern, Stmt};
+use crate::ast::{self, Arg, ArrayElem, Block, CommandPart, Expr, Member, PathRef, Pattern, Stmt};
+use crate::exec::ExecCache;
 use crate::module::{ModuleTables, VariantShape, load_module_tables};
-use crate::oracle::{Event, Payload, Value, deep_force};
+use crate::oracle::{Event, LocalRun, Payload, PendingRun, Value};
+use crate::oracle::{assign_roles, runs, splice_into, subtree, tool_for};
 use crate::support::Spanned;
 
 type NodeId = usize;
@@ -12,6 +15,7 @@ type NodeId = usize;
 #[derive(Clone)]
 enum NodeState {
     Thunk { expr: Rc<Expr>, env: Env },
+    Project { subject: NodeId, path: String },
     Forced(Value),
     InProgress,
 }
@@ -72,17 +76,20 @@ struct CallArg {
     node: NodeId,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Demand {
     Identity,
-    #[expect(dead_code, reason = "chunk 2 wires path demand through this shape")]
-    Path(&'static str),
+    Path(String),
 }
 
 pub struct Engine {
     tables: ModuleTables,
     arena: Vec<NodeState>,
     memo: HashMap<(u64, u64), Value>,
+    journal: BTreeMap<String, Value>,
+    exec_cache: ExecCache,
+    unlogged_runs: HashMap<u64, (String, crate::support::Span)>,
+    scheduled: HashSet<u64>,
     events: Vec<Event>,
     fn_stack: Vec<String>,
 }
@@ -95,13 +102,16 @@ impl Engine {
             tables: load_module_tables(source)?,
             arena: Vec::new(),
             memo: HashMap::new(),
+            journal: BTreeMap::new(),
+            exec_cache: ExecCache::new(),
+            unlogged_runs: HashMap::new(),
+            scheduled: HashSet::new(),
             events: Vec::new(),
             fn_stack: Vec::new(),
         })
     }
 
-    /// The EDGE: demand enters here; result is deep (chunk 1 has no pending
-    /// trees, but this keeps the edge shaped like later chunks).
+    /// The EDGE: demand enters here, then deep-forces with engine-side logging.
     pub fn call(&mut self, func: &str, args: &[(&str, Value)]) -> Result<Value, String> {
         let args = args
             .iter()
@@ -111,7 +121,7 @@ impl Engine {
             })
             .collect();
         let result = self.call_fn(func, args, false)?;
-        deep_force(result)
+        self.deep_force_value(result)
     }
 
     pub fn events(&self) -> Vec<Event> {
@@ -133,16 +143,28 @@ impl Engine {
         node
     }
 
+    fn alloc_project(&mut self, subject: NodeId, path: String) -> NodeId {
+        let node = self.arena.len();
+        self.arena.push(NodeState::Project { subject, path });
+        node
+    }
+
     fn demand(&mut self, node: NodeId, kind: Demand) -> EvalResult {
-        match kind {
-            Demand::Identity => {}
-            Demand::Path(_) => {}
-        }
         let state = std::mem::replace(&mut self.arena[node], NodeState::InProgress);
         match state {
             NodeState::Forced(value) => {
-                self.arena[node] = NodeState::Forced(value.clone());
-                Ok(value)
+                let result = self.apply_demand(value.clone(), kind.clone())?;
+                let stored = match kind {
+                    Demand::Identity => result.clone(),
+                    Demand::Path(_) => value,
+                };
+                self.arena[node] = NodeState::Forced(stored);
+                Ok(result)
+            }
+            NodeState::Project { subject, path } => {
+                let result = self.demand(subject, Demand::Path(path.clone()));
+                self.arena[node] = NodeState::Project { subject, path };
+                result
             }
             NodeState::InProgress => {
                 self.arena[node] = NodeState::InProgress;
@@ -152,21 +174,168 @@ impl Engine {
                     Err("demand cycle".to_string())
                 }
             }
-            NodeState::Thunk { expr, env } => match self.eval(&expr, env.clone()) {
-                Ok(value) => {
-                    self.arena[node] = NodeState::Forced(value.clone());
-                    Ok(value)
-                }
-                Err(err) => {
+            NodeState::Thunk { expr, env } => {
+                if let Demand::Path(path) = &kind
+                    && let Expr::Identifier(name) = expr.as_ref()
+                    && let Some(target) = env.lookup(&name.value)
+                {
+                    let result = self.demand(target, Demand::Path(path.clone()));
                     self.arena[node] = NodeState::Thunk { expr, env };
-                    Err(err)
+                    return result;
                 }
-            },
+                match self.eval(&expr, env.clone()) {
+                    Ok(value) => {
+                        let result = self.apply_demand(value.clone(), kind.clone())?;
+                        let stored = match kind {
+                            Demand::Identity => result.clone(),
+                            Demand::Path(_) => value,
+                        };
+                        self.arena[node] = NodeState::Forced(stored);
+                        Ok(result)
+                    }
+                    Err(err) => {
+                        self.arena[node] = NodeState::Thunk { expr, env };
+                        Err(err)
+                    }
+                }
+            }
         }
     }
 
     fn emit(&mut self, event: Event) {
         self.events.push(event);
+    }
+
+    fn apply_demand(&mut self, value: Value, kind: Demand) -> EvalResult {
+        match kind {
+            Demand::Identity => self.deep_force_value(value),
+            Demand::Path(path) => self.project_value(value, &path),
+        }
+    }
+
+    fn project_value(&mut self, value: Value, path: &str) -> EvalResult {
+        match value {
+            Value::Tree(tree) => subtree(&tree, path).map(Value::Tree),
+            Value::PendingTree { run } => {
+                self.note_scheduled(run);
+                let live =
+                    runs::get(run).ok_or_else(|| format!("pending run {run} not registered"))?;
+                match live.demand_path(path) {
+                    Ok(contents) => {
+                        let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
+                        Ok(Value::Tree(crate::exec::Tree::of(&[(
+                            base,
+                            contents.as_str(),
+                        )])))
+                    }
+                    Err(_) => subtree(&self.force_and_note(run)?, path).map(Value::Tree),
+                }
+            }
+            Value::Path(base) => Ok(Value::Path(format!("{base}/{path}"))),
+            other => Ok(other),
+        }
+    }
+
+    fn deep_force_value(&mut self, value: Value) -> EvalResult {
+        Ok(match value {
+            Value::PendingTree { run } => Value::Tree(self.force_and_note(run)?),
+            Value::Tuple(values) => Value::Tuple(
+                values
+                    .into_iter()
+                    .map(|value| self.deep_force_value(value))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Value::Array(values) => Value::Array(
+                values
+                    .into_iter()
+                    .map(|value| self.deep_force_value(value))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Value::Map(map) => Value::Map(
+                map.into_iter()
+                    .map(|(key, value)| {
+                        Ok::<_, String>((
+                            self.deep_force_value(key)?,
+                            self.deep_force_value(value)?,
+                        ))
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+            Value::Struct { name, fields } => Value::Struct {
+                name,
+                fields: fields
+                    .into_iter()
+                    .map(|(name, value)| Ok::<_, String>((name, self.deep_force_value(value)?)))
+                    .collect::<Result<_, _>>()?,
+            },
+            Value::Variant {
+                enum_name,
+                index,
+                name,
+                payload,
+            } => Value::Variant {
+                enum_name,
+                index,
+                name,
+                payload: match payload {
+                    Payload::Unit => Payload::Unit,
+                    Payload::Tuple(values) => Payload::Tuple(
+                        values
+                            .into_iter()
+                            .map(|value| self.deep_force_value(value))
+                            .collect::<Result<_, _>>()?,
+                    ),
+                    Payload::Record(fields) => Payload::Record(
+                        fields
+                            .into_iter()
+                            .map(|(name, value)| {
+                                Ok::<_, String>((name, self.deep_force_value(value)?))
+                            })
+                            .collect::<Result<_, _>>()?,
+                    ),
+                },
+            },
+            other => other,
+        })
+    }
+
+    fn note_scheduled(&mut self, id: u64) {
+        if !self.scheduled.insert(id) {
+            return;
+        }
+        if let Some((command, span)) = self.unlogged_runs.get(&id).cloned() {
+            self.emit(Event::Scheduled {
+                command,
+                run: id,
+                span,
+            });
+        }
+    }
+
+    fn force_and_note(&mut self, id: u64) -> Result<crate::exec::Tree, String> {
+        self.note_scheduled(id);
+        let (tree, event) = runs::get(id)
+            .ok_or_else(|| format!("pending run {id} not in the registry"))?
+            .flush()?;
+        if let Some((command, span)) = self.unlogged_runs.remove(&id) {
+            let outputs = tree
+                .entries
+                .iter()
+                .map(|(path, contents)| (path.clone(), contents.clone()))
+                .collect();
+            self.emit(Event::Finished {
+                command,
+                run: id,
+                span,
+                event,
+                outputs,
+            });
+        }
+        Ok(tree)
+    }
+
+    fn force_value(&mut self, value: Value) -> EvalResult {
+        self.deep_force_value(value)
     }
 
     fn call_fn(&mut self, func: &str, args: Vec<CallArg>, partial: bool) -> EvalResult {
@@ -191,6 +360,9 @@ impl Engine {
                     if !params.iter().any(|p| p == &name) {
                         return Err(format!("`{func}` has no parameter `{name}`"));
                     }
+                    if bound.iter().any(|(bound_name, _)| bound_name == &name) {
+                        return Err(format!("`{func}` got duplicate argument `{name}`"));
+                    }
                     bound.push((name, arg.node));
                 }
                 None => {
@@ -201,6 +373,9 @@ impl Engine {
                                 && params.iter().position(|q| q == *p) >= Some(positional)
                         })
                         .ok_or_else(|| format!("too many arguments for `{func}`"))?;
+                    if bound.iter().any(|(bound_name, _)| bound_name == param) {
+                        return Err(format!("`{func}` got duplicate argument `{param}`"));
+                    }
                     positional += 1;
                     bound.push((param.clone(), arg.node));
                 }
@@ -315,14 +490,12 @@ impl Engine {
                     env = env.with_binding(l.name.value.clone(), node);
                 }
                 Stmt::Expr(e) => {
-                    let node = self.alloc_thunk(e.expr.clone(), env.clone());
-                    self.demand(node, Demand::Identity)?;
+                    self.eval(&e.expr, env.clone())?;
                 }
             }
         }
         if let Some(tail) = &block.tail {
-            let node = self.alloc_thunk(tail.clone(), env);
-            self.demand(node, Demand::Identity)
+            self.eval(tail, env)
         } else {
             Ok(Value::Tuple(Vec::new()))
         }
@@ -414,6 +587,10 @@ impl Engine {
                         } else if let Some(node) = env.lookup(&name.value) {
                             let callee = self.demand(node, Demand::Identity)?;
                             self.call_value(callee, args)
+                        } else if name.value == "fetch" {
+                            self.fetch(args)
+                        } else if name.value == "extract" {
+                            self.extract(args)
                         } else {
                             Err(format!("unknown callable `{}`", name.value))
                         }
@@ -429,7 +606,7 @@ impl Engine {
                                 self.variant(enum_name, variant, payload)
                             }
                             [ty, "new"] if *ty == "Map" => Ok(Value::Map(BTreeMap::new())),
-                            [_, "acquire"] => Err("acquire is outside engine chunk 1".to_string()),
+                            [kind, "acquire"] => self.acquire(kind, args),
                             other => Err(format!("unknown callable `{}`", other.join("::"))),
                         }
                     }
@@ -493,7 +670,7 @@ impl Engine {
                     env: captured,
                 })
             }
-            Expr::Command(_) => Err("command blocks are outside engine chunk 1".to_string()),
+            Expr::Command(c) => self.command_block(c, env),
         }
     }
 
@@ -547,6 +724,26 @@ impl Engine {
             }
             let right_node = self.alloc_thunk(b.right.clone(), env);
             return self.demand(right_node, Demand::Identity);
+        }
+        if b.op == "/" {
+            let right = {
+                let node = self.alloc_thunk(b.right.clone(), env.clone());
+                self.demand(node, Demand::Identity)?
+            };
+            if let Value::Path(path) = right {
+                let subject = self.alloc_thunk(b.left.clone(), env);
+                let project = self.alloc_project(subject, path);
+                return self.demand(project, Demand::Identity);
+            }
+            let left = {
+                let node = self.alloc_thunk(b.left.clone(), env);
+                self.demand(node, Demand::Identity)?
+            };
+            return match (left, right) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
+                (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+                (left, right) => Err(format!("`/` not defined on {left:?} and {right:?}")),
+            };
         }
         let left = {
             let node = self.alloc_thunk(b.left.clone(), env.clone());
@@ -853,7 +1050,123 @@ impl Engine {
         })
     }
 
+    fn command_block(&mut self, c: &ast::CommandBlock, env: Env) -> EvalResult {
+        let capability_node = env
+            .lookup(&c.command.value)
+            .ok_or_else(|| format!("no capability `{}` in scope", c.command.value))?;
+        let capability = self.demand(capability_node, Demand::Identity)?;
+        let cap_fp = capability.canon_hash();
+
+        let mut argv = Vec::new();
+        let mut mounts = Vec::new();
+        for part in &c.parts {
+            match part {
+                CommandPart::Token(token) => argv.push(token.value.clone()),
+                CommandPart::Splice(splice) => {
+                    let node = self.alloc_thunk(splice.expr.clone(), env.clone());
+                    let value = self.demand(node, Demand::Identity)?;
+                    splice_into(value, &mut argv, &mut mounts)?;
+                }
+            }
+        }
+
+        let plan = assign_roles(&c.command.value, &argv)?;
+        let tool = tool_for(&c.command.value)?;
+        let outcome = self.exec_cache.exec(&plan, cap_fp, &mounts, tool)?;
+        let event = self
+            .exec_cache
+            .events
+            .last()
+            .cloned()
+            .expect("exec pushed an event");
+        let run: Arc<dyn PendingRun> = Arc::new(LocalRun {
+            outputs: outcome.outputs,
+            event,
+        });
+        let id = runs::register(run);
+        self.unlogged_runs
+            .insert(id, (c.command.value.clone(), c.span));
+        self.emit(Event::Created {
+            command: c.command.value.clone(),
+            run: id,
+            span: c.span,
+            in_fn: self.fn_stack.last().cloned(),
+            argv: argv.clone(),
+            describe: crate::exec::describe(&c.command.value, &plan),
+        });
+        Ok(Value::PendingTree { run: id })
+    }
+
+    fn observe(&mut self, key: String, produce: impl FnOnce() -> Value) -> Value {
+        if let Some(pinned) = self.journal.get(&key).cloned() {
+            self.emit(Event::Observation {
+                key,
+                replayed: true,
+            });
+            return pinned;
+        }
+        let value = produce();
+        self.journal.insert(key.clone(), value.clone());
+        self.emit(Event::Observation {
+            key,
+            replayed: false,
+        });
+        value
+    }
+
+    fn fetch(&mut self, args: Vec<CallArg>) -> EvalResult {
+        let mut sha = None;
+        for arg in args {
+            let value = self.demand(arg.node, Demand::Identity)?;
+            if arg.name.as_deref() == Some("sha256") {
+                sha = Some(value);
+            }
+        }
+        let Some(Value::Str(sha)) = sha else {
+            return Err("fetch requires a string sha256: the checksum IS the identity".to_string());
+        };
+        Ok(self.observe(format!("fetch:{sha}"), || {
+            Value::Tree(crate::exec::Tree::of(&[("tarball", sha.as_str())]))
+        }))
+    }
+
+    fn extract(&mut self, args: Vec<CallArg>) -> EvalResult {
+        let Some(arg) = args.first() else {
+            return Err("extract takes a tree".to_string());
+        };
+        let tar = self.demand(arg.node, Demand::Identity)?;
+        let tar_hash = tar.canon_hash();
+        let header = format!("// lua.h api ({tar_hash:016x})");
+        Ok(Value::Tree(crate::exec::Tree::of(&[
+            ("lua-5.4.8/src/lua.h", header.as_str()),
+            (
+                "lua-5.4.8/src/lua.c",
+                "#include \"lua.h\"\n// interpreter main",
+            ),
+            ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
+            ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
+            (
+                "lua-5.4.8/src/luac.c",
+                "#include \"lua.h\"\n// compiler main",
+            ),
+        ])))
+    }
+
+    fn acquire(&mut self, kind: &str, args: Vec<CallArg>) -> EvalResult {
+        let target_hash = if let Some(arg) = args.first() {
+            self.demand(arg.node, Demand::Identity)?.canon_hash()
+        } else {
+            0
+        };
+        let key = format!("acquire:{kind}:{target_hash:x}");
+        Ok(self.observe(key.clone(), || Value::Struct {
+            name: kind.to_string(),
+            fields: vec![("fingerprint".to_string(), Value::Str(key.clone()))],
+        }))
+    }
+
     fn method(&mut self, recv: Value, name: &str, args: Vec<CallArg>) -> EvalResult {
+        let recv = self.force_value(recv)?;
         let positional = args
             .into_iter()
             .map(|arg| self.demand(arg.node, Demand::Identity))
@@ -917,6 +1230,32 @@ impl Engine {
                 Ok(Value::Array(out))
             }
             (Value::Array(mut values), "collect") => {
+                if !values.is_empty()
+                    && values
+                        .iter()
+                        .all(|value| matches!(value, Value::Tree(_) | Value::PendingTree { .. }))
+                {
+                    let mut values = values
+                        .into_iter()
+                        .map(|value| self.force_value(value))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let mut merged = crate::exec::Tree::default();
+                    values.sort();
+                    for value in values {
+                        let Value::Tree(tree) = value else {
+                            unreachable!()
+                        };
+                        for (path, contents) in tree.entries {
+                            if let Some(prior) = merged.entries.get(&path)
+                                && *prior != contents
+                            {
+                                return Err(format!("collect: conflicting entry `{path}`"));
+                            }
+                            merged.entries.insert(path, contents);
+                        }
+                    }
+                    return Ok(Value::Tree(merged));
+                }
                 values.sort();
                 Ok(Value::Array(values))
             }
@@ -967,23 +1306,6 @@ fn path_names_variant(path: &PathRef, enum_name: &str, variant: &str) -> bool {
 
 fn path_names_struct(path: &PathRef, name: &str) -> bool {
     matches!(path, PathRef::Identifier(n) if n.value == name)
-}
-
-fn subtree(tree: &crate::exec::Tree, path: &str) -> Result<crate::exec::Tree, String> {
-    if let Some(contents) = tree.entries.get(path) {
-        let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
-        return Ok(crate::exec::Tree::of(&[(base, contents.as_str())]));
-    }
-    let prefix = format!("{path}/");
-    let entries: BTreeMap<String, String> = tree
-        .entries
-        .iter()
-        .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|r| (r.to_string(), v.clone())))
-        .collect();
-    if entries.is_empty() {
-        return Err(format!("no `{path}` in tree"));
-    }
-    Ok(crate::exec::Tree { entries })
 }
 
 fn parse_number(text: &str) -> Value {
