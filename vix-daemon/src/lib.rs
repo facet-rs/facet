@@ -193,34 +193,56 @@ impl Daemon for DaemonService {
             oracle.call(&entry, &args).map(|v| format!("{v:?}"))
         });
 
+        // Drop our own sender halves: the oracle thread holds the only clones
+        // now, so evt_rx/gate_rx yield None exactly when the oracle finishes.
+        // (Holding these across the loop deadlocked v1: recv() never ended.)
+        drop(evt_tx);
+        drop(gate_tx);
+
         // Bridge: forward events (gated by client Step/Resume) to the client.
+        //
+        // Invariants that keep this deadlock-free:
+        // - The sink requests a permit for EVERY event while in Step mode (the
+        //   mode is baked into the closure), so after Resume the bridge must
+        //   keep draining permits and grant them immediately.
+        // - At most one permit is ever outstanding (the oracle blocks on it).
+        // - A Step that arrives before its permit becomes a CREDIT, not a
+        //   dropped message.
         let mut gating = mode == StepMode::Step;
+        let mut step_credits: u32 = 0;
         let mut pending_permit: Option<oneshot::Sender<()>> = None;
         let mut gate_rx = gate_rx;
 
         loop {
             tokio::select! {
-                // A new gated event wants permission.
-                permit = gate_rx.recv(), if gating && pending_permit.is_none() => {
-                    match permit {
-                        Some(p) => pending_permit = Some(p),
-                        None => { gating = false; }
+                // The oracle wants permission to continue past an event.
+                permit = gate_rx.recv() => {
+                    if let Some(p) = permit {
+                        if !gating || step_credits > 0 {
+                            step_credits = step_credits.saturating_sub(1);
+                            let _ = p.send(());
+                        } else {
+                            pending_permit = Some(p);
+                        }
                     }
+                    // None just means the oracle dropped its gate sender;
+                    // evt_rx closing is what ends the loop.
                 }
-                // The oracle produced an event (already permitted, or free-running).
+                // The oracle produced an event (emitted before it blocks).
                 evt = evt_rx.recv() => {
                     match evt {
                         Some(de) => { let _ = events.send(de).await; }
-                        None => break, // oracle finished; drain below
+                        None => break, // oracle finished
                     }
                 }
                 // Client control (only relevant while gating).
                 cmd = control.recv(), if gating => {
                     match cmd {
                         Ok(Some(c)) => match c.get() {
-                            StepCommand::Step => {
-                                if let Some(p) = pending_permit.take() { let _ = p.send(()); }
-                            }
+                            StepCommand::Step => match pending_permit.take() {
+                                Some(p) => { let _ = p.send(()); }
+                                None => step_credits += 1,
+                            },
                             StepCommand::Resume => {
                                 gating = false;
                                 if let Some(p) = pending_permit.take() { let _ = p.send(()); }
@@ -232,13 +254,9 @@ impl Daemon for DaemonService {
             }
         }
 
-        // Release any last permit and drain remaining events.
+        // Release a straggler permit, if any.
         if let Some(p) = pending_permit.take() {
             let _ = p.send(());
-        }
-        drop(gate_tx);
-        while let Ok(de) = evt_rx.try_recv() {
-            let _ = events.send(de).await;
         }
 
         let final_event = match oracle_task.await {

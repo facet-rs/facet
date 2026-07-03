@@ -418,6 +418,9 @@ pub enum Event {
     },
 }
 
+/// A live tap on [`Event`]s as they happen (see [`Oracle::with_sink`]).
+pub type EventSink = Box<dyn Fn(&Event)>;
+
 struct EnumInfo {
     variants: Vec<(String, VariantShape)>,
 }
@@ -533,7 +536,7 @@ pub struct Oracle {
     /// to STREAM demand events to an IDE and to GATE them (block the oracle
     /// thread until the client steps). `events` above is the post-hoc log; the
     /// sink is the real-time tap. Both are fed by `emit`.
-    sink: Option<Box<dyn Fn(&Event)>>,
+    sink: Option<EventSink>,
     exec_cache: RefCell<crate::exec::ExecCache>,
     backend: Option<Box<dyn ExecBackend>>,
     /// Run ids this oracle spawned that haven't logged their Exec event yet
@@ -616,7 +619,7 @@ impl Oracle {
     }
 
     /// Install a live event sink (the daemon streams + gates through it).
-    pub fn with_sink(mut self, sink: Box<dyn Fn(&Event)>) -> Self {
+    pub fn with_sink(mut self, sink: EventSink) -> Self {
         self.sink = Some(sink);
         self
     }
