@@ -8164,8 +8164,11 @@ dependencies = [
  "eyre",
  "facet",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "vix",
  "vox",
+ "vox-codegen",
  "vox-schema",
 ]
 

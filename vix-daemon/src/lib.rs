@@ -1,4 +1,4 @@
-//! The Vixen daemon: a vox service that owns demand-driven evaluation.
+//! The vix daemon: a vox service that owns demand-driven evaluation.
 //!
 //! # Why a daemon
 //!
