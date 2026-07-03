@@ -947,6 +947,8 @@ const fn snark_intrinsic_descriptor(name: &'static str) -> IntrinsicDescriptor {
 }
 
 const SNARK_LEX_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("lex");
+const SNARK_CALL_EXTERNAL_SCANNER_DESCRIPTOR: IntrinsicDescriptor =
+    snark_intrinsic_descriptor("call_external_scanner");
 const SNARK_DISPATCH_ACTIONS_DESCRIPTOR: IntrinsicDescriptor =
     snark_intrinsic_descriptor("dispatch_actions");
 const SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR: IntrinsicDescriptor =
@@ -954,7 +956,115 @@ const SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR: IntrinsicDescriptor =
 const SNARK_SHIFT_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("shift");
 const SNARK_SHIFT_EXTRA_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("shift_extra");
 const SNARK_REDUCE_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("reduce");
+const SNARK_SPLIT_GLR_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("split_glr");
+const SNARK_MERGE_GLR_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("merge_glr");
+const SNARK_RETIRE_BRANCH_DESCRIPTOR: IntrinsicDescriptor =
+    snark_intrinsic_descriptor("retire_branch");
 const SNARK_ACCEPT_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("accept");
+const SNARK_EMIT_TRACE_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("emit_trace");
+const SNARK_EMIT_NODE_DESCRIPTOR: IntrinsicDescriptor = snark_intrinsic_descriptor("emit_node");
+const SNARK_EMIT_TREE_EVENT_DESCRIPTOR: IntrinsicDescriptor =
+    snark_intrinsic_descriptor("emit_tree_event");
+
+const fn snark_intrinsic_execution_keys(
+    descriptor: IntrinsicDescriptor,
+    domain: SnarkIntrinsicDomain,
+    family: SnarkStencilFamily,
+    execution: SnarkStencilExecution,
+) -> SnarkIntrinsicExecutionKeys {
+    SnarkIntrinsicExecutionKeys {
+        descriptor,
+        domain,
+        family,
+        execution,
+    }
+}
+
+const SNARK_LEX_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_LEX_DESCRIPTOR,
+    SnarkIntrinsicDomain::Lexing,
+    SnarkStencilFamily::Lexer,
+    SnarkStencilExecution::LexerGraph,
+);
+const SNARK_CALL_EXTERNAL_SCANNER_KEYS: SnarkIntrinsicExecutionKeys =
+    snark_intrinsic_execution_keys(
+        SNARK_CALL_EXTERNAL_SCANNER_DESCRIPTOR,
+        SnarkIntrinsicDomain::ExternalScanner,
+        SnarkStencilFamily::ExternalScanner,
+        SnarkStencilExecution::HostCall,
+    );
+const SNARK_DISPATCH_ACTIONS_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_DISPATCH_ACTIONS_DESCRIPTOR,
+    SnarkIntrinsicDomain::ParserControl,
+    SnarkStencilFamily::ParserDispatch,
+    SnarkStencilExecution::DirectStencil,
+);
+const SNARK_COMMIT_LOOKAHEAD_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR,
+    SnarkIntrinsicDomain::ParserControl,
+    SnarkStencilFamily::ParserCursor,
+    SnarkStencilExecution::DirectStencil,
+);
+const SNARK_SHIFT_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_SHIFT_DESCRIPTOR,
+    SnarkIntrinsicDomain::ParserControl,
+    SnarkStencilFamily::ParserStack,
+    SnarkStencilExecution::DirectStencil,
+);
+const SNARK_SHIFT_EXTRA_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_SHIFT_EXTRA_DESCRIPTOR,
+    SnarkIntrinsicDomain::ParserControl,
+    SnarkStencilFamily::ParserStack,
+    SnarkStencilExecution::DirectStencil,
+);
+const SNARK_REDUCE_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_REDUCE_DESCRIPTOR,
+    SnarkIntrinsicDomain::Tree,
+    SnarkStencilFamily::TreeBuilder,
+    SnarkStencilExecution::DirectStencil,
+);
+const SNARK_SPLIT_GLR_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_SPLIT_GLR_DESCRIPTOR,
+    SnarkIntrinsicDomain::GlrControl,
+    SnarkStencilFamily::GlrScheduler,
+    SnarkStencilExecution::DirectStencil,
+);
+const SNARK_MERGE_GLR_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_MERGE_GLR_DESCRIPTOR,
+    SnarkIntrinsicDomain::GlrControl,
+    SnarkStencilFamily::GlrScheduler,
+    SnarkStencilExecution::DirectStencil,
+);
+const SNARK_RETIRE_BRANCH_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_RETIRE_BRANCH_DESCRIPTOR,
+    SnarkIntrinsicDomain::GlrControl,
+    SnarkStencilFamily::GlrScheduler,
+    SnarkStencilExecution::DirectStencil,
+);
+const SNARK_ACCEPT_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_ACCEPT_DESCRIPTOR,
+    SnarkIntrinsicDomain::ParserControl,
+    SnarkStencilFamily::TreeBuilder,
+    SnarkStencilExecution::DirectStencil,
+);
+const SNARK_EMIT_TRACE_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_EMIT_TRACE_DESCRIPTOR,
+    SnarkIntrinsicDomain::Trace,
+    SnarkStencilFamily::Sink,
+    SnarkStencilExecution::SinkAdapter,
+);
+const SNARK_EMIT_NODE_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_EMIT_NODE_DESCRIPTOR,
+    SnarkIntrinsicDomain::Tree,
+    SnarkStencilFamily::Sink,
+    SnarkStencilExecution::SinkAdapter,
+);
+const SNARK_EMIT_TREE_EVENT_KEYS: SnarkIntrinsicExecutionKeys = snark_intrinsic_execution_keys(
+    SNARK_EMIT_TREE_EVENT_DESCRIPTOR,
+    SnarkIntrinsicDomain::Tree,
+    SnarkStencilFamily::Sink,
+    SnarkStencilExecution::SinkAdapter,
+);
 
 const SNARK_INTRINSIC_DESCRIPTOR_COUNT: usize = 14;
 const SNARK_INTRINSIC_DOMAIN_COUNT: usize = 7;
@@ -1010,65 +1120,23 @@ fn snark_intrinsic_execution_keys_for_descriptor(
     if descriptor.dialect != SnarkIntrinsic::DIALECT {
         return None;
     }
-    let (domain, family, execution) = match descriptor.name {
-        "lex" => (
-            SnarkIntrinsicDomain::Lexing,
-            SnarkStencilFamily::Lexer,
-            SnarkStencilExecution::LexerGraph,
-        ),
-        "call_external_scanner" => (
-            SnarkIntrinsicDomain::ExternalScanner,
-            SnarkStencilFamily::ExternalScanner,
-            SnarkStencilExecution::HostCall,
-        ),
-        "dispatch_actions" => (
-            SnarkIntrinsicDomain::ParserControl,
-            SnarkStencilFamily::ParserDispatch,
-            SnarkStencilExecution::DirectStencil,
-        ),
-        "commit_lookahead" => (
-            SnarkIntrinsicDomain::ParserControl,
-            SnarkStencilFamily::ParserCursor,
-            SnarkStencilExecution::DirectStencil,
-        ),
-        "shift" | "shift_extra" => (
-            SnarkIntrinsicDomain::ParserControl,
-            SnarkStencilFamily::ParserStack,
-            SnarkStencilExecution::DirectStencil,
-        ),
-        "reduce" => (
-            SnarkIntrinsicDomain::Tree,
-            SnarkStencilFamily::TreeBuilder,
-            SnarkStencilExecution::DirectStencil,
-        ),
-        "split_glr" | "merge_glr" | "retire_branch" => (
-            SnarkIntrinsicDomain::GlrControl,
-            SnarkStencilFamily::GlrScheduler,
-            SnarkStencilExecution::DirectStencil,
-        ),
-        "accept" => (
-            SnarkIntrinsicDomain::ParserControl,
-            SnarkStencilFamily::TreeBuilder,
-            SnarkStencilExecution::DirectStencil,
-        ),
-        "emit_trace" => (
-            SnarkIntrinsicDomain::Trace,
-            SnarkStencilFamily::Sink,
-            SnarkStencilExecution::SinkAdapter,
-        ),
-        "emit_node" | "emit_tree_event" => (
-            SnarkIntrinsicDomain::Tree,
-            SnarkStencilFamily::Sink,
-            SnarkStencilExecution::SinkAdapter,
-        ),
-        _ => return None,
-    };
-    Some(SnarkIntrinsicExecutionKeys {
-        descriptor,
-        domain,
-        family,
-        execution,
-    })
+    match descriptor.name {
+        "lex" => Some(SNARK_LEX_KEYS),
+        "call_external_scanner" => Some(SNARK_CALL_EXTERNAL_SCANNER_KEYS),
+        "dispatch_actions" => Some(SNARK_DISPATCH_ACTIONS_KEYS),
+        "commit_lookahead" => Some(SNARK_COMMIT_LOOKAHEAD_KEYS),
+        "shift" => Some(SNARK_SHIFT_KEYS),
+        "shift_extra" => Some(SNARK_SHIFT_EXTRA_KEYS),
+        "reduce" => Some(SNARK_REDUCE_KEYS),
+        "split_glr" => Some(SNARK_SPLIT_GLR_KEYS),
+        "merge_glr" => Some(SNARK_MERGE_GLR_KEYS),
+        "retire_branch" => Some(SNARK_RETIRE_BRANCH_KEYS),
+        "accept" => Some(SNARK_ACCEPT_KEYS),
+        "emit_trace" => Some(SNARK_EMIT_TRACE_KEYS),
+        "emit_node" => Some(SNARK_EMIT_NODE_KEYS),
+        "emit_tree_event" => Some(SNARK_EMIT_TREE_EVENT_KEYS),
+        _ => None,
+    }
 }
 
 fn snark_intrinsic_domain_index(domain: SnarkIntrinsicDomain) -> usize {
@@ -1290,12 +1358,10 @@ impl RuntimeWeavySnarkExecutionStats {
         self.record_execution_keys(intrinsic.runtime_execution_keys());
     }
 
-    fn record_descriptor(&mut self, descriptor: IntrinsicDescriptor) {
+    fn record_keys(&mut self, keys: SnarkIntrinsicExecutionKeys) {
         if !self.enabled {
             return;
         }
-        let keys = snark_intrinsic_execution_keys_for_descriptor(descriptor)
-            .expect("Snark intrinsic descriptor has runtime execution keys");
         self.record_execution_keys(keys);
     }
 
@@ -1494,9 +1560,22 @@ impl SnarkIntrinsic {
     pub const DIALECT: &'static str = "snark.tree_sitter";
 
     fn runtime_execution_keys(&self) -> SnarkIntrinsicExecutionKeys {
-        let descriptor = self.descriptor();
-        snark_intrinsic_execution_keys_for_descriptor(descriptor)
-            .expect("Snark intrinsic descriptor has runtime execution keys")
+        match self {
+            Self::Lex { .. } => SNARK_LEX_KEYS,
+            Self::CallExternalScanner { .. } => SNARK_CALL_EXTERNAL_SCANNER_KEYS,
+            Self::DispatchActions { .. } => SNARK_DISPATCH_ACTIONS_KEYS,
+            Self::CommitLookahead { .. } => SNARK_COMMIT_LOOKAHEAD_KEYS,
+            Self::Shift { .. } => SNARK_SHIFT_KEYS,
+            Self::ShiftExtra { .. } => SNARK_SHIFT_EXTRA_KEYS,
+            Self::Reduce { .. } => SNARK_REDUCE_KEYS,
+            Self::SplitGlr { .. } => SNARK_SPLIT_GLR_KEYS,
+            Self::MergeGlr { .. } => SNARK_MERGE_GLR_KEYS,
+            Self::RetireBranch { .. } => SNARK_RETIRE_BRANCH_KEYS,
+            Self::Accept { .. } => SNARK_ACCEPT_KEYS,
+            Self::EmitTrace { .. } => SNARK_EMIT_TRACE_KEYS,
+            Self::EmitNode { .. } => SNARK_EMIT_NODE_KEYS,
+            Self::EmitTreeEvent { .. } => SNARK_EMIT_TREE_EVENT_KEYS,
+        }
     }
 
     /// Optimizer-facing semantic metadata for this Snark dialect op.
@@ -10009,7 +10088,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
         let (token, lexed) = if let Some(token) = self.lookahead {
             (token, false)
         } else {
-            self.snark_stats.record_descriptor(SNARK_LEX_DESCRIPTOR);
+            self.snark_stats.record_keys(SNARK_LEX_KEYS);
             let state_row = self.parse_state(state)?;
             (self.lex(state_row, self.byte_position)?, true)
         };
@@ -10039,8 +10118,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
             );
         }
         self.lookahead = Some(token);
-        self.snark_stats
-            .record_descriptor(SNARK_DISPATCH_ACTIONS_DESCRIPTOR);
+        self.snark_stats.record_keys(SNARK_DISPATCH_ACTIONS_KEYS);
         let action_entry =
             if let Some(action_entry) = self.plan.action_entry(state, token.lookahead) {
                 action_entry
@@ -10070,10 +10148,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
         match action {
             parser_ir::ParseAction::Shift { state, .. } => {
                 let state = parser_ir::ParseStateId::from_index(state.get() as usize);
-                self.snark_stats
-                    .record_descriptor(SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR);
+                self.snark_stats.record_keys(SNARK_COMMIT_LOOKAHEAD_KEYS);
                 self.commit_lookahead_direct()?;
-                self.snark_stats.record_descriptor(SNARK_SHIFT_DESCRIPTOR);
+                self.snark_stats.record_keys(SNARK_SHIFT_KEYS);
                 self.shift_direct(state)?;
                 self.lookahead = None;
             }
@@ -10083,11 +10160,9 @@ impl<'a> RuntimeWeavyStepper<'a> {
                     .last()
                     .ok_or(RuntimeWeavyStepError::EmptyStack)?
                     .state;
-                self.snark_stats
-                    .record_descriptor(SNARK_COMMIT_LOOKAHEAD_DESCRIPTOR);
+                self.snark_stats.record_keys(SNARK_COMMIT_LOOKAHEAD_KEYS);
                 self.commit_lookahead_direct()?;
-                self.snark_stats
-                    .record_descriptor(SNARK_SHIFT_EXTRA_DESCRIPTOR);
+                self.snark_stats.record_keys(SNARK_SHIFT_EXTRA_KEYS);
                 self.shift_extra_direct(state)?;
                 self.lookahead = None;
             }
@@ -10098,7 +10173,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 child_count,
                 dynamic_precedence: _,
             } => {
-                self.snark_stats.record_descriptor(SNARK_REDUCE_DESCRIPTOR);
+                self.snark_stats.record_keys(SNARK_REDUCE_KEYS);
                 let _ = self.reduce_direct(production, metadata, symbol, child_count)?;
             }
             parser_ir::ParseAction::Accept {
@@ -10108,7 +10183,7 @@ impl<'a> RuntimeWeavyStepper<'a> {
                 symbol: _,
                 dynamic_precedence: _,
             } => {
-                self.snark_stats.record_descriptor(SNARK_ACCEPT_DESCRIPTOR);
+                self.snark_stats.record_keys(SNARK_ACCEPT_KEYS);
                 self.accept_direct(production, metadata, child_count)?;
             }
         }
