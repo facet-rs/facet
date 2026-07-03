@@ -5732,6 +5732,7 @@ macro_rules! trace_push {
 
 struct RuntimeWeavyLexerScratch {
     cache_policy: Cell<RuntimeWeavyLexSetCachePolicy>,
+    stats_enabled: Cell<bool>,
     execution_stats: RefCell<RuntimeWeavyLexerExecutionStats>,
     direct_literal_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
     direct_pattern_ends: RefCell<Vec<Option<parser_ir::LexMatch>>>,
@@ -5748,6 +5749,7 @@ impl RuntimeWeavyLexerScratch {
     fn new(cache_policy: RuntimeWeavyLexSetCachePolicy) -> Self {
         Self {
             cache_policy: Cell::new(cache_policy),
+            stats_enabled: Cell::new(true),
             execution_stats: RefCell::default(),
             direct_literal_ends: RefCell::default(),
             direct_pattern_ends: RefCell::default(),
@@ -5760,8 +5762,9 @@ impl RuntimeWeavyLexerScratch {
         }
     }
 
-    fn reset_for_parse(&self, cache_policy: RuntimeWeavyLexSetCachePolicy) {
+    fn reset_for_parse(&self, cache_policy: RuntimeWeavyLexSetCachePolicy, stats_enabled: bool) {
         self.cache_policy.set(cache_policy);
+        self.stats_enabled.set(stats_enabled);
         *self.execution_stats.borrow_mut() = RuntimeWeavyLexerExecutionStats::default();
         self.direct_literal_ends.borrow_mut().clear();
         self.direct_pattern_ends.borrow_mut().clear();
@@ -5774,24 +5777,39 @@ impl RuntimeWeavyLexerScratch {
     }
 
     fn record_lex_call(&self) {
+        if !self.stats_enabled.get() {
+            return;
+        }
         self.execution_stats.borrow_mut().lex_call_count += 1;
     }
 
     fn record_direct_set_cache_hit(&self) {
+        if !self.stats_enabled.get() {
+            return;
+        }
         self.execution_stats.borrow_mut().direct_set_cache_hit_count += 1;
     }
 
     fn record_direct_set_cache_miss(&self) {
+        if !self.stats_enabled.get() {
+            return;
+        }
         self.execution_stats
             .borrow_mut()
             .direct_set_cache_miss_count += 1;
     }
 
     fn record_direct_set_uncached(&self) {
+        if !self.stats_enabled.get() {
+            return;
+        }
         self.execution_stats.borrow_mut().direct_set_uncached_count += 1;
     }
 
     fn record_stencil_execution(&self, kind: WeavyLexerStencilKind) {
+        if !self.stats_enabled.get() {
+            return;
+        }
         self.execution_stats.borrow_mut().record_stencil(kind);
     }
 
@@ -6908,7 +6926,10 @@ where
             lexer_scratch,
         );
     }
-    lexer_scratch.reset_for_parse(RuntimeWeavyLexSetCachePolicy::Disabled);
+    lexer_scratch.reset_for_parse(
+        RuntimeWeavyLexSetCachePolicy::Disabled,
+        S::SNARK_STAT_COLLECTION,
+    );
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(false);
@@ -7047,7 +7068,10 @@ fn parse_weavy_deterministic_direct_with_execution_and_scratch<S>(
 where
     S: RuntimeWeavyDeterministicSink,
 {
-    lexer_scratch.reset_for_parse(RuntimeWeavyLexSetCachePolicy::Disabled);
+    lexer_scratch.reset_for_parse(
+        RuntimeWeavyLexSetCachePolicy::Disabled,
+        S::SNARK_STAT_COLLECTION,
+    );
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(false);
@@ -7606,7 +7630,10 @@ fn parse_weavy_with_lexer_program_and_scratch(
             stage: input_ctx.parser.stage(),
         });
     }
-    lexer_scratch.reset_for_parse(runtime_weavy_lex_set_cache_policy(recovery, reuse_index));
+    lexer_scratch.reset_for_parse(
+        runtime_weavy_lex_set_cache_policy(recovery, reuse_index),
+        true,
+    );
 
     let mut tree_store = RuntimeWeavyTreeStore::default();
     let mut trace_events = RuntimeWeavyTraceSink::new(block_execution.collects_traces());
@@ -14365,6 +14392,29 @@ mod tests {
             })
             .unwrap()
             .expect("tiny grammar is deterministic");
+        let tree_only_scratch =
+            RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
+        let scratch_tree_only = parse_weavy_deterministic_with_execution_and_scratch::<
+            RuntimeWeavyDeterministicTreeSink,
+        >(
+            RuntimeWeavyInput {
+                plan: &plan,
+                lexer_program: &plan.lexer_program,
+                auto_close_index: &plan.auto_close_index,
+                parser: &parser,
+                table: &table,
+                input: "ab",
+                external_scanner: None,
+            },
+            RuntimeWeavyBlockExecution::Direct,
+            &tree_only_scratch,
+        )
+        .unwrap()
+        .expect("tiny grammar is deterministic");
+        assert_eq!(
+            tree_only_scratch.execution_stats(),
+            WeavyLexerExecutionStats::default()
+        );
         let deterministic_resolved =
             parse_weavy_deterministic_resolved_tree_with_lexer_program(RuntimeWeavyInput {
                 plan: &plan,
@@ -14451,6 +14501,7 @@ mod tests {
         );
         assert_eq!(deterministic_direct.tree(), default_direct.tree());
         assert_eq!(&deterministic_tree_only, default_direct.tree());
+        assert_eq!(&scratch_tree_only, default_direct.tree());
         assert_eq!(&tree_only, default_direct.tree());
         let report_resolved = default_direct
             .accepted_resolved_tree(&parser, "ab")
