@@ -2827,9 +2827,8 @@ fn snark_stencil_summary_active_in_profile(
 ) -> bool {
     match profile {
         SnarkStencilProfile::Full => true,
-        SnarkStencilProfile::DirectNoTrace | SnarkStencilProfile::DirectTreeOnly => {
-            summary.domain != SnarkIntrinsicDomain::Trace
-        }
+        SnarkStencilProfile::DirectNoTrace => summary.domain != SnarkIntrinsicDomain::Trace,
+        SnarkStencilProfile::DirectTreeOnly => summary.stencil.family != SnarkStencilFamily::Sink,
     }
 }
 
@@ -15138,6 +15137,79 @@ mod tests {
                 .iter()
                 .any(|summary| summary.state == SnarkStencilState::TreeStore)
         );
+    }
+
+    #[test]
+    fn tree_only_stencil_profile_removes_sink_adapter_descriptors() {
+        let emit_trace = SnarkIntrinsic::EmitTrace {
+            event: TraceEventId(0),
+        };
+        let emit_node = SnarkIntrinsic::EmitNode {
+            symbol: SymbolId(1),
+        };
+        let emit_tree_event = SnarkIntrinsic::EmitTreeEvent {
+            event: TreeEventId(2),
+        };
+        let plan = WeavyParsePlan {
+            program: WeavyParserProgram {
+                lowered: empty_lowered(),
+                dense: DenseSnarkWeavyLowered::new(
+                    vec![
+                        WeavyOp::Intrinsic(emit_trace),
+                        WeavyOp::Intrinsic(emit_node),
+                        WeavyOp::Intrinsic(emit_tree_event),
+                    ],
+                    vec![],
+                ),
+                state_blocks: vec![],
+                state_block_refs: vec![],
+                action_blocks: vec![],
+                extra_node_index: RuntimeWeavyExtraNodeIndex::default(),
+                terminal_lookahead_index: RuntimeWeavyStateTerminalLookaheadIndex::default(),
+                public_node_kind_names: vec![],
+                alias_names: vec![],
+            },
+            lexer_program: WeavyLexerProgram {
+                modes: vec![],
+                state_modes: vec![],
+            },
+            auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
+            #[cfg(all(
+                feature = "jit",
+                any(
+                    all(target_os = "macos", target_arch = "aarch64"),
+                    all(target_os = "linux", target_arch = "x86_64")
+                )
+            ))]
+            hostcall_blocks: Default::default(),
+        };
+        let readiness = plan.analysis().readiness;
+        let descriptor_names = |profile: SnarkStencilProfile| {
+            readiness
+                .snark_stencil_summaries_for_profile(profile)
+                .into_iter()
+                .map(|summary| summary.descriptor.name)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            descriptor_names(SnarkStencilProfile::Full),
+            vec!["emit_node", "emit_trace", "emit_tree_event"]
+        );
+        assert_eq!(
+            descriptor_names(SnarkStencilProfile::DirectNoTrace),
+            vec!["emit_node", "emit_tree_event"]
+        );
+
+        let tree_only_profile =
+            readiness.snark_stencil_profile(SnarkStencilProfile::DirectTreeOnly);
+        assert!(tree_only_profile.descriptor_summaries.is_empty());
+        assert!(tree_only_profile.family_summaries.is_empty());
+        assert!(tree_only_profile.execution_summaries.is_empty());
+        assert!(tree_only_profile.state_summaries.is_empty());
+        assert_eq!(tree_only_profile.parser_stencil_count(), 0);
+        assert!(!tree_only_profile.needs_parser_stencils());
+        assert!(!tree_only_profile.needs_backend_stencils());
     }
 
     #[test]
