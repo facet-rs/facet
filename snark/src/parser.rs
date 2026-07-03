@@ -5308,7 +5308,7 @@ impl<'a> ResolvedCstBuilder<'a> {
                 ..
             } => {
                 self.push_item(ResolvedCstItem {
-                    kind: self.symbol_kind(*symbol, source_slice(self.input, *bytes)),
+                    kind: self.token_symbol_kind(*symbol, *bytes),
                     symbol: Some(*symbol),
                     field: None,
                     node: None,
@@ -5663,6 +5663,21 @@ impl<'a> ResolvedCstBuilder<'a> {
             .get(alias.get() as usize)
             .cloned()
             .unwrap_or_else(|| Arc::<str>::from(self.parser.aliases[alias.get() as usize].value()))
+    }
+
+    fn token_symbol_kind(&self, symbol: ParserSymbol, bytes: ByteRange) -> Arc<str> {
+        if let ParserSymbol::External(external) = symbol {
+            return self
+                .names
+                .externals
+                .get(external.get() as usize)
+                .and_then(Clone::clone)
+                .unwrap_or_else(|| {
+                    Arc::<str>::from(source_slice(self.input, bytes).unwrap_or("<external>"))
+                });
+        }
+
+        self.symbol_kind(symbol, None)
     }
 
     fn symbol_kind(&self, symbol: ParserSymbol, token_text: Option<&str>) -> Arc<str> {
