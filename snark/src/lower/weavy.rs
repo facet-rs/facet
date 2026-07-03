@@ -59,6 +59,8 @@ pub type SnarkWeavyOp = WeavyOp<SnarkBlockId, SnarkIntrinsic>;
 /// One dense Snark/Weavy operation.
 pub type DenseSnarkWeavyOp = WeavyOp<BlockRef, SnarkIntrinsic>;
 
+type RuntimeWeavyStateStack = SmallVec<[parser_ir::ParseStateId; 16]>;
+
 macro_rules! id_type {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]
@@ -8333,22 +8335,22 @@ impl RuntimeWeavyTreeJournal {
 struct RuntimeWeavyBranchKey {
     byte_position: usize,
     scanner_snapshot: Option<parser_ir::ScannerSnapshotId>,
-    stack: Vec<parser_ir::ParseStateId>,
+    stack: RuntimeWeavyStateStack,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeWeavyFailure {
     error: RuntimeWeavyStepError,
-    state_stack: Vec<parser_ir::ParseStateId>,
+    state_stack: RuntimeWeavyStateStack,
 }
 
-fn runtime_weavy_branch_state_stack(branch: &RuntimeWeavyBranch) -> Vec<parser_ir::ParseStateId> {
+fn runtime_weavy_branch_state_stack(branch: &RuntimeWeavyBranch) -> RuntimeWeavyStateStack {
     branch.stack.iter().map(|entry| entry.state).collect()
 }
 
 fn runtime_weavy_failure(
     error: RuntimeWeavyStepError,
-    state_stack: Vec<parser_ir::ParseStateId>,
+    state_stack: RuntimeWeavyStateStack,
 ) -> RuntimeWeavyFailure {
     RuntimeWeavyFailure { error, state_stack }
 }
@@ -8431,7 +8433,10 @@ fn step_runtime_weavy_branch(
     if branch.stack.last().is_none() {
         step.outcomes.push(RuntimeWeavyStepOutcome::Failed {
             version: source_version,
-            failure: runtime_weavy_failure(RuntimeWeavyStepError::EmptyStack, Vec::new()),
+            failure: runtime_weavy_failure(
+                RuntimeWeavyStepError::EmptyStack,
+                RuntimeWeavyStateStack::new(),
+            ),
         });
         return;
     }
@@ -8811,7 +8816,10 @@ fn run_runtime_weavy_direct_deterministic_step(
         None => {
             return Some(RuntimeWeavyStepOutcome::Failed {
                 version,
-                failure: runtime_weavy_failure(RuntimeWeavyStepError::EmptyStack, Vec::new()),
+                failure: runtime_weavy_failure(
+                    RuntimeWeavyStepError::EmptyStack,
+                    RuntimeWeavyStateStack::new(),
+                ),
             });
         }
     };
