@@ -7368,14 +7368,16 @@ impl<'a> RuntimeWeavyReuseIndex<'a> {
                 entry_state: shifted.entry_state,
                 scanner_snapshot: shifted.entry_scanner_snapshot,
             };
-            nodes
-                .entry(key)
-                .and_modify(|current| {
-                    if shifted.end_byte > current.end_byte {
-                        *current = shifted.clone();
+            match nodes.entry(key) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if shifted.end_byte > entry.get().end_byte {
+                        entry.insert(shifted);
                     }
-                })
-                .or_insert(shifted);
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(shifted);
+                }
+            }
         }
         RuntimeWeavyReuseIndex {
             tree_store: &report.tree_store,
