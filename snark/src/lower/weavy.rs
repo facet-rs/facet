@@ -5031,32 +5031,77 @@ impl RuntimeWeavyStateActionEntryIndex {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct RuntimeWeavyStateActionEntries {
-    entries: Vec<RuntimeWeavyActionEntry>,
+    terminal_entries: Vec<Option<RuntimeWeavyActionEntry>>,
+    external_entries: Vec<Option<RuntimeWeavyActionEntry>>,
+    eof_entry: Option<RuntimeWeavyActionEntry>,
+    sparse_entries: Vec<RuntimeWeavyActionEntry>,
 }
 
 impl RuntimeWeavyStateActionEntries {
     fn from_state(state: &parser_ir::ParseState) -> Self {
-        let mut entries = state
-            .entries()
-            .iter()
-            .enumerate()
-            .map(|(entry_index, entry)| RuntimeWeavyActionEntry {
+        let mut entries = Self {
+            terminal_entries: Vec::new(),
+            external_entries: Vec::new(),
+            eof_entry: None,
+            sparse_entries: Vec::new(),
+        };
+        for (entry_index, entry) in state.entries().iter().enumerate() {
+            let runtime_entry = RuntimeWeavyActionEntry {
                 lookahead: entry.lookahead(),
                 entry_index,
                 action_count: entry.actions().len(),
                 first_action: entry.actions().first().copied(),
-            })
-            .collect::<Vec<_>>();
-        entries.sort_by_key(|entry| entry.lookahead);
-        Self { entries }
+            };
+            match runtime_entry.lookahead {
+                parser_ir::LookaheadSymbol::Terminal(terminal) => {
+                    let index = terminal.get() as usize;
+                    if entries.terminal_entries.len() <= index {
+                        entries.terminal_entries.resize(index + 1, None);
+                    }
+                    entries.terminal_entries[index] = Some(runtime_entry);
+                }
+                parser_ir::LookaheadSymbol::External(external) => {
+                    let index = external.get() as usize;
+                    if entries.external_entries.len() <= index {
+                        entries.external_entries.resize(index + 1, None);
+                    }
+                    entries.external_entries[index] = Some(runtime_entry);
+                }
+                parser_ir::LookaheadSymbol::Eof => {
+                    entries.eof_entry = Some(runtime_entry);
+                }
+                parser_ir::LookaheadSymbol::ReservedWord { .. }
+                | parser_ir::LookaheadSymbol::ErrorRecovery(_) => {
+                    entries.sparse_entries.push(runtime_entry);
+                }
+            }
+        }
+        entries.sparse_entries.sort_by_key(|entry| entry.lookahead);
+        entries
     }
 
     fn get(&self, lookahead: parser_ir::LookaheadSymbol) -> Option<RuntimeWeavyActionEntry> {
-        let index = self
-            .entries
-            .binary_search_by_key(&lookahead, |entry| entry.lookahead)
-            .ok()?;
-        self.entries.get(index).copied()
+        match lookahead {
+            parser_ir::LookaheadSymbol::Terminal(terminal) => self
+                .terminal_entries
+                .get(terminal.get() as usize)
+                .copied()
+                .flatten(),
+            parser_ir::LookaheadSymbol::External(external) => self
+                .external_entries
+                .get(external.get() as usize)
+                .copied()
+                .flatten(),
+            parser_ir::LookaheadSymbol::Eof => self.eof_entry,
+            parser_ir::LookaheadSymbol::ReservedWord { .. }
+            | parser_ir::LookaheadSymbol::ErrorRecovery(_) => {
+                let index = self
+                    .sparse_entries
+                    .binary_search_by_key(&lookahead, |entry| entry.lookahead)
+                    .ok()?;
+                self.sparse_entries.get(index).copied()
+            }
+        }
     }
 }
 
