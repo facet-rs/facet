@@ -111,7 +111,19 @@ pub enum Op {
         stride: u32,
         src: u32,
     },
+    /// SYNC host call (Amos's refinement, ruled): a host operation
+    /// that ALWAYS completes — no await-point numbering, no park
+    /// machinery, no spill obligations beyond frame residency (which
+    /// three-address gives anyway). The host function receives the
+    /// current frame's bytes and reads/writes at offsets its contract
+    /// (known to the lowering) declares — the frame-direct convention
+    /// extended to the host boundary. `host` indexes the table passed
+    /// to [`Task::run_hosted`].
+    HostCall { host: u32 },
 }
+
+/// A synchronous host operation over the current frame's bytes.
+pub type HostFn<'h> = &'h mut dyn FnMut(&mut [u8]);
 
 /// Frame-granular trace events (the ruled vocabulary, recorded
 /// directly in this slice).
@@ -209,14 +221,27 @@ impl Task {
 
     /// Drive until the root returns or the task parks. `ready` and
     /// `awaited` are indexed by await input, exactly as in the proven
-    /// suspend protocol.
+    /// suspend protocol. Programs containing [`Op::HostCall`] must use
+    /// [`Task::run_hosted`].
     pub fn run(&mut self, program: &Program, ready: &[bool], awaited: &[i64]) -> TaskStep {
+        self.run_hosted(program, ready, awaited, &mut [])
+    }
+
+    /// [`Task::run`] with a host table for sync host calls.
+    pub fn run_hosted(
+        &mut self,
+        program: &Program,
+        ready: &[bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+    ) -> TaskStep {
         loop {
             let frame = self.frames.last().expect("running task has a frame");
             let base = frame.base;
+            let fn_id = frame.fn_id;
             let code = &program.fns[frame.fn_id.0 as usize].code;
             if frame.pc >= code.len() {
-                panic!("function {:?} fell off its code without Ret", frame.fn_id);
+                panic!("function {:?} fell off its code without Ret", fn_id);
             }
             match code[frame.pc].clone() {
                 Op::ConstI64 { dst, value } => {
@@ -293,6 +318,12 @@ impl Task {
                     let v = read_i64_at(&self.arena, base + src as usize);
                     let at = base + arr as usize + ix as usize * stride as usize;
                     write_i64_at(&mut self.arena, at, v);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::HostCall { host } => {
+                    let frame_layout = program.fns[fn_id.0 as usize].frame;
+                    let end = base + frame_layout.size;
+                    hosts[host as usize](&mut self.arena[base..end]);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::Await { dst, input } => {

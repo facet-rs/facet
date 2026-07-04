@@ -177,6 +177,7 @@ const TASK_SYMBOLS: &[&str] = &[
     "weavy_task_await",
     "weavy_task_call",
     "weavy_task_ret",
+    "weavy_task_hostcall",
     "weavy_task_done",
 ];
 
@@ -190,6 +191,7 @@ const TASK_NAMES: &[(&str, &str)] = &[
     ("AWAIT", "weavy_task_await"),
     ("CALL", "weavy_task_call"),
     ("RET", "weavy_task_ret"),
+    ("HOSTCALL", "weavy_task_hostcall"),
     ("DONE", "weavy_task_done"),
 ];
 

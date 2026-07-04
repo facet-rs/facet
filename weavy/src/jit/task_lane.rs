@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 
 use crate::jit::{NativeProgram, StencilLayout, task_stencils};
-use crate::task::{ArgCopy, FnId, Op, Program, TaskEvent, TaskStep};
+use crate::task::{ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep};
 
 /// Threaded state — MUST match `Ctx` in stencils/task_ops.rs.
 #[repr(C)]
@@ -89,6 +89,7 @@ fn compile_fn(f: &crate::task::Fn) -> CompiledFn {
             Op::Await { .. } => (task_stencils::AWAIT, task_stencils::AWAIT_CONT),
             Op::Call { .. } => (task_stencils::CALL, task_stencils::CALL_CONT),
             Op::Ret { .. } => (task_stencils::RET, task_stencils::RET_CONT),
+            Op::HostCall { .. } => (task_stencils::HOSTCALL, task_stencils::HOSTCALL_CONT),
         };
         let start = layout.emit_stencil(bytes);
         starts.push(start);
@@ -149,6 +150,11 @@ fn compile_fn(f: &crate::task::Fn) -> CompiledFn {
             Op::Ret { src, size } => {
                 layout.push_prog_word(root.prog_index, u64::from(*src));
                 layout.push_prog_word(root.prog_index, u64::from(*size));
+            }
+            Op::HostCall { host } => {
+                let continuation = starts.get(i + 1).copied().unwrap_or(done) as u64;
+                layout.push_prog_word(root.prog_index, continuation);
+                layout.push_prog_word(root.prog_index, u64::from(*host));
             }
         }
     }
@@ -224,6 +230,16 @@ impl JitTask {
     }
 
     pub fn run(&mut self, program: &JitProgram, ready: &[bool], awaited: &[i64]) -> TaskStep {
+        self.run_hosted(program, ready, awaited, &mut [])
+    }
+
+    pub fn run_hosted(
+        &mut self,
+        program: &JitProgram,
+        ready: &[bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+    ) -> TaskStep {
         self.ready_scratch.clear();
         self.ready_scratch.extend(ready.iter().map(|&r| i64::from(r)));
         if let Some(input) = self.parked_on
@@ -312,6 +328,19 @@ impl JitTask {
                         }
                     }
                 }
+                4 => {
+                    // Sync host call: invoke over the frame bytes,
+                    // re-enter at the continuation. No trace event, no
+                    // park path — the ruled sync/async distinction.
+                    let continuation = usize::try_from(resume_scratch).expect("offset");
+                    let host = usize::try_from(index_scratch).expect("host index");
+                    {
+                        let top = self.frames.last_mut().expect("frame");
+                        top.resume = continuation;
+                    }
+                    let end = frame.base + compiled.frame_size;
+                    hosts[host](&mut self.arena[frame.base..end]);
+                }
                 code => panic!("task chain exited with code {code} (fell through without Ret?)"),
             }
         }
@@ -324,6 +353,58 @@ mod tests {
     use super::*;
     use crate::mem::Layout;
     use crate::task::{Fn as TaskFn, Task};
+
+    #[test]
+    fn sync_host_calls_match_the_interpreter_and_never_park() {
+        // host 0: read slot 0, write slot0*2+1 to slot 8. Counters
+        // prove exactly-once invocation per lane.
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: Layout { size: 16, align: 8 },
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 20 },
+                    Op::HostCall { host: 0 },
+                    Op::AddI64 { dst: 8, a: 8, b: 0 },
+                    Op::Ret { src: 8, size: 8 },
+                ],
+            }],
+        };
+        let host_impl = |frame: &mut [u8]| {
+            let v = i64::from_le_bytes(frame[0..8].try_into().unwrap());
+            frame[8..16].copy_from_slice(&(v * 2 + 1).to_le_bytes());
+        };
+
+        let mut interp_calls = 0u32;
+        let mut interp_host = |frame: &mut [u8]| {
+            interp_calls += 1;
+            host_impl(frame);
+        };
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(
+            interp.run_hosted(&program, &[], &[], &mut [&mut interp_host]),
+            TaskStep::Done
+        );
+        assert_eq!(interp.result_i64(), 61);
+        assert_eq!(interp_calls, 1);
+        assert!(!interp.trace.iter().any(|e| matches!(e, TaskEvent::Parked { .. })));
+
+        let Some(jit) = JitProgram::compile(&program) else {
+            return;
+        };
+        let mut jit_calls = 0u32;
+        let mut jit_host = |frame: &mut [u8]| {
+            jit_calls += 1;
+            host_impl(frame);
+        };
+        let mut task = JitTask::spawn(&jit, FnId(0));
+        assert_eq!(
+            task.run_hosted(&jit, &[], &[], &mut [&mut jit_host]),
+            TaskStep::Done
+        );
+        assert_eq!(task.result_i64(), 61);
+        assert_eq!(jit_calls, 1);
+        assert_eq!(task.trace, interp.trace);
+    }
 
     /// Drive interp and JIT through the same schedule; assert identical
     /// steps, results, and traces.

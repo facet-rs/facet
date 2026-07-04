@@ -42,7 +42,8 @@ pub struct Ctx {
     pub await_index: *mut u64,
     /// Exit code: 0 = chain fell through (bug — RET is mandatory),
     /// 1 = parked on an await, 2 = call (driver enters callee),
-    /// 3 = ret (driver pops the frame).
+    /// 3 = ret (driver pops the frame), 4 = sync host call (driver
+    /// invokes the host over the frame, re-enters at the continuation).
     pub exit: *mut i64,
 }
 
@@ -188,6 +189,23 @@ pub unsafe extern "C" fn weavy_task_ret(cx: *mut Ctx) {
     *c.resume = src;
     *c.await_index = size;
     *c.exit = 3;
+}
+
+/// SYNC HOST CALL — immediates: [continuation, host_index], consumed
+/// before exit (unlike await: a host call always completes, so
+/// re-entry happens at the continuation, never here). Exit code 4;
+/// `resume` carries the continuation, `await_index` carries the host
+/// index. No park path exists on this op by construction — that is
+/// the ruled sync/async distinction in machine code.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_hostcall(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let continuation = *c.prog;
+    let host = *c.prog.add(1);
+    c.prog = c.prog.add(2);
+    *c.resume = continuation;
+    *c.await_index = host;
+    *c.exit = 4;
 }
 
 /// End of chain — reaching this is a lowering bug (RET is mandatory);
