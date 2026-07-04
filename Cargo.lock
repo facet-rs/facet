@@ -8180,6 +8180,7 @@ dependencies = [
  "snark",
  "snark-dsl",
  "tokio",
+ "weavy",
 ]
 
 [[package]]

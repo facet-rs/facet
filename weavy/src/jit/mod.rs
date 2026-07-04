@@ -89,7 +89,6 @@ pub mod async_stencils {
 // resolve the merged doc's intra-doc links in THIS scope and break them.
 pub mod debug;
 pub mod dwarf;
-pub mod r#async;
 
 /// Whether this build can allocate and run native copy-and-patch code.
 pub const NATIVE_COPY_PATCH_AVAILABLE: bool = cfg!(any(

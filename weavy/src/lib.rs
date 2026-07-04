@@ -6,6 +6,7 @@
 //! typed-memory descriptor/op vocabulary in [`mem`]. Native copy-and-patch
 //! backends can use the same program/block shape.
 
+pub mod r#async;
 pub mod ir;
 pub mod mem;
 
