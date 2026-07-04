@@ -120,9 +120,7 @@ impl Driver {
     /// Returns the scalar result (slice 1).
     pub fn demand(&mut self, fn_ref: usize, args: Vec<i64>) -> i64 {
         let key: MemoKey = (self.fns[fn_ref].hash, args.clone());
-        self.trace.push(DriveEvent::Demanded {
-            fn_hash: key.0,
-        });
+        self.trace.push(DriveEvent::Demanded { fn_hash: key.0 });
         if let Some(&v) = self.memo.get(&key) {
             self.trace.push(DriveEvent::MemoHit { fn_hash: key.0 });
             return v;
@@ -144,7 +142,9 @@ impl Driver {
                 Burst::Done(value) => {
                     let done_key = exec.key.clone();
                     self.memo.insert(done_key.clone(), value);
-                    self.trace.push(DriveEvent::Completed { fn_hash: done_key.0 });
+                    self.trace.push(DriveEvent::Completed {
+                        fn_hash: done_key.0,
+                    });
                     // Feed everyone parked on this invocation; they
                     // become runnable again.
                     if let Some(list) = waiters.remove(&done_key) {
@@ -159,10 +159,12 @@ impl Driver {
                     }
                     // Execution finished: drop it (arena and all).
                 }
-                Burst::Pending { new_requests, parked_input } => {
+                Burst::Pending {
+                    new_requests,
+                    parked_input,
+                } => {
                     for req in new_requests {
-                        let req_key: MemoKey =
-                            (self.fns[req.fn_ref].hash, req.args.clone());
+                        let req_key: MemoKey = (self.fns[req.fn_ref].hash, req.args.clone());
                         self.trace.push(DriveEvent::Demanded { fn_hash: req_key.0 });
                         if let Some(&v) = self.memo.get(&req_key) {
                             // Mechanism 1: memo hit — the slot fills
@@ -179,8 +181,7 @@ impl Driver {
                                 .or_default()
                                 .push((req.caller, req.input_slot));
                             if !already_running {
-                                let child =
-                                    self.spawn(&mut executions, req.fn_ref, req_key);
+                                let child = self.spawn(&mut executions, req.fn_ref, req_key);
                                 runnable.push(child);
                             }
                         }
@@ -213,7 +214,9 @@ impl Driver {
         key: MemoKey,
     ) -> usize {
         let lowered = &self.fns[fn_ref];
-        self.trace.push(DriveEvent::Spawned { fn_hash: lowered.hash });
+        self.trace.push(DriveEvent::Spawned {
+            fn_hash: lowered.hash,
+        });
         let mut task = Task::spawn(&self.program, lowered.task_fn);
         for (offset, value) in lowered.arg_offsets.iter().zip(&key.1) {
             task.write_i64(*offset, *value);
@@ -263,9 +266,9 @@ impl Driver {
                 });
             };
             let mut hosts: [HostFn<'_>; 1] = [&mut invoke];
-            let step =
-                exec.task
-                    .run_hosted(&self.program, &exec.ready, &exec.awaited, &mut hosts);
+            let step = exec
+                .task
+                .run_hosted(&self.program, &exec.ready, &exec.awaited, &mut hosts);
             drop(hosts);
 
             match step {
@@ -326,22 +329,34 @@ mod tests {
             frame: Layout { size: 96, align: 8 },
             code: vec![
                 // request fib(n-1) into input slot 0
-                Op::ConstI64 { dst: 8, value: 0 },  // input_slot = 0
+                Op::ConstI64 { dst: 8, value: 0 }, // input_slot = 0
                 Op::ConstI64 { dst: 16, value: 0 }, // fn_ref = 0 (self)
                 Op::ConstI64 { dst: 24, value: 1 }, // argc = 1
                 Op::ConstI64 { dst: 64, value: -1 },
-                Op::AddI64 { dst: 32, a: 0, b: 64 }, // arg0 = n-1
+                Op::AddI64 {
+                    dst: 32,
+                    a: 0,
+                    b: 64,
+                }, // arg0 = n-1
                 Op::HostCall { host: INVOKE_HOST },
                 // request fib(n-2) into input slot 1
                 Op::ConstI64 { dst: 8, value: 1 },
                 Op::ConstI64 { dst: 64, value: -2 },
-                Op::AddI64 { dst: 32, a: 0, b: 64 }, // arg0 = n-2
+                Op::AddI64 {
+                    dst: 32,
+                    a: 0,
+                    b: 64,
+                }, // arg0 = n-2
                 Op::HostCall { host: INVOKE_HOST },
                 // await both (joint: both requests registered before
                 // the first park — batched demand, not sequential)
                 Op::Await { dst: 40, input: 0 },
                 Op::Await { dst: 48, input: 1 },
-                Op::AddI64 { dst: 56, a: 40, b: 48 },
+                Op::AddI64 {
+                    dst: 56,
+                    a: 40,
+                    b: 48,
+                },
                 Op::Ret { src: 56, size: 8 },
             ],
         };
@@ -443,8 +458,7 @@ mod tests {
         assert!(
             !driver.trace.iter().any(|e| matches!(
                 e,
-                DriveEvent::Demanded { fn_hash: 0xDEAD }
-                    | DriveEvent::Spawned { fn_hash: 0xDEAD }
+                DriveEvent::Demanded { fn_hash: 0xDEAD } | DriveEvent::Spawned { fn_hash: 0xDEAD }
             )),
             "never asked, never anything"
         );
@@ -457,7 +471,11 @@ mod tests {
         let helper = TaskFn {
             frame: Layout { size: 24, align: 8 },
             code: vec![
-                Op::MulI64 { dst: 16, a: 0, b: 8 },
+                Op::MulI64 {
+                    dst: 16,
+                    a: 0,
+                    b: 8,
+                },
                 Op::Ret { src: 16, size: 8 },
             ],
         };
@@ -468,15 +486,25 @@ mod tests {
                 Op::Call {
                     callee: FnId(1),
                     args: vec![
-                        ArgCopy { src: 0, dst: 0, size: 8 },
-                        ArgCopy { src: 8, dst: 8, size: 8 },
+                        ArgCopy {
+                            src: 0,
+                            dst: 0,
+                            size: 8,
+                        },
+                        ArgCopy {
+                            src: 8,
+                            dst: 8,
+                            size: 8,
+                        },
                     ],
                     ret: 16,
                 },
                 Op::Ret { src: 16, size: 8 },
             ],
         };
-        let program = Program { fns: vec![body, helper] };
+        let program = Program {
+            fns: vec![body, helper],
+        };
         let fns = vec![LoweredFn {
             hash: 0xAB,
             task_fn: FnId(0),

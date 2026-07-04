@@ -54,6 +54,7 @@
 //! never executing (trace absence), through the VM and JIT.
 
 pub mod driver;
+pub mod lower;
 pub mod value;
 
 pub use value::TotalF64;
