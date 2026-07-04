@@ -60,6 +60,7 @@ pub const ARRAY_COLLECT_HOST: u32 = 11;
 pub const TREE_PROJECT_HOST: u32 = 12;
 pub const EXEC_HOST: u32 = 13;
 pub const PATH_WITH_EXT_HOST: u32 = 14;
+pub const PENDING_ALLOC_HOST: u32 = 15;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -174,6 +175,12 @@ struct ExecRequest {
     input_slot: usize,
     capability: i64,
     output: i64,
+}
+
+#[derive(Clone, Debug)]
+struct ForceRequest {
+    input_slot: usize,
+    option: i64,
 }
 
 /// A running or parked task execution.
@@ -311,19 +318,26 @@ struct OrderedMapPair {
 struct PendingInvocation {
     fn_ref: usize,
     args: Vec<i64>,
+    remaining_arity: usize,
     identity_hash: ContentHash,
 }
 
 #[derive(Clone, Debug)]
 enum ArrayEntry {
     Words(Vec<i64>),
-    Pending(Vec<PendingInvocation>),
+    Pending(Vec<i64>),
 }
 
 #[derive(Clone, Debug)]
 enum TreeEntry {
     Concrete(crate::exec::Tree),
-    Merge(Vec<PendingInvocation>),
+    Merge(Vec<i64>),
+}
+
+#[derive(Clone, Debug)]
+enum OptionPayload {
+    None,
+    Some { schema: String, word: i64 },
 }
 
 impl ValueStore {
@@ -431,9 +445,13 @@ impl ValueStore {
                     && canonical_word_hash_in_store(self, &pair.key_schema, pair.key_word)
                         == key_hash
             })
-            .map(|pair| pair.value_word);
+            .and_then(|pair| {
+                (pair.value_schema == value_schema
+                    || pair.value_schema == pending_schema(value_schema))
+                .then_some((pair.value_schema, pair.value_word))
+            });
         match value {
-            Some(word) => self.alloc_option_some(value_schema, word, schema_refs),
+            Some((schema, word)) => self.alloc_option_some(&schema, word, schema_refs),
             None => self.alloc_option_none(value_schema, schema_refs),
         }
     }
@@ -481,7 +499,7 @@ impl ValueStore {
         Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
     }
 
-    fn option_unwrap(&self, handle: i64, schema_refs: &[String]) -> Result<i64, String> {
+    fn option_payload(&self, handle: i64, schema_refs: &[String]) -> Result<OptionPayload, String> {
         let entry = self
             .entry(handle)
             .ok_or_else(|| format!("store handle {handle}"))?;
@@ -496,16 +514,16 @@ impl ValueStore {
         }
         let tag = read_frame_word(&entry.bytes, 0);
         if tag == 0 {
-            return Err("unwrap on None".into());
+            return Ok(OptionPayload::None);
         }
         let schema_ref = read_frame_word(&entry.bytes, 8);
         let schema = schema_refs
             .get(usize::try_from(schema_ref).map_err(|_| format!("schema ref {schema_ref}"))?)
             .ok_or_else(|| format!("schema ref {schema_ref}"))?;
-        Ok(canonicalize_word_for_schema(
-            schema,
-            read_frame_word(&entry.bytes, 16),
-        ))
+        Ok(OptionPayload::Some {
+            schema: schema.clone(),
+            word: canonicalize_word_for_schema(schema, read_frame_word(&entry.bytes, 16)),
+        })
     }
 
     fn alloc_with_hash(
@@ -557,9 +575,31 @@ impl ValueStore {
         self.alloc_with_hash("Array", bytes, content_hash)
     }
 
-    fn alloc_array_pending(&mut self, pending: Vec<PendingInvocation>) -> (i64, bool) {
-        let bytes = encode_pending_list(1, &pending);
-        let content_hash = hash_pending_list(b"vix-array-pending", &pending);
+    fn alloc_pending(&mut self, value_schema: &str, invocation: PendingInvocation) -> (i64, bool) {
+        let bytes = encode_pending_invocation(&invocation);
+        self.alloc_with_hash(
+            &pending_schema(value_schema),
+            bytes,
+            invocation.identity_hash,
+        )
+    }
+
+    fn pending_invocation(&self, handle: i64) -> Result<PendingInvocation, String> {
+        let entry = self
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        if pending_value_schema(&entry.schema).is_none() {
+            return Err(format!(
+                "handle {handle} is `{}`, not Pending",
+                entry.schema
+            ));
+        }
+        decode_pending_invocation(&entry.bytes)
+    }
+
+    fn alloc_array_pending(&mut self, pending: Vec<i64>) -> (i64, bool) {
+        let bytes = encode_handle_list(1, &pending);
+        let content_hash = hash_handle_list(b"vix-array-pending", &pending, self);
         self.alloc_with_hash("Array", bytes, content_hash)
     }
 
@@ -588,7 +628,7 @@ impl ValueStore {
                         .collect(),
                 ))
             }
-            1 => Ok(ArrayEntry::Pending(decode_pending_list(&entry.bytes)?)),
+            1 => Ok(ArrayEntry::Pending(decode_handle_list(&entry.bytes)?)),
             other => Err(format!("unknown Array kind {other}")),
         }
     }
@@ -599,9 +639,9 @@ impl ValueStore {
         self.alloc_with_hash("Tree", bytes, content_hash)
     }
 
-    fn alloc_tree_merge(&mut self, pending: Vec<PendingInvocation>) -> (i64, bool) {
-        let bytes = encode_pending_list(1, &pending);
-        let content_hash = hash_pending_list(b"vix-tree-merge", &pending);
+    fn alloc_tree_merge(&mut self, pending: Vec<i64>) -> (i64, bool) {
+        let bytes = encode_handle_list(1, &pending);
+        let content_hash = hash_handle_list(b"vix-tree-merge", &pending, self);
         self.alloc_with_hash("Tree", bytes, content_hash)
     }
 
@@ -615,7 +655,7 @@ impl ValueStore {
         let kind = read_frame_word(&entry.bytes, 0);
         match kind {
             0 => Ok(TreeEntry::Concrete(decode_concrete_tree(&entry.bytes)?)),
-            1 => Ok(TreeEntry::Merge(decode_pending_list(&entry.bytes)?)),
+            1 => Ok(TreeEntry::Merge(decode_handle_list(&entry.bytes)?)),
             other => Err(format!("unknown Tree kind {other}")),
         }
     }
@@ -783,6 +823,7 @@ impl Driver {
                     new_requests,
                     project_requests,
                     exec_requests,
+                    force_requests,
                     parked_input,
                 } => {
                     for req in exec_requests {
@@ -811,9 +852,28 @@ impl Driver {
                             Err(err) => return Err(err),
                         }
                     }
+                    let mut new_requests = new_requests;
+                    for req in force_requests {
+                        match self.force_request(req, ix) {
+                            Ok(ForceOutcome::Ready { input_slot, value }) => {
+                                if exec.ready.len() <= input_slot {
+                                    exec.ready.resize(input_slot + 1, false);
+                                    exec.awaited.resize(input_slot + 1, 0);
+                                }
+                                exec.ready[input_slot] = true;
+                                exec.awaited[input_slot] = value;
+                            }
+                            Ok(ForceOutcome::Demand(invoke)) => new_requests.push(invoke),
+                            Err(err) => return Err(err),
+                        }
+                    }
                     for req in new_requests {
                         let req_key = self.memo_key(req.fn_ref, &req.args);
                         self.trace.push(DriveEvent::Demanded { fn_hash: req_key.0 });
+                        if exec.ready.len() <= req.input_slot {
+                            exec.ready.resize(req.input_slot + 1, false);
+                            exec.awaited.resize(req.input_slot + 1, 0);
+                        }
                         if let Some(&v) = self.memo.get(&req_key) {
                             // Mechanism 1: memo hit — the slot fills
                             // synchronously, no task exists.
@@ -908,6 +968,7 @@ impl Driver {
             let mut requests: Vec<InvokeRequest> = Vec::new();
             let mut project_requests: Vec<ProjectRequest> = Vec::new();
             let mut exec_requests: Vec<ExecRequest> = Vec::new();
+            let mut force_requests: Vec<ForceRequest> = Vec::new();
             let descriptors = &self.descriptors;
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
@@ -1106,16 +1167,12 @@ impl Driver {
             };
 
             let mut option_unwrap = |frame: &mut [u8]| {
-                let result = (|| {
-                    let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
-                    let handle = read_frame_word(frame, store_alloc_region + 8);
-                    let value = store_cell.borrow().option_unwrap(handle, schema_refs)?;
-                    write_frame_word(frame, dst_slot, value);
-                    Ok(())
-                })();
-                if let Err(err) = result {
-                    *host_error.borrow_mut() = Some(err);
-                }
+                let input_slot = read_frame_word(frame, store_alloc_region) as usize;
+                let handle = read_frame_word(frame, store_alloc_region + 8);
+                force_requests.push(ForceRequest {
+                    input_slot,
+                    option: handle,
+                });
             };
 
             let mut acquire = |frame: &mut [u8]| {
@@ -1162,16 +1219,16 @@ impl Driver {
                         .into_iter()
                         .map(|word| {
                             let args = vec![captured, word];
-                            let identity_hash = pending_identity_hash(
+                            let invocation = pending_invocation_for(
                                 &lowered_fns[fn_ref],
-                                &store_cell.borrow(),
-                                &args,
-                            );
-                            PendingInvocation {
+                                store_cell,
                                 fn_ref,
                                 args,
-                                identity_hash,
-                            }
+                            );
+                            store_cell
+                                .borrow_mut()
+                                .alloc_pending(&lowered_fns[fn_ref].return_schema, invocation)
+                                .0
                         })
                         .collect();
                     let (handle, _) = store_cell.borrow_mut().alloc_array_pending(pending);
@@ -1244,7 +1301,32 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 15] = [
+            let mut pending_alloc = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let value_schema =
+                        schema_name_for(read_frame_word(frame, primitive_region + 8), schema_refs)?;
+                    let fn_ref = usize::try_from(read_frame_word(frame, primitive_region + 16))
+                        .map_err(|_| "negative fn ref".to_string())?;
+                    let argc = usize::try_from(read_frame_word(frame, primitive_region + 24))
+                        .map_err(|_| "negative argc".to_string())?;
+                    let args = (0..argc)
+                        .map(|i| read_frame_word(frame, primitive_region + 32 + i * 8))
+                        .collect::<Vec<_>>();
+                    let invocation =
+                        pending_invocation_for(&lowered_fns[fn_ref], store_cell, fn_ref, args);
+                    let (handle, _) = store_cell
+                        .borrow_mut()
+                        .alloc_pending(&value_schema, invocation);
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut hosts: [HostFn<'_>; 16] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -1260,6 +1342,7 @@ impl Driver {
                 &mut tree_project,
                 &mut exec_host,
                 &mut path_with_ext,
+                &mut pending_alloc,
             ];
             let step = exec
                 .task
@@ -1289,6 +1372,7 @@ impl Driver {
                         new_requests: requests,
                         project_requests,
                         exec_requests,
+                        force_requests,
                         parked_input: input,
                     };
                 }
@@ -1333,7 +1417,8 @@ impl Driver {
                 Ok(self.store.borrow_mut().alloc_tree_concrete(projected).0)
             }
             TreeEntry::Merge(pending) => {
-                for invocation in pending.into_iter().rev() {
+                for handle in pending.into_iter().rev() {
+                    let invocation = self.store.borrow().pending_invocation(handle)?;
                     let value = self.demand(invocation.fn_ref, invocation.args)?;
                     if let Some(found) = self.project_tree_path_optional(value, path)? {
                         return Ok(found);
@@ -1343,6 +1428,38 @@ impl Driver {
                     path: path.to_string(),
                 }
                 .diagnostic())
+            }
+        }
+    }
+
+    fn force_request(&mut self, req: ForceRequest, caller: usize) -> Result<ForceOutcome, String> {
+        match self
+            .store
+            .borrow()
+            .option_payload(req.option, &self.schema_refs)?
+        {
+            OptionPayload::None => Err("unwrap on None".into()),
+            OptionPayload::Some { schema, word } => {
+                if let Some(value_schema) = pending_value_schema(&schema) {
+                    let invocation = self.store.borrow().pending_invocation(word)?;
+                    if invocation.remaining_arity != 0 {
+                        return Err(format!(
+                            "cannot force pending {value_schema} with {} remaining args",
+                            invocation.remaining_arity
+                        ));
+                    }
+                    Ok(ForceOutcome::Demand(InvokeRequest {
+                        caller,
+                        input_slot: req.input_slot,
+                        fn_ref: invocation.fn_ref,
+                        args: invocation.args,
+                    }))
+                } else {
+                    Ok(ForceOutcome::Ready {
+                        input_slot: req.input_slot,
+                        value: word,
+                    })
+                }
             }
         }
     }
@@ -1399,9 +1516,15 @@ enum Burst {
         new_requests: Vec<InvokeRequest>,
         project_requests: Vec<ProjectRequest>,
         exec_requests: Vec<ExecRequest>,
+        force_requests: Vec<ForceRequest>,
         parked_input: usize,
     },
     Error(String),
+}
+
+enum ForceOutcome {
+    Ready { input_slot: usize, value: i64 },
+    Demand(InvokeRequest),
 }
 
 fn hash_u64(value: impl Hash) -> u64 {
@@ -1460,10 +1583,31 @@ fn memo_key_hash(key: &CanonMemoKey) -> u64 {
     std::hash::Hasher::finish(&h)
 }
 
+fn pending_invocation_for(
+    lowered: &LoweredFn,
+    store: &RefCell<ValueStore>,
+    fn_ref: usize,
+    args: Vec<i64>,
+) -> PendingInvocation {
+    let store = store.borrow();
+    let identity_hash = pending_identity_hash(lowered, &store, &args);
+    PendingInvocation {
+        fn_ref,
+        remaining_arity: lowered.arg_schemas.len().saturating_sub(args.len()),
+        args,
+        identity_hash,
+    }
+}
+
 fn pending_identity_hash(lowered: &LoweredFn, store: &ValueStore, args: &[i64]) -> ContentHash {
     let mut hasher = Sha256::new();
     hasher.update(b"vix-pending-invocation");
     hasher.update(lowered.hash.to_le_bytes());
+    hasher.update(
+        i64::try_from(lowered.arg_schemas.len().saturating_sub(args.len()))
+            .expect("remaining arity fits i64")
+            .to_le_bytes(),
+    );
     for (&word, schema) in args.iter().zip(&lowered.arg_schemas) {
         hasher.update(schema.as_bytes());
         hasher.update(canonical_word_hash_in_store(store, schema, word));
@@ -1626,88 +1770,112 @@ fn option_schema(value_schema: &str) -> String {
     format!("Option<{value_schema}>")
 }
 
-fn encode_pending_list(kind: i64, pending: &[PendingInvocation]) -> Vec<u8> {
+fn pending_schema(value_schema: &str) -> String {
+    format!("Pending<{value_schema}>")
+}
+
+fn pending_value_schema(schema: &str) -> Option<&str> {
+    schema.strip_prefix("Pending<")?.strip_suffix('>')
+}
+
+fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(&kind.to_le_bytes());
     bytes.extend_from_slice(
-        &i64::try_from(pending.len())
-            .expect("pending length fits i64")
+        &i64::try_from(invocation.fn_ref)
+            .expect("fn ref fits i64")
             .to_le_bytes(),
     );
-    for invocation in pending {
-        bytes.extend_from_slice(
-            &i64::try_from(invocation.fn_ref)
-                .expect("fn ref fits i64")
-                .to_le_bytes(),
-        );
-        bytes.extend_from_slice(
-            &i64::try_from(invocation.args.len())
-                .expect("argc fits i64")
-                .to_le_bytes(),
-        );
-        bytes.extend_from_slice(&invocation.identity_hash);
-        for arg in &invocation.args {
-            bytes.extend_from_slice(&arg.to_le_bytes());
-        }
+    bytes.extend_from_slice(
+        &i64::try_from(invocation.args.len())
+            .expect("argc fits i64")
+            .to_le_bytes(),
+    );
+    bytes.extend_from_slice(
+        &i64::try_from(invocation.remaining_arity)
+            .expect("remaining arity fits i64")
+            .to_le_bytes(),
+    );
+    bytes.extend_from_slice(&invocation.identity_hash);
+    for arg in &invocation.args {
+        bytes.extend_from_slice(&arg.to_le_bytes());
     }
     bytes
 }
 
-fn decode_pending_list(bytes: &[u8]) -> Result<Vec<PendingInvocation>, String> {
-    if bytes.len() < 16 {
-        return Err("pending list too short".into());
+fn decode_pending_invocation(bytes: &[u8]) -> Result<PendingInvocation, String> {
+    if bytes.len() < 56 {
+        return Err("pending invocation too short".into());
     }
-    let count = usize::try_from(read_frame_word(bytes, 8)).map_err(|_| "pending count")?;
-    let mut at = 16;
-    let mut pending = Vec::with_capacity(count);
-    for _ in 0..count {
-        let fn_ref = usize::try_from(read_frame_word(bytes, at)).map_err(|_| "fn ref")?;
-        let argc = usize::try_from(read_frame_word(bytes, at + 8)).map_err(|_| "argc")?;
-        at += 16;
-        if bytes.len() < at + 32 {
-            return Err("pending invocation identity truncated".into());
-        }
-        let identity_hash: ContentHash = bytes[at..at + 32]
-            .try_into()
-            .expect("pending identity hash length");
-        at += 32;
-        if bytes.len() < at + argc * 8 {
-            return Err("pending invocation truncated".into());
-        }
-        let args = (0..argc)
-            .map(|i| read_frame_word(bytes, at + i * 8))
-            .collect();
-        at += argc * 8;
-        pending.push(PendingInvocation {
-            fn_ref,
-            args,
-            identity_hash,
-        });
-    }
-    if at != bytes.len() {
+    let fn_ref = usize::try_from(read_frame_word(bytes, 0)).map_err(|_| "fn ref")?;
+    let argc = usize::try_from(read_frame_word(bytes, 8)).map_err(|_| "argc")?;
+    let remaining_arity =
+        usize::try_from(read_frame_word(bytes, 16)).map_err(|_| "remaining arity")?;
+    let identity_hash: ContentHash = bytes[24..56]
+        .try_into()
+        .expect("pending identity hash length");
+    let expected = 56 + argc * 8;
+    if bytes.len() != expected {
         return Err(format!(
-            "pending list has {} trailing bytes",
-            bytes.len() - at
+            "pending invocation has {} bytes, expected {expected}",
+            bytes.len()
         ));
     }
-    Ok(pending)
+    let args = (0..argc)
+        .map(|i| read_frame_word(bytes, 56 + i * 8))
+        .collect();
+    Ok(PendingInvocation {
+        fn_ref,
+        args,
+        remaining_arity,
+        identity_hash,
+    })
 }
 
-fn hash_pending_list(domain: &[u8], pending: &[PendingInvocation]) -> ContentHash {
+fn encode_handle_list(kind: i64, handles: &[i64]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&kind.to_le_bytes());
+    bytes.extend_from_slice(
+        &i64::try_from(handles.len())
+            .expect("handle length fits i64")
+            .to_le_bytes(),
+    );
+    for handle in handles {
+        bytes.extend_from_slice(&handle.to_le_bytes());
+    }
+    bytes
+}
+
+fn decode_handle_list(bytes: &[u8]) -> Result<Vec<i64>, String> {
+    if bytes.len() < 16 {
+        return Err("handle list too short".into());
+    }
+    let count = usize::try_from(read_frame_word(bytes, 8)).map_err(|_| "handle count")?;
+    let expected = 16 + count * 8;
+    if bytes.len() != expected {
+        return Err(format!(
+            "handle list has {} bytes, expected {expected}",
+            bytes.len()
+        ));
+    }
+    Ok((0..count)
+        .map(|i| read_frame_word(bytes, 16 + i * 8))
+        .collect())
+}
+
+fn hash_handle_list(domain: &[u8], handles: &[i64], store: &ValueStore) -> ContentHash {
     let mut hasher = Sha256::new();
     hasher.update(domain);
     hasher.update(
-        i64::try_from(pending.len())
-            .expect("pending length fits i64")
+        i64::try_from(handles.len())
+            .expect("handle length fits i64")
             .to_le_bytes(),
     );
-    for invocation in pending {
-        hasher.update(
-            i64::try_from(invocation.fn_ref)
-                .expect("fn ref fits i64")
-                .to_le_bytes(),
-        );
-        hasher.update(invocation.identity_hash);
+    for handle in handles {
+        let entry = store
+            .entry(*handle)
+            .unwrap_or_else(|| panic!("store handle {handle}"));
+        hasher.update(entry.schema.as_bytes());
+        hasher.update(entry.content_hash);
     }
     hasher.finalize().into()
 }

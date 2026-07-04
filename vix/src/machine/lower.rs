@@ -26,8 +26,8 @@ use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_MAP_PENDING_HOST, DriveEvent, Driver,
     EXEC_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
-    OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
-    TREE_PROJECT_HOST,
+    OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, STORE_ALLOC_HOST, STORE_READ_HOST,
+    STORE_TAG_HOST, TREE_PROJECT_HOST,
 };
 use crate::ast;
 use crate::module::{ModuleTables, VariantShape, load_module_tables, type_schema_name};
@@ -94,15 +94,19 @@ impl Machine {
         ]);
         for schema in fn_returns.values() {
             schema_names.push(schema.clone());
+            schema_names.push(pending_schema(schema));
             if let Some(value_schema) = map_value_schema(schema) {
                 schema_names.push(value_schema.to_string());
+                schema_names.push(pending_schema(value_schema));
             }
         }
         for schemas in fn_params.values() {
             for schema in schemas {
                 schema_names.push(schema.clone());
+                schema_names.push(pending_schema(schema));
                 if let Some(value_schema) = map_value_schema(schema) {
                     schema_names.push(value_schema.to_string());
+                    schema_names.push(pending_schema(value_schema));
                 }
             }
         }
@@ -638,8 +642,10 @@ fn collect_block_type_schemas(block: &ast::Block, out: &mut Vec<String>) -> Resu
 fn collect_type_schema(ty: &ast::Type, out: &mut Vec<String>) -> Result<(), String> {
     let schema = type_schema_name(ty)?;
     out.push(schema.clone());
+    out.push(pending_schema(&schema));
     if let Some(value_schema) = map_value_schema(&schema) {
         out.push(value_schema.to_string());
+        out.push(pending_schema(value_schema));
     }
     if let ast::Type::Generic(generic) = ty {
         for arg in &generic.args {
@@ -787,7 +793,8 @@ impl<'a> FnLowerer<'a> {
         this.store_tag_region = this.next;
         this.next += 8 * 2;
         this.primitive_region = this.next;
-        this.next += 8 * (8 + u32::try_from(max_store_fields).expect("field count fits u32"));
+        let primitive_words = max_store_fields.max(max_argc);
+        this.next += 8 * (8 + u32::try_from(primitive_words).expect("primitive word count"));
 
         let return_schema = item
             .return_type
@@ -1381,7 +1388,7 @@ impl<'a> FnLowerer<'a> {
                     return Err("Map.insert takes key and value".into());
                 }
                 let key = self.method_arg(&call.args.args[0], Some(key_schema))?;
-                let value = self.method_arg(&call.args.args[1], Some(value_schema))?;
+                let value = self.map_insert_value(&call.args.args[1], value_schema)?;
                 self.map_insert(&receiver, key, value, key_schema, value_schema)
             }
             "get" => {
@@ -1415,6 +1422,17 @@ impl<'a> FnLowerer<'a> {
             other => Err(format!(
                 "method argument {other:?} is outside the machine slice-3 subset"
             )),
+        }
+    }
+
+    fn map_insert_value(
+        &mut self,
+        arg: &ast::Arg,
+        value_schema: &str,
+    ) -> Result<ValueSlot, String> {
+        match arg {
+            ast::Arg::Expr(ast::Expr::Call(call)) => self.pending_call_value(call, value_schema),
+            _ => self.method_arg(arg, Some(value_schema)),
         }
     }
 
@@ -1745,7 +1763,12 @@ impl<'a> FnLowerer<'a> {
         value_schema: &str,
     ) -> Result<ValueSlot, String> {
         self.expect_schema(&key, key_schema)?;
-        self.expect_schema(&value, value_schema)?;
+        let pending_value_schema = pending_schema(value_schema);
+        if value.schema == pending_value_schema {
+            self.expect_schema(&value, &pending_value_schema)?;
+        } else {
+            self.expect_schema(&value, value_schema)?;
+        }
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let map_schema_ref = *self
@@ -1758,8 +1781,8 @@ impl<'a> FnLowerer<'a> {
             .ok_or_else(|| format!("no schema ref for {key_schema}"))?;
         let value_schema_ref = *self
             .schema_refs
-            .get(value_schema)
-            .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
+            .get(&value.schema)
+            .ok_or_else(|| format!("no schema ref for {}", value.schema))?;
         self.code.push(Op::ConstI64 {
             dst: region,
             value: dst.into(),
@@ -1843,11 +1866,12 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn option_unwrap(&mut self, option: &ValueSlot, value_schema: &str) -> ValueSlot {
-        let dst = self.alloc();
+        let input_slot = self.next_input_slot;
+        self.next_input_slot += 1;
         let region = self.store_alloc_region;
         self.code.push(Op::ConstI64 {
             dst: region,
-            value: dst.into(),
+            value: input_slot,
         });
         self.code.push(Op::CopyI64 {
             dst: region + 8,
@@ -1856,10 +1880,101 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::HostCall {
             host: OPTION_UNWRAP_HOST,
         });
+        let dst = self.alloc();
+        self.code.push(Op::Await {
+            dst,
+            input: u32::try_from(input_slot).expect("input slot fits u32"),
+        });
         ValueSlot {
             slot: dst,
             schema: value_schema.to_string(),
         }
+    }
+
+    fn pending_call_value(
+        &mut self,
+        call: &ast::Call,
+        value_schema: &str,
+    ) -> Result<ValueSlot, String> {
+        let name = match &call.callee {
+            ast::PathRef::Identifier(name) => &name.value,
+            _ => return self.call(call),
+        };
+        let fn_ref = *self
+            .fn_refs
+            .get(name)
+            .ok_or_else(|| format!("unknown function {name}"))?;
+        let return_schema = self
+            .fn_returns
+            .get(name)
+            .ok_or_else(|| format!("unknown function {name}"))?
+            .clone();
+        if return_schema != value_schema {
+            return Err(format!(
+                "pending call {name} returns {return_schema}, expected {value_schema}"
+            ));
+        }
+        let expected_args = self
+            .fn_params
+            .get(name)
+            .ok_or_else(|| format!("missing param schemas for {name}"))?
+            .clone();
+        let mut arg_slots = Vec::new();
+        for (index, arg) in call.args.args.iter().enumerate() {
+            let expected = expected_args
+                .get(index)
+                .ok_or_else(|| format!("function {name} got unexpected argument {index}"))?;
+            match arg {
+                ast::Arg::Expr(e) => arg_slots.push(self.expr_expected(e, Some(expected))?),
+                ast::Arg::Kwarg(_) | ast::Arg::Partial(_) => {
+                    return Err(
+                        "pending call kwargs/partials are outside the promotion slice".into(),
+                    );
+                }
+            }
+        }
+        if arg_slots.len() != expected_args.len() {
+            return Err(format!(
+                "function {name} expected {} arguments, got {}",
+                expected_args.len(),
+                arg_slots.len()
+            ));
+        }
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        let value_schema_ref = *self
+            .schema_refs
+            .get(value_schema)
+            .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: value_schema_ref,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: i64::try_from(fn_ref).expect("fn ref fits i64"),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: i64::try_from(arg_slots.len()).expect("argc fits i64"),
+        });
+        for (index, slot) in arg_slots.iter().enumerate() {
+            self.code.push(Op::CopyI64 {
+                dst: region + 32 + 8 * u32::try_from(index).expect("arg index fits u32"),
+                src: slot.slot,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: PENDING_ALLOC_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: pending_schema(value_schema),
+        })
     }
 
     fn acquire(&mut self, kind: &str, target: &ValueSlot) -> Result<ValueSlot, String> {
@@ -2111,6 +2226,10 @@ fn map_value_schema(schema: &str) -> Option<&str> {
 
 fn option_schema(value_schema: &str) -> String {
     format!("Option<{value_schema}>")
+}
+
+fn pending_schema(value_schema: &str) -> String {
+    format!("Pending<{value_schema}>")
 }
 
 fn option_value_schema(schema: &str) -> Option<&str> {
@@ -2982,6 +3101,85 @@ pub fn main() -> Int {
             assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 42, "{lane:?}");
             assert_eq!(spawned_count(&machine, "f"), 1, "{lane:?}");
             assert_eq!(memo_hit_count(&machine, "f"), 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn lazy_map_value_forces_only_selected_pending_entry() {
+        let src = r#"
+fn key(n: Int) -> String {
+    match n {
+        0 => "left",
+        _ => "right",
+    }
+}
+
+fn left() -> Float { 1.0 }
+fn right() -> Float { 2.0 }
+
+pub fn pick(n: Int) -> Float {
+    let m: Map<String, Float> = {};
+    m.insert("left", left()).insert("right", right()).get(key(n)).unwrap()
+}
+"#;
+        let mut cold_traces = Vec::new();
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(
+                (machine.demand_i64("pick", vec![0]).unwrap() as u64),
+                1.0f64.to_bits(),
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "left"), 1, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "right"), 0, "{lane:?}");
+            cold_traces.push((lane, machine.trace().to_vec()));
+
+            let pick_hash = machine.fn_hash("pick").expect("pick hash");
+            machine.clear_trace();
+            assert_eq!(
+                (machine.demand_i64("pick", vec![0]).unwrap() as u64),
+                1.0f64.to_bits(),
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.trace(),
+                &[
+                    DriveEvent::Demanded { fn_hash: pick_hash },
+                    DriveEvent::MemoHit { fn_hash: pick_hash },
+                ],
+                "warm re-demand is just the root memo hit on {lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "right"), 0, "{lane:?}");
+        }
+        assert_lane_traces_equal(&cold_traces);
+    }
+
+    #[test]
+    fn lazy_map_pending_entries_hash_independent_of_insert_order() {
+        let src = r#"
+fn left() -> Float { 1.0 }
+fn right() -> Float { 2.0 }
+
+pub fn lr() -> Map<String, Float> {
+    let m: Map<String, Float> = {};
+    m.insert("left", left()).insert("right", right())
+}
+
+pub fn rl() -> Map<String, Float> {
+    let m: Map<String, Float> = {};
+    m.insert("right", right()).insert("left", left())
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let lr = machine.demand_i64("lr", vec![]).unwrap();
+            let rl = machine.demand_i64("rl", vec![]).unwrap();
+            let lr_entry = machine.driver.store_entry(lr).expect("lr entry");
+            let rl_entry = machine.driver.store_entry(rl).expect("rl entry");
+            assert_eq!(lr_entry.content_hash, rl_entry.content_hash, "{lane:?}");
+            assert_eq!(lr, rl, "canonical map dedupes pending entries on {lane:?}");
+            assert_eq!(spawned_count(&machine, "left"), 0, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "right"), 0, "{lane:?}");
         }
     }
 
