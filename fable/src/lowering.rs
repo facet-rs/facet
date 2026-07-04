@@ -1548,7 +1548,6 @@ impl FableTaskPlan {
             .hosts
             .ops
             .iter()
-            .cloned()
             .map(|op| {
                 let runtime = runtime.clone();
                 Box::new(move |frame: &mut [u8]| {
@@ -1556,7 +1555,7 @@ impl FableTaskPlan {
                     if runtime.error.is_some() {
                         return;
                     }
-                    if let Err(err) = runtime.run_host_op(&op, frame) {
+                    if let Err(err) = runtime.run_host_op(op, frame) {
                         runtime.error = Some(err);
                     }
                 }) as Box<dyn FnMut(&mut [u8])>
