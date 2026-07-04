@@ -12,12 +12,9 @@ path against the Facet shape at compile time, type-checks the expressions, and
 produces a reusable bytecode plan that runs directly against a live `&mut T`
 without any serialization round-trip.
 
-The crate currently owns the **syntax layer** — a lossless lexer/parser, the
-[cstree](https://docs.rs/cstree) language tags, and a typed AST facade — plus
-the **lowering and interpreter** that compiles source to Weavy IR and executes
-it against Facet-reflected Rust values. "Lossless" means the concrete syntax
-tree preserves every byte — whitespace, comments, trivia — so tooling can
-round-trip and rewrite Fable source without losing anything.
+The crate owns the **syntax layer** through a snark grammar and generated typed
+AST, plus the **lowering and interpreter** that compiles source to Weavy IR and
+executes it against Facet-reflected Rust values.
 
 ```rust
 use facet::Facet;

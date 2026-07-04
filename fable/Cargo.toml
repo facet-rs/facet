@@ -14,9 +14,16 @@ description = "Tiny typed language over Facet-reflected Rust values, lowered tow
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-cstree.workspace = true
+facet.workspace = true
 facet-core.workspace = true
+snark = { path = "../snark", features = ["json-import"] }
 weavy.workspace = true
+
+[build-dependencies]
+facet.workspace = true
+facet-json.workspace = true
+snark = { path = "../snark", features = ["json-import"] }
+snark-dsl = { path = "../snark-dsl", features = ["native"] }
 
 [dev-dependencies]
 facet = { path = "../facet" }

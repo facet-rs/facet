@@ -14,10 +14,9 @@ use weavy::ir::{
 };
 use weavy::{BlockRef, Control, RunError, RunStats, Step};
 
-use crate::SyntaxKind;
 use crate::ast::{
-    self, AstNode, BinaryExpr, Block, CallExpr, ElseClause, Expr, IfStmt, Stmt, StructLiteral,
-    UnaryExpr,
+    self, BinaryExpr, Block, CallExpr, ElseBody, ElseClause, Expr, IfStmt, Literal, Name, Stmt,
+    StructLiteral, UnaryExpr,
 };
 use crate::{ParseError, parse};
 
@@ -897,16 +896,7 @@ impl FableRootPlan {
     ) -> Result<Self, FableError> {
         validate_root_specs(roots)?;
 
-        let parsed = parse(src);
-        if !parsed.errors().is_empty() {
-            return Err(FableError::Parse {
-                errors: parsed.errors().to_vec(),
-            });
-        }
-
-        let root = ast::Root::cast(parsed.syntax().clone()).ok_or(FableError::MalformedSyntax {
-            reason: "parse root was not a Fable root node",
-        })?;
+        let root = parse(src).map_err(|error| FableError::Parse { error })?;
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_root(&root)?;
         let blocks = lowerer.into_blocks();
@@ -964,16 +954,7 @@ impl FableRootPredicatePlan {
         validate_root_specs(roots)?;
         validate_predicate_root_specs(roots)?;
 
-        let parsed = parse(src);
-        if !parsed.errors().is_empty() {
-            return Err(FableError::Parse {
-                errors: parsed.errors().to_vec(),
-            });
-        }
-
-        let root = ast::Root::cast(parsed.syntax().clone()).ok_or(FableError::MalformedSyntax {
-            reason: "parse root was not a Fable root node",
-        })?;
+        let root = parse(src).map_err(|error| FableError::Parse { error })?;
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_predicate_root(&root)?;
         let blocks = lowerer.into_blocks();
@@ -1043,16 +1024,7 @@ where
         validate_root_specs(roots)?;
         validate_read_only_root_specs(roots, "query roots must be read-only")?;
 
-        let parsed = parse(src);
-        if !parsed.errors().is_empty() {
-            return Err(FableError::Parse {
-                errors: parsed.errors().to_vec(),
-            });
-        }
-
-        let root = ast::Root::cast(parsed.syntax().clone()).ok_or(FableError::MalformedSyntax {
-            reason: "parse root was not a Fable root node",
-        })?;
+        let root = parse(src).map_err(|error| FableError::Parse { error })?;
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_query_root(&root, Output::query_type())?;
         let blocks = lowerer.into_blocks();
@@ -1312,10 +1284,10 @@ fn validate_root_name(name: &'static str) -> Result<(), FableError> {
 /// Error returned while parsing, lowering, or running Fable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FableError {
-    /// The parser recovered from invalid source.
+    /// The parser rejected invalid source.
     Parse {
-        /// Collected parse errors.
-        errors: Vec<ParseError>,
+        /// Parse error.
+        error: ParseError,
     },
     /// The CST shape was not one produced by the parser.
     MalformedSyntax {
@@ -1466,18 +1438,8 @@ pub enum FableError {
 impl fmt::Display for FableError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FableError::Parse { errors } => {
-                if let Some(error) = errors.first() {
-                    write!(
-                        f,
-                        "Fable parse failed with {} error(s), first at byte {}: {}",
-                        errors.len(),
-                        error.offset,
-                        error.message
-                    )
-                } else {
-                    write!(f, "Fable parse failed")
-                }
+            FableError::Parse { error } => {
+                write!(f, "Fable parse failed: {}", error.message)
             }
             FableError::MalformedSyntax { reason } => {
                 write!(f, "Fable CST was malformed: {reason}")
@@ -2175,19 +2137,18 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         self.blocks
     }
 
-    fn lower_root(&mut self, root: &ast::Root) -> Result<FableProgram, FableError> {
-        self.lower_statements(root.statements())
+    fn lower_root(&mut self, root: &ast::SourceFile) -> Result<FableProgram, FableError> {
+        self.lower_statements(&root.stmts)
     }
 
-    fn lower_predicate_root(&mut self, root: &ast::Root) -> Result<FableProgram, FableError> {
-        let statements: Vec<_> = root.statements().collect();
-        let Some((last, prefix)) = statements.split_last() else {
+    fn lower_predicate_root(&mut self, root: &ast::SourceFile) -> Result<FableProgram, FableError> {
+        let Some((last, prefix)) = root.stmts.split_last() else {
             return Err(FableError::MalformedSyntax {
                 reason: "predicate source did not contain a final boolean expression",
             });
         };
 
-        let mut program = Vec::with_capacity(statements.len());
+        let mut program = Vec::with_capacity(root.stmts.len());
         for stmt in prefix {
             program.push(self.lower_stmt(stmt)?);
         }
@@ -2197,27 +2158,23 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 feature: "predicate final statement must be a boolean expression".into(),
             });
         };
-        let expr = expr_stmt.expr().ok_or(FableError::MalformedSyntax {
-            reason: "predicate final statement without expression",
-        })?;
-        let value = expect_bool_plan(self.lower_expr(&expr)?)?;
+        let value = expect_bool_plan(self.lower_expr(&expr_stmt.expr)?)?;
         program.push(fable_op(FableIntrinsic::Predicate(value)));
         Ok(program)
     }
 
     fn lower_query_root(
         &mut self,
-        root: &ast::Root,
+        root: &ast::SourceFile,
         query_type: FableQueryType,
     ) -> Result<FableProgram, FableError> {
-        let statements: Vec<_> = root.statements().collect();
-        let Some((last, prefix)) = statements.split_last() else {
+        let Some((last, prefix)) = root.stmts.split_last() else {
             return Err(FableError::MalformedSyntax {
                 reason: "query source did not contain a final expression",
             });
         };
 
-        let mut program = Vec::with_capacity(statements.len());
+        let mut program = Vec::with_capacity(root.stmts.len());
         for stmt in prefix {
             program.push(self.lower_stmt(stmt)?);
         }
@@ -2227,10 +2184,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 feature: "query final statement must be an expression".into(),
             });
         };
-        let expr = expr_stmt.expr().ok_or(FableError::MalformedSyntax {
-            reason: "query final statement without expression",
-        })?;
-        let value = self.lower_expr(&expr)?;
+        let value = self.lower_expr(&expr_stmt.expr)?;
         validate_query_expr(query_type, &value)?;
         program.push(fable_op(FableIntrinsic::Query(value)));
         Ok(program)
@@ -2238,18 +2192,15 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
     fn lower_block(&mut self, block: &Block) -> Result<FableProgram, FableError> {
         self.scopes.push(BTreeMap::new());
-        let result = self.lower_statements(block.statements());
+        let result = self.lower_statements(&block.stmts);
         self.scopes.pop();
         result
     }
 
-    fn lower_statements(
-        &mut self,
-        statements: impl IntoIterator<Item = Stmt>,
-    ) -> Result<FableProgram, FableError> {
+    fn lower_statements(&mut self, statements: &[Stmt]) -> Result<FableProgram, FableError> {
         let mut program = Vec::new();
         for stmt in statements {
-            program.push(self.lower_stmt(&stmt)?);
+            program.push(self.lower_stmt(stmt)?);
         }
         Ok(program)
     }
@@ -2257,53 +2208,35 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     fn lower_stmt(&mut self, stmt: &Stmt) -> Result<FableWeavyOp, FableError> {
         match stmt {
             Stmt::Assign(assign) => {
-                let target_expr = assign.target().ok_or(FableError::MalformedSyntax {
-                    reason: "assignment without target expression",
-                })?;
-                let value_expr = assign.value().ok_or(FableError::MalformedSyntax {
-                    reason: "assignment without value expression",
-                })?;
-                let target = self.lower_writable_path(&target_expr)?;
-                let value = self.lower_expr(&value_expr)?;
+                let target = self.lower_writable_path(&assign.target)?;
+                let value = self.lower_expr(&assign.value)?;
                 validate_assignment(target.scalar, target.shape, &value)?;
                 Ok(fable_op(FableIntrinsic::Assign { target, value }))
             }
             Stmt::Let(let_stmt) => {
-                let name = let_stmt.name().ok_or(FableError::MalformedSyntax {
-                    reason: "let statement without binding name",
-                })?;
-                let value_expr = let_stmt.value().ok_or(FableError::MalformedSyntax {
-                    reason: "let statement without value expression",
-                })?;
-                let value = self.lower_expr(&value_expr)?;
+                let name = name_text(&let_stmt.name).to_owned();
+                let value = self.lower_expr(&let_stmt.value)?;
                 let local = self.declare_local(name, &value)?;
                 Ok(fable_op(FableIntrinsic::Let { local, value }))
             }
             Stmt::Expr(expr_stmt) => {
-                let expr = expr_stmt.expr().ok_or(FableError::MalformedSyntax {
-                    reason: "expression statement without expression",
-                })?;
-                Ok(fable_op(FableIntrinsic::Eval(self.lower_expr(&expr)?)))
+                Ok(fable_op(FableIntrinsic::Eval(
+                    self.lower_expr(&expr_stmt.expr)?,
+                )))
             }
             Stmt::If(if_stmt) => self.lower_if(if_stmt),
         }
     }
 
     fn lower_if(&mut self, if_stmt: &IfStmt) -> Result<FableWeavyOp, FableError> {
-        let condition = if_stmt.condition().ok_or(FableError::MalformedSyntax {
-            reason: "if statement without condition",
-        })?;
-        let condition = expect_bool_plan(self.lower_expr(&condition)?)?;
-        let then_ast_block = if_stmt.then_block().ok_or(FableError::MalformedSyntax {
-            reason: "if statement without then block",
-        })?;
+        let condition = expect_bool_plan(self.lower_expr(&if_stmt.condition)?)?;
 
-        let else_block = if let Some(else_clause) = if_stmt.else_clause() {
-            self.lower_else(&else_clause)?
+        let else_block = if let Some(else_clause) = &if_stmt.else_clause {
+            self.lower_else(else_clause)?
         } else {
             None
         };
-        let then_program = self.lower_block(&then_ast_block)?;
+        let then_program = self.lower_block(&if_stmt.then)?;
         let then_block = self.push_block(then_program);
 
         Ok(fable_op(FableIntrinsic::Branch {
@@ -2314,16 +2247,15 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn lower_else(&mut self, else_clause: &ElseClause) -> Result<Option<BlockRef>, FableError> {
-        if let Some(if_stmt) = else_clause.if_stmt() {
-            let program = vec![self.lower_if(&if_stmt)?];
-            Ok(Some(self.push_block(program)))
-        } else if let Some(block) = else_clause.block() {
-            let program = self.lower_block(&block)?;
-            Ok(Some(self.push_block(program)))
-        } else {
-            Err(FableError::MalformedSyntax {
-                reason: "else clause without if statement or block",
-            })
+        match &else_clause.body {
+            ElseBody::If(if_stmt) => {
+                let program = vec![self.lower_if(if_stmt)?];
+                Ok(Some(self.push_block(program)))
+            }
+            ElseBody::Block(block) => {
+                let program = self.lower_block(block)?;
+                Ok(Some(self.push_block(program)))
+            }
         }
     }
 
@@ -2337,8 +2269,8 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         match expr {
             Expr::Literal(literal) => self.lower_literal(literal),
             Expr::Var(var) => {
-                if let Some(name) = var.name()
-                    && let Some(local) = self.find_local(&name)
+                let name = name_text(&var.name);
+                if let Some(local) = self.find_local(name)
                 {
                     return Ok(local_to_expr(local));
                 }
@@ -2350,10 +2282,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 path_to_expr(path)
             }
             Expr::Paren(paren) => {
-                let expr = paren.expr().ok_or(FableError::MalformedSyntax {
-                    reason: "parenthesized expression without inner expression",
-                })?;
-                self.lower_expr(&expr)
+                self.lower_expr(&paren.expr)
             }
             Expr::Unary(unary) => self.lower_unary(unary),
             Expr::Binary(binary) => self.lower_binary(binary),
@@ -2367,10 +2296,8 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn lower_struct_literal(&mut self, literal: &StructLiteral) -> Result<ExprPlan, FableError> {
-        let type_name = literal.type_name().ok_or(FableError::MalformedSyntax {
-            reason: "struct literal without type name",
-        })?;
-        let shape = self.resolve_type_name(&type_name)?;
+        let type_name = literal.type_name.value.as_str();
+        let shape = self.resolve_type_name(type_name)?;
         if !shape.is_pod() {
             return Err(FableError::NonPodStructLiteral { shape });
         }
@@ -2386,17 +2313,12 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         }
 
         let mut supplied = BTreeMap::new();
-        for field in literal.fields() {
-            let name = field.name().ok_or(FableError::MalformedSyntax {
-                reason: "struct literal field without name",
-            })?;
+        for field in &literal.fields {
+            let name = name_text(&field.name).to_owned();
             if supplied.contains_key(&name) {
                 return Err(FableError::DuplicateStructField { field: name });
             }
-            let value = field.value().ok_or(FableError::MalformedSyntax {
-                reason: "struct literal field without value",
-            })?;
-            supplied.insert(name, self.lower_expr(&value)?);
+            supplied.insert(name, self.lower_expr(&field.value)?);
         }
 
         let mut fields = Vec::with_capacity(struct_type.fields.len());
@@ -2451,41 +2373,29 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn lower_literal(&self, literal: &ast::Literal) -> Result<ExprPlan, FableError> {
-        let token = literal.token().ok_or(FableError::MalformedSyntax {
-            reason: "literal node without token",
-        })?;
-        let text = token.text();
-        let expr = match token.kind() {
-            SyntaxKind::True => ExprPlan::Bool(BoolExpr::Literal(true)),
-            SyntaxKind::False => ExprPlan::Bool(BoolExpr::Literal(false)),
-            SyntaxKind::Null => ExprPlan::Unit(UnitExpr::Null),
-            SyntaxKind::Int => ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::Literal(
-                text.parse().map_err(|_| FableError::InvalidLiteral {
-                    literal: text.to_owned(),
+        let expr = match literal {
+            Literal::True(_) => ExprPlan::Bool(BoolExpr::Literal(true)),
+            Literal::False(_) => ExprPlan::Bool(BoolExpr::Literal(false)),
+            Literal::Null(_) => ExprPlan::Unit(UnitExpr::Null),
+            Literal::Int(text) => ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::Literal(
+                text.value.parse().map_err(|_| FableError::InvalidLiteral {
+                    literal: text.value.clone(),
                     reason: "integer literal is out of range",
                 })?,
             ))),
-            SyntaxKind::Float => ExprPlan::Number(NumberExpr::Float(FloatExpr::Literal(
-                text.parse().map_err(|_| FableError::InvalidLiteral {
-                    literal: text.to_owned(),
+            Literal::Float(text) => ExprPlan::Number(NumberExpr::Float(FloatExpr::Literal(
+                text.value.parse().map_err(|_| FableError::InvalidLiteral {
+                    literal: text.value.clone(),
                     reason: "float literal is invalid",
                 })?,
             ))),
-            SyntaxKind::Str => ExprPlan::String(StringExpr::Literal(decode_string(text)?)),
-            _ => {
-                return Err(FableError::MalformedSyntax {
-                    reason: "literal node contained a non-literal token",
-                });
-            }
+            Literal::Str(text) => ExprPlan::String(StringExpr::Literal(text.value.clone())),
         };
         Ok(expr)
     }
 
     fn lower_unary(&mut self, unary: &UnaryExpr) -> Result<ExprPlan, FableError> {
-        let operand = unary.operand().ok_or(FableError::MalformedSyntax {
-            reason: "unary expression without operand",
-        })?;
-        let operand = self.lower_expr(&operand)?;
+        let operand = self.lower_expr(&unary.operand)?;
         match unary_op(unary)? {
             UnaryOp::Not => Ok(ExprPlan::Bool(BoolExpr::Not(Box::new(expect_bool_plan(
                 operand,
@@ -2505,14 +2415,8 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn lower_binary(&mut self, binary: &BinaryExpr) -> Result<ExprPlan, FableError> {
-        let lhs = binary.lhs().ok_or(FableError::MalformedSyntax {
-            reason: "binary expression without left operand",
-        })?;
-        let rhs = binary.rhs().ok_or(FableError::MalformedSyntax {
-            reason: "binary expression without right operand",
-        })?;
-        let lhs = self.lower_expr(&lhs)?;
-        let rhs = self.lower_expr(&rhs)?;
+        let lhs = self.lower_expr(&binary.lhs)?;
+        let rhs = self.lower_expr(&binary.rhs)?;
 
         match binary_op(binary)? {
             BinaryOp::Or => Ok(ExprPlan::Bool(BoolExpr::Or(
@@ -2535,10 +2439,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn lower_call(&mut self, call: &CallExpr) -> Result<ExprPlan, FableError> {
-        let callee = call.callee().ok_or(FableError::MalformedSyntax {
-            reason: "call expression without callee",
-        })?;
-        let name = call_callee_name(&callee)?;
+        let name = call_callee_name(&call.callee)?;
         let signature =
             self.intrinsics
                 .signature(&name)
@@ -2547,25 +2448,20 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 })?;
 
         let mut raw_args = Vec::new();
-        if let Some(arg_list) = call.args() {
-            for arg in arg_list.args() {
-                let expr = arg.expr().ok_or(FableError::MalformedSyntax {
-                    reason: "argument without expression",
-                })?;
-                raw_args.push(expr);
-            }
+        for arg in &call.args.args {
+            raw_args.push(&arg.expr);
         }
         signature.validate_arity(raw_args.len())?;
 
         let mut args = Vec::with_capacity(raw_args.len());
         for expr in raw_args {
             args.push(match signature.arg_kind {
-                IntrinsicArgKind::Expr => IntrinsicArgPlan::Expr(self.lower_expr(&expr)?),
+                IntrinsicArgKind::Expr => IntrinsicArgPlan::Expr(self.lower_expr(expr)?),
                 IntrinsicArgKind::FieldRead => {
-                    IntrinsicArgPlan::Field(self.lower_readable_path(&expr)?)
+                    IntrinsicArgPlan::Field(self.lower_readable_path(expr)?)
                 }
                 IntrinsicArgKind::FieldMut => {
-                    IntrinsicArgPlan::Field(self.lower_writable_path(&expr)?)
+                    IntrinsicArgPlan::Field(self.lower_writable_path(expr)?)
                 }
             });
         }
@@ -2582,8 +2478,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
     fn lower_writable_path(&self, expr: &Expr) -> Result<FieldPath, FableError> {
         if let Expr::Var(var) = expr
-            && let Some(name) = var.name()
-            && self.find_local(&name).is_some()
+            && self.find_local(name_text(&var.name)).is_some()
         {
             return Err(FableError::Unsupported {
                 feature: "assignment to let bindings".into(),
@@ -3270,9 +3165,7 @@ fn call_callee_name(callee: &Expr) -> Result<String, FableError> {
             feature: "non-identifier callees".into(),
         });
     };
-    var.name().ok_or(FableError::MalformedSyntax {
-        reason: "callee without identifier",
-    })
+    Ok(name_text(&var.name).to_owned())
 }
 
 fn validate_query_expr(query_type: FableQueryType, expr: &ExprPlan) -> Result<(), FableError> {
@@ -4689,42 +4582,30 @@ enum PathSegment {
     Index { index: usize, literal: String },
 }
 
+fn name_text(name: &Name) -> &str {
+    match name {
+        Name::Ident(value) | Name::TypeIdent(value) => &value.value,
+    }
+}
+
 fn collect_path(expr: &Expr) -> Result<Vec<PathSegment>, FableError> {
     match expr {
         Expr::Var(var) => {
-            let name = var.name().ok_or(FableError::MalformedSyntax {
-                reason: "variable reference without identifier",
-            })?;
-            Ok(vec![PathSegment::Name(name)])
+            Ok(vec![PathSegment::Name(name_text(&var.name).to_owned())])
         }
         Expr::Field(field) => {
-            let base = field.base().ok_or(FableError::MalformedSyntax {
-                reason: "field expression without base",
-            })?;
-            let mut path = collect_path(&base)?;
-            let field_name = field.field_name().ok_or(FableError::MalformedSyntax {
-                reason: "field expression without field name",
-            })?;
-            path.push(PathSegment::Name(field_name));
+            let mut path = collect_path(&field.base)?;
+            path.push(PathSegment::Name(name_text(&field.field_name).to_owned()));
             Ok(path)
         }
         Expr::Index(index) => {
-            let base = index.base().ok_or(FableError::MalformedSyntax {
-                reason: "index expression without base",
-            })?;
-            let index_expr = index.index().ok_or(FableError::MalformedSyntax {
-                reason: "index expression without index",
-            })?;
-            let mut path = collect_path(&base)?;
-            let (index, literal) = literal_index(&index_expr)?;
+            let mut path = collect_path(&index.base)?;
+            let (index, literal) = literal_index(&index.index)?;
             path.push(PathSegment::Index { index, literal });
             Ok(path)
         }
         Expr::Paren(paren) => {
-            let inner = paren.expr().ok_or(FableError::MalformedSyntax {
-                reason: "parenthesized path without inner expression",
-            })?;
-            collect_path(&inner)
+            collect_path(&paren.expr)
         }
         Expr::Call(_) => Err(FableError::Unsupported {
             feature: "call paths".into(),
@@ -4736,20 +4617,12 @@ fn collect_path(expr: &Expr) -> Result<Vec<PathSegment>, FableError> {
 }
 
 fn literal_index(expr: &Expr) -> Result<(usize, String), FableError> {
-    let Expr::Literal(literal) = expr else {
+    let Expr::Literal(Literal::Int(text)) = expr else {
         return Err(FableError::Unsupported {
             feature: "dynamic index paths".into(),
         });
     };
-    let token = literal.token().ok_or(FableError::MalformedSyntax {
-        reason: "index literal without token",
-    })?;
-    if token.kind() != SyntaxKind::Int {
-        return Err(FableError::Unsupported {
-            feature: "non-integer index paths".into(),
-        });
-    }
-    let text = token.text().to_owned();
+    let text = text.value.clone();
     let index = text.parse().map_err(|_| FableError::InvalidLiteral {
         literal: text.clone(),
         reason: "index literal is out of range",
@@ -4868,12 +4741,9 @@ fn find_field(
 }
 
 fn unary_op(unary: &UnaryExpr) -> Result<UnaryOp, FableError> {
-    let kind = first_operator_kind(unary.syntax()).ok_or(FableError::MalformedSyntax {
-        reason: "unary expression without operator",
-    })?;
-    match kind {
-        SyntaxKind::NotKw => Ok(UnaryOp::Not),
-        SyntaxKind::Minus => Ok(UnaryOp::Neg),
+    match unary.op.as_str() {
+        "not" => Ok(UnaryOp::Not),
+        "-" => Ok(UnaryOp::Neg),
         _ => Err(FableError::MalformedSyntax {
             reason: "unexpected unary operator",
         }),
@@ -4881,46 +4751,21 @@ fn unary_op(unary: &UnaryExpr) -> Result<UnaryOp, FableError> {
 }
 
 fn binary_op(binary: &BinaryExpr) -> Result<BinaryOp, FableError> {
-    let kind = first_operator_kind(binary.syntax()).ok_or(FableError::MalformedSyntax {
-        reason: "binary expression without operator",
-    })?;
-    match kind {
-        SyntaxKind::OrKw => Ok(BinaryOp::Or),
-        SyntaxKind::AndKw => Ok(BinaryOp::And),
-        SyntaxKind::EqEq => Ok(BinaryOp::Eq),
-        SyntaxKind::Neq => Ok(BinaryOp::Neq),
-        SyntaxKind::Lt => Ok(BinaryOp::Lt),
-        SyntaxKind::Gt => Ok(BinaryOp::Gt),
-        SyntaxKind::Le => Ok(BinaryOp::Le),
-        SyntaxKind::Ge => Ok(BinaryOp::Ge),
-        SyntaxKind::Plus => Ok(BinaryOp::Add),
-        SyntaxKind::Minus => Ok(BinaryOp::Sub),
+    match binary.op.as_str() {
+        "or" => Ok(BinaryOp::Or),
+        "and" => Ok(BinaryOp::And),
+        "==" => Ok(BinaryOp::Eq),
+        "!=" => Ok(BinaryOp::Neq),
+        "<" => Ok(BinaryOp::Lt),
+        ">" => Ok(BinaryOp::Gt),
+        "<=" => Ok(BinaryOp::Le),
+        ">=" => Ok(BinaryOp::Ge),
+        "+" => Ok(BinaryOp::Add),
+        "-" => Ok(BinaryOp::Sub),
         _ => Err(FableError::MalformedSyntax {
             reason: "unexpected binary operator",
         }),
     }
-}
-
-fn first_operator_kind(node: &crate::ResolvedNode) -> Option<SyntaxKind> {
-    node.children_with_tokens()
-        .filter_map(|element| element.into_token())
-        .map(|token| token.kind())
-        .find(|kind| {
-            matches!(
-                kind,
-                SyntaxKind::NotKw
-                    | SyntaxKind::Minus
-                    | SyntaxKind::OrKw
-                    | SyntaxKind::AndKw
-                    | SyntaxKind::EqEq
-                    | SyntaxKind::Neq
-                    | SyntaxKind::Lt
-                    | SyntaxKind::Gt
-                    | SyntaxKind::Le
-                    | SyntaxKind::Ge
-                    | SyntaxKind::Plus
-            )
-        })
 }
 
 fn ensure_readable(scalar: ScalarType, shape: &'static Shape) -> Result<(), FableError> {
@@ -5122,57 +4967,6 @@ fn binary_actual(lhs: &'static str, rhs: &'static str) -> &'static str {
     }
 }
 
-fn decode_string(text: &str) -> Result<String, FableError> {
-    let Some(quote) = text.as_bytes().first().copied() else {
-        return Err(FableError::InvalidLiteral {
-            literal: text.to_owned(),
-            reason: "empty string literal",
-        });
-    };
-    if quote != b'"' && quote != b'\'' {
-        return Err(FableError::InvalidLiteral {
-            literal: text.to_owned(),
-            reason: "missing opening quote",
-        });
-    }
-    if text.as_bytes().last().copied() != Some(quote) || text.len() < 2 {
-        return Err(FableError::InvalidLiteral {
-            literal: text.to_owned(),
-            reason: "missing closing quote",
-        });
-    }
-
-    let mut out = String::with_capacity(text.len().saturating_sub(2));
-    let mut chars = text[1..text.len() - 1].chars();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-            continue;
-        }
-        let Some(escaped) = chars.next() else {
-            return Err(FableError::InvalidLiteral {
-                literal: text.to_owned(),
-                reason: "trailing escape",
-            });
-        };
-        match escaped {
-            '\\' => out.push('\\'),
-            '"' => out.push('"'),
-            '\'' => out.push('\''),
-            'n' => out.push('\n'),
-            'r' => out.push('\r'),
-            't' => out.push('\t'),
-            '0' => out.push('\0'),
-            _ => {
-                return Err(FableError::InvalidLiteral {
-                    literal: text.to_owned(),
-                    reason: "unsupported escape",
-                });
-            }
-        }
-    }
-    Ok(out)
-}
 
 #[cfg(test)]
 mod tests {

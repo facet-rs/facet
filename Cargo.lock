@@ -2209,9 +2209,11 @@ dependencies = [
 name = "fable"
 version = "0.1.3"
 dependencies = [
- "cstree",
  "facet",
  "facet-core",
+ "facet-json",
+ "snark",
+ "snark-dsl",
  "weavy",
 ]
 
