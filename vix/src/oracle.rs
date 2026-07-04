@@ -517,12 +517,55 @@ pub trait ExecBackend: Send + Sync {
     ) -> Result<std::sync::Arc<dyn PendingRun>, String>;
 }
 
+/// Result of demanding one path from a tree-producing run.
+///
+/// `PendingRun::demand_path` blocks while the producer is still capable of
+/// writing the requested file. Once it returns, the path is either available
+/// as a single file, known absent from the finished tree, or requires the
+/// finished tree to decide a directory projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathDemand {
+    File(String),
+    FinishRequired(PathPending),
+    Missing(PathMissing),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathPending {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathMissing {
+    pub path: String,
+}
+
+impl PathPending {
+    fn new(path: &str) -> Self {
+        Self {
+            path: path.to_string(),
+        }
+    }
+}
+
+impl PathMissing {
+    fn new(path: &str) -> Self {
+        Self {
+            path: path.to_string(),
+        }
+    }
+
+    pub fn diagnostic(&self) -> String {
+        format!("path `{}` is missing from resolved tree", self.path)
+    }
+}
+
 /// A live (or completed) run. Values hold these through the run REGISTRY so
 /// Value stays plain facet data (a run id), and context-free forcing (Ord,
 /// Hash, ship) still works.
 pub trait PendingRun: Send + Sync {
     /// Block until the producer writes this path (or fails/finishes without it).
-    fn demand_path(&self, path: &str) -> Result<String, String>;
+    fn demand_path(&self, path: &str) -> Result<PathDemand, String>;
     /// Block until completion; idempotent. Returns the flushed tree and how
     /// the run was served.
     fn flush(&self) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String>;
@@ -570,12 +613,20 @@ pub(crate) struct LocalRun {
 }
 
 impl PendingRun for LocalRun {
-    fn demand_path(&self, path: &str) -> Result<String, String> {
-        self.outputs
+    fn demand_path(&self, path: &str) -> Result<PathDemand, String> {
+        if let Some(contents) = self.outputs.entries.get(path) {
+            return Ok(PathDemand::File(contents.clone()));
+        }
+        let prefix = format!("{path}/");
+        if self
+            .outputs
             .entries
-            .get(path)
-            .cloned()
-            .ok_or_else(|| format!("no `{path}` in outputs"))
+            .keys()
+            .any(|entry| entry.starts_with(&prefix))
+        {
+            return Ok(PathDemand::FinishRequired(PathPending::new(path)));
+        }
+        Ok(PathDemand::Missing(PathMissing::new(path)))
     }
 
     fn flush(&self) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String> {
@@ -1204,15 +1255,21 @@ impl Oracle {
                     self.note_scheduled(run);
                     let live = runs::get(run)
                         .ok_or_else(|| format!("pending run {run} not registered"))?;
-                    match live.demand_path(&p) {
-                        Ok(contents) => {
+                    match live.demand_path(&p)? {
+                        PathDemand::File(contents) => {
                             let base = p.rsplit_once('/').map(|(_, b)| b).unwrap_or(&p);
                             Ok(Value::Tree(crate::exec::Tree::of(&[(
                                 base,
                                 contents.as_str(),
                             )])))
                         }
-                        Err(_) => subtree(&self.force_and_note(run)?, &p).map(Value::Tree),
+                        PathDemand::FinishRequired(_) => {
+                            subtree(&self.force_and_note(run)?, &p).map(Value::Tree)
+                        }
+                        PathDemand::Missing(missing) => {
+                            let _ = self.force_and_note(run)?;
+                            Err(missing.diagnostic())
+                        }
                     }
                 }
                 (l, r) => Err(format!("`{op}` not defined on {l:?} and {r:?}")),

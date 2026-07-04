@@ -7,7 +7,7 @@ use crate::ast::{self, Arg, ArrayElem, Block, CommandPart, Expr, Member, PathRef
 use crate::exec::ExecCache;
 use crate::fetch::{FetchBackend, NoFetchBackend};
 use crate::module::{ModuleTables, VariantShape, load_module_tables};
-use crate::oracle::{Event, LocalRun, Payload, PendingRun, Value};
+use crate::oracle::{Event, LocalRun, PathDemand, Payload, PendingRun, Value};
 use crate::oracle::{assign_roles, runs, splice_into, subtree, tool_for};
 use crate::support::Spanned;
 
@@ -232,15 +232,21 @@ impl Engine {
                 self.note_scheduled(run);
                 let live =
                     runs::get(run).ok_or_else(|| format!("pending run {run} not registered"))?;
-                match live.demand_path(path) {
-                    Ok(contents) => {
+                match live.demand_path(path)? {
+                    PathDemand::File(contents) => {
                         let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
                         Ok(Value::Tree(crate::exec::Tree::of(&[(
                             base,
                             contents.as_str(),
                         )])))
                     }
-                    Err(_) => subtree(&self.force_and_note(run)?, path).map(Value::Tree),
+                    PathDemand::FinishRequired(_) => {
+                        subtree(&self.force_and_note(run)?, path).map(Value::Tree)
+                    }
+                    PathDemand::Missing(missing) => {
+                        let _ = self.force_and_note(run)?;
+                        Err(missing.diagnostic())
+                    }
                 }
             }
             Value::Path(base) => Ok(Value::Path(format!("{base}/{path}"))),

@@ -349,6 +349,122 @@ pub fn src_tree(nonce: Int) -> Tree {{
 }
 
 #[test]
+fn resolved_tree_missing_path_errors_immediately() {
+    let src = r#"
+use vix::Tree;
+
+pub fn main(input: Tree) -> Tree {
+    input / p"missing.txt"
+}
+"#;
+    let tree = Value::Tree(vix::exec::Tree::of(&[("present.txt", "ok")]));
+    let oracle = Oracle::load(src).expect("oracle load");
+    let mut engine = Engine::load(src).expect("engine load");
+
+    let oracle_err = oracle
+        .call("main", &[("input", tree.clone())])
+        .expect_err("oracle missing path");
+    let engine_err = engine
+        .call("main", &[("input", tree)])
+        .expect_err("engine missing path");
+
+    assert!(oracle_err.contains("missing.txt"), "{oracle_err}");
+    assert!(engine_err.contains("missing.txt"), "{engine_err}");
+    assert_eq!(oracle_err, engine_err);
+    assert_eq!(scheduled_count(&oracle.events()), 0, "{:?}", oracle.events());
+    assert_eq!(scheduled_count(&engine.events()), 0, "{:?}", engine.events());
+    assert_eq!(finished_multiset(&oracle.events()), BTreeMap::new());
+    assert_eq!(finished_multiset(&engine.events()), BTreeMap::new());
+}
+
+#[test]
+fn pending_tree_path_projection_serves_file_without_finish() {
+    let src = r#"
+use vix::Target;
+use caps::Cc;
+
+pub fn main(target: Target) -> Tree {
+    let cc = Cc::acquire(target);
+    cc! { -o artifact.o } / p"artifact.o"
+}
+"#;
+    let oracle = Oracle::load(src).expect("oracle load");
+    let mut engine = Engine::load(src).expect("engine load");
+
+    let oracle_value = oracle.call("main", &[("target", target())]).unwrap();
+    let engine_value = engine.call("main", &[("target", target())]).unwrap();
+
+    assert_eq!(oracle_value, engine_value);
+    let Value::Tree(tree) = oracle_value else {
+        panic!("projection should return a tree");
+    };
+    assert_eq!(
+        tree.entries.keys().cloned().collect::<Vec<_>>(),
+        vec!["artifact.o".to_string()]
+    );
+    assert_eq!(
+        scheduled_count(&oracle.events()),
+        1,
+        "{:?}",
+        oracle.events()
+    );
+    assert_eq!(
+        scheduled_count(&engine.events()),
+        1,
+        "{:?}",
+        engine.events()
+    );
+    assert_eq!(finished_multiset(&oracle.events()), BTreeMap::new());
+    assert_eq!(finished_multiset(&engine.events()), BTreeMap::new());
+}
+
+#[test]
+fn pending_tree_missing_path_errors_when_producer_finishes() {
+    let src = r#"
+use vix::Target;
+use caps::Cc;
+
+pub fn main(target: Target) -> Tree {
+    let cc = Cc::acquire(target);
+    cc! { -o artifact.o } / p"never-written.o"
+}
+"#;
+    let oracle = Oracle::load(src).expect("oracle load");
+    let mut engine = Engine::load(src).expect("engine load");
+
+    let oracle_err = oracle
+        .call("main", &[("target", target())])
+        .expect_err("oracle missing produced path");
+    let engine_err = engine
+        .call("main", &[("target", target())])
+        .expect_err("engine missing produced path");
+
+    assert!(oracle_err.contains("never-written.o"), "{oracle_err}");
+    assert!(engine_err.contains("never-written.o"), "{engine_err}");
+    assert_eq!(oracle_err, engine_err);
+    assert_eq!(
+        scheduled_count(&oracle.events()),
+        1,
+        "{:?}",
+        oracle.events()
+    );
+    assert_eq!(
+        scheduled_count(&engine.events()),
+        1,
+        "{:?}",
+        engine.events()
+    );
+    assert_eq!(
+        finished_multiset(&oracle.events()),
+        BTreeMap::from([(("cc".to_string(), "ran".to_string()), 1)])
+    );
+    assert_eq!(
+        finished_multiset(&engine.events()),
+        BTreeMap::from([(("cc".to_string(), "ran".to_string()), 1)])
+    );
+}
+
+#[test]
 fn warm_engine_lua_second_call_is_one_hit() {
     let src = sample("lua.vix");
     let mut engine = Engine::load(&src)

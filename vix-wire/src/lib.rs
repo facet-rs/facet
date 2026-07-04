@@ -23,7 +23,7 @@ use std::sync::Arc;
 use facet::Facet;
 use tokio::sync::Mutex;
 use vix::exec::{ExecPlan, MountedWorld, ObservedWorld, ReadSet, Role, Tree};
-use vix::oracle::{Oracle, Value};
+use vix::oracle::{Oracle, PathDemand, PathMissing, PathPending, Value};
 use vox::Tx;
 
 // ---------------------------------------------------------------------------
@@ -815,7 +815,7 @@ impl FleetRun {
 }
 
 impl vix::oracle::PendingRun for FleetRun {
-    fn demand_path(&self, path: &str) -> Result<String, String> {
+    fn demand_path(&self, path: &str) -> Result<PathDemand, String> {
         // Wait only for THIS path — the language-level rmeta move.
         {
             let mut state = self.state.lock().unwrap();
@@ -825,12 +825,23 @@ impl vix::oracle::PendingRun for FleetRun {
                 }
                 if let Some(finished) = &state.finished {
                     finished.clone()?;
-                    return Err(format!("run finished without producing `{path}`"));
+                    drop(state);
+                    let (tree, _) = self.flush()?;
+                    let prefix = format!("{path}/");
+                    return if tree.entries.keys().any(|entry| entry.starts_with(&prefix)) {
+                        Ok(PathDemand::FinishRequired(PathPending {
+                            path: path.to_string(),
+                        }))
+                    } else {
+                        Ok(PathDemand::Missing(PathMissing {
+                            path: path.to_string(),
+                        }))
+                    };
                 }
                 state = self.wake.wait(state).unwrap();
             }
         }
-        tokio::task::block_in_place(|| {
+        let contents = tokio::task::block_in_place(|| {
             self.handle.clone().block_on(async {
                 self.client
                     .fetch_path(self.fleet_run_id, path.to_string())
@@ -838,7 +849,8 @@ impl vix::oracle::PendingRun for FleetRun {
                     .map_err(|e| format!("fetch_path: {e:?}"))?
                     .ok_or_else(|| format!("`{path}` vanished from the producing space"))
             })
-        })
+        })?;
+        Ok(PathDemand::File(contents))
     }
 
     fn flush(&self) -> Result<(Tree, vix::exec::ExecEvent), String> {
