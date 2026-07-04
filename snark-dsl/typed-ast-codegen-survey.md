@@ -277,34 +277,46 @@ are also duplicated in spirit (`Span`, `Spanned`, `field_one`, `field_opt`,
 shared generator needs a stable support trait/module contract; moving them is a
 separate runtime API decision.
 
-## 7. cstree-era no-downgrade audit targets
+## 7. cstree-era no-downgrade audit
 
 The fable migration removed the lossless cstree layer. The old README promised
 that the CST preserved every byte, including whitespace, comments, and trivia,
 for round-trip tooling. The new README no longer promises lossless round-trip.
 
-Part 3 should verify and test:
+Part 3 verified and tested:
 
-- malformed fable input returns `Err(ParseError)` and never panics through
-  generated lowering;
-- parse diagnostics remain structured enough for callers, not only a formatted
-  string;
-- spans survive in generated AST structs and leaf values where the old typed
-  layer exposed syntax nodes/tokens;
-- lossless round-trip and recovery granularity are either restored or documented
-  as intentionally absent from the snark path.
+- malformed fable input returns `Err(ParseError)` at the public parse boundary
+  and does not enter generated lowering;
+- the diagnostic type is structured as `ParseError`, but its payload is still a
+  single message string, either `no accepted parse` or formatted parser failure
+  text;
+- spans survive in the generated typed AST for the source file, statement
+  structs, and decoded leaf values;
+- lossless round-trip and recovery granularity are currently absent from the
+  snark path.
 
-Minimal malformed-input tests:
+Regression tests in `fable/src/lib.rs`:
 
 ```rust
-assert!(fable::parse("root.age = ; root.ok = true").is_err());
-assert!(fable::parse("if root.age { root.ok = true").is_err());
-assert!(fable::parse("root.items[").is_err());
+malformed_inputs_return_parse_errors
+generated_ast_preserves_statement_and_leaf_spans
 ```
 
-The old parser recovered and kept a CST with `errors()`. The new API returns a
-single `ParseError { message }`, so preserving non-panic behavior is the floor,
-but it is not full cstree parity.
+The malformed-input test covers assignment-with-missing-RHS, unclosed `if`
+block, and unclosed index expression. The span test parses `let answer = 42;`
+and checks the root span, `LetStmt` span, identifier span, and integer literal
+span against byte offsets in the original source.
+
+No-downgrade findings:
+
+- structured non-panic failure is preserved at the public fable parse API;
+- generated typed AST spans are present at the node and leaf levels tested;
+- full cstree parity is not present: callers no longer get a recovered lossless
+  CST with trivia, round-trip bytes, and an `errors()` collection after a
+  malformed parse;
+- diagnostic granularity is below the cstree era because `ParseError` carries
+  only one message string and no source range, expected-token set, or recovery
+  tree.
 
 ## Parked questions
 

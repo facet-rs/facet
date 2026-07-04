@@ -98,6 +98,73 @@ pub fn parse(src: &str) -> Result<ast::SourceFile, ParseError> {
     FableParser::new().parse(src)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::ast::{Expr, Literal, Name, Stmt};
+    use super::support::Span;
+    use super::{FableParser, parse};
+
+    fn span_for(src: &str, needle: &str) -> Span {
+        let start = src.find(needle).expect("needle exists") as u32;
+        Span {
+            start,
+            end: start + needle.len() as u32,
+        }
+    }
+
+    #[test]
+    fn malformed_inputs_return_parse_errors() {
+        let parser = FableParser::new();
+
+        for src in [
+            "root.age = ; root.ok = true",
+            "if root.age { root.ok = true",
+            "root.items[",
+        ] {
+            let err = parser.parse(src).expect_err("malformed input must fail");
+            assert!(!err.message.is_empty());
+            assert!(err.message == "no accepted parse" || err.message.starts_with("parse failed:"));
+        }
+    }
+
+    #[test]
+    fn generated_ast_preserves_statement_and_leaf_spans() {
+        let src = "let answer = 42;";
+        let root = parse(src).expect("valid fable source");
+
+        assert_eq!(
+            root.span,
+            Span {
+                start: 0,
+                end: src.len() as u32,
+            }
+        );
+
+        let [Stmt::Let(stmt)] = root.stmts.as_slice() else {
+            panic!("expected one let statement");
+        };
+        assert_eq!(
+            stmt.span,
+            Span {
+                start: 0,
+                end: src.len() as u32,
+            }
+        );
+
+        let Name::Ident(name) = &stmt.name else {
+            panic!("expected identifier binding name");
+        };
+        assert_eq!(name.value, "answer");
+        assert_eq!(name.span, span_for(src, "answer"));
+
+        let Expr::Literal(Literal::Int(value)) = &stmt.value else {
+            panic!("expected integer literal value");
+        };
+        assert_eq!(value.value, "42");
+        assert_eq!(value.span, span_for(src, "42"));
+    }
+}
+
 /// Runtime support for the generated snark AST lowering.
 pub mod support {
     use snark::parser::ResolvedCstNode;
