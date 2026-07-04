@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 
 use crate::jit::{NativeProgram, StencilLayout, task_stencils};
-use crate::task::{ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep, TraceMode};
+use crate::task::{Advance, ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep, TraceMode};
 
 /// Threaded state — MUST match `Ctx` in stencils/task_ops.rs.
 #[repr(C)]
@@ -408,11 +408,64 @@ impl JitTask {
 
 }
 
+/// The JIT lane bundled with its compiled program, for
+/// [`crate::task::TaskExec`].
+pub struct JitRunning<'p> {
+    pub program: &'p JitProgram,
+    pub task: JitTask,
+}
+
+impl Advance for JitRunning<'_> {
+    fn advance(
+        &mut self,
+        ready: &[bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+    ) -> TaskStep {
+        self.task.run_hosted(self.program, ready, awaited, hosts)
+    }
+
+    fn result_bytes(&self) -> &[u8] {
+        &self.task.result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mem::Layout;
     use crate::task::{Fn as TaskFn, Task};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn jit_tasks_await_real_futures() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: Layout { size: 24, align: 8 },
+                code: vec![
+                    Op::Await { dst: 0, input: 0 },
+                    Op::Await { dst: 8, input: 1 },
+                    Op::AddI64 { dst: 16, a: 0, b: 8 },
+                    Op::Ret { src: 16, size: 8 },
+                ],
+            }],
+        };
+        let Some(jit) = JitProgram::compile(&program) else {
+            return;
+        };
+        let running = JitRunning {
+            program: &jit,
+            task: JitTask::spawn(&jit, FnId(0)),
+        };
+        let slow: core::pin::Pin<Box<dyn core::future::Future<Output = i64>>> =
+            Box::pin(async {
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                40
+            });
+        let fast: core::pin::Pin<Box<dyn core::future::Future<Output = i64>>> =
+            Box::pin(async { 2 });
+        let result = crate::task::TaskExec::new(running, vec![slow, fast], vec![]).await;
+        assert_eq!(i64::from_le_bytes(result[..8].try_into().unwrap()), 42);
+    }
 
     #[test]
     fn trace_marks_record_in_innards_and_vanish_in_production() {

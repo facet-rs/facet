@@ -26,7 +26,7 @@ jit = ["dep:copypatch"]
 # The async lane's driver uses only `core::future` — no runtime dependency.
 # tokio is dev-only, to provide an executor + timers for the suspend tests.
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 
 [lints]
 workspace = true

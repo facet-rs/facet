@@ -30,6 +30,10 @@
 //! this slice they are recorded directly — the strippable
 //! IR-instrumentation form arrives with the trace-vocabulary slice.
 
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
+
 use crate::mem::Layout;
 
 /// Identifies a function in a [`Program`]'s function table.
@@ -142,6 +146,9 @@ pub enum Op {
 
 /// A synchronous host operation over the current frame's bytes.
 pub type HostFn<'h> = &'h mut dyn FnMut(&mut [u8]);
+
+/// An owned sync host operation, as [`TaskExec`] carries them.
+pub type BoxedHostFn<'h> = Box<dyn FnMut(&mut [u8]) + 'h>;
 
 /// Frame-granular trace events (the ruled vocabulary, recorded
 /// directly in this slice).
@@ -407,6 +414,118 @@ impl Task {
                         return TaskStep::Parked { input };
                     }
                 }
+            }
+        }
+    }
+}
+
+/// One burst of task progress — implemented by both lanes so the
+/// executor driver below (and vix's demand driver later) can hold
+/// either without caring which.
+pub trait Advance {
+    fn advance(
+        &mut self,
+        ready: &[bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+    ) -> TaskStep;
+    fn result_bytes(&self) -> &[u8];
+}
+
+/// The interpreter lane bundled with its program.
+pub struct Running<'p> {
+    pub program: &'p Program,
+    pub task: Task,
+}
+
+impl Advance for Running<'_> {
+    fn advance(
+        &mut self,
+        ready: &[bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+    ) -> TaskStep {
+        self.task.run_hosted(self.program, ready, awaited, hosts)
+    }
+
+    fn result_bytes(&self) -> &[u8] {
+        &self.task.result
+    }
+}
+
+/// TOOTH 3 — the async host boundary: a task driven as a real Rust
+/// [`Future`], one input future per await index (an "async host call"
+/// IS an await whose input is fed by the host's future — the ruled
+/// sync/async distinction from the other side). Depends only on
+/// `core::future`; bring any executor. The waker-precision rule from
+/// the proven async lane carries over: while parked, a wakeup that
+/// didn't ready the BLOCKING input never re-enters the lane.
+pub struct TaskExec<'h, A: Advance> {
+    lane: A,
+    inners: Vec<Pin<Box<dyn Future<Output = i64> + 'h>>>,
+    hosts: Vec<BoxedHostFn<'h>>,
+    resolved: Vec<bool>,
+    ready: Vec<bool>,
+    awaited: Vec<i64>,
+    parked_on: Option<u32>,
+}
+
+impl<'h, A: Advance> TaskExec<'h, A> {
+    pub fn new(
+        lane: A,
+        inners: Vec<Pin<Box<dyn Future<Output = i64> + 'h>>>,
+        hosts: Vec<BoxedHostFn<'h>>,
+    ) -> Self {
+        let n = inners.len();
+        TaskExec {
+            lane,
+            inners,
+            hosts,
+            resolved: vec![false; n],
+            ready: vec![false; n],
+            awaited: vec![0; n],
+            parked_on: None,
+        }
+    }
+
+    pub fn lane(&self) -> &A {
+        &self.lane
+    }
+}
+
+impl<A: Advance + Unpin> Future for TaskExec<'_, A> {
+    type Output = Vec<u8>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Vec<u8>> {
+        let this = &mut *self;
+
+        // Drive EVERY unresolved input; independent awaits make
+        // progress concurrently.
+        for i in 0..this.inners.len() {
+            if !this.resolved[i]
+                && let Poll::Ready(value) = this.inners[i].as_mut().poll(cx)
+            {
+                this.awaited[i] = value;
+                this.ready[i] = true;
+                this.resolved[i] = true;
+            }
+        }
+
+        // Parked and the blocking input still isn't ready: don't
+        // re-enter the lane.
+        if let Some(i) = this.parked_on
+            && !this.ready[i as usize]
+        {
+            return Poll::Pending;
+        }
+
+        let mut host_refs: Vec<HostFn<'_>> =
+            this.hosts.iter_mut().map(|h| h.as_mut() as HostFn<'_>).collect();
+        match this.lane.advance(&this.ready, &this.awaited, &mut host_refs) {
+            TaskStep::Done => Poll::Ready(this.lane.result_bytes().to_vec()),
+            TaskStep::Parked { input } => {
+                this.parked_on = Some(input);
+                Poll::Pending
             }
         }
     }
@@ -721,6 +840,83 @@ mod tests {
         let mut task = Task::spawn(&program, FnId(0));
         assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
         assert_eq!(task.result_i64(), 6, "indexed into the 24-byte returned composite");
+    }
+
+    fn later(value: i64, ms: u64) -> Pin<Box<dyn Future<Output = i64>>> {
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            value
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tasks_await_real_futures_across_call_frames() {
+        // outer calls callee; callee awaits TWO real futures (late #0,
+        // early #1) and combines them with a frame local. The demand
+        // driver shape vix will use, in miniature.
+        let program = Program {
+            fns: vec![
+                Fn {
+                    frame: frame_of_i64s(2),
+                    code: vec![
+                        Op::ConstI64 { dst: 0, value: 1000 },
+                        Op::Call { callee: FnId(1), args: vec![], ret: 8 },
+                        Op::AddI64 { dst: 8, a: 8, b: 0 },
+                        Op::Ret { src: 8, size: 8 },
+                    ],
+                },
+                Fn {
+                    frame: frame_of_i64s(3),
+                    code: vec![
+                        Op::Await { dst: 0, input: 0 },
+                        Op::Await { dst: 8, input: 1 },
+                        Op::MulI64 { dst: 16, a: 0, b: 8 },
+                        Op::Ret { src: 16, size: 8 },
+                    ],
+                },
+            ],
+        };
+        let running = Running {
+            program: &program,
+            task: Task::spawn(&program, FnId(0)),
+        };
+        let exec = TaskExec::new(running, vec![later(6, 60), later(7, 20)], vec![]);
+        let result = exec.await;
+        assert_eq!(i64::from_le_bytes(result[..8].try_into().unwrap()), 6 * 7 + 1000);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn external_wakes_resume_parked_tasks() {
+        // The async-host shape: a oneshot fed by another tokio task —
+        // an external event wakes the parked task through the ordinary
+        // waker path, and sync host calls coexist in the same run.
+        let program = Program {
+            fns: vec![Fn {
+                frame: frame_of_i64s(2),
+                code: vec![
+                    Op::Await { dst: 0, input: 0 },
+                    Op::HostCall { host: 0 },
+                    Op::Ret { src: 8, size: 8 },
+                ],
+            }],
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel::<i64>();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            tx.send(21).unwrap();
+        });
+        let input: Pin<Box<dyn Future<Output = i64>>> =
+            Box::pin(async move { rx.await.expect("sender lives") });
+        let host: BoxedHostFn = Box::new(|frame: &mut [u8]| {
+            let v = i64::from_le_bytes(frame[0..8].try_into().unwrap());
+            frame[8..16].copy_from_slice(&(v * 2).to_le_bytes());
+        });
+        let running = Running {
+            program: &program,
+            task: Task::spawn(&program, FnId(0)),
+        };
+        let result = TaskExec::new(running, vec![input], vec![host]).await;
+        assert_eq!(i64::from_le_bytes(result[..8].try_into().unwrap()), 42);
     }
 
     #[test]
