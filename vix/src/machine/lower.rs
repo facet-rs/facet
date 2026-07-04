@@ -56,7 +56,17 @@ impl Machine {
                 hash,
                 task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
                 arg_offsets: info.arg_offsets,
+                arg_schemas: item
+                    .params
+                    .params
+                    .iter()
+                    .map(|param| type_schema_name(&param.ty))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| format!("lowering {name}: {e}"))?,
                 invoke_region: info.invoke_region,
+                store_alloc_region: 0,
+                store_read_region: 0,
+                store_tag_region: 0,
             });
         }
 
@@ -81,6 +91,25 @@ impl Machine {
 
     pub fn clear_trace(&mut self) {
         self.driver.trace.clear();
+    }
+}
+
+fn type_schema_name(ty: &ast::Type) -> Result<String, String> {
+    match ty {
+        ast::Type::Path(path) => path_schema_name(path),
+        other => Err(format!(
+            "parameter type {other:?} is outside the machine slice-2 subset"
+        )),
+    }
+}
+
+fn path_schema_name(path: &ast::TypePath) -> Result<String, String> {
+    if path.segments.len() == 1 {
+        Ok(path.segments[0].value.clone())
+    } else {
+        Err(format!(
+            "qualified type path {path:?} is outside the machine slice-2 subset"
+        ))
     }
 }
 
