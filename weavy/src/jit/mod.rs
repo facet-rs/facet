@@ -560,32 +560,46 @@ impl StencilLayout {
 /// The ABI is still owned by the caller: this only binds a finalized
 /// [`StencilLayout`] into native memory and keeps each chain's program stream in
 /// stable heap storage for stencils to read.
-#[cfg(any(
-    all(target_os = "macos", target_arch = "aarch64"),
-    all(target_os = "linux", target_arch = "x86_64")
-))]
 pub struct NativeProgram {
+    #[cfg(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    ))]
     buf: ExecBuf,
     progs: Vec<Vec<u64>>,
     entry: Chain,
     stencil_count: usize,
 }
 
-#[cfg(any(
-    all(target_os = "macos", target_arch = "aarch64"),
-    all(target_os = "linux", target_arch = "x86_64")
-))]
 impl NativeProgram {
     /// Make a finalized stencil layout executable.
     #[must_use]
     #[inline]
     pub fn new(layout: StencilLayout, entry: Chain) -> Self {
-        let (code, progs, stencil_count) = layout.into_parts();
-        Self {
-            buf: ExecBuf::new(&code),
-            progs,
-            entry,
-            stencil_count,
+        #[cfg(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        ))]
+        {
+            let (code, progs, stencil_count) = layout.into_parts();
+            Self {
+                buf: ExecBuf::new(&code),
+                progs,
+                entry,
+                stencil_count,
+            }
+        }
+        #[cfg(not(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )))]
+        {
+            let (_code, progs, stencil_count) = layout.into_parts();
+            Self {
+                progs,
+                entry,
+                stencil_count,
+            }
         }
     }
 
@@ -593,7 +607,20 @@ impl NativeProgram {
     #[must_use]
     #[inline]
     pub fn code_ptr(&self) -> *const u8 {
-        self.buf.as_ptr()
+        #[cfg(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        ))]
+        {
+            self.buf.as_ptr()
+        }
+        #[cfg(not(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )))]
+        {
+            core::ptr::null()
+        }
     }
 
     /// Return this program's root chain as a function pointer.
@@ -614,10 +641,27 @@ impl NativeProgram {
     #[must_use]
     #[inline]
     pub unsafe fn chain_fn<C>(&self, entry: usize) -> unsafe extern "C" fn(*mut C) {
-        unsafe {
-            core::mem::transmute::<*const u8, unsafe extern "C" fn(*mut C)>(
-                self.code_ptr().add(entry),
-            )
+        #[cfg(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        ))]
+        {
+            unsafe {
+                core::mem::transmute::<*const u8, unsafe extern "C" fn(*mut C)>(
+                    self.code_ptr().add(entry),
+                )
+            }
+        }
+        #[cfg(not(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )))]
+        {
+            let _ = entry;
+            unsafe extern "C" fn unavailable<C>(_: *mut C) {
+                unreachable!("native copy-and-patch is unavailable on this target")
+            }
+            unavailable::<C>
         }
     }
 
