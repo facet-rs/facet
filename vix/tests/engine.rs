@@ -101,6 +101,17 @@ fn finished_multiset(events: &[Event]) -> BTreeMap<(String, String), usize> {
     out
 }
 
+fn finished_output_paths(events: &[Event]) -> BTreeSet<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Finished { outputs, .. } => Some(outputs),
+            _ => None,
+        })
+        .flat_map(|outputs| outputs.iter().map(|(path, _)| path.clone()))
+        .collect()
+}
+
 fn created_set(events: &[Event]) -> BTreeSet<(String, Vec<String>)> {
     events
         .iter()
@@ -349,6 +360,121 @@ pub fn src_tree(nonce: Int) -> Tree {{
 }
 
 #[test]
+fn engine_tunnels_path_demand_through_merge() {
+    let src = sample("merge-demand.vix");
+    let oracle = Oracle::load(&src).expect("oracle load");
+    let mut engine = Engine::load(&src).expect("engine load");
+
+    let oracle_value = oracle
+        .call("selected", &[("target", target())])
+        .expect("oracle call");
+    let engine_value = engine
+        .call("selected", &[("target", target())])
+        .expect("engine call");
+
+    assert_eq!(engine_value, oracle_value);
+    assert_eq!(engine.journal(), oracle.journal(), "journal pins differ");
+
+    let oracle_finished = finished_output_paths(&oracle.events());
+    let engine_finished = finished_output_paths(&engine.events());
+    assert!(
+        engine_finished.is_subset(&oracle_finished),
+        "engine finished outputs must be an oracle subset\nengine={:?}\noracle={:?}",
+        engine.events(),
+        oracle.events()
+    );
+    assert!(
+        engine_finished.len() < oracle_finished.len(),
+        "expected strict Finished subset\nengine={:?}\noracle={:?}",
+        engine.events(),
+        oracle.events()
+    );
+    assert!(
+        !engine_finished.contains("left.o"),
+        "left object must not finish under engine path demand: {:?}",
+        engine.events()
+    );
+    assert!(
+        oracle_finished.contains("left.o"),
+        "oracle stays eager and finishes left object: {:?}",
+        oracle.events()
+    );
+    assert!(
+        oracle_finished.contains("wanted.o"),
+        "oracle finishes right object: {:?}",
+        oracle.events()
+    );
+}
+
+#[test]
+fn engine_falls_left_after_right_merge_absence_is_known() {
+    let src = sample("merge-demand.vix");
+    let oracle = Oracle::load(&src).expect("oracle load");
+    let mut engine = Engine::load(&src).expect("engine load");
+
+    let oracle_value = oracle
+        .call("fallback", &[("target", target())])
+        .expect("oracle call");
+    let engine_value = engine
+        .call("fallback", &[("target", target())])
+        .expect("engine call");
+
+    assert_eq!(engine_value, oracle_value);
+    let oracle_finished = finished_output_paths(&oracle.events());
+    let engine_finished = finished_output_paths(&engine.events());
+
+    assert!(
+        engine_finished.contains("right.o"),
+        "right candidate must finish before absence is known: {:?}",
+        engine.events()
+    );
+    assert!(
+        !engine_finished.contains("wanted.o"),
+        "winning left candidate is served by path demand, not full finish: {:?}",
+        engine.events()
+    );
+    assert!(
+        oracle_finished.contains("wanted.o") && oracle_finished.contains("right.o"),
+        "oracle stays eager: {:?}",
+        oracle.events()
+    );
+}
+
+#[test]
+fn engine_refines_subtree_chain_through_merge() {
+    let src = sample("merge-demand.vix");
+    let oracle = Oracle::load(&src).expect("oracle load");
+    let mut engine = Engine::load(&src).expect("engine load");
+
+    let oracle_value = oracle
+        .call("subtree_chain", &[("target", target())])
+        .expect("oracle call");
+    let engine_value = engine
+        .call("subtree_chain", &[("target", target())])
+        .expect("engine call");
+
+    assert_eq!(engine_value, oracle_value);
+    let oracle_finished = finished_output_paths(&oracle.events());
+    let engine_finished = finished_output_paths(&engine.events());
+
+    assert!(
+        !engine_finished.contains("left.o"),
+        "left object must not finish when chained projection selects x/wanted.o: {:?}",
+        engine.events()
+    );
+    assert!(
+        !engine_finished.contains("x/wanted.o"),
+        "selected nested object is served by path demand, not full finish: {:?}",
+        engine.events()
+    );
+    assert!(
+        oracle_finished.contains("left.o") && oracle_finished.contains("x/wanted.o"),
+        "oracle stays eager across chained projection: {:?}",
+        oracle.events()
+    );
+}
+
+#[test]
 fn resolved_tree_missing_path_errors_immediately() {
     let src = r#"
 use vix::Tree;
@@ -371,8 +497,18 @@ pub fn main(input: Tree) -> Tree {
     assert!(oracle_err.contains("missing.txt"), "{oracle_err}");
     assert!(engine_err.contains("missing.txt"), "{engine_err}");
     assert_eq!(oracle_err, engine_err);
-    assert_eq!(scheduled_count(&oracle.events()), 0, "{:?}", oracle.events());
-    assert_eq!(scheduled_count(&engine.events()), 0, "{:?}", engine.events());
+    assert_eq!(
+        scheduled_count(&oracle.events()),
+        0,
+        "{:?}",
+        oracle.events()
+    );
+    assert_eq!(
+        scheduled_count(&engine.events()),
+        0,
+        "{:?}",
+        engine.events()
+    );
     assert_eq!(finished_multiset(&oracle.events()), BTreeMap::new());
     assert_eq!(finished_multiset(&engine.events()), BTreeMap::new());
 }
