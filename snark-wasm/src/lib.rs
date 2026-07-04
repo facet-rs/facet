@@ -98,6 +98,7 @@ pub enum VixDriveEvent {
     RunRequested { command: String, output: String },
     RunStarted { command: String, output: String },
     RunCompleted { command: String, output: String },
+    Observation { key: String, replayed: bool },
 }
 
 #[wasm_bindgen(js_name = runVixMachine)]
@@ -240,6 +241,12 @@ fn trace_events(events: &[vix::machine::driver::DriveEvent]) -> Vec<VixDriveEven
                 VixDriveEvent::RunCompleted {
                     command: hex_hash(command),
                     output: hex_hash(output),
+                }
+            }
+            vix::machine::driver::DriveEvent::Observation { key, replayed } => {
+                VixDriveEvent::Observation {
+                    key: hex_hash(key),
+                    replayed,
                 }
             }
         })

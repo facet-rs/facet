@@ -17,9 +17,9 @@ Classification:
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| 1 | 24 | Already covered by current machine tests. |
+| 1 | 34 | Already covered by current machine tests. |
 | 2 | 0 | Machine can already express it; missing parity test only. |
-| 3 | 33 | Needs feature work before parity. |
+| 3 | 23 | Needs feature work before parity. |
 | 4 | 3 | Parser/wire-shipping assertions outside the evaluator machine. |
 
 Class 4 is intentionally not used for any evaluator behavior.
@@ -40,11 +40,11 @@ Class 4 is intentionally not used for any evaluator behavior.
 | ID | Frozen assertion | Class | Machine parity status |
 | --- | --- | ---: | --- |
 | E01 | `eval_vix_contract_is_pinned`: `eval.vix::demo()` returns `Float(42.0)` and has no finished runs, scheduled runs, created runs, observations, or journal pins. | 1 | `eval_vix_demo_returns_42_on_the_machine` proves bits-exact `42.0`, spawn count, warm memo trace, and both-lane trace equality. No run events are produced. |
-| E02 | `types_vix_contract_is_pinned`: `types.vix::partials()` returns `Int(42)` with empty event/journal contract. | 3 | Needs `types.vix` surface: first-class partial application, named arguments/partials, and function-typed values on the machine. |
-| E03 | `types_vix_contract_is_pinned`: `types.vix::depths()` returns `Int(2)` with empty event/journal contract. | 3 | Needs tuple values and tuple indexing/projection in machine lowering. |
-| E04 | `types_vix_contract_is_pinned`: `classify(Artifact::Object("lua.o"))` returns `"the interpreter object"` with empty event/journal contract. | 3 | Needs `types.vix` match surface: shorthand bindings, guards, path payloads, and string/path comparison coverage. |
-| E05 | `types_vix_contract_is_pinned`: `classify(Artifact::Object("lapi.o"))` returns `"an object"` with empty event/journal contract. | 3 | Same `types.vix` match/guard/path surface as E04. |
-| E06 | `types_vix_contract_is_pinned`: `toolchain(windows target)` returns a `Toolchain` struct with acquired `Cc` and `Ar`, `opt = 1`, `env = {"CFLAGS":"-O2","LDFLAGS":"-lm"}`, observations for both capabilities, and journal pins for both. | 3 | Needs struct update/record projection, `Target.os` access, `Ar::acquire`, capability observations/journal surfaced from the machine driver. |
+| E02 | `types_vix_contract_is_pinned`: `types.vix::partials()` returns `Int(42)` with empty event/journal contract. | 1 | Covered by `types_vix_partials_depths_and_classify_run_on_the_machine` on both lanes; partial application lowers to a pending invocation with named args resolved before the machine boundary. |
+| E03 | `types_vix_contract_is_pinned`: `types.vix::depths()` returns `Int(2)` with empty event/journal contract. | 1 | Covered by `types_vix_partials_depths_and_classify_run_on_the_machine` on both lanes via tuple values and tuple-index store projection. |
+| E04 | `types_vix_contract_is_pinned`: `classify(Artifact::Object("lua.o"))` returns `"the interpreter object"` with empty event/journal contract. | 1 | Covered by `types_vix_partials_depths_and_classify_run_on_the_machine` on both lanes via guarded variant matching and path comparison. |
+| E05 | `types_vix_contract_is_pinned`: `classify(Artifact::Object("lapi.o"))` returns `"an object"` with empty event/journal contract. | 1 | Covered by `types_vix_partials_depths_and_classify_run_on_the_machine` on both lanes via guard fallthrough to the tuple-variant wildcard arm. |
+| E06 | `types_vix_contract_is_pinned`: `toolchain(windows target)` returns a `Toolchain` struct with acquired `Cc` and `Ar`, `opt = 1`, `env = {"CFLAGS":"-O2","LDFLAGS":"-lm"}`, observations for both capabilities, and journal pins for both. | 1 | Covered by `types_vix_toolchain_acquires_capabilities_and_updates_records` on both lanes: record update allocates a new store entry, `Target.os` projects through declared layout, `Cc`/`Ar` acquisition emits two non-replayed observation events, and the returned struct/env map is inspected in the value store. |
 | E07 | `lua_vix_contract_is_pinned`: `lua.vix::lua(linux target)` returns tree `lua -> obj(da0b3249eab2761b)`, 5 scheduled, 5 created, 3 finished cc runs at `lapi.o`, `lauxlib.o`, and `lua`, plus `Cc`, `Ar`, and fetch observations/journal pins. | 3 | Needs full `lua.vix` lowering: fetch/extract/glob/filter, arrays of flags, path/tree joins, `ar!`, multi-input `cc!`, exec observations/journal, and projection-preserving run accounting. |
 | E08 | `cargo_toml_projection_contract_is_pinned`: `cargo_manifest(Cargo.toml tree)` returns `("mini-real-crate", "0.3.1", "0.50.0-rc.5")` with empty event/journal contract. | 3 | Needs TOML parsing builtin, structural document values, tuple returns, `.get().unwrap()` on TOML values, and tree/file content projection. |
 | E09 | `json_structural_values_contract_is_pinned`: parsing the inline JSON returns `("mini-real-crate", 3, false)` with empty event/journal contract. | 3 | Needs JSON parsing builtin, structural document values, bool values, tuple returns, and `.get().unwrap()` typed projection. |
@@ -58,7 +58,7 @@ Class 4 is intentionally not used for any evaluator behavior.
 | ID | Frozen assertion | Class | Machine parity status |
 | --- | --- | ---: | --- |
 | D01 | Engine and oracle match on `eval.vix::demo`: value, finished multiset, scheduled count, observations, journal, miss subset, and created subset. | 1 | Machine already pins the value, zero run events, spawn count, and warm behavior for `eval.vix::demo` on both lanes. |
-| D02 | Engine and oracle match on `types.vix::{partials,depths,classify(lua.o),classify(lapi.o),toolchain(windows)}` with the full event/journal subset rules. | 3 | Same `types.vix` feature set as E02-E06. |
+| D02 | Engine and oracle match on `types.vix::{partials,depths,classify(lua.o),classify(lapi.o),toolchain(windows)}` with the full event/journal subset rules. | 1 | Covered by the B3 machine tests for partials, depths, classify, and toolchain on both lanes, including exact capability observation replay flags. |
 | D03 | Engine and oracle match on `lua.vix::lua`: same value, same finished multiset, scheduled count 5, created set equality, observation keys, journal, and miss subset. | 3 | Same full `lua.vix` exec/fetch/archive feature set as E07. |
 | D04 | Engine and oracle match on Cargo.toml projection. | 3 | Same TOML/tree/tuple feature set as E08. |
 | D05 | Engine and oracle match on JSON structural values. | 3 | Same JSON/document/bool/tuple feature set as E09. |
@@ -81,8 +81,8 @@ Class 4 is intentionally not used for any evaluator behavior.
 | G08 | `shared_binding_computes_once`: `let x = f(20); x + x` returns `42`; `f` misses once and has zero hits. | 1 | Covered by `shared_let_binding_computes_once` on both lanes. |
 | G09 | `unselected_match_arm_never_evaluates`: match returns `42`; `boom` has zero misses. | 1 | Covered by `untaken_arms_never_spawn` and `untaken_variant_arms_never_spawn` on both lanes. |
 | G10 | `memo_hits_across_calls`: `a()+b()` returns `42`; `f(20)` misses once and hits at least once. | 1 | Covered directly by `memo_hits_across_distinct_calls_exact_counts` on both lanes: one spawn and one memo hit for `f`. |
-| G11 | Duplicate named arguments are rejected by oracle with text containing `duplicate argument \`x\``. | 3 | Needs named-argument support and duplicate-name diagnostics in machine lowering if named calls become part of machine surface. |
-| G12 | Duplicate named arguments are rejected by engine with text containing `duplicate argument \`x\``. | 3 | Same named-argument diagnostic surface as G11. |
+| G11 | Duplicate named arguments are rejected by oracle with text containing `duplicate argument \`x\``. | 1 | Covered by `types_vix_named_argument_diagnostics_are_pinned` on both lanes with machine lowering text containing `duplicate argument \`x\``. |
+| G12 | Duplicate named arguments are rejected by engine with text containing `duplicate argument \`x\``. | 1 | Covered by `types_vix_named_argument_diagnostics_are_pinned` on both lanes with the same machine lowering diagnostic. |
 
 ## Oracle Warm Reload, Identity, and Value Contracts
 
@@ -96,8 +96,8 @@ Class 4 is intentionally not used for any evaluator behavior.
 | O06 | `editing_unreferenced_function_preserves_other_closure_hashes`: editing `never_demanded` preserves hashes for `{leaf,left,right,independent,main}` and changes only `never_demanded`. | 1 | Covered by `warm_reload_unused_edit_costs_zero_misses_and_hashes_only_itself` using `Machine::fn_hashes()` and `ReloadDiff`; only `never_demanded` changes. |
 | O07 | `warm_reload_type_declaration_edit_misses_exact_transitive_users`: reordering `enum Choice { A, B }` to `{ B, A }` keeps `main = 8`, misses exactly `{typed,bridge,main}`, and `independent` hits. | 1 | Covered by `warm_reload_type_decl_edit_misses_transitive_users` on both lanes; closure hashes include type declarations, producing exact diff/spawn set `{typed,bridge,main}` and an `independent` hit. |
 | O08 | `recursive_scc_closure_hashes_are_stable_across_definition_order`: mutually recursive `a`/`b` hashes are equal across definition order. | 1 | Covered by `recursive_scc_hashes_survive_definition_order_on_machine` on both lanes via machine-visible `fn_hash`. |
-| O09 | `types_vix_partials_guards_and_tuple_indexing`: `partials = 42`, `depths = 2`, `classify(lua.o)` and `classify(lapi.o)` return the two pinned strings, and calling `scaled(k:2)` without `x`/`..` errors. | 3 | Same `types.vix` feature set as E02-E05 plus exact partial-call error. |
-| O10 | `toolchain_acquires_capabilities_and_updates_records`: Windows target returns a `Toolchain` struct with `opt = 1`, two env entries including `CFLAGS=-O2`, and exactly two non-replayed capability observations. | 3 | Same record-update/capability-observation surface as E06. |
+| O09 | `types_vix_partials_guards_and_tuple_indexing`: `partials = 42`, `depths = 2`, `classify(lua.o)` and `classify(lapi.o)` return the two pinned strings, and calling `scaled(k:2)` without `x`/`..` errors. | 1 | Covered by `types_vix_partials_depths_and_classify_run_on_the_machine` and `types_vix_named_argument_diagnostics_are_pinned` on both lanes, including the exact missing-argument text for `scaled(k: 2)`. |
+| O10 | `toolchain_acquires_capabilities_and_updates_records`: Windows target returns a `Toolchain` struct with `opt = 1`, two env entries including `CFLAGS=-O2`, and exactly two non-replayed capability observations. | 1 | Covered by `types_vix_toolchain_acquires_capabilities_and_updates_records` on both lanes with direct store inspection and exact observation events. |
 | O11 | `fetch_pins_the_journal_and_replays`: fetch with declared checksum returns equal trees for different nonce args; observations are first `replayed=false`, then `replayed=true`; journal pins checksum under `fetch:{url}:sha256:{sha}`. | 3 | Needs fetch primitive, declared checksum identity, observation replay accounting, and journal exposure. |
 | O12 | `closures_ship_between_oracles`: closure values ship/receive across oracle instances, preserve canonical hash, invoke remotely to `42`, and formatting preserves closure hash. | 4 | Closure serialization/wire transport is an oracle exec-prototype contract, not a machine evaluator requirement. If closure values become machine values, this should be reclassified as a machine feature. |
 | O13 | `values_are_totally_ordered_canonically`: enum declaration order, float total order/NaN last/`-0.0 == 0.0`, canonical map key order, map hash equality across construction orders, and variant payload ordering. | 3 | Needs machine-visible total ordering over store values. Float canonicalization and map hash equality already exist; full value ordering and enum/payload ordering remain. |

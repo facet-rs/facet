@@ -122,7 +122,14 @@ pub(crate) fn type_schema_name(ty: &ast::Type) -> Result<String, String> {
             Ok(format!("{base}<{}>", args.join(",")))
         }
         ast::Type::Array(_) => Ok("Array".into()),
-        ast::Type::Tuple(_) => Ok("Tuple".into()),
+        ast::Type::Tuple(tuple) => {
+            let elems = tuple
+                .elems
+                .iter()
+                .map(type_schema_name)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(format!("Tuple<{}>", elems.join(",")))
+        }
         ast::Type::Fn(_) => Ok("Fn".into()),
     }
 }
@@ -141,6 +148,7 @@ fn declared_descriptors(file: &SourceFile) -> Result<HashMap<String, Descriptor<
     let mut descriptors = HashMap::new();
     descriptors.insert("Int".into(), declared_mem::i64_("Int".into()));
     descriptors.insert("Float".into(), declared_mem::f64_("Float".into()));
+    descriptors.insert("Bool".into(), declared_mem::i64_("Bool".into()));
 
     for item in &file.items {
         match item {
@@ -203,6 +211,7 @@ fn descriptor_for_type(ty: &ast::Type) -> Result<Descriptor<String>, String> {
     Ok(match schema.as_str() {
         "Int" => declared_mem::i64_("Int".into()),
         "Float" => declared_mem::f64_("Float".into()),
+        "Bool" => declared_mem::i64_("Bool".into()),
         "String" => handle_i64("StringRef", "String"),
         other => handle_i64(format!("{other}Ref"), other.to_string()),
     })

@@ -29,7 +29,7 @@ use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_MAP_PENDING_HOST, DriveEvent, Driver,
     EXEC_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
     OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST,
-    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, TREE_PROJECT_HOST,
+    PENDING_INVOKE_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, TREE_PROJECT_HOST,
 };
 use crate::ast;
 use crate::module::{ModuleTables, VariantShape, load_module_tables, type_schema_name};
@@ -89,53 +89,21 @@ impl Machine {
                 ))
             })
             .collect::<Result<_, String>>()?;
-        let mut schema_names: Vec<String> = tables.descriptors.keys().cloned().collect();
-        schema_names.extend([
-            "String".to_string(),
-            "Path".to_string(),
-            "Target".to_string(),
-            "Cc".to_string(),
-            "Tree".to_string(),
-            "Array".to_string(),
-            "Map".to_string(),
-        ]);
-        for schema in fn_returns.values() {
-            schema_names.push(schema.clone());
-            schema_names.push(pending_schema(schema));
-            if let Some(value_schema) = map_value_schema(schema) {
-                let pending = pending_schema(value_schema);
-                let realized = realized_schema(value_schema);
-                schema_names.push(value_schema.to_string());
-                schema_names.push(pending.clone());
-                schema_names.push(option_schema(value_schema));
-                schema_names.push(realized.clone());
-                schema_names.push(option_schema(&realized));
-                if let Some((key_schema, _)) = map_schemas(schema) {
-                    schema_names.push(map_schema(key_schema, &realized));
-                }
-            }
-        }
-        for schemas in fn_params.values() {
-            for schema in schemas {
-                schema_names.push(schema.clone());
-                schema_names.push(pending_schema(schema));
-                if let Some(value_schema) = map_value_schema(schema) {
-                    let pending = pending_schema(value_schema);
-                    let realized = realized_schema(value_schema);
-                    schema_names.push(value_schema.to_string());
-                    schema_names.push(pending.clone());
-                    schema_names.push(option_schema(value_schema));
-                    schema_names.push(realized.clone());
-                    schema_names.push(option_schema(&realized));
-                    if let Some((key_schema, _)) = map_schemas(schema) {
-                        schema_names.push(map_schema(key_schema, &realized));
-                    }
-                }
-            }
-        }
-        for item in tables.fns.values() {
-            collect_block_type_schemas(&item.body, &mut schema_names)?;
-        }
+        let fn_param_names: HashMap<String, Vec<String>> = names
+            .iter()
+            .map(|name| {
+                let item = &tables.fns[*name];
+                (
+                    (*name).clone(),
+                    item.params
+                        .params
+                        .iter()
+                        .map(|param| param.name.value.clone())
+                        .collect(),
+                )
+            })
+            .collect();
+        let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
         schema_names.sort();
         schema_names.dedup();
         let schema_refs: HashMap<String, i64> = schema_names
@@ -154,22 +122,30 @@ impl Machine {
             strings: &string_handles,
             paths: &path_handles,
         };
+        let signatures = FnSignatures {
+            returns: &fn_returns,
+            params: &fn_params,
+            param_names: &fn_param_names,
+        };
 
         let mut task_fns = Vec::with_capacity(names.len());
         let mut lowered = Vec::with_capacity(names.len());
         for (ix, name) in names.iter().enumerate() {
             let item = &tables.fns[*name];
             let hash = tables.fn_hashes[*name];
-            let (task_fn, info) = FnLowerer::lower(
-                item,
-                &tables,
-                &fn_refs,
-                &fn_returns,
-                &fn_params,
-                &schema_refs,
-                literal_handles,
-            )
-            .map_err(|e| format!("lowering {name}: {e}"))?;
+            let (task_fn, info) = if parked_generic_or_fn_typed(item) {
+                parked_stub(item)?
+            } else {
+                FnLowerer::lower(
+                    item,
+                    &tables,
+                    &fn_refs,
+                    signatures,
+                    &schema_refs,
+                    literal_handles,
+                )
+                .map_err(|e| format!("lowering {name}: {e}"))?
+            };
             task_fns.push(task_fn);
             lowered.push(LoweredFn {
                 hash,
@@ -192,6 +168,7 @@ impl Machine {
         }
 
         let mut descriptors = tables.descriptors;
+        add_builtin_descriptors(&mut descriptors);
         for name in &schema_names {
             if let Some(descriptor) = derived_descriptor(name) {
                 descriptors.entry(name.clone()).or_insert(descriptor);
@@ -264,6 +241,20 @@ impl Machine {
                 ))
             })
             .collect::<Result<_, String>>()?;
+        let fn_param_names: HashMap<String, Vec<String>> = names
+            .iter()
+            .map(|name| {
+                let item = &tables.fns[*name];
+                (
+                    (*name).clone(),
+                    item.params
+                        .params
+                        .iter()
+                        .map(|param| param.name.value.clone())
+                        .collect(),
+                )
+            })
+            .collect();
         let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
         schema_names.sort();
         schema_names.dedup();
@@ -274,22 +265,30 @@ impl Machine {
             strings: &string_handles,
             paths: &path_handles,
         };
+        let signatures = FnSignatures {
+            returns: &fn_returns,
+            params: &fn_params,
+            param_names: &fn_param_names,
+        };
 
         let mut task_fns = Vec::with_capacity(names.len());
         let mut lowered = Vec::with_capacity(names.len());
         for (ix, name) in names.iter().enumerate() {
             let item = &tables.fns[*name];
             let hash = tables.fn_hashes[*name];
-            let (task_fn, info) = FnLowerer::lower(
-                item,
-                &tables,
-                &fn_refs,
-                &fn_returns,
-                &fn_params,
-                &schema_refs,
-                literal_handles,
-            )
-            .map_err(|e| format!("lowering {name}: {e}"))?;
+            let (task_fn, info) = if parked_generic_or_fn_typed(item) {
+                parked_stub(item)?
+            } else {
+                FnLowerer::lower(
+                    item,
+                    &tables,
+                    &fn_refs,
+                    signatures,
+                    &schema_refs,
+                    literal_handles,
+                )
+                .map_err(|e| format!("lowering {name}: {e}"))?
+            };
             task_fns.push(task_fn);
             lowered.push(LoweredFn {
                 hash,
@@ -312,6 +311,7 @@ impl Machine {
         }
 
         let mut descriptors = tables.descriptors;
+        add_builtin_descriptors(&mut descriptors);
         for name in &schema_names {
             if let Some(descriptor) = derived_descriptor(name) {
                 descriptors.entry(name.clone()).or_insert(descriptor);
@@ -403,8 +403,10 @@ fn schema_names_for(
     schema_names.extend([
         "String".to_string(),
         "Path".to_string(),
+        "Bool".to_string(),
         "Target".to_string(),
         "Cc".to_string(),
+        "Ar".to_string(),
         "Tree".to_string(),
         "Array".to_string(),
         "Map".to_string(),
@@ -417,8 +419,12 @@ fn schema_names_for(
             push_schema_closure(schema, &mut schema_names);
         }
     }
+    for descriptor in tables.descriptors.values() {
+        collect_descriptor_schemas(descriptor, &mut schema_names);
+    }
     for item in tables.fns.values() {
         collect_block_type_schemas(&item.body, &mut schema_names)?;
+        collect_expr_schemas_in_block(&item.body, &mut schema_names, tables, fn_returns)?;
     }
     Ok(schema_names)
 }
@@ -437,6 +443,27 @@ fn push_schema_closure(schema: &str, schema_names: &mut Vec<String>) {
         if let Some((key_schema, _)) = map_schemas(schema) {
             schema_names.push(map_schema(key_schema, &realized));
         }
+    }
+}
+
+fn collect_descriptor_schemas(descriptor: &Descriptor<String>, out: &mut Vec<String>) {
+    push_schema_closure(&descriptor.schema, out);
+    match &descriptor.access {
+        weavy::mem::Access::Handle { target } => push_schema_closure(target, out),
+        weavy::mem::Access::Array { element, .. } => collect_descriptor_schemas(element, out),
+        weavy::mem::Access::Record(record) => {
+            for field in &record.fields {
+                collect_descriptor_schemas(&field.descriptor, out);
+            }
+        }
+        weavy::mem::Access::Enum(access) => {
+            for variant in &access.variants {
+                for field in &variant.payload.fields {
+                    collect_descriptor_schemas(&field.descriptor, out);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -851,6 +878,216 @@ fn collect_block_type_schemas(block: &ast::Block, out: &mut Vec<String>) -> Resu
     Ok(())
 }
 
+fn collect_expr_schemas_in_block(
+    block: &ast::Block,
+    out: &mut Vec<String>,
+    tables: &ModuleTables,
+    fn_returns: &HashMap<String, String>,
+) -> Result<(), String> {
+    let mut env = HashMap::new();
+    for stmt in &block.stmts {
+        if let ast::Stmt::Let(l) = stmt {
+            let annotated = l.ty.as_ref().map(type_schema_name).transpose()?;
+            let inferred = collect_expr_schemas(&l.value, out, tables, fn_returns, &env)?;
+            if let Some(schema) = annotated.or(inferred) {
+                env.insert(l.name.value.clone(), schema);
+            }
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_expr_schemas(tail, out, tables, fn_returns, &env)?;
+    }
+    Ok(())
+}
+
+fn collect_expr_schemas(
+    expr: &ast::Expr,
+    out: &mut Vec<String>,
+    tables: &ModuleTables,
+    fn_returns: &HashMap<String, String>,
+    env: &HashMap<String, String>,
+) -> Result<Option<String>, String> {
+    match expr {
+        ast::Expr::Number(n) => Ok(Some(if n.value.contains('.') {
+            "Float".into()
+        } else {
+            "Int".into()
+        })),
+        ast::Expr::Bool(_) => Ok(Some("Bool".into())),
+        ast::Expr::Str(_) => Ok(Some("String".into())),
+        ast::Expr::Path(_) => Ok(Some("Path".into())),
+        ast::Expr::Tuple(tuple) => {
+            let mut fields = Vec::new();
+            for elem in &tuple.elems {
+                if let Some(schema) = collect_expr_schemas(elem, out, tables, fn_returns, env)? {
+                    fields.push(schema);
+                }
+            }
+            let schema = tuple_schema(&fields);
+            out.push(schema.clone());
+            Ok(Some(schema))
+        }
+        ast::Expr::Binary(binary) => {
+            let _ = collect_expr_schemas(&binary.left, out, tables, fn_returns, env)?;
+            let _ = collect_expr_schemas(&binary.right, out, tables, fn_returns, env)?;
+            Ok(None)
+        }
+        ast::Expr::Unary(unary) => {
+            collect_expr_schemas(&unary.operand, out, tables, fn_returns, env)
+        }
+        ast::Expr::Call(call) => {
+            for arg in &call.args.args {
+                if let ast::Arg::Expr(expr) = arg {
+                    let _ = collect_expr_schemas(expr, out, tables, fn_returns, env)?;
+                } else if let ast::Arg::Kwarg(kwarg) = arg {
+                    let _ = collect_expr_schemas(&kwarg.value, out, tables, fn_returns, env)?;
+                }
+            }
+            if let ast::PathRef::Identifier(name) = &call.callee
+                && let Some(schema) = fn_returns.get(&name.value)
+            {
+                return Ok(Some(schema.clone()));
+            }
+            if let Ok((enum_name, _, _)) = resolve_path_variant_for_collect(tables, &call.callee) {
+                return Ok(Some(enum_name));
+            }
+            Ok(None)
+        }
+        ast::Expr::MethodCall(call) => {
+            let receiver_schema =
+                collect_expr_schemas(&call.receiver, out, tables, fn_returns, env)?;
+            for arg in &call.args.args {
+                if let ast::Arg::Expr(expr) = arg {
+                    let _ = collect_expr_schemas(expr, out, tables, fn_returns, env)?;
+                } else if let ast::Arg::Kwarg(kwarg) = arg {
+                    let _ = collect_expr_schemas(&kwarg.value, out, tables, fn_returns, env)?;
+                }
+            }
+            match (call.name.value.as_str(), receiver_schema.as_deref()) {
+                ("with_ext", Some("Path")) => Ok(Some("Path".into())),
+                ("insert", Some(schema)) if map_schemas(schema).is_some() => {
+                    Ok(Some(schema.to_string()))
+                }
+                ("get", Some(schema)) => Ok(map_value_schema(schema).map(option_schema)),
+                ("unwrap", Some(schema)) => Ok(option_value_schema(schema).map(str::to_string)),
+                _ => Ok(None),
+            }
+        }
+        ast::Expr::Field(field) => {
+            let receiver = collect_expr_schemas(&field.receiver, out, tables, fn_returns, env)?;
+            if let (Some(schema), ast::Member::Index(index)) = (receiver, &field.name)
+                && let Some(fields) = tuple_schema_fields(&schema)
+                && let Ok(field_index) = index.value.parse::<usize>()
+            {
+                return Ok(fields.get(field_index).cloned());
+            }
+            Ok(None)
+        }
+        ast::Expr::Match(m) => {
+            let _ = collect_expr_schemas(&m.scrutinee, out, tables, fn_returns, env)?;
+            let mut result_schema: Option<String> = None;
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    let _ = collect_expr_schemas(guard, out, tables, fn_returns, env)?;
+                }
+                let arm_schema = collect_expr_schemas(&arm.value, out, tables, fn_returns, env)?;
+                match (&result_schema, arm_schema) {
+                    (None, Some(schema)) => result_schema = Some(schema),
+                    (Some(expected), Some(schema)) if expected == &schema => {}
+                    _ => result_schema = None,
+                }
+            }
+            Ok(result_schema)
+        }
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                let _ = collect_expr_schemas(&field.value, out, tables, fn_returns, env)?;
+            }
+            for spread in &lit.spreads {
+                if let Some(base) = &spread.base {
+                    let _ = collect_expr_schemas(base, out, tables, fn_returns, env)?;
+                }
+            }
+            let segments = path_ref_segments(&lit.path)?;
+            if segments.len() == 1 {
+                return Ok(Some(segments[0].clone()));
+            }
+            if let Ok((enum_name, _, _)) = resolve_variant_segments(tables, &segments) {
+                return Ok(Some(enum_name));
+            }
+            Ok(None)
+        }
+        ast::Expr::Map(map) => {
+            let mut key_schema = None;
+            let mut value_schema = None;
+            for entry in &map.entries {
+                key_schema = key_schema.or(collect_expr_schemas(
+                    &entry.key, out, tables, fn_returns, env,
+                )?);
+                value_schema = value_schema.or(collect_expr_schemas(
+                    &entry.value,
+                    out,
+                    tables,
+                    fn_returns,
+                    env,
+                )?);
+            }
+            if let (Some(key), Some(value)) = (key_schema, value_schema) {
+                let schema = map_schema(&key, &value);
+                push_schema_closure(&schema, out);
+                Ok(Some(schema))
+            } else {
+                Ok(None)
+            }
+        }
+        ast::Expr::Array(array) => {
+            for elem in &array.elems {
+                if let ast::ArrayElem::Expr(expr) = elem {
+                    let _ = collect_expr_schemas(expr, out, tables, fn_returns, env)?;
+                }
+            }
+            Ok(None)
+        }
+        ast::Expr::Paren(paren) => collect_expr_schemas(&paren.inner, out, tables, fn_returns, env),
+        ast::Expr::Closure(closure) => {
+            collect_expr_schemas(&closure.body, out, tables, fn_returns, env)
+        }
+        ast::Expr::Command(command) => {
+            for part in &command.parts {
+                if let ast::CommandPart::Splice(splice) = part {
+                    let _ = collect_expr_schemas(&splice.expr, out, tables, fn_returns, env)?;
+                }
+            }
+            Ok(None)
+        }
+        ast::Expr::Identifier(name) => Ok(env.get(&name.value).cloned().or_else(|| {
+            tables
+                .structs
+                .get(&name.value)
+                .and_then(|info| info.is_unit.then(|| name.value.clone()))
+        })),
+        ast::Expr::Scoped(path) => {
+            let (enum_name, _, _) = resolve_variant_segments(
+                tables,
+                &path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.value.clone())
+                    .collect::<Vec<_>>(),
+            )?;
+            Ok(Some(enum_name))
+        }
+    }
+}
+
+fn resolve_path_variant_for_collect(
+    tables: &ModuleTables,
+    path: &ast::PathRef,
+) -> Result<(String, usize, VariantShape), String> {
+    let segments = path_ref_segments(path)?;
+    resolve_variant_segments(tables, &segments)
+}
+
 fn collect_type_schema(ty: &ast::Type, out: &mut Vec<String>) -> Result<(), String> {
     let schema = type_schema_name(ty)?;
     out.push(schema.clone());
@@ -875,23 +1112,130 @@ fn collect_type_schema(ty: &ast::Type, out: &mut Vec<String>) -> Result<(), Stri
     Ok(())
 }
 
+fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>) {
+    descriptors
+        .entry("Bool".into())
+        .or_insert_with(|| declared_mem::i64_("Bool".into()));
+    descriptors.entry("Target".into()).or_insert_with(|| {
+        declared_mem::declared_struct(
+            "Target".into(),
+            vec![declared_mem::handle("OsRef".into(), "Os".into())],
+        )
+    });
+}
+
 fn derived_descriptor(schema: &str) -> Option<Descriptor<String>> {
-    let value_schema = realized_value_schema(schema)?;
-    Some(declared_mem::declared_struct(
-        schema.to_string(),
-        vec![
-            word_descriptor_for_schema(value_schema),
-            declared_mem::i64_(format!("{schema}::realization_bitset")),
-        ],
-    ))
+    if let Some(value_schema) = realized_value_schema(schema) {
+        return Some(declared_mem::declared_struct(
+            schema.to_string(),
+            vec![
+                word_descriptor_for_schema(value_schema),
+                declared_mem::i64_(format!("{schema}::realization_bitset")),
+            ],
+        ));
+    }
+    if let Some(fields) = tuple_schema_fields(schema) {
+        return Some(declared_mem::declared_struct(
+            schema.to_string(),
+            fields
+                .into_iter()
+                .enumerate()
+                .map(|(index, field)| word_descriptor_for_schema_with_name(&field, index))
+                .collect(),
+        ));
+    }
+    None
 }
 
 fn word_descriptor_for_schema(schema: &str) -> Descriptor<String> {
+    word_descriptor_for_schema_with_name(schema, 0)
+}
+
+fn word_descriptor_for_schema_with_name(schema: &str, index: usize) -> Descriptor<String> {
     match schema {
-        "Int" => declared_mem::i64_("Int".into()),
-        "Float" => declared_mem::f64_("Float".into()),
-        other => declared_mem::handle(format!("{other}Ref"), other.to_string()),
+        "Int" => declared_mem::i64_(format!("Int{index}")),
+        "Float" => declared_mem::f64_(format!("Float{index}")),
+        "Bool" => declared_mem::i64_(format!("Bool{index}")),
+        other => declared_mem::handle(format!("{other}Ref{index}"), other.to_string()),
     }
+}
+
+fn descriptor_field_schema(
+    descriptor: &Descriptor<String>,
+    field_index: usize,
+) -> Result<String, String> {
+    let field = match &descriptor.access {
+        weavy::mem::Access::Record(record) => record.fields.get(field_index),
+        other => {
+            return Err(format!(
+                "descriptor `{}` has access {other:?}, not fields",
+                descriptor.schema
+            ));
+        }
+    }
+    .ok_or_else(|| format!("missing field {field_index} on `{}`", descriptor.schema))?;
+    match &field.descriptor.access {
+        weavy::mem::Access::Handle { target } => Ok(target.clone()),
+        _ => Ok(field.descriptor.schema.clone()),
+    }
+}
+
+fn parked_generic_or_fn_typed(item: &ast::FnItem) -> bool {
+    item.generics.is_some()
+        || item
+            .params
+            .params
+            .iter()
+            .any(|param| type_contains_fn(&param.ty))
+        || item.return_type.as_ref().is_some_and(type_contains_fn)
+}
+
+fn type_contains_fn(ty: &ast::Type) -> bool {
+    match ty {
+        ast::Type::Fn(_) => true,
+        ast::Type::Array(array) => type_contains_fn(&array.elem),
+        ast::Type::Generic(generic) => generic.args.iter().any(type_contains_fn),
+        ast::Type::Tuple(tuple) => tuple.elems.iter().any(type_contains_fn),
+        ast::Type::Path(_) => false,
+    }
+}
+
+fn parked_stub(item: &ast::FnItem) -> Result<(TaskFn, LoweredInfo), String> {
+    let mut arg_offsets = Vec::new();
+    let mut next = 0u32;
+    for _ in &item.params.params {
+        arg_offsets.push(next);
+        next += 8;
+    }
+    let result = next;
+    next += 8;
+    let code = vec![
+        Op::ConstI64 {
+            dst: result,
+            value: 0,
+        },
+        Op::Ret {
+            src: result,
+            size: 8,
+        },
+    ];
+    Ok((
+        TaskFn {
+            frame: Layout {
+                size: next as usize,
+                align: 8,
+            },
+            code,
+        },
+        LoweredInfo {
+            arg_offsets,
+            invoke_region: result,
+            store_alloc_region: result,
+            store_read_region: result,
+            store_tag_region: result,
+            primitive_region: result,
+        },
+    ))
 }
 
 struct LoweredInfo {
@@ -914,6 +1258,26 @@ struct ValueSlot {
     slot: u32,
     schema: String,
     realization: Option<u32>,
+    pending: Option<PendingSlot>,
+}
+
+#[derive(Clone, Copy)]
+struct PendingSlot {
+    fn_ref: usize,
+    given: usize,
+}
+
+struct BoundCall {
+    args: Vec<ValueSlot>,
+    partial: bool,
+    given: usize,
+}
+
+#[derive(Clone, Copy)]
+struct FnSignatures<'a> {
+    returns: &'a HashMap<String, String>,
+    params: &'a HashMap<String, Vec<String>>,
+    param_names: &'a HashMap<String, Vec<String>>,
 }
 
 type Bindings = HashMap<String, BindingCell>;
@@ -966,8 +1330,7 @@ fn fork_binding_cell(cell: &BindingCell) -> BindingCell {
 struct FnLowerer<'a> {
     tables: &'a ModuleTables,
     fn_refs: &'a HashMap<String, usize>,
-    fn_returns: &'a HashMap<String, String>,
-    fn_params: &'a HashMap<String, Vec<String>>,
+    signatures: FnSignatures<'a>,
     schema_refs: &'a HashMap<String, i64>,
     literal_handles: LiteralHandles<'a>,
     slots: Bindings,
@@ -986,16 +1349,14 @@ impl<'a> FnLowerer<'a> {
         item: &ast::FnItem,
         tables: &'a ModuleTables,
         fn_refs: &'a HashMap<String, usize>,
-        fn_returns: &'a HashMap<String, String>,
-        fn_params: &'a HashMap<String, Vec<String>>,
+        signatures: FnSignatures<'a>,
         schema_refs: &'a HashMap<String, i64>,
         literal_handles: LiteralHandles<'a>,
     ) -> Result<(TaskFn, LoweredInfo), String> {
         let mut this = FnLowerer {
             tables,
             fn_refs,
-            fn_returns,
-            fn_params,
+            signatures,
             schema_refs,
             literal_handles,
             slots: HashMap::new(),
@@ -1019,6 +1380,7 @@ impl<'a> FnLowerer<'a> {
                     slot,
                     schema,
                     realization: None,
+                    pending: None,
                 }),
             );
             arg_offsets.push(slot);
@@ -1131,6 +1493,7 @@ impl<'a> FnLowerer<'a> {
                         slot: dst,
                         schema: "Float".into(),
                         realization: None,
+                        pending: None,
                     });
                 }
                 let value: i64 = n
@@ -1143,6 +1506,7 @@ impl<'a> FnLowerer<'a> {
                     slot: dst,
                     schema: "Int".into(),
                     realization: None,
+                    pending: None,
                 })
             }
             ast::Expr::Str(s) => {
@@ -1157,6 +1521,7 @@ impl<'a> FnLowerer<'a> {
                     slot: dst,
                     schema: "String".into(),
                     realization: None,
+                    pending: None,
                 })
             }
             ast::Expr::Path(p) => {
@@ -1171,12 +1536,36 @@ impl<'a> FnLowerer<'a> {
                     slot: dst,
                     schema: "Path".into(),
                     realization: None,
+                    pending: None,
                 })
             }
-            ast::Expr::Identifier(name) => self.resolve_binding(&name.value),
+            ast::Expr::Bool(b) => {
+                let dst = self.alloc();
+                self.code.push(Op::ConstI64 {
+                    dst,
+                    value: i64::from(b.value),
+                });
+                Ok(ValueSlot {
+                    slot: dst,
+                    schema: "Bool".into(),
+                    realization: None,
+                    pending: None,
+                })
+            }
+            ast::Expr::Identifier(name) => {
+                if let Some(info) = self.tables.structs.get(&name.value)
+                    && info.is_unit
+                    && !self.slots.contains_key(&name.value)
+                {
+                    return self.store_alloc(&name.value, 0, &[]);
+                }
+                self.resolve_binding(&name.value, expected)
+            }
             ast::Expr::Paren(p) => self.expr(&p.inner),
             ast::Expr::Scoped(path) => self.scoped_value(path),
             ast::Expr::StructLit(lit) => self.struct_literal(lit),
+            ast::Expr::Tuple(tuple) => self.tuple_literal(tuple),
+            ast::Expr::Field(field) => self.field_access(field),
             ast::Expr::Binary(b) if b.op.as_str() == "/" => {
                 let left = self.expr(&b.left)?;
                 let right = self.expr(&b.right)?;
@@ -1255,7 +1644,7 @@ impl<'a> FnLowerer<'a> {
                                 a: a.slot,
                                 b: r.slot,
                             },
-                            "Int",
+                            "Bool",
                         )
                     }
                     (other, _, _) => {
@@ -1270,6 +1659,7 @@ impl<'a> FnLowerer<'a> {
                     slot: dst,
                     schema: schema.into(),
                     realization: None,
+                    pending: None,
                 })
             }
             ast::Expr::Call(call) => self.call(call),
@@ -1284,7 +1674,11 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
-    fn resolve_binding(&mut self, name: &str) -> Result<ValueSlot, String> {
+    fn resolve_binding(
+        &mut self,
+        name: &str,
+        contextual_expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
         let cell = self
             .slots
             .get(name)
@@ -1299,7 +1693,8 @@ impl<'a> FnLowerer<'a> {
                 env,
             } => {
                 let saved = std::mem::replace(&mut self.slots, env);
-                let slot = self.expr_expected(&value, expected.as_deref())?;
+                let slot =
+                    self.expr_expected(&value, contextual_expected.or(expected.as_deref()))?;
                 *cell.0.borrow_mut() = BindingState::Value(slot.clone());
                 self.slots = saved;
                 Ok(slot)
@@ -1327,12 +1722,9 @@ impl<'a> FnLowerer<'a> {
 
         let last = m.arms.len().saturating_sub(1);
         for (i, arm) in m.arms.iter().enumerate() {
-            if arm.guard.is_some() {
-                return Err("match guards are outside the slice-2 subset".into());
-            }
             let saved_slots = self.slots.clone();
             self.slots = fork_bindings(&saved_slots);
-            let mut skip_patch: Option<usize> = None;
+            let mut skip_patches: Vec<usize> = Vec::new();
             match &arm.pattern {
                 ast::Pattern::Number(n) => {
                     let value: i64 = n
@@ -1347,7 +1739,7 @@ impl<'a> FnLowerer<'a> {
                         a: self.expect_schema(&scrut, "Int")?,
                         b: lit,
                     });
-                    skip_patch = Some(self.code.len());
+                    skip_patches.push(self.code.len());
                     self.code.push(Op::JumpIfZero {
                         value: test,
                         target: 0,
@@ -1366,7 +1758,7 @@ impl<'a> FnLowerer<'a> {
                         a: self.expect_schema(&scrut, "String")?,
                         b: lit,
                     });
-                    skip_patch = Some(self.code.len());
+                    skip_patches.push(self.code.len());
                     self.code.push(Op::JumpIfZero {
                         value: test,
                         target: 0,
@@ -1374,11 +1766,11 @@ impl<'a> FnLowerer<'a> {
                 }
                 ast::Pattern::Scoped(path) => {
                     let (enum_name, variant_index, _) = self.resolve_scoped_variant(path)?;
-                    self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patch)?;
+                    self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
                 }
                 ast::Pattern::Variant(p) => {
                     let (enum_name, variant_index, shape) = self.resolve_path_variant(&p.path)?;
-                    self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patch)?;
+                    self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
                     let VariantShape::Tuple(expected) = shape else {
                         return Err(format!(
                             "tuple variant pattern used on non-tuple variant {enum_name}"
@@ -1396,7 +1788,7 @@ impl<'a> FnLowerer<'a> {
                 }
                 ast::Pattern::Struct(p) => {
                     let (enum_name, variant_index, shape) = self.resolve_path_variant(&p.path)?;
-                    self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patch)?;
+                    self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
                     let VariantShape::Record(field_names) = shape else {
                         return Err(format!(
                             "record pattern used on non-record variant {enum_name}"
@@ -1436,7 +1828,16 @@ impl<'a> FnLowerer<'a> {
                     return Err(format!("pattern {other:?} is outside the slice-2 subset"));
                 }
             }
-            if skip_patch.is_none() && i != last {
+            if let Some(guard) = &arm.guard {
+                let guard = self.expr_expected(guard, Some("Bool"))?;
+                let guard = self.coerce_to_schema(guard, "Bool")?;
+                skip_patches.push(self.code.len());
+                self.code.push(Op::JumpIfZero {
+                    value: self.expect_schema(&guard, "Bool")?,
+                    target: 0,
+                });
+            }
+            if skip_patches.is_empty() && i != last {
                 return Err("irrefutable arm before the last arm".into());
             }
             let v = self.expr(&arm.value)?;
@@ -1463,7 +1864,7 @@ impl<'a> FnLowerer<'a> {
                 jump_to_end.push(self.code.len());
                 self.code.push(Op::Jump { target: 0 });
             }
-            if let Some(at) = skip_patch {
+            for at in skip_patches {
                 let next = u32::try_from(self.code.len()).expect("code len fits u32");
                 let Op::JumpIfZero { value, .. } = self.code[at] else {
                     unreachable!("skip patch site is a JumpIfZero");
@@ -1472,7 +1873,8 @@ impl<'a> FnLowerer<'a> {
                     value,
                     target: next,
                 };
-            } else if i == last {
+            }
+            if i == last {
                 break;
             }
             self.slots = saved_slots;
@@ -1497,6 +1899,7 @@ impl<'a> FnLowerer<'a> {
             slot: result,
             schema: result_schema.unwrap_or_else(|| "Int".into()),
             realization: None,
+            pending: None,
         })
     }
 
@@ -1523,7 +1926,7 @@ impl<'a> FnLowerer<'a> {
             })
             .collect();
         for name in hoist {
-            self.resolve_binding(&name)?;
+            self.resolve_binding(&name, None)?;
         }
         Ok(())
     }
@@ -1540,44 +1943,78 @@ impl<'a> FnLowerer<'a> {
             return Ok(value);
         }
         let name = match &call.callee {
-            ast::PathRef::Identifier(name) => &name.value,
+            ast::PathRef::Identifier(name) => name.value.as_str(),
             other => {
                 return Err(format!("callee {other:?} is outside the slice-1 subset"));
             }
         };
-        let fn_ref = *self
-            .fn_refs
-            .get(name)
-            .ok_or_else(|| format!("unknown function {name}"))?;
-        let expected_args = self
-            .fn_params
-            .get(name)
-            .ok_or_else(|| format!("missing param schemas for {name}"))?
-            .clone();
-
-        let mut arg_slots = Vec::new();
-        for (index, arg) in call.args.args.iter().enumerate() {
-            match arg {
-                ast::Arg::Expr(e) => {
-                    let expected = expected_args
-                        .get(index)
-                        .ok_or_else(|| format!("too many arguments for {name}"))?;
-                    let value = self.expr_expected(e, Some(expected))?;
-                    arg_slots.push(self.coerce_scalar_arg(value, expected)?);
-                }
-                other => {
-                    return Err(format!("argument {other:?} is outside the slice-1 subset"));
-                }
+        if let Some(&fn_ref) = self.fn_refs.get(name) {
+            let param_names = self
+                .signatures
+                .param_names
+                .get(name)
+                .ok_or_else(|| format!("missing param names for {name}"))?
+                .clone();
+            let param_schemas = self
+                .signatures
+                .params
+                .get(name)
+                .ok_or_else(|| format!("missing param schemas for {name}"))?
+                .clone();
+            let bound =
+                self.bind_call_args(name, &param_names, &param_schemas, &call.args, 0, true)?;
+            let return_schema = self.signatures.returns[name].clone();
+            if bound.partial {
+                return self.pending_alloc_for_fn(
+                    fn_ref,
+                    &return_schema,
+                    bound.args,
+                    Some(PendingSlot {
+                        fn_ref,
+                        given: bound.given,
+                    }),
+                );
             }
-        }
-        if arg_slots.len() != expected_args.len() {
-            return Err(format!(
-                "function {name} expected {} arguments, got {}",
-                expected_args.len(),
-                arg_slots.len()
-            ));
+            return self.invoke_fn(fn_ref, bound.args, return_schema);
         }
 
+        let callee = self.resolve_binding(name, None)?;
+        let Some(pending) = callee.pending else {
+            return Err(format!("unknown function {name}"));
+        };
+        let fn_name = self.fn_name_for_ref(pending.fn_ref)?.to_string();
+        let param_names = self
+            .signatures
+            .param_names
+            .get(&fn_name)
+            .ok_or_else(|| format!("missing param names for {fn_name}"))?
+            .clone();
+        let param_schemas = self
+            .signatures
+            .params
+            .get(&fn_name)
+            .ok_or_else(|| format!("missing param schemas for {fn_name}"))?
+            .clone();
+        let bound = self.bind_call_args(
+            &fn_name,
+            &param_names,
+            &param_schemas,
+            &call.args,
+            pending.given,
+            false,
+        )?;
+        let value_schema = pending_value_schema(&callee.schema)
+            .ok_or_else(|| format!("callee {name} is `{}`, not pending", callee.schema))?
+            .to_string();
+        self.pending_invoke(callee, bound.args, &value_schema)
+    }
+
+    fn invoke_fn(
+        &mut self,
+        fn_ref: usize,
+        arg_slots: Vec<ValueSlot>,
+        return_schema: String,
+    ) -> Result<ValueSlot, String> {
         let input_slot = self.next_input_slot;
         self.next_input_slot += 1;
         let region = self.invoke_region;
@@ -1607,8 +2044,106 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: self.fn_returns[name].clone(),
+            schema: return_schema,
             realization: None,
+            pending: None,
+        })
+    }
+
+    fn fn_name_for_ref(&self, fn_ref: usize) -> Result<&str, String> {
+        self.fn_refs
+            .iter()
+            .find_map(|(name, candidate)| (*candidate == fn_ref).then_some(name.as_str()))
+            .ok_or_else(|| format!("unknown fn_ref {fn_ref}"))
+    }
+
+    fn bind_call_args(
+        &mut self,
+        fn_name: &str,
+        param_names: &[String],
+        param_schemas: &[String],
+        args: &ast::ArgList,
+        start: usize,
+        allow_partial: bool,
+    ) -> Result<BoundCall, String> {
+        if start > param_names.len() || param_names.len() != param_schemas.len() {
+            return Err(format!("bad parameter table for `{fn_name}`"));
+        }
+        let mut values: Vec<Option<ValueSlot>> = vec![None; param_names.len() - start];
+        let mut positional = 0usize;
+        let mut partial = false;
+        for arg in &args.args {
+            match arg {
+                ast::Arg::Partial(_) => {
+                    if !allow_partial {
+                        return Err(format!(
+                            "partial call marker is not accepted here for `{fn_name}`"
+                        ));
+                    }
+                    if partial {
+                        return Err(format!("duplicate partial marker for `{fn_name}`"));
+                    }
+                    partial = true;
+                }
+                ast::Arg::Expr(expr) => {
+                    while values.get(positional).is_some_and(Option::is_some) {
+                        positional += 1;
+                    }
+                    let Some(expected) = param_schemas.get(start + positional) else {
+                        return Err(format!("too many arguments for `{fn_name}`"));
+                    };
+                    let value = self.expr_expected(expr, Some(expected))?;
+                    values[positional] = Some(self.coerce_scalar_arg(value, expected)?);
+                    positional += 1;
+                }
+                ast::Arg::Kwarg(kwarg) => {
+                    let offset = param_names[start..]
+                        .iter()
+                        .position(|name| name == &kwarg.name.value)
+                        .ok_or_else(|| {
+                            format!("`{fn_name}` has no argument `{}`", kwarg.name.value)
+                        })?;
+                    if values[offset].is_some() {
+                        return Err(format!("duplicate argument `{}`", kwarg.name.value));
+                    }
+                    let expected = &param_schemas[start + offset];
+                    let value = self.expr_expected(&kwarg.value, Some(expected))?;
+                    values[offset] = Some(self.coerce_scalar_arg(value, expected)?);
+                }
+            }
+        }
+
+        let missing: Vec<String> = values
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| value.is_none())
+            .map(|(offset, _)| param_names[start + offset].clone())
+            .collect();
+        if !partial && !missing.is_empty() {
+            return Err(format!("`{fn_name}` missing argument(s): {missing:?}"));
+        }
+        if partial {
+            let prefix_len = values.iter().take_while(|value| value.is_some()).count();
+            if values[prefix_len..].iter().any(Option::is_some) {
+                return Err(format!(
+                    "partial call to `{fn_name}` must bind a contiguous argument prefix"
+                ));
+            }
+            let args = values.into_iter().take(prefix_len).flatten().collect();
+            return Ok(BoundCall {
+                args,
+                partial: true,
+                given: start + prefix_len,
+            });
+        }
+        let args = values
+            .into_iter()
+            .map(|value| value.expect("missing arguments checked"))
+            .collect::<Vec<_>>();
+        Ok(BoundCall {
+            args,
+            partial: false,
+            given: param_names.len(),
         })
     }
 
@@ -1618,12 +2153,12 @@ impl<'a> FnLowerer<'a> {
         };
         let segments: Vec<&str> = path.segments.iter().map(|s| s.value.as_str()).collect();
         match segments.as_slice() {
-            ["Cc", "acquire"] => {
+            [kind @ ("Cc" | "Ar"), "acquire"] => {
                 let [ast::Arg::Expr(target)] = call.args.args.as_slice() else {
-                    return Err("Cc::acquire takes one target".into());
+                    return Err(format!("{kind}::acquire takes one target"));
                 };
                 let target = self.expr_expected(target, Some("Target"))?;
-                Ok(Some(self.acquire("Cc", &target)?))
+                Ok(Some(self.acquire(kind, &target)?))
             }
             _ => Ok(None),
         }
@@ -1742,10 +2277,56 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
-    fn struct_literal(&mut self, lit: &ast::StructLiteral) -> Result<ValueSlot, String> {
-        if !lit.spreads.is_empty() {
-            return Err("record update is outside the machine slice-2 subset".into());
+    fn tuple_literal(&mut self, tuple: &ast::TupleExpr) -> Result<ValueSlot, String> {
+        let mut fields = Vec::new();
+        let mut schemas = Vec::new();
+        for elem in &tuple.elems {
+            let value = self.expr(elem)?;
+            schemas.push(value.schema.clone());
+            fields.push(value);
         }
+        self.store_alloc(&tuple_schema(&schemas), 0, &fields)
+    }
+
+    fn field_access(&mut self, field: &ast::FieldAccess) -> Result<ValueSlot, String> {
+        let receiver = self.expr(&field.receiver)?;
+        match &field.name {
+            ast::Member::Index(index) => {
+                let field_index = index
+                    .value
+                    .parse::<usize>()
+                    .map_err(|_| format!("tuple index {} does not parse", index.value))?;
+                let fields = tuple_schema_fields(&receiver.schema)
+                    .ok_or_else(|| format!("tuple indexing on {}", receiver.schema))?;
+                let schema = fields
+                    .get(field_index)
+                    .ok_or_else(|| format!("tuple {} has no field {field_index}", receiver.schema))?
+                    .clone();
+                Ok(self.store_read(&receiver, field_index, schema))
+            }
+            ast::Member::Identifier(name) => {
+                if receiver.schema == "Target" && name.value == "os" {
+                    return Ok(self.store_read(&receiver, 0, "Os".into()));
+                }
+                let info = self
+                    .tables
+                    .structs
+                    .get(&receiver.schema)
+                    .ok_or_else(|| format!("field access on {}", receiver.schema))?;
+                let field_index = info
+                    .fields
+                    .iter()
+                    .position(|(field_name, _)| field_name == &name.value)
+                    .ok_or_else(|| {
+                        format!("unknown field {} on {}", name.value, receiver.schema)
+                    })?;
+                let schema = self.struct_field_schema(&receiver.schema, field_index)?;
+                Ok(self.store_read(&receiver, field_index, schema))
+            }
+        }
+    }
+
+    fn struct_literal(&mut self, lit: &ast::StructLiteral) -> Result<ValueSlot, String> {
         let path = path_ref_segments(&lit.path)?;
         if path.len() == 1 {
             let name = &path[0];
@@ -1758,16 +2339,41 @@ impl<'a> FnLowerer<'a> {
             if info.is_unit {
                 return self.store_alloc(name, 0, &[]);
             }
+            let mut explicit = HashMap::new();
+            for field in &lit.fields {
+                if explicit
+                    .insert(field.name.value.clone(), &field.value)
+                    .is_some()
+                {
+                    return Err(format!(
+                        "duplicate field `{}` in struct literal `{name}`",
+                        field.name.value
+                    ));
+                }
+            }
+            let base = match lit.spreads.as_slice() {
+                [] => None,
+                [spread] => {
+                    let Some(base) = &spread.base else {
+                        return Err("record update spread requires a base expression".into());
+                    };
+                    Some(self.expr_expected(base, Some(name))?)
+                }
+                _ => return Err("multiple record update spreads are outside the B3 subset".into()),
+            };
             let mut fields = Vec::new();
-            for (field_name, default) in &info.fields {
-                let init = lit
-                    .fields
-                    .iter()
-                    .find(|field| &field.name.value == field_name)
-                    .map(|field| &field.value)
-                    .or(default.as_ref())
-                    .ok_or_else(|| format!("missing field {field_name} for struct {name}"))?;
-                fields.push(self.expr(init)?);
+            for (field_index, (field_name, default)) in info.fields.iter().enumerate() {
+                let field_schema = self.struct_field_schema(name, field_index)?;
+                let value = if let Some(init) = explicit.get(field_name) {
+                    self.expr_expected(init, Some(&field_schema))?
+                } else if let Some(base) = &base {
+                    self.store_read(base, field_index, field_schema.clone())
+                } else if let Some(default) = default {
+                    self.expr_expected(default, Some(&field_schema))?
+                } else {
+                    return Err(format!("missing field {field_name} for struct {name}"));
+                };
+                fields.push(value);
             }
             return self.store_alloc(name, 0, &fields);
         }
@@ -1788,6 +2394,15 @@ impl<'a> FnLowerer<'a> {
             fields.push(self.expr(&init.value)?);
         }
         self.store_alloc(&enum_name, variant_index, &fields)
+    }
+
+    fn struct_field_schema(&self, struct_name: &str, field_index: usize) -> Result<String, String> {
+        let descriptor = self
+            .tables
+            .descriptors
+            .get(struct_name)
+            .ok_or_else(|| format!("missing descriptor for {struct_name}"))?;
+        descriptor_field_schema(descriptor, field_index)
     }
 
     fn variant_constructor_call(&mut self, call: &ast::Call) -> Result<Option<ValueSlot>, String> {
@@ -1839,7 +2454,7 @@ impl<'a> FnLowerer<'a> {
         scrut: &ValueSlot,
         enum_name: &str,
         variant_index: usize,
-        skip_patch: &mut Option<usize>,
+        skip_patches: &mut Vec<usize>,
     ) -> Result<(), String> {
         self.expect_schema(scrut, enum_name)?;
         let tag = self.store_tag(scrut);
@@ -1854,7 +2469,7 @@ impl<'a> FnLowerer<'a> {
             a: tag.slot,
             b: lit,
         });
-        *skip_patch = Some(self.code.len());
+        skip_patches.push(self.code.len());
         self.code.push(Op::JumpIfZero {
             value: test,
             target: 0,
@@ -1968,6 +2583,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: expected.to_string(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -1993,6 +2609,7 @@ impl<'a> FnLowerer<'a> {
             slot: value.slot,
             schema: pending_schema(expected),
             realization: None,
+            pending: None,
         };
         let forced = self.coerce_pending_to_schema(pending, expected)?;
         self.code.push(Op::CopyI64 {
@@ -2018,6 +2635,7 @@ impl<'a> FnLowerer<'a> {
             slot: value.slot,
             schema: expected.to_string(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2073,6 +2691,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: schema.to_string(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2098,6 +2717,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema,
             realization: None,
+            pending: None,
         }
     }
 
@@ -2119,6 +2739,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: "Int".into(),
             realization: None,
+            pending: None,
         }
     }
 
@@ -2144,6 +2765,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: schema.to_string(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2235,6 +2857,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: output_schema,
             realization: None,
+            pending: None,
         })
     }
 
@@ -2253,6 +2876,7 @@ impl<'a> FnLowerer<'a> {
                 slot: value.slot,
                 schema: realized,
                 realization: Some(flag),
+                pending: None,
             };
         }
         let flag = self.alloc();
@@ -2264,6 +2888,7 @@ impl<'a> FnLowerer<'a> {
             slot: value.slot,
             schema: realized,
             realization: Some(flag),
+            pending: None,
         }
     }
 
@@ -2310,6 +2935,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: option_schema(value_schema),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2360,6 +2986,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: value_schema.to_string(),
             realization,
+            pending: None,
         }
     }
 
@@ -2377,7 +3004,8 @@ impl<'a> FnLowerer<'a> {
             .get(name)
             .ok_or_else(|| format!("unknown function {name}"))?;
         let return_schema = self
-            .fn_returns
+            .signatures
+            .returns
             .get(name)
             .ok_or_else(|| format!("unknown function {name}"))?
             .clone();
@@ -2386,35 +3014,30 @@ impl<'a> FnLowerer<'a> {
                 "pending call {name} returns {return_schema}, expected {value_schema}"
             ));
         }
-        let expected_args = self
-            .fn_params
+        let param_names = self
+            .signatures
+            .param_names
+            .get(name)
+            .ok_or_else(|| format!("missing param names for {name}"))?
+            .clone();
+        let param_schemas = self
+            .signatures
+            .params
             .get(name)
             .ok_or_else(|| format!("missing param schemas for {name}"))?
             .clone();
-        let mut arg_slots = Vec::new();
-        for (index, arg) in call.args.args.iter().enumerate() {
-            let expected = expected_args
-                .get(index)
-                .ok_or_else(|| format!("function {name} got unexpected argument {index}"))?;
-            match arg {
-                ast::Arg::Expr(e) => {
-                    let value = self.expr_expected(e, Some(expected))?;
-                    arg_slots.push(self.coerce_scalar_arg(value, expected)?);
-                }
-                ast::Arg::Kwarg(_) | ast::Arg::Partial(_) => {
-                    return Err(
-                        "pending call kwargs/partials are outside the promotion slice".into(),
-                    );
-                }
-            }
-        }
-        if arg_slots.len() != expected_args.len() {
-            return Err(format!(
-                "function {name} expected {} arguments, got {}",
-                expected_args.len(),
-                arg_slots.len()
-            ));
-        }
+        let bound =
+            self.bind_call_args(name, &param_names, &param_schemas, &call.args, 0, false)?;
+        self.pending_alloc_for_fn(fn_ref, value_schema, bound.args, None)
+    }
+
+    fn pending_alloc_for_fn(
+        &mut self,
+        fn_ref: usize,
+        value_schema: &str,
+        arg_slots: Vec<ValueSlot>,
+        pending: Option<PendingSlot>,
+    ) -> Result<ValueSlot, String> {
         let dst = self.alloc();
         let region = self.primitive_region;
         let value_schema_ref = *self
@@ -2450,6 +3073,50 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: pending_schema(value_schema),
             realization: None,
+            pending,
+        })
+    }
+
+    fn pending_invoke(
+        &mut self,
+        pending: ValueSlot,
+        arg_slots: Vec<ValueSlot>,
+        value_schema: &str,
+    ) -> Result<ValueSlot, String> {
+        let input_slot = self.next_input_slot;
+        self.next_input_slot += 1;
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: input_slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: pending.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: i64::try_from(arg_slots.len()).expect("argc fits i64"),
+        });
+        for (index, slot) in arg_slots.iter().enumerate() {
+            self.code.push(Op::CopyI64 {
+                dst: region + 24 + 8 * u32::try_from(index).expect("arg index fits u32"),
+                src: slot.slot,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: PENDING_INVOKE_HOST,
+        });
+        let dst = self.alloc();
+        self.code.push(Op::Await {
+            dst,
+            input: u32::try_from(input_slot).expect("input slot fits u32"),
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: value_schema.to_string(),
+            realization: None,
+            pending: None,
         })
     }
 
@@ -2478,6 +3145,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: kind.to_string(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2519,6 +3187,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: "Array".into(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2537,7 +3206,7 @@ impl<'a> FnLowerer<'a> {
             .get(fn_name)
             .ok_or_else(|| format!("unknown function {fn_name}"))?;
         let captured = self
-            .resolve_binding(captured_name)
+            .resolve_binding(captured_name, None)
             .map_err(|_| format!("unbound capture {captured_name}"))?;
         let dst = self.alloc();
         let region = self.primitive_region;
@@ -2565,6 +3234,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: "Array".into(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2587,6 +3257,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: "Tree".into(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2620,6 +3291,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: "Tree".into(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2631,7 +3303,7 @@ impl<'a> FnLowerer<'a> {
             ));
         }
         let capability = self
-            .resolve_binding(&command.command.value)
+            .resolve_binding(&command.command.value, None)
             .map_err(|_| format!("no capability `{}` in scope", command.command.value))?;
         let output = command_output_path_expr(command)
             .ok_or_else(|| "slice-4 cc command requires `-o {path}`".to_string())
@@ -2661,6 +3333,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: "Tree".into(),
             realization: None,
+            pending: None,
         })
     }
 
@@ -2686,6 +3359,7 @@ impl<'a> FnLowerer<'a> {
             slot: dst,
             schema: "Path".into(),
             realization: None,
+            pending: None,
         })
     }
 }
@@ -2709,6 +3383,37 @@ fn map_schema(key_schema: &str, value_schema: &str) -> String {
 
 fn map_value_schema(schema: &str) -> Option<&str> {
     map_schemas(schema).map(|(_, value)| value)
+}
+
+fn tuple_schema(fields: &[String]) -> String {
+    format!("Tuple<{}>", fields.join(","))
+}
+
+fn tuple_schema_fields(schema: &str) -> Option<Vec<String>> {
+    let inner = schema.strip_prefix("Tuple<")?.strip_suffix('>')?;
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    Some(split_top_level_schemas(inner))
+}
+
+fn split_top_level_schemas(inner: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in inner.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(inner[start..index].to_string());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(inner[start..].to_string());
+    out
 }
 
 fn option_schema(value_schema: &str) -> String {
@@ -2744,7 +3449,7 @@ fn strict_binary_operand_schema<'a>(op: &str, left: &'a str, right: &'a str) -> 
     match (op, left) {
         ("+" | "-" | "*", "Int")
         | ("+" | "*", "Float")
-        | ("==", "Int" | "Float" | "String" | "Path") => Some(left),
+        | ("==", "Int" | "Float" | "String" | "Path" | "Bool") => Some(left),
         _ => None,
     }
 }
@@ -3624,6 +4329,179 @@ pub fn main() -> Int {
             assert_eq!(spawned_count(&machine, "f"), 1, "{lane:?}");
             assert_eq!(memo_hit_count(&machine, "f"), 1, "{lane:?}");
         }
+    }
+
+    #[test]
+    fn types_vix_partials_depths_and_classify_run_on_the_machine() {
+        let src = format!(
+            "{}\n{}",
+            include_str!("../../../playgrounds/snark/src/bundled/vix/samples/types.vix"),
+            r#"
+pub fn classify_lua() -> String {
+    classify(Artifact::Object(p"lua.o"))
+}
+
+pub fn classify_lapi() -> String {
+    classify(Artifact::Object(p"lapi.o"))
+}
+"#
+        );
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut machine = load_with_lane(&src, lane);
+            assert_eq!(
+                machine.demand_i64("partials", vec![]).unwrap(),
+                42,
+                "{lane:?}"
+            );
+            assert_eq!(machine.demand_i64("depths", vec![]).unwrap(), 2, "{lane:?}");
+
+            let lua = machine.demand_i64("classify_lua", vec![]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(lua, "String").unwrap(),
+                "the interpreter object",
+                "{lane:?}"
+            );
+            let lapi = machine.demand_i64("classify_lapi", vec![]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(lapi, "String").unwrap(),
+                "an object",
+                "{lane:?}"
+            );
+            traces.push((lane, machine.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
+    }
+
+    #[test]
+    fn types_vix_named_argument_diagnostics_are_pinned() {
+        let missing = r#"
+fn scaled(k: Int, x: Int) -> Int { k * x }
+pub fn main() -> Int { scaled(k: 2) }
+"#;
+        let duplicate = r#"
+fn scaled(k: Int, x: Int) -> Int { k * x }
+pub fn main() -> Int { scaled(k: 1, x: 2, x: 3) }
+"#;
+        for lane in lanes() {
+            let err = match Machine::load_with_lane(missing, lane) {
+                Ok(_) => panic!("missing argument source loaded on {lane:?}"),
+                Err(err) => err,
+            };
+            assert!(
+                err.contains("`scaled` missing argument(s): [\"x\"]"),
+                "{lane:?}: {err}"
+            );
+            let err = match Machine::load_with_lane(duplicate, lane) {
+                Ok(_) => panic!("duplicate argument source loaded on {lane:?}"),
+                Err(err) => err,
+            };
+            assert!(err.contains("duplicate argument `x`"), "{lane:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn match_guard_failure_skips_guarded_body() {
+        let src = r#"
+enum Artifact { Object(Path), Phony }
+
+fn expensive() -> String { "bad" }
+
+fn classify(a: Artifact) -> String {
+    match a {
+        Artifact::Object(p) if p == p"nope" => expensive(),
+        Artifact::Object(_) => "ok",
+        _ => "other",
+    }
+}
+
+pub fn main() -> String {
+    classify(Artifact::Object(p"lua.o"))
+}
+"#;
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let result = machine.demand_i64("main", vec![]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(result, "String").unwrap(),
+                "ok",
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "expensive"), 0, "{lane:?}");
+            traces.push((lane, machine.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
+    }
+
+    #[test]
+    fn types_vix_toolchain_acquires_capabilities_and_updates_records() {
+        const CC_PIN: &str = "acquire:Cc:1c17ad644df20b15";
+        const AR_PIN: &str = "acquire:Ar:1c17ad644df20b15";
+
+        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/types.vix");
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let (target, _) = machine.driver.intern_windows_target().unwrap();
+            let toolchain = machine.demand_i64("toolchain", vec![target]).unwrap();
+
+            let cc = machine.driver.store_field(toolchain, 0).unwrap();
+            let ar = machine.driver.store_field(toolchain, 1).unwrap();
+            let opt = machine.driver.store_field(toolchain, 2).unwrap();
+            let env = machine.driver.store_field(toolchain, 3).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(cc, "Cc").unwrap(),
+                CC_PIN,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.driver.raw_string(ar, "Ar").unwrap(),
+                AR_PIN,
+                "{lane:?}"
+            );
+            assert_eq!(opt, 1, "{lane:?}");
+
+            let env = machine
+                .driver
+                .map_words(env)
+                .unwrap()
+                .into_iter()
+                .map(|(key_schema, key, value_schema, value, realization)| {
+                    assert_eq!(key_schema, "String");
+                    assert_eq!(value_schema, "String");
+                    assert_eq!(realization, None);
+                    (
+                        machine.driver.raw_string(key, "String").unwrap(),
+                        machine.driver.raw_string(value, "String").unwrap(),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            assert_eq!(
+                env,
+                BTreeMap::from([
+                    ("CFLAGS".to_string(), "-O2".to_string()),
+                    ("LDFLAGS".to_string(), "-lm".to_string()),
+                ]),
+                "{lane:?}"
+            );
+
+            let observations = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::Observation { key, replayed } => Some((*key, *replayed)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                observations,
+                vec![(trace_hash(CC_PIN), false), (trace_hash(AR_PIN), false)],
+                "{lane:?}"
+            );
+            traces.push((lane, machine.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
     }
 
     fn anti_nix_diamond() -> &'static str {

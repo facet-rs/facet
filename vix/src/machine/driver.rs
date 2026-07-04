@@ -62,6 +62,7 @@ pub const EXEC_HOST: u32 = 13;
 pub const PATH_WITH_EXT_HOST: u32 = 14;
 pub const PENDING_ALLOC_HOST: u32 = 15;
 pub const PENDING_COERCE_HOST: u32 = 16;
+pub const PENDING_INVOKE_HOST: u32 = 17;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -152,6 +153,10 @@ pub enum DriveEvent {
         command: u64,
         output: u64,
     },
+    Observation {
+        key: u64,
+        replayed: bool,
+    },
 }
 
 /// A pending invocation request captured by the INVOKE host during a
@@ -189,6 +194,14 @@ struct OptionUnwrapRequest {
 struct PendingCoerceRequest {
     input_slot: usize,
     pending: i64,
+}
+
+#[derive(Clone, Debug)]
+struct PendingInvokeRequest {
+    caller: usize,
+    input_slot: usize,
+    pending: i64,
+    args: Vec<i64>,
 }
 
 /// A running or parked task execution.
@@ -795,6 +808,7 @@ pub struct Driver {
     descriptors: HashMap<String, Descriptor<String>>,
     schema_refs: Vec<String>,
     memo: HashMap<CanonMemoKey, i64>,
+    journal: BTreeMap<String, i64>,
     exec_cache: crate::exec::ExecCache,
     pub trace: Vec<DriveEvent>,
     store: RefCell<ValueStore>,
@@ -829,6 +843,7 @@ impl Driver {
             descriptors,
             schema_refs: Vec::new(),
             memo: HashMap::new(),
+            journal: BTreeMap::new(),
             exec_cache: crate::exec::ExecCache::new(),
             trace: Vec::new(),
             store: RefCell::new(ValueStore::default()),
@@ -879,6 +894,58 @@ impl Driver {
         self.store.borrow().entry(handle).cloned()
     }
 
+    #[cfg(test)]
+    pub fn store_field(&self, handle: i64, field_index: usize) -> Result<i64, String> {
+        let store = self.store.borrow();
+        let entry = store
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        let descriptor = self
+            .descriptors
+            .get(&entry.schema)
+            .ok_or_else(|| format!("descriptor for schema `{}`", entry.schema))?;
+        let offset = field_offset(descriptor, &entry.bytes, field_index);
+        Ok(read_frame_word(&entry.bytes, offset))
+    }
+
+    #[cfg(test)]
+    pub fn store_tag(&self, handle: i64) -> Result<u64, String> {
+        let store = self.store.borrow();
+        let entry = store
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        let descriptor = self
+            .descriptors
+            .get(&entry.schema)
+            .ok_or_else(|| format!("descriptor for schema `{}`", entry.schema))?;
+        Ok(read_variant_tag(&entry.bytes, descriptor))
+    }
+
+    #[cfg(test)]
+    pub fn raw_string(&self, handle: i64, schema: &str) -> Result<String, String> {
+        self.store.borrow().string_value(handle, schema)
+    }
+
+    #[cfg(test)]
+    pub fn map_words(
+        &self,
+        handle: i64,
+    ) -> Result<Vec<(String, i64, String, i64, Option<i64>)>, String> {
+        let (_, pairs) = self.store.borrow().map_pairs(handle, &self.schema_refs)?;
+        Ok(pairs
+            .into_iter()
+            .map(|pair| {
+                (
+                    pair.key_schema,
+                    pair.key_word,
+                    pair.value_schema,
+                    pair.value_word,
+                    pair.value_realization.map(Realization::to_word),
+                )
+            })
+            .collect())
+    }
+
     pub fn tree_entries(&self, handle: i64) -> Result<BTreeMap<String, String>, String> {
         match self.store.borrow().tree_entry(handle)? {
             TreeEntry::Concrete(tree) => Ok(tree.entries),
@@ -908,6 +975,33 @@ impl Driver {
         self.store
             .borrow_mut()
             .alloc_raw("Target", 0x391c555cf0975f9cu64.to_le_bytes().to_vec())
+    }
+
+    #[cfg(test)]
+    pub fn intern_windows_target(&self) -> Result<(i64, bool), String> {
+        let os_descriptor = self
+            .descriptors
+            .get("Os")
+            .ok_or_else(|| "missing Os descriptor".to_string())?;
+        let mut os_bytes = vec![0u8; os_descriptor.layout.size];
+        write_variant_tag(&mut os_bytes, os_descriptor, 2);
+        let os = self
+            .store
+            .borrow_mut()
+            .alloc("Os", os_bytes, &self.descriptors)
+            .0;
+
+        let target_descriptor = self
+            .descriptors
+            .get("Target")
+            .ok_or_else(|| "missing Target descriptor".to_string())?;
+        let mut target_bytes = vec![0u8; target_descriptor.layout.size];
+        let offset = field_offset(target_descriptor, &target_bytes, 0);
+        target_bytes[offset..offset + 8].copy_from_slice(&os.to_le_bytes());
+        Ok(self
+            .store
+            .borrow_mut()
+            .alloc("Target", target_bytes, &self.descriptors))
     }
 
     /// Demand one invocation's identity: the edge of the machine.
@@ -960,6 +1054,7 @@ impl Driver {
                     exec_requests,
                     option_unwraps,
                     pending_coercions,
+                    pending_invokes,
                     parked_input,
                 } => {
                     for req in exec_requests {
@@ -1006,6 +1101,12 @@ impl Driver {
                     let mut new_requests = new_requests;
                     for req in pending_coercions {
                         match self.pending_coercion(req, ix) {
+                            Ok(invoke) => new_requests.push(invoke),
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    for req in pending_invokes {
+                        match self.pending_invocation_call(req) {
                             Ok(invoke) => new_requests.push(invoke),
                             Err(err) => return Err(err),
                         }
@@ -1113,9 +1214,11 @@ impl Driver {
             let mut exec_requests: Vec<ExecRequest> = Vec::new();
             let mut option_unwraps: Vec<OptionUnwrapRequest> = Vec::new();
             let mut pending_coercions: Vec<PendingCoerceRequest> = Vec::new();
+            let mut pending_invokes: Vec<PendingInvokeRequest> = Vec::new();
             let descriptors = &self.descriptors;
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
+            let journal_cell = RefCell::new(&mut self.journal);
             let lowered_fns = &self.fns;
             let store_events = RefCell::new(Vec::new());
             let mut invoke = |frame: &mut [u8]| {
@@ -1338,8 +1441,22 @@ impl Driver {
                     let target = read_frame_word(frame, primitive_region + 16);
                     let target_hash = target_hash(store_cell, target)?;
                     let key = format!("acquire:{kind}:{target_hash:x}");
-                    let (handle, _) = store_cell.borrow_mut().alloc_raw(&kind, key.into_bytes());
+                    let mut journal = journal_cell.borrow_mut();
+                    let (handle, replayed) = if let Some(handle) = journal.get(&key).copied() {
+                        (handle, true)
+                    } else {
+                        let handle = store_cell
+                            .borrow_mut()
+                            .alloc_raw(&kind, key.clone().into_bytes())
+                            .0;
+                        journal.insert(key.clone(), handle);
+                        (handle, false)
+                    };
                     write_frame_word(frame, dst_slot, handle);
+                    store_events.borrow_mut().push(DriveEvent::Observation {
+                        key: hash_u64(&key),
+                        replayed,
+                    });
                     Ok(())
                 })();
                 if let Err(err) = result {
@@ -1485,7 +1602,23 @@ impl Driver {
                 });
             };
 
-            let mut hosts: [HostFn<'_>; 17] = [
+            let mut pending_invoke = |frame: &mut [u8]| {
+                let input_slot = read_frame_word(frame, primitive_region) as usize;
+                let pending = read_frame_word(frame, primitive_region + 8);
+                let argc = usize::try_from(read_frame_word(frame, primitive_region + 16))
+                    .unwrap_or_else(|_| panic!("negative pending invoke argc"));
+                let args = (0..argc)
+                    .map(|i| read_frame_word(frame, primitive_region + 24 + i * 8))
+                    .collect();
+                pending_invokes.push(PendingInvokeRequest {
+                    caller: exec_ix,
+                    input_slot,
+                    pending,
+                    args,
+                });
+            };
+
+            let mut hosts: [HostFn<'_>; 18] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -1503,6 +1636,7 @@ impl Driver {
                 &mut path_with_ext,
                 &mut pending_alloc,
                 &mut pending_coerce,
+                &mut pending_invoke,
             ];
             let step = exec
                 .task
@@ -1534,6 +1668,7 @@ impl Driver {
                         exec_requests,
                         option_unwraps,
                         pending_coercions,
+                        pending_invokes,
                         parked_input: input,
                     };
                 }
@@ -1626,6 +1761,33 @@ impl Driver {
         })
     }
 
+    fn pending_invocation_call(&self, req: PendingInvokeRequest) -> Result<InvokeRequest, String> {
+        let invocation = self.store.borrow().pending_invocation(req.pending)?;
+        if invocation.remaining_arity != req.args.len() {
+            return Err(format!(
+                "pending invocation expected {} argument(s), got {}",
+                invocation.remaining_arity,
+                req.args.len()
+            ));
+        }
+        let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
+        let mut args = invocation.args;
+        args.extend(req.args);
+        if args.len() != self.fns[fn_ref].arg_schemas.len() {
+            return Err(format!(
+                "pending invocation completed to {} argument(s), expected {}",
+                args.len(),
+                self.fns[fn_ref].arg_schemas.len()
+            ));
+        }
+        Ok(InvokeRequest {
+            caller: req.caller,
+            input_slot: req.input_slot,
+            fn_ref,
+            args,
+        })
+    }
+
     fn option_unwrap_request(&self, req: OptionUnwrapRequest) -> Result<Vec<(usize, i64)>, String> {
         match self
             .store
@@ -1707,6 +1869,7 @@ enum Burst {
         exec_requests: Vec<ExecRequest>,
         option_unwraps: Vec<OptionUnwrapRequest>,
         pending_coercions: Vec<PendingCoerceRequest>,
+        pending_invokes: Vec<PendingInvokeRequest>,
         parked_input: usize,
     },
     Error(String),
@@ -2245,6 +2408,31 @@ fn target_hash(store: &RefCell<ValueStore>, handle: i64) -> Result<u64, String> 
     }
     if entry.bytes.len() != 8 {
         return Err(format!("Target entry has {} bytes", entry.bytes.len()));
+    }
+    let word = i64::from_le_bytes(entry.bytes[..8].try_into().expect("target hash bytes"));
+    if let Some(os) = store.entry(word)
+        && os.schema == "Os"
+    {
+        let index = usize::from(*os.bytes.first().ok_or("empty Os entry")?);
+        let value = crate::oracle::Value::Struct {
+            name: "Target".into(),
+            fields: vec![(
+                "os".into(),
+                crate::oracle::Value::Variant {
+                    enum_name: "Os".into(),
+                    index,
+                    name: match index {
+                        0 => "Linux",
+                        1 => "Macos",
+                        2 => "Windows",
+                        _ => "Unknown",
+                    }
+                    .into(),
+                    payload: crate::oracle::Payload::Unit,
+                },
+            )],
+        };
+        return Ok(value.canon_hash());
     }
     Ok(u64::from_le_bytes(
         entry.bytes[..8].try_into().expect("target hash bytes"),
