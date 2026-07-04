@@ -15,7 +15,9 @@
 //! transitively) — trivia edits preserve it, semantic edits change
 //! exactly the affected closures.
 
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 
 use weavy::mem::Layout;
 use weavy::task::{Fn as TaskFn, FnId, Op, Program};
@@ -231,10 +233,22 @@ impl Machine {
         self.driver.tree_entries(handle)
     }
 
+    #[cfg(test)]
+    fn intern_tree_concrete(&self, tree: crate::exec::Tree) -> i64 {
+        self.driver.intern_tree_concrete(tree)
+    }
+
     pub fn fn_hash(&self, name: &str) -> Option<u64> {
         self.fn_refs
             .get(name)
             .map(|&fn_ref| self.driver.fn_hash(fn_ref))
+    }
+
+    #[cfg(test)]
+    fn fn_ops(&self, name: &str) -> Option<&[Op]> {
+        self.fn_refs
+            .get(name)
+            .map(|&fn_ref| self.driver.fn_ops(fn_ref))
     }
 }
 
@@ -484,6 +498,129 @@ fn collect_pattern_strings(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
     }
 }
 
+fn collect_expr_identifiers(expr: &ast::Expr, out: &mut BTreeSet<String>) {
+    match expr {
+        ast::Expr::Identifier(name) => {
+            out.insert(name.value.clone());
+        }
+        ast::Expr::Binary(b) => {
+            collect_expr_identifiers(&b.left, out);
+            collect_expr_identifiers(&b.right, out);
+        }
+        ast::Expr::Unary(u) => collect_expr_identifiers(&u.operand, out),
+        ast::Expr::Call(c) => {
+            for arg in &c.args.args {
+                match arg {
+                    ast::Arg::Expr(e) => collect_expr_identifiers(e, out),
+                    ast::Arg::Kwarg(k) => collect_expr_identifiers(&k.value, out),
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::MethodCall(m) => {
+            collect_expr_identifiers(&m.receiver, out);
+            for arg in &m.args.args {
+                match arg {
+                    ast::Arg::Expr(e) => collect_expr_identifiers(e, out),
+                    ast::Arg::Kwarg(k) => collect_expr_identifiers(&k.value, out),
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::Field(f) => collect_expr_identifiers(&f.receiver, out),
+        ast::Expr::Match(m) => {
+            collect_expr_identifiers(&m.scrutinee, out);
+            for arm in &m.arms {
+                let mut local = BTreeSet::new();
+                collect_expr_identifiers(&arm.value, &mut local);
+                if let Some(guard) = &arm.guard {
+                    collect_expr_identifiers(guard, &mut local);
+                }
+                let mut bound = BTreeSet::new();
+                collect_pattern_bindings(&arm.pattern, &mut bound);
+                for name in local {
+                    if !bound.contains(&name) {
+                        out.insert(name);
+                    }
+                }
+            }
+        }
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                collect_expr_identifiers(&field.value, out);
+            }
+            for base in &lit.spreads {
+                if let Some(base) = &base.base {
+                    collect_expr_identifiers(base, out);
+                }
+            }
+        }
+        ast::Expr::Map(m) => {
+            for entry in &m.entries {
+                collect_expr_identifiers(&entry.key, out);
+                collect_expr_identifiers(&entry.value, out);
+            }
+        }
+        ast::Expr::Tuple(t) => {
+            for elem in &t.elems {
+                collect_expr_identifiers(elem, out);
+            }
+        }
+        ast::Expr::Array(a) => {
+            for elem in &a.elems {
+                if let ast::ArrayElem::Expr(expr) = elem {
+                    collect_expr_identifiers(expr, out);
+                }
+            }
+        }
+        ast::Expr::Paren(p) => collect_expr_identifiers(&p.inner, out),
+        ast::Expr::Closure(c) => collect_expr_identifiers(&c.body, out),
+        ast::Expr::Command(c) => {
+            for part in &c.parts {
+                if let ast::CommandPart::Splice(s) = part {
+                    collect_expr_identifiers(&s.expr, out);
+                }
+            }
+        }
+        ast::Expr::Scoped(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+    }
+}
+
+fn collect_pattern_bindings(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
+    match pattern {
+        ast::Pattern::Identifier(name) => {
+            out.insert(name.value.clone());
+        }
+        ast::Pattern::Variant(v) => {
+            for arg in &v.args {
+                collect_pattern_bindings(arg, out);
+            }
+        }
+        ast::Pattern::Struct(s) => {
+            for field in &s.fields {
+                if let Some(pattern) = &field.pattern {
+                    collect_pattern_bindings(pattern, out);
+                } else {
+                    out.insert(field.name.value.clone());
+                }
+            }
+        }
+        ast::Pattern::Tuple(t) => {
+            for elem in &t.elems {
+                collect_pattern_bindings(elem, out);
+            }
+        }
+        ast::Pattern::Wildcard(_)
+        | ast::Pattern::Scoped(_)
+        | ast::Pattern::Str(_)
+        | ast::Pattern::Number(_) => {}
+    }
+}
+
 fn collect_block_type_schemas(block: &ast::Block, out: &mut Vec<String>) -> Result<(), String> {
     for stmt in &block.stmts {
         match stmt {
@@ -533,6 +670,53 @@ struct ValueSlot {
     schema: String,
 }
 
+type Bindings = HashMap<String, BindingCell>;
+
+#[derive(Clone)]
+struct BindingCell(Rc<RefCell<BindingState>>);
+
+#[derive(Clone)]
+enum BindingState {
+    Value(ValueSlot),
+    Lazy {
+        value: ast::Expr,
+        expected: Option<String>,
+        env: Bindings,
+    },
+}
+
+impl BindingCell {
+    fn value(slot: ValueSlot) -> Self {
+        Self(Rc::new(RefCell::new(BindingState::Value(slot))))
+    }
+
+    fn lazy(value: ast::Expr, expected: Option<String>, env: Bindings) -> Self {
+        Self(Rc::new(RefCell::new(BindingState::Lazy {
+            value,
+            expected,
+            env,
+        })))
+    }
+}
+
+fn fork_bindings(bindings: &Bindings) -> Bindings {
+    bindings
+        .iter()
+        .map(|(name, cell)| (name.clone(), fork_binding_cell(cell)))
+        .collect()
+}
+
+fn fork_binding_cell(cell: &BindingCell) -> BindingCell {
+    match cell.0.borrow().clone() {
+        BindingState::Value(slot) => BindingCell::value(slot),
+        BindingState::Lazy {
+            value,
+            expected,
+            env,
+        } => BindingCell::lazy(value, expected, fork_bindings(&env)),
+    }
+}
+
 struct FnLowerer<'a> {
     tables: &'a ModuleTables,
     fn_refs: &'a HashMap<String, usize>,
@@ -540,7 +724,7 @@ struct FnLowerer<'a> {
     fn_params: &'a HashMap<String, Vec<String>>,
     schema_refs: &'a HashMap<String, i64>,
     literal_handles: LiteralHandles<'a>,
-    slots: HashMap<String, ValueSlot>,
+    slots: Bindings,
     next: u32,
     code: Vec<Op>,
     invoke_region: u32,
@@ -583,8 +767,10 @@ impl<'a> FnLowerer<'a> {
         for param in &item.params.params {
             let slot = this.alloc();
             let schema = type_schema_name(&param.ty)?;
-            this.slots
-                .insert(param.name.value.clone(), ValueSlot { slot, schema });
+            this.slots.insert(
+                param.name.value.clone(),
+                BindingCell::value(ValueSlot { slot, schema }),
+            );
             arg_offsets.push(slot);
         }
 
@@ -650,12 +836,10 @@ impl<'a> FnLowerer<'a> {
             match stmt {
                 ast::Stmt::Let(l) => {
                     let expected = l.ty.as_ref().map(type_schema_name).transpose()?;
-                    let slot = self.expr_expected(&l.value, expected.as_deref())?;
-                    // Lets are sequential and may shadow (binder
-                    // semantics); binding the produced slot directly
-                    // is safe because slots are single-assignment in
-                    // this lowering (naive bump allocation).
-                    self.slots.insert(l.name.value.clone(), slot);
+                    self.slots.insert(
+                        l.name.value.clone(),
+                        BindingCell::lazy(l.value.clone(), expected, self.slots.clone()),
+                    );
                 }
                 ast::Stmt::Expr(_) => {
                     return Err("expression statements are outside the slice-1 subset".into());
@@ -733,11 +917,7 @@ impl<'a> FnLowerer<'a> {
                     schema: "Path".into(),
                 })
             }
-            ast::Expr::Identifier(name) => self
-                .slots
-                .get(&name.value)
-                .cloned()
-                .ok_or_else(|| format!("unbound name {}", name.value)),
+            ast::Expr::Identifier(name) => self.resolve_binding(&name.value),
             ast::Expr::Paren(p) => self.expr(&p.inner),
             ast::Expr::Scoped(path) => self.scoped_value(path),
             ast::Expr::StructLit(lit) => self.struct_literal(lit),
@@ -841,6 +1021,29 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
+    fn resolve_binding(&mut self, name: &str) -> Result<ValueSlot, String> {
+        let cell = self
+            .slots
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("unbound name {name}"))?;
+        let state = cell.0.borrow().clone();
+        match state {
+            BindingState::Value(slot) => Ok(slot),
+            BindingState::Lazy {
+                value,
+                expected,
+                env,
+            } => {
+                let saved = std::mem::replace(&mut self.slots, env);
+                let slot = self.expr_expected(&value, expected.as_deref())?;
+                *cell.0.borrow_mut() = BindingState::Value(slot.clone());
+                self.slots = saved;
+                Ok(slot)
+            }
+        }
+    }
+
     /// Match on scalars: literal arms compile to EqI64 + JumpIfZero
     /// chains; the final arm must be irrefutable (wildcard or a
     /// binding) until the checker owns exhaustiveness. THE LAZINESS
@@ -849,6 +1052,7 @@ impl<'a> FnLowerer<'a> {
     /// never spawn, provable by trace absence.
     fn match_expr(&mut self, m: &ast::MatchExpr) -> Result<ValueSlot, String> {
         let scrut = self.expr(&m.scrutinee)?;
+        self.hoist_bindings_used_by_multiple_arms(m)?;
         let result = self.alloc();
         let mut result_schema: Option<String> = None;
         let mut jump_to_end: Vec<usize> = Vec::new();
@@ -859,6 +1063,7 @@ impl<'a> FnLowerer<'a> {
                 return Err("match guards are outside the slice-2 subset".into());
             }
             let saved_slots = self.slots.clone();
+            self.slots = fork_bindings(&saved_slots);
             let mut skip_patch: Option<usize> = None;
             match &arm.pattern {
                 ast::Pattern::Number(n) => {
@@ -942,7 +1147,8 @@ impl<'a> FnLowerer<'a> {
                                 field_index,
                                 self.variant_field_schema(&enum_name, variant_index, field_index)?,
                             );
-                            self.slots.insert(field.name.value.clone(), value);
+                            self.slots
+                                .insert(field.name.value.clone(), BindingCell::value(value));
                         }
                     }
                 }
@@ -955,7 +1161,8 @@ impl<'a> FnLowerer<'a> {
                     if i != last {
                         return Err("binding arm must be last".into());
                     }
-                    self.slots.insert(name.value.clone(), scrut.clone());
+                    self.slots
+                        .insert(name.value.clone(), BindingCell::value(scrut.clone()));
                 }
                 other => {
                     return Err(format!("pattern {other:?} is outside the slice-2 subset"));
@@ -1017,6 +1224,34 @@ impl<'a> FnLowerer<'a> {
             slot: result,
             schema: result_schema.unwrap_or_else(|| "Int".into()),
         })
+    }
+
+    fn hoist_bindings_used_by_multiple_arms(&mut self, m: &ast::MatchExpr) -> Result<(), String> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for arm in &m.arms {
+            let mut names = BTreeSet::new();
+            collect_expr_identifiers(&arm.value, &mut names);
+            if let Some(guard) = &arm.guard {
+                collect_expr_identifiers(guard, &mut names);
+            }
+            let mut bound = BTreeSet::new();
+            collect_pattern_bindings(&arm.pattern, &mut bound);
+            for name in names {
+                if !bound.contains(&name) {
+                    *counts.entry(name).or_default() += 1;
+                }
+            }
+        }
+        let hoist: Vec<String> = counts
+            .into_iter()
+            .filter_map(|(name, count)| {
+                (count > 1 && self.slots.contains_key(&name)).then_some(name)
+            })
+            .collect();
+        for name in hoist {
+            self.resolve_binding(&name)?;
+        }
+        Ok(())
     }
 
     /// A user-function call: a MEMO BOUNDARY through the INVOKE
@@ -1346,7 +1581,8 @@ impl<'a> FnLowerer<'a> {
         match pattern {
             ast::Pattern::Identifier(name) => {
                 let value = self.store_read(scrut, field_index, schema);
-                self.slots.insert(name.value.clone(), value);
+                self.slots
+                    .insert(name.value.clone(), BindingCell::value(value));
                 Ok(())
             }
             ast::Pattern::Wildcard(_) => Ok(()),
@@ -1708,10 +1944,8 @@ impl<'a> FnLowerer<'a> {
             .get(fn_name)
             .ok_or_else(|| format!("unknown function {fn_name}"))?;
         let captured = self
-            .slots
-            .get(captured_name)
-            .cloned()
-            .ok_or_else(|| format!("unbound capture {captured_name}"))?;
+            .resolve_binding(captured_name)
+            .map_err(|_| format!("unbound capture {captured_name}"))?;
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {
@@ -1801,10 +2035,8 @@ impl<'a> FnLowerer<'a> {
             ));
         }
         let capability = self
-            .slots
-            .get(&command.command.value)
-            .cloned()
-            .ok_or_else(|| format!("no capability `{}` in scope", command.command.value))?;
+            .resolve_binding(&command.command.value)
+            .map_err(|_| format!("no capability `{}` in scope", command.command.value))?;
         let output = command_output_path_expr(command)
             .ok_or_else(|| "slice-4 cc command requires `-o {path}`".to_string())
             .and_then(|expr| self.expr_expected(expr, Some("Path")))?;
@@ -2562,6 +2794,197 @@ fn missing() -> Float {
         }
     }
 
+    #[test]
+    fn concrete_tree_missing_path_errors_without_runs() {
+        let src = r#"
+use vix::Tree;
+
+pub fn main(input: Tree) -> Tree {
+    input / p"missing.txt"
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let input =
+                machine.intern_tree_concrete(crate::exec::Tree::of(&[("present.txt", "ok")]));
+            let err = machine
+                .demand_i64("main", vec![input])
+                .expect_err("missing path errors");
+            assert!(err.contains("missing.txt"), "{lane:?}: {err}");
+            assert_eq!(run_requested_count(&machine), 0, "{lane:?}");
+            assert_eq!(completed_outputs(&machine), Vec::<u64>::new(), "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn pending_tree_projection_serves_file_through_one_run() {
+        let src = r#"
+use vix::Target;
+use caps::Cc;
+
+pub fn main(target: Target) -> Tree {
+    let cc = Cc::acquire(target);
+    cc! { -o {p"artifact.o"} } / p"artifact.o"
+}
+"#;
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = machine.linux_target_handle();
+            let handle = machine.demand_i64("main", vec![target]).unwrap();
+            assert_eq!(
+                machine
+                    .tree_entries(handle)
+                    .unwrap()
+                    .keys()
+                    .collect::<Vec<_>>(),
+                vec![&"artifact.o".to_string()],
+                "{lane:?}"
+            );
+            assert_eq!(run_requested_count(&machine), 1, "{lane:?}");
+            assert_eq!(
+                completed_outputs(&machine),
+                output_set(&["artifact.o"]),
+                "{lane:?}"
+            );
+            traces.push((lane, machine.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
+    }
+
+    #[test]
+    fn pending_tree_missing_path_errors_after_one_run() {
+        let src = r#"
+use vix::Target;
+use caps::Cc;
+
+pub fn main(target: Target) -> Tree {
+    let cc = Cc::acquire(target);
+    cc! { -o {p"artifact.o"} } / p"never-written.o"
+}
+"#;
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = machine.linux_target_handle();
+            let err = machine
+                .demand_i64("main", vec![target])
+                .expect_err("missing produced path errors");
+            assert!(err.contains("never-written.o"), "{lane:?}: {err}");
+            assert_eq!(run_requested_count(&machine), 1, "{lane:?}");
+            assert_eq!(
+                completed_outputs(&machine),
+                output_set(&["artifact.o"]),
+                "{lane:?}"
+            );
+            traces.push((lane, machine.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
+    }
+
+    #[test]
+    fn unused_command_binding_emits_no_exec_ops_or_runs() {
+        let src = r#"
+use vix::Target;
+use caps::Cc;
+
+pub fn main(target: Target) -> Int {
+    let cc = Cc::acquire(target);
+    let dead = cc! { -o {p"dead"} };
+    7
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(host_call_count(&machine, "main", EXEC_HOST), 0, "{lane:?}");
+            let target = machine.linux_target_handle();
+            assert_eq!(
+                machine.demand_i64("main", vec![target]).unwrap(),
+                7,
+                "{lane:?}"
+            );
+            assert_eq!(run_requested_count(&machine), 0, "{lane:?}");
+            assert_eq!(completed_outputs(&machine), Vec::<u64>::new(), "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn unused_let_call_never_spawns() {
+        let src = r#"
+fn expensive() -> Int { 41 }
+
+pub fn main() -> Int {
+    let x = expensive();
+    7
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 7, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "expensive"), 0, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn let_binding_sinks_into_only_using_match_arm() {
+        let src = r#"
+fn expensive() -> Int { 41 }
+
+pub fn main(n: Int) -> Int {
+    let x = expensive();
+    match n {
+        0 => 7,
+        _ => x + 1,
+    }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![0]).unwrap(), 7, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "expensive"), 0, "{lane:?}");
+            machine.clear_trace();
+            assert_eq!(machine.demand_i64("main", vec![1]).unwrap(), 42, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "expensive"), 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn shared_let_binding_computes_once() {
+        let src = r#"
+fn f(x: Int) -> Int { x + 1 }
+
+pub fn main() -> Int {
+    let x = f(20);
+    x + x
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 42, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "f"), 1, "{lane:?}");
+            assert_eq!(memo_hit_count(&machine, "f"), 0, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn memo_hits_across_distinct_calls_exact_counts() {
+        let src = r#"
+fn f(x: Int) -> Int { x + 1 }
+fn a() -> Int { f(20) }
+fn b() -> Int { f(20) }
+
+pub fn main() -> Int {
+    a() + b()
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 42, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "f"), 1, "{lane:?}");
+            assert_eq!(memo_hit_count(&machine, "f"), 1, "{lane:?}");
+        }
+    }
+
     fn assert_lane_traces_equal(traces: &[(Lane, Vec<DriveEvent>)]) {
         let Some((first_lane, first_trace)) = traces.first() else {
             return;
@@ -2590,6 +3013,32 @@ fn missing() -> Float {
             .trace()
             .iter()
             .filter(|event| matches!(event, DriveEvent::Spawned { fn_hash } if *fn_hash == hash))
+            .count()
+    }
+
+    fn memo_hit_count(machine: &Machine, name: &str) -> usize {
+        let hash = machine.fn_hash(name).expect("function hash");
+        machine
+            .trace()
+            .iter()
+            .filter(|event| matches!(event, DriveEvent::MemoHit { fn_hash } if *fn_hash == hash))
+            .count()
+    }
+
+    fn host_call_count(machine: &Machine, name: &str, host: u32) -> usize {
+        machine
+            .fn_ops(name)
+            .expect("function ops")
+            .iter()
+            .filter(|op| matches!(op, Op::HostCall { host: op_host } if *op_host == host))
+            .count()
+    }
+
+    fn run_requested_count(machine: &Machine) -> usize {
+        machine
+            .trace()
+            .iter()
+            .filter(|event| matches!(event, DriveEvent::RunRequested { .. }))
             .count()
     }
 

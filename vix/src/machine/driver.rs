@@ -33,11 +33,9 @@ use std::hash::Hash;
 use sha2::{Digest, Sha256};
 #[cfg(any(test, feature = "jit"))]
 use weavy::jit::task_lane::{JitProgram, JitTask};
-#[cfg(any(test, feature = "jit"))]
-use weavy::mem::Layout;
 use weavy::mem::{Access, Descriptor, Tag};
 #[cfg(any(test, feature = "jit"))]
-use weavy::task::{ArgCopy, Fn as TaskFn, Op};
+use weavy::task::Op;
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
 
 use crate::oracle::{assign_roles, tool_for};
@@ -229,14 +227,16 @@ impl LaneRuntime {
             }
             #[cfg(any(test, feature = "jit"))]
             Self::Jit => {
-                let (wrapped, entry) = jit_entry_program(program, lowered, args);
-                let Some(jit) = JitProgram::compile(&wrapped) else {
+                let Some(jit) = JitProgram::compile(program) else {
                     return Err(format!(
-                        "weavy JIT task lane could not compile invocation wrapper; ops: {}",
-                        program_op_set(&wrapped)
+                        "weavy JIT task lane could not compile program; ops: {}",
+                        program_op_set(program)
                     ));
                 };
-                let task = JitTask::spawn(&jit, entry);
+                let mut task = JitTask::spawn(&jit, lowered.task_fn);
+                for (offset, value) in lowered.arg_offsets.iter().zip(args) {
+                    task.write_i64(*offset, *value);
+                }
                 Ok(LaneTask::Jit { program: jit, task })
             }
         }
@@ -711,8 +711,18 @@ impl Driver {
         }
     }
 
+    #[cfg(test)]
+    pub fn intern_tree_concrete(&self, tree: crate::exec::Tree) -> i64 {
+        self.store.borrow_mut().alloc_tree_concrete(tree).0
+    }
+
     pub fn fn_hash(&self, fn_ref: usize) -> u64 {
         self.fns[fn_ref].hash
+    }
+
+    #[cfg(test)]
+    pub fn fn_ops(&self, fn_ref: usize) -> &[Op] {
+        &self.program.fns[self.fns[fn_ref].task_fn.0 as usize].code
     }
 
     pub fn intern_raw_value(&self, schema: &str, bytes: Vec<u8>) -> (i64, bool) {
@@ -1398,44 +1408,6 @@ fn hash_u64(value: impl Hash) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut h);
     std::hash::Hasher::finish(&h)
-}
-
-#[cfg(any(test, feature = "jit"))]
-fn jit_entry_program(program: &Program, lowered: &LoweredFn, args: &[i64]) -> (Program, FnId) {
-    let mut wrapped = program.clone();
-    let ret = u32::try_from(args.len() * 8).expect("arg frame size fits u32");
-    let mut code = Vec::with_capacity(args.len() + 2);
-    for (index, value) in args.iter().enumerate() {
-        code.push(Op::ConstI64 {
-            dst: u32::try_from(index * 8).expect("arg offset fits u32"),
-            value: *value,
-        });
-    }
-    let call_args = lowered
-        .arg_offsets
-        .iter()
-        .enumerate()
-        .map(|(index, dst)| ArgCopy {
-            src: u32::try_from(index * 8).expect("arg offset fits u32"),
-            dst: *dst,
-            size: 8,
-        })
-        .collect();
-    code.push(Op::Call {
-        callee: lowered.task_fn,
-        args: call_args,
-        ret,
-    });
-    code.push(Op::Ret { src: ret, size: 8 });
-    let entry = FnId(u32::try_from(wrapped.fns.len()).expect("fn count fits u32"));
-    wrapped.fns.push(TaskFn {
-        frame: Layout {
-            size: args.len() * 8 + 8,
-            align: 8,
-        },
-        code,
-    });
-    (wrapped, entry)
 }
 
 #[cfg(any(test, feature = "jit"))]

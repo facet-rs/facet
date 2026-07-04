@@ -17,12 +17,23 @@ Classification:
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| 1 | 12 | Already covered by current machine tests. |
-| 2 | 5 | Machine can already express it; missing parity test only. |
+| 1 | 17 | Already covered by current machine tests. |
+| 2 | 0 | Machine can already express it; missing parity test only. |
 | 3 | 40 | Needs feature work before parity. |
 | 4 | 3 | Parser/wire-shipping assertions outside the evaluator machine. |
 
 Class 4 is intentionally not used for any evaluator behavior.
+
+## Debts Carried Past The Funeral
+
+- O12 is accepted as Class 4 only for its oracle-instance vehicle. The
+  underlying semantic property remains a fleet-arc debt: canonical closure hash
+  must stay stable across serialization, and remote invocation must agree with
+  local invocation.
+- O14 and L01 are accepted as Class 4 with a relocation condition. The funeral
+  deletes evaluator test files, not parser/editor contracts; any highlight or
+  typed-AST shape assertion hosted in a doomed file must move to a surviving
+  parser/editor test file before deletion.
 
 ## Engine Pinned Contracts
 
@@ -61,15 +72,15 @@ Class 4 is intentionally not used for any evaluator behavior.
 | ID | Frozen assertion | Class | Machine parity status |
 | --- | --- | ---: | --- |
 | G01 | `collect_argument_strictness_is_pinned`: `[2,1].collect(0)` errors exactly `collect takes no arguments`; `[2,1].collect()` returns sorted array `[1,2]`. | 3 | Needs scalar array values, array collect semantics beyond path-pending collection, and exact error text on the machine. |
-| G02 | `resolved_tree_missing_path_errors_immediately`: projecting missing path from a concrete tree errors with the path, schedules 0, and finishes 0. | 2 | Existing tree projection machinery can produce this; needs a direct machine test with a concrete input tree handle. |
-| G03 | `pending_tree_path_projection_serves_file_without_finish`: projecting `cc! { -o artifact.o } / p"artifact.o"` returns a one-entry tree, schedules 1, and records no finished run. | 2 | Existing `cc!`/projection features can express it; needs a machine test with exact run/request semantics mapped to machine `Run*` events. |
-| G04 | `pending_tree_missing_path_errors_when_producer_finishes`: projecting `never-written.o` from a pending `cc! { -o artifact.o }` errors with `never-written.o`, schedules 1, and finishes one `cc` run. | 2 | Existing projection and error path can express it; needs a machine test. |
+| G02 | `resolved_tree_missing_path_errors_immediately`: projecting missing path from a concrete tree errors with the path, schedules 0, and finishes 0. | 1 | Covered by `concrete_tree_missing_path_errors_without_runs` on both lanes. |
+| G03 | `pending_tree_path_projection_serves_file_without_finish`: projecting `cc! { -o artifact.o } / p"artifact.o"` returns a one-entry tree, schedules 1, and records no finished run. | 1 | Covered by `pending_tree_projection_serves_file_through_one_run` on both lanes. Machine `RunCompleted` is finer than engine `Finished`; parity is asserted as one requested/completed `artifact.o` run and the projected one-entry tree. |
+| G04 | `pending_tree_missing_path_errors_when_producer_finishes`: projecting `never-written.o` from a pending `cc! { -o artifact.o }` errors with `never-written.o`, schedules 1, and finishes one `cc` run. | 1 | Covered by `pending_tree_missing_path_errors_after_one_run` on both lanes. |
 | G05 | `warm_engine_lua_second_call_is_one_hit`: second `lua(linux)` call returns same tree and appends exactly one hit for `lua`. | 3 | Needs full `lua.vix` support first; warm memo behavior itself already exists. |
-| G06 | `unused_command_binding_is_never_created_by_engine`: unused `let dead = cc! { -o dead }` returns `7`, creates no runs, finishes no runs. | 2 | Machine laziness and `cc!` lowering can express this; needs a direct machine absence test. |
-| G07 | `unused_binding_is_never_demanded`: unused `let x = expensive()` returns `7`; `expensive` has zero misses. | 1 | Current machine tests cover unused function absence (`undemanded_functions_never_trace`). |
-| G08 | `shared_binding_computes_once`: `let x = f(20); x + x` returns `42`; `f` misses once and has zero hits. | 2 | Existing machine memo boundary supports this; needs direct trace-count test for the let-binding shape. |
+| G06 | `unused_command_binding_is_never_created_by_engine`: unused `let dead = cc! { -o dead }` returns `7`, creates no runs, finishes no runs. | 1 | Covered by `unused_command_binding_emits_no_exec_ops_or_runs` on both lanes via demand-sunk let lowering; the compiled task program contains no `EXEC_HOST` op. |
+| G07 | `unused_binding_is_never_demanded`: unused `let x = expensive()` returns `7`; `expensive` has zero misses. | 1 | Covered by `unused_let_call_never_spawns` on both lanes via demand-sunk let lowering. The older undemanded-function test remains separate coverage. |
+| G08 | `shared_binding_computes_once`: `let x = f(20); x + x` returns `42`; `f` misses once and has zero hits. | 1 | Covered by `shared_let_binding_computes_once` on both lanes. |
 | G09 | `unselected_match_arm_never_evaluates`: match returns `42`; `boom` has zero misses. | 1 | Covered by `untaken_arms_never_spawn` and `untaken_variant_arms_never_spawn` on both lanes. |
-| G10 | `memo_hits_across_calls`: `a()+b()` returns `42`; `f(20)` misses once and hits at least once. | 1 | Covered by shared-call and structural memo tests; a direct exact-machine test can be added if desired, but behavior is already reproduced. |
+| G10 | `memo_hits_across_calls`: `a()+b()` returns `42`; `f(20)` misses once and hits at least once. | 1 | Covered directly by `memo_hits_across_distinct_calls_exact_counts` on both lanes: one spawn and one memo hit for `f`. |
 | G11 | Duplicate named arguments are rejected by oracle with text containing `duplicate argument \`x\``. | 3 | Needs named-argument support and duplicate-name diagnostics in machine lowering if named calls become part of machine surface. |
 | G12 | Duplicate named arguments are rejected by engine with text containing `duplicate argument \`x\``. | 3 | Same named-argument diagnostic surface as G11. |
 
