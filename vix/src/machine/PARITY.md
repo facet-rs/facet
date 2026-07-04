@@ -17,7 +17,7 @@ Classification:
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| 1 | 34 | Already covered by current machine tests. |
+| 1 | 57 | Already covered by current machine tests. |
 | 2 | 0 | Machine can already express it; missing parity test only. |
 | 3 | 0 | Needs feature work before parity. |
 | 4 | 3 | Parser/wire-shipping assertions outside the evaluator machine. |
