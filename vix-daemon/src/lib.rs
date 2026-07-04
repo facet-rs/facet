@@ -26,6 +26,8 @@
 //! is the reusable part.)
 
 use facet::Facet;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 
 use tokio::sync::{mpsc, oneshot};
@@ -103,6 +105,40 @@ impl From<vix::support::Span> for Span {
     }
 }
 
+/// Counts for one completed eval generation.
+#[derive(Facet, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EvalSummary {
+    pub generation: u64,
+    pub hits: u64,
+    pub misses: u64,
+    pub created: u64,
+    pub scheduled: u64,
+    pub finished: u64,
+}
+
+impl EvalSummary {
+    fn new(generation: u64) -> Self {
+        Self {
+            generation,
+            ..Self::default()
+        }
+    }
+
+    fn observe(&mut self, event: &DemandEvent) {
+        match event {
+            DemandEvent::Miss { .. } => self.misses += 1,
+            DemandEvent::Hit { .. } => self.hits += 1,
+            DemandEvent::Created { .. } => self.created += 1,
+            DemandEvent::Scheduled { .. } => self.scheduled += 1,
+            DemandEvent::Finished { .. } => self.finished += 1,
+            DemandEvent::Observation { .. }
+            | DemandEvent::Summary { .. }
+            | DemandEvent::Done { .. }
+            | DemandEvent::Failed { .. } => {}
+        }
+    }
+}
+
 /// One observable step of demand-driven evaluation, streamed to the IDE. This
 /// is simultaneously the debugger's step feed and the graph-viz's edge feed:
 /// `run` pairs Spawn↔Exec exactly, `caller`/`in_fn` give demand ancestry,
@@ -115,6 +151,7 @@ pub enum DemandEvent {
     /// A memoized call ran cold. `span` is the fn declaration; `args` render
     /// each bound argument shortly.
     Miss {
+        generation: u64,
         at: u64,
         func: String,
         span: Span,
@@ -123,6 +160,7 @@ pub enum DemandEvent {
     },
     /// A memoized call was served from the language-level cache.
     Hit {
+        generation: u64,
         at: u64,
         func: String,
         span: Span,
@@ -133,6 +171,7 @@ pub enum DemandEvent {
     /// nothing demanded yet. `describe` is the command grammar's
     /// important-first description (level 0 = verb + object; last = argv).
     Created {
+        generation: u64,
         at: u64,
         command: String,
         run: u64,
@@ -145,6 +184,7 @@ pub enum DemandEvent {
     /// identity) — paying starts here. Scheduled→Finished is the rectangle
     /// in the lanes view; Created is where a click links back to.
     Scheduled {
+        generation: u64,
         at: u64,
         command: String,
         run: u64,
@@ -153,6 +193,7 @@ pub enum DemandEvent {
     /// EXECUTION FINISHED: resolved through the two-tier exec cache;
     /// `outputs` is the produced tree — artifacts, path by path.
     Finished {
+        generation: u64,
         at: u64,
         command: String,
         run: u64,
@@ -162,20 +203,23 @@ pub enum DemandEvent {
     },
     /// A primitive observed the world (cold) or replayed its pin.
     Observation {
+        generation: u64,
         at: u64,
         key: String,
         replayed: bool,
     },
+    /// Evaluation completed; counts cover this generation's oracle events.
+    Summary { summary: EvalSummary },
     /// Evaluation finished. `result` is the value's Debug form (v1).
-    Done { result: String },
+    Done { generation: u64, result: String },
     /// Evaluation failed.
-    Failed { error: String },
+    Failed { generation: u64, error: String },
 }
 
 vox_schema::impl_reborrow_owned!(DemandEvent, StepCommand);
 
 impl DemandEvent {
-    fn from_oracle(at: u64, event: &Event) -> DemandEvent {
+    fn from_oracle(generation: u64, at: u64, event: &Event) -> DemandEvent {
         match event {
             Event::Miss {
                 func,
@@ -183,6 +227,7 @@ impl DemandEvent {
                 caller,
                 args,
             } => DemandEvent::Miss {
+                generation,
                 at,
                 func: func.clone(),
                 span: (*span).into(),
@@ -195,6 +240,7 @@ impl DemandEvent {
                 caller,
                 args,
             } => DemandEvent::Hit {
+                generation,
                 at,
                 func: func.clone(),
                 span: (*span).into(),
@@ -209,6 +255,7 @@ impl DemandEvent {
                 argv,
                 describe,
             } => DemandEvent::Created {
+                generation,
                 at,
                 command: command.clone(),
                 run: *run,
@@ -218,6 +265,7 @@ impl DemandEvent {
                 describe: describe.clone(),
             },
             Event::Scheduled { command, run, span } => DemandEvent::Scheduled {
+                generation,
                 at,
                 command: command.clone(),
                 run: *run,
@@ -230,6 +278,7 @@ impl DemandEvent {
                 event,
                 outputs,
             } => DemandEvent::Finished {
+                generation,
                 at,
                 command: command.clone(),
                 run: *run,
@@ -238,6 +287,7 @@ impl DemandEvent {
                 outputs: outputs.clone(),
             },
             Event::Observation { key, replayed } => DemandEvent::Observation {
+                generation,
                 at,
                 key: key.clone(),
                 replayed: *replayed,
@@ -327,12 +377,14 @@ fn eval_on_actor(
 #[derive(Clone)]
 pub struct DaemonService {
     actor: OracleActor,
+    next_generation: Arc<AtomicU64>,
 }
 
 impl DaemonService {
     pub fn new() -> Self {
         Self {
             actor: OracleActor::start(),
+            next_generation: Arc::new(AtomicU64::new(1)),
         }
     }
 }
@@ -345,6 +397,7 @@ impl Default for DaemonService {
 
 impl Daemon for DaemonService {
     async fn eval(&self, req: EvalRequest, mut control: Rx<StepCommand>, events: Tx<DemandEvent>) {
+        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         // The sink pushes each event onto a std channel; when stepping, it also
         // BLOCKS on a per-event permission oneshot. The oracle runs on a
         // blocking thread; this async task bridges to the vox streams.
@@ -360,7 +413,7 @@ impl Daemon for DaemonService {
             let sink_evt = evt_tx_for_oracle.clone();
             let sink_gate = gate_tx_for_oracle.clone();
             let sink = move |at: u64, event: &Event| {
-                let de = DemandEvent::from_oracle(at, event);
+                let de = DemandEvent::from_oracle(generation, at, event);
                 if mode == StepMode::Step {
                     // Ask the async side for permission and block until granted.
                     let (permit_tx, permit_rx) = oneshot::channel::<()>();
@@ -396,6 +449,7 @@ impl Daemon for DaemonService {
         let mut step_credits: u32 = 0;
         let mut pending_permit: Option<oneshot::Sender<()>> = None;
         let mut gate_rx = gate_rx;
+        let mut summary = EvalSummary::new(generation);
 
         loop {
             tokio::select! {
@@ -415,7 +469,10 @@ impl Daemon for DaemonService {
                 // The oracle produced an event (emitted before it blocks).
                 evt = evt_rx.recv() => {
                     match evt {
-                        Some(de) => { let _ = events.send(de).await; }
+                        Some(de) => {
+                            summary.observe(&de);
+                            let _ = events.send(de).await;
+                        }
                         None => break, // oracle finished
                     }
                 }
@@ -443,10 +500,12 @@ impl Daemon for DaemonService {
             let _ = p.send(());
         }
 
+        let _ = events.send(DemandEvent::Summary { summary }).await;
         let final_event = match oracle_task.await {
-            Ok(Ok(result)) => DemandEvent::Done { result },
-            Ok(Err(error)) => DemandEvent::Failed { error },
+            Ok(Ok(result)) => DemandEvent::Done { generation, result },
+            Ok(Err(error)) => DemandEvent::Failed { generation, error },
             Err(join) => DemandEvent::Failed {
+                generation,
                 error: format!("daemon eval task panicked: {join}"),
             },
         };

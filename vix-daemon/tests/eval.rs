@@ -3,13 +3,11 @@
 //! drives the evaluation one demand at a time.
 
 use vix_daemon::{
-    DaemonClient, DaemonDispatcher, DaemonService, DemandEvent, EvalRequest, Serving, StepCommand,
-    StepMode,
+    DaemonClient, DaemonDispatcher, DaemonService, DemandEvent, EvalRequest, EvalSummary, Serving,
+    StepCommand, StepMode,
 };
 
-const LUA: &str = include_str!(
-    "../../playgrounds/snark/src/bundled/vix/samples/lua.vix"
-);
+const LUA: &str = include_str!("../../playgrounds/snark/src/bundled/vix/samples/lua.vix");
 
 async fn serve() -> String {
     let listener = vox::WsListener::bind("127.0.0.1:0").await.unwrap();
@@ -52,6 +50,67 @@ async fn collect(
     out
 }
 
+fn generation(event: &DemandEvent) -> u64 {
+    match event {
+        DemandEvent::Miss { generation, .. }
+        | DemandEvent::Hit { generation, .. }
+        | DemandEvent::Created { generation, .. }
+        | DemandEvent::Scheduled { generation, .. }
+        | DemandEvent::Finished { generation, .. }
+        | DemandEvent::Observation { generation, .. }
+        | DemandEvent::Done { generation, .. }
+        | DemandEvent::Failed { generation, .. } => *generation,
+        DemandEvent::Summary { summary } => summary.generation,
+    }
+}
+
+fn count_wire_events(events: &[DemandEvent], generation: u64) -> EvalSummary {
+    let mut summary = EvalSummary {
+        generation,
+        hits: 0,
+        misses: 0,
+        created: 0,
+        scheduled: 0,
+        finished: 0,
+    };
+    for event in events {
+        match event {
+            DemandEvent::Miss { .. } => summary.misses += 1,
+            DemandEvent::Hit { .. } => summary.hits += 1,
+            DemandEvent::Created { .. } => summary.created += 1,
+            DemandEvent::Scheduled { .. } => summary.scheduled += 1,
+            DemandEvent::Finished { .. } => summary.finished += 1,
+            DemandEvent::Observation { .. }
+            | DemandEvent::Summary { .. }
+            | DemandEvent::Done { .. }
+            | DemandEvent::Failed { .. } => {}
+        }
+    }
+    summary
+}
+
+fn assert_eval_generation(events: &[DemandEvent], expected: u64) {
+    assert!(
+        events.iter().all(|event| generation(event) == expected),
+        "expected generation {expected}: {events:?}"
+    );
+}
+
+fn assert_summary_matches_events(events: &[DemandEvent], generation: u64) -> EvalSummary {
+    assert_eval_generation(events, generation);
+    let summaries: Vec<EvalSummary> = events
+        .iter()
+        .filter_map(|event| match event {
+            DemandEvent::Summary { summary } => Some(*summary),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(summaries.len(), 1, "events: {events:?}");
+    let expected = count_wire_events(events, generation);
+    assert_eq!(summaries[0], expected, "events: {events:?}");
+    summaries[0]
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn daemon_evaluates_lua_over_the_wire() {
     let addr = serve().await;
@@ -62,17 +121,38 @@ async fn daemon_evaluates_lua_over_the_wire() {
     // The evaluation ran and produced the linked binary tree.
     let done = events.last().expect("at least the Done event");
     assert!(
-        matches!(done, DemandEvent::Done { result } if result.contains("lua")),
+        matches!(done, DemandEvent::Done { result, .. } if result.contains("lua")),
         "final: {done:?}"
     );
+    let summary = assert_summary_matches_events(&events, 1);
     // The demand stream shows real work: fn miss for `lua`, exec dispatches,
     // exec serving classes, and fetch/acquire observations.
-    assert!(events.iter().any(|e| matches!(e, DemandEvent::Miss { func, .. } if func == "lua")));
-    assert!(events.iter().any(|e| matches!(e, DemandEvent::Created { command, .. } if command == "cc")));
-    assert!(events.iter().any(
-        |e| matches!(e, DemandEvent::Finished { serving: Serving::Ran, .. })
-    ));
-    assert!(events.iter().any(|e| matches!(e, DemandEvent::Observation { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, DemandEvent::Miss { func, .. } if func == "lua"))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, DemandEvent::Created { command, .. } if command == "cc"))
+    );
+    assert!(events.iter().any(|e| matches!(
+        e,
+        DemandEvent::Finished {
+            serving: Serving::Ran,
+            ..
+        }
+    )));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, DemandEvent::Observation { .. }))
+    );
+    assert!(summary.misses > 0, "summary: {summary:?}");
+    assert!(summary.created > 0, "summary: {summary:?}");
+    assert!(summary.scheduled > 0, "summary: {summary:?}");
+    assert!(summary.finished > 0, "summary: {summary:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -85,21 +165,35 @@ async fn warm_daemon_whitespace_edit_is_one_hit() {
         matches!(first.last(), Some(DemandEvent::Done { .. })),
         "first eval did not finish cleanly: {first:?}"
     );
+    assert_summary_matches_events(&first, 1);
 
     let warm_source = format!("// warm\n{LUA}");
     let second = collect(&client, &warm_source, "lua", StepMode::Run).await;
 
-    assert_eq!(second.len(), 2, "warm eval events: {second:?}");
+    assert_eq!(second.len(), 3, "warm eval events: {second:?}");
     assert!(
         matches!(&second[0], DemandEvent::Hit { func, .. } if func == "lua"),
         "first warm event: {:?}",
         second[0]
     );
     assert!(
-        matches!(&second[1], DemandEvent::Done { .. }),
+        matches!(&second[1], DemandEvent::Summary { summary } if *summary == EvalSummary {
+            generation: 2,
+            hits: 1,
+            misses: 0,
+            created: 0,
+            scheduled: 0,
+            finished: 0,
+        }),
         "second warm event: {:?}",
         second[1]
     );
+    assert!(
+        matches!(&second[2], DemandEvent::Done { .. }),
+        "third warm event: {:?}",
+        second[2]
+    );
+    assert_summary_matches_events(&second, 2);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -112,6 +206,7 @@ async fn warm_daemon_edited_fn_reruns() {
         matches!(first.last(), Some(DemandEvent::Done { .. })),
         "first eval did not finish cleanly: {first:?}"
     );
+    assert_summary_matches_events(&first, 1);
 
     let edited = LUA.replace(
         "Linux => [-DLUA_USE_LINUX],",
@@ -119,19 +214,24 @@ async fn warm_daemon_edited_fn_reruns() {
     );
     assert_ne!(edited, LUA, "semantic edit fixture must change lua.vix");
     let second = collect(&client, &edited, "lua", StepMode::Run).await;
+    let summary = assert_summary_matches_events(&second, 2);
 
     assert!(
-        second
-            .iter()
-            .any(|e| matches!(e, DemandEvent::Miss { .. })),
+        second.iter().any(|e| matches!(e, DemandEvent::Miss { .. })),
         "edited eval did not miss: {second:?}"
     );
     assert!(
-        second
-            .iter()
-            .any(|e| matches!(e, DemandEvent::Finished { serving: Serving::Ran, .. })),
+        second.iter().any(|e| matches!(
+            e,
+            DemandEvent::Finished {
+                serving: Serving::Ran,
+                ..
+            }
+        )),
         "edited eval did not run work: {second:?}"
     );
+    assert!(summary.misses > 0, "summary: {summary:?}");
+    assert!(summary.finished > 0, "summary: {summary:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -170,7 +270,10 @@ async fn stepping_gates_the_demand_one_event_at_a_time() {
         // Resume: the rest streams without gating, up to Done.
         control_tx.send(StepCommand::Resume).await.unwrap();
         while let Ok(Some(e)) = events_rx.recv().await {
-            if matches!(e.get(), DemandEvent::Done { .. } | DemandEvent::Failed { .. }) {
+            if matches!(
+                e.get(),
+                DemandEvent::Done { .. } | DemandEvent::Failed { .. }
+            ) {
                 done = true;
                 break;
             }
