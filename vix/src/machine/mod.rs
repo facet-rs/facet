@@ -60,6 +60,7 @@
 //! several producers, one path selected, unselected producers provably
 //! never executing (trace absence), through the VM and JIT.
 
+mod ast_probe;
 pub mod driver;
 mod elf;
 pub mod lower;

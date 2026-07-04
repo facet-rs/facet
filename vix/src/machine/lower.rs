@@ -28,13 +28,14 @@ use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 
 use super::TotalF64;
 use super::driver::{
-    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST,
-    ARRAY_MAP_PENDING_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PARSE_HOST, DriveEvent,
-    DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane,
-    LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MachineExecBackend,
-    OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST,
-    PENDING_INVOKE_HOST, RenderNames, RenderVariant, RenderedValue, STORE_ALLOC_HOST,
-    STORE_READ_HOST, STORE_TAG_HOST, StepMode, StoreHandle, TREE_PROJECT_HOST, ValueBundle,
+    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_LEN_HOST,
+    ARRAY_MAP_PENDING_HOST, AST_DOC_HOST, AST_FN_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST,
+    DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
+    GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
+    MachineExecBackend, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
+    PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames, RenderVariant, RenderedValue,
+    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, StepMode, StoreHandle, TREE_PROJECT_HOST,
+    ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -2469,6 +2470,7 @@ impl<'a> FnLowerer<'a> {
             "toml" => return self.doc_parse_call(call, 0),
             "json" => return self.doc_parse_call(call, 1),
             "elf" => return self.elf_call(call),
+            "ast" => return self.ast_call(call),
             _ => {}
         }
         if let Some(&fn_ref) = self.fn_refs.get(name) {
@@ -2707,6 +2709,21 @@ impl<'a> FnLowerer<'a> {
                 let ext = self.method_arg(arg, Some("String"))?;
                 self.path_with_ext(&receiver, &ext)
             }
+            "len" => {
+                if !call.args.args.is_empty() {
+                    return Err("len takes no arguments".into());
+                }
+                let receiver = match receiver.schema.as_str() {
+                    "Array" => receiver,
+                    "Doc" => self.coerce_doc_to_schema(receiver, "Array")?,
+                    "Realized<Doc>" => {
+                        let doc = self.coerce_to_schema(receiver, "Doc")?;
+                        self.coerce_doc_to_schema(doc, "Array")?
+                    }
+                    _ => return Err(format!("len called on {}", receiver.schema)),
+                };
+                self.array_len(&receiver)
+            }
             "glob" => self.tree_glob(&receiver, call),
             "filter" => self.array_filter_exclude(&receiver, call),
             "map" => self.array_map_pending(&receiver, call),
@@ -2748,6 +2765,14 @@ impl<'a> FnLowerer<'a> {
                 }
                 let key = self.method_arg(&call.args.args[0], Some(key_schema))?;
                 self.map_get(&receiver, key, key_schema, &result_value_schema)
+            }
+            "fn" => {
+                if call.args.args.len() != 1 {
+                    return Err("Doc.fn takes one name".into());
+                }
+                let receiver = self.coerce_to_schema(receiver, "Doc")?;
+                let name = self.method_arg(&call.args.args[0], Some("String"))?;
+                self.ast_fn(&receiver, &name)
             }
             "unwrap" => {
                 if !call.args.args.is_empty() {
@@ -4057,6 +4082,29 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn array_len(&mut self, receiver: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: ARRAY_LEN_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Int".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
     fn doc_get(&mut self, doc: &ValueSlot, key: &ValueSlot) -> Result<ValueSlot, String> {
         self.expect_schema(doc, "Doc")?;
         self.expect_schema(key, "String")?;
@@ -4330,6 +4378,60 @@ impl<'a> FnLowerer<'a> {
             realization: None,
             pending: None,
         })
+    }
+
+    fn ast_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("ast takes one source String or single-source Tree".into());
+        };
+        let input = self.expr(arg)?;
+        if !matches!(input.schema.as_str(), "String" | "Tree") {
+            return Err(format!("ast called on {}", input.schema));
+        }
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: input.slot,
+        });
+        self.code.push(Op::HostCall { host: AST_DOC_HOST });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Doc".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn ast_fn(&mut self, receiver: &ValueSlot, name: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Doc")?;
+        self.expect_schema(name, "String")?;
+        let pending_slot = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: pending_slot.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: name.slot,
+        });
+        self.code.push(Op::HostCall { host: AST_FN_HOST });
+        let pending = ValueSlot {
+            slot: pending_slot,
+            schema: pending_schema("Doc"),
+            realization: None,
+            pending: None,
+        };
+        self.coerce_pending_to_schema(pending, "Doc")
     }
 
     fn path_with_ext(&mut self, path: &ValueSlot, ext: &ValueSlot) -> Result<ValueSlot, String> {
@@ -6802,6 +6904,142 @@ pub fn arch_twice(input: Blob) -> (String, String) {
     }
 
     #[test]
+    fn ast_structural_projection_contracts_are_pinned() {
+        let src = r#"
+pub fn item_count(source: String) -> Int { ast(source).items.len() }
+pub fn fn_count(source: String) -> Int { ast(source).fns.len() }
+pub fn toolchain_start(source: String) -> Int { ast(source).fn("toolchain").span.start }
+pub fn toolchain_param_count(source: String) -> Int { ast(source).fn("toolchain").params.len() }
+pub fn toolchain_body_children(source: String) -> Int {
+    ast(source).fn("toolchain").body.children.len()
+}
+"#;
+        let types = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/types.vix");
+        let parsed = crate::VixParser::new().parse(types).unwrap();
+        let expected_items = i64::try_from(parsed.items.len()).unwrap();
+        let expected_fns = i64::try_from(
+            parsed
+                .items
+                .iter()
+                .filter(|item| matches!(item, ast::Item::Fn(_)))
+                .count(),
+        )
+        .unwrap();
+        let toolchain = parsed
+            .items
+            .iter()
+            .find_map(|item| match item {
+                ast::Item::Fn(item) if item.name.value == "toolchain" => Some(item),
+                _ => None,
+            })
+            .unwrap();
+        let expected_body_children =
+            i64::try_from(toolchain.body.stmts.len() + usize::from(toolchain.body.tail.is_some()))
+                .unwrap();
+
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let source = machine
+                .driver
+                .intern_raw_value("String", types.as_bytes().to_vec())
+                .0;
+
+            assert_eq!(
+                machine.demand_i64("item_count", vec![source]).unwrap(),
+                expected_items,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.demand_i64("fn_count", vec![source]).unwrap(),
+                expected_fns,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.demand_i64("toolchain_start", vec![source]).unwrap(),
+                i64::from(toolchain.span.start),
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .demand_i64("toolchain_param_count", vec![source])
+                    .unwrap(),
+                i64::try_from(toolchain.params.params.len()).unwrap(),
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .demand_i64("toolchain_body_children", vec![source])
+                    .unwrap(),
+                expected_body_children,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ast_items_projection_does_not_force_fn_or_body_children() {
+        let src = r#"
+pub fn item_count(source: String) -> Int { ast(source).items.len() }
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let source = machine
+                .driver
+                .intern_raw_value(
+                    "String",
+                    include_str!("../../../playgrounds/snark/src/bundled/vix/samples/types.vix")
+                        .as_bytes()
+                        .to_vec(),
+                )
+                .0;
+            assert!(machine.demand_i64("item_count", vec![source]).unwrap() > 0);
+            assert_eq!(
+                ast_artifact_probes(&machine),
+                vec![("items".to_string(), false)],
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ast_fn_body_children_projection_is_lazy_and_memoized() {
+        let src = r#"
+pub fn body_twice(source: String) -> (Int, Int) {
+    (
+        ast(source).fn("toolchain").body.children.len(),
+        ast(source).fn("toolchain").body.children.len(),
+    )
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let source = machine
+                .driver
+                .intern_raw_value(
+                    "String",
+                    include_str!("../../../playgrounds/snark/src/bundled/vix/samples/types.vix")
+                        .as_bytes()
+                        .to_vec(),
+                )
+                .0;
+            let tuple = machine.demand_i64("body_twice", vec![source]).unwrap();
+            let left = machine.driver.store_field(tuple, 0).unwrap();
+            let right = machine.driver.store_field(tuple, 1).unwrap();
+            assert_eq!(left, right, "{lane:?}");
+            assert_eq!(
+                ast_artifact_probes(&machine),
+                vec![
+                    ("fn".to_string(), false),
+                    ("fn.body.children".to_string(), false),
+                    ("fn".to_string(), true),
+                    ("fn.body.children".to_string(), true),
+                ],
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
     fn scalar_array_collect_sorts_and_rejects_arguments() {
         let bad = r#"
 pub fn bad() -> [Int] {
@@ -7205,6 +7443,22 @@ pub fn lazy(n: Int) -> Map<String, Float> {
                     cache_hit,
                     ..
                 } if format == "elf" => Some((projection.clone(), *cache_hit)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn ast_artifact_probes(machine: &Machine) -> Vec<(String, bool)> {
+        machine
+            .trace()
+            .iter()
+            .filter_map(|event| match event {
+                DriveEvent::ArtifactProbe {
+                    format,
+                    projection,
+                    cache_hit,
+                    ..
+                } if format == "ast" => Some((projection.clone(), *cache_hit)),
                 _ => None,
             })
             .collect()
