@@ -479,11 +479,16 @@ mod tests {
     async fn interpreter_lane_is_always_available() {
         // The portability guarantee: no JIT, no unsafe, works on iOS/wasm.
         let ops = [Op::Push(40), Op::Await, Op::Add];
-        let (result, jit, trace) =
-            drive(AsyncExec::interpret(&ops, vec![later(2, 40)])).await;
+        let (result, jit, trace) = drive(AsyncExec::interpret(&ops, vec![later(2, 40)])).await;
         assert_eq!(result, 42);
         assert!(!jit, "interpret() must never use the JIT");
-        assert_eq!(trace, vec![SuspendEvent { await_index: 0, stack_depth: 1 }]);
+        assert_eq!(
+            trace,
+            vec![SuspendEvent {
+                await_index: 0,
+                stack_depth: 1
+            }]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -529,8 +534,11 @@ mod tests {
         // sails past #1 — exactly one park. Checked on the interpreter (the
         // reference); the differential test proves the JIT matches.
         let ops = [Op::Await, Op::Await, Op::Add];
-        let (result, _, trace) =
-            drive(AsyncExec::interpret(&ops, vec![later(40, 60), later(2, 20)])).await;
+        let (result, _, trace) = drive(AsyncExec::interpret(
+            &ops,
+            vec![later(40, 60), later(2, 20)],
+        ))
+        .await;
         assert_eq!(result, 42);
         assert_eq!(trace.len(), 1, "concurrent ⇒ one park: {trace:?}");
         assert_eq!(trace[0].await_index, 0);

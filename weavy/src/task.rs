@@ -79,6 +79,8 @@ pub enum Op {
     SubI64 { dst: u32, a: u32, b: u32 },
     /// `frame[dst] = frame[a] * frame[b]` (i64, wrapping).
     MulI64 { dst: u32, a: u32, b: u32 },
+    /// `frame[dst] = frame[src]` (one 64-bit word).
+    CopyI64 { dst: u32, src: u32 },
     /// `frame[dst] = (frame[a] == frame[b]) as i64`.
     EqI64 { dst: u32, a: u32, b: u32 },
     /// `frame[dst] = (frame[a] != frame[b]) as i64`.
@@ -320,16 +322,21 @@ impl Task {
                     write_i64_at(&mut self.arena, base + dst as usize, va.wrapping_add(vb));
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
+                Op::MulI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + a as usize);
+                    let vb = read_i64_at(&self.arena, base + b as usize);
+                    write_i64_at(&mut self.arena, base + dst as usize, va.wrapping_mul(vb));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
                 Op::SubI64 { dst, a, b } => {
                     let va = read_i64_at(&self.arena, base + a as usize);
                     let vb = read_i64_at(&self.arena, base + b as usize);
                     write_i64_at(&mut self.arena, base + dst as usize, va.wrapping_sub(vb));
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
-                Op::MulI64 { dst, a, b } => {
-                    let va = read_i64_at(&self.arena, base + a as usize);
-                    let vb = read_i64_at(&self.arena, base + b as usize);
-                    write_i64_at(&mut self.arena, base + dst as usize, va.wrapping_mul(vb));
+                Op::CopyI64 { dst, src } => {
+                    let v = read_i64_at(&self.arena, base + src as usize);
+                    write_i64_at(&mut self.arena, base + dst as usize, v);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::EqI64 { dst, a, b } => {

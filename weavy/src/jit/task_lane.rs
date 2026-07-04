@@ -89,8 +89,7 @@ impl JitProgram {
 fn op_needs_unimplemented_stencil(op: &Op) -> bool {
     matches!(
         op,
-        Op::SubI64 { .. }
-            | Op::EqI64 { .. }
+        Op::EqI64 { .. }
             | Op::NeI64 { .. }
             | Op::LtI64 { .. }
             | Op::LeI64 { .. }
@@ -127,8 +126,9 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::ConstI64 { .. } => (task_stencils::CONST, task_stencils::CONST_CONT),
             Op::AddI64 { .. } => (task_stencils::ADD, task_stencils::ADD_CONT),
             Op::MulI64 { .. } => (task_stencils::MUL, task_stencils::MUL_CONT),
-            Op::SubI64 { .. }
-            | Op::EqI64 { .. }
+            Op::SubI64 { .. } => (task_stencils::SUB, task_stencils::SUB_CONT),
+            Op::CopyI64 { .. } => (task_stencils::COPY, task_stencils::COPY_CONT),
+            Op::EqI64 { .. }
             | Op::NeI64 { .. }
             | Op::LtI64 { .. }
             | Op::LeI64 { .. }
@@ -177,13 +177,16 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 layout.push_prog_word(root.prog_index, u64::from(*dst));
                 layout.push_prog_word(root.prog_index, *value as u64);
             }
-            Op::AddI64 { dst, a, b } | Op::MulI64 { dst, a, b } => {
+            Op::CopyI64 { dst, src } => {
+                layout.push_prog_word(root.prog_index, u64::from(*dst));
+                layout.push_prog_word(root.prog_index, u64::from(*src));
+            }
+            Op::AddI64 { dst, a, b } | Op::MulI64 { dst, a, b } | Op::SubI64 { dst, a, b } => {
                 layout.push_prog_word(root.prog_index, u64::from(*dst));
                 layout.push_prog_word(root.prog_index, u64::from(*a));
                 layout.push_prog_word(root.prog_index, u64::from(*b));
             }
-            Op::SubI64 { .. }
-            | Op::EqI64 { .. }
+            Op::EqI64 { .. }
             | Op::NeI64 { .. }
             | Op::LtI64 { .. }
             | Op::LeI64 { .. }

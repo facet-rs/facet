@@ -110,6 +110,30 @@ pub unsafe extern "C" fn weavy_task_mul(cx: *mut Ctx) {
     cont!(cx);
 }
 
+/// `frame[dst] = frame[a] - frame[b]` (i64, wrapping) — immediates: [dst, a, b].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_sub(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let a = *c.prog.add(1);
+    let b = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    write_i64(c.frame, dst, read_i64(c.frame, a).wrapping_sub(read_i64(c.frame, b)));
+    cont!(cx);
+}
+
+/// `frame[dst] = frame[src]` — immediates: [dst, src].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_copy(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let src = *c.prog.add(1);
+    c.prog = c.prog.add(2);
+    let v = read_i64(c.frame, src);
+    write_i64(c.frame, dst, v);
+    cont!(cx);
+}
+
 /// `frame[dst] = frame[base + frame[index]*stride]` — immediates:
 /// [dst, base, index, stride]. Bounds are the checker's obligation.
 #[no_mangle]
