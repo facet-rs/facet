@@ -152,31 +152,6 @@ fn warm_reload_trivia_anywhere_costs_zero_misses_and_zero_runs() {
 }
 
 #[test]
-fn warm_reload_leaf_semantic_edit_currently_hits_stale_entry() {
-    let mut oracle = Oracle::load(anti_nix_diamond()).expect("load");
-    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(37));
-
-    let edited =
-        anti_nix_diamond().replace("fn leaf() -> Int {\n    1", "fn leaf() -> Int {\n    2");
-    oracle.reload(&edited).expect("reload");
-
-    assert_eq!(
-        oracle.call("main", &[]).unwrap(),
-        Value::Int(37),
-        "measured current behavior: unchanged entry memo key hides the edited leaf"
-    );
-    let events = oracle.events();
-    assert_eq!(missed_functions(&events), BTreeSet::new(), "{events:?}");
-    assert_eq!(hit_functions(&events), BTreeSet::from(["main".to_string()]));
-    assert_eq!(
-        event_counts(&events),
-        BTreeMap::from([("hit", 1)]),
-        "{events:?}"
-    );
-}
-
-#[test]
-#[ignore = "theoretical anti-Nix blast radius is not implemented: unchanged dependents can currently hit stale memo entries"]
 fn warm_reload_leaf_semantic_edit_misses_exact_theoretical_blast_radius() {
     let mut oracle = Oracle::load(anti_nix_diamond()).expect("load");
     assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(37));
@@ -197,11 +172,9 @@ fn warm_reload_leaf_semantic_edit_misses_exact_theoretical_blast_radius() {
         ]),
         "{events:?}"
     );
-    assert_eq!(
-        hit_functions(&events),
-        BTreeSet::from(["independent".to_string()]),
-        "{events:?}"
-    );
+    let hits = hit_functions(&events);
+    assert!(hits.contains("independent"), "{events:?}");
+    assert!(!hits.contains("never_demanded"), "{events:?}");
 }
 
 #[test]
@@ -219,6 +192,93 @@ fn warm_reload_never_demanded_semantic_edit_costs_zero_misses() {
     let events = oracle.events();
     assert_zero_cost_reload(&events);
     assert_eq!(hit_functions(&events), BTreeSet::from(["main".to_string()]));
+}
+
+#[test]
+fn editing_unreferenced_function_preserves_other_closure_hashes() {
+    let before = Oracle::load(anti_nix_diamond()).expect("load before");
+    let edited = anti_nix_diamond().replace(
+        "fn never_demanded() -> Int {\n    100",
+        "fn never_demanded() -> Int {\n    101",
+    );
+    let after = Oracle::load(&edited).expect("load after");
+
+    for name in ["leaf", "left", "right", "independent", "main"] {
+        assert_eq!(
+            before.fn_hash(name),
+            after.fn_hash(name),
+            "{name} should not inherit an unreferenced function edit"
+        );
+    }
+    assert_ne!(
+        before.fn_hash("never_demanded"),
+        after.fn_hash("never_demanded")
+    );
+}
+
+fn type_closure_source() -> &'static str {
+    r#"
+enum Choice { A, B }
+
+fn typed(x: Choice) -> Int {
+    match x {
+        Choice::A => 1,
+        Choice::B => 2,
+    }
+}
+
+fn bridge() -> Int {
+    typed(Choice::A)
+}
+
+fn independent() -> Int {
+    7
+}
+
+pub fn main() -> Int {
+    bridge() + independent()
+}
+"#
+}
+
+#[test]
+fn warm_reload_type_declaration_edit_misses_exact_transitive_users() {
+    let mut oracle = Oracle::load(type_closure_source()).expect("load");
+    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(8));
+
+    let edited = type_closure_source().replace("enum Choice { A, B }", "enum Choice { B, A }");
+    oracle.reload(&edited).expect("reload");
+
+    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(8));
+    let events = oracle.events();
+    assert_eq!(
+        missed_functions(&events),
+        BTreeSet::from([
+            "bridge".to_string(),
+            "main".to_string(),
+            "typed".to_string(),
+        ]),
+        "{events:?}"
+    );
+    let hits = hit_functions(&events);
+    assert!(hits.contains("independent"), "{events:?}");
+}
+
+#[test]
+fn recursive_scc_closure_hashes_are_stable_across_definition_order() {
+    let ab = r#"
+fn a() -> Int { b() }
+fn b() -> Int { a() }
+"#;
+    let ba = r#"
+fn b() -> Int { a() }
+fn a() -> Int { b() }
+"#;
+    let ab = Oracle::load(ab).expect("load ab");
+    let ba = Oracle::load(ba).expect("load ba");
+
+    assert_eq!(ab.fn_hash("a"), ba.fn_hash("a"));
+    assert_eq!(ab.fn_hash("b"), ba.fn_hash("b"));
 }
 
 #[test]

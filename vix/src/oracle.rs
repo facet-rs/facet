@@ -7,10 +7,10 @@
 //!   - every value is hashable and TOTALLY ORDERED (floats: total order with
 //!     NaN last; maps are BTreeMaps, so iteration IS canonical order; enum
 //!     variants order by DECLARATION index);
-//!   - memo keys are canonical-AST-hash × args-hash. Function identity is the
-//!     AST modulo spans: editing whitespace/comments anywhere — including
-//!     inside the function — does not change its hash (the rmeta-cutoff idea
-//!     in miniature);
+//!   - memo keys are fn type-closure hash × args-hash. Function identity is
+//!     the span-stripped canonical AST plus every referenced function/type
+//!     declaration transitively, so trivia costs nothing and real edits miss
+//!     only their blast radius;
 //!   - the aggregation unit v0 = named function call ("we don't memo 2 + x");
 //!   - primitives (`fetch`, `X::acquire`) are OBSERVATIONS pinned in a
 //!     journal; a warm run replays the pin instead of re-observing;
@@ -704,7 +704,8 @@ impl Oracle {
         }
     }
 
-    /// The canonical identity of a top-level function (AST modulo spans).
+    /// The closure identity of a top-level function (span-stripped code plus
+    /// referenced functions/types transitively).
     pub fn fn_hash(&self, name: &str) -> Option<u64> {
         self.fn_hashes.get(name).copied()
     }
