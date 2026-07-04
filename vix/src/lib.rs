@@ -20,14 +20,11 @@ pub mod ast {
 
 pub mod binder;
 pub(crate) mod data;
-pub mod engine;
 pub mod exec;
 pub mod fetch;
-pub mod graph;
 pub mod ide;
 pub mod machine;
 pub(crate) mod module;
-pub mod oracle;
 pub mod value;
 
 /// The tree-sitter grammar.json emitted from grammar.js at build time, embedded so
@@ -133,11 +130,8 @@ impl Default for VixParser {
 /// Runtime support for the generated lowering.
 pub mod support {
     use std::collections::BTreeMap;
-    use std::sync::Arc;
 
     use snark::parser::ResolvedCstNode;
-
-    use crate::value::Value;
 
     /// Half-open byte range into the source, carried by every AST node.
     #[derive(facet::Facet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -285,114 +279,14 @@ pub mod support {
         out
     }
 
-    pub trait ExecBackend: Send + Sync {
-        fn spawn(
-            &self,
-            command: &str,
-            plan: &crate::exec::ExecPlan,
-            capability: u64,
-            mounts: &[crate::exec::Mount],
-        ) -> Result<Arc<dyn PendingRun>, String>;
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub enum PathDemand {
-        File(String),
-        FinishRequired(PathPending),
-        Missing(PathMissing),
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct PathPending {
-        pub path: String,
-    }
-
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct PathMissing {
         pub path: String,
     }
 
-    impl PathPending {
-        fn new(path: &str) -> Self {
-            Self {
-                path: path.to_string(),
-            }
-        }
-    }
-
     impl PathMissing {
-        fn new(path: &str) -> Self {
-            Self {
-                path: path.to_string(),
-            }
-        }
-
         pub fn diagnostic(&self) -> String {
             format!("path `{}` is missing from resolved tree", self.path)
-        }
-    }
-
-    pub trait PendingRun: Send + Sync {
-        fn demand_path(&self, path: &str) -> Result<PathDemand, String>;
-        fn flush(&self) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String>;
-    }
-
-    pub(crate) mod runs {
-        use std::collections::HashMap;
-        use std::sync::{Arc, Mutex, OnceLock};
-
-        use super::PendingRun;
-
-        fn table() -> &'static Mutex<HashMap<u64, Arc<dyn PendingRun>>> {
-            static TABLE: OnceLock<Mutex<HashMap<u64, Arc<dyn PendingRun>>>> = OnceLock::new();
-            TABLE.get_or_init(|| Mutex::new(HashMap::new()))
-        }
-
-        pub fn register(run: Arc<dyn PendingRun>) -> u64 {
-            use std::sync::atomic::{AtomicU64, Ordering};
-            static NEXT: AtomicU64 = AtomicU64::new(1);
-            let id = NEXT.fetch_add(1, Ordering::SeqCst);
-            table().lock().unwrap().insert(id, run);
-            id
-        }
-
-        pub fn get(id: u64) -> Option<Arc<dyn PendingRun>> {
-            table().lock().unwrap().get(&id).cloned()
-        }
-    }
-
-    pub(crate) fn force_run(
-        id: u64,
-    ) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String> {
-        runs::get(id)
-            .ok_or_else(|| format!("pending run {id} not in the registry"))?
-            .flush()
-    }
-
-    pub(crate) struct LocalRun {
-        pub(crate) outputs: crate::exec::Tree,
-        pub(crate) event: crate::exec::ExecEvent,
-    }
-
-    impl PendingRun for LocalRun {
-        fn demand_path(&self, path: &str) -> Result<PathDemand, String> {
-            if let Some(contents) = self.outputs.entries.get(path) {
-                return Ok(PathDemand::File(contents.clone()));
-            }
-            let prefix = format!("{path}/");
-            if self
-                .outputs
-                .entries
-                .keys()
-                .any(|entry| entry.starts_with(&prefix))
-            {
-                return Ok(PathDemand::FinishRequired(PathPending::new(path)));
-            }
-            Ok(PathDemand::Missing(PathMissing::new(path)))
-        }
-
-        fn flush(&self) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String> {
-            Ok((self.outputs.clone(), self.event.clone()))
         }
     }
 
@@ -414,35 +308,6 @@ pub mod support {
             return Err(format!("no `{path}` in tree"));
         }
         Ok(crate::exec::Tree { entries })
-    }
-
-    pub(crate) fn splice_into(
-        value: Value,
-        argv: &mut Vec<String>,
-        mounts: &mut Vec<crate::exec::Mount>,
-    ) -> Result<(), String> {
-        match value {
-            Value::Path(p) | Value::Str(p) | Value::Flag(p) => argv.push(p),
-            Value::Int(i) => argv.push(i.to_string()),
-            Value::Float(f) => argv.push(f.to_string()),
-            Value::Array(vs) => {
-                for v in vs {
-                    splice_into(v, argv, mounts)?;
-                }
-            }
-            Value::Tree(t) => {
-                let root = format!("/m/{}", mounts.len());
-                let text = if t.entries.len() == 1 {
-                    format!("{root}/{}", t.entries.keys().next().unwrap())
-                } else {
-                    root.clone()
-                };
-                mounts.push(crate::exec::Mount { at: root, tree: t });
-                argv.push(text);
-            }
-            other => return Err(format!("cannot splice {other:?} into a command")),
-        }
-        Ok(())
     }
 
     pub(crate) fn assign_roles(

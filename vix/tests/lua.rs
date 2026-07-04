@@ -1,5 +1,5 @@
-//! Oracle: the lua.vix sketch (the playground corpus, the first vix design target)
-//! parses into the grammar-derived typed AST with the structure the sketch means.
+//! The lua.vix sketch (the playground corpus, the first vix design target)
+//! parses and highlights with the structure the sketch means.
 
 use vix::ast::{Arg, ArrayElem, CommandPart, Expr, Item, Pattern, Stmt, Type};
 
@@ -146,4 +146,21 @@ fn lua_sketch_lowers_to_typed_ast() {
         panic!("splice holds a `/` join");
     };
     assert_eq!(main_join.op, "/");
+}
+
+#[test]
+fn highlights_query_captures_lua_sample() {
+    let parser = vix::VixParser::new();
+    let source = lua_source();
+    let caps = parser.highlights(&source).expect("highlights");
+    assert!(!caps.is_empty());
+
+    let has = |name: &str, text: &str| {
+        caps.iter()
+            .any(|(cap, s, e)| cap == name && &source[*s as usize..*e as usize] == text)
+    };
+    assert!(has("keyword", "fn"), "{caps:?}");
+    assert!(has("function", "sources"), "fn decl name: {caps:?}");
+    assert!(has("string.special.path", "p\"lua.c\""), "{caps:?}");
+    assert!(caps.windows(2).all(|w| w[0].1 <= w[1].1), "sorted starts");
 }

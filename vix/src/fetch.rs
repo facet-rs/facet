@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use crate::exec::Tree;
-use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub struct FetchOutput {
@@ -73,48 +72,6 @@ impl FetchBackend for FakeFetchBackend {
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
-}
-
-pub(crate) struct FetchObservation {
-    pub(crate) key: String,
-    pub(crate) replayed: bool,
-}
-
-pub(crate) fn fetch_value(
-    journal: &mut BTreeMap<String, Value>,
-    backend: &dyn FetchBackend,
-    url: String,
-    declared_sha256: Option<String>,
-) -> Result<(Value, FetchObservation), String> {
-    let key = match &declared_sha256 {
-        Some(sha) => format!("fetch:{url}:sha256:{sha}"),
-        None => format!("fetch:{url}:observed"),
-    };
-    if let Some(pin) = journal.get(&key) {
-        let Value::Str(pinned_sha256) = pin else {
-            return Err(format!("fetch journal pin `{key}` is not a sha256 string"));
-        };
-        let fetched = backend.fetch(&url, Some(pinned_sha256))?;
-        verify_checksum(&url, Some(pinned_sha256), &fetched.actual_sha256)?;
-        return Ok((
-            Value::Tree(fetched.tree),
-            FetchObservation {
-                key,
-                replayed: true,
-            },
-        ));
-    }
-
-    let fetched = backend.fetch(&url, declared_sha256.as_deref())?;
-    verify_checksum(&url, declared_sha256.as_deref(), &fetched.actual_sha256)?;
-    journal.insert(key.clone(), Value::Str(fetched.actual_sha256));
-    Ok((
-        Value::Tree(fetched.tree),
-        FetchObservation {
-            key,
-            replayed: false,
-        },
-    ))
 }
 
 fn verify_checksum(

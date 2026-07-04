@@ -40,9 +40,6 @@ pub enum Value {
         given: Vec<(String, Value)>,
     },
     Tree(crate::exec::Tree),
-    PendingTree {
-        run: u64,
-    },
 }
 
 #[derive(facet::Facet, Debug, Clone)]
@@ -70,18 +67,13 @@ impl Value {
             Value::Fn { .. } => 11,
             Value::Closure { .. } => 12,
             Value::Partial { .. } => 13,
-            Value::Tree(_) | Value::PendingTree { .. } => 14,
+            Value::Tree(_) => 14,
         }
     }
 
     fn forced_tree(&self) -> Option<crate::exec::Tree> {
         match self {
             Value::Tree(t) => Some(t.clone()),
-            Value::PendingTree { run } => Some(
-                crate::support::force_run(*run)
-                    .expect("pending run flushes")
-                    .0,
-            ),
             _ => None,
         }
     }
@@ -115,7 +107,6 @@ impl Value {
                 self.hash_into(&mut h);
                 format!("tree({:08x}, {} paths)", h.finish() as u32, t.entries.len())
             }
-            Value::PendingTree { run } => format!("pending(run {run})"),
         }
     }
 
@@ -184,9 +175,7 @@ impl Value {
                     v.hash_into(h);
                 }
             }
-            Value::Tree(_) | Value::PendingTree { .. } => {
-                self.forced_tree().expect("tree rank").fingerprint().hash(h)
-            }
+            Value::Tree(_) => self.forced_tree().expect("tree rank").fingerprint().hash(h),
         }
     }
 
@@ -273,10 +262,7 @@ impl Ord for Value {
             | (Value::Partial { .. }, Value::Partial { .. }) => {
                 self.canon_hash().cmp(&other.canon_hash())
             }
-            (
-                Value::Tree(_) | Value::PendingTree { .. },
-                Value::Tree(_) | Value::PendingTree { .. },
-            ) => {
+            (Value::Tree(_), Value::Tree(_)) => {
                 let a = self.forced_tree().expect("tree rank");
                 let b = other.forced_tree().expect("tree rank");
                 a.entries.cmp(&b.entries)
@@ -284,76 +270,4 @@ impl Ord for Value {
             _ => self.rank().cmp(&other.rank()),
         }
     }
-}
-
-pub fn ship(value: &Value) -> Result<Vec<u8>, String> {
-    let forced = deep_force(value.clone())?;
-    phon::api::encode(&forced).map_err(|e| format!("ship: {e}"))
-}
-
-pub fn deep_force(value: Value) -> Result<Value, String> {
-    deep_force_with(value, &|id| {
-        crate::support::force_run(id).map(|(tree, _)| tree)
-    })
-}
-
-pub(crate) fn deep_force_with(
-    value: Value,
-    force: &impl Fn(u64) -> Result<crate::exec::Tree, String>,
-) -> Result<Value, String> {
-    Ok(match value {
-        Value::PendingTree { run } => Value::Tree(force(run)?),
-        Value::Tuple(vs) => Value::Tuple(
-            vs.into_iter()
-                .map(|v| deep_force_with(v, force))
-                .collect::<Result<_, _>>()?,
-        ),
-        Value::Array(vs) => Value::Array(
-            vs.into_iter()
-                .map(|v| deep_force_with(v, force))
-                .collect::<Result<_, _>>()?,
-        ),
-        Value::Map(m) => Value::Map(
-            m.into_iter()
-                .map(|(k, v)| {
-                    Ok::<_, String>((deep_force_with(k, force)?, deep_force_with(v, force)?))
-                })
-                .collect::<Result<_, _>>()?,
-        ),
-        Value::Struct { name, fields } => Value::Struct {
-            name,
-            fields: fields
-                .into_iter()
-                .map(|(n, v)| Ok::<_, String>((n, deep_force_with(v, force)?)))
-                .collect::<Result<_, _>>()?,
-        },
-        Value::Variant {
-            enum_name,
-            index,
-            name,
-            payload,
-        } => Value::Variant {
-            enum_name,
-            index,
-            name,
-            payload: match payload {
-                Payload::Unit => Payload::Unit,
-                Payload::Tuple(vs) => Payload::Tuple(
-                    vs.into_iter()
-                        .map(|v| deep_force_with(v, force))
-                        .collect::<Result<_, _>>()?,
-                ),
-                Payload::Record(fs) => Payload::Record(
-                    fs.into_iter()
-                        .map(|(n, v)| Ok::<_, String>((n, deep_force_with(v, force)?)))
-                        .collect::<Result<_, _>>()?,
-                ),
-            },
-        },
-        other => other,
-    })
-}
-
-pub fn receive(bytes: &[u8]) -> Result<Value, String> {
-    phon::api::decode(bytes).map_err(|e| format!("receive: {e}"))
 }
