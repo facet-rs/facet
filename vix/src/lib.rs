@@ -19,6 +19,7 @@ pub mod ast {
 }
 
 pub mod binder;
+pub(crate) mod data;
 pub mod engine;
 pub mod exec;
 pub mod graph;

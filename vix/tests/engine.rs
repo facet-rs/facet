@@ -12,6 +12,14 @@ fn sample(name: &str) -> String {
     .expect("read sample")
 }
 
+fn sample_fixture(name: &str) -> String {
+    std::fs::read_to_string(format!(
+        "{}/../playgrounds/snark/src/bundled/vix/samples/fixtures/{name}",
+        env!("CARGO_MANIFEST_DIR"),
+    ))
+    .expect("read sample fixture")
+}
+
 fn artifact_object(path: &str) -> Value {
     Value::Variant {
         enum_name: "Artifact".into(),
@@ -211,6 +219,44 @@ fn engine_matches_oracle_on_lua_vix_exec_seam() {
         observation_keys(&oracle_events)
     );
     assert_misses_subset(&engine_events, &oracle_events);
+}
+
+#[test]
+fn engine_matches_oracle_on_cargo_toml_projection() {
+    let manifest = sample_fixture("Cargo.toml");
+    let tree = Value::Tree(vix::exec::Tree::of(&[("Cargo.toml", &manifest)]));
+    assert_full_contract(
+        &sample("cargo.vix"),
+        "cargo_manifest",
+        &[("manifest", tree)],
+        false,
+    );
+}
+
+#[test]
+fn engine_matches_oracle_on_json_structural_values() {
+    let src = r#"
+pub fn parse(input: String) -> (String, Int, Bool) {
+    let doc = json(input);
+    let package = doc.get("package").unwrap();
+    (
+        package.get("name").unwrap(),
+        package.get("version").unwrap(),
+        doc.get("publish").unwrap(),
+    )
+}
+"#;
+    assert_full_contract(
+        src,
+        "parse",
+        &[(
+            "input",
+            Value::Str(
+                r#"{"package":{"name":"mini-real-crate","version":3},"publish":false}"#.into(),
+            ),
+        )],
+        false,
+    );
 }
 
 #[test]

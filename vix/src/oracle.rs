@@ -1006,6 +1006,10 @@ impl Oracle {
                             self.fetch(args)
                         } else if name.value == "extract" {
                             self.extract(args)
+                        } else if name.value == "toml" {
+                            self.toml(args)
+                        } else if name.value == "json" {
+                            self.json(args)
                         } else {
                             Err(format!("unknown callable `{}`", name.value))
                         }
@@ -1591,6 +1595,20 @@ impl Oracle {
                 "#include \"lua.h\"\n// compiler main",
             ),
         ])))
+    }
+
+    fn toml(&self, args: Vec<(Option<String>, Value)>) -> EvalResult {
+        let [(_, input)] = args.as_slice() else {
+            return Err("toml takes one string or single-blob tree".to_string());
+        };
+        crate::data::parse_toml(input.clone())
+    }
+
+    fn json(&self, args: Vec<(Option<String>, Value)>) -> EvalResult {
+        let [(_, input)] = args.as_slice() else {
+            return Err("json takes one string or single-blob tree".to_string());
+        };
+        crate::data::parse_json(input.clone())
     }
 
     /// `Cc::acquire(target)` — capability acquisition IS an observation; the

@@ -591,6 +591,10 @@ impl Engine {
                             self.fetch(args)
                         } else if name.value == "extract" {
                             self.extract(args)
+                        } else if name.value == "toml" {
+                            self.toml(args)
+                        } else if name.value == "json" {
+                            self.json(args)
                         } else {
                             Err(format!("unknown callable `{}`", name.value))
                         }
@@ -1150,6 +1154,22 @@ impl Engine {
                 "#include \"lua.h\"\n// compiler main",
             ),
         ])))
+    }
+
+    fn toml(&mut self, args: Vec<CallArg>) -> EvalResult {
+        let [arg] = args.as_slice() else {
+            return Err("toml takes one string or single-blob tree".to_string());
+        };
+        let input = self.demand(arg.node, Demand::Identity)?;
+        crate::data::parse_toml(input)
+    }
+
+    fn json(&mut self, args: Vec<CallArg>) -> EvalResult {
+        let [arg] = args.as_slice() else {
+            return Err("json takes one string or single-blob tree".to_string());
+        };
+        let input = self.demand(arg.node, Demand::Identity)?;
+        crate::data::parse_json(input)
     }
 
     fn acquire(&mut self, kind: &str, args: Vec<CallArg>) -> EvalResult {

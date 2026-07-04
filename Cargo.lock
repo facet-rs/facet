@@ -8151,6 +8151,8 @@ version = "0.0.0"
 dependencies = [
  "facet",
  "facet-json",
+ "facet-toml",
+ "facet-value",
  "phon",
  "snark",
  "snark-dsl",
