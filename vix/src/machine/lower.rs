@@ -218,10 +218,94 @@ impl<'a> FnLowerer<'a> {
                 Ok(dst)
             }
             ast::Expr::Call(call) => self.call(call),
+            ast::Expr::Match(m) => self.match_expr(m),
             other => Err(format!(
                 "expression {other:?} is outside the slice-1 subset"
             )),
         }
+    }
+
+    /// Match on scalars: literal arms compile to EqI64 + JumpIfZero
+    /// chains; the final arm must be irrefutable (wildcard or a
+    /// binding) until the checker owns exhaustiveness. THE LAZINESS
+    /// INVARIANT AT MACHINE LEVEL: an untaken arm's code never
+    /// executes, so an INVOKE it contains never fires — unused arms
+    /// never spawn, provable by trace absence.
+    fn match_expr(&mut self, m: &ast::MatchExpr) -> Result<u32, String> {
+        let scrut = self.expr(&m.scrutinee)?;
+        let result = self.alloc();
+        let mut jump_to_end: Vec<usize> = Vec::new();
+
+        let last = m.arms.len().saturating_sub(1);
+        for (i, arm) in m.arms.iter().enumerate() {
+            if arm.guard.is_some() {
+                return Err("match guards are outside the slice-2 subset".into());
+            }
+            let mut skip_patch: Option<usize> = None;
+            match &arm.pattern {
+                ast::Pattern::Number(n) => {
+                    let value: i64 = n
+                        .value
+                        .parse()
+                        .map_err(|_| format!("pattern {} does not parse", n.value))?;
+                    let lit = self.alloc();
+                    self.code.push(Op::ConstI64 { dst: lit, value });
+                    let test = self.alloc();
+                    self.code.push(Op::EqI64 { dst: test, a: scrut, b: lit });
+                    skip_patch = Some(self.code.len());
+                    self.code.push(Op::JumpIfZero { value: test, target: 0 });
+                }
+                ast::Pattern::Wildcard(_) => {
+                    if i != last {
+                        return Err("wildcard arm must be last".into());
+                    }
+                }
+                ast::Pattern::Identifier(name) => {
+                    if i != last {
+                        return Err("binding arm must be last".into());
+                    }
+                    self.slots.insert(name.value.clone(), scrut);
+                }
+                other => {
+                    return Err(format!(
+                        "pattern {other:?} is outside the slice-2 subset"
+                    ));
+                }
+            }
+            if skip_patch.is_none() && i != last {
+                return Err("irrefutable arm before the last arm".into());
+            }
+            let v = self.expr(&arm.value)?;
+            self.code.push(Op::CopyI64 { dst: result, src: v });
+            if i != last {
+                jump_to_end.push(self.code.len());
+                self.code.push(Op::Jump { target: 0 });
+            }
+            if let Some(at) = skip_patch {
+                let next = u32::try_from(self.code.len()).expect("code len fits u32");
+                let Op::JumpIfZero { value, .. } = self.code[at] else {
+                    unreachable!("skip patch site is a JumpIfZero");
+                };
+                self.code[at] = Op::JumpIfZero { value, target: next };
+            } else if i == last {
+                break;
+            }
+        }
+        match m.arms.last().map(|a| &a.pattern) {
+            Some(ast::Pattern::Wildcard(_) | ast::Pattern::Identifier(_)) => {}
+            _ => {
+                return Err(
+                    "match must end with an irrefutable arm (exhaustiveness \
+                     checking arrives with the checker)"
+                        .into(),
+                );
+            }
+        }
+        let end = u32::try_from(self.code.len()).expect("code len fits u32");
+        for at in jump_to_end {
+            self.code[at] = Op::Jump { target: end };
+        }
+        Ok(result)
     }
 
     /// A user-function call: a MEMO BOUNDARY through the INVOKE
@@ -301,6 +385,12 @@ fn max_call_argc(block: &ast::Block) -> usize {
                 in_expr(&b.right, max);
             }
             ast::Expr::Paren(p) => in_expr(&p.inner, max),
+            ast::Expr::Match(m) => {
+                in_expr(&m.scrutinee, max);
+                for arm in &m.arms {
+                    in_expr(&arm.value, max);
+                }
+            }
             _ => {}
         }
     }
@@ -380,6 +470,78 @@ pub fn poly(n: Int) -> Int {
             3,
             "three spawns total; `never` never appears"
         );
+    }
+
+    #[test]
+    fn fib_runs_linear_on_the_machine() {
+        let src = r#"
+fn fib(n: Int) -> Int {
+    match n {
+        0 => 0,
+        1 => 1,
+        _ => fib(n - 1) + fib(n - 2),
+    }
+}
+"#;
+        let mut m = Machine::load(src).expect("loads");
+        assert_eq!(m.demand_i64("fib", vec![20]).unwrap(), 6765);
+        let spawns = m
+            .trace()
+            .iter()
+            .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
+            .count();
+        // fib(0)..fib(20): 21 distinct invocations, 21 spawns — LINEAR.
+        // Naive recursion runs 13,529 more bodies than this.
+        assert_eq!(spawns, 21);
+    }
+
+    #[test]
+    fn untaken_arms_never_spawn() {
+        let src = r#"
+fn cheap(x: Int) -> Int { x + 1 }
+fn expensive(x: Int) -> Int { x * 1000000 }
+fn pick(b: Int) -> Int {
+    match b {
+        0 => cheap(b),
+        _ => expensive(b),
+    }
+}
+"#;
+        let mut m = Machine::load(src).expect("loads");
+        assert_eq!(m.demand_i64("pick", vec![0]).unwrap(), 1);
+        let spawns = m
+            .trace()
+            .iter()
+            .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
+            .count();
+        // pick + cheap. `expensive` sits in an untaken arm: its INVOKE
+        // never executed, so it never spawned, never demanded, never
+        // anything — the laziness proof by trace absence.
+        assert_eq!(spawns, 2);
+    }
+
+    #[test]
+    fn binding_arms_bind_the_scrutinee() {
+        let src = r#"
+fn f(n: Int) -> Int {
+    match n {
+        0 => 7,
+        m => m * 2,
+    }
+}
+"#;
+        let mut m = Machine::load(src).expect("loads");
+        assert_eq!(m.demand_i64("f", vec![0]).unwrap(), 7);
+        assert_eq!(m.demand_i64("f", vec![21]).unwrap(), 42);
+    }
+
+    #[test]
+    fn refutable_matches_without_irrefutable_tail_are_rejected() {
+        let src = "fn f(n: Int) -> Int { match n { 0 => 1, 1 => 2 } }";
+        let err = Machine::load(src)
+            .and_then(|mut m| m.demand_i64("f", vec![0]))
+            .unwrap_err();
+        assert!(err.contains("irrefutable"), "{err}");
     }
 
     #[test]
