@@ -4,7 +4,7 @@
 //!   - hidden choice rules (`_expr`, `_item`, …) become enums (names from ast()),
 //!   - fielded visible rules become structs; a field's type comes from what the
 //!     field can contain, its cardinality from the optional/repeat context around it
-//!     (bare -> T, optional -> Option<T>, repeat/sepBy -> Vec<T>),
+//!     (bare -> T, optional -> `Option<T>`, repeat/sepBy -> `Vec<T>`),
 //!   - mixed-alternative fields (e.g. array elements: flag | expr) become ad-hoc
 //!     enums named by ast() annotations,
 //!   - unfielded leaves (identifier, string, …) decode per their annotation.
@@ -1367,8 +1367,12 @@ module.exports = grammar({
         assert!(generated.contains("pub items: Vec<crate::support::Spanned<String>>"));
         assert!(generated.contains("pub elems: Vec<crate::support::Spanned<String>>"));
         assert!(generated.contains("pub entries: Vec<crate::support::Spanned<String>>"));
-        assert!(generated.contains(r#"items: crate::support::fields(n, "item").map(crate::support::node_text).collect(),"#));
-        assert!(generated.contains(r#"elems: crate::support::fields(n, "elem").map(crate::support::node_text).collect(),"#));
+        assert!(generated.contains(
+            r#"items: crate::support::fields(n, "item").map(crate::support::node_text).collect(),"#
+        ));
+        assert!(generated.contains(
+            r#"elems: crate::support::fields(n, "elem").map(crate::support::node_text).collect(),"#
+        ));
         assert!(generated.contains(r#"entries: crate::support::fields(n, "entry").map(crate::support::node_text).collect(),"#));
 
         let root = parse_resolved(grammar, "{a b}<c>[d,e,](f;g;)");

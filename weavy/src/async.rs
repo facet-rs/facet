@@ -15,7 +15,7 @@
 //! runtime often lives. So the async substrate has two execution lanes with
 //! IDENTICAL semantics:
 //!
-//! - [`Machine::Interp`] — a pure-Rust interpreter over the op list. Always
+//! - `Interp` — a pure-Rust interpreter over the op list. Always
 //!   available, no `unsafe`, no executable memory. This is the REFERENCE.
 //! - the JIT lane — the copy-and-patch chain, native-only (`jit` feature +
 //!   supported target), for speed. It must match the interpreter exactly
@@ -27,7 +27,7 @@
 //! # Why suspension works in BOTH lanes
 //!
 //! The state that must survive a suspend is never on the C stack. In the
-//! interpreter it's the [`Machine`]'s own fields (a program counter + a `Vec`
+//! interpreter it's the machine's own fields (a program counter + a `Vec`
 //! operand stack); suspend is a plain `return`. In the JIT it's an explicit
 //! `Ctx` struct + the driver, and the guaranteed-tail-call discipline
 //! (`become`, see `build.rs`) means the whole chain runs in one driver-owned
