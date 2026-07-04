@@ -6481,7 +6481,7 @@ pub fn linker_metadata(input: Blob) -> [String] { elf(input).linker_metadata }
                     super::super::elf::Projection::NeedsGlibc,
                 )
                 .unwrap(),
-                crate::oracle::Value::Str(value) if value == "GLIBC_2.2.5"
+                crate::value::Value::Str(value) if value == "GLIBC_2.2.5"
             ));
 
             let arch = machine.demand_i64("arch", vec![hello]).unwrap();

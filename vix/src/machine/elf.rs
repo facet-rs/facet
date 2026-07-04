@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::oracle::Value;
+use crate::value::Value;
 
 const EI_CLASS: usize = 4;
 const EI_DATA: usize = 5;

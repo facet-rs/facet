@@ -42,7 +42,8 @@ use weavy::task::Op;
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
 
 use crate::fetch::{FetchBackend, NoFetchBackend};
-use crate::oracle::{assign_roles, tool_for};
+use crate::support::{PathMissing, assign_roles, subtree, tool_for};
+use crate::value::{Payload, Value};
 
 /// INVOKE request frame contract (the lowering and this driver's
 /// shared knowledge): at `INVOKE_REGION` the body lays out
@@ -2339,7 +2340,7 @@ impl Driver {
         let tree = self.store.borrow().tree_entry(tree_handle)?;
         match tree {
             TreeEntry::Concrete(tree) => {
-                let projected = crate::oracle::subtree(&tree, path)?;
+                let projected = subtree(&tree, path)?;
                 Ok(self.store.borrow_mut().alloc_tree_concrete(projected).0)
             }
             TreeEntry::Merge(pending) => {
@@ -2354,7 +2355,7 @@ impl Driver {
                         return Ok(found);
                     }
                 }
-                Err(crate::oracle::PathMissing {
+                Err(PathMissing {
                     path: path.to_string(),
                 }
                 .diagnostic())
@@ -2371,7 +2372,7 @@ impl Driver {
                 } else {
                     self.schedule_run(run_id)?.outputs
                 };
-                let projected = crate::oracle::subtree(&tree, path)?;
+                let projected = subtree(&tree, path)?;
                 Ok(self.store.borrow_mut().alloc_tree_concrete(projected).0)
             }
         }
@@ -2528,7 +2529,7 @@ impl Driver {
                 return Err("nested merge tree projection is outside slice 4".into());
             }
         };
-        match crate::oracle::subtree(&tree, path) {
+        match subtree(&tree, path) {
             Ok(projected) => Ok(Some(
                 self.store.borrow_mut().alloc_tree_concrete(projected).0,
             )),
@@ -2779,7 +2780,7 @@ impl Driver {
         Ok((req.input_slot, handle))
     }
 
-    fn document_input_value(&mut self, handle: i64) -> Result<crate::oracle::Value, String> {
+    fn document_input_value(&mut self, handle: i64) -> Result<Value, String> {
         let entry = self
             .store
             .borrow()
@@ -2787,7 +2788,7 @@ impl Driver {
             .cloned()
             .ok_or_else(|| format!("store handle {handle}"))?;
         match entry.schema.as_str() {
-            "String" => Ok(crate::oracle::Value::Str(
+            "String" => Ok(Value::Str(
                 String::from_utf8(entry.bytes).map_err(|err| err.to_string())?,
             )),
             "Tree" => {
@@ -2795,7 +2796,7 @@ impl Driver {
                 let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
                     return Err("document parser input tree stayed pending".into());
                 };
-                Ok(crate::oracle::Value::Tree(tree))
+                Ok(Value::Tree(tree))
             }
             other => Err(format!(
                 "document parser input must be String or Tree, got {other}"
@@ -2923,24 +2924,22 @@ fn alloc_doc_from_value(
     store: &RefCell<ValueStore>,
     descriptors: &HashMap<String, Descriptor<String>>,
     schema_refs: &[String],
-    value: crate::oracle::Value,
+    value: Value,
 ) -> Result<i64, String> {
     match value {
-        crate::oracle::Value::Bool(value) => {
-            alloc_doc_variant(store, descriptors, 1, &[i64::from(value)])
-        }
-        crate::oracle::Value::Int(value) => alloc_doc_variant(store, descriptors, 2, &[value]),
-        crate::oracle::Value::Float(value) => alloc_doc_variant(
+        Value::Bool(value) => alloc_doc_variant(store, descriptors, 1, &[i64::from(value)]),
+        Value::Int(value) => alloc_doc_variant(store, descriptors, 2, &[value]),
+        Value::Float(value) => alloc_doc_variant(
             store,
             descriptors,
             3,
             &[super::value::TotalF64::new(value).get().to_bits() as i64],
         ),
-        crate::oracle::Value::Str(value) => {
+        Value::Str(value) => {
             let handle = store.borrow_mut().alloc_raw("String", value.into_bytes()).0;
             alloc_doc_variant(store, descriptors, 4, &[handle])
         }
-        crate::oracle::Value::Array(values) => {
+        Value::Array(values) => {
             let words = values
                 .into_iter()
                 .map(|value| alloc_doc_from_value(store, descriptors, schema_refs, value))
@@ -2951,10 +2950,10 @@ fn alloc_doc_from_value(
                 .0;
             alloc_doc_variant(store, descriptors, 5, &[handle])
         }
-        crate::oracle::Value::Map(entries) => {
+        Value::Map(entries) => {
             let mut pairs = Vec::new();
             for (key, value) in entries {
-                let crate::oracle::Value::Str(key) = key else {
+                let Value::Str(key) = key else {
                     return Err(format!("document object key must be a string, got {key:?}"));
                 };
                 let key_word = store.borrow_mut().alloc_raw("String", key.into_bytes()).0;
@@ -2973,7 +2972,7 @@ fn alloc_doc_from_value(
                 .0;
             alloc_doc_variant(store, descriptors, 6, &[handle])
         }
-        crate::oracle::Value::Variant {
+        Value::Variant {
             enum_name,
             name,
             index,
@@ -4520,11 +4519,11 @@ fn target_hash(store: &RefCell<ValueStore>, handle: i64) -> Result<u64, String> 
         && os.schema == "Os"
     {
         let index = usize::from(*os.bytes.first().ok_or("empty Os entry")?);
-        let value = crate::oracle::Value::Struct {
+        let value = Value::Struct {
             name: "Target".into(),
             fields: vec![(
                 "os".into(),
-                crate::oracle::Value::Variant {
+                Value::Variant {
                     enum_name: "Os".into(),
                     index,
                     name: match index {
@@ -4534,7 +4533,7 @@ fn target_hash(store: &RefCell<ValueStore>, handle: i64) -> Result<u64, String> 
                         _ => "Unknown",
                     }
                     .into(),
-                    payload: crate::oracle::Payload::Unit,
+                    payload: Payload::Unit,
                 },
             )],
         };
@@ -4546,23 +4545,17 @@ fn target_hash(store: &RefCell<ValueStore>, handle: i64) -> Result<u64, String> 
 }
 
 fn cc_capability_hash(fingerprint: &str) -> u64 {
-    let value = crate::oracle::Value::Struct {
+    let value = Value::Struct {
         name: "Cc".into(),
-        fields: vec![(
-            "fingerprint".into(),
-            crate::oracle::Value::Str(fingerprint.to_string()),
-        )],
+        fields: vec![("fingerprint".into(), Value::Str(fingerprint.to_string()))],
     };
     value.canon_hash()
 }
 
 fn ar_capability_hash(fingerprint: &str) -> u64 {
-    let value = crate::oracle::Value::Struct {
+    let value = Value::Struct {
         name: "Ar".into(),
-        fields: vec![(
-            "fingerprint".into(),
-            crate::oracle::Value::Str(fingerprint.to_string()),
-        )],
+        fields: vec![("fingerprint".into(), Value::Str(fingerprint.to_string()))],
     };
     value.canon_hash()
 }

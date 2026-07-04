@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use crate::exec::Tree;
-use crate::oracle::Value;
+use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub struct FetchOutput {
