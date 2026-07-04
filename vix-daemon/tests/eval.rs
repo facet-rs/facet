@@ -2,6 +2,8 @@
 //! client evaluates vix, receives the demand-event stream, and — in step mode —
 //! drives the evaluation one demand at a time.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use vix::exec::Tree;
 use vix::fetch::FakeFetchBackend;
 use vix_daemon::{
@@ -146,6 +148,94 @@ fn assert_summary_matches_events(events: &[DemandEvent], generation: u64) -> Eva
     summaries[0]
 }
 
+fn assert_run_id_and_span_invariants(events: &[DemandEvent]) {
+    let mut created = BTreeMap::new();
+    let mut scheduled = BTreeSet::new();
+    let mut finished = BTreeSet::new();
+
+    for event in events {
+        match event {
+            DemandEvent::Created {
+                run,
+                span,
+                command,
+                argv,
+                describe,
+                ..
+            } => {
+                assert!(span.end >= span.start, "created span: {event:?}");
+                assert!(!command.is_empty(), "created command: {event:?}");
+                assert!(!argv.is_empty(), "created argv: {event:?}");
+                assert!(!describe.is_empty(), "created describe: {event:?}");
+                assert!(
+                    created.insert(*run, *span).is_none(),
+                    "duplicate Created run {run}: {events:?}"
+                );
+            }
+            DemandEvent::Scheduled { run, span, .. } => {
+                assert!(span.end >= span.start, "scheduled span: {event:?}");
+                assert!(
+                    created.contains_key(run),
+                    "Scheduled before Created for run {run}: {events:?}"
+                );
+                scheduled.insert(*run);
+            }
+            DemandEvent::Finished {
+                run, span, outputs, ..
+            } => {
+                assert!(span.end >= span.start, "finished span: {event:?}");
+                assert!(
+                    created.contains_key(run),
+                    "Finished before Created for run {run}: {events:?}"
+                );
+                assert!(
+                    scheduled.contains(run),
+                    "Finished before Scheduled for run {run}: {events:?}"
+                );
+                assert!(!outputs.is_empty(), "finished outputs: {event:?}");
+                finished.insert(*run);
+            }
+            DemandEvent::Miss { span, .. } | DemandEvent::Hit { span, .. } => {
+                assert!(span.end >= span.start, "fn span: {event:?}");
+            }
+            DemandEvent::Observation { .. }
+            | DemandEvent::Summary { .. }
+            | DemandEvent::Done { .. }
+            | DemandEvent::Failed { .. } => {}
+        }
+    }
+
+    assert!(!created.is_empty(), "no Created events: {events:?}");
+    assert!(!scheduled.is_empty(), "no Scheduled events: {events:?}");
+    assert!(!finished.is_empty(), "no Finished events: {events:?}");
+    assert!(
+        scheduled.iter().all(|run| created.contains_key(run)),
+        "scheduled run without Created: {events:?}"
+    );
+    assert!(
+        finished.iter().all(|run| scheduled.contains(run)),
+        "finished run without Scheduled: {events:?}"
+    );
+    assert!(
+        created.values().any(|span| span.end > span.start),
+        "no source span on any run: {events:?}"
+    );
+
+    let done_result = events
+        .iter()
+        .find_map(|event| match event {
+            DemandEvent::Done { result, .. } => Some(result.as_str()),
+            _ => None,
+        })
+        .expect("Done event");
+    assert!(
+        created
+            .keys()
+            .any(|run| done_result.contains(&format!("run_id: Some({run})"))),
+        "terminal pending run does not match a Created run: {events:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn daemon_evaluates_lua_over_the_wire() {
     let addr = serve().await;
@@ -153,13 +243,15 @@ async fn daemon_evaluates_lua_over_the_wire() {
 
     let events = collect(&client, LUA, "lua", StepMode::Run).await;
 
-    // The evaluation ran and produced the linked binary tree.
+    // The evaluation ran to a terminal result; the machine renderer reports the
+    // pending exec identity instead of forcing the linked binary tree.
     let done = events.last().expect("at least the Done event");
     assert!(
-        matches!(done, DemandEvent::Done { result, .. } if result.contains("lua")),
+        matches!(done, DemandEvent::Done { result, .. } if result.contains("TreePending") && result.contains("run_id")),
         "final: {done:?}"
     );
     let summary = assert_summary_matches_events(&events, 1);
+    assert_run_id_and_span_invariants(&events);
     // The demand stream shows real work: fn miss for `lua`, exec dispatches,
     // exec serving classes, and fetch/acquire observations.
     assert!(

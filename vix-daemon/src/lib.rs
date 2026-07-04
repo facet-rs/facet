@@ -3,8 +3,8 @@
 //! # Why a daemon
 //!
 //! The IDE should not embed the evaluator; it should TALK to one. The daemon
-//! owns the oracle (soon: the real graph engine + a fleet of executors), and
-//! the IDE is a generated vox client. Because vox generates typed clients from
+//! owns the machine (soon: with a fleet of executors), and the IDE is a
+//! generated vox client. Because vox generates typed clients from
 //! the `#[service]` trait, "the browser IDE talks to a local daemon" is a
 //! generated `.ts` client over a websocket — not bespoke plumbing.
 //!
@@ -25,15 +25,19 @@
 //! connection. (Executor-side step gating is the next slice; the protocol here
 //! is the reusable part.)
 
-use facet::Facet;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 
-use tokio::sync::{mpsc, oneshot};
+use facet::Facet;
+use tokio::sync::mpsc;
 use vix::exec::ExecEvent;
 use vix::fetch::{FetchBackend, NoFetchBackend};
-use vix::oracle::{Event, Oracle};
+use vix::machine::driver::{
+    DriveEvent, StepCommand as MachineStepCommand, StepMode as MachineStepMode,
+};
+use vix::machine::lower::Machine;
 use vox::{Rx, Tx};
 
 /// How the client wants to receive the demand stream.
@@ -209,7 +213,7 @@ pub enum DemandEvent {
         key: String,
         replayed: bool,
     },
-    /// Evaluation completed; counts cover this generation's oracle events.
+    /// Evaluation completed; counts cover this generation's streamed events.
     Summary { summary: EvalSummary },
     /// Evaluation finished. `result` is the value's Debug form (v1).
     Done { generation: u64, result: String },
@@ -218,84 +222,6 @@ pub enum DemandEvent {
 }
 
 vox_schema::impl_reborrow_owned!(DemandEvent, StepCommand);
-
-impl DemandEvent {
-    fn from_oracle(generation: u64, at: u64, event: &Event) -> DemandEvent {
-        match event {
-            Event::Miss {
-                func,
-                span,
-                caller,
-                args,
-            } => DemandEvent::Miss {
-                generation,
-                at,
-                func: func.clone(),
-                span: (*span).into(),
-                caller: caller.clone(),
-                args: args.clone(),
-            },
-            Event::Hit {
-                func,
-                span,
-                caller,
-                args,
-            } => DemandEvent::Hit {
-                generation,
-                at,
-                func: func.clone(),
-                span: (*span).into(),
-                caller: caller.clone(),
-                args: args.clone(),
-            },
-            Event::Created {
-                command,
-                run,
-                span,
-                in_fn,
-                argv,
-                describe,
-            } => DemandEvent::Created {
-                generation,
-                at,
-                command: command.clone(),
-                run: *run,
-                span: (*span).into(),
-                in_fn: in_fn.clone(),
-                argv: argv.clone(),
-                describe: describe.clone(),
-            },
-            Event::Scheduled { command, run, span } => DemandEvent::Scheduled {
-                generation,
-                at,
-                command: command.clone(),
-                run: *run,
-                span: (*span).into(),
-            },
-            Event::Finished {
-                command,
-                run,
-                span,
-                event,
-                outputs,
-            } => DemandEvent::Finished {
-                generation,
-                at,
-                command: command.clone(),
-                run: *run,
-                span: (*span).into(),
-                serving: event.clone().into(),
-                outputs: outputs.clone(),
-            },
-            Event::Observation { key, replayed } => DemandEvent::Observation {
-                generation,
-                at,
-                key: key.clone(),
-                replayed: *replayed,
-            },
-        }
-    }
-}
 
 /// The daemon's RPC surface. The IDE gets a generated client for this.
 #[vox::service]
@@ -307,31 +233,32 @@ pub trait Daemon {
     async fn eval(&self, req: EvalRequest, control: Rx<StepCommand>, events: Tx<DemandEvent>);
 }
 
-struct EvalJob {
+struct EvalWork {
     source: String,
     entry: String,
-    sink: vix::oracle::EventSink,
+    mode: MachineStepMode,
+    generation: u64,
+    events: mpsc::UnboundedSender<DemandEvent>,
+    commands: std_mpsc::Receiver<StepCommand>,
+}
+
+struct EvalJob {
+    work: EvalWork,
     reply: std_mpsc::Sender<Result<String, String>>,
 }
 
 #[derive(Clone)]
-struct OracleActor {
+struct MachineActor {
     jobs: std_mpsc::Sender<EvalJob>,
 }
 
-impl OracleActor {
+impl MachineActor {
     fn start(fetch_backend: Arc<dyn FetchBackend>) -> Self {
         let (jobs, rx) = std_mpsc::channel::<EvalJob>();
         std::thread::spawn(move || {
-            let mut oracle: Option<Oracle> = None;
+            let mut machine: Option<Machine> = None;
             for job in rx {
-                let result = eval_on_actor(
-                    &mut oracle,
-                    fetch_backend.clone(),
-                    job.source,
-                    &job.entry,
-                    job.sink,
-                );
+                let result = eval_on_actor(&mut machine, fetch_backend.clone(), job.work);
                 let _ = job.reply.send(result);
             }
         });
@@ -342,49 +269,286 @@ impl OracleActor {
         &self,
         source: String,
         entry: String,
-        sink: vix::oracle::EventSink,
+        mode: MachineStepMode,
+        generation: u64,
+        events: mpsc::UnboundedSender<DemandEvent>,
+        commands: std_mpsc::Receiver<StepCommand>,
     ) -> Result<String, String> {
         let (reply, rx) = std_mpsc::channel::<Result<String, String>>();
         let job = EvalJob {
-            source,
-            entry,
-            sink,
+            work: EvalWork {
+                source,
+                entry,
+                mode,
+                generation,
+                events,
+                commands,
+            },
             reply,
         };
         self.jobs
             .send(job)
-            .map_err(|_| "oracle actor stopped".to_string())?;
+            .map_err(|_| "machine actor stopped".to_string())?;
         rx.recv()
-            .map_err(|_| "oracle actor stopped before replying".to_string())?
+            .map_err(|_| "machine actor stopped before replying".to_string())?
     }
 }
 
 fn eval_on_actor(
-    oracle: &mut Option<Oracle>,
+    machine: &mut Option<Machine>,
     fetch_backend: Arc<dyn FetchBackend>,
-    source: String,
-    entry: &str,
-    sink: vix::oracle::EventSink,
+    work: EvalWork,
 ) -> Result<String, String> {
-    if let Some(oracle) = oracle {
-        oracle.reload(&source)?;
+    let EvalWork {
+        source,
+        entry,
+        mode,
+        generation,
+        events,
+        commands,
+    } = work;
+
+    if let Some(machine) = machine {
+        machine.reload(&source)?;
     } else {
-        *oracle = Some(Oracle::load(&source)?.with_fetch_backend_arc(fetch_backend));
+        *machine = Some(Machine::load(&source)?.with_fetch_backend_arc(fetch_backend));
     }
-    let oracle = oracle.as_mut().expect("oracle loaded or reloaded");
-    oracle.set_sink(Some(sink));
-    let args = target_args_for(oracle, entry);
-    let result = oracle.call(entry, &args).map(|v| format!("{v:?}"));
-    oracle.set_sink(None);
+    let machine = machine.as_mut().expect("machine loaded or reloaded");
+    machine.clear_trace();
+    machine.set_step_mode(mode);
+
+    let mut adapter = MachineEventAdapter::new(
+        generation,
+        &source,
+        machine,
+        events,
+        commands,
+        mode == MachineStepMode::Step,
+    )?;
+    machine.set_event_sink(Some(Box::new(move |event| adapter.handle(event))));
+
+    let result = target_args_for(machine, &entry)
+        .and_then(|args| machine.demand_i64(&entry, args))
+        .and_then(|word| machine.render_result(&entry, word))
+        .map(|value| format!("{value:?}"));
+
+    machine.set_event_sink(None);
+    machine.set_step_mode(MachineStepMode::Run);
     result
 }
 
-/// The daemon owns one warm oracle actor per service instance. Cloned service
+struct MachineEventAdapter {
+    generation: u64,
+    events: mpsc::UnboundedSender<DemandEvent>,
+    commands: std_mpsc::Receiver<StepCommand>,
+    hash_names: BTreeMap<u64, String>,
+    fn_spans: BTreeMap<String, Span>,
+    run_spans: BTreeMap<u64, Span>,
+    synthetic_at: u64,
+    gating: bool,
+}
+
+impl MachineEventAdapter {
+    fn new(
+        generation: u64,
+        source: &str,
+        machine: &Machine,
+        events: mpsc::UnboundedSender<DemandEvent>,
+        commands: std_mpsc::Receiver<StepCommand>,
+        gating: bool,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            generation,
+            events,
+            commands,
+            hash_names: machine
+                .fn_hashes()
+                .into_iter()
+                .map(|(name, hash)| (hash, name))
+                .collect(),
+            fn_spans: function_spans(source)?,
+            run_spans: BTreeMap::new(),
+            synthetic_at: 0,
+            gating,
+        })
+    }
+
+    fn handle(&mut self, event: &DriveEvent) -> MachineStepCommand {
+        if let Some(event) = self.convert(event) {
+            if self.events.send(event).is_err() {
+                self.gating = false;
+                MachineStepCommand::Resume
+            } else {
+                self.wait_if_gated()
+            }
+        } else {
+            MachineStepCommand::Step
+        }
+    }
+
+    fn convert(&mut self, event: &DriveEvent) -> Option<DemandEvent> {
+        match event {
+            DriveEvent::MemoHit { fn_hash } => {
+                let func = self.func_name(*fn_hash);
+                Some(DemandEvent::Hit {
+                    generation: self.generation,
+                    at: self.next_synthetic_at(),
+                    span: self.func_span(&func),
+                    caller: None,
+                    args: Vec::new(),
+                    func,
+                })
+            }
+            DriveEvent::Spawned { fn_hash } => {
+                let func = self.func_name(*fn_hash);
+                Some(DemandEvent::Miss {
+                    generation: self.generation,
+                    at: self.next_synthetic_at(),
+                    span: self.func_span(&func),
+                    caller: None,
+                    args: Vec::new(),
+                    func,
+                })
+            }
+            DriveEvent::RunRequested {
+                run_id,
+                command_name,
+                argv,
+                describe,
+                span,
+                timestamp_us,
+                ..
+            } => {
+                let span = span_from_option(*span);
+                self.run_spans.insert(*run_id, span);
+                Some(DemandEvent::Created {
+                    generation: self.generation,
+                    at: *timestamp_us,
+                    command: command_name.clone(),
+                    run: *run_id,
+                    span,
+                    in_fn: None,
+                    argv: argv.clone(),
+                    describe: describe.clone(),
+                })
+            }
+            DriveEvent::RunStarted {
+                run_id,
+                command_name,
+                timestamp_us,
+                ..
+            } => Some(DemandEvent::Scheduled {
+                generation: self.generation,
+                at: *timestamp_us,
+                command: command_name.clone(),
+                run: *run_id,
+                span: self.run_span(*run_id),
+            }),
+            DriveEvent::RunCompleted {
+                run_id,
+                command_name,
+                serving,
+                outputs,
+                timestamp_us,
+                ..
+            } => Some(DemandEvent::Finished {
+                generation: self.generation,
+                at: *timestamp_us,
+                command: command_name.clone(),
+                run: *run_id,
+                span: self.run_span(*run_id),
+                serving: serving.clone().into(),
+                outputs: outputs.clone(),
+            }),
+            DriveEvent::Observation {
+                replayed,
+                key_text,
+                timestamp_us,
+                ..
+            } => Some(DemandEvent::Observation {
+                generation: self.generation,
+                at: *timestamp_us,
+                key: key_text.clone(),
+                replayed: *replayed,
+            }),
+            DriveEvent::Demanded { .. }
+            | DriveEvent::ParkedOn { .. }
+            | DriveEvent::Completed { .. }
+            | DriveEvent::SpawnedInvocation { .. }
+            | DriveEvent::StoreAlloc { .. } => None,
+        }
+    }
+
+    fn wait_if_gated(&mut self) -> MachineStepCommand {
+        if !self.gating {
+            return MachineStepCommand::Resume;
+        }
+        match self.commands.recv() {
+            Ok(StepCommand::Step) => MachineStepCommand::Step,
+            Ok(StepCommand::Resume) | Err(_) => {
+                self.gating = false;
+                MachineStepCommand::Resume
+            }
+        }
+    }
+
+    fn func_name(&self, hash: u64) -> String {
+        self.hash_names
+            .get(&hash)
+            .cloned()
+            .unwrap_or_else(|| format!("fn#{hash:016x}"))
+    }
+
+    fn func_span(&self, func: &str) -> Span {
+        self.fn_spans.get(func).copied().unwrap_or_else(empty_span)
+    }
+
+    fn run_span(&self, run_id: u64) -> Span {
+        self.run_spans
+            .get(&run_id)
+            .copied()
+            .unwrap_or_else(empty_span)
+    }
+
+    fn next_synthetic_at(&mut self) -> u64 {
+        let at = self.synthetic_at;
+        self.synthetic_at = self.synthetic_at.saturating_add(1);
+        at
+    }
+}
+
+fn function_spans(source: &str) -> Result<BTreeMap<String, Span>, String> {
+    let parser = vix::VixParser::new();
+    let file: vix::ast::SourceFile = parser.parse(source).map_err(|error| error.message)?;
+    Ok(file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            vix::ast::Item::Fn(function) => {
+                Some((function.name.value.clone(), function.span.into()))
+            }
+            vix::ast::Item::Enum(_) | vix::ast::Item::Struct(_) | vix::ast::Item::Use(_) => None,
+        })
+        .collect())
+}
+
+fn span_from_option(span: Option<(u32, u32)>) -> Span {
+    match span {
+        Some((start, end)) => Span { start, end },
+        None => empty_span(),
+    }
+}
+
+fn empty_span() -> Span {
+    Span { start: 0, end: 0 }
+}
+
+/// The daemon owns one warm machine actor per service instance. Cloned service
 /// handles share the same actor sender, so concurrent evals across connections
-/// serialize through one dedicated Oracle thread for v1 warmth.
+/// serialize through one dedicated machine thread for v1 warmth.
 #[derive(Clone)]
 pub struct DaemonService {
-    actor: OracleActor,
+    actor: MachineActor,
     next_generation: Arc<AtomicU64>,
 }
 
@@ -395,7 +559,7 @@ impl DaemonService {
 
     pub fn with_fetch_backend(backend: impl FetchBackend + 'static) -> Self {
         Self {
-            actor: OracleActor::start(Arc::new(backend)),
+            actor: MachineActor::start(Arc::new(backend)),
             next_generation: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -410,110 +574,52 @@ impl Default for DaemonService {
 impl Daemon for DaemonService {
     async fn eval(&self, req: EvalRequest, mut control: Rx<StepCommand>, events: Tx<DemandEvent>) {
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
-        // The sink pushes each event onto a std channel; when stepping, it also
-        // BLOCKS on a per-event permission oneshot. The oracle runs on a
-        // blocking thread; this async task bridges to the vox streams.
         let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<DemandEvent>();
-        let (gate_tx, gate_rx) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
         let mode = req.mode;
-
-        let gate_tx_for_oracle = gate_tx.clone();
-        let evt_tx_for_oracle = evt_tx.clone();
+        let machine_mode = match mode {
+            StepMode::Run => MachineStepMode::Run,
+            StepMode::Step => MachineStepMode::Step,
+        };
+        let (command_tx, command_rx) = std_mpsc::channel::<StepCommand>();
+        let disconnect_command_tx = command_tx.clone();
         let actor = self.actor.clone();
 
-        let oracle_task = tokio::task::spawn_blocking(move || {
-            let sink_evt = evt_tx_for_oracle.clone();
-            let sink_gate = gate_tx_for_oracle.clone();
-            let sink = move |at: u64, event: &Event| {
-                let de = DemandEvent::from_oracle(generation, at, event);
-                if mode == StepMode::Step {
-                    // Ask the async side for permission and block until granted.
-                    let (permit_tx, permit_rx) = oneshot::channel::<()>();
-                    if sink_gate.send(permit_tx).is_err() {
+        let control_task = tokio::spawn(async move {
+            if mode == StepMode::Step {
+                while let Ok(Some(command)) = control.recv().await {
+                    let command = *command.get();
+                    let _ = command_tx.send(command);
+                    if command == StepCommand::Resume {
                         return;
-                    }
-                    let _ = sink_evt.send(de);
-                    // Block the oracle thread until the client steps.
-                    let _ = permit_rx.blocking_recv();
-                } else {
-                    let _ = sink_evt.send(de);
-                }
-            };
-            actor.eval(req.source, req.entry, Box::new(sink))
-        });
-
-        // Drop our own sender halves: the oracle thread holds the only clones
-        // now, so evt_rx/gate_rx yield None exactly when the oracle finishes.
-        // (Holding these across the loop deadlocked v1: recv() never ended.)
-        drop(evt_tx);
-        drop(gate_tx);
-
-        // Bridge: forward events (gated by client Step/Resume) to the client.
-        //
-        // Invariants that keep this deadlock-free:
-        // - The sink requests a permit for EVERY event while in Step mode (the
-        //   mode is baked into the closure), so after Resume the bridge must
-        //   keep draining permits and grant them immediately.
-        // - At most one permit is ever outstanding (the oracle blocks on it).
-        // - A Step that arrives before its permit becomes a CREDIT, not a
-        //   dropped message.
-        let mut gating = mode == StepMode::Step;
-        let mut step_credits: u32 = 0;
-        let mut pending_permit: Option<oneshot::Sender<()>> = None;
-        let mut gate_rx = gate_rx;
-        let mut summary = EvalSummary::new(generation);
-
-        loop {
-            tokio::select! {
-                // The oracle wants permission to continue past an event.
-                permit = gate_rx.recv() => {
-                    if let Some(p) = permit {
-                        if !gating || step_credits > 0 {
-                            step_credits = step_credits.saturating_sub(1);
-                            let _ = p.send(());
-                        } else {
-                            pending_permit = Some(p);
-                        }
-                    }
-                    // None just means the oracle dropped its gate sender;
-                    // evt_rx closing is what ends the loop.
-                }
-                // The oracle produced an event (emitted before it blocks).
-                evt = evt_rx.recv() => {
-                    match evt {
-                        Some(de) => {
-                            summary.observe(&de);
-                            let _ = events.send(de).await;
-                        }
-                        None => break, // oracle finished
-                    }
-                }
-                // Client control (only relevant while gating).
-                cmd = control.recv(), if gating => {
-                    match cmd {
-                        Ok(Some(c)) => match c.get() {
-                            StepCommand::Step => match pending_permit.take() {
-                                Some(p) => { let _ = p.send(()); }
-                                None => step_credits += 1,
-                            },
-                            StepCommand::Resume => {
-                                gating = false;
-                                if let Some(p) = pending_permit.take() { let _ = p.send(()); }
-                            }
-                        },
-                        _ => { gating = false; if let Some(p) = pending_permit.take() { let _ = p.send(()); } }
                     }
                 }
             }
-        }
+            let _ = command_tx.send(StepCommand::Resume);
+        });
 
-        // Release a straggler permit, if any.
-        if let Some(p) = pending_permit.take() {
-            let _ = p.send(());
+        let machine_task = tokio::task::spawn_blocking(move || {
+            actor.eval(
+                req.source,
+                req.entry,
+                machine_mode,
+                generation,
+                evt_tx,
+                command_rx,
+            )
+        });
+
+        let mut summary = EvalSummary::new(generation);
+
+        while let Some(de) = evt_rx.recv().await {
+            summary.observe(&de);
+            if events.send(de).await.is_err() {
+                let _ = disconnect_command_tx.send(StepCommand::Resume);
+                break;
+            }
         }
 
         let _ = events.send(DemandEvent::Summary { summary }).await;
-        let final_event = match oracle_task.await {
+        let final_event = match machine_task.await {
             Ok(Ok(result)) => DemandEvent::Done { generation, result },
             Ok(Err(error)) => DemandEvent::Failed { generation, error },
             Err(join) => DemandEvent::Failed {
@@ -522,22 +628,18 @@ impl Daemon for DaemonService {
             },
         };
         let _ = events.send(final_event).await;
-        let _ = evt_tx;
+        control_task.abort();
     }
 }
 
 /// If `entry` takes a single `Target` parameter, supply a canned linux target.
-fn target_args_for(oracle: &Oracle, entry: &str) -> Vec<(&'static str, vix::oracle::Value)> {
-    use vix::oracle::Value;
-    if oracle.fn_param_is_target(entry) {
-        vec![(
-            "target",
-            Value::Struct {
-                name: "Target".into(),
-                fields: vec![("os".into(), Value::Str("linux-x86_64".into()))],
-            },
-        )]
-    } else {
-        vec![]
+fn target_args_for(machine: &Machine, entry: &str) -> Result<Vec<i64>, String> {
+    match machine.entry_param_schemas(entry) {
+        Some([]) => Ok(Vec::new()),
+        Some([schema]) if schema == "Target" => Ok(vec![machine.linux_target_handle()]),
+        Some(params) => Err(format!(
+            "entry `{entry}` has unsupported machine daemon params {params:?}"
+        )),
+        None => Err(format!("no function named {entry}")),
     }
 }
