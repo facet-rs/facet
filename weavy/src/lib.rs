@@ -9,6 +9,7 @@
 pub mod r#async;
 pub mod ir;
 pub mod mem;
+pub mod task;
 
 #[cfg(feature = "jit")]
 pub mod jit;
