@@ -43,6 +43,10 @@ pub const INVOKE_HOST: u32 = 0;
 pub const STORE_ALLOC_HOST: u32 = 1;
 pub const STORE_READ_HOST: u32 = 2;
 pub const STORE_TAG_HOST: u32 = 3;
+pub const MAP_EMPTY_HOST: u32 = 4;
+pub const MAP_INSERT_HOST: u32 = 5;
+pub const MAP_GET_HOST: u32 = 6;
+pub const OPTION_UNWRAP_HOST: u32 = 7;
 
 /// One compiled vix function: its task program identity plus where its
 /// INVOKE region and argument slots live. Cached content-addressed —
@@ -60,6 +64,9 @@ pub struct LoweredFn {
     /// word bytes; handles hash the target store entry's canonical
     /// content.
     pub arg_schemas: Vec<String>,
+    /// Schema ref for the returned word. Float returns canonicalize at
+    /// the memo boundary.
+    pub return_schema: String,
     /// Byte offset of this function's INVOKE region.
     pub invoke_region: u32,
     /// Byte offset of this function's STORE_ALLOC region:
@@ -129,6 +136,21 @@ pub struct ValueStore {
     by_content: HashMap<(String, ContentHash), i64>,
 }
 
+#[derive(Clone, Debug)]
+struct MapPair {
+    key_schema: String,
+    key_word: i64,
+    value_schema: String,
+    value_word: i64,
+}
+
+#[derive(Clone)]
+struct OrderedMapPair {
+    pair: MapPair,
+    key_hash: ContentHash,
+    value_hash: ContentHash,
+}
+
 impl ValueStore {
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -174,6 +196,149 @@ impl ValueStore {
         hasher.update(schema.as_bytes());
         hasher.update(&bytes);
         let content_hash = hasher.finalize().into();
+        let key = (schema.to_string(), content_hash);
+        if let Some(handle) = self.by_content.get(&key).copied() {
+            return (handle, true);
+        }
+        let handle = i64::try_from(self.entries.len()).expect("store handle fits i64");
+        self.entries.push(StoreEntry {
+            schema: schema.to_string(),
+            bytes,
+            content_hash,
+        });
+        self.by_content.insert(key, handle);
+        (handle, false)
+    }
+
+    fn alloc_map(
+        &mut self,
+        schema: &str,
+        pairs: Vec<MapPair>,
+        schema_refs: &[String],
+    ) -> Result<(i64, bool), String> {
+        let ordered = canonical_map_pairs(self, pairs);
+        let bytes = encode_map_pairs(&ordered, schema_refs)?;
+        let content_hash = hash_map_pairs(schema, &ordered);
+        Ok(self.alloc_with_hash(schema, bytes, content_hash))
+    }
+
+    fn map_pairs(
+        &self,
+        handle: i64,
+        schema_refs: &[String],
+    ) -> Result<(String, Vec<MapPair>), String> {
+        let entry = self
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        if !entry.schema.starts_with("Map") {
+            return Err(format!("handle {handle} is `{}`, not a Map", entry.schema));
+        }
+        Ok((
+            entry.schema.clone(),
+            decode_map_pairs(&entry.bytes, schema_refs)?,
+        ))
+    }
+
+    fn map_get(
+        &mut self,
+        handle: i64,
+        key_schema: &str,
+        key_word: i64,
+        value_schema: &str,
+        schema_refs: &[String],
+    ) -> Result<(i64, bool), String> {
+        let (_, pairs) = self.map_pairs(handle, schema_refs)?;
+        let key_hash = canonical_word_hash_in_store(self, key_schema, key_word);
+        let value = pairs
+            .into_iter()
+            .find(|pair| {
+                pair.key_schema == key_schema
+                    && canonical_word_hash_in_store(self, &pair.key_schema, pair.key_word)
+                        == key_hash
+            })
+            .map(|pair| pair.value_word);
+        match value {
+            Some(word) => self.alloc_option_some(value_schema, word, schema_refs),
+            None => self.alloc_option_none(value_schema, schema_refs),
+        }
+    }
+
+    fn alloc_option_none(
+        &mut self,
+        value_schema: &str,
+        schema_refs: &[String],
+    ) -> Result<(i64, bool), String> {
+        let option_schema = option_schema(value_schema);
+        let value_ref = schema_ref_for(value_schema, schema_refs)?;
+        let mut bytes = Vec::with_capacity(24);
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&value_ref.to_le_bytes());
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        let mut hasher = Sha256::new();
+        hasher.update(b"vix-option");
+        hasher.update(option_schema.as_bytes());
+        hasher.update(0i64.to_le_bytes());
+        let content_hash = hasher.finalize().into();
+        Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
+    }
+
+    fn alloc_option_some(
+        &mut self,
+        value_schema: &str,
+        value_word: i64,
+        schema_refs: &[String],
+    ) -> Result<(i64, bool), String> {
+        let option_schema = option_schema(value_schema);
+        let value_ref = schema_ref_for(value_schema, schema_refs)?;
+        let value_word = canonicalize_word_for_schema(value_schema, value_word);
+        let value_hash = canonical_word_hash_in_store(self, value_schema, value_word);
+        let mut bytes = Vec::with_capacity(24);
+        bytes.extend_from_slice(&1i64.to_le_bytes());
+        bytes.extend_from_slice(&value_ref.to_le_bytes());
+        bytes.extend_from_slice(&value_word.to_le_bytes());
+        let mut hasher = Sha256::new();
+        hasher.update(b"vix-option");
+        hasher.update(option_schema.as_bytes());
+        hasher.update(1i64.to_le_bytes());
+        hasher.update(value_schema.as_bytes());
+        hasher.update(value_hash);
+        let content_hash = hasher.finalize().into();
+        Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
+    }
+
+    fn option_unwrap(&self, handle: i64, schema_refs: &[String]) -> Result<i64, String> {
+        let entry = self
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        if !entry.schema.starts_with("Option<") {
+            return Err(format!(
+                "handle {handle} is `{}`, not an Option",
+                entry.schema
+            ));
+        }
+        if entry.bytes.len() != 24 {
+            return Err(format!("Option entry has {} bytes", entry.bytes.len()));
+        }
+        let tag = read_frame_word(&entry.bytes, 0);
+        if tag == 0 {
+            return Err("unwrap on None".into());
+        }
+        let schema_ref = read_frame_word(&entry.bytes, 8);
+        let schema = schema_refs
+            .get(usize::try_from(schema_ref).map_err(|_| format!("schema ref {schema_ref}"))?)
+            .ok_or_else(|| format!("schema ref {schema_ref}"))?;
+        Ok(canonicalize_word_for_schema(
+            schema,
+            read_frame_word(&entry.bytes, 16),
+        ))
+    }
+
+    fn alloc_with_hash(
+        &mut self,
+        schema: &str,
+        bytes: Vec<u8>,
+        content_hash: ContentHash,
+    ) -> (i64, bool) {
         let key = (schema.to_string(), content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
@@ -254,12 +419,12 @@ impl Driver {
 
     /// Demand one invocation's identity: the edge of the machine.
     /// Returns the scalar result (slice 1).
-    pub fn demand(&mut self, fn_ref: usize, args: Vec<i64>) -> i64 {
+    pub fn demand(&mut self, fn_ref: usize, args: Vec<i64>) -> Result<i64, String> {
         let key = self.memo_key(fn_ref, &args);
         self.trace.push(DriveEvent::Demanded { fn_hash: key.0 });
         if let Some(&v) = self.memo.get(&key) {
             self.trace.push(DriveEvent::MemoHit { fn_hash: key.0 });
-            return v;
+            return Ok(v);
         }
 
         // Waiters: invocation key → executions parked on it (by index
@@ -277,6 +442,7 @@ impl Driver {
             match requests {
                 Burst::Done(value) => {
                     let done_key = exec.key.clone();
+                    let value = self.canonicalize_return_word(exec.fn_ref, value);
                     self.memo.insert(done_key.clone(), value);
                     self.trace.push(DriveEvent::Completed {
                         fn_hash: done_key.0,
@@ -338,10 +504,14 @@ impl Driver {
                     executions[ix] = Some(exec);
                     continue;
                 }
+                Burst::Error(err) => return Err(err),
             }
         }
 
-        *self.memo.get(&key).expect("root invocation completed")
+        self.memo
+            .get(&key)
+            .copied()
+            .ok_or_else(|| "root invocation did not complete".to_string())
     }
 
     fn spawn(
@@ -388,6 +558,10 @@ impl Driver {
             exec.awaited.resize(want, 0);
 
             let mut requests: Vec<InvokeRequest> = Vec::new();
+            let descriptors = &self.descriptors;
+            let schema_refs = &self.schema_refs;
+            let store_cell = &self.store;
+            let store_events = RefCell::new(Vec::new());
             let mut invoke = |frame: &mut [u8]| {
                 let word = |i: usize| {
                     i64::from_le_bytes(
@@ -411,15 +585,11 @@ impl Driver {
             let mut store_alloc = |frame: &mut [u8]| {
                 let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
                 let type_ref = read_frame_word(frame, store_alloc_region + 8);
-                let schema = self
-                    .schema_refs
-                    .get(usize::try_from(type_ref).expect("schema ref non-negative"))
-                    .unwrap_or_else(|| panic!("schema ref {type_ref}"))
-                    .clone();
+                let schema =
+                    schema_name_for(type_ref, schema_refs).unwrap_or_else(|err| panic!("{err}"));
                 let variant_index = read_frame_word(frame, store_alloc_region + 16);
                 let field_count = read_frame_word(frame, store_alloc_region + 24) as usize;
-                let descriptor = self
-                    .descriptors
+                let descriptor = descriptors
                     .get(&schema)
                     .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
                 let mut bytes = vec![0u8; descriptor.layout.size];
@@ -432,13 +602,10 @@ impl Driver {
                     frame,
                     store_alloc_region + 32,
                 );
-                let (handle, deduped) =
-                    self.store
-                        .borrow_mut()
-                        .alloc(&schema, bytes, &self.descriptors);
+                let (handle, deduped) = store_cell.borrow_mut().alloc(&schema, bytes, descriptors);
                 write_frame_word(frame, dst_slot, handle);
                 let schema_ref = hash_u64(&schema);
-                self.trace.push(DriveEvent::StoreAlloc {
+                store_events.borrow_mut().push(DriveEvent::StoreAlloc {
                     schema_ref,
                     deduped,
                 });
@@ -448,12 +615,11 @@ impl Driver {
                 let dst_slot = read_frame_word(frame, store_read_region) as usize;
                 let handle = read_frame_word(frame, store_read_region + 8);
                 let field_index = read_frame_word(frame, store_read_region + 16) as usize;
-                let store = self.store.borrow();
+                let store = store_cell.borrow();
                 let entry = store
                     .entry(handle)
                     .unwrap_or_else(|| panic!("store handle {handle}"));
-                let descriptor = self
-                    .descriptors
+                let descriptor = descriptors
                     .get(&entry.schema)
                     .unwrap_or_else(|| panic!("descriptor for schema `{}`", entry.schema));
                 let offset = field_offset(descriptor, &entry.bytes, field_index);
@@ -464,12 +630,11 @@ impl Driver {
             let mut store_tag = |frame: &mut [u8]| {
                 let dst_slot = read_frame_word(frame, store_tag_region) as usize;
                 let handle = read_frame_word(frame, store_tag_region + 8);
-                let store = self.store.borrow();
+                let store = store_cell.borrow();
                 let entry = store
                     .entry(handle)
                     .unwrap_or_else(|| panic!("store handle {handle}"));
-                let descriptor = self
-                    .descriptors
+                let descriptor = descriptors
                     .get(&entry.schema)
                     .unwrap_or_else(|| panic!("descriptor for schema `{}`", entry.schema));
                 let tag = read_variant_tag(&entry.bytes, descriptor);
@@ -480,16 +645,146 @@ impl Driver {
                 );
             };
 
-            let mut hosts: [HostFn<'_>; 4] = [
+            let host_error = RefCell::new(None::<String>);
+
+            let mut map_empty = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
+                    let schema = schema_name_for(
+                        read_frame_word(frame, store_alloc_region + 8),
+                        schema_refs,
+                    )?;
+                    let (handle, deduped) =
+                        store_cell
+                            .borrow_mut()
+                            .alloc_map(&schema, Vec::new(), schema_refs)?;
+                    write_frame_word(frame, dst_slot, handle);
+                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                        schema_ref: hash_u64(&schema),
+                        deduped,
+                    });
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut map_insert = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
+                    let map_handle = read_frame_word(frame, store_alloc_region + 8);
+                    let map_schema = schema_name_for(
+                        read_frame_word(frame, store_alloc_region + 16),
+                        schema_refs,
+                    )?;
+                    let key_schema = schema_name_for(
+                        read_frame_word(frame, store_alloc_region + 24),
+                        schema_refs,
+                    )?;
+                    let key_word = canonicalize_word_for_schema(
+                        &key_schema,
+                        read_frame_word(frame, store_alloc_region + 32),
+                    );
+                    let value_schema = schema_name_for(
+                        read_frame_word(frame, store_alloc_region + 40),
+                        schema_refs,
+                    )?;
+                    let value_word = canonicalize_word_for_schema(
+                        &value_schema,
+                        read_frame_word(frame, store_alloc_region + 48),
+                    );
+                    let (stored_schema, mut pairs) =
+                        store_cell.borrow().map_pairs(map_handle, schema_refs)?;
+                    if stored_schema != map_schema {
+                        return Err(format!(
+                            "expected map schema {map_schema}, got {stored_schema}"
+                        ));
+                    }
+                    pairs.push(MapPair {
+                        key_schema,
+                        key_word,
+                        value_schema,
+                        value_word,
+                    });
+                    let (handle, deduped) =
+                        store_cell
+                            .borrow_mut()
+                            .alloc_map(&map_schema, pairs, schema_refs)?;
+                    write_frame_word(frame, dst_slot, handle);
+                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                        schema_ref: hash_u64(&map_schema),
+                        deduped,
+                    });
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut map_get = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
+                    let map_handle = read_frame_word(frame, store_alloc_region + 8);
+                    let value_schema = schema_name_for(
+                        read_frame_word(frame, store_alloc_region + 16),
+                        schema_refs,
+                    )?;
+                    let key_schema = schema_name_for(
+                        read_frame_word(frame, store_alloc_region + 24),
+                        schema_refs,
+                    )?;
+                    let key_word = canonicalize_word_for_schema(
+                        &key_schema,
+                        read_frame_word(frame, store_alloc_region + 32),
+                    );
+                    let (handle, _) = store_cell.borrow_mut().map_get(
+                        map_handle,
+                        &key_schema,
+                        key_word,
+                        &value_schema,
+                        schema_refs,
+                    )?;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut option_unwrap = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
+                    let handle = read_frame_word(frame, store_alloc_region + 8);
+                    let value = store_cell.borrow().option_unwrap(handle, schema_refs)?;
+                    write_frame_word(frame, dst_slot, value);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut hosts: [HostFn<'_>; 8] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
                 &mut store_tag,
+                &mut map_empty,
+                &mut map_insert,
+                &mut map_get,
+                &mut option_unwrap,
             ];
             let step = exec
                 .task
                 .run_hosted(&self.program, &exec.ready, &exec.awaited, &mut hosts);
             drop(hosts);
+            self.trace.extend(store_events.into_inner());
+            if let Some(err) = host_error.into_inner() {
+                return Burst::Error(err);
+            }
 
             match step {
                 TaskStep::Done => {
@@ -527,15 +822,15 @@ impl Driver {
 
     fn canonical_word_hash(&self, schema: &str, word: i64) -> ContentHash {
         let store = self.store.borrow();
-        match store.entry(word) {
-            Some(entry) if entry.schema == schema => return entry.content_hash,
-            _ => {}
+        canonical_word_hash_in_store(&store, schema, word)
+    }
+
+    fn canonicalize_return_word(&self, fn_ref: usize, word: i64) -> i64 {
+        if self.fns[fn_ref].return_schema == "Float" {
+            canonicalize_word_for_schema("Float", word)
+        } else {
+            word
         }
-        let mut hasher = Sha256::new();
-        hasher.update(b"vix-scalar-word");
-        hasher.update(schema.as_bytes());
-        hasher.update(word.to_le_bytes());
-        hasher.finalize().into()
     }
 }
 
@@ -545,6 +840,7 @@ enum Burst {
         new_requests: Vec<InvokeRequest>,
         parked_input: usize,
     },
+    Error(String),
 }
 
 fn hash_u64(value: impl Hash) -> u64 {
@@ -559,6 +855,153 @@ fn read_frame_word(frame: &[u8], at: usize) -> i64 {
 
 fn write_frame_word(frame: &mut [u8], at: usize, value: i64) {
     frame[at..at + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn canonicalize_word_for_schema(schema: &str, word: i64) -> i64 {
+    if schema == "Float" {
+        super::value::TotalF64::new(f64::from_bits(word as u64))
+            .get()
+            .to_bits() as i64
+    } else {
+        word
+    }
+}
+
+fn canonical_word_hash_in_store(store: &ValueStore, schema: &str, word: i64) -> ContentHash {
+    match store.entry(word) {
+        Some(entry) if entry.schema == schema => return entry.content_hash,
+        _ => {}
+    }
+    let word = canonicalize_word_for_schema(schema, word);
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-scalar-word");
+    hasher.update(schema.as_bytes());
+    hasher.update(word.to_le_bytes());
+    hasher.finalize().into()
+}
+
+fn canonical_map_pairs(store: &ValueStore, pairs: Vec<MapPair>) -> Vec<OrderedMapPair> {
+    let mut pairs: Vec<OrderedMapPair> = pairs
+        .into_iter()
+        .map(|mut pair| {
+            pair.key_word = canonicalize_word_for_schema(&pair.key_schema, pair.key_word);
+            pair.value_word = canonicalize_word_for_schema(&pair.value_schema, pair.value_word);
+            let key_hash = canonical_word_hash_in_store(store, &pair.key_schema, pair.key_word);
+            let value_hash =
+                canonical_word_hash_in_store(store, &pair.value_schema, pair.value_word);
+            OrderedMapPair {
+                pair,
+                key_hash,
+                value_hash,
+            }
+        })
+        .collect();
+    pairs.sort_by(|a, b| {
+        a.pair
+            .key_schema
+            .cmp(&b.pair.key_schema)
+            .then_with(|| a.key_hash.cmp(&b.key_hash))
+    });
+    let mut deduped: Vec<OrderedMapPair> = Vec::new();
+    for pair in pairs {
+        match deduped.last_mut() {
+            Some(last)
+                if last.pair.key_schema == pair.pair.key_schema
+                    && last.key_hash == pair.key_hash =>
+            {
+                *last = pair;
+                continue;
+            }
+            _ => {}
+        }
+        deduped.push(pair);
+    }
+    deduped
+}
+
+fn encode_map_pairs(pairs: &[OrderedMapPair], schema_refs: &[String]) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::with_capacity(8 + pairs.len() * 32);
+    bytes.extend_from_slice(
+        &i64::try_from(pairs.len())
+            .expect("map pair count fits i64")
+            .to_le_bytes(),
+    );
+    for pair in pairs {
+        bytes.extend_from_slice(&schema_ref_for(&pair.pair.key_schema, schema_refs)?.to_le_bytes());
+        bytes.extend_from_slice(&pair.pair.key_word.to_le_bytes());
+        bytes.extend_from_slice(
+            &schema_ref_for(&pair.pair.value_schema, schema_refs)?.to_le_bytes(),
+        );
+        bytes.extend_from_slice(&pair.pair.value_word.to_le_bytes());
+    }
+    Ok(bytes)
+}
+
+fn decode_map_pairs(bytes: &[u8], schema_refs: &[String]) -> Result<Vec<MapPair>, String> {
+    if bytes.len() < 8 {
+        return Err("Map entry is shorter than its count word".into());
+    }
+    let count = usize::try_from(read_frame_word(bytes, 0)).map_err(|_| "negative map count")?;
+    let expected = 8 + count * 32;
+    if bytes.len() != expected {
+        return Err(format!(
+            "Map entry has {} bytes, expected {expected}",
+            bytes.len()
+        ));
+    }
+    let mut pairs = Vec::with_capacity(count);
+    for i in 0..count {
+        let at = 8 + i * 32;
+        let key_schema = schema_name_for(read_frame_word(bytes, at), schema_refs)?;
+        let key_word = read_frame_word(bytes, at + 8);
+        let value_schema = schema_name_for(read_frame_word(bytes, at + 16), schema_refs)?;
+        let value_word = read_frame_word(bytes, at + 24);
+        pairs.push(MapPair {
+            key_schema,
+            key_word,
+            value_schema,
+            value_word,
+        });
+    }
+    Ok(pairs)
+}
+
+fn hash_map_pairs(schema: &str, pairs: &[OrderedMapPair]) -> ContentHash {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-map");
+    hasher.update(schema.as_bytes());
+    hasher.update(
+        i64::try_from(pairs.len())
+            .expect("map pair count fits i64")
+            .to_le_bytes(),
+    );
+    for pair in pairs {
+        hasher.update(pair.pair.key_schema.as_bytes());
+        hasher.update(pair.key_hash);
+        hasher.update(pair.pair.value_schema.as_bytes());
+        hasher.update(pair.value_hash);
+    }
+    hasher.finalize().into()
+}
+
+fn schema_ref_for(schema: &str, schema_refs: &[String]) -> Result<i64, String> {
+    schema_refs
+        .iter()
+        .position(|candidate| candidate == schema)
+        .map(|index| i64::try_from(index).expect("schema ref fits i64"))
+        .ok_or_else(|| format!("schema `{schema}` has no schema ref"))
+}
+
+fn schema_name_for(schema_ref: i64, schema_refs: &[String]) -> Result<String, String> {
+    let index = usize::try_from(schema_ref).map_err(|_| format!("schema ref {schema_ref}"))?;
+    schema_refs
+        .get(index)
+        .cloned()
+        .ok_or_else(|| format!("schema ref {schema_ref}"))
+}
+
+fn option_schema(value_schema: &str) -> String {
+    format!("Option<{value_schema}>")
 }
 
 fn hash_value_bytes(
@@ -580,6 +1023,10 @@ fn hash_value_into(
     hasher.update(b"vix-value");
     hasher.update(descriptor.schema.as_bytes());
     match &descriptor.access {
+        Access::Scalar if descriptor.schema == "Float" => {
+            let word = read_frame_word(bytes, 0);
+            hasher.update(canonicalize_word_for_schema("Float", word).to_le_bytes());
+        }
         Access::Scalar => hasher.update(bytes),
         Access::Handle { target } => {
             let handle = read_frame_word(bytes, 0);
@@ -696,7 +1143,10 @@ fn write_alloc_fields(
     };
     assert_eq!(fields.len(), field_count, "STORE_ALLOC field count");
     for (i, field) in fields.iter().enumerate() {
-        let value = read_frame_word(frame, field_base + i * 8);
+        let value = canonicalize_word_for_schema(
+            &field.descriptor.schema,
+            read_frame_word(frame, field_base + i * 8),
+        );
         let dst = field.offset;
         let field_size = field.descriptor.layout.size;
         assert!(
@@ -799,6 +1249,7 @@ mod tests {
             task_fn: FnId(0),
             arg_offsets: vec![0],
             arg_schemas: vec!["Int".into()],
+            return_schema: "Int".into(),
             invoke_region: 8,
             store_alloc_region: 0,
             store_read_region: 0,
@@ -818,7 +1269,7 @@ mod tests {
         driver.memo.insert(zero, 0);
         driver.memo.insert(one, 1);
 
-        assert_eq!(driver.demand(0, vec![20]), 6765);
+        assert_eq!(driver.demand(0, vec![20]).unwrap(), 6765);
 
         let spawns = driver
             .trace
@@ -846,7 +1297,7 @@ mod tests {
         let one = driver.memo_key(0, &[1]);
         driver.memo.insert(zero, 0);
         driver.memo.insert(one, 1);
-        driver.demand(0, vec![15]);
+        driver.demand(0, vec![15]).unwrap();
         let cold_spawns = driver
             .trace
             .iter()
@@ -854,7 +1305,7 @@ mod tests {
             .count();
 
         driver.trace.clear();
-        assert_eq!(driver.demand(0, vec![15]), 610);
+        assert_eq!(driver.demand(0, vec![15]).unwrap(), 610);
         let warm_spawns = driver
             .trace
             .iter()
@@ -891,6 +1342,7 @@ mod tests {
             task_fn: FnId(1),
             arg_offsets: vec![],
             arg_schemas: vec![],
+            return_schema: "Int".into(),
             invoke_region: 8,
             store_alloc_region: 0,
             store_read_region: 0,
@@ -901,7 +1353,7 @@ mod tests {
         let one = driver.memo_key(0, &[1]);
         driver.memo.insert(zero, 0);
         driver.memo.insert(one, 1);
-        driver.demand(0, vec![5]);
+        driver.demand(0, vec![5]).unwrap();
         assert!(
             !driver.trace.iter().any(|e| matches!(
                 e,
@@ -957,13 +1409,14 @@ mod tests {
             task_fn: FnId(0),
             arg_offsets: vec![0],
             arg_schemas: vec!["Int".into()],
+            return_schema: "Int".into(),
             invoke_region: 24,
             store_alloc_region: 0,
             store_read_region: 0,
             store_tag_region: 0,
         }];
         let mut driver = Driver::new(program, fns);
-        assert_eq!(driver.demand(0, vec![6]), 42);
+        assert_eq!(driver.demand(0, vec![6]).unwrap(), 42);
         let spawns = driver
             .trace
             .iter()
@@ -1003,6 +1456,7 @@ mod tests {
                 task_fn: FnId(0),
                 arg_offsets,
                 arg_schemas,
+                return_schema: "Int".into(),
                 invoke_region: 128,
                 store_alloc_region: 0,
                 store_read_region: 48,
@@ -1053,7 +1507,7 @@ mod tests {
         ];
         let mut driver = store_driver_for(code, vec![], vec![]);
 
-        assert_eq!(driver.demand(0, vec![]), 21);
+        assert_eq!(driver.demand(0, vec![]).unwrap(), 21);
         assert_eq!(driver.store_len(), 1);
         assert!(driver
             .trace
@@ -1091,7 +1545,7 @@ mod tests {
         ]);
         let mut driver = store_driver_for(code, vec![], vec![]);
 
-        assert_eq!(driver.demand(0, vec![]), 1);
+        assert_eq!(driver.demand(0, vec![]).unwrap(), 1);
         assert_eq!(driver.store_len(), 1);
         assert!(driver
             .trace
@@ -1136,8 +1590,8 @@ mod tests {
         assert!(d2);
         assert_eq!(h1, h2, "same value returns the same handle");
 
-        assert_eq!(driver.demand(0, vec![h1]), 55);
-        assert_eq!(driver.demand(0, vec![h2]), 55);
+        assert_eq!(driver.demand(0, vec![h1]).unwrap(), 55);
+        assert_eq!(driver.demand(0, vec![h2]).unwrap(), 55);
         let spawns = driver
             .trace
             .iter()

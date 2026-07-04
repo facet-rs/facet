@@ -112,7 +112,15 @@ pub(crate) fn load_module_tables(source: &str) -> Result<ModuleTables, String> {
 pub(crate) fn type_schema_name(ty: &ast::Type) -> Result<String, String> {
     match ty {
         ast::Type::Path(path) => type_path_schema_name(path),
-        ast::Type::Generic(generic) => type_path_schema_name(&generic.base),
+        ast::Type::Generic(generic) => {
+            let base = type_path_schema_name(&generic.base)?;
+            let args = generic
+                .args
+                .iter()
+                .map(type_schema_name)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(format!("{base}<{}>", args.join(",")))
+        }
         ast::Type::Array(_) => Ok("Array".into()),
         ast::Type::Tuple(_) => Ok("Tuple".into()),
         ast::Type::Fn(_) => Ok("Fn".into()),
@@ -132,6 +140,7 @@ pub(crate) fn type_path_schema_name(path: &ast::TypePath) -> Result<String, Stri
 fn declared_descriptors(file: &SourceFile) -> Result<HashMap<String, Descriptor<String>>, String> {
     let mut descriptors = HashMap::new();
     descriptors.insert("Int".into(), declared_mem::i64_("Int".into()));
+    descriptors.insert("Float".into(), declared_mem::f64_("Float".into()));
 
     for item in &file.items {
         match item {
@@ -193,6 +202,7 @@ fn descriptor_for_type(ty: &ast::Type) -> Result<Descriptor<String>, String> {
     let schema = type_schema_name(ty)?;
     Ok(match schema.as_str() {
         "Int" => declared_mem::i64_("Int".into()),
+        "Float" => declared_mem::f64_("Float".into()),
         "String" => handle_i64("StringRef", "String"),
         other => handle_i64(format!("{other}Ref"), other.to_string()),
     })
