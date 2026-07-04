@@ -25,6 +25,8 @@ pub mod fetch;
 pub mod ide;
 pub mod machine;
 pub(crate) mod module;
+#[cfg(all(feature = "real-process", not(target_arch = "wasm32")))]
+pub mod real_process;
 pub mod value;
 
 /// The tree-sitter grammar.json emitted from grammar.js at build time, embedded so
@@ -298,16 +300,25 @@ pub mod support {
             let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
             return Ok(crate::exec::Tree::of(&[(base, contents.as_str())]));
         }
+        if let Some(contents) = tree.blobs.get(path) {
+            let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
+            return Ok(crate::exec::Tree::of_blobs(&[(base, contents.as_slice())]));
+        }
         let prefix = format!("{path}/");
         let entries: BTreeMap<String, String> = tree
             .entries
             .iter()
             .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|r| (r.to_string(), v.clone())))
             .collect();
-        if entries.is_empty() {
+        let blobs: BTreeMap<String, Vec<u8>> = tree
+            .blobs
+            .iter()
+            .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|r| (r.to_string(), v.clone())))
+            .collect();
+        if entries.is_empty() && blobs.is_empty() {
             return Err(format!("no `{path}` in tree"));
         }
-        Ok(crate::exec::Tree { entries })
+        Ok(crate::exec::Tree { entries, blobs })
     }
 
     pub(crate) fn assign_roles(

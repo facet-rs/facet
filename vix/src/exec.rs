@@ -31,7 +31,7 @@
 //! here is the grammar's output shape; the toy role extraction in the oracle
 //! stands in for the real snark command grammars.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 // ---------------------------------------------------------------------------
@@ -39,10 +39,12 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 // ---------------------------------------------------------------------------
 
 /// A content-addressed tree: path -> contents. (The oracle's stand-in for the
-/// CAS; contents are strings because the design doesn't care about bytes.)
+/// CAS. Text entries keep the fake lane readable; blob entries carry real
+/// process artifacts without lossy UTF-8 conversion.
 #[derive(facet::Facet, Debug, Clone, Default, PartialEq, Eq)]
 pub struct Tree {
     pub entries: BTreeMap<String, String>,
+    pub blobs: BTreeMap<String, Vec<u8>>,
 }
 
 impl Tree {
@@ -52,7 +54,52 @@ impl Tree {
                 .iter()
                 .map(|(p, c)| (p.to_string(), c.to_string()))
                 .collect(),
+            blobs: BTreeMap::new(),
         }
+    }
+
+    pub fn of_blobs(entries: &[(&str, &[u8])]) -> Tree {
+        Tree {
+            entries: BTreeMap::new(),
+            blobs: entries
+                .iter()
+                .map(|(p, c)| (p.to_string(), c.to_vec()))
+                .collect(),
+        }
+    }
+
+    pub fn insert_bytes(&mut self, path: impl Into<String>, contents: Vec<u8>) {
+        let path = path.into();
+        match String::from_utf8(contents) {
+            Ok(text) => {
+                self.entries.insert(path, text);
+            }
+            Err(err) => {
+                self.blobs.insert(path, err.into_bytes());
+            }
+        }
+    }
+
+    pub fn bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.entries
+            .get(path)
+            .map(|contents| contents.as_bytes().to_vec())
+            .or_else(|| self.blobs.get(path).cloned())
+    }
+
+    pub fn display_entries(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .entries
+            .iter()
+            .map(|(path, contents)| (path.clone(), contents.clone()))
+            .collect();
+        out.extend(
+            self.blobs
+                .iter()
+                .map(|(path, contents)| (path.clone(), format!("<blob:{} bytes>", contents.len()))),
+        );
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 
     /// The TIER-1 fingerprint: everything, coarsely. Any change anywhere in
@@ -61,6 +108,12 @@ impl Tree {
     pub fn fingerprint(&self) -> u64 {
         let mut h = DefaultHasher::new();
         for (path, contents) in &self.entries {
+            0u8.hash(&mut h);
+            path.hash(&mut h);
+            contents.hash(&mut h);
+        }
+        for (path, contents) in &self.blobs {
+            1u8.hash(&mut h);
             path.hash(&mut h);
             contents.hash(&mut h);
         }
@@ -279,6 +332,9 @@ pub struct Outcome {
 /// never sees a filesystem; it sees this.
 pub trait Snapshot {
     fn read(&self, path: &str) -> Option<String>;
+    fn read_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.read(path).map(String::into_bytes)
+    }
     fn list(&self, dir: &str) -> Option<Vec<String>>;
 }
 
@@ -291,8 +347,12 @@ pub trait Tool {
 }
 
 fn content_hash(s: &str) -> u64 {
+    content_hash_bytes(s.as_bytes())
+}
+
+fn content_hash_bytes(bytes: &[u8]) -> u64 {
     let mut h = DefaultHasher::new();
-    s.hash(&mut h);
+    bytes.hash(&mut h);
     h.finish()
 }
 
@@ -329,14 +389,30 @@ impl Snapshot for MountedWorld<'_> {
         None
     }
 
+    fn read_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        for m in self.mounts {
+            if let Some(rest) = path.strip_prefix(&m.at) {
+                let key = rest.trim_start_matches('/');
+                if let Some(contents) = m.tree.entries.get(key) {
+                    return Some(contents.as_bytes().to_vec());
+                }
+                if let Some(contents) = m.tree.blobs.get(key) {
+                    return Some(contents.clone());
+                }
+            }
+        }
+        None
+    }
+
     fn list(&self, dir: &str) -> Option<Vec<String>> {
         for m in self.mounts {
             if let Some(rest) = dir.strip_prefix(&m.at) {
                 let prefix = rest.trim_start_matches('/');
-                let names: Vec<String> = m
+                let names: BTreeSet<String> = m
                     .tree
                     .entries
                     .keys()
+                    .chain(m.tree.blobs.keys())
                     .filter(|k| {
                         prefix.is_empty()
                             || k.strip_prefix(prefix).is_some_and(|r| r.starts_with('/'))
@@ -344,7 +420,7 @@ impl Snapshot for MountedWorld<'_> {
                     .cloned()
                     .collect();
                 if !names.is_empty() || prefix.is_empty() {
-                    return Some(names);
+                    return Some(names.into_iter().collect());
                 }
             }
         }
@@ -378,6 +454,24 @@ impl<'a> ObservedWorld<'a> {
         got
     }
 
+    pub fn read_bytes(&mut self, path: &str) -> Option<Vec<u8>> {
+        let got = self.world.read_bytes(path);
+        let obs = match &got {
+            Some(contents) => ReadObservation::Content(content_hash_bytes(contents)),
+            None => ReadObservation::Absent,
+        };
+        self.read_set.entries.insert(path.to_string(), obs);
+        got
+    }
+
+    pub fn peek_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.world.read_bytes(path)
+    }
+
+    pub fn peek_list(&self, dir: &str) -> Option<Vec<String>> {
+        self.world.list(dir)
+    }
+
     pub fn list(&mut self, dir: &str) -> Option<Vec<String>> {
         let got = self.world.list(dir);
         let obs = match &got {
@@ -399,9 +493,9 @@ impl<'a> ObservedWorld<'a> {
 /// never a false positive.
 pub fn verify(read_set: &ReadSet, world: &dyn Snapshot) -> bool {
     read_set.entries.iter().all(|(path, obs)| match obs {
-        ReadObservation::Content(hash) => {
-            world.read(path).is_some_and(|c| content_hash(&c) == *hash)
-        }
+        ReadObservation::Content(hash) => world
+            .read_bytes(path)
+            .is_some_and(|c| content_hash_bytes(&c) == *hash),
         ReadObservation::Absent => {
             if let Some(dir) = path.strip_suffix('/') {
                 world.list(dir).is_none()
