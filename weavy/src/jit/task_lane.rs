@@ -90,6 +90,11 @@ fn compile_fn(f: &crate::task::Fn) -> CompiledFn {
             Op::Call { .. } => (task_stencils::CALL, task_stencils::CALL_CONT),
             Op::Ret { .. } => (task_stencils::RET, task_stencils::RET_CONT),
             Op::HostCall { .. } => (task_stencils::HOSTCALL, task_stencils::HOSTCALL_CONT),
+            // A 64-bit immediate store is type-blind: ConstF64 IS the
+            // CONST stencil with float bits in the immediate.
+            Op::ConstF64 { .. } => (task_stencils::CONST, task_stencils::CONST_CONT),
+            Op::AddF64 { .. } => (task_stencils::ADD_F64, task_stencils::ADD_F64_CONT),
+            Op::MulF64 { .. } => (task_stencils::MUL_F64, task_stencils::MUL_F64_CONT),
         };
         let start = layout.emit_stencil(bytes);
         starts.push(start);
@@ -155,6 +160,15 @@ fn compile_fn(f: &crate::task::Fn) -> CompiledFn {
                 let continuation = starts.get(i + 1).copied().unwrap_or(done) as u64;
                 layout.push_prog_word(root.prog_index, continuation);
                 layout.push_prog_word(root.prog_index, u64::from(*host));
+            }
+            Op::ConstF64 { dst, bits } => {
+                layout.push_prog_word(root.prog_index, u64::from(*dst));
+                layout.push_prog_word(root.prog_index, *bits);
+            }
+            Op::AddF64 { dst, a, b } | Op::MulF64 { dst, a, b } => {
+                layout.push_prog_word(root.prog_index, u64::from(*dst));
+                layout.push_prog_word(root.prog_index, u64::from(*a));
+                layout.push_prog_word(root.prog_index, u64::from(*b));
             }
         }
     }
@@ -353,6 +367,37 @@ mod tests {
     use super::*;
     use crate::mem::Layout;
     use crate::task::{Fn as TaskFn, Task};
+
+    #[test]
+    fn f64_arithmetic_matches_the_interpreter_bitwise() {
+        // (2.5 * awaited) + 0.125, parked mid-flight with float state
+        // frame-resident. Same hardware, same IEEE ops in both lanes:
+        // results must match BITWISE.
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: Layout { size: 32, align: 8 },
+                code: vec![
+                    Op::ConstF64 { dst: 0, bits: 2.5f64.to_bits() },
+                    Op::Await { dst: 8, input: 0 },
+                    Op::MulF64 { dst: 16, a: 0, b: 8 },
+                    Op::ConstF64 { dst: 24, bits: 0.125f64.to_bits() },
+                    Op::AddF64 { dst: 16, a: 16, b: 24 },
+                    Op::Ret { src: 16, size: 8 },
+                ],
+            }],
+        };
+        let awaited_bits = 3.25f64.to_bits() as i64;
+        differential(
+            &program,
+            FnId(0),
+            &[(&[false], &[0]), (&[true], &[awaited_bits])],
+        );
+        // And the value itself is what IEEE says.
+        let mut interp = Task::spawn(&program, FnId(0));
+        interp.run(&program, &[true], &[awaited_bits]);
+        let bits = interp.result_i64() as u64;
+        assert_eq!(f64::from_bits(bits), 2.5 * 3.25 + 0.125);
+    }
 
     #[test]
     fn sync_host_calls_match_the_interpreter_and_never_park() {

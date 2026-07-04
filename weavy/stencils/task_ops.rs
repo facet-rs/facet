@@ -191,6 +191,34 @@ pub unsafe extern "C" fn weavy_task_ret(cx: *mut Ctx) {
     *c.exit = 3;
 }
 
+/// `frame[dst] = frame[a] + frame[b]` (f64, IEEE) — immediates: [dst, a, b].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_add_f64(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let a = *c.prog.add(1);
+    let b = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let va = f64::from_bits(read_i64(c.frame, a) as u64);
+    let vb = f64::from_bits(read_i64(c.frame, b) as u64);
+    write_i64(c.frame, dst, (va + vb).to_bits() as i64);
+    cont!(cx);
+}
+
+/// `frame[dst] = frame[a] * frame[b]` (f64, IEEE) — immediates: [dst, a, b].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_mul_f64(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let a = *c.prog.add(1);
+    let b = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let va = f64::from_bits(read_i64(c.frame, a) as u64);
+    let vb = f64::from_bits(read_i64(c.frame, b) as u64);
+    write_i64(c.frame, dst, (va * vb).to_bits() as i64);
+    cont!(cx);
+}
+
 /// SYNC HOST CALL — immediates: [continuation, host_index], consumed
 /// before exit (unlike await: a host call always completes, so
 /// re-entry happens at the continuation, never here). Exit code 4;

@@ -111,6 +111,17 @@ pub enum Op {
         stride: u32,
         src: u32,
     },
+    /// `frame[dst] = f64::from_bits(bits)` — the immediate carries the
+    /// BIT PATTERN (keeps `Op: Eq`; the machine is type-blind about a
+    /// 64-bit store anyway — the op exists so lowerings and readers
+    /// see intent). Total-order/NaN canonicalization is the LANGUAGE's
+    /// value-level concern (vix's TotalF64), not the machine's:
+    /// arithmetic here is plain IEEE, identical across lanes.
+    ConstF64 { dst: u32, bits: u64 },
+    /// `frame[dst] = frame[a] + frame[b]` (f64, IEEE).
+    AddF64 { dst: u32, a: u32, b: u32 },
+    /// `frame[dst] = frame[a] * frame[b]` (f64, IEEE).
+    MulF64 { dst: u32, a: u32, b: u32 },
     /// SYNC host call (Amos's refinement, ruled): a host operation
     /// that ALWAYS completes — no await-point numbering, no park
     /// machinery, no spill obligations beyond frame residency (which
@@ -318,6 +329,22 @@ impl Task {
                     let v = read_i64_at(&self.arena, base + src as usize);
                     let at = base + arr as usize + ix as usize * stride as usize;
                     write_i64_at(&mut self.arena, at, v);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::ConstF64 { dst, bits } => {
+                    write_i64_at(&mut self.arena, base + dst as usize, bits as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::AddF64 { dst, a, b } => {
+                    let va = f64::from_bits(read_i64_at(&self.arena, base + a as usize) as u64);
+                    let vb = f64::from_bits(read_i64_at(&self.arena, base + b as usize) as u64);
+                    write_i64_at(&mut self.arena, base + dst as usize, (va + vb).to_bits() as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::MulF64 { dst, a, b } => {
+                    let va = f64::from_bits(read_i64_at(&self.arena, base + a as usize) as u64);
+                    let vb = f64::from_bits(read_i64_at(&self.arena, base + b as usize) as u64);
+                    write_i64_at(&mut self.arena, base + dst as usize, (va * vb).to_bits() as i64);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::HostCall { host } => {
