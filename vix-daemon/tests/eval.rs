@@ -2,18 +2,53 @@
 //! client evaluates vix, receives the demand-event stream, and — in step mode —
 //! drives the evaluation one demand at a time.
 
+use vix::exec::Tree;
+use vix::fetch::FakeFetchBackend;
 use vix_daemon::{
     DaemonClient, DaemonDispatcher, DaemonService, DemandEvent, EvalRequest, EvalSummary, Serving,
     StepCommand, StepMode,
 };
 
 const LUA: &str = include_str!("../../playgrounds/snark/src/bundled/vix/samples/lua.vix");
+const LUA_URL: &str = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
+const LUA_ARCHIVE_BYTES: &[u8] = b"lua-5.4.8 fixture archive";
+
+const PURE_WARM_SOURCE: &str = r#"
+fn leaf() -> Int {
+    21
+}
+
+fn main() -> Int {
+    leaf() + leaf()
+}
+"#;
+
+fn lua_fetch_backend() -> FakeFetchBackend {
+    FakeFetchBackend::new().with_archive(
+        LUA_URL,
+        LUA_ARCHIVE_BYTES,
+        Tree::of(&[
+            ("lua-5.4.8/src/lua.h", "// lua.h api"),
+            (
+                "lua-5.4.8/src/lua.c",
+                "#include \"lua.h\"\n// interpreter main",
+            ),
+            ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
+            ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
+            (
+                "lua-5.4.8/src/luac.c",
+                "#include \"lua.h\"\n// compiler main",
+            ),
+        ]),
+    )
+}
 
 async fn serve() -> String {
     let listener = vox::WsListener::bind("127.0.0.1:0").await.unwrap();
     let addr = format!("ws://{}", listener.local_addr().unwrap());
     tokio::spawn(async move {
-        let _ = vox::serve_listener(listener, DaemonDispatcher::new(DaemonService::new())).await;
+        let service = DaemonService::with_fetch_backend(lua_fetch_backend());
+        let _ = vox::serve_listener(listener, DaemonDispatcher::new(service)).await;
     });
     addr
 }
@@ -194,6 +229,41 @@ async fn warm_daemon_whitespace_edit_is_one_hit() {
         second[2]
     );
     assert_summary_matches_events(&second, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn serve_path_comment_only_summary_reports_zero_misses() {
+    let addr = serve().await;
+    let client: DaemonClient = vox::connect_lane(&addr).await.unwrap();
+
+    let first = collect(&client, PURE_WARM_SOURCE, "main", StepMode::Run).await;
+    assert!(
+        matches!(first.last(), Some(DemandEvent::Done { .. })),
+        "first eval did not finish cleanly: {first:?}"
+    );
+    assert_summary_matches_events(&first, 1);
+
+    let second = collect(
+        &client,
+        &format!("{PURE_WARM_SOURCE}\n// comment-only serve reload\n"),
+        "main",
+        StepMode::Run,
+    )
+    .await;
+    let summary = assert_summary_matches_events(&second, 2);
+
+    assert_eq!(
+        summary,
+        EvalSummary {
+            generation: 2,
+            hits: 1,
+            misses: 0,
+            created: 0,
+            scheduled: 0,
+            finished: 0,
+        },
+        "serve-path comment-only summary: {second:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

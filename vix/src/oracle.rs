@@ -674,6 +674,11 @@ impl Oracle {
         self
     }
 
+    pub fn with_fetch_backend_arc(mut self, backend: Arc<dyn FetchBackend>) -> Self {
+        self.fetch_backend = backend;
+        self
+    }
+
     pub fn journal(&self) -> BTreeMap<String, Value> {
         self.journal.borrow().clone()
     }

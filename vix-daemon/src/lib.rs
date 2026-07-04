@@ -32,6 +32,7 @@ use std::sync::mpsc as std_mpsc;
 
 use tokio::sync::{mpsc, oneshot};
 use vix::exec::ExecEvent;
+use vix::fetch::{FetchBackend, NoFetchBackend};
 use vix::oracle::{Event, Oracle};
 use vox::{Rx, Tx};
 
@@ -319,12 +320,18 @@ struct OracleActor {
 }
 
 impl OracleActor {
-    fn start() -> Self {
+    fn start(fetch_backend: Arc<dyn FetchBackend>) -> Self {
         let (jobs, rx) = std_mpsc::channel::<EvalJob>();
         std::thread::spawn(move || {
             let mut oracle: Option<Oracle> = None;
             for job in rx {
-                let result = eval_on_actor(&mut oracle, job.source, &job.entry, job.sink);
+                let result = eval_on_actor(
+                    &mut oracle,
+                    fetch_backend.clone(),
+                    job.source,
+                    &job.entry,
+                    job.sink,
+                );
                 let _ = job.reply.send(result);
             }
         });
@@ -354,6 +361,7 @@ impl OracleActor {
 
 fn eval_on_actor(
     oracle: &mut Option<Oracle>,
+    fetch_backend: Arc<dyn FetchBackend>,
     source: String,
     entry: &str,
     sink: vix::oracle::EventSink,
@@ -361,7 +369,7 @@ fn eval_on_actor(
     if let Some(oracle) = oracle {
         oracle.reload(&source)?;
     } else {
-        *oracle = Some(Oracle::load(&source)?);
+        *oracle = Some(Oracle::load(&source)?.with_fetch_backend_arc(fetch_backend));
     }
     let oracle = oracle.as_mut().expect("oracle loaded or reloaded");
     oracle.set_sink(Some(sink));
@@ -382,8 +390,12 @@ pub struct DaemonService {
 
 impl DaemonService {
     pub fn new() -> Self {
+        Self::with_fetch_backend(NoFetchBackend)
+    }
+
+    pub fn with_fetch_backend(backend: impl FetchBackend + 'static) -> Self {
         Self {
-            actor: OracleActor::start(),
+            actor: OracleActor::start(Arc::new(backend)),
             next_generation: Arc::new(AtomicU64::new(1)),
         }
     }
