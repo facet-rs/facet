@@ -61,6 +61,21 @@ pub fn f64_<SchemaRef>(schema: SchemaRef) -> Descriptor<SchemaRef> {
     scalar(schema, 8, 8)
 }
 
+/// A task-lifetime immutable value-store handle. The handle itself is
+/// one machine word inline; the target descriptor is compile-time
+/// knowledge carried by [`Access::Handle`].
+#[must_use]
+pub fn handle<SchemaRef>(schema: SchemaRef, target: SchemaRef) -> Descriptor<SchemaRef> {
+    Descriptor {
+        schema,
+        layout: Layout {
+            size: core::mem::size_of::<usize>(),
+            align: core::mem::align_of::<usize>(),
+        },
+        access: Access::Handle { target },
+    }
+}
+
 /// An INLINE fixed-count array: `count` elements, `stride` apart,
 /// living wherever the descriptor is placed (a frame, a struct field)
 /// — unboxed, part of the containing layout's bytes.
@@ -317,18 +332,36 @@ mod tests {
     }
 
     #[test]
+    fn handles_are_word_sized_and_record_their_target_schema() {
+        let h = handle("TreeRef", "Tree");
+        assert_eq!(
+            h.layout,
+            Layout {
+                size: core::mem::size_of::<usize>(),
+                align: core::mem::align_of::<usize>(),
+            }
+        );
+        let Access::Handle { target } = &h.access else {
+            panic!("handle access expected");
+        };
+        assert_eq!(*target, "Tree");
+    }
+
+    #[test]
     fn enums_lead_with_the_smallest_fitting_tag() {
         // Three variants: (), (i64), (bool, bool).
-        let e = declared_enum((), vec![
-            vec![],
-            vec![i64_(())],
-            vec![bool_(()), bool_(())],
-        ]);
+        let e = declared_enum((), vec![vec![], vec![i64_(())], vec![bool_(()), bool_(())]]);
         assert_eq!(e.layout, Layout { size: 16, align: 8 });
         let Access::Enum(access) = &e.access else {
             panic!("enum expected");
         };
-        assert!(matches!(access.tag, Tag::Direct { offset: 0, width: 1 }));
+        assert!(matches!(
+            access.tag,
+            Tag::Direct {
+                offset: 0,
+                width: 1
+            }
+        ));
         assert_eq!(access.variants.len(), 3);
         // Payloads share the aligned base after the tag.
         let v1 = &access.variants[1];
@@ -347,8 +380,18 @@ mod tests {
         };
         // fields_only ownership: the tag region stays UNKNOWN to
         // optimizers looking through a variant's payload record.
-        assert!(!access.variants[0].payload.byte_ownership.is_padding_range(0, 1));
-        assert!(!access.variants[1].payload.byte_ownership.is_padding_range(0, 1));
+        assert!(
+            !access.variants[0]
+                .payload
+                .byte_ownership
+                .is_padding_range(0, 1)
+        );
+        assert!(
+            !access.variants[1]
+                .payload
+                .byte_ownership
+                .is_padding_range(0, 1)
+        );
     }
 
     #[test]

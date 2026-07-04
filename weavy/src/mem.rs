@@ -260,6 +260,9 @@ pub enum Access<SchemaRef> {
         count: usize,
         stride: usize,
     },
+    /// An immutable task-lifetime value-store handle whose target schema is
+    /// known statically by the language checker.
+    Handle { target: SchemaRef },
     /// A runtime-shape tensor.
     Tensor(TensorAccess<SchemaRef>),
     /// A dynamic homogeneous sequence or byte sequence.
