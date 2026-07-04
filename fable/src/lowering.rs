@@ -4708,7 +4708,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 .fields
                 .iter()
                 .position(|field| field.name == binding_name)
-                .or_else(|| {
+                .or({
                     if variant.data.fields.len() == 1 && supplied_fields.len() == 1 {
                         Some(0)
                     } else {
