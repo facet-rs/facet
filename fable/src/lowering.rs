@@ -15,8 +15,8 @@ use weavy::ir::{
 use weavy::{BlockRef, Control, RunError, RunStats, Step};
 
 use crate::ast::{
-    self, BinaryExpr, Block, CallExpr, ElseBody, ElseClause, Expr, IfStmt, Literal, Name, Stmt,
-    StructLiteral, UnaryExpr,
+    self, BinaryExpr, Block, CallExpr, ElseClause, Expr, IfStmt, Literal, Name, Stmt, StructLiteral,
+    UnaryExpr,
 };
 use crate::{ParseError, parse};
 
@@ -2247,15 +2247,16 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn lower_else(&mut self, else_clause: &ElseClause) -> Result<Option<BlockRef>, FableError> {
-        match &else_clause.body {
-            ElseBody::If(if_stmt) => {
-                let program = vec![self.lower_if(if_stmt)?];
-                Ok(Some(self.push_block(program)))
-            }
-            ElseBody::Block(block) => {
-                let program = self.lower_block(block)?;
-                Ok(Some(self.push_block(program)))
-            }
+        if let Some(if_stmt) = &else_clause.if_stmt {
+            let program = vec![self.lower_if(if_stmt)?];
+            Ok(Some(self.push_block(program)))
+        } else if let Some(block) = &else_clause.block {
+            let program = self.lower_block(block)?;
+            Ok(Some(self.push_block(program)))
+        } else {
+            Err(FableError::MalformedSyntax {
+                reason: "else clause without body",
+            })
         }
     }
 

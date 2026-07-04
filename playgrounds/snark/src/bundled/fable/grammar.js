@@ -47,9 +47,8 @@ module.exports = grammar({
         optional(field("else_clause", $.else_clause)),
       ),
 
-    else_clause: ($) => seq("else", field("body", $._else_body)),
-
-    _else_body: ($) => choice($.if_statement, $.block),
+    else_clause: ($) =>
+      seq("else", choice(field("if_stmt", $.if_statement), field("block", $.block))),
 
     block: ($) => seq("{", repeat(field("stmt", $._statement)), "}"),
 

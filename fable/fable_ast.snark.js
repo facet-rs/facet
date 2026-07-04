@@ -9,7 +9,6 @@ ast({
   _call_callee: { enum: "Expr" },
   _literal: { enum: "Literal", as: "Literal" },
   _name: { enum: "Name" },
-  _else_body: { enum: "ElseBody" },
 
   let_statement: { as: "Let", struct: "LetStmt" },
   assign_statement: { as: "Assign", struct: "AssignStmt" },

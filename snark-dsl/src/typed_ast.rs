@@ -313,6 +313,7 @@ struct FieldDef {
     rust_name: String,
     shape: Shape,
     mult: Mult,
+    boxed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -396,12 +397,14 @@ impl<'a> Model<'a> {
                         grammar_name: fname,
                         shape,
                         mult,
+                        boxed: false,
                     }
                 })
                 .collect();
             model.structs.push(StructDef { kind, name, fields });
         }
 
+        model.mark_cycle_back_edges();
         model
     }
 
@@ -528,6 +531,93 @@ impl<'a> Model<'a> {
             .collect();
         self.adhocs.push(AdHocDef { name, alts });
         Shape::AdHoc(self.adhocs.len() - 1)
+    }
+
+    fn mark_cycle_back_edges(&mut self) {
+        let mut state =
+            TypeVisitState::new(self.structs.len(), self.enums.len(), self.adhocs.len());
+        for idx in 0..self.structs.len() {
+            self.visit_type(TypeNode::Struct(idx), &mut state);
+        }
+        for idx in 0..self.enums.len() {
+            self.visit_type(TypeNode::Enum(idx), &mut state);
+        }
+        for idx in 0..self.adhocs.len() {
+            self.visit_type(TypeNode::AdHoc(idx), &mut state);
+        }
+    }
+
+    fn visit_type(&mut self, node: TypeNode, state: &mut TypeVisitState) {
+        if state.is_done(node) || state.is_visiting(node) {
+            return;
+        }
+        state.set_visiting(node);
+        match node {
+            TypeNode::Struct(idx) => {
+                let field_count = self.structs[idx].fields.len();
+                for field_idx in 0..field_count {
+                    let Some(target) = self.field_type_node(idx, field_idx) else {
+                        continue;
+                    };
+                    if state.is_visiting(target) {
+                        self.structs[idx].fields[field_idx].boxed = true;
+                    } else if !state.is_done(target) {
+                        self.visit_type(target, state);
+                    }
+                }
+            }
+            TypeNode::Enum(idx) => {
+                let member_kinds = self.enums[idx].member_kinds.clone();
+                for kind in member_kinds {
+                    if let Some(target) = self.hidden_enum_type_node(&kind) {
+                        self.visit_type(target, state);
+                    }
+                }
+            }
+            TypeNode::AdHoc(idx) => {
+                let alts = self.adhocs[idx].alts.clone();
+                for alt in alts {
+                    if let AdHocAlt::Hidden(kind, _) = alt
+                        && let Some(target) = self.hidden_enum_type_node(&kind)
+                    {
+                        self.visit_type(target, state);
+                    }
+                }
+            }
+        }
+        state.set_done(node);
+    }
+
+    fn field_type_node(&self, struct_idx: usize, field_idx: usize) -> Option<TypeNode> {
+        let field = &self.structs[struct_idx].fields[field_idx];
+        if field.boxed || field.mult == Mult::Many {
+            return None;
+        }
+        match &field.shape {
+            Shape::Struct(kind) => self.struct_type_node(kind),
+            Shape::Enum(name) => self.enum_type_node(name),
+            Shape::AdHoc(idx) => Some(TypeNode::AdHoc(*idx)),
+            Shape::TokenSet(_) | Shape::Leaf(_) => None,
+        }
+    }
+
+    fn struct_type_node(&self, kind: &str) -> Option<TypeNode> {
+        self.structs
+            .iter()
+            .position(|s| s.kind == kind)
+            .map(TypeNode::Struct)
+    }
+
+    fn enum_type_node(&self, name: &str) -> Option<TypeNode> {
+        self.enums
+            .iter()
+            .position(|e| e.name == name)
+            .map(TypeNode::Enum)
+    }
+
+    fn hidden_enum_type_node(&self, kind: &str) -> Option<TypeNode> {
+        let name = self.hidden_enum(kind).map(|e| e.name.as_str())?;
+        self.enum_type_node(name)
     }
 
     // -----------------------------------------------------------------------
@@ -819,13 +909,16 @@ impl<'a> Model<'a> {
     }
 
     fn field_type(&self, f: &FieldDef) -> String {
-        let base = match &f.shape {
+        let mut base = match &f.shape {
             Shape::TokenSet(_) => "String".to_string(),
             Shape::Enum(name) => name.clone(),
             Shape::Struct(kind) => self.struct_name(kind),
             Shape::Leaf(decode) => decode.rust_type().to_string(),
             Shape::AdHoc(idx) => self.adhocs[*idx].name.clone(),
         };
+        if f.boxed {
+            base = format!("Box<{base}>");
+        }
         match f.mult {
             Mult::One => base,
             Mult::Opt => format!("Option<{base}>"),
@@ -886,9 +979,17 @@ impl<'a> Model<'a> {
             } else {
                 let lower = self.field_lower_fn(f);
                 match f.mult {
+                    Mult::One if f.boxed => format!(
+                        "Box::new({lower}(crate::support::field_one(n, {:?}, {:?})))",
+                        f.grammar_name, s.kind
+                    ),
                     Mult::One => format!(
                         "{lower}(crate::support::field_one(n, {:?}, {:?}))",
                         f.grammar_name, s.kind
+                    ),
+                    Mult::Opt if f.boxed => format!(
+                        "crate::support::field_opt(n, {:?}).map(|n| Box::new({lower}(n)))",
+                        f.grammar_name
                     ),
                     Mult::Opt => format!(
                         "crate::support::field_opt(n, {:?}).map({lower})",
@@ -917,6 +1018,68 @@ impl<'a> Model<'a> {
             }
         }
         writeln!(out, "    }}\n}}\n").unwrap();
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TypeMark {
+    Fresh,
+    Visiting,
+    Done,
+}
+
+#[derive(Clone, Copy)]
+enum TypeNode {
+    Struct(usize),
+    Enum(usize),
+    AdHoc(usize),
+}
+
+struct TypeVisitState {
+    structs: Vec<TypeMark>,
+    enums: Vec<TypeMark>,
+    adhocs: Vec<TypeMark>,
+}
+
+impl TypeVisitState {
+    fn new(structs: usize, enums: usize, adhocs: usize) -> Self {
+        Self {
+            structs: vec![TypeMark::Fresh; structs],
+            enums: vec![TypeMark::Fresh; enums],
+            adhocs: vec![TypeMark::Fresh; adhocs],
+        }
+    }
+
+    fn mark(&self, node: TypeNode) -> TypeMark {
+        match node {
+            TypeNode::Struct(idx) => self.structs[idx],
+            TypeNode::Enum(idx) => self.enums[idx],
+            TypeNode::AdHoc(idx) => self.adhocs[idx],
+        }
+    }
+
+    fn set(&mut self, node: TypeNode, mark: TypeMark) {
+        match node {
+            TypeNode::Struct(idx) => self.structs[idx] = mark,
+            TypeNode::Enum(idx) => self.enums[idx] = mark,
+            TypeNode::AdHoc(idx) => self.adhocs[idx] = mark,
+        }
+    }
+
+    fn is_visiting(&self, node: TypeNode) -> bool {
+        self.mark(node) == TypeMark::Visiting
+    }
+
+    fn is_done(&self, node: TypeNode) -> bool {
+        self.mark(node) == TypeMark::Done
+    }
+
+    fn set_visiting(&mut self, node: TypeNode) {
+        self.set(node, TypeMark::Visiting);
+    }
+
+    fn set_done(&mut self, node: TypeNode) {
+        self.set(node, TypeMark::Done);
     }
 }
 
@@ -959,4 +1122,60 @@ fn snake(name: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{Annotations, Model, TypedAstConfig};
+    use snark::grammar::RawGrammarJson;
+
+    fn generate(grammar_source: &str) -> String {
+        let (grammar_json, annotations_json) =
+            crate::emit_source_with_annotations_boa(grammar_source, "cycle.js").unwrap();
+        let raw = RawGrammarJson::from_tree_sitter_json_str(&grammar_json).unwrap();
+        let anns: Annotations = facet_json::from_str(&annotations_json).unwrap();
+        let config = TypedAstConfig {
+            grammar_js: Path::new("cycle/grammar.js"),
+            annotations_js: Path::new("cycle/ast.js"),
+            out_dir: Path::new("unused"),
+            grammar_output: "cycle_grammar.json",
+            ast_output: "cycle_ast.rs",
+            annotation_source_name: "cycle_ast.snark.js",
+            generated_by: "cycle/build.rs",
+            language_name: "cycle",
+        };
+        Model::build(&raw, &anns).generate(&config)
+    }
+
+    #[test]
+    fn boxes_struct_field_that_closes_type_cycle() {
+        let generated = generate(
+            r#"
+module.exports = grammar({
+  name: "cycle",
+  rules: {
+    source_file: $ => field("stmt", $.if_statement),
+    if_statement: $ => seq(
+      "if",
+      field("then", $.block),
+      optional(field("else_clause", $.else_clause)),
+    ),
+    else_clause: $ => seq(
+      "else",
+      choice(field("if_stmt", $.if_statement), field("block", $.block)),
+    ),
+    block: $ => seq("{", "}"),
+  },
+});
+"#,
+        );
+
+        assert!(generated.contains("pub else_clause: Option<ElseClause>,"));
+        assert!(generated.contains("pub if_stmt: Option<Box<IfStatement>>,"));
+        assert!(generated.contains(
+            r#"if_stmt: crate::support::field_opt(n, "if_stmt").map(|n| Box::new(lower_if_statement(n))),"#
+        ));
+    }
 }

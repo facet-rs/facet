@@ -16,11 +16,20 @@ embedded grammar JSON.
    This has the highest payoff because every capability below otherwise lands
    twice. The shared API should take a grammar path, an annotation file, and
    output stems for the generated AST and embedded grammar JSON.
+   Status: landed in `a4f6e0ef4`; vix/fable generated AST and grammar JSON
+   were byte-identical before/after consolidation.
 2. Auto-box generated type-graph cycles. This removes fable's `_else_body`
    workaround and turns recursive grammar shape into a generator capability.
+   Status: landed after consolidation; fable now spells `else if` directly as
+   an `if_stmt` field on `else_clause`, and the generated field is
+   `Option<Box<IfStmt>>`.
 3. Preserve fields on anonymous token steps in the resolved tree. Both vix and
    fable route around this today by scanning anonymous children against
    grammar-derived token sets.
+   Status: parked. The current runtime emits `TreeEvent::Field { child: None }`
+   for token steps, so the resolved-CST builder has no token identity to attach.
+   Fixing this cleanly needs an event-level child identity or a deliberate
+   resolved-builder reconstruction pass keyed by parent production structure.
 4. Make hidden-rule enum aliases explicit and deterministic. `_expr`,
    `_scrutinee`, and `_call_callee` can share the same Rust enum name today, and
    the emitter relies on the broad declaration being emitted first.
@@ -158,10 +167,14 @@ scan. This is a snark resolved-tree limitation first; once fixed, the generator
 can lower token fields through the same `field_one`/`field_opt` route as named
 children.
 
-Tractable Part 2 shape: preserve anonymous-token field metadata in the resolved
-builder, add a parser/resolved-tree regression test in `snark`, then remove the
-token-set scan branch from the shared codegen only when vix and fable generated
-ASTs stay semantically equivalent.
+Precise blocker for Part 2: the runtime currently emits
+`TreeEvent::Field { child: None, field, structural_index, .. }` for anonymous
+token steps. `ResolvedCstBuilder` ignores that event because the field has no
+child `TreeNodeId`; shifted tokens have no `TreeNodeId`, so there is no direct
+identity to attach. A robust fix should either extend tree events with token
+child identity or teach the resolved builder to reconstruct the fielded token
+from the parent production/structural index after direct children have been
+materialized. Until then, the shared codegen must keep the token-set scan path.
 
 ## 4. repeat()/sepBy() field collection
 
