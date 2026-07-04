@@ -2,7 +2,7 @@ use snark::{
     grammar::RawGrammarJson,
     lexical::LexicalFacts,
     lower::weavy::{
-        WeavyGlrDiagnostics, WeavyParseError, WeavyParsePlan, parse_prepared_weavy_glr_diagnostics,
+        WeavyGlrDiagnostics, WeavyParsePlan, parse_prepared_weavy_glr_diagnostics,
         parse_prepared_weavy_with_report,
     },
     parser::{LookaheadSymbol, ParseTable, ParserGrammar, TraceEvent},
@@ -472,35 +472,33 @@ Every attributed branch pop in both measured shapes comes from conflicts 3 and
 13, both from the same semantic ambiguity: at a var_ref followed by "(", the
 parser keeps both reductions, `_expr -> var_ref` and `_call_callee -> var_ref`.
 
-Declaration-walker control:
+Declaration-walker control before grammar disambiguation:
 - total GLR branch pops: 2,417,938
-- unforked/root pops: 242
-- conflict 13: 1,811,488 pops, 16,585 splits, 33,170 child versions
-- conflict 3: 606,208 pops, 16,384 splits, 32,768 child versions
-- densest current positions:
-  - conflict 3 source byte 1528 -> current bytes 1530 and 1533:
-    163,840 pops each
-  - conflict 13 source byte 1488 -> current byte 1498: 114,688 pops
+- conflict 13: 1,811,488 pops
+- conflict 3: 606,208 pops
 
-All-node walker repro:
+Declaration-walker control after grammar disambiguation:
+- total GLR branch pops: 1,430
+- attributed fork pops: 0
+- table conflicts: 14
+
+All-node walker repro before grammar disambiguation:
 - total GLR branch pops: 16,857,345; this is limit + 1 for the 4,098 byte input
-- unforked/root pops: 242
 - conflict 13: 12,122,251 pops, 128,324 splits, 256,648 child versions
 - conflict 3: 4,734,852 pops, 127,970 splits, 255,940 child versions
-- densest current positions:
-  - conflict 3 source byte 4093 -> current bytes 4095 and 4098:
-    1,279,692 and 1,279,690 pops
-  - conflict 13 source byte 4053 -> current byte 4063:
-    895,830 pops
 
-Classification:
-- Fable grammar candidate: call_expr currently uses `_call_callee` as a hidden
-  subset of `_expr`, but `_call_callee` includes var_ref, field_expr, index_expr,
-  and paren_expr. On `foo(` this leaves `var_ref` reducible as both `_expr` and
-  `_call_callee`. A grammar fix would pin call syntax so a callee followed by
-  `arg_list` reduces through only the call-callee path. Candidate rules:
-  `call_expr`, `_call_callee`, `var_ref`, and postfix `field_expr`/`index_expr`.
-  The semantic choice to preserve is that calls bind tighter than binary/unary
+All-node walker repro after grammar disambiguation:
+- total GLR branch pops: 3,700
+- attributed fork pops: 0
+- parses under the 16,857,344 branch-step limit
+
+Implemented grammar half:
+- call_expr still uses `_call_callee`, preserving the generated
+  `CallExpr { callee: Expr }` AST surface.
+- `_call_callee` now gives its `var_ref` alternative postfix static precedence,
+  so on `foo(` the reduce/reduce conflict picks `_call_callee -> var_ref` over
+  `_expr -> var_ref`.
+- The semantic choice preserved is that calls bind tighter than binary/unary
   expression forms and that only the explicit callee subset can be called.
 - GLR-side candidate: the branch worklist does not pack/merge equivalent reduce
   alternatives for `_expr -> var_ref` vs `_call_callee -> var_ref`, so each call
@@ -523,11 +521,11 @@ fn declaration_walker_control_metrics_are_stable() {
             bytes: 1533,
             limit: 6_351_104,
             states: 1124,
-            conflicts: 18,
+            conflicts: 14,
             splits: 0,
             accepted: 1,
-            failures: 202,
-            max_live_versions: 92,
+            failures: 0,
+            max_live_versions: 1,
         }
     );
 }
@@ -547,193 +545,17 @@ fn declaration_walker_glr_attribution_is_stable() {
     assert_eq!(
         glr_attribution_snapshot(query, run.diagnostics()),
         GlrAttributionSnapshot {
-            total_branch_pops: 2_417_938,
-            root_branch_pops: 242,
-            top_conflicts: vec![
-                ConflictPopSnapshot {
-                    conflict: 13,
-                    branch_pops: 1_811_488,
-                    split_count: 16_585,
-                    created_branch_count: 33_170,
-                },
-                ConflictPopSnapshot {
-                    conflict: 3,
-                    branch_pops: 606_208,
-                    split_count: 16_384,
-                    created_branch_count: 32_768,
-                },
-            ],
-            top_sources: vec![
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1488,
-                    line: 52,
-                    column: 42,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 950_272,
-                    split_count: 8192,
-                    created_branch_count: 16_384,
-                },
-                SourcePopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 1528,
-                    line: 57,
-                    column: 11,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 606_208,
-                    split_count: 16_384,
-                    created_branch_count: 32_768,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1431,
-                    line: 51,
-                    column: 69,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 524_288,
-                    split_count: 4096,
-                    created_branch_count: 8192,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1347,
-                    line: 50,
-                    column: 70,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 131_072,
-                    split_count: 1024,
-                    created_branch_count: 2048,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1404,
-                    line: 51,
-                    column: 42,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 106_496,
-                    split_count: 2048,
-                    created_branch_count: 4096,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1262,
-                    line: 49,
-                    column: 78,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 32_768,
-                    split_count: 256,
-                    created_branch_count: 512,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1052,
-                    line: 41,
-                    column: 44,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 22_912,
-                    split_count: 128,
-                    created_branch_count: 256,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1323,
-                    line: 50,
-                    column: 46,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 20_480,
-                    split_count: 512,
-                    created_branch_count: 1024,
-                },
-            ],
-            top_positions: vec![
-                PositionPopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 1528,
-                    current_byte: 1530,
-                    current_line: 57,
-                    current_column: 13,
-                    branch_pops: 163_840,
-                },
-                PositionPopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 1528,
-                    current_byte: 1533,
-                    current_line: 58,
-                    current_column: 1,
-                    branch_pops: 163_840,
-                },
-                PositionPopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 1528,
-                    current_byte: 1531,
-                    current_line: 57,
-                    current_column: 14,
-                    branch_pops: 114_688,
-                },
-                PositionPopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1488,
-                    current_byte: 1498,
-                    current_line: 52,
-                    current_column: 52,
-                    branch_pops: 114_688,
-                },
-                PositionPopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 1528,
-                    current_byte: 1528,
-                    current_line: 57,
-                    current_column: 11,
-                    branch_pops: 98_304,
-                },
-                PositionPopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1488,
-                    current_byte: 1515,
-                    current_line: 55,
-                    current_column: 1,
-                    branch_pops: 98_304,
-                },
-                PositionPopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1488,
-                    current_byte: 1495,
-                    current_line: 52,
-                    current_column: 49,
-                    branch_pops: 81_920,
-                },
-                PositionPopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 1488,
-                    current_byte: 1518,
-                    current_line: 57,
-                    current_column: 1,
-                    branch_pops: 81_920,
-                },
-            ],
+            total_branch_pops: 1430,
+            root_branch_pops: 1430,
+            top_conflicts: Vec::new(),
+            top_sources: Vec::new(),
+            top_positions: Vec::new(),
         }
     );
 }
 
 #[test]
-#[ignore = "diagnostic repro for the BranchStepLimit ceiling; expands 16,857,344 GLR branch steps"]
-fn all_node_walker_hits_branch_step_limit() {
+fn all_node_walker_parses_under_branch_step_limit() {
     let prepared = PreparedFableParser::new();
     let query = all_node_walker_query(0);
     let run = parse_prepared_weavy_glr_diagnostics(
@@ -742,200 +564,15 @@ fn all_node_walker_hits_branch_step_limit() {
         &prepared.table,
         &query,
     );
-    let error = run
-        .result()
-        .as_ref()
-        .expect_err("diagnostic query should exceed the strict branch budget");
-
-    assert_eq!(
-        *error,
-        WeavyParseError::BranchStepLimit {
-            limit: prepared.strict_branch_step_limit(&query),
-        }
-    );
+    assert!(run.result().is_ok());
     assert_eq!(
         glr_attribution_snapshot(&query, run.diagnostics()),
         GlrAttributionSnapshot {
-            total_branch_pops: 16_857_345,
-            root_branch_pops: 242,
-            top_conflicts: vec![
-                ConflictPopSnapshot {
-                    conflict: 13,
-                    branch_pops: 12_122_251,
-                    split_count: 128_324,
-                    created_branch_count: 256_648,
-                },
-                ConflictPopSnapshot {
-                    conflict: 3,
-                    branch_pops: 4_734_852,
-                    split_count: 127_970,
-                    created_branch_count: 255_940,
-                },
-            ],
-            top_sources: vec![
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 4053,
-                    line: 147,
-                    column: 60,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 7_678_343,
-                    split_count: 63_990,
-                    created_branch_count: 127_980,
-                },
-                SourcePopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 4093,
-                    line: 152,
-                    column: 11,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 4_734_852,
-                    split_count: 127_970,
-                    created_branch_count: 255_940,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 3978,
-                    line: 146,
-                    column: 96,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 2_047_852,
-                    split_count: 16_000,
-                    created_branch_count: 32_000,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 4034,
-                    line: 147,
-                    column: 41,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 1_279_800,
-                    split_count: 31_996,
-                    created_branch_count: 63_992,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 3951,
-                    line: 146,
-                    column: 69,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 448_000,
-                    split_count: 8000,
-                    created_branch_count: 16_000,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 3867,
-                    line: 145,
-                    column: 70,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 256_000,
-                    split_count: 2000,
-                    created_branch_count: 4000,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 3924,
-                    line: 146,
-                    column: 42,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 208_000,
-                    split_count: 4000,
-                    created_branch_count: 8000,
-                },
-                SourcePopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 3782,
-                    line: 144,
-                    column: 78,
-                    lookahead: LookaheadSnapshot::Terminal(7),
-                    branch_pops: 64_256,
-                    split_count: 506,
-                    created_branch_count: 1012,
-                },
-            ],
-            top_positions: vec![
-                PositionPopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 4093,
-                    current_byte: 4095,
-                    current_line: 152,
-                    current_column: 13,
-                    branch_pops: 1_279_692,
-                },
-                PositionPopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 4093,
-                    current_byte: 4098,
-                    current_line: 153,
-                    current_column: 1,
-                    branch_pops: 1_279_690,
-                },
-                PositionPopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 4053,
-                    current_byte: 4063,
-                    current_line: 147,
-                    current_column: 70,
-                    branch_pops: 895_830,
-                },
-                PositionPopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 4093,
-                    current_byte: 4096,
-                    current_line: 152,
-                    current_column: 14,
-                    branch_pops: 895_784,
-                },
-                PositionPopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 4053,
-                    current_byte: 4080,
-                    current_line: 150,
-                    current_column: 1,
-                    branch_pops: 767_820,
-                },
-                PositionPopSnapshot {
-                    conflict: 3,
-                    state: 41,
-                    source_byte: 4093,
-                    current_byte: 4093,
-                    current_line: 152,
-                    current_column: 11,
-                    branch_pops: 767_810,
-                },
-                PositionPopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 4053,
-                    current_byte: 4060,
-                    current_line: 147,
-                    current_column: 67,
-                    branch_pops: 639_875,
-                },
-                PositionPopSnapshot {
-                    conflict: 13,
-                    state: 560,
-                    source_byte: 4053,
-                    current_byte: 4083,
-                    current_line: 152,
-                    current_column: 1,
-                    branch_pops: 639_850,
-                },
-            ],
+            total_branch_pops: 3700,
+            root_branch_pops: 3700,
+            top_conflicts: Vec::new(),
+            top_sources: Vec::new(),
+            top_positions: Vec::new(),
         }
     );
 }

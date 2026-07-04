@@ -176,7 +176,13 @@ module.exports = grammar({
         ),
       ),
 
-    _call_callee: ($) => choice($.var_ref, $.field_expr, $.index_expr, $.paren_expr),
+    _call_callee: ($) =>
+      choice(
+        prec(PREC.postfix, $.var_ref),
+        $.field_expr,
+        $.index_expr,
+        $.paren_expr,
+      ),
 
     arg_list: ($) => seq("(", sepBy(",", field("arg", $.arg)), ")"),
     arg: ($) => field("expr", $._expr),
