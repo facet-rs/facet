@@ -7,9 +7,10 @@
 //! not a protocol rewrite.
 
 use std::collections::BTreeMap;
+use std::env;
 use std::fmt;
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use facet::Facet;
@@ -27,6 +28,8 @@ use facet_lsp::types::{
     ServerInfo, TextDocumentPositionParams, TextEdit, WorkspaceEdit,
 };
 use tracing::{debug, info, warn};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::prelude::*;
 use vix::binder::{self, Bindings, SymbolId};
 use vix::support::Span;
 use vix::{ParseError, VixParser};
@@ -42,37 +45,74 @@ pub fn run_stdio() -> Result<(), ServerError> {
     server.run(&mut input, &mut output)
 }
 
-/// Initialize file tracing from `VIX_LSP_LOG`, if set.
+/// Initialize compact tracing to stderr and a daily rolling log file.
 pub fn init_tracing() {
     static INIT: OnceLock<()> = OnceLock::new();
     INIT.get_or_init(|| {
-        let Some(path) = std::env::var_os("VIX_LSP_LOG").map(PathBuf::from) else {
-            return;
-        };
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-        {
-            Ok(file) => {
-                let subscriber = tracing_subscriber::fmt()
-                    .with_writer(file)
+        let filter = tracing_subscriber::EnvFilter::try_from_env("VIX_LSP_LOG_LEVEL")
+            .or_else(|_| tracing_subscriber::EnvFilter::try_from_env("VIX_LSP_LOG_FILTER"))
+            .unwrap_or_else(|_| "info".into());
+        let stderr_layer = tracing_subscriber::fmt::layer()
+            .compact()
+            .with_ansi(false)
+            .with_writer(std::io::stderr);
+        let mut file_error = None;
+        let file_layer = match rolling_log_appender() {
+            Ok(appender) => Some(
+                tracing_subscriber::fmt::layer()
+                    .compact()
                     .with_ansi(false)
-                    .with_env_filter(
-                        tracing_subscriber::EnvFilter::try_from_env("VIX_LSP_LOG_FILTER")
-                            .unwrap_or_else(|_| "vix_lsp=debug".into()),
-                    )
-                    .finish();
-                if tracing::subscriber::set_global_default(subscriber).is_err() {
-                    // Another test or embedding may have initialized tracing already.
-                }
+                    .with_writer(appender),
+            ),
+            Err(err) => {
+                file_error = Some(err.to_string());
+                None
             }
-            Err(_err) => {
-                // stdout/stderr are protocol channels for LSP clients; failure to
-                // open an optional log file must stay silent.
+        };
+
+        let subscriber = tracing_subscriber::registry()
+            .with(filter)
+            .with(stderr_layer)
+            .with(file_layer);
+        if tracing::subscriber::set_global_default(subscriber).is_ok() {
+            if let Some(err) = file_error {
+                warn!(error = %err, "failed to initialize vix-lsp file logging");
             }
         }
     });
+}
+
+fn rolling_log_appender() -> Result<RollingFileAppender, tracing_appender::rolling::InitError> {
+    RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("vix-lsp.log")
+        .max_log_files(log_retention())
+        .build(log_dir())
+}
+
+fn log_dir() -> PathBuf {
+    if let Some(dir) = env::var_os("VIX_LSP_LOG_DIR") {
+        return PathBuf::from(dir);
+    }
+    if let Some(path) = env::var_os("VIX_LSP_LOG") {
+        let path = PathBuf::from(path);
+        return if path.extension().is_some() {
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf()
+        } else {
+            path
+        };
+    }
+    PathBuf::from("/tmp/vix-lsp")
+}
+
+fn log_retention() -> usize {
+    env::var("VIX_LSP_LOG_RETENTION")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(7)
 }
 
 /// Server errors.

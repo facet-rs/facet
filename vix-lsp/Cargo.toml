@@ -17,6 +17,7 @@ facet.workspace = true
 facet-json.workspace = true
 facet-lsp = { path = "../facet-lsp" }
 tracing.workspace = true
+tracing-appender = "0.2.5"
 tracing-subscriber.workspace = true
 vix = { path = "../vix" }
 
