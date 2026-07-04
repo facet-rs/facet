@@ -475,6 +475,30 @@ fn engine_refines_subtree_chain_through_merge() {
 }
 
 #[test]
+fn collect_argument_strictness_matches_between_evaluators() {
+    let src = r#"
+pub fn bad() -> [Int] {
+    [2, 1].collect(0)
+}
+
+pub fn good() -> [Int] {
+    [2, 1].collect()
+}
+"#;
+    let oracle = Oracle::load(src).expect("oracle load");
+    let mut engine = Engine::load(src).expect("engine load");
+
+    let oracle_err = oracle.call("bad", &[]).expect_err("oracle rejects args");
+    let engine_err = engine.call("bad", &[]).expect_err("engine rejects args");
+    assert_eq!(oracle_err, engine_err);
+    assert_eq!(oracle_err, "collect takes no arguments");
+
+    let expected = Value::Array(vec![Value::Int(1), Value::Int(2)]);
+    assert_eq!(oracle.call("good", &[]).unwrap(), expected);
+    assert_eq!(engine.call("good", &[]).unwrap(), expected);
+}
+
+#[test]
 fn resolved_tree_missing_path_errors_immediately() {
     let src = r#"
 use vix::Tree;

@@ -1687,6 +1687,9 @@ impl Oracle {
         // Method calls are whole-value uses: a pending receiver forces.
         let recv = self.force_value(recv)?;
         let positional: Vec<Value> = args.into_iter().map(|(_, v)| v).collect();
+        if name == "collect" && !positional.is_empty() {
+            return Err("collect takes no arguments".to_string());
+        }
         match (recv, name) {
             (Value::Map(m), "get") => {
                 let [key] = positional.as_slice() else {
