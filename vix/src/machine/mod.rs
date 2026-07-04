@@ -45,8 +45,10 @@
 //! with the content-keyed lowering cache → exec/journal seams → corpus
 //! parity → the frozen evaluators are deleted.
 
+pub mod graph;
 pub mod value;
 
+pub use graph::{Graph, InputId, MachineError, NodeId, NodeOp};
 pub use value::{
     Field, Handle, Layout, LayoutError, LayoutId, Registry, Slot, SlotTy, Store, TotalF64,
     ValueRef, Variant,
