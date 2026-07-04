@@ -60,10 +60,16 @@ macro_rules! cont {
 /// Push one immediate onto the operand stack.
 #[no_mangle]
 pub unsafe extern "C" fn weavy_async_push(cx: *mut Ctx) {
-    let c = &mut *cx;
-    *c.sp = *c.prog as i64;
-    c.sp = c.sp.add(1);
-    c.prog = c.prog.add(1);
+    let prog = (*cx).prog;
+    let sp = (*cx).sp;
+    *sp = *prog as i64;
+
+    // Keep these as independent scalar stores. On Linux x86_64, LLVM otherwise
+    // combines the adjacent `prog`/`sp` updates into an SSE add with a
+    // RIP-relative constant-pool relocation, and copied stencils only support
+    // continuation relocations.
+    core::ptr::write_volatile(core::ptr::addr_of_mut!((*cx).sp), sp.add(1));
+    core::ptr::write_volatile(core::ptr::addr_of_mut!((*cx).prog), prog.add(1));
     cont!(cx);
 }
 
