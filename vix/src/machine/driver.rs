@@ -31,7 +31,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 
 use sha2::{Digest, Sha256};
+#[cfg(any(test, feature = "jit"))]
+use weavy::jit::task_lane::{JitProgram, JitTask};
+#[cfg(any(test, feature = "jit"))]
+use weavy::mem::Layout;
 use weavy::mem::{Access, Descriptor, Tag};
+#[cfg(any(test, feature = "jit"))]
+use weavy::task::{ArgCopy, Fn as TaskFn, Op};
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
 
 use crate::oracle::{assign_roles, tool_for};
@@ -56,6 +62,14 @@ pub const ARRAY_COLLECT_HOST: u32 = 11;
 pub const TREE_PROJECT_HOST: u32 = 12;
 pub const EXEC_HOST: u32 = 13;
 pub const PATH_WITH_EXT_HOST: u32 = 14;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lane {
+    #[default]
+    Interp,
+    #[cfg(any(test, feature = "jit"))]
+    Jit,
+}
 
 /// One compiled vix function: its task program identity plus where its
 /// INVOKE region and argument slots live. Cached content-addressed —
@@ -166,7 +180,7 @@ struct ExecRequest {
 
 /// A running or parked task execution.
 struct Execution {
-    task: Task,
+    task: LaneTask,
     fn_ref: usize,
     key: CanonMemoKey,
     ready: Vec<bool>,
@@ -174,6 +188,92 @@ struct Execution {
     /// input slot → the invocation key feeding it (for wiring
     /// completions).
     feeds: HashMap<usize, CanonMemoKey>,
+}
+
+enum LaneRuntime {
+    Interp,
+    #[cfg(any(test, feature = "jit"))]
+    Jit,
+}
+
+impl LaneRuntime {
+    fn new(lane: Lane, _program: &Program) -> Result<Self, String> {
+        match lane {
+            Lane::Interp => Ok(Self::Interp),
+            #[cfg(any(test, feature = "jit"))]
+            Lane::Jit => {
+                let Some(_) = JitProgram::compile(_program) else {
+                    return Err(format!(
+                        "weavy JIT task lane could not compile program; ops: {}",
+                        program_op_set(_program)
+                    ));
+                };
+                Ok(Self::Jit)
+            }
+        }
+    }
+
+    fn spawn(
+        &self,
+        program: &Program,
+        lowered: &LoweredFn,
+        args: &[i64],
+    ) -> Result<LaneTask, String> {
+        match self {
+            Self::Interp => {
+                let mut task = Task::spawn(program, lowered.task_fn);
+                for (offset, value) in lowered.arg_offsets.iter().zip(args) {
+                    task.write_i64(*offset, *value);
+                }
+                Ok(LaneTask::Interp(task))
+            }
+            #[cfg(any(test, feature = "jit"))]
+            Self::Jit => {
+                let (wrapped, entry) = jit_entry_program(program, lowered, args);
+                let Some(jit) = JitProgram::compile(&wrapped) else {
+                    return Err(format!(
+                        "weavy JIT task lane could not compile invocation wrapper; ops: {}",
+                        program_op_set(&wrapped)
+                    ));
+                };
+                let task = JitTask::spawn(&jit, entry);
+                Ok(LaneTask::Jit { program: jit, task })
+            }
+        }
+    }
+}
+
+enum LaneTask {
+    Interp(Task),
+    #[cfg(any(test, feature = "jit"))]
+    Jit {
+        program: JitProgram,
+        task: JitTask,
+    },
+}
+
+impl LaneTask {
+    fn advance(
+        &mut self,
+        program: &Program,
+        ready: &[bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+    ) -> TaskStep {
+        match self {
+            Self::Interp(task) => task.run_hosted(program, ready, awaited, hosts),
+            #[cfg(any(test, feature = "jit"))]
+            Self::Jit { program, task } => task.run_hosted(program, ready, awaited, hosts),
+        }
+    }
+
+    fn result_i64(&self) -> i64 {
+        match self {
+            Self::Interp(task) => task.result_i64(),
+            #[cfg(any(test, feature = "jit"))]
+            Self::Jit { task, .. } => task.result_i64(),
+        }
+    }
 }
 
 type ContentHash = [u8; 32];
@@ -537,6 +637,7 @@ impl ValueStore {
 /// The demand scheduler.
 pub struct Driver {
     program: Program,
+    lane: LaneRuntime,
     fns: Vec<LoweredFn>,
     descriptors: HashMap<String, Descriptor<String>>,
     schema_refs: Vec<String>,
@@ -556,8 +657,20 @@ impl Driver {
         fns: Vec<LoweredFn>,
         descriptors: HashMap<String, Descriptor<String>>,
     ) -> Self {
-        Driver {
+        Self::try_with_descriptors(program, fns, descriptors, Lane::Interp)
+            .expect("interp lane is always available")
+    }
+
+    pub fn try_with_descriptors(
+        program: Program,
+        fns: Vec<LoweredFn>,
+        descriptors: HashMap<String, Descriptor<String>>,
+        lane: Lane,
+    ) -> Result<Self, String> {
+        let lane = LaneRuntime::new(lane, &program)?;
+        Ok(Driver {
             program,
+            lane,
             fns,
             descriptors,
             schema_refs: Vec::new(),
@@ -565,7 +678,7 @@ impl Driver {
             exec_cache: crate::exec::ExecCache::new(),
             trace: Vec::new(),
             store: RefCell::new(ValueStore::default()),
-        }
+        })
     }
 
     /// How many memo entries exist (tests: warm behavior).
@@ -628,7 +741,7 @@ impl Driver {
         let mut waiters: HashMap<CanonMemoKey, Vec<(usize, usize)>> = HashMap::new();
         let mut runnable: Vec<usize> = Vec::new();
 
-        let root = self.spawn(&mut executions, fn_ref, key.clone(), &args);
+        let root = self.spawn(&mut executions, fn_ref, key.clone(), &args)?;
         runnable.push(root);
 
         while let Some(ix) = runnable.pop() {
@@ -707,7 +820,7 @@ impl Driver {
                                 .push((req.caller, req.input_slot));
                             if !already_running {
                                 let child =
-                                    self.spawn(&mut executions, req.fn_ref, req_key, &req.args);
+                                    self.spawn(&mut executions, req.fn_ref, req_key, &req.args)?;
                                 runnable.push(child);
                             }
                         }
@@ -743,7 +856,7 @@ impl Driver {
         fn_ref: usize,
         key: CanonMemoKey,
         args: &[i64],
-    ) -> usize {
+    ) -> Result<usize, String> {
         let lowered = &self.fns[fn_ref];
         self.trace.push(DriveEvent::Spawned {
             fn_hash: lowered.hash,
@@ -752,10 +865,7 @@ impl Driver {
             fn_hash: lowered.hash,
             key_hash: memo_key_hash(&key),
         });
-        let mut task = Task::spawn(&self.program, lowered.task_fn);
-        for (offset, value) in lowered.arg_offsets.iter().zip(args) {
-            task.write_i64(*offset, *value);
-        }
+        let task = self.lane.spawn(&self.program, lowered, args)?;
         executions.push(Some(Execution {
             task,
             fn_ref,
@@ -764,7 +874,7 @@ impl Driver {
             awaited: Vec::new(),
             feeds: HashMap::new(),
         }));
-        executions.len() - 1
+        Ok(executions.len() - 1)
     }
 
     /// Run one execution until done or blocked, capturing INVOKE
@@ -1143,7 +1253,7 @@ impl Driver {
             ];
             let step = exec
                 .task
-                .run_hosted(&self.program, &exec.ready, &exec.awaited, &mut hosts);
+                .advance(&self.program, &exec.ready, &exec.awaited, &mut hosts);
             drop(hosts);
             self.trace.extend(store_events.into_inner());
             if let Some(err) = host_error.into_inner() {
@@ -1288,6 +1398,85 @@ fn hash_u64(value: impl Hash) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut h);
     std::hash::Hasher::finish(&h)
+}
+
+#[cfg(any(test, feature = "jit"))]
+fn jit_entry_program(program: &Program, lowered: &LoweredFn, args: &[i64]) -> (Program, FnId) {
+    let mut wrapped = program.clone();
+    let ret = u32::try_from(args.len() * 8).expect("arg frame size fits u32");
+    let mut code = Vec::with_capacity(args.len() + 2);
+    for (index, value) in args.iter().enumerate() {
+        code.push(Op::ConstI64 {
+            dst: u32::try_from(index * 8).expect("arg offset fits u32"),
+            value: *value,
+        });
+    }
+    let call_args = lowered
+        .arg_offsets
+        .iter()
+        .enumerate()
+        .map(|(index, dst)| ArgCopy {
+            src: u32::try_from(index * 8).expect("arg offset fits u32"),
+            dst: *dst,
+            size: 8,
+        })
+        .collect();
+    code.push(Op::Call {
+        callee: lowered.task_fn,
+        args: call_args,
+        ret,
+    });
+    code.push(Op::Ret { src: ret, size: 8 });
+    let entry = FnId(u32::try_from(wrapped.fns.len()).expect("fn count fits u32"));
+    wrapped.fns.push(TaskFn {
+        frame: Layout {
+            size: args.len() * 8 + 8,
+            align: 8,
+        },
+        code,
+    });
+    (wrapped, entry)
+}
+
+#[cfg(any(test, feature = "jit"))]
+fn program_op_set(program: &Program) -> String {
+    let mut names: Vec<&'static str> = program
+        .fns
+        .iter()
+        .flat_map(|f| f.code.iter().map(op_name))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names.join(", ")
+}
+
+#[cfg(any(test, feature = "jit"))]
+fn op_name(op: &Op) -> &'static str {
+    match op {
+        Op::ConstI64 { .. } => "ConstI64",
+        Op::AddI64 { .. } => "AddI64",
+        Op::SubI64 { .. } => "SubI64",
+        Op::MulI64 { .. } => "MulI64",
+        Op::CopyI64 { .. } => "CopyI64",
+        Op::EqI64 { .. } => "EqI64",
+        Op::NeI64 { .. } => "NeI64",
+        Op::LtI64 { .. } => "LtI64",
+        Op::LeI64 { .. } => "LeI64",
+        Op::GtI64 { .. } => "GtI64",
+        Op::GeI64 { .. } => "GeI64",
+        Op::Jump { .. } => "Jump",
+        Op::JumpIfZero { .. } => "JumpIfZero",
+        Op::Call { .. } => "Call",
+        Op::Ret { .. } => "Ret",
+        Op::Await { .. } => "Await",
+        Op::LoadIndexedI64 { .. } => "LoadIndexedI64",
+        Op::StoreIndexedI64 { .. } => "StoreIndexedI64",
+        Op::ConstF64 { .. } => "ConstF64",
+        Op::AddF64 { .. } => "AddF64",
+        Op::MulF64 { .. } => "MulF64",
+        Op::Trace { .. } => "Trace",
+        Op::HostCall { .. } => "HostCall",
+    }
 }
 
 fn memo_key_hash(key: &CanonMemoKey) -> u64 {

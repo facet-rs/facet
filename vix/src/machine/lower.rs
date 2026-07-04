@@ -23,7 +23,7 @@ use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_MAP_PENDING_HOST, DriveEvent, Driver,
-    EXEC_HOST, INVOKE_HOST, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
+    EXEC_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
     OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
     TREE_PROJECT_HOST,
 };
@@ -39,6 +39,10 @@ pub struct Machine {
 
 impl Machine {
     pub fn load(source: &str) -> Result<Machine, String> {
+        Self::load_with_lane(source, Lane::Interp)
+    }
+
+    pub fn load_with_lane(source: &str, lane: Lane) -> Result<Machine, String> {
         let tables = load_module_tables(source)?;
 
         // Deterministic fn_ref assignment: sorted names.
@@ -158,8 +162,12 @@ impl Machine {
             });
         }
 
-        let mut driver =
-            Driver::with_descriptors(Program { fns: task_fns }, lowered, tables.descriptors);
+        let mut driver = Driver::try_with_descriptors(
+            Program { fns: task_fns },
+            lowered,
+            tables.descriptors,
+            lane,
+        )?;
         for name in &schema_names {
             let actual = driver.intern_schema_ref(name.clone());
             assert_eq!(
@@ -2070,55 +2078,80 @@ pub fn poly(n: Int) -> Int {
 }
 "#;
 
+    fn lanes() -> Vec<Lane> {
+        let mut lanes = vec![Lane::Interp];
+        #[cfg(any(test, feature = "jit"))]
+        lanes.push(Lane::Jit);
+        lanes
+    }
+
+    fn load_with_lane(source: &str, lane: Lane) -> Machine {
+        Machine::load_with_lane(source, lane).unwrap_or_else(|err| {
+            panic!("loads on {lane:?}: {err}");
+        })
+    }
+
     #[test]
     fn the_scalar_corpus_runs_on_the_machine() {
-        let mut m = Machine::load(CORPUS).expect("loads");
-        // poly(3): square(4)=16 twice -> 32; 32 - 3 = 29.
-        assert_eq!(m.demand_i64("poly", vec![3]).unwrap(), 29);
+        for lane in lanes() {
+            let mut m = load_with_lane(CORPUS, lane);
+            // poly(3): square(4)=16 twice -> 32; 32 - 3 = 29.
+            assert_eq!(m.demand_i64("poly", vec![3]).unwrap(), 29, "{lane:?}");
+        }
     }
 
     #[test]
     fn shared_calls_spawn_once() {
-        let mut m = Machine::load(CORPUS).expect("loads");
-        m.demand_i64("poly", vec![3]).unwrap();
-        let spawns = m
-            .trace()
-            .iter()
-            .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-            .count();
-        // poly, twice_sq, square — square(4) is called twice with the
-        // same argument and spawns ONCE (memo + waiter joining).
-        assert_eq!(spawns, 3);
+        for lane in lanes() {
+            let mut m = load_with_lane(CORPUS, lane);
+            m.demand_i64("poly", vec![3]).unwrap();
+            let spawns = m
+                .trace()
+                .iter()
+                .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
+                .count();
+            // poly, twice_sq, square — square(4) is called twice with the
+            // same argument and spawns ONCE (memo + waiter joining).
+            assert_eq!(spawns, 3, "{lane:?}");
+        }
     }
 
     #[test]
     fn warm_demand_is_two_events() {
-        let mut m = Machine::load(CORPUS).expect("loads");
-        m.demand_i64("poly", vec![3]).unwrap();
-        m.clear_trace();
-        assert_eq!(m.demand_i64("poly", vec![3]).unwrap(), 29);
-        assert_eq!(m.trace().len(), 2, "Demanded + MemoHit, nothing else");
+        for lane in lanes() {
+            let mut m = load_with_lane(CORPUS, lane);
+            m.demand_i64("poly", vec![3]).unwrap();
+            m.clear_trace();
+            assert_eq!(m.demand_i64("poly", vec![3]).unwrap(), 29, "{lane:?}");
+            assert_eq!(
+                m.trace().len(),
+                2,
+                "Demanded + MemoHit, nothing else on {lane:?}"
+            );
+        }
     }
 
     #[test]
     fn undemanded_functions_never_trace() {
         let source = format!("{CORPUS}\nfn never(z: Int) -> Int {{ z * 1000 }}\n");
-        let mut m = Machine::load(&source).expect("loads");
-        m.demand_i64("poly", vec![5]).unwrap();
-        // Mechanism 2 by absence: `never`'s closure hash appears
-        // nowhere in the trace.
-        let never_ref = m.fn_refs["never"];
-        let _ = never_ref;
-        let poly = m.demand_i64("poly", vec![5]).unwrap();
-        assert_eq!(poly, (6 * 6) * 2 - 5);
-        assert_eq!(
-            m.trace()
-                .iter()
-                .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-                .count(),
-            3,
-            "three spawns total; `never` never appears"
-        );
+        for lane in lanes() {
+            let mut m = load_with_lane(&source, lane);
+            m.demand_i64("poly", vec![5]).unwrap();
+            // Mechanism 2 by absence: `never`'s closure hash appears
+            // nowhere in the trace.
+            let never_ref = m.fn_refs["never"];
+            let _ = never_ref;
+            let poly = m.demand_i64("poly", vec![5]).unwrap();
+            assert_eq!(poly, (6 * 6) * 2 - 5, "{lane:?}");
+            assert_eq!(
+                m.trace()
+                    .iter()
+                    .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
+                    .count(),
+                3,
+                "three spawns total; `never` never appears on {lane:?}"
+            );
+        }
     }
 
     #[test]
@@ -2132,16 +2165,21 @@ fn fib(n: Int) -> Int {
     }
 }
 "#;
-        let mut m = Machine::load(src).expect("loads");
-        assert_eq!(m.demand_i64("fib", vec![20]).unwrap(), 6765);
-        let spawns = m
-            .trace()
-            .iter()
-            .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-            .count();
-        // fib(0)..fib(20): 21 distinct invocations, 21 spawns — LINEAR.
-        // Naive recursion runs 13,529 more bodies than this.
-        assert_eq!(spawns, 21);
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            assert_eq!(m.demand_i64("fib", vec![20]).unwrap(), 6765, "{lane:?}");
+            let spawns = m
+                .trace()
+                .iter()
+                .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
+                .count();
+            // fib(0)..fib(20): 21 distinct invocations, 21 spawns — LINEAR.
+            // Naive recursion runs 13,529 more bodies than this.
+            assert_eq!(spawns, 21, "{lane:?}");
+            traces.push((lane, m.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
     }
 
     #[test]
@@ -2156,17 +2194,22 @@ fn pick(b: Int) -> Int {
     }
 }
 "#;
-        let mut m = Machine::load(src).expect("loads");
-        assert_eq!(m.demand_i64("pick", vec![0]).unwrap(), 1);
-        let spawns = m
-            .trace()
-            .iter()
-            .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-            .count();
-        // pick + cheap. `expensive` sits in an untaken arm: its INVOKE
-        // never executed, so it never spawned, never demanded, never
-        // anything — the laziness proof by trace absence.
-        assert_eq!(spawns, 2);
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            assert_eq!(m.demand_i64("pick", vec![0]).unwrap(), 1, "{lane:?}");
+            let spawns = m
+                .trace()
+                .iter()
+                .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
+                .count();
+            // pick + cheap. `expensive` sits in an untaken arm: its INVOKE
+            // never executed, so it never spawned, never demanded, never
+            // anything — the laziness proof by trace absence.
+            assert_eq!(spawns, 2, "{lane:?}");
+            traces.push((lane, m.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
     }
 
     #[test]
@@ -2179,27 +2222,34 @@ fn f(n: Int) -> Int {
     }
 }
 "#;
-        let mut m = Machine::load(src).expect("loads");
-        assert_eq!(m.demand_i64("f", vec![0]).unwrap(), 7);
-        assert_eq!(m.demand_i64("f", vec![21]).unwrap(), 42);
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            assert_eq!(m.demand_i64("f", vec![0]).unwrap(), 7, "{lane:?}");
+            assert_eq!(m.demand_i64("f", vec![21]).unwrap(), 42, "{lane:?}");
+        }
     }
 
     #[test]
     fn refutable_matches_without_irrefutable_tail_are_rejected() {
         let src = "fn f(n: Int) -> Int { match n { 0 => 1, 1 => 2 } }";
-        let err = Machine::load(src)
-            .and_then(|mut m| m.demand_i64("f", vec![0]))
-            .unwrap_err();
-        assert!(err.contains("irrefutable"), "{err}");
+        for lane in lanes() {
+            let err = Machine::load_with_lane(src, lane)
+                .and_then(|mut m| m.demand_i64("f", vec![0]))
+                .unwrap_err();
+            assert!(err.contains("irrefutable"), "{lane:?}: {err}");
+        }
     }
 
     #[test]
     fn float_literals_lower_as_canonical_bits() {
-        let mut m = Machine::load("fn f() -> Float { 1.5 }").expect("loads");
-        assert_eq!(
-            (m.demand_i64("f", vec![]).unwrap() as u64),
-            1.5f64.to_bits()
-        );
+        for lane in lanes() {
+            let mut m = load_with_lane("fn f() -> Float { 1.5 }", lane);
+            assert_eq!(
+                (m.demand_i64("f", vec![]).unwrap() as u64),
+                1.5f64.to_bits(),
+                "{lane:?}"
+            );
+        }
     }
 
     #[test]
@@ -2223,8 +2273,10 @@ fn main() -> Int {
     eval(Expr::Add(Expr::Num(2), Expr::Mul(Expr::Num(3), Expr::Num(4))))
 }
 "#;
-        let mut m = Machine::load(src).expect("loads");
-        assert_eq!(m.demand_i64("main", vec![]).unwrap(), 14);
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            assert_eq!(m.demand_i64("main", vec![]).unwrap(), 14, "{lane:?}");
+        }
     }
 
     #[test]
@@ -2256,27 +2308,35 @@ fn main() -> Int {
     eval(a) + eval(b)
 }
 "#;
-        let mut m = Machine::load(src).expect("loads");
-        assert_eq!(m.demand_i64("main", vec![]).unwrap(), 6);
-        let eval_hash = m.fn_hash("eval").expect("eval hash");
-        let eval_spawns = m
-            .trace()
-            .iter()
-            .filter(|e| matches!(e, DriveEvent::Spawned { fn_hash } if *fn_hash == eval_hash))
-            .count();
-        let eval_hits = m
-            .trace()
-            .iter()
-            .filter(|e| matches!(e, DriveEvent::MemoHit { fn_hash } if *fn_hash == eval_hash))
-            .count();
-        assert_eq!(eval_spawns, 3, "Add, Num(1), Num(2) each spawn once");
-        assert!(eval_hits > 0, "second structurally equal tree hits memo");
-        assert!(
-            m.trace()
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            assert_eq!(m.demand_i64("main", vec![]).unwrap(), 6, "{lane:?}");
+            let eval_hash = m.fn_hash("eval").expect("eval hash");
+            let eval_spawns = m
+                .trace()
                 .iter()
-                .any(|e| matches!(e, DriveEvent::StoreAlloc { deduped: true, .. })),
-            "second constructor path dedupes in the value store"
-        );
+                .filter(|e| matches!(e, DriveEvent::Spawned { fn_hash } if *fn_hash == eval_hash))
+                .count();
+            let eval_hits = m
+                .trace()
+                .iter()
+                .filter(|e| matches!(e, DriveEvent::MemoHit { fn_hash } if *fn_hash == eval_hash))
+                .count();
+            assert_eq!(
+                eval_spawns, 3,
+                "Add, Num(1), Num(2) each spawn once on {lane:?}"
+            );
+            assert!(
+                eval_hits > 0,
+                "second structurally equal tree hits memo on {lane:?}"
+            );
+            assert!(
+                m.trace()
+                    .iter()
+                    .any(|e| matches!(e, DriveEvent::StoreAlloc { deduped: true, .. })),
+                "second constructor path dedupes in the value store on {lane:?}"
+            );
+        }
     }
 
     #[test]
@@ -2297,17 +2357,22 @@ fn main() -> Int {
     pick(Choice::A)
 }
 "#;
-        let mut m = Machine::load(src).expect("loads");
-        assert_eq!(m.demand_i64("main", vec![]).unwrap(), 1);
-        let expensive_hash = m.fn_hash("expensive").expect("expensive hash");
-        assert!(
-            !m.trace().iter().any(|e| matches!(
-                e,
-                DriveEvent::Demanded { fn_hash } | DriveEvent::Spawned { fn_hash }
-                    if *fn_hash == expensive_hash
-            )),
-            "untaken variant arm never demands or spawns expensive"
-        );
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            assert_eq!(m.demand_i64("main", vec![]).unwrap(), 1, "{lane:?}");
+            let expensive_hash = m.fn_hash("expensive").expect("expensive hash");
+            assert!(
+                !m.trace().iter().any(|e| matches!(
+                    e,
+                    DriveEvent::Demanded { fn_hash } | DriveEvent::Spawned { fn_hash }
+                        if *fn_hash == expensive_hash
+                )),
+                "untaken variant arm never demands or spawns expensive on {lane:?}"
+            );
+            traces.push((lane, m.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
     }
 
     #[test]
@@ -2322,39 +2387,55 @@ fn classify() -> Int {
     }
 }
 "#;
-        let mut m = Machine::load(src).expect("loads");
-        assert_eq!(m.store_len(), 1, "two identical literals intern once");
-        assert_eq!(m.demand_i64("classify", vec![]).unwrap(), 42);
-        assert_eq!(m.store_len(), 1, "string matching does not allocate");
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            assert_eq!(
+                m.store_len(),
+                1,
+                "two identical literals intern once on {lane:?}"
+            );
+            assert_eq!(m.demand_i64("classify", vec![]).unwrap(), 42, "{lane:?}");
+            assert_eq!(
+                m.store_len(),
+                1,
+                "string matching does not allocate on {lane:?}"
+            );
+        }
     }
 
     #[test]
     fn eval_vix_demo_returns_42_on_the_machine() {
-        let mut m = Machine::load(include_str!(
-            "../../../playgrounds/snark/src/bundled/vix/samples/eval.vix"
-        ))
-        .expect("eval.vix loads");
-        let bits = m.demand_i64("demo", vec![]).unwrap() as u64;
-        assert_eq!(bits, 42.0f64.to_bits());
-        let demo_hash = m.fn_hash("demo").expect("demo hash");
-        let spawns = m
-            .trace()
-            .iter()
-            .filter(|event| matches!(event, DriveEvent::Spawned { .. }))
-            .count();
-        assert_eq!(spawns, 6, "demo plus five distinct eval invocations");
+        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/eval.vix");
+        let mut cold_traces = Vec::new();
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            let bits = m.demand_i64("demo", vec![]).unwrap() as u64;
+            assert_eq!(bits, 42.0f64.to_bits(), "{lane:?}");
+            let demo_hash = m.fn_hash("demo").expect("demo hash");
+            let spawns = m
+                .trace()
+                .iter()
+                .filter(|event| matches!(event, DriveEvent::Spawned { .. }))
+                .count();
+            assert_eq!(
+                spawns, 6,
+                "demo plus five distinct eval invocations on {lane:?}"
+            );
+            cold_traces.push((lane, m.trace().to_vec()));
 
-        m.clear_trace();
-        let warm_bits = m.demand_i64("demo", vec![]).unwrap() as u64;
-        assert_eq!(warm_bits, 42.0f64.to_bits());
-        assert_eq!(
-            m.trace(),
-            &[
-                DriveEvent::Demanded { fn_hash: demo_hash },
-                DriveEvent::MemoHit { fn_hash: demo_hash },
-            ],
-            "warm demo is exactly demand + memo hit"
-        );
+            m.clear_trace();
+            let warm_bits = m.demand_i64("demo", vec![]).unwrap() as u64;
+            assert_eq!(warm_bits, 42.0f64.to_bits(), "{lane:?}");
+            assert_eq!(
+                m.trace(),
+                &[
+                    DriveEvent::Demanded { fn_hash: demo_hash },
+                    DriveEvent::MemoHit { fn_hash: demo_hash },
+                ],
+                "warm demo is exactly demand + memo hit on {lane:?}"
+            );
+        }
+        assert_lane_traces_equal(&cold_traces);
     }
 
     #[test]
@@ -2375,20 +2456,23 @@ pub fn lazy_probe() -> Float {
 }
 "#
         );
-        let mut m = Machine::load(&src).expect("loads");
-        assert_eq!(
-            (m.demand_i64("lazy_probe", vec![]).unwrap() as u64),
-            1.0f64.to_bits()
-        );
-        let never_hash = m.fn_hash("never_float").expect("never_float hash");
-        assert!(
-            !m.trace().iter().any(|event| matches!(
-                event,
-                DriveEvent::Demanded { fn_hash } | DriveEvent::Spawned { fn_hash }
-                    if *fn_hash == never_hash
-            )),
-            "helper in untaken variant arm never demanded or spawned"
-        );
+        for lane in lanes() {
+            let mut m = load_with_lane(&src, lane);
+            assert_eq!(
+                (m.demand_i64("lazy_probe", vec![]).unwrap() as u64),
+                1.0f64.to_bits(),
+                "{lane:?}"
+            );
+            let never_hash = m.fn_hash("never_float").expect("never_float hash");
+            assert!(
+                !m.trace().iter().any(|event| matches!(
+                    event,
+                    DriveEvent::Demanded { fn_hash } | DriveEvent::Spawned { fn_hash }
+                        if *fn_hash == never_hash
+                )),
+                "helper in untaken variant arm never demanded or spawned on {lane:?}"
+            );
+        }
     }
 
     #[test]
@@ -2404,13 +2488,18 @@ fn ba() -> Map<String, Float> {
     m.insert("b", 2.0).insert("a", 1.0)
 }
 "#;
-        let mut m = Machine::load(src).expect("loads");
-        let ab = m.demand_i64("ab", vec![]).unwrap();
-        let ba = m.demand_i64("ba", vec![]).unwrap();
-        let ab_entry = m.driver.store_entry(ab).expect("ab entry");
-        let ba_entry = m.driver.store_entry(ba).expect("ba entry");
-        assert_eq!(ab_entry.content_hash, ba_entry.content_hash);
-        assert_eq!(ab, ba, "dedupe returns the same canonical handle");
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            let ab = m.demand_i64("ab", vec![]).unwrap();
+            let ba = m.demand_i64("ba", vec![]).unwrap();
+            let ab_entry = m.driver.store_entry(ab).expect("ab entry");
+            let ba_entry = m.driver.store_entry(ba).expect("ba entry");
+            assert_eq!(ab_entry.content_hash, ba_entry.content_hash, "{lane:?}");
+            assert_eq!(
+                ab, ba,
+                "dedupe returns the same canonical handle on {lane:?}"
+            );
+        }
     }
 
     #[test]
@@ -2434,24 +2523,27 @@ fn main() -> Float {
     consume(ab()) + consume(ba())
 }
 "#;
-        let mut m = Machine::load(src).expect("loads");
-        assert_eq!(
-            (m.demand_i64("main", vec![]).unwrap() as u64),
-            6.0f64.to_bits()
-        );
-        let consume_hash = m.fn_hash("consume").expect("consume hash");
-        let consume_spawns = m
-            .trace()
-            .iter()
-            .filter(|event| matches!(event, DriveEvent::Spawned { fn_hash } if *fn_hash == consume_hash))
-            .count();
-        let consume_hits = m
-            .trace()
-            .iter()
-            .filter(|event| matches!(event, DriveEvent::MemoHit { fn_hash } if *fn_hash == consume_hash))
-            .count();
-        assert_eq!(consume_spawns, 1);
-        assert_eq!(consume_hits, 1);
+        for lane in lanes() {
+            let mut m = load_with_lane(src, lane);
+            assert_eq!(
+                (m.demand_i64("main", vec![]).unwrap() as u64),
+                6.0f64.to_bits(),
+                "{lane:?}"
+            );
+            let consume_hash = m.fn_hash("consume").expect("consume hash");
+            let consume_spawns = m
+                .trace()
+                .iter()
+                .filter(|event| matches!(event, DriveEvent::Spawned { fn_hash } if *fn_hash == consume_hash))
+                .count();
+            let consume_hits = m
+                .trace()
+                .iter()
+                .filter(|event| matches!(event, DriveEvent::MemoHit { fn_hash } if *fn_hash == consume_hash))
+                .count();
+            assert_eq!(consume_spawns, 1, "{lane:?}");
+            assert_eq!(consume_hits, 1, "{lane:?}");
+        }
     }
 
     #[test]
@@ -2462,10 +2554,24 @@ fn missing() -> Float {
     m.get("missing").unwrap()
 }
 "#;
-        let err = Machine::load(src)
-            .and_then(|mut machine| machine.demand_i64("missing", vec![]))
-            .unwrap_err();
-        assert!(err.contains("unwrap on None"), "{err}");
+        for lane in lanes() {
+            let err = Machine::load_with_lane(src, lane)
+                .and_then(|mut machine| machine.demand_i64("missing", vec![]))
+                .unwrap_err();
+            assert!(err.contains("unwrap on None"), "{lane:?}: {err}");
+        }
+    }
+
+    fn assert_lane_traces_equal(traces: &[(Lane, Vec<DriveEvent>)]) {
+        let Some((first_lane, first_trace)) = traces.first() else {
+            return;
+        };
+        for (lane, trace) in &traces[1..] {
+            assert_eq!(
+                trace, first_trace,
+                "driver trace diverged between {first_lane:?} and {lane:?}"
+            );
+        }
     }
 
     fn trace_hash(value: &str) -> u64 {
@@ -2519,97 +2625,163 @@ fn missing() -> Float {
         values
     }
 
-    fn load_merge_demand() -> Machine {
-        Machine::load(include_str!(
-            "../../../playgrounds/snark/src/bundled/vix/samples/merge-demand.vix"
-        ))
-        .expect("merge-demand.vix loads")
+    fn load_merge_demand(lane: Lane) -> Machine {
+        load_with_lane(
+            include_str!("../../../playgrounds/snark/src/bundled/vix/samples/merge-demand.vix"),
+            lane,
+        )
     }
 
     #[test]
     fn merge_demand_selected_tunnels_and_never_runs_left() {
-        let mut machine = load_merge_demand();
-        let target = machine.linux_target_handle();
-        let handle = machine.demand_i64("selected", vec![target]).unwrap();
+        let mut cold_traces = Vec::new();
+        let mut first_handle = None;
+        for lane in lanes() {
+            let mut machine = load_merge_demand(lane);
+            let target = machine.linux_target_handle();
+            let handle = machine.demand_i64("selected", vec![target]).unwrap();
 
-        assert_eq!(machine.tree_entries(handle).unwrap(), expected_object());
-        assert_eq!(spawned_count(&machine, "selected"), 1);
-        assert_eq!(spawned_count(&machine, "object"), 1);
-        assert_eq!(started_outputs(&machine), output_set(&["wanted.o"]));
-        assert_eq!(completed_outputs(&machine), output_set(&["wanted.o"]));
-        assert!(
-            !machine
-                .trace()
-                .iter()
-                .any(|event| matches!(event, DriveEvent::RunRequested { output, .. } if *output == trace_hash("left.o"))),
-            "left.o producer is never requested"
-        );
+            assert_eq!(
+                machine.tree_entries(handle).unwrap(),
+                expected_object(),
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "selected"), 1, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "object"), 1, "{lane:?}");
+            assert_eq!(
+                started_outputs(&machine),
+                output_set(&["wanted.o"]),
+                "{lane:?}"
+            );
+            assert_eq!(
+                completed_outputs(&machine),
+                output_set(&["wanted.o"]),
+                "{lane:?}"
+            );
+            assert!(
+                !machine
+                    .trace()
+                    .iter()
+                    .any(|event| matches!(event, DriveEvent::RunRequested { output, .. } if *output == trace_hash("left.o"))),
+                "left.o producer is never requested on {lane:?}"
+            );
+            if let Some(expected) = first_handle {
+                assert_eq!(handle, expected, "same selected result handle on {lane:?}");
+            } else {
+                first_handle = Some(handle);
+            }
+            cold_traces.push((lane, machine.trace().to_vec()));
 
-        let selected_hash = machine.fn_hash("selected").expect("selected hash");
-        machine.clear_trace();
-        let warm = machine.demand_i64("selected", vec![target]).unwrap();
-        assert_eq!(warm, handle);
-        assert_eq!(
-            machine.trace(),
-            &[
-                DriveEvent::Demanded {
-                    fn_hash: selected_hash
-                },
-                DriveEvent::MemoHit {
-                    fn_hash: selected_hash
-                },
-            ],
-            "warm selected demand is exactly root memo hit"
-        );
+            let selected_hash = machine.fn_hash("selected").expect("selected hash");
+            machine.clear_trace();
+            let warm = machine.demand_i64("selected", vec![target]).unwrap();
+            assert_eq!(warm, handle, "{lane:?}");
+            assert_eq!(
+                machine.trace(),
+                &[
+                    DriveEvent::Demanded {
+                        fn_hash: selected_hash
+                    },
+                    DriveEvent::MemoHit {
+                        fn_hash: selected_hash
+                    },
+                ],
+                "warm selected demand is exactly root memo hit on {lane:?}"
+            );
+        }
+        assert_lane_traces_equal(&cold_traces);
     }
 
     #[test]
     fn merge_demand_fallback_falls_left_after_right_absence() {
-        let mut machine = load_merge_demand();
-        let target = machine.linux_target_handle();
-        let handle = machine.demand_i64("fallback", vec![target]).unwrap();
+        let mut cold_traces = Vec::new();
+        let mut first_handle = None;
+        for lane in lanes() {
+            let mut machine = load_merge_demand(lane);
+            let target = machine.linux_target_handle();
+            let handle = machine.demand_i64("fallback", vec![target]).unwrap();
 
-        assert_eq!(machine.tree_entries(handle).unwrap(), expected_object());
-        assert_eq!(spawned_count(&machine, "fallback"), 1);
-        assert_eq!(
-            spawned_count(&machine, "object"),
-            2,
-            "right.o is run to prove absence, then wanted.o is demanded"
-        );
-        assert_eq!(
-            started_outputs(&machine),
-            output_set(&["right.o", "wanted.o"])
-        );
-        assert_eq!(
-            completed_outputs(&machine),
-            output_set(&["right.o", "wanted.o"])
-        );
-        assert!(
-            !machine
-                .trace()
-                .iter()
-                .any(|event| matches!(event, DriveEvent::RunRequested { output, .. } if *output == trace_hash("left.o"))),
-            "left.o is outside fallback's demanded path"
-        );
+            assert_eq!(
+                machine.tree_entries(handle).unwrap(),
+                expected_object(),
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "fallback"), 1, "{lane:?}");
+            assert_eq!(
+                spawned_count(&machine, "object"),
+                2,
+                "right.o is run to prove absence, then wanted.o is demanded on {lane:?}"
+            );
+            assert_eq!(
+                started_outputs(&machine),
+                output_set(&["right.o", "wanted.o"]),
+                "{lane:?}"
+            );
+            assert_eq!(
+                completed_outputs(&machine),
+                output_set(&["right.o", "wanted.o"]),
+                "{lane:?}"
+            );
+            assert!(
+                !machine
+                    .trace()
+                    .iter()
+                    .any(|event| matches!(event, DriveEvent::RunRequested { output, .. } if *output == trace_hash("left.o"))),
+                "left.o is outside fallback's demanded path on {lane:?}"
+            );
+            if let Some(expected) = first_handle {
+                assert_eq!(handle, expected, "same fallback result handle on {lane:?}");
+            } else {
+                first_handle = Some(handle);
+            }
+            cold_traces.push((lane, machine.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&cold_traces);
     }
 
     #[test]
     fn merge_demand_subtree_chain_refines_without_left() {
-        let mut machine = load_merge_demand();
-        let target = machine.linux_target_handle();
-        let handle = machine.demand_i64("subtree_chain", vec![target]).unwrap();
+        let mut cold_traces = Vec::new();
+        let mut first_handle = None;
+        for lane in lanes() {
+            let mut machine = load_merge_demand(lane);
+            let target = machine.linux_target_handle();
+            let handle = machine.demand_i64("subtree_chain", vec![target]).unwrap();
 
-        assert_eq!(machine.tree_entries(handle).unwrap(), expected_object());
-        assert_eq!(spawned_count(&machine, "subtree_chain"), 1);
-        assert_eq!(spawned_count(&machine, "object"), 1);
-        assert_eq!(started_outputs(&machine), output_set(&["x/wanted.o"]));
-        assert_eq!(completed_outputs(&machine), output_set(&["x/wanted.o"]));
-        assert!(
-            !machine
-                .trace()
-                .iter()
-                .any(|event| matches!(event, DriveEvent::RunRequested { output, .. } if *output == trace_hash("left.o"))),
-            "left.o producer is never requested through the subtree chain"
-        );
+            assert_eq!(
+                machine.tree_entries(handle).unwrap(),
+                expected_object(),
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "subtree_chain"), 1, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "object"), 1, "{lane:?}");
+            assert_eq!(
+                started_outputs(&machine),
+                output_set(&["x/wanted.o"]),
+                "{lane:?}"
+            );
+            assert_eq!(
+                completed_outputs(&machine),
+                output_set(&["x/wanted.o"]),
+                "{lane:?}"
+            );
+            assert!(
+                !machine
+                    .trace()
+                    .iter()
+                    .any(|event| matches!(event, DriveEvent::RunRequested { output, .. } if *output == trace_hash("left.o"))),
+                "left.o producer is never requested through the subtree chain on {lane:?}"
+            );
+            if let Some(expected) = first_handle {
+                assert_eq!(
+                    handle, expected,
+                    "same subtree_chain result handle on {lane:?}"
+                );
+            } else {
+                first_handle = Some(handle);
+            }
+            cold_traces.push((lane, machine.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&cold_traces);
     }
 }
