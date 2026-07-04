@@ -757,6 +757,7 @@ impl ValueStore {
 /// The demand scheduler.
 pub struct Driver {
     program: Program,
+    lane_kind: Lane,
     lane: LaneRuntime,
     fns: Vec<LoweredFn>,
     descriptors: HashMap<String, Descriptor<String>>,
@@ -787,10 +788,11 @@ impl Driver {
         descriptors: HashMap<String, Descriptor<String>>,
         lane: Lane,
     ) -> Result<Self, String> {
-        let lane = LaneRuntime::new(lane, &program)?;
+        let lane_runtime = LaneRuntime::new(lane, &program)?;
         Ok(Driver {
             program,
-            lane,
+            lane_kind: lane,
+            lane: lane_runtime,
             fns,
             descriptors,
             schema_refs: Vec::new(),
@@ -799,6 +801,20 @@ impl Driver {
             trace: Vec::new(),
             store: RefCell::new(ValueStore::default()),
         })
+    }
+
+    pub fn reload(
+        &mut self,
+        program: Program,
+        fns: Vec<LoweredFn>,
+        descriptors: HashMap<String, Descriptor<String>>,
+    ) -> Result<(), String> {
+        self.lane = LaneRuntime::new(self.lane_kind, &program)?;
+        self.program = program;
+        self.fns = fns;
+        self.descriptors = descriptors;
+        self.trace.clear();
+        Ok(())
     }
 
     /// How many memo entries exist (tests: warm behavior).
@@ -818,6 +834,13 @@ impl Driver {
         let index = self.schema_refs.len();
         self.schema_refs.push(schema);
         i64::try_from(index).expect("schema ref fits i64")
+    }
+
+    pub fn schema_ref_map_for(&mut self, schemas: &[String]) -> HashMap<String, i64> {
+        schemas
+            .iter()
+            .map(|schema| (schema.clone(), self.intern_schema_ref(schema.clone())))
+            .collect()
     }
 
     pub fn store_entry(&self, handle: i64) -> Option<StoreEntry> {

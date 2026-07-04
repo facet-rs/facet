@@ -17,9 +17,9 @@ Classification:
 
 | Class | Count | Meaning |
 | --- | ---: | --- |
-| 1 | 17 | Already covered by current machine tests. |
+| 1 | 24 | Already covered by current machine tests. |
 | 2 | 0 | Machine can already express it; missing parity test only. |
-| 3 | 40 | Needs feature work before parity. |
+| 3 | 33 | Needs feature work before parity. |
 | 4 | 3 | Parser/wire-shipping assertions outside the evaluator machine. |
 
 Class 4 is intentionally not used for any evaluator behavior.
@@ -89,13 +89,13 @@ Class 4 is intentionally not used for any evaluator behavior.
 | ID | Frozen assertion | Class | Machine parity status |
 | --- | --- | ---: | --- |
 | O01 | `eval_vix_computes_42`: oracle `eval.vix::demo()` returns `Float(42.0)`. | 1 | Covered by machine `eval_vix_demo_returns_42_on_the_machine` on both lanes. |
-| O02 | `memo_hits_and_identity_survives_trivia`: cold `demo` events are all misses; warm second call is one hit for `demo`; trivia/comments preserve `demo` and `eval` hashes; semantic edit changes `demo` hash but not `eval`. | 3 | Needs public machine warm trace plus closure-hash inspection/reload APIs. The warm hit part exists; hash/reload assertions need machine-facing support. |
-| O03 | `warm_reload_trivia_anywhere_costs_zero_misses_and_zero_runs`: after trivia-only reload, `main` returns `37`, zero misses/created events, and only `main` hits. | 3 | Needs warm reload preserving memo/value store across new lowering tables. |
-| O04 | `warm_reload_leaf_semantic_edit_misses_exact_theoretical_blast_radius`: changing `leaf` from 1 to 2 makes `main` return `39`; misses are exactly `{leaf,left,right,main}`; `independent` hits; `never_demanded` does not hit. | 3 | Needs warm reload plus closure-hash transitive dependency invalidation on the machine. |
-| O05 | `warm_reload_never_demanded_semantic_edit_costs_zero_misses`: editing unused `never_demanded` keeps `main = 37`, zero misses/created events, and only `main` hits. | 3 | Needs warm reload and unchanged reachable memo identity. |
-| O06 | `editing_unreferenced_function_preserves_other_closure_hashes`: editing `never_demanded` preserves hashes for `{leaf,left,right,independent,main}` and changes only `never_demanded`. | 3 | Needs machine-visible closure hash inspection or reload diagnostics. |
-| O07 | `warm_reload_type_declaration_edit_misses_exact_transitive_users`: reordering `enum Choice { A, B }` to `{ B, A }` keeps `main = 8`, misses exactly `{typed,bridge,main}`, and `independent` hits. | 3 | Needs warm reload plus type-declaration hash dependency tracking in machine tables. |
-| O08 | `recursive_scc_closure_hashes_are_stable_across_definition_order`: mutually recursive `a`/`b` hashes are equal across definition order. | 3 | Needs machine-visible closure hash inspection; module hashing may already satisfy this but is not asserted machine-side. |
+| O02 | `memo_hits_and_identity_survives_trivia`: cold `demo` events are all misses; warm second call is one hit for `demo`; trivia/comments preserve `demo` and `eval` hashes; semantic edit changes `demo` hash but not `eval`. | 1 | Covered by `warm_reload_eval_identity_survives_trivia_and_semantic_edits` on both lanes: cold has no memo hits, warm is exactly root `MemoHit`, trivia preserves `demo`/`eval` hashes, and semantic demo edit changes only `demo`. |
+| O03 | `warm_reload_trivia_anywhere_costs_zero_misses_and_zero_runs`: after trivia-only reload, `main` returns `37`, zero misses/created events, and only `main` hits. | 1 | Covered by `warm_reload_trivia_costs_only_root_hit` on both lanes; `Machine::reload` rebuilds lowering tables while preserving memo/value store, and the post-reload trace has zero spawns and only `main` hit. |
+| O04 | `warm_reload_leaf_semantic_edit_misses_exact_theoretical_blast_radius`: changing `leaf` from 1 to 2 makes `main` return `39`; misses are exactly `{leaf,left,right,main}`; `independent` hits; `never_demanded` does not hit. | 1 | Covered by `warm_reload_leaf_edit_misses_exact_blast_radius` on both lanes, with exact reload diff and exact spawned-function set `{leaf,left,right,main}` plus `independent` hit. |
+| O05 | `warm_reload_never_demanded_semantic_edit_costs_zero_misses`: editing unused `never_demanded` keeps `main = 37`, zero misses/created events, and only `main` hits. | 1 | Covered by `warm_reload_unused_edit_costs_zero_misses_and_hashes_only_itself` on both lanes: zero spawns, only `main` hit, and `main` remains `37`. |
+| O06 | `editing_unreferenced_function_preserves_other_closure_hashes`: editing `never_demanded` preserves hashes for `{leaf,left,right,independent,main}` and changes only `never_demanded`. | 1 | Covered by `warm_reload_unused_edit_costs_zero_misses_and_hashes_only_itself` using `Machine::fn_hashes()` and `ReloadDiff`; only `never_demanded` changes. |
+| O07 | `warm_reload_type_declaration_edit_misses_exact_transitive_users`: reordering `enum Choice { A, B }` to `{ B, A }` keeps `main = 8`, misses exactly `{typed,bridge,main}`, and `independent` hits. | 1 | Covered by `warm_reload_type_decl_edit_misses_transitive_users` on both lanes; closure hashes include type declarations, producing exact diff/spawn set `{typed,bridge,main}` and an `independent` hit. |
+| O08 | `recursive_scc_closure_hashes_are_stable_across_definition_order`: mutually recursive `a`/`b` hashes are equal across definition order. | 1 | Covered by `recursive_scc_hashes_survive_definition_order_on_machine` on both lanes via machine-visible `fn_hash`. |
 | O09 | `types_vix_partials_guards_and_tuple_indexing`: `partials = 42`, `depths = 2`, `classify(lua.o)` and `classify(lapi.o)` return the two pinned strings, and calling `scaled(k:2)` without `x`/`..` errors. | 3 | Same `types.vix` feature set as E02-E05 plus exact partial-call error. |
 | O10 | `toolchain_acquires_capabilities_and_updates_records`: Windows target returns a `Toolchain` struct with `opt = 1`, two env entries including `CFLAGS=-O2`, and exactly two non-replayed capability observations. | 3 | Same record-update/capability-observation surface as E06. |
 | O11 | `fetch_pins_the_journal_and_replays`: fetch with declared checksum returns equal trees for different nonce args; observations are first `replayed=false`, then `replayed=true`; journal pins checksum under `fetch:{url}:sha256:{sha}`. | 3 | Needs fetch primitive, declared checksum identity, observation replay accounting, and journal exposure. |

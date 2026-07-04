@@ -1205,11 +1205,11 @@ impl Oracle {
 
     fn binary(&self, b: &ast::Binary, frames: &mut Vec<Frame>) -> EvalResult {
         // Short-circuit forms first.
-        if b.op == "&&" || b.op == "||" {
+        if b.op.as_str() == "&&" || b.op.as_str() == "||" {
             let Value::Bool(left) = self.eval(&b.left, frames)? else {
                 return Err("logical op on non-bool".to_string());
             };
-            if (b.op == "&&") != left {
+            if (b.op.as_str() == "&&") != left {
                 return Ok(Value::Bool(left));
             }
             return self.eval(&b.right, frames);

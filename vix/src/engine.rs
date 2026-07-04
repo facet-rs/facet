@@ -237,7 +237,7 @@ impl Engine {
                 }
                 if let Demand::Path(tail) = &kind
                     && let Expr::Binary(binary) = expr.as_ref()
-                    && binary.op == "/"
+                    && binary.op.as_str() == "/"
                 {
                     let right = {
                         let right_node = self.alloc_thunk(binary.right.clone(), env.clone());
@@ -883,18 +883,18 @@ impl Engine {
     }
 
     fn binary(&mut self, b: &ast::Binary, env: Env) -> EvalResult {
-        if b.op == "&&" || b.op == "||" {
+        if b.op.as_str() == "&&" || b.op.as_str() == "||" {
             let left_node = self.alloc_thunk(b.left.clone(), env.clone());
             let Value::Bool(left) = self.demand(left_node, Demand::Identity)? else {
                 return Err("logical op on non-bool".to_string());
             };
-            if (b.op == "&&") != left {
+            if (b.op.as_str() == "&&") != left {
                 return Ok(Value::Bool(left));
             }
             let right_node = self.alloc_thunk(b.right.clone(), env);
             return self.demand(right_node, Demand::Identity);
         }
-        if b.op == "/" {
+        if b.op.as_str() == "/" {
             let right = {
                 let node = self.alloc_thunk(b.right.clone(), env.clone());
                 self.demand(node, Demand::Identity)?

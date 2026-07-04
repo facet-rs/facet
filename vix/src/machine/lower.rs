@@ -16,7 +16,7 @@
 //! exactly the affected closures.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 use weavy::mem::Descriptor;
@@ -39,6 +39,11 @@ use crate::module::{ModuleTables, VariantShape, load_module_tables, type_schema_
 pub struct Machine {
     driver: Driver,
     fn_refs: HashMap<String, usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReloadDiff {
+    pub changed: BTreeSet<String>,
 }
 
 impl Machine {
@@ -221,6 +226,111 @@ impl Machine {
         Ok(Machine { driver, fn_refs })
     }
 
+    pub fn reload(&mut self, source: &str) -> Result<ReloadDiff, String> {
+        let before = self.fn_hashes();
+        let tables = load_module_tables(source)?;
+
+        let mut names: Vec<&String> = tables.fns.keys().collect();
+        names.sort();
+        let fn_refs: HashMap<String, usize> = names
+            .iter()
+            .enumerate()
+            .map(|(ix, name)| ((*name).clone(), ix))
+            .collect();
+        let fn_returns: HashMap<String, String> = names
+            .iter()
+            .map(|name| {
+                let item = &tables.fns[*name];
+                let schema = item
+                    .return_type
+                    .as_ref()
+                    .map(type_schema_name)
+                    .transpose()?
+                    .unwrap_or_else(|| "Int".into());
+                Ok(((*name).clone(), schema))
+            })
+            .collect::<Result<_, String>>()?;
+        let fn_params: HashMap<String, Vec<String>> = names
+            .iter()
+            .map(|name| {
+                let item = &tables.fns[*name];
+                Ok((
+                    (*name).clone(),
+                    item.params
+                        .params
+                        .iter()
+                        .map(|param| type_schema_name(&param.ty))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ))
+            })
+            .collect::<Result<_, String>>()?;
+        let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
+        schema_names.sort();
+        schema_names.dedup();
+        let schema_refs = self.driver.schema_ref_map_for(&schema_names);
+        let string_handles = live_string_handles(&self.driver, &tables);
+        let path_handles = live_path_handles(&self.driver, &tables);
+        let literal_handles = LiteralHandles {
+            strings: &string_handles,
+            paths: &path_handles,
+        };
+
+        let mut task_fns = Vec::with_capacity(names.len());
+        let mut lowered = Vec::with_capacity(names.len());
+        for (ix, name) in names.iter().enumerate() {
+            let item = &tables.fns[*name];
+            let hash = tables.fn_hashes[*name];
+            let (task_fn, info) = FnLowerer::lower(
+                item,
+                &tables,
+                &fn_refs,
+                &fn_returns,
+                &fn_params,
+                &schema_refs,
+                literal_handles,
+            )
+            .map_err(|e| format!("lowering {name}: {e}"))?;
+            task_fns.push(task_fn);
+            lowered.push(LoweredFn {
+                hash,
+                task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
+                arg_offsets: info.arg_offsets,
+                arg_schemas: item
+                    .params
+                    .params
+                    .iter()
+                    .map(|param| type_schema_name(&param.ty))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| format!("lowering {name}: {e}"))?,
+                return_schema: fn_returns[*name].clone(),
+                invoke_region: info.invoke_region,
+                store_alloc_region: info.store_alloc_region,
+                store_read_region: info.store_read_region,
+                store_tag_region: info.store_tag_region,
+                primitive_region: info.primitive_region,
+            });
+        }
+
+        let mut descriptors = tables.descriptors;
+        for name in &schema_names {
+            if let Some(descriptor) = derived_descriptor(name) {
+                descriptors.entry(name.clone()).or_insert(descriptor);
+            }
+        }
+        self.driver
+            .reload(Program { fns: task_fns }, lowered, descriptors)?;
+        self.fn_refs = fn_refs;
+
+        let after = self.fn_hashes();
+        let changed = before
+            .keys()
+            .chain(after.keys())
+            .filter(|name| before.get(*name) != after.get(*name))
+            .cloned()
+            .collect();
+        Ok(ReloadDiff { changed })
+    }
+
     /// Demand a function's value at the edge (scalars, this slice).
     pub fn demand_i64(&mut self, name: &str, args: Vec<i64>) -> Result<i64, String> {
         let fn_ref = *self
@@ -269,6 +379,13 @@ impl Machine {
             .map(|&fn_ref| self.driver.fn_hash(fn_ref))
     }
 
+    pub fn fn_hashes(&self) -> BTreeMap<String, u64> {
+        self.fn_refs
+            .keys()
+            .filter_map(|name| self.fn_hash(name).map(|hash| (name.clone(), hash)))
+            .collect()
+    }
+
     #[cfg(test)]
     fn fn_ops(&self, name: &str) -> Option<&[Op]> {
         self.fn_refs
@@ -277,24 +394,80 @@ impl Machine {
     }
 }
 
-fn string_handles(tables: &ModuleTables) -> HashMap<String, i64> {
-    let mut strings = BTreeSet::new();
-    for item in tables.fns.values() {
-        collect_block_strings(&item.body, &mut strings);
+fn schema_names_for(
+    tables: &ModuleTables,
+    fn_returns: &HashMap<String, String>,
+    fn_params: &HashMap<String, Vec<String>>,
+) -> Result<Vec<String>, String> {
+    let mut schema_names: Vec<String> = tables.descriptors.keys().cloned().collect();
+    schema_names.extend([
+        "String".to_string(),
+        "Path".to_string(),
+        "Target".to_string(),
+        "Cc".to_string(),
+        "Tree".to_string(),
+        "Array".to_string(),
+        "Map".to_string(),
+    ]);
+    for schema in fn_returns.values() {
+        push_schema_closure(schema, &mut schema_names);
     }
-    strings
+    for schemas in fn_params.values() {
+        for schema in schemas {
+            push_schema_closure(schema, &mut schema_names);
+        }
+    }
+    for item in tables.fns.values() {
+        collect_block_type_schemas(&item.body, &mut schema_names)?;
+    }
+    Ok(schema_names)
+}
+
+fn push_schema_closure(schema: &str, schema_names: &mut Vec<String>) {
+    schema_names.push(schema.to_string());
+    schema_names.push(pending_schema(schema));
+    if let Some(value_schema) = map_value_schema(schema) {
+        let pending = pending_schema(value_schema);
+        let realized = realized_schema(value_schema);
+        schema_names.push(value_schema.to_string());
+        schema_names.push(pending);
+        schema_names.push(option_schema(value_schema));
+        schema_names.push(realized.clone());
+        schema_names.push(option_schema(&realized));
+        if let Some((key_schema, _)) = map_schemas(schema) {
+            schema_names.push(map_schema(key_schema, &realized));
+        }
+    }
+}
+
+fn string_handles(tables: &ModuleTables) -> HashMap<String, i64> {
+    string_literals(tables)
         .into_iter()
         .enumerate()
         .map(|(ix, value)| (value, i64::try_from(ix).expect("string handle fits i64")))
         .collect()
 }
 
-fn path_handles(tables: &ModuleTables, offset: usize) -> HashMap<String, i64> {
-    let mut paths = BTreeSet::new();
+fn live_string_handles(driver: &Driver, tables: &ModuleTables) -> HashMap<String, i64> {
+    string_literals(tables)
+        .into_iter()
+        .map(|value| {
+            let (handle, _) = driver.intern_raw_value("String", value.as_bytes().to_vec());
+            (value, handle)
+        })
+        .collect()
+}
+
+fn string_literals(tables: &ModuleTables) -> BTreeSet<String> {
+    let mut strings = BTreeSet::new();
     for item in tables.fns.values() {
-        collect_block_paths(&item.body, &mut paths);
+        collect_block_strings(&item.body, &mut strings);
     }
-    paths
+    strings
+}
+
+fn path_handles(tables: &ModuleTables, offset: usize) -> HashMap<String, i64> {
+    path_literals(tables)
         .into_iter()
         .enumerate()
         .map(|(ix, value)| {
@@ -304,6 +477,24 @@ fn path_handles(tables: &ModuleTables, offset: usize) -> HashMap<String, i64> {
             )
         })
         .collect()
+}
+
+fn live_path_handles(driver: &Driver, tables: &ModuleTables) -> HashMap<String, i64> {
+    path_literals(tables)
+        .into_iter()
+        .map(|value| {
+            let (handle, _) = driver.intern_raw_value("Path", value.as_bytes().to_vec());
+            (value, handle)
+        })
+        .collect()
+}
+
+fn path_literals(tables: &ModuleTables) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    for item in tables.fns.values() {
+        collect_block_paths(&item.body, &mut paths);
+    }
+    paths
 }
 
 fn collect_block_strings(block: &ast::Block, out: &mut BTreeSet<String>) {
@@ -980,7 +1171,7 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Paren(p) => self.expr(&p.inner),
             ast::Expr::Scoped(path) => self.scoped_value(path),
             ast::Expr::StructLit(lit) => self.struct_literal(lit),
-            ast::Expr::Binary(b) if b.op == "/" => {
+            ast::Expr::Binary(b) if b.op.as_str() == "/" => {
                 let left = self.expr(&b.left)?;
                 let right = self.expr(&b.right)?;
                 match (left.schema.as_str(), right.schema.as_str()) {
@@ -3359,6 +3550,321 @@ pub fn main() -> Int {
         }
     }
 
+    fn anti_nix_diamond() -> &'static str {
+        r#"
+fn leaf() -> Int {
+    1
+}
+
+fn left() -> Int {
+    leaf() + 10
+}
+
+fn right() -> Int {
+    leaf() + 20
+}
+
+fn independent() -> Int {
+    5
+}
+
+fn never_demanded() -> Int {
+    100
+}
+
+pub fn main() -> Int {
+    left() + right() + independent()
+}
+"#
+    }
+
+    fn type_closure_source() -> &'static str {
+        r#"
+enum Choice { A, B }
+
+fn typed(x: Choice) -> Int {
+    match x {
+        Choice::A => 1,
+        Choice::B => 2,
+    }
+}
+
+fn bridge() -> Int {
+    typed(Choice::A)
+}
+
+fn independent() -> Int {
+    7
+}
+
+pub fn main() -> Int {
+    bridge() + independent()
+}
+"#
+    }
+
+    #[test]
+    fn warm_reload_eval_identity_survives_trivia_and_semantic_edits() {
+        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/eval.vix");
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(
+                (machine.demand_i64("demo", vec![]).unwrap() as u64),
+                42.0f64.to_bits(),
+                "{lane:?}"
+            );
+            assert_eq!(memo_hit_functions(&machine), BTreeSet::new(), "{lane:?}");
+            assert!(!spawned_functions(&machine).is_empty(), "{lane:?}");
+
+            let demo_hash = machine.fn_hash("demo").expect("demo hash");
+            machine.clear_trace();
+            assert_eq!(
+                (machine.demand_i64("demo", vec![]).unwrap() as u64),
+                42.0f64.to_bits(),
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.trace(),
+                &[
+                    DriveEvent::Demanded { fn_hash: demo_hash },
+                    DriveEvent::MemoHit { fn_hash: demo_hash },
+                ],
+                "{lane:?}"
+            );
+
+            let reformatted = src
+                .replace("fn demo() -> Float {", "fn demo() -> Float {\n    // hi!\n")
+                .replace("use vix::Map;", "// preamble\n\nuse vix::Map;");
+            let reformatted = load_with_lane(&reformatted, lane);
+            assert_eq!(
+                machine.fn_hash("demo"),
+                reformatted.fn_hash("demo"),
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.fn_hash("eval"),
+                reformatted.fn_hash("eval"),
+                "{lane:?}"
+            );
+
+            let changed = src.replace("Expr::Num(6.0)", "Expr::Num(5.0)");
+            let changed = load_with_lane(&changed, lane);
+            assert_ne!(machine.fn_hash("demo"), changed.fn_hash("demo"), "{lane:?}");
+            assert_eq!(machine.fn_hash("eval"), changed.fn_hash("eval"), "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn warm_reload_trivia_costs_only_root_hit() {
+        for lane in lanes() {
+            let mut machine = load_with_lane(anti_nix_diamond(), lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
+            let reformatted = anti_nix_diamond()
+                .replace(
+                    "fn leaf() -> Int {",
+                    "// top-level trivia\nfn leaf() -> Int {\n    // leaf",
+                )
+                .replace("fn left() -> Int {", "fn left() -> Int {\n\n    // left")
+                .replace("fn right() -> Int {", "fn right() -> Int {\n    // right")
+                .replace(
+                    "fn never_demanded() -> Int {",
+                    "fn never_demanded() -> Int {\n    // dead code trivia",
+                )
+                .replace("left() + right()", "left()   +   right()");
+            let diff = machine.reload(&reformatted).unwrap();
+            assert!(diff.changed.is_empty(), "{lane:?}: {diff:?}");
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
+            assert_eq!(spawned_functions(&machine), BTreeSet::new(), "{lane:?}");
+            assert_eq!(
+                memo_hit_functions(&machine),
+                BTreeSet::from(["main".to_string()]),
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn warm_reload_leaf_edit_misses_exact_blast_radius() {
+        for lane in lanes() {
+            let mut machine = load_with_lane(anti_nix_diamond(), lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
+            let edited = anti_nix_diamond()
+                .replace("fn leaf() -> Int {\n    1", "fn leaf() -> Int {\n    2");
+            let diff = machine.reload(&edited).unwrap();
+            assert_eq!(
+                diff.changed,
+                BTreeSet::from([
+                    "leaf".to_string(),
+                    "left".to_string(),
+                    "main".to_string(),
+                    "right".to_string(),
+                ]),
+                "{lane:?}"
+            );
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 39, "{lane:?}");
+            assert_eq!(
+                spawned_functions(&machine),
+                BTreeSet::from([
+                    "leaf".to_string(),
+                    "left".to_string(),
+                    "main".to_string(),
+                    "right".to_string(),
+                ]),
+                "{lane:?}"
+            );
+            let hits = memo_hit_functions(&machine);
+            assert!(hits.contains("independent"), "{lane:?}: {hits:?}");
+            assert!(!hits.contains("never_demanded"), "{lane:?}: {hits:?}");
+        }
+    }
+
+    #[test]
+    fn warm_reload_unused_edit_costs_zero_misses_and_hashes_only_itself() {
+        for lane in lanes() {
+            let mut machine = load_with_lane(anti_nix_diamond(), lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
+            let before = machine.fn_hashes();
+            let edited = anti_nix_diamond().replace(
+                "fn never_demanded() -> Int {\n    100",
+                "fn never_demanded() -> Int {\n    101",
+            );
+            let diff = machine.reload(&edited).unwrap();
+            assert_eq!(
+                diff.changed,
+                BTreeSet::from(["never_demanded".to_string()]),
+                "{lane:?}"
+            );
+            for name in ["leaf", "left", "right", "independent", "main"] {
+                assert_eq!(
+                    before.get(name),
+                    machine.fn_hashes().get(name),
+                    "{name} should not inherit an unreferenced function edit on {lane:?}"
+                );
+            }
+            assert_ne!(
+                before.get("never_demanded"),
+                machine.fn_hashes().get("never_demanded"),
+                "{lane:?}"
+            );
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
+            assert_eq!(spawned_functions(&machine), BTreeSet::new(), "{lane:?}");
+            assert_eq!(
+                memo_hit_functions(&machine),
+                BTreeSet::from(["main".to_string()]),
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn warm_reload_type_decl_edit_misses_transitive_users() {
+        for lane in lanes() {
+            let mut machine = load_with_lane(type_closure_source(), lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 8, "{lane:?}");
+            let edited =
+                type_closure_source().replace("enum Choice { A, B }", "enum Choice { B, A }");
+            let diff = machine.reload(&edited).unwrap();
+            assert_eq!(
+                diff.changed,
+                BTreeSet::from([
+                    "bridge".to_string(),
+                    "main".to_string(),
+                    "typed".to_string()
+                ]),
+                "{lane:?}"
+            );
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 8, "{lane:?}");
+            assert_eq!(
+                spawned_functions(&machine),
+                BTreeSet::from([
+                    "bridge".to_string(),
+                    "main".to_string(),
+                    "typed".to_string()
+                ]),
+                "{lane:?}"
+            );
+            let hits = memo_hit_functions(&machine);
+            assert!(hits.contains("independent"), "{lane:?}: {hits:?}");
+        }
+    }
+
+    #[test]
+    fn recursive_scc_hashes_survive_definition_order_on_machine() {
+        let ab = r#"
+fn a() -> Int { b() }
+fn b() -> Int { a() }
+"#;
+        let ba = r#"
+fn b() -> Int { a() }
+fn a() -> Int { b() }
+"#;
+        for lane in lanes() {
+            let ab = load_with_lane(ab, lane);
+            let ba = load_with_lane(ba, lane);
+            assert_eq!(ab.fn_hash("a"), ba.fn_hash("a"), "{lane:?}");
+            assert_eq!(ab.fn_hash("b"), ba.fn_hash("b"), "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn pending_entries_resolve_through_reloaded_hash_tables() {
+        let src = r#"
+fn producer() -> Float { 1.0 }
+
+pub fn make() -> Map<String, Float> {
+    let m: Map<String, Float> = {};
+    m.insert("x", producer())
+}
+
+pub fn touch(m: Map<String, Float>, nonce: Int) -> Float {
+    m.get("x").unwrap()
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let handle = machine.demand_i64("make", vec![]).unwrap();
+            assert_eq!(
+                (machine.demand_i64("touch", vec![handle, 0]).unwrap() as u64),
+                1.0f64.to_bits(),
+                "{lane:?}"
+            );
+
+            let trivia = src.replace(
+                "fn producer() -> Float {",
+                "fn producer() -> Float {\n    // hi\n",
+            );
+            let diff = machine.reload(&trivia).unwrap();
+            assert!(diff.changed.is_empty(), "{lane:?}: {diff:?}");
+            assert_eq!(
+                (machine.demand_i64("touch", vec![handle, 1]).unwrap() as u64),
+                1.0f64.to_bits(),
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "producer"), 0, "{lane:?}");
+            assert_eq!(memo_hit_count(&machine, "producer"), 1, "{lane:?}");
+
+            let semantic = src.replace(
+                "fn producer() -> Float { 1.0 }",
+                "fn producer() -> Float { 2.0 }",
+            );
+            let diff = machine.reload(&semantic).unwrap();
+            assert_eq!(
+                diff.changed,
+                BTreeSet::from(["make".to_string(), "producer".to_string()]),
+                "{lane:?}"
+            );
+            let handle = machine.demand_i64("make", vec![]).unwrap();
+            machine.clear_trace();
+            assert_eq!(
+                (machine.demand_i64("touch", vec![handle, 2]).unwrap() as u64),
+                2.0f64.to_bits(),
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "producer"), 1, "{lane:?}");
+            assert_eq!(memo_hit_count(&machine, "producer"), 0, "{lane:?}");
+        }
+    }
+
     #[test]
     fn lazy_map_value_forces_only_selected_pending_entry() {
         let src = r#"
@@ -3552,6 +4058,36 @@ pub fn moved(n: Int) -> Map<String, Float> {
         let mut h = DefaultHasher::new();
         value.hash(&mut h);
         h.finish()
+    }
+
+    fn spawned_functions(machine: &Machine) -> BTreeSet<String> {
+        event_functions(machine, |event| match event {
+            DriveEvent::Spawned { fn_hash } => Some(*fn_hash),
+            _ => None,
+        })
+    }
+
+    fn memo_hit_functions(machine: &Machine) -> BTreeSet<String> {
+        event_functions(machine, |event| match event {
+            DriveEvent::MemoHit { fn_hash } => Some(*fn_hash),
+            _ => None,
+        })
+    }
+
+    fn event_functions(
+        machine: &Machine,
+        pick: impl Fn(&DriveEvent) -> Option<u64>,
+    ) -> BTreeSet<String> {
+        let by_hash: HashMap<u64, String> = machine
+            .fn_hashes()
+            .into_iter()
+            .map(|(name, hash)| (hash, name))
+            .collect();
+        machine
+            .trace()
+            .iter()
+            .filter_map(|event| pick(event).and_then(|hash| by_hash.get(&hash).cloned()))
+            .collect()
     }
 
     fn expected_object() -> BTreeMap<String, String> {
