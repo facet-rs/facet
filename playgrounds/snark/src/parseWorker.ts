@@ -76,9 +76,36 @@ self.onmessage = async (event: MessageEvent<ParseWorkerRequest>) => {
     // vix IDE bindings ride the same round trip: parse+bind with vix's own embedded
     // grammar (lazy table build inside wasm, once per worker lifetime).
     const vix = vixIde ? vixBindings(input) : null;
-    const vixMachine = vixMachineFn ? runVixMachine(input, vixMachineFn) : null;
+    let vixMachine: string | null = null;
+    if (vixMachineFn) {
+      try {
+        vixMachine = runVixMachine(input, vixMachineFn);
+      } catch (error) {
+        vixMachine = JSON.stringify({
+          ok: false,
+          error: errorMessage(error),
+          source_kind: machineSourceKind(input),
+          fn_name: vixMachineFn,
+          result: null,
+          cold_trace: [],
+          warm_trace: [],
+          fn_hashes: [],
+          run_hashes: [],
+        });
+      }
+    }
     post({ id, ok: true, response, prepared: true, vix, vixMachine });
   } catch (error) {
     post({ id, ok: false, error: errorMessage(error) });
   }
 };
+
+function machineSourceKind(input: string): string {
+  if (input.includes("left.c") && input.includes("subtree_chain")) {
+    return "merge-demand";
+  }
+  if (input.includes("pub fn demo() -> Float")) {
+    return "eval";
+  }
+  return "vix";
+}

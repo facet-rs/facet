@@ -874,12 +874,49 @@ select {
   color: var(--text-faint);
 }
 
+.machine-node em {
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
 .machine-node-spawn {
   border-color: light-dark(rgb(31 157 99 / 28%), rgb(92 192 137 / 30%));
 }
 
 .machine-node-run {
   border-color: light-dark(rgb(31 127 168 / 26%), rgb(111 195 232 / 28%));
+}
+
+.machine-node-ran,
+.machine-run-ran {
+  border-color: light-dark(rgb(39 135 87 / 32%), rgb(93 190 130 / 34%));
+}
+
+.machine-node-tier1,
+.machine-run-tier1 {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.machine-node-tier2,
+.machine-run-tier2 {
+  border-color: light-dark(rgb(180 144 45 / 40%), rgb(220 183 75 / 38%));
+}
+
+.machine-node-joined,
+.machine-run-joined {
+  border-color: light-dark(rgb(126 104 210 / 38%), rgb(166 145 238 / 36%));
+}
+
+.machine-node-observation {
+  border-color: light-dark(rgb(68 147 153 / 28%), rgb(109 203 207 / 30%));
+}
+
+.machine-node-replayed {
+  border-color: light-dark(rgb(134 126 154 / 30%), rgb(166 159 184 / 30%));
+  opacity: 0.84;
 }
 
 .machine-node-memo {
@@ -895,6 +932,7 @@ select {
 
 .machine-edges,
 .machine-runs,
+.machine-observations,
 .machine-trace {
   display: grid;
   gap: 4px;
@@ -902,6 +940,7 @@ select {
 
 .machine-edge,
 .machine-run,
+.machine-observation,
 .machine-trace-row {
   display: grid;
   align-items: center;
@@ -918,15 +957,20 @@ select {
 }
 
 .machine-run {
-  grid-template-columns: 80px minmax(0, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr) auto minmax(94px, auto) auto;
 }
 
 .machine-trace-row {
-  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+}
+
+.machine-observation {
+  grid-template-columns: 72px minmax(0, 1fr) auto;
 }
 
 .machine-edge span,
 .machine-run span,
+.machine-observation span,
 .machine-trace-row span {
   color: var(--text-faint);
   font-family: var(--mono);
@@ -936,6 +980,7 @@ select {
 
 .machine-edge code,
 .machine-run code,
+.machine-observation code,
 .machine-trace-row code {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -945,12 +990,85 @@ select {
   color: var(--text-dim);
 }
 
-.machine-run-RunCompleted span {
+.machine-run strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.machine-run small,
+.machine-observation small,
+.machine-trace-row small {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.machine-run p {
+  grid-column: 2 / -1;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.machine-run-outputs {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.machine-run-outputs code {
+  padding: 2px 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  background: var(--code-bg);
+}
+
+.machine-span-link {
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.machine-span-link:hover {
+  color: var(--accent);
+}
+
+.machine-run-tier1 span,
+.machine-run-tier1 strong,
+.machine-trace-MemoHit span {
+  color: var(--accent);
+}
+
+.machine-run-ran strong {
   color: var(--ok);
 }
 
-.machine-run-RunStarted span {
-  color: var(--accent);
+.machine-run-tier2 strong {
+  color: light-dark(rgb(141 103 0), rgb(237 200 88));
+}
+
+.machine-run-joined strong {
+  color: light-dark(rgb(96 76 178), rgb(181 163 255));
+}
+
+.machine-observation-cold span {
+  color: var(--ok);
+}
+
+.machine-observation-replayed span {
+  color: var(--text-faint);
 }
 
 .machine-error {

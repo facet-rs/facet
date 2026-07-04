@@ -37,6 +37,12 @@ export interface SourceEdit {
   new_end_byte: number;
 }
 
+export interface EditorJump {
+  start_byte: number;
+  end_byte: number;
+  nonce: number;
+}
+
 /** Language-level IDE bindings (vix Ring 2): symbols, references, unresolved names. */
 export interface IdeSymbol {
   name: string;
@@ -72,6 +78,7 @@ export interface SourceEditorProps {
   captures: CaptureRange[];
   diagnostic: EditorDiagnostic | null;
   ide: IdeState;
+  jump: EditorJump | null;
   onChange: (value: string, edit: SourceEdit | null) => void;
 }
 
@@ -411,7 +418,7 @@ const snarkTheme = EditorView.theme({
   },
 });
 
-export function SourceEditor({ input, captures, diagnostic, ide, onChange }: SourceEditorProps) {
+export function SourceEditor({ input, captures, diagnostic, ide, jump, onChange }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const applyingExternalInputRef = useRef(false);
@@ -480,6 +487,22 @@ export function SourceEditor({ input, captures, diagnostic, ide, onChange }: Sou
   useEffect(() => {
     viewRef.current?.dispatch({ effects: ideRefresh.of(null) });
   }, [ide]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !jump) {
+      return;
+    }
+    const doc = view.state.doc.toString();
+    const byteMap = byteOffsetMap(doc);
+    const from = Math.min(byteMap[jump.start_byte] ?? doc.length, doc.length);
+    const to = Math.min(byteMap[jump.end_byte] ?? from, doc.length);
+    view.dispatch({
+      selection: { anchor: from, head: Math.max(from, to) },
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
+    view.focus();
+  }, [jump]);
 
   return <div className="editor" ref={hostRef} />;
 }

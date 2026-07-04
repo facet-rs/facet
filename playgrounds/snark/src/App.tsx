@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { runParse } from "./parseClient";
 import { runBenchmark, BenchBody, benchMeta, type BenchReport } from "./benchmark";
-import { SourceEditor, type IdeInfo, type IdeState, type SourceEdit } from "./editor";
+import { SourceEditor, type EditorJump, type IdeInfo, type IdeState, type SourceEdit } from "./editor";
 import { captureClass } from "./highlight";
 import { defaultVendoredRootId, vendoredFiles } from "./bundled";
 import {
@@ -319,6 +319,22 @@ type HashLabel = {
   label: string;
 };
 
+type VixSpan = {
+  start: number;
+  end: number;
+};
+
+type RunOutput = {
+  path: string;
+  hash: string;
+};
+
+type VixExecServing =
+  | { type: "Tier1Hit" }
+  | { type: "Tier2Cutoff"; verified: number }
+  | { type: "Ran" }
+  | { type: "Joined" };
+
 type VixDriveEvent =
   | { type: "Demanded"; fn_hash: string }
   | { type: "MemoHit"; fn_hash: string }
@@ -327,9 +343,42 @@ type VixDriveEvent =
   | { type: "Completed"; fn_hash: string }
   | { type: "SpawnedInvocation"; fn_hash: string; key_hash: string }
   | { type: "StoreAlloc"; schema_ref: string; deduped: boolean }
-  | { type: "RunRequested"; command: string; output: string }
-  | { type: "RunStarted"; command: string; output: string }
-  | { type: "RunCompleted"; command: string; output: string };
+  | {
+      type: "RunRequested";
+      command: string;
+      output: string;
+      run_id: number;
+      command_name: string;
+      argv: string[];
+      describe: string[];
+      span: VixSpan | null;
+      timestamp_us: number;
+    }
+  | {
+      type: "RunStarted";
+      command: string;
+      output: string;
+      run_id: number;
+      command_name: string;
+      timestamp_us: number;
+    }
+  | {
+      type: "RunCompleted";
+      command: string;
+      output: string;
+      run_id: number;
+      command_name: string;
+      serving: VixExecServing;
+      outputs: RunOutput[];
+      timestamp_us: number;
+    }
+  | {
+      type: "Observation";
+      key: string;
+      replayed: boolean;
+      key_text: string;
+      timestamp_us: number;
+    };
 
 const defaultFiles: BundleFile[] = vendoredFiles;
 // One frame (~60fps). Leading-edge throttle interval for live re-parsing.
@@ -362,6 +411,9 @@ const routedSample = initialRouteValid
 const defaultSample =
   routedSample ??
   sourceExamplesForGrammarRootId(defaultFiles, defaultGrammarRoot).find(
+    (file) => defaultGrammarRoot === "vix" && file.path === "samples/lua.vix",
+  ) ??
+  sourceExamplesForGrammarRootId(defaultFiles, defaultGrammarRoot).find(
     (file) => defaultGrammarRoot === "vix" && file.path === "samples/merge-demand.vix",
   ) ??
   preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
@@ -381,6 +433,7 @@ export function App() {
   const [selectedSamplePath, setSelectedSamplePath] = useState(defaultSample?.path ?? "");
   const [input, setInput] = useState(defaultSample?.text ?? "");
   const [machineFn, setMachineFn] = useState(defaultMachineFnForInput(defaultSample?.text ?? ""));
+  const [editorJump, setEditorJump] = useState<EditorJump | null>(null);
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | "bench" | null>(null);
   const [benchReport, setBenchReport] = useState<BenchReport | null>(null);
@@ -842,12 +895,20 @@ export function App() {
           captures={editorCaptures}
           diagnostic={editorDiagnostic}
           ide={result?.vix_ide ?? null}
+          jump={editorJump}
           onChange={(value, edit) => updateSourceInput(value, "", edit)}
         />
 
         <ResultsDock
           result={result}
           machine={result?.vix_machine ?? null}
+          onMachineSpan={(span) =>
+            setEditorJump((current) => ({
+              start_byte: span.start,
+              end_byte: span.end,
+              nonce: (current?.nonce ?? 0) + 1,
+            }))
+          }
           onUseInput={(value, sourcePath = "") => updateSourceInput(value, sourcePath)}
           bench={{
             report: benchReport,
@@ -927,11 +988,13 @@ type DockSection = {
 function ResultsDock({
   result,
   machine,
+  onMachineSpan,
   onUseInput,
   bench,
 }: {
   result: PlaygroundResponse | null;
   machine: VixMachineRun | null;
+  onMachineSpan: (span: VixSpan) => void;
   onUseInput: (value: string, sourcePath?: string) => void;
   bench: { report: BenchReport | null; running: boolean; progress: string; onRun: () => void };
 }) {
@@ -968,7 +1031,7 @@ function ResultsDock({
       meta: machine.ok
         ? `${machine.fn_name} · ${machine.cold_trace.length}/${machine.warm_trace.length} events`
         : "blocked",
-      body: <MachineBody run={machine} />,
+      body: <MachineBody run={machine} onMachineSpan={onMachineSpan} />,
     });
   }
 
@@ -1200,7 +1263,8 @@ type MachineNode = {
   id: string;
   label: string;
   detail: string;
-  kind: "spawn" | "memo" | "run" | "pending";
+  kind: "spawn" | "memo" | "run" | "ran" | "tier1" | "tier2" | "joined" | "observation" | "replayed" | "pending";
+  timeUs?: number;
 };
 
 type MachineEdge = {
@@ -1214,7 +1278,23 @@ type MachineGraph = {
   edges: MachineEdge[];
 };
 
-function MachineBody({ run }: { run: VixMachineRun }) {
+type MachineRunSummary = {
+  runId: number;
+  command: string;
+  commandName: string;
+  output: string;
+  outputLabel: string;
+  argv: string[];
+  describe: string[];
+  span: VixSpan | null;
+  requestedAt: number | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  serving: VixExecServing | null;
+  outputs: RunOutput[];
+};
+
+function MachineBody({ run, onMachineSpan }: { run: VixMachineRun; onMachineSpan: (span: VixSpan) => void }) {
   const [warm, setWarm] = useState(false);
   useEffect(() => {
     setWarm(false);
@@ -1233,7 +1313,8 @@ function MachineBody({ run }: { run: VixMachineRun }) {
   const graph = machineGraph(run, trace, warm);
   const fnLabels = labelMap(run.fn_hashes);
   const runLabels = labelMap(run.run_hashes);
-  const completedRuns = runEvents(run.cold_trace, runLabels, "RunCompleted");
+  const runSummaries = runLifecycle(trace, runLabels);
+  const completedRuns = runLifecycle(run.cold_trace, runLabels).filter((event) => event.completedAt !== null);
 
   return (
     <div className="machine-panel">
@@ -1266,6 +1347,7 @@ function MachineBody({ run }: { run: VixMachineRun }) {
           <div className={`machine-node machine-node-${node.kind}`} key={node.id}>
             <span>{node.label}</span>
             <code>{node.detail}</code>
+            {node.timeUs != null ? <em>{formatTimestamp(node.timeUs)}</em> : null}
           </div>
         ))}
       </div>
@@ -1282,20 +1364,62 @@ function MachineBody({ run }: { run: VixMachineRun }) {
         </div>
       ) : null}
 
-      <div className="machine-runs">
-        {runEvents(trace, runLabels).map((event, index) => (
-          <div className={`machine-run machine-run-${event.kind}`} key={`${event.kind}-${event.output}-${index}`}>
-            <span>{event.kind.replace(/^Run/, "")}</span>
-            <code>{event.output}</code>
-          </div>
-        ))}
+      {runSummaries.length ? (
+        <div className="machine-runs">
+          {runSummaries.map((event) => (
+            <div
+              className={`machine-run machine-run-${servingClass(event.serving)}`}
+              key={`run-${event.runId}`}
+            >
+              <span>run #{event.runId}</span>
+              <code>{event.outputLabel}</code>
+              <strong>{event.serving ? servingLabel(event.serving) : runStatus(event)}</strong>
+              <small>{runTimestamps(event)}</small>
+              {event.span ? (
+                <button type="button" className="machine-span-link" onClick={() => onMachineSpan(event.span!)}>
+                  span
+                </button>
+              ) : null}
+              <p>
+                {event.commandName}
+                {event.argv.length ? ` ${event.argv.join(" ")}` : ""}
+              </p>
+              {event.describe.length ? <p>{event.describe.join(" ")}</p> : null}
+              {event.outputs.length ? (
+                <div className="machine-run-outputs">
+                  {event.outputs.map((output) => (
+                    <code key={`${event.runId}-${output.path}-${output.hash}`}>
+                      {output.path} · {shortHash(output.hash)}
+                    </code>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="machine-observations">
+        {trace
+          .filter((event): event is Extract<VixDriveEvent, { type: "Observation" }> => event.type === "Observation")
+          .map((event, index) => (
+            <div
+              className={`machine-observation ${event.replayed ? "machine-observation-replayed" : "machine-observation-cold"}`}
+              key={`${event.key}-${event.timestamp_us}-${index}`}
+            >
+              <span>{event.replayed ? "replayed" : "cold"}</span>
+              <code>{event.key_text || shortHash(event.key)}</code>
+              <small>{formatTimestamp(event.timestamp_us)}</small>
+            </div>
+          ))}
       </div>
 
       <div className="machine-trace">
         {trace.map((event, index) => (
-          <div className="machine-trace-row" key={`${event.type}-${index}`}>
+          <div className={`machine-trace-row machine-trace-${event.type}`} key={`${event.type}-${index}`}>
             <span>{index + 1}</span>
             <code>{formatDriveEvent(event, fnLabels, runLabels)}</code>
+            {eventTimestamp(event) != null ? <small>{formatTimestamp(eventTimestamp(event)!)}</small> : null}
           </div>
         ))}
       </div>
@@ -1303,7 +1427,7 @@ function MachineBody({ run }: { run: VixMachineRun }) {
       {!warm && completedRuns.length ? (
         <div className="machine-run-summary">
           {completedRuns.map((event) => (
-            <code key={`${event.kind}-${event.output}`}>{event.output}</code>
+            <code key={`completed-${event.runId}`}>{event.outputLabel}</code>
           ))}
         </div>
       ) : null}
@@ -1314,12 +1438,14 @@ function MachineBody({ run }: { run: VixMachineRun }) {
 function machineGraph(run: VixMachineRun, trace: VixDriveEvent[], warm: boolean): MachineGraph {
   const fnLabels = labelMap(run.fn_hashes);
   const runLabels = labelMap(run.run_hashes);
+  const runSummaries = new Map(runLifecycle(trace, runLabels).map((event) => [event.runId, event]));
   const nodes: MachineNode[] = [];
   const edges: MachineEdge[] = [];
   let root: string | null = null;
   let latestSpawn: string | null = null;
   let latestObject: string | null = null;
-  const latestRunByOutput = new Map<string, string>();
+  const latestRunById = new Map<number, string>();
+  const materializedOutputs = new Set<string>();
 
   const addNode = (node: MachineNode) => {
     nodes.push(node);
@@ -1359,27 +1485,46 @@ function machineGraph(run: VixMachineRun, trace: VixDriveEvent[], warm: boolean)
       event.type === "RunStarted" ||
       event.type === "RunCompleted"
     ) {
-      const output = runLabels.get(event.output) ?? event.output;
-      const existing = latestRunByOutput.get(output);
+      const summary = runSummaries.get(event.run_id);
+      const output = summary?.outputLabel ?? runLabels.get(event.output) ?? event.output;
+      materializedOutputs.add(output);
+      for (const output of summary?.outputs ?? []) {
+        materializedOutputs.add(output.path);
+      }
+      const existing = latestRunById.get(event.run_id);
       const id =
         existing ??
         addNode({
           id: `run-${index}`,
           label: output,
-          detail: event.type.replace(/^Run/, "").toLowerCase(),
-          kind: "run",
+          detail: summary ? `${summary.commandName} · ${runStatus(summary)}` : event.type.replace(/^Run/, "").toLowerCase(),
+          kind: summary?.serving ? servingClass(summary.serving) : "run",
+          timeUs: event.timestamp_us,
         });
-      latestRunByOutput.set(output, id);
+      latestRunById.set(event.run_id, id);
       const node = nodes.find((candidate) => candidate.id === id);
       if (node) {
-        node.detail = event.type.replace(/^Run/, "").toLowerCase();
+        node.kind = summary?.serving ? servingClass(summary.serving) : "run";
+        node.detail = summary?.serving
+          ? `${servingLabel(summary.serving)} · ${summary.commandName}`
+          : event.type.replace(/^Run/, "").toLowerCase();
+        node.timeUs = event.timestamp_us;
       }
       addEdge(latestObject ?? latestSpawn ?? root, id, "run");
+    } else if (event.type === "Observation") {
+      const id = addNode({
+        id: `observation-${index}`,
+        label: event.replayed ? "observe replay" : "observe",
+        detail: event.key_text || shortHash(event.key),
+        kind: event.replayed ? "replayed" : "observation",
+        timeUs: event.timestamp_us,
+      });
+      addEdge(latestSpawn ?? root, id, event.replayed ? "replay" : "observe");
     }
   });
 
   for (const pending of pendingOutputs(run)) {
-    if (latestRunByOutput.has(pending)) {
+    if (materializedOutputs.has(pending)) {
       continue;
     }
     const id = addNode({
@@ -1404,17 +1549,59 @@ function pendingOutputs(run: VixMachineRun): string[] {
   return ["left.o"];
 }
 
-function runEvents(trace: VixDriveEvent[], labels: Map<string, string>, only?: string) {
-  return trace
-    .filter(
-      (event): event is Extract<VixDriveEvent, { output: string; type: string }> =>
-        (event.type === "RunRequested" || event.type === "RunStarted" || event.type === "RunCompleted") &&
-        (!only || event.type === only),
-    )
-    .map((event) => ({
-      kind: event.type,
-      output: labels.get(event.output) ?? event.output,
-    }));
+function runLifecycle(trace: VixDriveEvent[], labels: Map<string, string>): MachineRunSummary[] {
+  const runs = new Map<number, MachineRunSummary>();
+  const order: number[] = [];
+  const ensure = (
+    event: Extract<VixDriveEvent, { type: "RunRequested" | "RunStarted" | "RunCompleted" }>,
+  ) => {
+    const existing = runs.get(event.run_id);
+    if (existing) {
+      return existing;
+    }
+    order.push(event.run_id);
+    const summary: MachineRunSummary = {
+      runId: event.run_id,
+      command: event.command,
+      commandName: event.command_name,
+      output: event.output,
+      outputLabel: labels.get(event.output) ?? event.output,
+      argv: [],
+      describe: [],
+      span: null,
+      requestedAt: null,
+      startedAt: null,
+      completedAt: null,
+      serving: null,
+      outputs: [],
+    };
+    runs.set(event.run_id, summary);
+    return summary;
+  };
+
+  for (const event of trace) {
+    if (event.type === "RunRequested") {
+      const summary = ensure(event);
+      summary.requestedAt = event.timestamp_us;
+      summary.argv = event.argv;
+      summary.describe = event.describe;
+      summary.span = event.span;
+      summary.commandName = event.command_name;
+    } else if (event.type === "RunStarted") {
+      const summary = ensure(event);
+      summary.startedAt = event.timestamp_us;
+      summary.commandName = event.command_name;
+    } else if (event.type === "RunCompleted") {
+      const summary = ensure(event);
+      summary.completedAt = event.timestamp_us;
+      summary.commandName = event.command_name;
+      summary.serving = event.serving;
+      summary.outputs = event.outputs;
+      summary.outputLabel = event.outputs[0]?.path ?? labels.get(event.output) ?? event.output;
+    }
+  }
+
+  return order.map((id) => runs.get(id)!).filter(Boolean);
 }
 
 function formatDriveEvent(
@@ -1434,10 +1621,77 @@ function formatDriveEvent(
     case "StoreAlloc":
       return `${event.type} schema ${event.schema_ref.slice(0, 8)} ${event.deduped ? "deduped" : "new"}`;
     case "RunRequested":
+      return `${event.type} #${event.run_id} ${event.command_name} -> ${runLabels.get(event.output) ?? event.output}`;
+    case "RunStarted":
+      return `${event.type} #${event.run_id} ${event.command_name} -> ${runLabels.get(event.output) ?? event.output}`;
+    case "RunCompleted":
+      return `${event.type} #${event.run_id} ${servingLabel(event.serving)} ${event.command_name} -> ${
+        event.outputs.map((output) => output.path).join(", ") || runLabels.get(event.output) || event.output
+      }`;
+    case "Observation":
+      return `Observation ${event.replayed ? "replayed" : "cold"} ${event.key_text || shortHash(event.key)}`;
+  }
+}
+
+function runStatus(event: MachineRunSummary): string {
+  if (event.completedAt !== null) return "completed";
+  if (event.startedAt !== null) return "started";
+  if (event.requestedAt !== null) return "requested";
+  return "queued";
+}
+
+function runTimestamps(event: MachineRunSummary): string {
+  const stamps = [
+    event.requestedAt !== null ? `req ${formatTimestamp(event.requestedAt)}` : null,
+    event.startedAt !== null ? `start ${formatTimestamp(event.startedAt)}` : null,
+    event.completedAt !== null ? `done ${formatTimestamp(event.completedAt)}` : null,
+  ].filter(Boolean);
+  return stamps.join(" · ");
+}
+
+function servingLabel(serving: VixExecServing): string {
+  if (serving.type === "Tier2Cutoff") {
+    return `Tier2Cutoff ${serving.verified}`;
+  }
+  return serving.type;
+}
+
+function servingClass(serving: VixExecServing | null): MachineNode["kind"] {
+  switch (serving?.type) {
+    case "Ran":
+      return "ran";
+    case "Tier1Hit":
+      return "tier1";
+    case "Tier2Cutoff":
+      return "tier2";
+    case "Joined":
+      return "joined";
+    default:
+      return "run";
+  }
+}
+
+function eventTimestamp(event: VixDriveEvent): number | null {
+  switch (event.type) {
+    case "RunRequested":
     case "RunStarted":
     case "RunCompleted":
-      return `${event.type} ${runLabels.get(event.output) ?? event.output}`;
+    case "Observation":
+      return event.timestamp_us;
+    default:
+      return null;
   }
+}
+
+function formatTimestamp(timestampUs: number): string {
+  if (timestampUs < 1000) {
+    return `+${timestampUs} us`;
+  }
+  return `+${(timestampUs / 1000).toFixed(timestampUs >= 10_000 ? 1 : 2)} ms`;
+}
+
+function shortHash(hash: string): string {
+  return hash.length > 12 ? hash.slice(0, 12) : hash;
 }
 
 function labelMap(labels: HashLabel[]): Map<string, string> {
@@ -1735,6 +1989,9 @@ function InventoryGroup({ title, paths }: { title: string; paths: string[] }) {
 }
 
 function vixMachineOptions(input: string): Array<{ name: string }> {
+  if (input.includes("pub fn lua")) {
+    return [{ name: "lua" }];
+  }
   if (input.includes("pub fn selected") && input.includes("pub fn fallback")) {
     return [{ name: "selected" }, { name: "fallback" }, { name: "subtree_chain" }];
   }
