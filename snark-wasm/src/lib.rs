@@ -88,17 +88,83 @@ struct HashLabel {
 #[derive(Facet)]
 #[facet(tag = "type")]
 pub enum VixDriveEvent {
-    Demanded { fn_hash: String },
-    MemoHit { fn_hash: String },
-    Spawned { fn_hash: String },
-    ParkedOn { fn_hash: String },
-    Completed { fn_hash: String },
-    SpawnedInvocation { fn_hash: String, key_hash: String },
-    StoreAlloc { schema_ref: String, deduped: bool },
-    RunRequested { command: String, output: String },
-    RunStarted { command: String, output: String },
-    RunCompleted { command: String, output: String },
-    Observation { key: String, replayed: bool },
+    Demanded {
+        fn_hash: String,
+    },
+    MemoHit {
+        fn_hash: String,
+    },
+    Spawned {
+        fn_hash: String,
+    },
+    ParkedOn {
+        fn_hash: String,
+    },
+    Completed {
+        fn_hash: String,
+    },
+    SpawnedInvocation {
+        fn_hash: String,
+        key_hash: String,
+    },
+    StoreAlloc {
+        schema_ref: String,
+        deduped: bool,
+    },
+    RunRequested {
+        command: String,
+        output: String,
+        run_id: u64,
+        command_name: String,
+        argv: Vec<String>,
+        describe: Vec<String>,
+        span: Option<VixSpan>,
+        timestamp_us: u64,
+    },
+    RunStarted {
+        command: String,
+        output: String,
+        run_id: u64,
+        command_name: String,
+        timestamp_us: u64,
+    },
+    RunCompleted {
+        command: String,
+        output: String,
+        run_id: u64,
+        command_name: String,
+        serving: VixExecServing,
+        outputs: Vec<RunOutput>,
+        timestamp_us: u64,
+    },
+    Observation {
+        key: String,
+        replayed: bool,
+        key_text: String,
+        timestamp_us: u64,
+    },
+}
+
+#[derive(Facet)]
+pub struct VixSpan {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Facet)]
+pub struct RunOutput {
+    pub path: String,
+    pub hash: String,
+}
+
+#[repr(u8)]
+#[derive(Facet)]
+#[facet(tag = "type")]
+pub enum VixExecServing {
+    Tier1Hit,
+    Tier2Cutoff { verified: u64 },
+    Ran,
+    Joined,
 }
 
 #[wasm_bindgen(js_name = runVixMachine)]
@@ -196,61 +262,114 @@ fn run_vix_machine_inner(source: &str, fn_name: &str) -> Result<VixMachineRun, S
 fn trace_events(events: &[vix::machine::driver::DriveEvent]) -> Vec<VixDriveEvent> {
     events
         .iter()
-        .map(|event| match *event {
+        .map(|event| match event {
             vix::machine::driver::DriveEvent::Demanded { fn_hash } => VixDriveEvent::Demanded {
-                fn_hash: hex_hash(fn_hash),
+                fn_hash: hex_hash(*fn_hash),
             },
             vix::machine::driver::DriveEvent::MemoHit { fn_hash } => VixDriveEvent::MemoHit {
-                fn_hash: hex_hash(fn_hash),
+                fn_hash: hex_hash(*fn_hash),
             },
             vix::machine::driver::DriveEvent::Spawned { fn_hash } => VixDriveEvent::Spawned {
-                fn_hash: hex_hash(fn_hash),
+                fn_hash: hex_hash(*fn_hash),
             },
             vix::machine::driver::DriveEvent::ParkedOn { fn_hash } => VixDriveEvent::ParkedOn {
-                fn_hash: hex_hash(fn_hash),
+                fn_hash: hex_hash(*fn_hash),
             },
             vix::machine::driver::DriveEvent::Completed { fn_hash } => VixDriveEvent::Completed {
-                fn_hash: hex_hash(fn_hash),
+                fn_hash: hex_hash(*fn_hash),
             },
             vix::machine::driver::DriveEvent::SpawnedInvocation { fn_hash, key_hash } => {
                 VixDriveEvent::SpawnedInvocation {
-                    fn_hash: hex_hash(fn_hash),
-                    key_hash: hex_hash(key_hash),
+                    fn_hash: hex_hash(*fn_hash),
+                    key_hash: hex_hash(*key_hash),
                 }
             }
             vix::machine::driver::DriveEvent::StoreAlloc {
                 schema_ref,
                 deduped,
             } => VixDriveEvent::StoreAlloc {
-                schema_ref: hex_hash(schema_ref),
-                deduped,
+                schema_ref: hex_hash(*schema_ref),
+                deduped: *deduped,
             },
             vix::machine::driver::DriveEvent::RunRequested {
-                command, output, ..
+                command,
+                output,
+                run_id,
+                command_name,
+                argv,
+                describe,
+                span,
+                timestamp_us,
             } => VixDriveEvent::RunRequested {
-                command: hex_hash(command),
-                output: hex_hash(output),
+                command: hex_hash(*command),
+                output: hex_hash(*output),
+                run_id: *run_id,
+                command_name: command_name.clone(),
+                argv: argv.clone(),
+                describe: describe.clone(),
+                span: span.map(|(start, end)| VixSpan { start, end }),
+                timestamp_us: *timestamp_us,
             },
             vix::machine::driver::DriveEvent::RunStarted {
-                command, output, ..
+                command,
+                output,
+                run_id,
+                command_name,
+                timestamp_us,
             } => VixDriveEvent::RunStarted {
-                command: hex_hash(command),
-                output: hex_hash(output),
+                command: hex_hash(*command),
+                output: hex_hash(*output),
+                run_id: *run_id,
+                command_name: command_name.clone(),
+                timestamp_us: *timestamp_us,
             },
             vix::machine::driver::DriveEvent::RunCompleted {
-                command, output, ..
+                command,
+                output,
+                run_id,
+                command_name,
+                serving,
+                outputs,
+                timestamp_us,
             } => VixDriveEvent::RunCompleted {
-                command: hex_hash(command),
-                output: hex_hash(output),
+                command: hex_hash(*command),
+                output: hex_hash(*output),
+                run_id: *run_id,
+                command_name: command_name.clone(),
+                serving: serving_event(serving),
+                outputs: outputs
+                    .iter()
+                    .map(|(path, hash)| RunOutput {
+                        path: path.clone(),
+                        hash: hash.clone(),
+                    })
+                    .collect(),
+                timestamp_us: *timestamp_us,
             },
-            vix::machine::driver::DriveEvent::Observation { key, replayed, .. } => {
-                VixDriveEvent::Observation {
-                    key: hex_hash(key),
-                    replayed,
-                }
-            }
+            vix::machine::driver::DriveEvent::Observation {
+                key,
+                replayed,
+                key_text,
+                timestamp_us,
+            } => VixDriveEvent::Observation {
+                key: hex_hash(*key),
+                replayed: *replayed,
+                key_text: key_text.clone(),
+                timestamp_us: *timestamp_us,
+            },
         })
         .collect()
+}
+
+fn serving_event(event: &vix::exec::ExecEvent) -> VixExecServing {
+    match event {
+        vix::exec::ExecEvent::Tier1Hit => VixExecServing::Tier1Hit,
+        vix::exec::ExecEvent::Tier2Cutoff { verified } => VixExecServing::Tier2Cutoff {
+            verified: u64::try_from(*verified).expect("verified count fits u64"),
+        },
+        vix::exec::ExecEvent::Ran => VixExecServing::Ran,
+        vix::exec::ExecEvent::Joined => VixExecServing::Joined,
+    }
 }
 
 fn function_hashes(machine: &vix::machine::lower::Machine) -> Vec<HashLabel> {

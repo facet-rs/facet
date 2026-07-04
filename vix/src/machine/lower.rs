@@ -28,11 +28,11 @@ use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST,
-    ARRAY_MAP_PENDING_HOST, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PARSE_HOST, DriveEvent, Driver,
-    EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
-    MAP_INSERT_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
-    PENDING_COERCE_HOST, PENDING_INVOKE_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
-    TREE_PROJECT_HOST,
+    ARRAY_MAP_PENDING_HOST, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PARSE_HOST, DriveEvent,
+    DriveEventSink, Driver, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn,
+    MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
+    PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames, RenderVariant,
+    RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, StepMode, TREE_PROJECT_HOST,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -43,6 +43,9 @@ use crate::module::{ModuleTables, VariantShape, load_module_tables, type_schema_
 pub struct Machine {
     driver: Driver,
     fn_refs: HashMap<String, usize>,
+    fn_params: BTreeMap<String, Vec<String>>,
+    fn_returns: BTreeMap<String, String>,
+    render_names: RenderNames,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,6 +113,7 @@ impl Machine {
         let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
         schema_names.sort();
         schema_names.dedup();
+        let render_names = render_names_for(&tables);
         let schema_refs: HashMap<String, i64> = schema_names
             .iter()
             .enumerate()
@@ -212,7 +216,13 @@ impl Machine {
             assert_eq!(actual, *expected, "flag handle assignment is deterministic");
         }
 
-        Ok(Machine { driver, fn_refs })
+        Ok(Machine {
+            driver,
+            fn_refs,
+            fn_params: fn_params.into_iter().collect(),
+            fn_returns: fn_returns.into_iter().collect(),
+            render_names,
+        })
     }
 
     pub fn with_fetch_backend(mut self, backend: impl FetchBackend + 'static) -> Self {
@@ -280,6 +290,7 @@ impl Machine {
         let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
         schema_names.sort();
         schema_names.dedup();
+        let render_names = render_names_for(&tables);
         let schema_refs = self.driver.schema_ref_map_for(&schema_names);
         let string_handles = live_string_handles(&self.driver, &tables);
         let path_handles = live_path_handles(&self.driver, &tables);
@@ -344,6 +355,9 @@ impl Machine {
         self.driver
             .reload(Program { fns: task_fns }, lowered, descriptors)?;
         self.fn_refs = fn_refs;
+        self.fn_params = fn_params.into_iter().collect();
+        self.fn_returns = fn_returns.into_iter().collect();
+        self.render_names = render_names;
 
         let after = self.fn_hashes();
         let changed = before
@@ -379,6 +393,33 @@ impl Machine {
 
     pub fn clear_trace(&mut self) {
         self.driver.trace.clear();
+    }
+
+    pub fn set_event_sink(&mut self, sink: Option<DriveEventSink>) {
+        self.driver.set_event_sink(sink);
+    }
+
+    pub fn set_step_mode(&mut self, mode: StepMode) {
+        self.driver.set_step_mode(mode);
+    }
+
+    pub fn entry_param_schemas(&self, name: &str) -> Option<&[String]> {
+        self.fn_params.get(name).map(Vec::as_slice)
+    }
+
+    pub fn entry_return_schema(&self, name: &str) -> Option<&str> {
+        self.fn_returns.get(name).map(String::as_str)
+    }
+
+    pub fn render_value(&self, schema: &str, word: i64) -> Result<RenderedValue, String> {
+        self.driver.render_word(schema, word, &self.render_names)
+    }
+
+    pub fn render_result(&self, name: &str, word: i64) -> Result<RenderedValue, String> {
+        let schema = self
+            .entry_return_schema(name)
+            .ok_or_else(|| format!("no function named {name}"))?;
+        self.render_value(schema, word)
     }
 
     pub fn store_len(&self) -> usize {
@@ -456,6 +497,45 @@ fn schema_names_for(
         collect_expr_schemas_in_block(&item.body, &mut schema_names, tables, fn_returns)?;
     }
     Ok(schema_names)
+}
+
+fn render_names_for(tables: &ModuleTables) -> RenderNames {
+    let structs = tables
+        .structs
+        .iter()
+        .map(|(name, info)| {
+            (
+                name.clone(),
+                info.fields
+                    .iter()
+                    .map(|(field, _)| field.clone())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    let enums = tables
+        .enums
+        .iter()
+        .map(|(name, info)| {
+            (
+                name.clone(),
+                info.variants
+                    .iter()
+                    .map(|(variant, shape)| RenderVariant {
+                        name: variant.clone(),
+                        fields: match shape {
+                            VariantShape::Unit => Vec::new(),
+                            VariantShape::Tuple(count) => {
+                                (0..*count).map(|index| index.to_string()).collect()
+                            }
+                            VariantShape::Record(fields) => fields.clone(),
+                        },
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    RenderNames { structs, enums }
 }
 
 fn push_schema_closure(schema: &str, schema_names: &mut Vec<String>) {
@@ -4285,11 +4365,14 @@ fn max_store_field_count(block: &ast::Block) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::super::driver::StepCommand;
     use super::*;
     use crate::exec::{ExecEvent, Tree};
     use crate::fetch::FakeFetchBackend;
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::hash::{DefaultHasher, Hash, Hasher};
+    use std::rc::Rc;
 
     const CORPUS: &str = r#"
 fn square(x: Int) -> Int { x * x }
@@ -6236,6 +6319,191 @@ pub fn az() -> Map<String, Int> {
                 std::cmp::Ordering::Equal,
                 "{lane:?}"
             );
+        }
+    }
+
+    #[test]
+    fn live_event_sink_streams_the_accumulated_trace() {
+        for lane in lanes() {
+            for mode in [StepMode::Run, StepMode::Step] {
+                let mut machine = load_with_lane(CORPUS, lane);
+                let seen = Rc::new(RefCell::new(Vec::new()));
+                let commands = Rc::new(RefCell::new(Vec::new()));
+                let seen_for_sink = Rc::clone(&seen);
+                let commands_for_sink = Rc::clone(&commands);
+                machine.set_step_mode(mode);
+                machine.set_event_sink(Some(Box::new(move |event| {
+                    seen_for_sink.borrow_mut().push(event.clone());
+                    let command = if mode == StepMode::Step && commands_for_sink.borrow().len() == 1
+                    {
+                        StepCommand::Resume
+                    } else {
+                        StepCommand::Step
+                    };
+                    commands_for_sink.borrow_mut().push(command);
+                    command
+                })));
+
+                assert_eq!(machine.demand_i64("poly", vec![3]).unwrap(), 29, "{lane:?}");
+                assert_eq!(
+                    seen.borrow().as_slice(),
+                    machine.trace(),
+                    "sink-collected events must match trace() on {lane:?} in {mode:?}"
+                );
+                assert!(!commands.borrow().is_empty(), "{lane:?} in {mode:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn entry_param_metadata_exposes_lowered_schemas() {
+        let src = r#"
+use vix::{Target, Tree};
+
+pub fn build(target: Target, source: Tree, n: Int) -> Tree {
+    source
+}
+"#;
+        for lane in lanes() {
+            let machine = load_with_lane(src, lane);
+            assert_eq!(
+                machine.entry_param_schemas("build"),
+                Some(["Target".to_string(), "Tree".to_string(), "Int".to_string()].as_slice()),
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.entry_return_schema("build"),
+                Some("Tree"),
+                "{lane:?}"
+            );
+            assert_eq!(machine.entry_param_schemas("missing"), None, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn render_result_is_schema_aware_and_never_forces_pending_values() {
+        let src = r#"
+enum Choice { A, B(Int), C { name: String } }
+struct Pair { left: Int, right: String }
+
+pub fn tupled() -> (String, Int, Bool) { ("mini", 3, false) }
+pub fn picked() -> Choice { Choice::C { name: "lua.o" } }
+pub fn paired() -> Pair { Pair { left: 7, right: "ok" } }
+pub fn mapped() -> Map<String, Int> {
+    let m: Map<String, Int> = {};
+    m.insert("b", 2).insert("a", 1)
+}
+pub fn parsed(input: String) -> Doc { json(input) }
+
+fn key(n: Int) -> String {
+    match n {
+        0 => "left",
+        _ => "right",
+    }
+}
+
+fn left() -> Float { 1.0 }
+fn right() -> Float { 2.0 }
+
+pub fn lazy(n: Int) -> Map<String, Float> {
+    let source: Map<String, Float> = {};
+    let source = source.insert("left", left()).insert("right", right());
+    let value = source.get(key(n)).unwrap();
+    let out: Map<String, Float> = {};
+    out.insert("selected", value)
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+
+            let tuple = machine.demand_i64("tupled", vec![]).unwrap();
+            let RenderedValue::Tuple { schema, fields } =
+                machine.render_result("tupled", tuple).unwrap()
+            else {
+                panic!("tupled renders as tuple on {lane:?}");
+            };
+            assert_eq!(schema, "Tuple<String,Int,Bool>", "{lane:?}");
+            assert_eq!(fields.len(), 3, "{lane:?}");
+            assert!(matches!(&fields[0].value, RenderedValue::String { value } if value == "mini"));
+            assert!(matches!(fields[1].value, RenderedValue::Int { value: 3 }));
+            assert!(matches!(
+                fields[2].value,
+                RenderedValue::Bool { value: false }
+            ));
+
+            let choice = machine.demand_i64("picked", vec![]).unwrap();
+            let RenderedValue::Enum {
+                variant, fields, ..
+            } = machine.render_result("picked", choice).unwrap()
+            else {
+                panic!("picked renders as enum on {lane:?}");
+            };
+            assert_eq!(variant, "C", "{lane:?}");
+            assert_eq!(fields[0].name, "name", "{lane:?}");
+            assert!(
+                matches!(&fields[0].value, RenderedValue::String { value } if value == "lua.o")
+            );
+
+            let pair = machine.demand_i64("paired", vec![]).unwrap();
+            let RenderedValue::Record { fields, .. } =
+                machine.render_result("paired", pair).unwrap()
+            else {
+                panic!("paired renders as record on {lane:?}");
+            };
+            assert_eq!(fields[0].name, "left", "{lane:?}");
+            assert_eq!(fields[1].name, "right", "{lane:?}");
+
+            let map = machine.demand_i64("mapped", vec![]).unwrap();
+            let RenderedValue::Map { entries, .. } = machine.render_result("mapped", map).unwrap()
+            else {
+                panic!("mapped renders as map on {lane:?}");
+            };
+            assert_eq!(entries.len(), 2, "{lane:?}");
+            assert!(matches!(&entries[0].key, RenderedValue::String { value } if value == "a"));
+            assert!(matches!(entries[0].value, RenderedValue::Int { value: 1 }));
+            assert!(matches!(&entries[1].key, RenderedValue::String { value } if value == "b"));
+            assert!(matches!(entries[1].value, RenderedValue::Int { value: 2 }));
+
+            let input = machine
+                .driver
+                .intern_raw_value(
+                    "String",
+                    br#"{"package":{"name":"mini-real-crate"},"publish":false}"#.to_vec(),
+                )
+                .0;
+            let doc = machine.demand_i64("parsed", vec![input]).unwrap();
+            let RenderedValue::Doc {
+                variant,
+                value: Some(value),
+            } = machine.render_result("parsed", doc).unwrap()
+            else {
+                panic!("parsed renders as doc map on {lane:?}");
+            };
+            assert_eq!(variant, "Map", "{lane:?}");
+            assert!(matches!(*value, RenderedValue::Map { .. }));
+
+            let tree = machine.intern_tree_concrete(Tree::of(&[("a.txt", "hello")]));
+            let RenderedValue::Tree { entries } = machine.render_value("Tree", tree).unwrap()
+            else {
+                panic!("tree renders as tree on {lane:?}");
+            };
+            assert_eq!(entries[0].path, "a.txt", "{lane:?}");
+            assert_eq!(entries[0].contents, "hello", "{lane:?}");
+
+            let lazy = machine.demand_i64("lazy", vec![0]).unwrap();
+            let RenderedValue::Map { entries, .. } = machine.render_result("lazy", lazy).unwrap()
+            else {
+                panic!("lazy map renders as map on {lane:?}");
+            };
+            assert_eq!(entries.len(), 1, "{lane:?}");
+            assert_eq!(
+                entries[0].realization.as_deref(),
+                Some("Pending"),
+                "{lane:?}"
+            );
+            assert!(matches!(entries[0].value, RenderedValue::Pending { .. }));
+            assert_eq!(spawned_count(&machine, "left"), 0, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "right"), 0, "{lane:?}");
         }
     }
 

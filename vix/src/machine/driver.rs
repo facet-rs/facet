@@ -32,6 +32,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 use std::sync::Arc;
 
+use facet::Facet;
 use sha2::{Digest, Sha256};
 #[cfg(any(test, feature = "jit"))]
 use weavy::jit::task_lane::{JitProgram, JitTask};
@@ -80,6 +81,22 @@ pub enum Lane {
     #[cfg(any(test, feature = "jit"))]
     Jit,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[repr(u8)]
+pub enum StepMode {
+    Run,
+    Step,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[repr(u8)]
+pub enum StepCommand {
+    Step,
+    Resume,
+}
+
+pub type DriveEventSink = Box<dyn FnMut(&DriveEvent) -> StepCommand>;
 
 /// One compiled vix function: its task program identity plus where its
 /// INVOKE region and argument slots live. Cached content-addressed —
@@ -166,6 +183,121 @@ pub enum DriveEvent {
         key_text: String,
         timestamp_us: u64,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Facet)]
+pub struct RenderedField {
+    pub name: String,
+    pub schema: String,
+    pub value: RenderedValue,
+}
+
+#[derive(Clone, Debug, PartialEq, Facet)]
+pub struct RenderedMapEntry {
+    pub key_schema: String,
+    pub key: RenderedValue,
+    pub value_schema: String,
+    pub realization: Option<String>,
+    pub value: RenderedValue,
+}
+
+#[derive(Clone, Debug, PartialEq, Facet)]
+pub struct RenderedTreeEntry {
+    pub path: String,
+    pub contents: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Facet)]
+pub struct RenderedPending {
+    pub schema: String,
+    pub closure_hash: String,
+    pub identity_hash: String,
+    pub remaining_arity: u64,
+    pub arg_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Facet)]
+pub struct RenderedTreePending {
+    pub kind: String,
+    pub identity_hash: String,
+    pub pending: Vec<RenderedPending>,
+    pub run_id: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Facet)]
+#[repr(u8)]
+#[facet(tag = "type")]
+pub enum RenderedValue {
+    Int {
+        value: i64,
+    },
+    Float {
+        bits: String,
+        value: String,
+    },
+    Bool {
+        value: bool,
+    },
+    String {
+        value: String,
+    },
+    Path {
+        value: String,
+    },
+    Flag {
+        value: String,
+    },
+    Raw {
+        schema: String,
+        bytes_utf8: Option<String>,
+    },
+    Tuple {
+        schema: String,
+        fields: Vec<RenderedField>,
+    },
+    Record {
+        schema: String,
+        fields: Vec<RenderedField>,
+    },
+    Enum {
+        schema: String,
+        variant_index: u64,
+        variant: String,
+        fields: Vec<RenderedField>,
+    },
+    Array {
+        element_schema: String,
+        items: Vec<RenderedValue>,
+    },
+    Map {
+        schema: String,
+        entries: Vec<RenderedMapEntry>,
+    },
+    Tree {
+        entries: Vec<RenderedTreeEntry>,
+    },
+    TreePending {
+        pending: RenderedTreePending,
+    },
+    Pending {
+        pending: RenderedPending,
+    },
+    Doc {
+        variant: String,
+        value: Option<Box<RenderedValue>>,
+    },
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RenderNames {
+    pub structs: BTreeMap<String, Vec<String>>,
+    pub enums: BTreeMap<String, Vec<RenderVariant>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenderVariant {
+    pub name: String,
+    pub fields: Vec<String>,
 }
 
 /// A pending invocation request captured by the INVOKE host during a
@@ -904,6 +1036,8 @@ pub struct Driver {
     next_run_id: u64,
     trace_clock: u64,
     pub trace: Vec<DriveEvent>,
+    event_sink: Option<DriveEventSink>,
+    step_mode: StepMode,
     store: RefCell<ValueStore>,
 }
 
@@ -943,6 +1077,8 @@ impl Driver {
             next_run_id: 0,
             trace_clock: 0,
             trace: Vec::new(),
+            event_sink: None,
+            step_mode: StepMode::Run,
             store: RefCell::new(ValueStore::default()),
         })
     }
@@ -963,6 +1099,25 @@ impl Driver {
 
     pub fn set_fetch_backend(&mut self, backend: Arc<dyn FetchBackend>) {
         self.fetch_backend = backend;
+    }
+
+    pub fn set_event_sink(&mut self, sink: Option<DriveEventSink>) {
+        self.event_sink = sink;
+    }
+
+    pub fn set_step_mode(&mut self, mode: StepMode) {
+        self.step_mode = mode;
+    }
+
+    fn emit(&mut self, event: DriveEvent) {
+        self.trace.push(event);
+        let event = self.trace.last().expect("just pushed event");
+        if let Some(sink) = &mut self.event_sink {
+            let command = sink(event);
+            if self.step_mode == StepMode::Step && command == StepCommand::Resume {
+                self.step_mode = StepMode::Run;
+            }
+        }
     }
 
     fn next_timestamp(&mut self) -> u64 {
@@ -1070,6 +1225,22 @@ impl Driver {
         )
     }
 
+    pub fn render_word(
+        &self,
+        schema: &str,
+        word: i64,
+        names: &RenderNames,
+    ) -> Result<RenderedValue, String> {
+        render_word(
+            &self.store.borrow(),
+            &self.descriptors,
+            &self.schema_refs,
+            names,
+            schema,
+            word,
+        )
+    }
+
     pub fn tree_entries(&mut self, handle: i64) -> Result<BTreeMap<String, String>, String> {
         let handle = self.force_tree_handle(handle)?;
         match self.store.borrow().tree_entry(handle)? {
@@ -1139,9 +1310,9 @@ impl Driver {
     /// Returns the scalar result (slice 1).
     pub fn demand(&mut self, fn_ref: usize, args: Vec<i64>) -> Result<i64, String> {
         let key = self.memo_key(fn_ref, &args);
-        self.trace.push(DriveEvent::Demanded { fn_hash: key.0 });
+        self.emit(DriveEvent::Demanded { fn_hash: key.0 });
         if let Some(&v) = self.memo.get(&key) {
-            self.trace.push(DriveEvent::MemoHit { fn_hash: key.0 });
+            self.emit(DriveEvent::MemoHit { fn_hash: key.0 });
             return Ok(v);
         }
 
@@ -1162,7 +1333,7 @@ impl Driver {
                     let done_key = exec.key.clone();
                     let value = self.canonicalize_return_word(exec.fn_ref, value);
                     self.memo.insert(done_key.clone(), value);
-                    self.trace.push(DriveEvent::Completed {
+                    self.emit(DriveEvent::Completed {
                         fn_hash: done_key.0,
                     });
                     // Feed everyone parked on this invocation; they
@@ -1272,7 +1443,7 @@ impl Driver {
                     }
                     for req in new_requests {
                         let req_key = self.memo_key(req.fn_ref, &req.args);
-                        self.trace.push(DriveEvent::Demanded { fn_hash: req_key.0 });
+                        self.emit(DriveEvent::Demanded { fn_hash: req_key.0 });
                         if exec.ready.len() <= req.input_slot {
                             exec.ready.resize(req.input_slot + 1, false);
                             exec.awaited.resize(req.input_slot + 1, 0);
@@ -1280,7 +1451,7 @@ impl Driver {
                         if let Some(&v) = self.memo.get(&req_key) {
                             // Mechanism 1: memo hit — the slot fills
                             // synchronously, no task exists.
-                            self.trace.push(DriveEvent::MemoHit { fn_hash: req_key.0 });
+                            self.emit(DriveEvent::MemoHit { fn_hash: req_key.0 });
                             exec.ready[req.input_slot] = true;
                             exec.awaited[req.input_slot] = v;
                         } else {
@@ -1306,7 +1477,7 @@ impl Driver {
                     if exec.ready.get(parked_input).copied().unwrap_or(false) {
                         runnable.push(ix);
                     } else {
-                        self.trace.push(DriveEvent::ParkedOn {
+                        self.emit(DriveEvent::ParkedOn {
                             fn_hash: exec.key.0,
                         });
                     }
@@ -1330,14 +1501,13 @@ impl Driver {
         key: CanonMemoKey,
         args: &[i64],
     ) -> Result<usize, String> {
-        let lowered = &self.fns[fn_ref];
-        self.trace.push(DriveEvent::Spawned {
-            fn_hash: lowered.hash,
-        });
-        self.trace.push(DriveEvent::SpawnedInvocation {
-            fn_hash: lowered.hash,
+        let fn_hash = self.fns[fn_ref].hash;
+        self.emit(DriveEvent::Spawned { fn_hash });
+        self.emit(DriveEvent::SpawnedInvocation {
+            fn_hash,
             key_hash: memo_key_hash(&key),
         });
+        let lowered = &self.fns[fn_ref];
         let task = self.lane.spawn(&self.program, lowered, args)?;
         executions.push(Some(Execution {
             task,
@@ -2059,7 +2229,9 @@ impl Driver {
                 .task
                 .advance(&self.program, &exec.ready, &exec.awaited, &mut hosts);
             drop(hosts);
-            self.trace.extend(store_events.into_inner());
+            for event in store_events.into_inner() {
+                self.emit(event);
+            }
             if let Some(err) = host_error.into_inner() {
                 return Burst::Error(err);
             }
@@ -2338,7 +2510,7 @@ impl Driver {
         let run_id = self.next_run_id;
         self.next_run_id = self.next_run_id.saturating_add(1);
         let timestamp_us = self.next_timestamp();
-        self.trace.push(DriveEvent::RunRequested {
+        self.emit(DriveEvent::RunRequested {
             command: hash_u64(&req.command),
             output: hash_u64(&output),
             run_id,
@@ -2384,7 +2556,7 @@ impl Driver {
                 (run.command.clone(), run.output.clone())
             };
             let timestamp_us = self.next_timestamp();
-            self.trace.push(DriveEvent::RunStarted {
+            self.emit(DriveEvent::RunStarted {
                 command: hash_u64(&command),
                 output: hash_u64(&output),
                 run_id,
@@ -2445,7 +2617,7 @@ impl Driver {
                 )
             };
             let timestamp_us = self.next_timestamp();
-            self.trace.push(DriveEvent::RunCompleted {
+            self.emit(DriveEvent::RunCompleted {
                 command: hash_u64(&command),
                 output: hash_u64(&output),
                 run_id,
@@ -2531,7 +2703,7 @@ impl Driver {
             self.journal.insert(key.clone(), pin_handle);
         }
         let timestamp_us = self.next_timestamp();
-        self.trace.push(DriveEvent::Observation {
+        self.emit(DriveEvent::Observation {
             key: hash_u64(&key),
             replayed,
             key_text: key,
@@ -3074,6 +3246,490 @@ fn compare_word_slices(
         }
     }
     Ok(a.len().cmp(&b.len()))
+}
+
+fn render_word(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    names: &RenderNames,
+    schema: &str,
+    word: i64,
+) -> Result<RenderedValue, String> {
+    if pending_value_schema(schema).is_some() {
+        return Ok(RenderedValue::Pending {
+            pending: render_pending(store, word)?,
+        });
+    }
+    if schema.starts_with("Option<") {
+        return render_option(store, descriptors, schema_refs, names, word);
+    }
+    match schema {
+        "Int" => Ok(RenderedValue::Int { value: word }),
+        "Float" => {
+            let bits = canonicalize_word_for_schema("Float", word) as u64;
+            let value = f64::from_bits(bits);
+            Ok(RenderedValue::Float {
+                bits: format!("{bits:016x}"),
+                value: if value.is_nan() {
+                    "NaN".to_string()
+                } else {
+                    value.to_string()
+                },
+            })
+        }
+        "Bool" => Ok(RenderedValue::Bool { value: word != 0 }),
+        "String" => Ok(RenderedValue::String {
+            value: store.string_value(word, "String")?,
+        }),
+        "Path" => Ok(RenderedValue::Path {
+            value: store.string_value(word, "Path")?,
+        }),
+        "Flag" => Ok(RenderedValue::Flag {
+            value: store.string_value(word, "Flag")?,
+        }),
+        "Tree" => render_tree(store, word),
+        "Array" => render_array(store, descriptors, schema_refs, names, word),
+        "Doc" => render_doc(store, descriptors, schema_refs, names, word),
+        schema if schema.starts_with("Map<") => {
+            render_map(store, descriptors, schema_refs, names, schema, word)
+        }
+        schema => {
+            if matches!(schema, "Cc" | "Ar") {
+                return Ok(RenderedValue::Raw {
+                    schema: schema.to_string(),
+                    bytes_utf8: Some(store.string_value(word, schema)?),
+                });
+            }
+            render_declared(store, descriptors, schema_refs, names, schema, word)
+        }
+    }
+}
+
+fn render_option(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    names: &RenderNames,
+    handle: i64,
+) -> Result<RenderedValue, String> {
+    let entry = store
+        .entry(handle)
+        .ok_or_else(|| format!("store handle {handle}"))?;
+    let value_schema = entry
+        .schema
+        .strip_prefix("Option<")
+        .and_then(|inner| inner.strip_suffix('>'))
+        .ok_or_else(|| format!("handle {handle} is `{}`, not an Option", entry.schema))?;
+    match store.option_payload(handle, schema_refs)? {
+        OptionPayload::None => Ok(RenderedValue::Enum {
+            schema: entry.schema.clone(),
+            variant_index: 0,
+            variant: "None".to_string(),
+            fields: Vec::new(),
+        }),
+        OptionPayload::Some { word, realization } => {
+            let render_schema = match realization {
+                Some(Realization::Pending) => {
+                    pending_schema(realized_value_schema(value_schema).unwrap_or(value_schema))
+                }
+                _ => realized_value_schema(value_schema)
+                    .unwrap_or(value_schema)
+                    .to_string(),
+            };
+            Ok(RenderedValue::Enum {
+                schema: entry.schema.clone(),
+                variant_index: 1,
+                variant: "Some".to_string(),
+                fields: vec![RenderedField {
+                    name: "0".to_string(),
+                    schema: render_schema.clone(),
+                    value: render_word(
+                        store,
+                        descriptors,
+                        schema_refs,
+                        names,
+                        &render_schema,
+                        word,
+                    )?,
+                }],
+            })
+        }
+    }
+}
+
+fn render_tree(store: &ValueStore, handle: i64) -> Result<RenderedValue, String> {
+    let entry = store
+        .entry(handle)
+        .ok_or_else(|| format!("store handle {handle}"))?;
+    match store.tree_entry(handle)? {
+        TreeEntry::Concrete(tree) => Ok(RenderedValue::Tree {
+            entries: tree
+                .entries
+                .into_iter()
+                .map(|(path, contents)| RenderedTreeEntry { path, contents })
+                .collect(),
+        }),
+        TreeEntry::Merge(handles) => Ok(RenderedValue::TreePending {
+            pending: RenderedTreePending {
+                kind: "merge".to_string(),
+                identity_hash: hex_content_hash(&entry.content_hash),
+                pending: handles
+                    .into_iter()
+                    .map(|handle| render_pending(store, handle))
+                    .collect::<Result<Vec<_>, _>>()?,
+                run_id: None,
+            },
+        }),
+        TreeEntry::Exec(run_id) => Ok(RenderedValue::TreePending {
+            pending: RenderedTreePending {
+                kind: "exec".to_string(),
+                identity_hash: hex_content_hash(&entry.content_hash),
+                pending: Vec::new(),
+                run_id: Some(run_id),
+            },
+        }),
+    }
+}
+
+fn render_array(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    names: &RenderNames,
+    handle: i64,
+) -> Result<RenderedValue, String> {
+    match store.array_entry(handle, schema_refs)? {
+        ArrayEntry::Words { elem_schema, words } => Ok(RenderedValue::Array {
+            element_schema: elem_schema.clone(),
+            items: words
+                .into_iter()
+                .map(|word| render_word(store, descriptors, schema_refs, names, &elem_schema, word))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        ArrayEntry::Pending(handles) => Ok(RenderedValue::Array {
+            element_schema: "Pending<Tree>".to_string(),
+            items: handles
+                .into_iter()
+                .map(|handle| {
+                    render_word(
+                        store,
+                        descriptors,
+                        schema_refs,
+                        names,
+                        "Pending<Tree>",
+                        handle,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+    }
+}
+
+fn render_map(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    names: &RenderNames,
+    schema: &str,
+    handle: i64,
+) -> Result<RenderedValue, String> {
+    let (_, pairs) = store.map_pairs(handle, schema_refs)?;
+    Ok(RenderedValue::Map {
+        schema: schema.to_string(),
+        entries: pairs
+            .into_iter()
+            .map(|pair| {
+                Ok(RenderedMapEntry {
+                    key_schema: pair.key_schema.clone(),
+                    key: render_word(
+                        store,
+                        descriptors,
+                        schema_refs,
+                        names,
+                        &pair.key_schema,
+                        pair.key_word,
+                    )?,
+                    value_schema: pair.value_schema.clone(),
+                    realization: pair.value_realization.map(|realization| match realization {
+                        Realization::Ready => "Ready".to_string(),
+                        Realization::Pending => "Pending".to_string(),
+                    }),
+                    value: render_word(
+                        store,
+                        descriptors,
+                        schema_refs,
+                        names,
+                        &pair.value_schema,
+                        pair.value_word,
+                    )?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+    })
+}
+
+fn render_doc(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    names: &RenderNames,
+    handle: i64,
+) -> Result<RenderedValue, String> {
+    let (variant, value) = match doc_payload(store, descriptors, handle)? {
+        DocPayload::Null => ("Null".to_string(), None),
+        DocPayload::Bool(word) => (
+            "Bool".to_string(),
+            Some(Box::new(render_word(
+                store,
+                descriptors,
+                schema_refs,
+                names,
+                "Bool",
+                word,
+            )?)),
+        ),
+        DocPayload::Int(word) => (
+            "Int".to_string(),
+            Some(Box::new(render_word(
+                store,
+                descriptors,
+                schema_refs,
+                names,
+                "Int",
+                word,
+            )?)),
+        ),
+        DocPayload::Float(word) => (
+            "Float".to_string(),
+            Some(Box::new(render_word(
+                store,
+                descriptors,
+                schema_refs,
+                names,
+                "Float",
+                word,
+            )?)),
+        ),
+        DocPayload::String(word) => (
+            "String".to_string(),
+            Some(Box::new(render_word(
+                store,
+                descriptors,
+                schema_refs,
+                names,
+                "String",
+                word,
+            )?)),
+        ),
+        DocPayload::Array(word) => (
+            "Array".to_string(),
+            Some(Box::new(render_word(
+                store,
+                descriptors,
+                schema_refs,
+                names,
+                "Array",
+                word,
+            )?)),
+        ),
+        DocPayload::Map(word) => (
+            "Map".to_string(),
+            Some(Box::new(render_word(
+                store,
+                descriptors,
+                schema_refs,
+                names,
+                "Map<String,Doc>",
+                word,
+            )?)),
+        ),
+    };
+    Ok(RenderedValue::Doc { variant, value })
+}
+
+fn render_declared(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    names: &RenderNames,
+    schema: &str,
+    handle: i64,
+) -> Result<RenderedValue, String> {
+    let entry = store
+        .entry(handle)
+        .ok_or_else(|| format!("store handle {handle}"))?;
+    if entry.schema != schema {
+        return Err(format!(
+            "render expected {schema}, got handle {} with schema {}",
+            handle, entry.schema
+        ));
+    }
+    let descriptor = descriptors
+        .get(schema)
+        .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
+    match &descriptor.access {
+        Access::Record(record) => {
+            let tuple_fields = tuple_schema_fields(schema);
+            let field_names = names.structs.get(schema);
+            let fields = record
+                .fields
+                .iter()
+                .enumerate()
+                .map(|(index, field)| {
+                    let field_schema = descriptor_word_schema(&field.descriptor);
+                    let word =
+                        read_word_at(&entry.bytes, field.offset, field.descriptor.layout.size);
+                    let name = if tuple_fields.is_some() {
+                        index.to_string()
+                    } else {
+                        field_names
+                            .and_then(|fields| fields.get(index).cloned())
+                            .unwrap_or_else(|| index.to_string())
+                    };
+                    Ok(RenderedField {
+                        name,
+                        schema: field_schema.clone(),
+                        value: render_word(
+                            store,
+                            descriptors,
+                            schema_refs,
+                            names,
+                            &field_schema,
+                            word,
+                        )?,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            if tuple_fields.is_some() {
+                Ok(RenderedValue::Tuple {
+                    schema: schema.to_string(),
+                    fields,
+                })
+            } else {
+                Ok(RenderedValue::Record {
+                    schema: schema.to_string(),
+                    fields,
+                })
+            }
+        }
+        Access::Enum(access) => {
+            let selector = read_variant_tag(&entry.bytes, descriptor);
+            let variant = access
+                .variants
+                .iter()
+                .find(|variant| variant.selector == selector)
+                .ok_or_else(|| format!("enum selector {selector}"))?;
+            let variant_info = names
+                .enums
+                .get(schema)
+                .and_then(|variants| variants.get(selector as usize));
+            let fields = variant
+                .payload
+                .fields
+                .iter()
+                .enumerate()
+                .map(|(index, field)| {
+                    let field_schema = descriptor_word_schema(&field.descriptor);
+                    let word =
+                        read_word_at(&entry.bytes, field.offset, field.descriptor.layout.size);
+                    Ok(RenderedField {
+                        name: variant_info
+                            .and_then(|info| info.fields.get(index).cloned())
+                            .unwrap_or_else(|| index.to_string()),
+                        schema: field_schema.clone(),
+                        value: render_word(
+                            store,
+                            descriptors,
+                            schema_refs,
+                            names,
+                            &field_schema,
+                            word,
+                        )?,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(RenderedValue::Enum {
+                schema: schema.to_string(),
+                variant_index: selector,
+                variant: variant_info
+                    .map(|info| info.name.clone())
+                    .unwrap_or_else(|| selector.to_string()),
+                fields,
+            })
+        }
+        Access::Scalar | Access::Handle { .. } | Access::Array { .. } => Ok(RenderedValue::Raw {
+            schema: schema.to_string(),
+            bytes_utf8: String::from_utf8(entry.bytes.clone()).ok(),
+        }),
+        other => Err(format!("cannot render descriptor access {other:?}")),
+    }
+}
+
+fn render_pending(store: &ValueStore, handle: i64) -> Result<RenderedPending, String> {
+    let entry = store
+        .entry(handle)
+        .ok_or_else(|| format!("store handle {handle}"))?;
+    let invocation = store.pending_invocation(handle)?;
+    Ok(RenderedPending {
+        schema: entry.schema.clone(),
+        closure_hash: format!("{:016x}", invocation.closure_hash),
+        identity_hash: hex_content_hash(&invocation.identity_hash),
+        remaining_arity: invocation.remaining_arity as u64,
+        arg_count: invocation.args.len() as u64,
+    })
+}
+
+fn descriptor_word_schema(descriptor: &Descriptor<String>) -> String {
+    match &descriptor.access {
+        Access::Handle { target } => target.clone(),
+        Access::Scalar if descriptor.schema.starts_with("Int") => "Int".to_string(),
+        Access::Scalar if descriptor.schema.starts_with("Float") => "Float".to_string(),
+        Access::Scalar if descriptor.schema.starts_with("Bool") => "Bool".to_string(),
+        _ => descriptor.schema.clone(),
+    }
+}
+
+fn read_word_at(bytes: &[u8], offset: usize, size: usize) -> i64 {
+    let mut word = [0u8; 8];
+    word[..size].copy_from_slice(&bytes[offset..offset + size]);
+    i64::from_le_bytes(word)
+}
+
+fn tuple_schema_fields(schema: &str) -> Option<Vec<String>> {
+    let inner = schema.strip_prefix("Tuple<")?.strip_suffix('>')?;
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    Some(split_top_level_schemas(inner))
+}
+
+fn split_top_level_schemas(inner: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in inner.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(inner[start..index].to_string());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(inner[start..].to_string());
+    out
+}
+
+fn hex_content_hash(hash: &ContentHash) -> String {
+    let mut out = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        use std::fmt::Write as _;
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
 }
 
 #[cfg(any(test, feature = "jit"))]
