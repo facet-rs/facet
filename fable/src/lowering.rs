@@ -7,7 +7,8 @@ use std::mem::{align_of, size_of};
 use std::ptr::copy_nonoverlapping;
 
 use facet_core::{
-    Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type, UserType,
+    Def, EnumRepr, Facet, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type,
+    UserType,
 };
 use weavy::ir::{
     ControlOp, DenseWeavyLowered, DenseWeavyProgram, EffectContract, EffectResource,
@@ -2624,7 +2625,7 @@ impl ExprPlan {
             ExprPlan::Number(NumberExpr::Unsigned(_)) => "unsigned number",
             ExprPlan::Number(NumberExpr::Float(_)) => "float",
             ExprPlan::Value(_) => "typed value",
-            ExprPlan::Match(expr) => expr.result_kind.name(),
+            ExprPlan::Match(expr) => expr.result_kind().name(),
         }
     }
 }
@@ -2639,6 +2640,7 @@ enum LocalRef {
     Unsigned(usize),
     Float(usize),
     Value { index: usize, shape: &'static Shape },
+    BorrowedValue { index: usize, shape: &'static Shape },
     Declared { index: usize, type_index: usize },
 }
 
@@ -2653,6 +2655,7 @@ impl LocalRef {
             LocalRef::Unsigned(_) => "unsigned number",
             LocalRef::Float(_) => "float",
             LocalRef::Value { .. } => "typed value",
+            LocalRef::BorrowedValue { .. } => "typed value",
             LocalRef::Declared { .. } => "declared value",
         }
     }
@@ -2896,6 +2899,7 @@ enum FloatExpr {
 #[derive(Debug)]
 enum ValueExpr {
     Struct(StructExpr),
+    Read(FieldPath),
     Local(LocalRef),
     Declared(DeclaredValueExpr),
 }
@@ -2971,7 +2975,9 @@ impl ValueExpr {
     fn shape(&self) -> &'static Shape {
         match self {
             Self::Struct(expr) => expr.shape,
+            Self::Read(path) => path.shape,
             Self::Local(LocalRef::Value { shape, .. }) => shape,
+            Self::Local(LocalRef::BorrowedValue { shape, .. }) => shape,
             Self::Declared(_) => unreachable!("declared values do not have Facet shapes"),
             Self::Local(_) => unreachable!("value expression local must refer to a value slot"),
         }
@@ -3004,11 +3010,34 @@ impl DeclaredValueExpr {
 }
 
 #[derive(Debug)]
-struct MatchExprPlan {
+enum MatchExprPlan {
+    Declared(DeclaredMatchExprPlan),
+    Facet(FacetMatchExprPlan),
+}
+
+impl MatchExprPlan {
+    fn result_kind(&self) -> FableQueryType {
+        match self {
+            Self::Declared(expr) => expr.result_kind,
+            Self::Facet(expr) => expr.result_kind,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DeclaredMatchExprPlan {
     scrutinee: DeclaredValueExpr,
     enum_type_index: usize,
     result_kind: FableQueryType,
     arms: Box<[MatchArmPlan]>,
+}
+
+#[derive(Debug)]
+struct FacetMatchExprPlan {
+    scrutinee: ValueExpr,
+    enum_shape: &'static Shape,
+    result_kind: FableQueryType,
+    arms: Box<[FacetMatchArmPlan]>,
 }
 
 #[derive(Debug)]
@@ -3017,6 +3046,20 @@ struct MatchArmPlan {
     bindings: Box<[MatchBindingPlan]>,
     prefix: FableProgram,
     result: ExprPlan,
+}
+
+#[derive(Debug)]
+struct FacetMatchArmPlan {
+    variant_index: Option<usize>,
+    bindings: Box<[FacetMatchBindingPlan]>,
+    prefix: FableProgram,
+    result: ExprPlan,
+}
+
+#[derive(Debug)]
+struct FacetMatchBindingPlan {
+    local: LocalRef,
+    field_index: usize,
 }
 
 #[derive(Debug)]
@@ -3054,17 +3097,27 @@ struct LoweredBlockResult {
 
 #[derive(Debug)]
 struct FieldPath {
-    root: usize,
+    base: FieldPathBase,
     source: Box<str>,
     shape: &'static Shape,
     scalar: Option<ScalarType>,
     steps: Box<[FieldStep]>,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum FieldPathBase {
+    Root(usize),
+    Local(LocalRef),
+}
+
 #[derive(Debug)]
 enum FieldStep {
     Field {
         offset: usize,
+    },
+    PointerDeref {
+        source: Box<str>,
+        shape: &'static Shape,
     },
     ListIndex {
         source: Box<str>,
@@ -3110,6 +3163,9 @@ impl FieldStep {
     unsafe fn ptr_mut(&self, ptr: PtrMut) -> Result<PtrMut, FableError> {
         match self {
             Self::Field { offset } => Ok(unsafe { ptr.field(*offset) }),
+            Self::PointerDeref { source, .. } => Err(FableError::Unsupported {
+                feature: format!("mutable deref of {source}"),
+            }),
             Self::ListIndex {
                 source,
                 shape,
@@ -3178,6 +3234,19 @@ impl FieldStep {
     unsafe fn ptr_const(&self, ptr: PtrConst) -> Result<PtrConst, FableError> {
         match self {
             Self::Field { offset } => Ok(unsafe { ptr.field(*offset) }),
+            Self::PointerDeref { source, shape } => {
+                let Def::Pointer(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "pointer deref step did not point to a pointer shape",
+                    });
+                };
+                let Some(borrow) = def.vtable.borrow_fn else {
+                    return Err(FableError::Unsupported {
+                        feature: format!("deref of {source}"),
+                    });
+                };
+                Ok(unsafe { borrow(ptr) })
+            }
             Self::ListIndex {
                 source,
                 shape,
@@ -3249,6 +3318,7 @@ struct LocalAllocator {
     unsigned_count: usize,
     float_count: usize,
     value_count: usize,
+    borrowed_value_count: usize,
     declared_count: usize,
 }
 
@@ -3310,6 +3380,12 @@ impl LocalAllocator {
             },
             ExprPlan::Match(_) => unreachable!("match expressions cannot allocate locals directly"),
         }
+    }
+
+    fn allocate_borrowed_value(&mut self, shape: &'static Shape) -> LocalRef {
+        let index = self.borrowed_value_count;
+        self.borrowed_value_count += 1;
+        LocalRef::BorrowedValue { index, shape }
     }
 
     fn allocate_declared_scalar(&mut self, scalar: DeclaredScalar) -> LocalRef {
@@ -3758,21 +3834,21 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 if let Some(local) = self.find_local(name) {
                     return Ok(local_to_expr(local));
                 }
-                let path = self.lower_readable_path(expr)?;
+                let path = self.resolve_path(expr)?;
                 path_to_expr(path)
             }
             Expr::Field(_) => {
                 if let Some(expr) = self.lower_declared_field_expr(expr)? {
                     return Ok(expr);
                 }
-                let path = self.lower_readable_path(expr)?;
+                let path = self.resolve_path(expr)?;
                 path_to_expr(path)
             }
             Expr::Paren(paren) => self.lower_expr(&paren.expr),
             Expr::Unary(unary) => self.lower_unary(unary),
             Expr::Binary(binary) => self.lower_binary(binary),
             Expr::Index(_) => {
-                let path = self.lower_readable_path(expr)?;
+                let path = self.resolve_path(expr)?;
                 path_to_expr(path)
             }
             Expr::StructLiteral(literal) => self.lower_struct_literal(literal),
@@ -4152,12 +4228,29 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
     fn lower_match_expr(&mut self, expr: &ast::MatchExpr) -> Result<ExprPlan, FableError> {
         let scrutinee = self.lower_expr(&expr.scrutinee)?;
-        let ExprPlan::Value(ValueExpr::Declared(scrutinee)) = scrutinee else {
+        let ExprPlan::Value(scrutinee) = scrutinee else {
             return Err(FableError::TypeMismatch {
-                expected: "declared enum".into(),
+                expected: "enum value".into(),
                 actual: scrutinee.kind_name(),
             });
         };
+        match scrutinee {
+            ValueExpr::Declared(scrutinee) => self.lower_declared_match_expr(expr, scrutinee),
+            value if facet_enum_type(value.shape()).is_some() => {
+                self.lower_facet_match_expr(expr, value)
+            }
+            value => Err(FableError::TypeMismatch {
+                expected: "enum value".into(),
+                actual: value.kind_name(),
+            }),
+        }
+    }
+
+    fn lower_declared_match_expr(
+        &mut self,
+        expr: &ast::MatchExpr,
+        scrutinee: DeclaredValueExpr,
+    ) -> Result<ExprPlan, FableError> {
         let enum_type_index = scrutinee.type_index();
         let (enum_name, variant_count) = {
             let declared = self.declared_type(enum_type_index)?;
@@ -4220,12 +4313,85 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             });
         }
 
-        Ok(ExprPlan::Match(Box::new(MatchExprPlan {
-            scrutinee,
-            enum_type_index,
-            result_kind: result_kind.expect("non-empty match has result kind"),
-            arms: arms.into_boxed_slice(),
-        })))
+        Ok(ExprPlan::Match(Box::new(MatchExprPlan::Declared(
+            DeclaredMatchExprPlan {
+                scrutinee,
+                enum_type_index,
+                result_kind: result_kind.expect("non-empty match has result kind"),
+                arms: arms.into_boxed_slice(),
+            },
+        ))))
+    }
+
+    fn lower_facet_match_expr(
+        &mut self,
+        expr: &ast::MatchExpr,
+        scrutinee: ValueExpr,
+    ) -> Result<ExprPlan, FableError> {
+        let enum_shape = scrutinee.shape();
+        let enum_type = facet_enum_type(enum_shape).ok_or(FableError::TypeMismatch {
+            expected: "facet enum".into(),
+            actual: scrutinee.kind_name(),
+        })?;
+        let enum_name = short_shape_name(enum_shape).to_owned();
+        let (enum_name, variant_count) = {
+            (enum_name, enum_type.variants.len())
+        };
+        let mut covered = vec![false; variant_count];
+        let mut wildcard = false;
+        let mut arms = Vec::with_capacity(expr.arms.len());
+        let mut result_kind: Option<FableQueryType> = None;
+
+        for (arm_index, arm) in expr.arms.iter().enumerate() {
+            if wildcard {
+                return Err(FableError::Unsupported {
+                    feature: "match wildcard arm must be trailing".into(),
+                });
+            }
+            let lowered = self.lower_facet_match_arm(arm, enum_shape)?;
+            if let Some(variant_index) = lowered.variant_index {
+                if let Some(slot) = covered.get_mut(variant_index) {
+                    *slot = true;
+                }
+            } else {
+                wildcard = true;
+            }
+            let arm_kind = expr_query_type(&lowered.result)?;
+            if let Some(result_kind) = result_kind {
+                if result_kind != arm_kind {
+                    return Err(FableError::TypeMismatch {
+                        expected: result_kind.name().to_owned(),
+                        actual: arm_kind.name(),
+                    });
+                }
+            } else {
+                result_kind = Some(arm_kind);
+            }
+            if arm_index + 1 == expr.arms.len() && lowered.variant_index.is_none() {
+                wildcard = true;
+            }
+            arms.push(lowered);
+        }
+
+        if arms.is_empty() {
+            return Err(FableError::Unsupported {
+                feature: "match without arms".into(),
+            });
+        }
+        if !wildcard && covered.iter().any(|covered| !covered) {
+            return Err(FableError::Unsupported {
+                feature: format!("non-exhaustive match on {enum_name}"),
+            });
+        }
+
+        Ok(ExprPlan::Match(Box::new(MatchExprPlan::Facet(
+            FacetMatchExprPlan {
+                scrutinee,
+                enum_shape,
+                result_kind: result_kind.expect("non-empty match has result kind"),
+                arms: arms.into_boxed_slice(),
+            },
+        ))))
     }
 
     fn lower_match_arm(
@@ -4248,6 +4414,98 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             prefix: result.prefix,
             result: result.result,
         })
+    }
+
+    fn lower_facet_match_arm(
+        &mut self,
+        arm: &ast::MatchArm,
+        enum_shape: &'static Shape,
+    ) -> Result<FacetMatchArmPlan, FableError> {
+        self.scopes.push(BTreeMap::new());
+        let (variant_index, bindings) = match &arm.pattern {
+            ast::MatchPattern::Wildcard(_) => (None, Vec::new()),
+            ast::MatchPattern::Variant(pattern) => {
+                self.lower_facet_variant_pattern(pattern, enum_shape)?
+            }
+        };
+        let result = self.lower_block_result(&arm.body)?;
+        self.scopes.pop();
+        Ok(FacetMatchArmPlan {
+            variant_index,
+            bindings: bindings.into_boxed_slice(),
+            prefix: result.prefix,
+            result: result.result,
+        })
+    }
+
+    fn lower_facet_variant_pattern(
+        &mut self,
+        pattern: &ast::VariantPattern,
+        enum_shape: &'static Shape,
+    ) -> Result<(Option<usize>, Vec<FacetMatchBindingPlan>), FableError> {
+        let enum_type = facet_enum_type(enum_shape).ok_or(FableError::TypeMismatch {
+            expected: "facet enum".into(),
+            actual: "non-enum value",
+        })?;
+        let pattern_type = pattern.path.type_name.value.as_str();
+        if !shape_name_matches(enum_shape, pattern_type) {
+            return Err(FableError::TypeMismatch {
+                expected: short_shape_name(enum_shape).to_owned(),
+                actual: "different facet enum",
+            });
+        }
+        let variant_name = pattern.path.variant_name.value.as_str();
+        let (variant_index, variant) = enum_type
+            .variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| variant.name == variant_name)
+            .ok_or_else(|| FableError::Unsupported {
+                feature: format!("{} has no variant named {variant_name}", short_shape_name(enum_shape)),
+            })?;
+        let supplied_fields: &[ast::PatternField] = pattern
+            .fields
+            .as_ref()
+            .map(|fields| fields.fields.as_slice())
+            .unwrap_or(&[]);
+        if supplied_fields.len() > variant.data.fields.len() {
+            return Err(FableError::Unsupported {
+                feature: format!("{variant_name} pattern has too many fields"),
+            });
+        }
+
+        let mut used = vec![false; variant.data.fields.len()];
+        let mut bindings = Vec::with_capacity(supplied_fields.len());
+        for supplied in supplied_fields {
+            let binding_name = name_text(&supplied.name).to_owned();
+            let field_index = variant
+                .data
+                .fields
+                .iter()
+                .position(|field| field.name == binding_name)
+                .or_else(|| {
+                    if variant.data.fields.len() == 1 && supplied_fields.len() == 1 {
+                        Some(0)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| FableError::Unsupported {
+                    feature: format!("{variant_name} has no field named {binding_name}"),
+                })?;
+            if used[field_index] {
+                return Err(FableError::DuplicateStructField {
+                    field: binding_name,
+                });
+            }
+            used[field_index] = true;
+            let field = &variant.data.fields[field_index];
+            let local = self.locals.allocate_borrowed_value(field.shape.get());
+            self.insert_local(binding_name, local)?;
+            bindings.push(FacetMatchBindingPlan { local, field_index });
+        }
+
+        Ok((Some(variant_index), bindings))
     }
 
     fn lower_variant_pattern(
@@ -4481,9 +4739,14 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             });
         }
         let path = self.resolve_path(expr)?;
-        if self.roots[path.root].access != FableRootAccess::ReadWrite {
+        let FieldPathBase::Root(root) = path.base else {
+            return Err(FableError::Unsupported {
+                feature: "assignment to let bindings".into(),
+            });
+        };
+        if self.roots[root].access != FableRootAccess::ReadWrite {
             return Err(FableError::ReadOnlyRoot {
-                name: self.roots[path.root].name.to_owned(),
+                name: self.roots[root].name.to_owned(),
             });
         }
         if let Some(scalar) = path.scalar {
@@ -4519,19 +4782,34 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 reason: "path did not start with a variable reference",
             });
         };
-        let Some(root) = self.roots.iter().position(|root| root.name == first) else {
-            return Err(FableError::ExpectedRoot {
-                found: first,
-            });
-        };
-
-        let mut shape = self.roots[root].shape;
-        let mut source = self.roots[root].name.to_owned();
+        let (base, mut shape, mut source) =
+            if let Some(root) = self.roots.iter().position(|root| root.name == first) {
+                (
+                    FieldPathBase::Root(root),
+                    self.roots[root].shape,
+                    self.roots[root].name.to_owned(),
+                )
+            } else if let Some(local) = self.find_local(&first) {
+                (
+                    FieldPathBase::Local(local),
+                    local_value_shape(local)?,
+                    first,
+                )
+            } else {
+                return Err(FableError::ExpectedRoot { found: first });
+            };
         let mut steps = Vec::new();
         for segment in segments {
             match segment {
                 RuntimePathSegment::Name(field_name) => {
-                    let field = find_field(shape, &field_name)?;
+                    let deref_source = source.clone();
+                    let (field, field_owner_shape) = find_field_after_deref(shape, &field_name)?;
+                    if field_owner_shape != shape {
+                        steps.push(FieldStep::PointerDeref {
+                            source: deref_source.into_boxed_str(),
+                            shape,
+                        });
+                    }
                     let field_shape = field.shape.get();
                     source.push('.');
                     source.push_str(&field_name);
@@ -4562,7 +4840,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
         let scalar = ScalarType::try_from_shape(shape);
         Ok(FieldPath {
-            root,
+            base,
             source: source.into_boxed_str(),
             shape,
             scalar,
@@ -5261,7 +5539,7 @@ fn expr_query_type(expr: &ExprPlan) -> Result<FableQueryType, FableError> {
         ExprPlan::Number(NumberExpr::Signed(_)) => Ok(FableQueryType::Signed),
         ExprPlan::Number(NumberExpr::Unsigned(_)) => Ok(FableQueryType::Unsigned),
         ExprPlan::Number(NumberExpr::Float(_)) => Ok(FableQueryType::Float),
-        ExprPlan::Match(expr) => Ok(expr.result_kind),
+        ExprPlan::Match(expr) => Ok(expr.result_kind()),
         ExprPlan::Value(_) => Err(FableError::Unsupported {
             feature: "typed value query results".into(),
         }),
@@ -5307,7 +5585,9 @@ fn local_to_expr(local: LocalRef) -> ExprPlan {
         LocalRef::Signed(_) => ExprPlan::Number(NumberExpr::Signed(IntExpr::Local(local))),
         LocalRef::Unsigned(_) => ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::Local(local))),
         LocalRef::Float(_) => ExprPlan::Number(NumberExpr::Float(FloatExpr::Local(local))),
-        LocalRef::Value { .. } => ExprPlan::Value(ValueExpr::Local(local)),
+        LocalRef::Value { .. } | LocalRef::BorrowedValue { .. } => {
+            ExprPlan::Value(ValueExpr::Local(local))
+        }
         LocalRef::Declared { .. } => {
             ExprPlan::Value(ValueExpr::Declared(DeclaredValueExpr::Local(local)))
         }
@@ -5315,9 +5595,9 @@ fn local_to_expr(local: LocalRef) -> ExprPlan {
 }
 
 fn path_to_expr(path: FieldPath) -> Result<ExprPlan, FableError> {
-    let scalar = path.scalar.ok_or_else(|| FableError::Unsupported {
-        feature: format!("reading non-scalar path ending at {}", path.shape),
-    })?;
+    let Some(scalar) = path.scalar else {
+        return Ok(ExprPlan::Value(ValueExpr::Read(path)));
+    };
     let expr = match scalar {
         ScalarType::Unit => ExprPlan::Unit(UnitExpr::Read(path)),
         ScalarType::Bool => ExprPlan::Bool(BoolExpr::Read(path)),
@@ -5603,6 +5883,7 @@ struct LocalSlots {
     unsigned: Vec<Option<u128>>,
     floats: Vec<Option<f64>>,
     values: Vec<Option<OwnedValue>>,
+    borrowed_values: Vec<Option<BorrowedValue>>,
     declared: Vec<Option<DeclaredOwnedValue>>,
 }
 
@@ -5615,6 +5896,12 @@ struct FableValueStore {
 struct OwnedValue {
     shape: &'static Shape,
     ptr: PtrMut,
+}
+
+#[derive(Clone, Copy)]
+struct BorrowedValue {
+    shape: &'static Shape,
+    ptr: PtrConst,
 }
 
 struct DeclaredOwnedValue {
@@ -5674,6 +5961,25 @@ impl DeclaredOwnedValue {
 }
 
 impl OwnedValue {
+    fn copy_from(shape: &'static Shape, src: PtrConst) -> Result<Self, FableError> {
+        let layout = shape
+            .layout
+            .sized_layout()
+            .map_err(|_| FableError::Unsupported {
+                feature: format!("copying unsized value {shape}"),
+            })?;
+        let ptr = shape.allocate().map_err(|_| FableError::Unsupported {
+            feature: format!("allocating unsized value {shape}"),
+        })?;
+        unsafe {
+            copy_nonoverlapping(src.as_byte_ptr(), ptr.as_mut_byte_ptr(), layout.size());
+            Ok(Self {
+                shape,
+                ptr: ptr.assume_init(),
+            })
+        }
+    }
+
     unsafe fn move_into(self, dst: PtrMut) -> Result<(), FableError> {
         let shape = self.shape;
         let src = self.ptr;
@@ -5842,13 +6148,17 @@ impl FableInterp {
 
 impl FableInterp {
     fn path_ptr_const(&self, path: &FieldPath) -> Result<PtrConst, FableError> {
-        let root = self
-            .roots
-            .get(path.root)
-            .ok_or(FableError::MalformedProgram {
-                reason: "path referenced missing runtime root",
-            })?;
-        let mut ptr = root.ptr.as_const();
+        let mut ptr = match path.base {
+            FieldPathBase::Root(root) => self
+                .roots
+                .get(root)
+                .ok_or(FableError::MalformedProgram {
+                    reason: "path referenced missing runtime root",
+                })?
+                .ptr
+                .as_const(),
+            FieldPathBase::Local(local) => self.borrowed_local_ptr(local)?,
+        };
         for step in path.steps.iter() {
             ptr = unsafe { self.step_ptr_const(step, ptr)? };
         }
@@ -5856,12 +6166,14 @@ impl FableInterp {
     }
 
     fn path_ptr_mut(&self, path: &FieldPath) -> Result<PtrMut, FableError> {
-        let root = self
-            .roots
-            .get(path.root)
-            .ok_or(FableError::MalformedProgram {
-                reason: "path referenced missing runtime root",
-            })?;
+        let FieldPathBase::Root(root) = path.base else {
+            return Err(FableError::Unsupported {
+                feature: "mutable access through borrowed locals".into(),
+            });
+        };
+        let root = self.roots.get(root).ok_or(FableError::MalformedProgram {
+            reason: "path referenced missing runtime root",
+        })?;
         let Some(ptr) = root.ptr.as_mut() else {
             return Err(FableError::ReadOnlyRoot {
                 name: root.name.to_owned(),
@@ -5880,6 +6192,19 @@ impl FableInterp {
         ptr: PtrConst,
     ) -> Result<PtrConst, FableError> {
         match step {
+            FieldStep::PointerDeref { source, shape } => {
+                let Def::Pointer(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "pointer deref step did not point to a pointer shape",
+                    });
+                };
+                let Some(borrow) = def.vtable.borrow_fn else {
+                    return Err(FableError::Unsupported {
+                        feature: format!("deref of {source}"),
+                    });
+                };
+                Ok(unsafe { borrow(ptr) })
+            }
             FieldStep::DynamicListIndex {
                 source,
                 shape,
@@ -5941,6 +6266,9 @@ impl FableInterp {
 
     unsafe fn step_ptr_mut(&self, step: &FieldStep, ptr: PtrMut) -> Result<PtrMut, FableError> {
         match step {
+            FieldStep::PointerDeref { source, .. } => Err(FableError::Unsupported {
+                feature: format!("mutable deref of {source}"),
+            }),
             FieldStep::DynamicListIndex {
                 source,
                 shape,
@@ -6047,6 +6375,11 @@ impl FableInterp {
                 let value = self.eval_value(shape, expect_value_expr(expr)?)?;
                 set_slot(&mut self.locals.values, index, Some(value));
             }
+            LocalRef::BorrowedValue { .. } => {
+                return Err(FableError::Unsupported {
+                    feature: "initializing borrowed value locals".into(),
+                });
+            }
             LocalRef::Declared { index, type_index } => {
                 let value =
                     self.eval_declared_value(type_index, expect_declared_value_expr(expr)?)?;
@@ -6094,6 +6427,23 @@ impl FableInterp {
     }
 
     fn eval_match_for_effect(&mut self, expr: &MatchExprPlan) -> Result<(), FableError> {
+        match expr {
+            MatchExprPlan::Declared(expr) => self.eval_declared_match_for_effect(expr),
+            MatchExprPlan::Facet(expr) => self.eval_facet_match_for_effect(expr),
+        }
+    }
+
+    fn eval_match_query(&mut self, expr: &MatchExprPlan) -> Result<FableQueryOutput, FableError> {
+        match expr {
+            MatchExprPlan::Declared(expr) => self.eval_declared_match_query(expr),
+            MatchExprPlan::Facet(expr) => self.eval_facet_match_query(expr),
+        }
+    }
+
+    fn eval_declared_match_for_effect(
+        &mut self,
+        expr: &DeclaredMatchExprPlan,
+    ) -> Result<(), FableError> {
         let scrutinee = self.eval_declared_value(expr.enum_type_index, &expr.scrutinee)?;
         let selector = self.read_declared_tag(&scrutinee, expr.enum_type_index)?;
         let arm = expr
@@ -6109,7 +6459,10 @@ impl FableInterp {
         self.eval_expr(&arm.result)
     }
 
-    fn eval_match_query(&mut self, expr: &MatchExprPlan) -> Result<FableQueryOutput, FableError> {
+    fn eval_declared_match_query(
+        &mut self,
+        expr: &DeclaredMatchExprPlan,
+    ) -> Result<FableQueryOutput, FableError> {
         let scrutinee = self.eval_declared_value(expr.enum_type_index, &expr.scrutinee)?;
         let selector = self.read_declared_tag(&scrutinee, expr.enum_type_index)?;
         let arm = expr
@@ -6123,6 +6476,160 @@ impl FableInterp {
         self.init_match_bindings(&arm.bindings, &scrutinee)?;
         self.eval_arm_prefix(&arm.prefix)?;
         self.eval_query(&arm.result)
+    }
+
+    fn eval_facet_match_for_effect(
+        &mut self,
+        expr: &FacetMatchExprPlan,
+    ) -> Result<(), FableError> {
+        let (ptr, shape) = self.value_ptr_const(&expr.scrutinee)?;
+        if shape != expr.enum_shape {
+            return Err(FableError::MalformedProgram {
+                reason: "facet match scrutinee shape changed",
+            });
+        }
+        let variant_index = self.read_facet_variant_index(shape, ptr)?;
+        let arm = expr
+            .arms
+            .iter()
+            .find(|arm| arm.variant_index == Some(variant_index))
+            .or_else(|| expr.arms.iter().find(|arm| arm.variant_index.is_none()))
+            .ok_or(FableError::MalformedProgram {
+                reason: "match had no selected arm",
+            })?;
+        self.init_facet_match_bindings(&arm.bindings, shape, ptr, variant_index)?;
+        self.eval_arm_prefix(&arm.prefix)?;
+        self.eval_expr(&arm.result)
+    }
+
+    fn eval_facet_match_query(
+        &mut self,
+        expr: &FacetMatchExprPlan,
+    ) -> Result<FableQueryOutput, FableError> {
+        let (ptr, shape) = self.value_ptr_const(&expr.scrutinee)?;
+        if shape != expr.enum_shape {
+            return Err(FableError::MalformedProgram {
+                reason: "facet match scrutinee shape changed",
+            });
+        }
+        let variant_index = self.read_facet_variant_index(shape, ptr)?;
+        let arm = expr
+            .arms
+            .iter()
+            .find(|arm| arm.variant_index == Some(variant_index))
+            .or_else(|| expr.arms.iter().find(|arm| arm.variant_index.is_none()))
+            .ok_or(FableError::MalformedProgram {
+                reason: "match had no selected arm",
+            })?;
+        self.init_facet_match_bindings(&arm.bindings, shape, ptr, variant_index)?;
+        self.eval_arm_prefix(&arm.prefix)?;
+        self.eval_query(&arm.result)
+    }
+
+    fn value_ptr_const(&self, expr: &ValueExpr) -> Result<(PtrConst, &'static Shape), FableError> {
+        match expr {
+            ValueExpr::Read(path) => Ok((self.path_ptr_const(path)?, path.shape)),
+            ValueExpr::Local(local @ LocalRef::BorrowedValue { shape, .. }) => {
+                Ok((self.borrowed_local_ptr(*local)?, *shape))
+            }
+            ValueExpr::Local(LocalRef::Value { .. }) => Err(FableError::Unsupported {
+                feature: "matching moved typed value locals".into(),
+            }),
+            ValueExpr::Struct(_) => Err(FableError::Unsupported {
+                feature: "matching temporary struct literals".into(),
+            }),
+            ValueExpr::Declared(_) => Err(FableError::TypeMismatch {
+                expected: "facet value".into(),
+                actual: "declared value",
+            }),
+            ValueExpr::Local(local) => Err(local_kind_mismatch("typed value", *local)),
+        }
+    }
+
+    fn read_facet_variant_index(
+        &self,
+        shape: &'static Shape,
+        ptr: PtrConst,
+    ) -> Result<usize, FableError> {
+        let enum_type = facet_enum_type(shape).ok_or(FableError::TypeMismatch {
+            expected: "facet enum".into(),
+            actual: "non-enum value",
+        })?;
+        let discriminant = match enum_type.enum_repr {
+            EnumRepr::Rust => {
+                return Err(FableError::Unsupported {
+                    feature: format!("matching opaque Rust enum {shape}"),
+                });
+            }
+            EnumRepr::RustNPO => {
+                return Err(FableError::Unsupported {
+                    feature: format!("matching niche-optimized enum {shape}"),
+                });
+            }
+            EnumRepr::U8 => i64::from(*unsafe { ptr.get::<u8>() }),
+            EnumRepr::U16 => i64::from(*unsafe { ptr.get::<u16>() }),
+            EnumRepr::U32 => i64::from(*unsafe { ptr.get::<u32>() }),
+            EnumRepr::U64 => i64::try_from(*unsafe { ptr.get::<u64>() }).map_err(|_| {
+                FableError::MalformedProgram {
+                    reason: "facet enum discriminant did not fit i64",
+                }
+            })?,
+            EnumRepr::USize => i64::try_from(*unsafe { ptr.get::<usize>() }).map_err(|_| {
+                FableError::MalformedProgram {
+                    reason: "facet enum discriminant did not fit i64",
+                }
+            })?,
+            EnumRepr::I8 => i64::from(*unsafe { ptr.get::<i8>() }),
+            EnumRepr::I16 => i64::from(*unsafe { ptr.get::<i16>() }),
+            EnumRepr::I32 => i64::from(*unsafe { ptr.get::<i32>() }),
+            EnumRepr::I64 => *unsafe { ptr.get::<i64>() },
+            EnumRepr::ISize => (*unsafe { ptr.get::<isize>() }) as i64,
+        };
+        enum_type
+            .variants
+            .iter()
+            .position(|variant| variant.discriminant == Some(discriminant))
+            .ok_or(FableError::MalformedProgram {
+                reason: "facet enum discriminant did not match a variant",
+            })
+    }
+
+    fn init_facet_match_bindings(
+        &mut self,
+        bindings: &[FacetMatchBindingPlan],
+        shape: &'static Shape,
+        ptr: PtrConst,
+        variant_index: usize,
+    ) -> Result<(), FableError> {
+        let enum_type = facet_enum_type(shape).ok_or(FableError::MalformedProgram {
+            reason: "facet match binding shape was not an enum",
+        })?;
+        let variant = enum_type
+            .variants
+            .get(variant_index)
+            .ok_or(FableError::MalformedProgram {
+                reason: "facet match variant index was out of bounds",
+            })?;
+        for binding in bindings {
+            let field = variant.data.fields.get(binding.field_index).ok_or(
+                FableError::MalformedProgram {
+                    reason: "facet match binding field index was out of bounds",
+                },
+            )?;
+            let LocalRef::BorrowedValue { index, .. } = binding.local else {
+                return Err(local_kind_mismatch("typed value", binding.local));
+            };
+            let ptr = unsafe { ptr.field(field.offset) };
+            set_slot(
+                &mut self.locals.borrowed_values,
+                index,
+                Some(BorrowedValue {
+                    shape: field.shape.get(),
+                    ptr,
+                }),
+            );
+        }
+        Ok(())
     }
 
     fn read_declared_tag(
@@ -6526,6 +7033,21 @@ impl FableInterp {
         }
     }
 
+    fn borrowed_local_ptr(&self, local: LocalRef) -> Result<PtrConst, FableError> {
+        let LocalRef::BorrowedValue { index, .. } = local else {
+            return Err(local_kind_mismatch("typed value", local));
+        };
+        self.locals
+            .borrowed_values
+            .get(index)
+            .and_then(|value| *value)
+            .map(|value| {
+                debug_assert_eq!(value.shape, local_value_shape(local).expect("borrowed shape"));
+                value.ptr
+            })
+            .ok_or_else(uninitialized_local)
+    }
+
     unsafe fn read_unsigned_path(
         &self,
         scalar: ScalarType,
@@ -6820,6 +7342,21 @@ impl FableInterp {
                     });
                 }
                 unsafe { self.init_struct_value(expr) }
+            }
+            ValueExpr::Read(path) => {
+                if path.shape != shape {
+                    return Err(FableError::TypeMismatch {
+                        expected: format!("{shape}"),
+                        actual: "typed value",
+                    });
+                }
+                if !shape.is_pod() {
+                    return Err(FableError::Unsupported {
+                        feature: format!("copying non-POD path ending at {shape}"),
+                    });
+                }
+                let ptr = self.path_ptr_const(path)?;
+                OwnedValue::copy_from(shape, ptr)
             }
             ValueExpr::Local(local) => self.take_local_value(*local, shape),
             ValueExpr::Declared(_) => Err(FableError::TypeMismatch {
@@ -7145,23 +7682,30 @@ impl FableInterp {
     fn eval_value_for_effect(&mut self, expr: &ValueExpr) -> Result<(), FableError> {
         match expr {
             ValueExpr::Struct(expr) => unsafe { self.init_struct_value(expr) }.map(drop),
+            ValueExpr::Read(path) => {
+                let _ = self.path_ptr_const(path)?;
+                Ok(())
+            }
             ValueExpr::Declared(expr) => {
                 self.eval_declared_value(expr.type_index(), expr).map(drop)
             }
             ValueExpr::Local(local) => {
-                let LocalRef::Value { index, .. } = *local else {
-                    return Err(local_kind_mismatch("typed value", *local));
-                };
-                if self
-                    .locals
-                    .values
-                    .get(index)
-                    .and_then(Option::as_ref)
-                    .is_some()
-                {
-                    Ok(())
-                } else {
-                    Err(uninitialized_local())
+                match *local {
+                    LocalRef::Value { index, .. } => {
+                        if self
+                            .locals
+                            .values
+                            .get(index)
+                            .and_then(Option::as_ref)
+                            .is_some()
+                        {
+                            Ok(())
+                        } else {
+                            Err(uninitialized_local())
+                        }
+                    }
+                    LocalRef::BorrowedValue { .. } => self.borrowed_local_ptr(*local).map(drop),
+                    _ => Err(local_kind_mismatch("typed value", *local)),
                 }
             }
         }
@@ -7185,19 +7729,35 @@ impl FableInterp {
         local: LocalRef,
         expected_shape: &'static Shape,
     ) -> Result<OwnedValue, FableError> {
-        let LocalRef::Value { index, shape } = local else {
-            return Err(local_kind_mismatch("typed value", local));
-        };
-        if shape != expected_shape {
-            return Err(FableError::TypeMismatch {
-                expected: format!("{expected_shape}"),
-                actual: "typed value",
-            });
+        match local {
+            LocalRef::Value { index, shape } => {
+                if shape != expected_shape {
+                    return Err(FableError::TypeMismatch {
+                        expected: format!("{expected_shape}"),
+                        actual: "typed value",
+                    });
+                }
+                let Some(slot) = self.locals.values.get_mut(index) else {
+                    return Err(uninitialized_local());
+                };
+                slot.take().ok_or_else(uninitialized_local)
+            }
+            LocalRef::BorrowedValue { shape, .. } => {
+                if shape != expected_shape {
+                    return Err(FableError::TypeMismatch {
+                        expected: format!("{expected_shape}"),
+                        actual: "typed value",
+                    });
+                }
+                if !shape.is_pod() {
+                    return Err(FableError::Unsupported {
+                        feature: format!("copying non-POD borrowed value {shape}"),
+                    });
+                }
+                OwnedValue::copy_from(shape, self.borrowed_local_ptr(local)?)
+            }
+            _ => Err(local_kind_mismatch("typed value", local)),
         }
-        let Some(slot) = self.locals.values.get_mut(index) else {
-            return Err(uninitialized_local());
-        };
-        slot.take().ok_or_else(uninitialized_local)
     }
 
     unsafe fn init_scalar(
@@ -7476,6 +8036,13 @@ fn local_kind_mismatch(expected: &'static str, actual: LocalRef) -> FableError {
     FableError::TypeMismatch {
         expected: expected.into(),
         actual: actual.kind_name(),
+    }
+}
+
+fn local_value_shape(local: LocalRef) -> Result<&'static Shape, FableError> {
+    match local {
+        LocalRef::Value { shape, .. } | LocalRef::BorrowedValue { shape, .. } => Ok(shape),
+        _ => Err(local_kind_mismatch("typed value", local)),
     }
 }
 
@@ -7863,6 +8430,22 @@ fn shape_name_matches(shape: &'static Shape, name: &str) -> bool {
     displayed == name || displayed.rsplit("::").next() == Some(name)
 }
 
+fn short_shape_name(shape: &'static Shape) -> String {
+    let displayed = shape.type_name().to_string();
+    displayed
+        .rsplit("::")
+        .next()
+        .unwrap_or(displayed.as_str())
+        .to_owned()
+}
+
+fn facet_enum_type(shape: &'static Shape) -> Option<facet_core::EnumType> {
+    match shape.ty {
+        Type::User(UserType::Enum(enum_type)) => Some(enum_type),
+        _ => None,
+    }
+}
+
 fn element_stride(
     element_shape: &'static Shape,
     owner_shape: &'static Shape,
@@ -7899,6 +8482,24 @@ fn find_field(
             shape,
             field: field_name.to_owned(),
         })
+}
+
+fn find_field_after_deref(
+    shape: &'static Shape,
+    field_name: &str,
+) -> Result<(&'static facet_core::Field, &'static Shape), FableError> {
+    match find_field(shape, field_name) {
+        Ok(field) => Ok((field, shape)),
+        Err(original) => {
+            let Def::Pointer(def) = shape.def else {
+                return Err(original);
+            };
+            let Some(pointee) = def.pointee else {
+                return Err(original);
+            };
+            find_field(pointee, field_name).map(|field| (field, pointee))
+        }
+    }
 }
 
 fn unary_op(unary: &UnaryExpr) -> Result<UnaryOp, FableError> {
@@ -8667,6 +9268,37 @@ mod tests {
                 len: 2,
             } if path == "root.users[dynamic]"
         ));
+    }
+
+    #[test]
+    fn matches_facet_reflected_generated_ast_enums() {
+        let ast = parse("let answer = 42;").unwrap();
+        let roots = [FableRootSpec::read_only::<ast::SourceFile>("root")];
+        let plan = FableRootQueryPlan::<bool>::compile(
+            r#"
+                match root.items[0] {
+                  Item::Stmt { stmt } => {
+                    match stmt {
+                      Stmt::Let { let_stmt } => {
+                        match let_stmt.name {
+                          Name::Ident { ident } => {
+                            ident.value == "answer";
+                          },
+                          _ => { false; },
+                        };
+                      },
+                      _ => { false; },
+                    };
+                  },
+                  _ => { false; },
+                }
+            "#,
+            &roots,
+        )
+        .unwrap();
+        let mut values = [FableRootValue::read_only("root", &ast)];
+
+        assert!(plan.evaluate(&mut values).unwrap());
     }
 
     #[test]
