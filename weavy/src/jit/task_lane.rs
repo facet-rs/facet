@@ -483,6 +483,15 @@ impl JitTask {
         i64::from_le_bytes(self.result[..8].try_into().expect("8-byte result"))
     }
 
+    /// Write an i64 into the CURRENT frame at `offset` — used for
+    /// entry arguments before the first [`JitTask::run`], matching
+    /// [`Task::write_i64`](crate::task::Task::write_i64).
+    pub fn write_i64(&mut self, offset: u32, value: i64) {
+        let base = self.frames.last().expect("live frame").base;
+        let at = base + offset as usize;
+        self.arena[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
     fn alloc_frame(&mut self, f: &CompiledFn) -> usize {
         let align = f.frame_align.max(1);
         let base = self.arena.len().div_ceil(align) * align;
@@ -896,6 +905,73 @@ mod tests {
 
         assert_eq!(jit_steps, interp_steps, "step sequences diverge");
         assert_eq!(task.result, interp.result, "results diverge");
+        assert_eq!(task.trace, interp.trace, "frame traces diverge");
+    }
+
+    #[test]
+    fn seeded_root_args_match_the_interpreter_and_feed_branches() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(5),
+                code: vec![
+                    Op::GtI64 {
+                        dst: 24,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::JumpIfZero {
+                        value: 24,
+                        target: 5,
+                    },
+                    Op::SubI64 {
+                        dst: 32,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::MulI64 {
+                        dst: 32,
+                        a: 32,
+                        b: 16,
+                    },
+                    Op::Jump { target: 7 },
+                    Op::SubI64 {
+                        dst: 32,
+                        a: 8,
+                        b: 0,
+                    },
+                    Op::MulI64 {
+                        dst: 32,
+                        a: 32,
+                        b: 16,
+                    },
+                    Op::Ret { src: 32, size: 8 },
+                ],
+            }],
+        };
+
+        let mut interp = Task::spawn(&program, FnId(0));
+        interp.write_i64(0, 11);
+        interp.write_i64(8, 4);
+        interp.write_i64(16, 3);
+        let interp_steps = vec![interp.run(&program, &[], &[])];
+
+        let Some(jit) = JitProgram::compile(&program) else {
+            assert!(
+                !available(),
+                "task JIT refused a seeded-args program on a native copy-and-patch target"
+            );
+            return;
+        };
+        let mut task = JitTask::spawn(&jit, FnId(0));
+        task.write_i64(0, 11);
+        task.write_i64(8, 4);
+        task.write_i64(16, 3);
+        let jit_steps = vec![task.run(&jit, &[], &[])];
+
+        assert_eq!(jit_steps.len(), interp_steps.len(), "step counts diverge");
+        assert_eq!(jit_steps, interp_steps, "step sequences diverge");
+        assert_eq!(task.result, interp.result, "results diverge");
+        assert_eq!(task.result_i64(), 21);
         assert_eq!(task.trace, interp.trace, "frame traces diverge");
     }
 
