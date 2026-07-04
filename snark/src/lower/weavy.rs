@@ -2351,6 +2351,8 @@ impl WeavyParseWorkspace {
             None,
             RuntimeWeavyReuseCollection::Disabled,
             RuntimeWeavyBlockExecution::Direct,
+            #[cfg(feature = "glr-diagnostics")]
+            None,
             &self.lexer_scratch,
         )
         .map(|report| report.tree)
@@ -2400,6 +2402,8 @@ impl WeavyParseWorkspace {
             None,
             RuntimeWeavyReuseCollection::Disabled,
             RuntimeWeavyBlockExecution::Direct,
+            #[cfg(feature = "glr-diagnostics")]
+            None,
             &self.lexer_scratch,
         )
         .and_then(|report| {
@@ -2453,6 +2457,8 @@ impl WeavyParseWorkspace {
             None,
             RuntimeWeavyReuseCollection::Disabled,
             RuntimeWeavyBlockExecution::Direct,
+            #[cfg(feature = "glr-diagnostics")]
+            None,
             &self.lexer_scratch,
         )
         .and_then(|report| {
@@ -2506,6 +2512,8 @@ impl WeavyParseWorkspace {
             None,
             RuntimeWeavyReuseCollection::Disabled,
             RuntimeWeavyBlockExecution::Direct,
+            #[cfg(feature = "glr-diagnostics")]
+            None,
             &self.lexer_scratch,
         )?;
         let tree = report
@@ -2554,6 +2562,8 @@ impl WeavyParseWorkspace {
             None,
             RuntimeWeavyReuseCollection::Enabled,
             RuntimeWeavyBlockExecution::Direct,
+            #[cfg(feature = "glr-diagnostics")]
+            None,
             &self.lexer_scratch,
         )
     }
@@ -2591,6 +2601,8 @@ impl WeavyParseWorkspace {
             None,
             RuntimeWeavyReuseCollection::Enabled,
             RuntimeWeavyBlockExecution::Direct,
+            #[cfg(feature = "glr-diagnostics")]
+            None,
             &self.lexer_scratch,
         )
     }
@@ -2625,6 +2637,8 @@ impl WeavyParseWorkspace {
             Some(&reuse_index),
             RuntimeWeavyReuseCollection::Enabled,
             RuntimeWeavyBlockExecution::Direct,
+            #[cfg(feature = "glr-diagnostics")]
+            None,
             &self.lexer_scratch,
         )
     }
@@ -2659,6 +2673,8 @@ impl WeavyParseWorkspace {
             Some(&reuse_index),
             RuntimeWeavyReuseCollection::Enabled,
             RuntimeWeavyBlockExecution::Direct,
+            #[cfg(feature = "glr-diagnostics")]
+            None,
             &self.lexer_scratch,
         )
     }
@@ -8301,8 +8317,43 @@ fn parse_weavy_with_lexer_program(
         reuse_index,
         reuse_collection,
         block_execution,
+        #[cfg(feature = "glr-diagnostics")]
+        None,
         &lexer_scratch,
     )
+}
+
+/// Execute a prepared Weavy plan and collect GLR branch-pop attribution.
+#[cfg(feature = "glr-diagnostics")]
+pub fn parse_prepared_weavy_glr_diagnostics(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> WeavyGlrDiagnosticRun {
+    let lexer_scratch = RuntimeWeavyLexerScratch::new(RuntimeWeavyLexSetCachePolicy::Disabled);
+    let mut diagnostics = RuntimeWeavyGlrDiagnosticsCollector::default();
+    let result = parse_weavy_with_lexer_program_and_scratch(
+        RuntimeWeavyInput {
+            plan,
+            lexer_program: &plan.lexer_program,
+            auto_close_index: &plan.auto_close_index,
+            parser,
+            table,
+            input,
+            external_scanner: None,
+        },
+        RuntimeWeavyRecoveryMode::Strict,
+        None,
+        RuntimeWeavyReuseCollection::Disabled,
+        RuntimeWeavyBlockExecution::Direct,
+        Some(&mut diagnostics),
+        &lexer_scratch,
+    );
+    WeavyGlrDiagnosticRun {
+        result,
+        diagnostics: diagnostics.finish(),
+    }
 }
 
 fn runtime_weavy_lex_set_cache_policy(
@@ -8322,6 +8373,9 @@ fn parse_weavy_with_lexer_program_and_scratch(
     reuse_index: Option<&RuntimeWeavyReuseIndex<'_>>,
     reuse_collection: RuntimeWeavyReuseCollection,
     block_execution: RuntimeWeavyBlockExecution,
+    #[cfg(feature = "glr-diagnostics")] mut glr_diagnostics: Option<
+        &mut RuntimeWeavyGlrDiagnosticsCollector,
+    >,
     lexer_scratch: &RuntimeWeavyLexerScratch,
 ) -> Result<WeavyParseReport, WeavyParseError> {
     if input_ctx.parser.stage() != parser_ir::ParserGenerationStage::Productions {
@@ -8443,6 +8497,10 @@ fn parse_weavy_with_lexer_program_and_scratch(
             }
         }
         step_count += 1;
+        #[cfg(feature = "glr-diagnostics")]
+        if let Some(diagnostics) = glr_diagnostics.as_deref_mut() {
+            diagnostics.record_branch_pop(branch.version, branch.byte_position);
+        }
         if step_count > step_limit {
             trace_push!(
                 trace_events,
@@ -8485,6 +8543,8 @@ fn parse_weavy_with_lexer_program_and_scratch(
                 recovery,
                 reuse_index,
                 reuse_collection,
+                #[cfg(feature = "glr-diagnostics")]
+                glr_diagnostics: glr_diagnostics.as_deref_mut(),
                 outcomes: &mut branch_outcomes,
             },
         );
@@ -8700,6 +8760,270 @@ pub struct WeavyParseReport {
     accepted_count: usize,
     failure_count: usize,
     max_live_versions: usize,
+}
+
+/// Result of a GLR diagnostic parse run.
+#[cfg(feature = "glr-diagnostics")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeavyGlrDiagnosticRun {
+    result: Result<WeavyParseReport, WeavyParseError>,
+    diagnostics: WeavyGlrDiagnostics,
+}
+
+#[cfg(feature = "glr-diagnostics")]
+impl WeavyGlrDiagnosticRun {
+    /// Parse result produced while collecting GLR diagnostics.
+    pub const fn result(&self) -> &Result<WeavyParseReport, WeavyParseError> {
+        &self.result
+    }
+
+    /// Collected GLR branch-pop diagnostics.
+    pub const fn diagnostics(&self) -> &WeavyGlrDiagnostics {
+        &self.diagnostics
+    }
+
+    /// Consume the diagnostic run into its parse result and diagnostics.
+    pub fn into_parts(
+        self,
+    ) -> (
+        Result<WeavyParseReport, WeavyParseError>,
+        WeavyGlrDiagnostics,
+    ) {
+        (self.result, self.diagnostics)
+    }
+}
+
+/// Collected attribution for GLR branch pops.
+#[cfg(feature = "glr-diagnostics")]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WeavyGlrDiagnostics {
+    total_branch_pops: usize,
+    root_branch_pops: usize,
+    source_pops: Vec<WeavyGlrSourcePopDiagnostic>,
+    position_pops: Vec<WeavyGlrPositionPopDiagnostic>,
+}
+
+#[cfg(feature = "glr-diagnostics")]
+impl WeavyGlrDiagnostics {
+    /// Total number of GLR branch worklist pops observed.
+    pub const fn total_branch_pops(&self) -> usize {
+        self.total_branch_pops
+    }
+
+    /// Number of branch pops from the original unforked stack version.
+    pub const fn root_branch_pops(&self) -> usize {
+        self.root_branch_pops
+    }
+
+    /// Branch pops grouped by the conflict/source position that forked a stack version.
+    pub fn source_pops(&self) -> &[WeavyGlrSourcePopDiagnostic] {
+        &self.source_pops
+    }
+
+    /// Branch pops grouped by fork source and the current byte position of the popped branch.
+    pub fn position_pops(&self) -> &[WeavyGlrPositionPopDiagnostic] {
+        &self.position_pops
+    }
+}
+
+/// One conflict/source-position bucket for GLR branch-pop attribution.
+#[cfg(feature = "glr-diagnostics")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeavyGlrSourcePopDiagnostic {
+    source: WeavyGlrForkSource,
+    branch_pops: usize,
+    split_count: usize,
+    created_branch_count: usize,
+}
+
+#[cfg(feature = "glr-diagnostics")]
+impl WeavyGlrSourcePopDiagnostic {
+    /// Conflict/source position that forked these branches.
+    pub const fn source(&self) -> WeavyGlrForkSource {
+        self.source
+    }
+
+    /// Number of later branch pops attributed to this fork source.
+    pub const fn branch_pops(&self) -> usize {
+        self.branch_pops
+    }
+
+    /// Number of GLR split events at this exact fork source.
+    pub const fn split_count(&self) -> usize {
+        self.split_count
+    }
+
+    /// Number of stack versions created by split events at this exact fork source.
+    pub const fn created_branch_count(&self) -> usize {
+        self.created_branch_count
+    }
+}
+
+/// One current-position bucket for branches attributed to a fork source.
+#[cfg(feature = "glr-diagnostics")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeavyGlrPositionPopDiagnostic {
+    source: WeavyGlrForkSource,
+    current_byte_position: usize,
+    branch_pops: usize,
+}
+
+#[cfg(feature = "glr-diagnostics")]
+impl WeavyGlrPositionPopDiagnostic {
+    /// Conflict/source position that forked these branches.
+    pub const fn source(&self) -> WeavyGlrForkSource {
+        self.source
+    }
+
+    /// Current byte position of the branch when it was popped.
+    pub const fn current_byte_position(&self) -> usize {
+        self.current_byte_position
+    }
+
+    /// Number of branch pops in this source/current-position bucket.
+    pub const fn branch_pops(&self) -> usize {
+        self.branch_pops
+    }
+}
+
+/// Source conflict and input position that created one or more GLR stack versions.
+#[cfg(feature = "glr-diagnostics")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WeavyGlrForkSource {
+    conflict: parser_ir::ConflictId,
+    state: parser_ir::ParseStateId,
+    byte_position: usize,
+    lookahead: parser_ir::LookaheadSymbol,
+    action_count: usize,
+}
+
+#[cfg(feature = "glr-diagnostics")]
+impl WeavyGlrForkSource {
+    fn new(
+        conflict: parser_ir::ConflictId,
+        state: parser_ir::ParseStateId,
+        byte_position: usize,
+        lookahead: parser_ir::LookaheadSymbol,
+        action_count: usize,
+    ) -> Self {
+        Self {
+            conflict,
+            state,
+            byte_position,
+            lookahead,
+            action_count,
+        }
+    }
+
+    /// Parse-table conflict id for this fork source.
+    pub const fn conflict(&self) -> parser_ir::ConflictId {
+        self.conflict
+    }
+
+    /// Parse state containing the conflict.
+    pub const fn state(&self) -> parser_ir::ParseStateId {
+        self.state
+    }
+
+    /// Input byte position where the conflict forked stack versions.
+    pub const fn byte_position(&self) -> usize {
+        self.byte_position
+    }
+
+    /// Lookahead table key that selected the conflict.
+    pub const fn lookahead(&self) -> parser_ir::LookaheadSymbol {
+        self.lookahead
+    }
+
+    /// Number of actions in the conflicted table cell.
+    pub const fn action_count(&self) -> usize {
+        self.action_count
+    }
+}
+
+#[cfg(feature = "glr-diagnostics")]
+#[derive(Default)]
+struct RuntimeWeavyGlrDiagnosticsCollector {
+    version_sources: HashMap<parser_ir::StackVersionId, WeavyGlrForkSource>,
+    source_pops: HashMap<WeavyGlrForkSource, usize>,
+    source_splits: HashMap<WeavyGlrForkSource, (usize, usize)>,
+    position_pops: HashMap<(WeavyGlrForkSource, usize), usize>,
+    total_branch_pops: usize,
+    root_branch_pops: usize,
+}
+
+#[cfg(feature = "glr-diagnostics")]
+impl RuntimeWeavyGlrDiagnosticsCollector {
+    fn record_branch_pop(&mut self, version: parser_ir::StackVersionId, byte_position: usize) {
+        self.total_branch_pops += 1;
+        let Some(source) = self.version_sources.get(&version).copied() else {
+            self.root_branch_pops += 1;
+            return;
+        };
+        *self.source_pops.entry(source).or_default() += 1;
+        *self
+            .position_pops
+            .entry((source, byte_position))
+            .or_default() += 1;
+    }
+
+    fn record_split(&mut self, versions: &[parser_ir::StackVersionId], source: WeavyGlrForkSource) {
+        let entry = self.source_splits.entry(source).or_default();
+        entry.0 += 1;
+        entry.1 += versions.len();
+        for version in versions {
+            self.version_sources.insert(*version, source);
+        }
+    }
+
+    fn finish(self) -> WeavyGlrDiagnostics {
+        let mut source_pops = self
+            .source_pops
+            .into_iter()
+            .map(|(source, branch_pops)| {
+                let (split_count, created_branch_count) =
+                    self.source_splits.get(&source).copied().unwrap_or_default();
+                WeavyGlrSourcePopDiagnostic {
+                    source,
+                    branch_pops,
+                    split_count,
+                    created_branch_count,
+                }
+            })
+            .collect::<Vec<_>>();
+        source_pops.sort_by(|left, right| {
+            right
+                .branch_pops
+                .cmp(&left.branch_pops)
+                .then_with(|| left.source.cmp(&right.source))
+        });
+
+        let mut position_pops = self
+            .position_pops
+            .into_iter()
+            .map(
+                |((source, current_byte_position), branch_pops)| WeavyGlrPositionPopDiagnostic {
+                    source,
+                    current_byte_position,
+                    branch_pops,
+                },
+            )
+            .collect::<Vec<_>>();
+        position_pops.sort_by(|left, right| {
+            right
+                .branch_pops
+                .cmp(&left.branch_pops)
+                .then_with(|| left.source.cmp(&right.source))
+                .then_with(|| left.current_byte_position.cmp(&right.current_byte_position))
+        });
+
+        WeavyGlrDiagnostics {
+            total_branch_pops: self.total_branch_pops,
+            root_branch_pops: self.root_branch_pops,
+            source_pops,
+            position_pops,
+        }
+    }
 }
 
 /// Runtime execution lane used to produce a Weavy parse report.
@@ -9200,6 +9524,8 @@ struct RuntimeWeavyBranchStep<'a, 'out> {
     recovery: RuntimeWeavyRecoveryMode,
     reuse_index: Option<&'a RuntimeWeavyReuseIndex<'a>>,
     reuse_collection: RuntimeWeavyReuseCollection,
+    #[cfg(feature = "glr-diagnostics")]
+    glr_diagnostics: Option<&'a mut RuntimeWeavyGlrDiagnosticsCollector>,
     outcomes: &'out mut Vec<RuntimeWeavyStepOutcome>,
 }
 
@@ -9353,6 +9679,19 @@ fn step_runtime_weavy_branch(
             dispatch.token.lookahead,
             actions,
         );
+        #[cfg(feature = "glr-diagnostics")]
+        if let Some(diagnostics) = step.glr_diagnostics {
+            diagnostics.record_split(
+                &versions,
+                WeavyGlrForkSource::new(
+                    conflict,
+                    dispatch.state,
+                    branch.byte_position,
+                    dispatch.token.lookahead,
+                    actions.len(),
+                ),
+            );
+        }
         trace_push!(
             output.trace_events,
             parser_ir::TraceEvent::GlrSplit {
