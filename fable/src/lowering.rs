@@ -15,8 +15,8 @@ use weavy::ir::{
 use weavy::{BlockRef, Control, RunError, RunStats, Step};
 
 use crate::ast::{
-    self, BinaryExpr, Block, CallExpr, ElseClause, Expr, IfStmt, Literal, Name, Stmt, StructLiteral,
-    UnaryExpr,
+    self, BinaryExpr, Block, CallExpr, ElseClause, Expr, IfStmt, Item, Literal, Name, Stmt,
+    StructLiteral, UnaryExpr,
 };
 use crate::{ParseError, parse};
 
@@ -2138,22 +2138,24 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn lower_root(&mut self, root: &ast::SourceFile) -> Result<FableProgram, FableError> {
-        self.lower_statements(&root.stmts)
+        let statements = self.root_statements(root)?;
+        self.lower_statements(statements)
     }
 
     fn lower_predicate_root(&mut self, root: &ast::SourceFile) -> Result<FableProgram, FableError> {
-        let Some((last, prefix)) = root.stmts.split_last() else {
+        let statements = self.root_statements(root)?;
+        let Some((last, prefix)) = statements.split_last() else {
             return Err(FableError::MalformedSyntax {
                 reason: "predicate source did not contain a final boolean expression",
             });
         };
 
-        let mut program = Vec::with_capacity(root.stmts.len());
+        let mut program = Vec::with_capacity(statements.len());
         for stmt in prefix {
             program.push(self.lower_stmt(stmt)?);
         }
 
-        let Stmt::Expr(expr_stmt) = last else {
+        let Stmt::Expr(expr_stmt) = *last else {
             return Err(FableError::Unsupported {
                 feature: "predicate final statement must be a boolean expression".into(),
             });
@@ -2168,18 +2170,19 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         root: &ast::SourceFile,
         query_type: FableQueryType,
     ) -> Result<FableProgram, FableError> {
-        let Some((last, prefix)) = root.stmts.split_last() else {
+        let statements = self.root_statements(root)?;
+        let Some((last, prefix)) = statements.split_last() else {
             return Err(FableError::MalformedSyntax {
                 reason: "query source did not contain a final expression",
             });
         };
 
-        let mut program = Vec::with_capacity(root.stmts.len());
+        let mut program = Vec::with_capacity(statements.len());
         for stmt in prefix {
             program.push(self.lower_stmt(stmt)?);
         }
 
-        let Stmt::Expr(expr_stmt) = last else {
+        let Stmt::Expr(expr_stmt) = *last else {
             return Err(FableError::Unsupported {
                 feature: "query final statement must be an expression".into(),
             });
@@ -2192,12 +2195,33 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
     fn lower_block(&mut self, block: &Block) -> Result<FableProgram, FableError> {
         self.scopes.push(BTreeMap::new());
-        let result = self.lower_statements(&block.stmts);
+        let result = self.lower_statements(block.stmts.iter());
         self.scopes.pop();
         result
     }
 
-    fn lower_statements(&mut self, statements: &[Stmt]) -> Result<FableProgram, FableError> {
+    fn root_statements<'ast>(
+        &self,
+        root: &'ast ast::SourceFile,
+    ) -> Result<Vec<&'ast Stmt>, FableError> {
+        let mut statements = Vec::new();
+        for item in &root.items {
+            match item {
+                Item::Stmt(stmt) => statements.push(stmt),
+                Item::Struct(_) | Item::Enum(_) => {
+                    return Err(FableError::Unsupported {
+                        feature: "type declarations before checker wiring".into(),
+                    });
+                }
+            }
+        }
+        Ok(statements)
+    }
+
+    fn lower_statements<'ast>(
+        &mut self,
+        statements: impl IntoIterator<Item = &'ast Stmt>,
+    ) -> Result<FableProgram, FableError> {
         let mut program = Vec::new();
         for stmt in statements {
             program.push(self.lower_stmt(stmt)?);
@@ -2219,11 +2243,9 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 let local = self.declare_local(name, &value)?;
                 Ok(fable_op(FableIntrinsic::Let { local, value }))
             }
-            Stmt::Expr(expr_stmt) => {
-                Ok(fable_op(FableIntrinsic::Eval(
-                    self.lower_expr(&expr_stmt.expr)?,
-                )))
-            }
+            Stmt::Expr(expr_stmt) => Ok(fable_op(FableIntrinsic::Eval(
+                self.lower_expr(&expr_stmt.expr)?,
+            ))),
             Stmt::If(if_stmt) => self.lower_if(if_stmt),
         }
     }
@@ -2271,8 +2293,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             Expr::Literal(literal) => self.lower_literal(literal),
             Expr::Var(var) => {
                 let name = name_text(&var.name);
-                if let Some(local) = self.find_local(name)
-                {
+                if let Some(local) = self.find_local(name) {
                     return Ok(local_to_expr(local));
                 }
                 let path = self.lower_readable_path(expr)?;
@@ -2282,9 +2303,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 let path = self.lower_readable_path(expr)?;
                 path_to_expr(path)
             }
-            Expr::Paren(paren) => {
-                self.lower_expr(&paren.expr)
-            }
+            Expr::Paren(paren) => self.lower_expr(&paren.expr),
             Expr::Unary(unary) => self.lower_unary(unary),
             Expr::Binary(binary) => self.lower_binary(binary),
             Expr::Index(_) => {
@@ -2292,6 +2311,12 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 path_to_expr(path)
             }
             Expr::StructLiteral(literal) => self.lower_struct_literal(literal),
+            Expr::EnumVariant(_) => Err(FableError::Unsupported {
+                feature: "enum variant construction before checker wiring".into(),
+            }),
+            Expr::Match(_) => Err(FableError::Unsupported {
+                feature: "match expressions before checker wiring".into(),
+            }),
             Expr::Call(call) => self.lower_call(call),
         }
     }
@@ -4591,9 +4616,7 @@ fn name_text(name: &Name) -> &str {
 
 fn collect_path(expr: &Expr) -> Result<Vec<PathSegment>, FableError> {
     match expr {
-        Expr::Var(var) => {
-            Ok(vec![PathSegment::Name(name_text(&var.name).to_owned())])
-        }
+        Expr::Var(var) => Ok(vec![PathSegment::Name(name_text(&var.name).to_owned())]),
         Expr::Field(field) => {
             let mut path = collect_path(&field.base)?;
             path.push(PathSegment::Name(name_text(&field.field_name).to_owned()));
@@ -4605,9 +4628,7 @@ fn collect_path(expr: &Expr) -> Result<Vec<PathSegment>, FableError> {
             path.push(PathSegment::Index { index, literal });
             Ok(path)
         }
-        Expr::Paren(paren) => {
-            collect_path(&paren.expr)
-        }
+        Expr::Paren(paren) => collect_path(&paren.expr),
         Expr::Call(_) => Err(FableError::Unsupported {
             feature: "call paths".into(),
         }),
@@ -4967,7 +4988,6 @@ fn binary_actual(lhs: &'static str, rhs: &'static str) -> &'static str {
         "mixed expression types"
     }
 }
-
 
 #[cfg(test)]
 mod tests {

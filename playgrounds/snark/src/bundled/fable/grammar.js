@@ -1,7 +1,6 @@
 // Snark grammar for fable: the tiny typed language over Facet-reflected values.
 //
-// Mirrors fable/src/{lexer,parser}.rs while the migration runs. The grammar is
-// intentionally syntax-only: no declarations, functions, or new language teeth.
+// The grammar is the single source of truth for Fable's typed AST.
 
 const PREC = {
   or: 1,
@@ -25,7 +24,54 @@ module.exports = grammar({
   word: ($) => $.identifier,
 
   rules: {
-    source_file: ($) => repeat(field("stmt", $._statement)),
+    source_file: ($) => repeat(field("item", $._item)),
+
+    _item: ($) => choice($.struct_decl, $.enum_decl, $._statement),
+
+    struct_decl: ($) =>
+      seq("struct", field("name", $.type_identifier), field("fields", $.type_field_list)),
+
+    enum_decl: ($) =>
+      seq(
+        "enum",
+        field("name", $.type_identifier),
+        "{",
+        sepBy(",", field("variant", $.enum_variant_decl)),
+        "}",
+      ),
+
+    enum_variant_decl: ($) =>
+      seq(field("name", $.type_identifier), optional(field("fields", $.type_field_list))),
+
+    type_field_list: ($) => seq("{", sepBy(",", field("field", $.type_field)), "}"),
+
+    type_field: ($) => seq(field("name", $._name), ":", field("ty", $._type_expr)),
+
+    _type_expr: ($) => choice($.scalar_type, $.declared_type),
+
+    declared_type: ($) => field("name", $.type_identifier),
+
+    scalar_type: () =>
+      choice(
+        "unit",
+        "bool",
+        "char",
+        "string",
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "i128",
+        "isize",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "u128",
+        "usize",
+        "f32",
+        "f64",
+      ),
 
     _statement: ($) =>
       choice($.if_statement, $.let_statement, $.assign_statement, $.expr_statement),
@@ -65,6 +111,8 @@ module.exports = grammar({
         $.index_expr,
         $.call_expr,
         $.struct_literal,
+        $.enum_variant_expr,
+        $.match_expr,
         $.paren_expr,
         $.var_ref,
         $._literal,
@@ -129,6 +177,40 @@ module.exports = grammar({
 
     struct_field: ($) =>
       seq(field("name", $._name), ":", field("value", $._expr)),
+
+    enum_variant_expr: ($) =>
+      seq(field("path", $.variant_path), optional(field("fields", $.struct_field_list))),
+
+    variant_path: ($) =>
+      seq(
+        field("type_name", $.type_identifier),
+        "::",
+        field("variant_name", $.type_identifier),
+      ),
+
+    struct_field_list: ($) => seq("{", sepBy(",", field("field", $.struct_field)), "}"),
+
+    match_expr: ($) =>
+      seq(
+        "match",
+        field("scrutinee", $._expr),
+        "{",
+        sepBy(",", field("arm", $.match_arm)),
+        "}",
+      ),
+
+    match_arm: ($) => seq(field("pattern", $._match_pattern), "=>", field("body", $.block)),
+
+    _match_pattern: ($) => choice($.variant_pattern, $.wildcard_pattern),
+
+    variant_pattern: ($) =>
+      seq(field("path", $.variant_path), optional(field("fields", $.pattern_field_list))),
+
+    pattern_field_list: ($) => seq("{", sepBy(",", field("field", $.pattern_field)), "}"),
+
+    pattern_field: ($) => field("name", $._name),
+
+    wildcard_pattern: () => "_",
 
     paren_expr: ($) => seq("(", field("expr", $._expr), ")"),
 

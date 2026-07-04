@@ -63,7 +63,8 @@ impl FableParser {
             .expect("embedded fable grammar normalizes")
             .prepare_productions_for_items()
             .expect("embedded fable grammar prepares productions");
-        let table = ParseTable::from_grammar(&parser).expect("embedded fable grammar builds tables");
+        let table =
+            ParseTable::from_grammar(&parser).expect("embedded fable grammar builds tables");
         let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("weavy parse plan");
         Self {
             parser,
@@ -76,8 +77,8 @@ impl FableParser {
     pub fn parse(&self, src: &str) -> Result<ast::SourceFile, ParseError> {
         let report = parse_prepared_weavy_with_report(&self.plan, &self.parser, &self.table, src)
             .map_err(|error| ParseError {
-                message: format!("parse failed: {error:?}"),
-            })?;
+            message: format!("parse failed: {error:?}"),
+        })?;
         let resolved = report
             .accepted_resolved_tree(&self.parser, src)
             .ok_or_else(|| ParseError {
@@ -100,7 +101,7 @@ pub fn parse(src: &str) -> Result<ast::SourceFile, ParseError> {
 
 #[cfg(test)]
 mod tests {
-    use super::ast::{Expr, Literal, Name, Stmt};
+    use super::ast::{Expr, Item, Literal, MatchPattern, Name, Stmt, TypeExpr};
     use super::support::Span;
     use super::{FableParser, parse};
 
@@ -140,7 +141,7 @@ mod tests {
             }
         );
 
-        let [Stmt::Let(stmt)] = root.stmts.as_slice() else {
+        let [Item::Stmt(Stmt::Let(stmt))] = root.items.as_slice() else {
             panic!("expected one let statement");
         };
         assert_eq!(
@@ -162,6 +163,91 @@ mod tests {
         };
         assert_eq!(value.value, "42");
         assert_eq!(value.span, span_for(src, "42"));
+    }
+
+    #[test]
+    fn generated_ast_covers_declared_types_and_match() {
+        let src = r#"
+struct Point { x: i64, y: i64, }
+enum Shape {
+  Empty,
+  Point { point: Point, },
+}
+let shape = Shape::Point { point: Point { x: 1, y: 2 } };
+match shape {
+  Shape::Point { point } => { point.x; },
+  _ => { 0; },
+}
+"#;
+        let root = parse(src).expect("valid fable source");
+
+        let [
+            Item::Struct(struct_decl),
+            Item::Enum(enum_decl),
+            Item::Stmt(Stmt::Let(let_stmt)),
+            Item::Stmt(Stmt::Expr(expr_stmt)),
+        ] = root.items.as_slice()
+        else {
+            panic!("expected struct, enum, let, match expression items");
+        };
+
+        assert_eq!(struct_decl.name.value, "Point");
+        assert_eq!(struct_decl.fields.fields.len(), 2);
+        let TypeExpr::Scalar(first_field_ty) = &struct_decl.fields.fields[0].ty else {
+            panic!("expected scalar field type");
+        };
+        assert_eq!(first_field_ty.value, "i64");
+
+        assert_eq!(enum_decl.name.value, "Shape");
+        assert_eq!(enum_decl.variants.len(), 2);
+        assert_eq!(enum_decl.variants[1].name.value, "Point");
+        assert_eq!(
+            enum_decl.variants[1]
+                .fields
+                .as_ref()
+                .expect("payload fields")
+                .fields
+                .len(),
+            1,
+        );
+
+        let Expr::EnumVariant(constructor) = &let_stmt.value else {
+            panic!("expected enum variant constructor");
+        };
+        assert_eq!(constructor.path.type_name.value, "Shape");
+        assert_eq!(constructor.path.variant_name.value, "Point");
+        assert_eq!(
+            constructor
+                .fields
+                .as_ref()
+                .expect("constructor payload")
+                .fields
+                .len(),
+            1,
+        );
+
+        let Expr::Match(match_expr) = &expr_stmt.expr else {
+            panic!("expected match expression");
+        };
+        assert_eq!(match_expr.arms.len(), 2);
+        let MatchPattern::Variant(pattern) = &match_expr.arms[0].pattern else {
+            panic!("expected variant pattern");
+        };
+        assert_eq!(pattern.path.type_name.value, "Shape");
+        assert_eq!(pattern.path.variant_name.value, "Point");
+        assert_eq!(
+            pattern
+                .fields
+                .as_ref()
+                .expect("pattern payload")
+                .fields
+                .len(),
+            1,
+        );
+        let MatchPattern::Wildcard(wildcard) = &match_expr.arms[1].pattern else {
+            panic!("expected wildcard pattern");
+        };
+        assert_eq!(wildcard.value, "_");
     }
 }
 
