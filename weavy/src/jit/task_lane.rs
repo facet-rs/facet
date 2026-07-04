@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 
 use crate::jit::{NativeProgram, StencilLayout, task_stencils};
-use crate::task::{ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep};
+use crate::task::{ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep, TraceMode};
 
 /// Threaded state — MUST match `Ctx` in stencils/task_ops.rs.
 #[repr(C)]
@@ -60,26 +60,46 @@ pub struct JitProgram {
 }
 
 impl JitProgram {
-    /// Compile every function. Returns None when the lane is
-    /// unavailable on this target.
+    /// Compile every function (Innards instrumentation). Returns None
+    /// when the lane is unavailable on this target.
     pub fn compile(program: &Program) -> Option<JitProgram> {
+        Self::compile_with_mode(program, TraceMode::Innards)
+    }
+
+    /// Compile with an explicit trace mode. Production STRIPS
+    /// instrumentation ops from the chains entirely — zero
+    /// instructions, not skipped checks.
+    pub fn compile_with_mode(program: &Program, mode: TraceMode) -> Option<JitProgram> {
         if !available() {
             return None;
         }
-        let fns = program.fns.iter().map(compile_fn).collect();
+        let fns = program.fns.iter().map(|f| compile_fn(f, mode)).collect();
         Some(JitProgram { fns })
     }
 }
 
-fn compile_fn(f: &crate::task::Fn) -> CompiledFn {
+/// First emitted stencil at or after op `i` (stripped ops have no
+/// stencil of their own; control flows to whatever follows them).
+fn next_emitted(starts: &[Option<usize>], i: usize, done: usize) -> usize {
+    starts[i..].iter().flatten().next().copied().unwrap_or(done)
+}
+
+fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
     let mut layout = StencilLayout::new();
     let root = layout.start_chain();
 
+    let stripped = |op: &Op| matches!(op, Op::Trace { .. }) && mode == TraceMode::Production;
+
     // Pass 1: code. Record each op's chain start and continuation
     // patch sites; collect call descriptors keyed by continuation.
-    let mut starts = Vec::with_capacity(f.code.len());
+    // Stripped ops record no start — they own no instructions.
+    let mut starts: Vec<Option<usize>> = Vec::with_capacity(f.code.len());
     let mut sites: Vec<(usize, &'static [usize])> = Vec::new();
     for op in &f.code {
+        if stripped(op) {
+            starts.push(None);
+            continue;
+        }
         let (bytes, cont): (&[u8], &'static [usize]) = match op {
             Op::ConstI64 { .. } => (task_stencils::CONST, task_stencils::CONST_CONT),
             Op::AddI64 { .. } => (task_stencils::ADD, task_stencils::ADD_CONT),
@@ -95,14 +115,21 @@ fn compile_fn(f: &crate::task::Fn) -> CompiledFn {
             Op::ConstF64 { .. } => (task_stencils::CONST, task_stencils::CONST_CONT),
             Op::AddF64 { .. } => (task_stencils::ADD_F64, task_stencils::ADD_F64_CONT),
             Op::MulF64 { .. } => (task_stencils::MUL_F64, task_stencils::MUL_F64_CONT),
+            Op::Trace { .. } => (task_stencils::TRACE, task_stencils::TRACE_CONT),
         };
         let start = layout.emit_stencil(bytes);
-        starts.push(start);
+        starts.push(Some(start));
         sites.push((start, cont));
     }
     let done = layout.emit_stencil(task_stencils::DONE);
-    for (i, &(start, cont)) in sites.iter().enumerate() {
-        let target = starts.get(i + 1).copied().unwrap_or(done);
+    // Continuations flow to the next EMITTED stencil, skipping
+    // stripped ops (they own no code to flow through).
+    let mut emitted_ix = 0usize;
+    for (i, start_opt) in starts.iter().enumerate() {
+        let Some(start) = *start_opt else { continue };
+        let (_, cont) = sites[emitted_ix];
+        emitted_ix += 1;
+        let target = next_emitted(&starts, i + 1, done);
         for &rel in cont {
             layout.patch_continuation(start + rel, target);
         }
@@ -133,15 +160,19 @@ fn compile_fn(f: &crate::task::Fn) -> CompiledFn {
             }
             Op::Await { dst, input } => {
                 // [resume_off = own start, index, dst] — idempotent
-                // suspend point, the proven protocol.
-                layout.push_prog_word(root.prog_index, starts[i] as u64);
+                // suspend point, the proven protocol. Awaits are never
+                // stripped.
+                layout.push_prog_word(
+                    root.prog_index,
+                    starts[i].expect("awaits are never stripped") as u64,
+                );
                 layout.push_prog_word(root.prog_index, u64::from(*input));
                 layout.push_prog_word(root.prog_index, u64::from(*dst));
             }
             Op::Call { callee, args, ret } => {
-                // [continuation = NEXT op's start]; descriptor lives in
-                // the side table under that same key.
-                let continuation = starts.get(i + 1).copied().unwrap_or(done) as u64;
+                // [continuation = next emitted stencil]; descriptor
+                // lives in the side table under that same key.
+                let continuation = next_emitted(&starts, i + 1, done) as u64;
                 layout.push_prog_word(root.prog_index, continuation);
                 calls.insert(
                     continuation,
@@ -157,9 +188,16 @@ fn compile_fn(f: &crate::task::Fn) -> CompiledFn {
                 layout.push_prog_word(root.prog_index, u64::from(*size));
             }
             Op::HostCall { host } => {
-                let continuation = starts.get(i + 1).copied().unwrap_or(done) as u64;
+                let continuation = next_emitted(&starts, i + 1, done) as u64;
                 layout.push_prog_word(root.prog_index, continuation);
                 layout.push_prog_word(root.prog_index, u64::from(*host));
+            }
+            Op::Trace { id } => {
+                if !stripped(op) {
+                    let continuation = next_emitted(&starts, i + 1, done) as u64;
+                    layout.push_prog_word(root.prog_index, continuation);
+                    layout.push_prog_word(root.prog_index, u64::from(*id));
+                }
             }
             Op::ConstF64 { dst, bits } => {
                 layout.push_prog_word(root.prog_index, u64::from(*dst));
@@ -342,6 +380,14 @@ impl JitTask {
                         }
                     }
                 }
+                5 => {
+                    // Instrumentation mark (Innards-compiled chains only).
+                    let continuation = usize::try_from(resume_scratch).expect("offset");
+                    let id = u32::try_from(index_scratch).expect("mark id");
+                    let top = self.frames.last_mut().expect("frame");
+                    top.resume = continuation;
+                    self.trace.push(TaskEvent::Mark(id));
+                }
                 4 => {
                     // Sync host call: invoke over the frame bytes,
                     // re-enter at the continuation. No trace event, no
@@ -367,6 +413,73 @@ mod tests {
     use super::*;
     use crate::mem::Layout;
     use crate::task::{Fn as TaskFn, Task};
+
+    #[test]
+    fn trace_marks_record_in_innards_and_vanish_in_production() {
+        let program = Program {
+            fns: vec![
+                TaskFn {
+                    frame: Layout { size: 16, align: 8 },
+                    code: vec![
+                        Op::Trace { id: 10 },
+                        Op::ConstI64 { dst: 0, value: 5 },
+                        Op::Call { callee: FnId(1), args: vec![ArgCopy { src: 0, dst: 0, size: 8 }], ret: 8 },
+                        Op::Trace { id: 11 },
+                        Op::Ret { src: 8, size: 8 },
+                    ],
+                },
+                TaskFn {
+                    frame: Layout { size: 16, align: 8 },
+                    code: vec![
+                        Op::Trace { id: 20 },
+                        Op::AddI64 { dst: 8, a: 0, b: 0 },
+                        Op::Ret { src: 8, size: 8 },
+                    ],
+                },
+            ],
+        };
+
+        // Innards: marks appear, in program order, in BOTH lanes.
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(interp.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(interp.result_i64(), 10);
+        let marks: Vec<_> = interp
+            .trace
+            .iter()
+            .filter_map(|e| match e {
+                TaskEvent::Mark(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(marks, vec![10, 20, 11]);
+
+        // Production: marks are GONE, everything else identical.
+        let mut prod = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
+        assert_eq!(prod.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(prod.result_i64(), 10);
+        assert!(!prod.trace.iter().any(|e| matches!(e, TaskEvent::Mark(_))));
+        let stripped_of_marks: Vec<_> = interp
+            .trace
+            .iter()
+            .copied()
+            .filter(|e| !matches!(e, TaskEvent::Mark(_)))
+            .collect();
+        assert_eq!(prod.trace, stripped_of_marks);
+
+        // JIT, both modes, matching the interpreter exactly.
+        if let Some(jit) = JitProgram::compile(&program) {
+            let mut t = JitTask::spawn(&jit, FnId(0));
+            assert_eq!(t.run(&jit, &[], &[]), TaskStep::Done);
+            assert_eq!(t.result_i64(), 10);
+            assert_eq!(t.trace, interp.trace);
+        }
+        if let Some(jit) = JitProgram::compile_with_mode(&program, TraceMode::Production) {
+            let mut t = JitTask::spawn(&jit, FnId(0));
+            assert_eq!(t.run(&jit, &[], &[]), TaskStep::Done);
+            assert_eq!(t.result_i64(), 10);
+            assert_eq!(t.trace, prod.trace);
+        }
+    }
 
     #[test]
     fn f64_arithmetic_matches_the_interpreter_bitwise() {

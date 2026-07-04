@@ -122,6 +122,13 @@ pub enum Op {
     AddF64 { dst: u32, a: u32, b: u32 },
     /// `frame[dst] = frame[a] * frame[b]` (f64, IEEE).
     MulF64 { dst: u32, a: u32, b: u32 },
+    /// INSTRUMENTATION (the unified-trace ruling): lowerings emit
+    /// trace marks freely; the MODE decides their cost. Innards mode
+    /// records [`TaskEvent::Mark`]; Production mode strips them — in
+    /// the interpreter a skip, in the JIT the op is simply NOT
+    /// COMPILED (zero instructions in the chain). Static ids map back
+    /// to source constructs in the lowering's tables.
+    Trace { id: u32 },
     /// SYNC host call (Amos's refinement, ruled): a host operation
     /// that ALWAYS completes — no await-point numbering, no park
     /// machinery, no spill obligations beyond frame residency (which
@@ -144,6 +151,20 @@ pub enum TaskEvent {
     FrameExited(FnId),
     Parked { input: u32 },
     Resumed,
+    /// An [`Op::Trace`] instrumentation mark (Innards mode only).
+    Mark(u32),
+}
+
+/// How much instrumentation a program instance carries. Tests trace
+/// innards; production keeps only the structural events (frames,
+/// parks) needed for observability.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TraceMode {
+    /// Record every instrumentation mark.
+    #[default]
+    Innards,
+    /// Strip instrumentation marks entirely.
+    Production,
 }
 
 /// The result of driving a task.
@@ -177,6 +198,7 @@ pub struct Task {
     pub result: Vec<u8>,
     pub trace: Vec<TaskEvent>,
     parked_on: Option<u32>,
+    mode: TraceMode,
 }
 
 impl Task {
@@ -186,12 +208,18 @@ impl Task {
     /// at the boundary too.
     #[must_use]
     pub fn spawn(program: &Program, entry: FnId) -> Self {
+        Self::spawn_with_mode(program, entry, TraceMode::Innards)
+    }
+
+    #[must_use]
+    pub fn spawn_with_mode(program: &Program, entry: FnId, mode: TraceMode) -> Self {
         let mut task = Task {
             arena: Vec::new(),
             frames: Vec::new(),
             result: Vec::new(),
             trace: Vec::new(),
             parked_on: None,
+            mode,
         };
         let base = task.alloc_frame(program.fns[entry.0 as usize].frame);
         task.frames.push(FrameRecord {
@@ -329,6 +357,12 @@ impl Task {
                     let v = read_i64_at(&self.arena, base + src as usize);
                     let at = base + arr as usize + ix as usize * stride as usize;
                     write_i64_at(&mut self.arena, at, v);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::Trace { id } => {
+                    if self.mode == TraceMode::Innards {
+                        self.trace.push(TaskEvent::Mark(id));
+                    }
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::ConstF64 { dst, bits } => {

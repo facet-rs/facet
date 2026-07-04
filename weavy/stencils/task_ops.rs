@@ -236,6 +236,23 @@ pub unsafe extern "C" fn weavy_task_hostcall(cx: *mut Ctx) {
     *c.exit = 4;
 }
 
+/// TRACE MARK — immediates: [continuation, id], consumed before exit
+/// (a mark always completes). Exit code 5; `resume` carries the
+/// continuation, `await_index` carries the id. Only Innards-mode
+/// compilation emits this stencil at all — Production strips the op
+/// from the chain entirely (zero instructions), which is the
+/// unified-trace ruling's "weavy strips by mode" made literal.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_trace(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let continuation = *c.prog;
+    let id = *c.prog.add(1);
+    c.prog = c.prog.add(2);
+    *c.resume = continuation;
+    *c.await_index = id;
+    *c.exit = 5;
+}
+
 /// End of chain — reaching this is a lowering bug (RET is mandatory);
 /// the driver panics on exit code 0.
 #[no_mangle]
