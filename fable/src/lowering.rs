@@ -156,6 +156,8 @@ struct FableTaskHosts {
     ops: Vec<FableHostOp>,
 }
 
+type TaskHostClosure<'a> = Box<dyn FnMut(&mut [u8]) + 'a>;
+
 #[derive(Clone)]
 enum FableHostOp {
     InternString {
@@ -1549,7 +1551,7 @@ impl FableTaskPlan {
             result: Ok(FableQueryOutput::Unit),
             error: None,
         }));
-        let mut host_boxes: Vec<Box<dyn FnMut(&mut [u8]) + '_>> = self
+        let mut host_boxes: Vec<TaskHostClosure<'_>> = self
             .hosts
             .ops
             .iter()
@@ -1711,7 +1713,7 @@ impl FableTaskRuntime {
                 )
             }
             FableHostOp::ReadFacetTag { dst, src, shape } => {
-                let value = self.borrowed_value(frame, *src, *shape)?;
+                let value = self.borrowed_value(frame, *src, shape)?;
                 let variant_index = read_facet_variant_index(value.shape, value.ptr)?;
                 write_frame_word(
                     frame,
@@ -1727,7 +1729,7 @@ impl FableTaskRuntime {
                 variant_index,
                 bindings,
             } => {
-                let value = self.borrowed_value(frame, *src, *shape)?;
+                let value = self.borrowed_value(frame, *src, shape)?;
                 self.bind_facet_match(frame, bindings, value.shape, value.ptr, *variant_index)
             }
             FableHostOp::EvalDeclared {
@@ -1765,7 +1767,7 @@ impl FableTaskRuntime {
             FableHostOp::Assign { target, value } => self.assign(frame, target, value),
             FableHostOp::EvalExpr { expr } => self.eval_expr_for_effect(frame, expr),
             FableHostOp::EvalValue { dst, shape, expr } => {
-                let value = self.eval_value(frame, *shape, expr)?;
+                let value = self.eval_value(frame, shape, expr)?;
                 let handle = self.store_value(value)?;
                 write_frame_word(frame, *dst, handle as i64)
             }
