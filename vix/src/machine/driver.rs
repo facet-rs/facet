@@ -181,6 +181,7 @@ struct ExecRequest {
 #[derive(Clone, Debug)]
 struct OptionUnwrapRequest {
     input_slot: usize,
+    realization_slot: Option<usize>,
     option: i64,
 }
 
@@ -312,6 +313,7 @@ struct MapPair {
     key_word: i64,
     value_schema: String,
     value_word: i64,
+    value_realization: Option<Realization>,
 }
 
 #[derive(Clone)]
@@ -341,10 +343,43 @@ enum TreeEntry {
     Merge(Vec<i64>),
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Realization {
+    Ready,
+    Pending,
+}
+
+impl Realization {
+    fn from_word(word: i64) -> Result<Self, String> {
+        match word {
+            0 => Ok(Self::Ready),
+            1 => Ok(Self::Pending),
+            other => Err(format!("unknown realization bit {other}")),
+        }
+    }
+
+    fn to_word(self) -> i64 {
+        match self {
+            Self::Ready => 0,
+            Self::Pending => 1,
+        }
+    }
+
+    fn bit(self) -> u64 {
+        match self {
+            Self::Ready => 0,
+            Self::Pending => 1,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 enum OptionPayload {
     None,
-    Some { word: i64 },
+    Some {
+        word: i64,
+        realization: Option<Realization>,
+    },
 }
 
 impl ValueStore {
@@ -441,7 +476,7 @@ impl ValueStore {
         key_schema: &str,
         key_word: i64,
         value_schema: &str,
-        descriptors: &HashMap<String, Descriptor<String>>,
+        _descriptors: &HashMap<String, Descriptor<String>>,
         schema_refs: &[String],
     ) -> Result<(i64, bool), String> {
         let (_, pairs) = self.map_pairs(handle, schema_refs)?;
@@ -453,88 +488,62 @@ impl ValueStore {
                 continue;
             }
             if pair.value_schema == value_schema {
-                return self.alloc_option_some(&pair.value_schema, pair.value_word, schema_refs);
+                return self.alloc_option_some(
+                    &pair.value_schema,
+                    pair.value_word,
+                    pair.value_realization,
+                    schema_refs,
+                );
             }
             if let Some(inner) = realized_value_schema(value_schema) {
-                if pair.value_schema == inner {
-                    let handle = self.alloc_realized_ready(
-                        descriptors,
-                        value_schema,
-                        inner,
-                        pair.value_word,
-                    )?;
-                    return self.alloc_option_some(value_schema, handle, schema_refs);
+                if let Some(realization) = pair.value_realization {
+                    match realization {
+                        Realization::Ready if pair.value_schema == inner => {
+                            return self.alloc_option_some(
+                                value_schema,
+                                pair.value_word,
+                                Some(Realization::Ready),
+                                schema_refs,
+                            );
+                        }
+                        Realization::Pending if pair.value_schema == pending_schema(inner) => {
+                            return self.alloc_option_some(
+                                value_schema,
+                                pair.value_word,
+                                Some(Realization::Pending),
+                                schema_refs,
+                            );
+                        }
+                        _ => {}
+                    }
                 }
-                if pair.value_schema == pending_schema(inner) {
-                    let handle =
-                        self.alloc_realized_pending(descriptors, value_schema, pair.value_word)?;
-                    return self.alloc_option_some(value_schema, handle, schema_refs);
+                if pair.value_schema == inner && pair.value_realization.is_none() {
+                    return self.alloc_option_some(
+                        value_schema,
+                        pair.value_word,
+                        Some(Realization::Ready),
+                        schema_refs,
+                    );
+                }
+                if pair.value_schema == pending_schema(inner) && pair.value_realization.is_none() {
+                    return self.alloc_option_some(
+                        value_schema,
+                        pair.value_word,
+                        Some(Realization::Pending),
+                        schema_refs,
+                    );
                 }
             }
             if pair.value_schema == pending_schema(value_schema) {
-                return self.alloc_option_some(&pair.value_schema, pair.value_word, schema_refs);
+                return self.alloc_option_some(
+                    &pair.value_schema,
+                    pair.value_word,
+                    pair.value_realization,
+                    schema_refs,
+                );
             }
         }
         self.alloc_option_none(value_schema, schema_refs)
-    }
-
-    fn alloc_realized_ready(
-        &mut self,
-        descriptors: &HashMap<String, Descriptor<String>>,
-        realized_schema: &str,
-        value_schema: &str,
-        value_word: i64,
-    ) -> Result<i64, String> {
-        self.alloc_realized_variant(descriptors, realized_schema, 0, value_schema, value_word)
-    }
-
-    fn alloc_realized_pending(
-        &mut self,
-        descriptors: &HashMap<String, Descriptor<String>>,
-        realized_schema: &str,
-        pending_word: i64,
-    ) -> Result<i64, String> {
-        self.alloc_realized_variant(
-            descriptors,
-            realized_schema,
-            1,
-            realized_schema,
-            pending_word,
-        )
-    }
-
-    fn alloc_realized_variant(
-        &mut self,
-        descriptors: &HashMap<String, Descriptor<String>>,
-        realized_schema: &str,
-        variant_index: usize,
-        value_schema: &str,
-        word: i64,
-    ) -> Result<i64, String> {
-        let descriptor = descriptors
-            .get(realized_schema)
-            .ok_or_else(|| format!("descriptor for schema `{realized_schema}`"))?;
-        let mut bytes = vec![0u8; descriptor.layout.size];
-        write_variant_tag(
-            &mut bytes,
-            descriptor,
-            u64::try_from(variant_index).expect("variant index fits u64"),
-        );
-        let Access::Enum(access) = &descriptor.access else {
-            return Err(format!("{realized_schema} is not an enum descriptor"));
-        };
-        let field = access
-            .variants
-            .get(variant_index)
-            .and_then(|variant| variant.payload.fields.first())
-            .ok_or_else(|| format!("{realized_schema} missing variant {variant_index} payload"))?;
-        let word = canonicalize_word_for_schema(value_schema, word);
-        bytes[field.offset..field.offset + 8].copy_from_slice(&word.to_le_bytes());
-        // Realized<T> hashes through the declared enum layout: Ready hashes
-        // by T's content, Pending hashes by the pending invocation identity.
-        // A Ready(4.2) entry and a Pending(producer-of-4.2) entry therefore
-        // hash differently; identity is finer than content and never forces.
-        Ok(self.alloc(realized_schema, bytes, descriptors).0)
     }
 
     fn alloc_option_none(
@@ -560,21 +569,33 @@ impl ValueStore {
         &mut self,
         value_schema: &str,
         value_word: i64,
+        realization: Option<Realization>,
         schema_refs: &[String],
     ) -> Result<(i64, bool), String> {
         let option_schema = option_schema(value_schema);
         let value_ref = schema_ref_for(value_schema, schema_refs)?;
-        let value_word = canonicalize_word_for_schema(value_schema, value_word);
-        let value_hash = canonical_word_hash_in_store(self, value_schema, value_word);
-        let mut bytes = Vec::with_capacity(24);
+        let hash_schema = realized_value_schema(value_schema).unwrap_or(value_schema);
+        let canonical_schema = match realization {
+            Some(Realization::Pending) => pending_schema(hash_schema),
+            _ => hash_schema.to_string(),
+        };
+        let value_word = canonicalize_word_for_schema(&canonical_schema, value_word);
+        let value_hash = canonical_word_hash_in_store(self, &canonical_schema, value_word);
+        let mut bytes = Vec::with_capacity(32);
         bytes.extend_from_slice(&1i64.to_le_bytes());
         bytes.extend_from_slice(&value_ref.to_le_bytes());
         bytes.extend_from_slice(&value_word.to_le_bytes());
+        if let Some(realization) = &realization {
+            bytes.extend_from_slice(&realization.to_word().to_le_bytes());
+        }
         let mut hasher = Sha256::new();
         hasher.update(b"vix-option");
         hasher.update(option_schema.as_bytes());
         hasher.update(1i64.to_le_bytes());
         hasher.update(value_schema.as_bytes());
+        if let Some(realization) = &realization {
+            hasher.update(realization.to_word().to_le_bytes());
+        }
         hasher.update(value_hash);
         let content_hash = hasher.finalize().into();
         Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
@@ -590,7 +611,7 @@ impl ValueStore {
                 entry.schema
             ));
         }
-        if entry.bytes.len() != 24 {
+        if entry.bytes.len() != 24 && entry.bytes.len() != 32 {
             return Err(format!("Option entry has {} bytes", entry.bytes.len()));
         }
         let tag = read_frame_word(&entry.bytes, 0);
@@ -601,8 +622,19 @@ impl ValueStore {
         let schema = schema_refs
             .get(usize::try_from(schema_ref).map_err(|_| format!("schema ref {schema_ref}"))?)
             .ok_or_else(|| format!("schema ref {schema_ref}"))?;
+        let realization = if entry.bytes.len() == 32 {
+            Some(Realization::from_word(read_frame_word(&entry.bytes, 24))?)
+        } else {
+            None
+        };
+        let word_schema = if let Some(Realization::Pending) = realization {
+            pending_schema(realized_value_schema(schema).unwrap_or(schema))
+        } else {
+            realized_value_schema(schema).unwrap_or(schema).to_string()
+        };
         Ok(OptionPayload::Some {
-            word: canonicalize_word_for_schema(schema, read_frame_word(&entry.bytes, 16)),
+            word: canonicalize_word_for_schema(&word_schema, read_frame_word(&entry.bytes, 16)),
+            realization,
         })
     }
 
@@ -958,13 +990,15 @@ impl Driver {
                     }
                     for req in option_unwraps {
                         match self.option_unwrap_request(req) {
-                            Ok((input_slot, value)) => {
-                                if exec.ready.len() <= input_slot {
-                                    exec.ready.resize(input_slot + 1, false);
-                                    exec.awaited.resize(input_slot + 1, 0);
+                            Ok(fills) => {
+                                for (input_slot, value) in fills {
+                                    if exec.ready.len() <= input_slot {
+                                        exec.ready.resize(input_slot + 1, false);
+                                        exec.awaited.resize(input_slot + 1, 0);
+                                    }
+                                    exec.ready[input_slot] = true;
+                                    exec.awaited[input_slot] = value;
                                 }
-                                exec.ready[input_slot] = true;
-                                exec.awaited[input_slot] = value;
                             }
                             Err(err) => return Err(err),
                         }
@@ -1212,26 +1246,30 @@ impl Driver {
                         read_frame_word(frame, store_alloc_region + 40),
                         schema_refs,
                     )?;
+                    let value_realization =
+                        Realization::from_word(read_frame_word(frame, store_alloc_region + 56))?;
+                    let logical_value_schema =
+                        realized_value_schema(&value_schema).unwrap_or(&value_schema);
+                    let stored_value_schema = match value_realization {
+                        Realization::Ready => logical_value_schema.to_string(),
+                        Realization::Pending => pending_schema(logical_value_schema),
+                    };
                     let value_word = canonicalize_word_for_schema(
-                        &value_schema,
+                        &stored_value_schema,
                         read_frame_word(frame, store_alloc_region + 48),
                     );
                     let (stored_schema, mut pairs) =
                         store_cell.borrow().map_pairs(map_handle, schema_refs)?;
                     if stored_schema != map_schema {
-                        pairs = promote_map_pairs_to_realized(
-                            store_cell,
-                            descriptors,
-                            &stored_schema,
-                            &map_schema,
-                            pairs,
-                        )?;
+                        pairs = promote_map_pairs_to_realized(&stored_schema, &map_schema, pairs)?;
                     }
                     pairs.push(MapPair {
                         key_schema,
                         key_word,
-                        value_schema,
+                        value_schema: stored_value_schema,
                         value_word,
+                        value_realization: realized_value_schema(&value_schema)
+                            .map(|_| value_realization),
                     });
                     let (handle, deduped) =
                         store_cell
@@ -1284,8 +1322,10 @@ impl Driver {
             let mut option_unwrap = |frame: &mut [u8]| {
                 let input_slot = read_frame_word(frame, store_alloc_region) as usize;
                 let handle = read_frame_word(frame, store_alloc_region + 8);
+                let realization_slot = read_frame_word(frame, store_alloc_region + 16);
                 option_unwraps.push(OptionUnwrapRequest {
                     input_slot,
+                    realization_slot: usize::try_from(realization_slot).ok(),
                     option: handle,
                 });
             };
@@ -1586,14 +1626,23 @@ impl Driver {
         })
     }
 
-    fn option_unwrap_request(&self, req: OptionUnwrapRequest) -> Result<(usize, i64), String> {
+    fn option_unwrap_request(&self, req: OptionUnwrapRequest) -> Result<Vec<(usize, i64)>, String> {
         match self
             .store
             .borrow()
             .option_payload(req.option, &self.schema_refs)?
         {
             OptionPayload::None => Err("unwrap on None".into()),
-            OptionPayload::Some { word } => Ok((req.input_slot, word)),
+            OptionPayload::Some { word, realization } => {
+                let mut fills = vec![(req.input_slot, word)];
+                if let Some(slot) = req.realization_slot {
+                    let realization = realization.ok_or_else(|| {
+                        "Option unwrap expected realization bit, got plain payload".to_string()
+                    })?;
+                    fills.push((slot, realization.to_word()));
+                }
+                Ok(fills)
+            }
         }
     }
 
@@ -1821,8 +1870,6 @@ fn canonical_map_pairs(store: &ValueStore, pairs: Vec<MapPair>) -> Vec<OrderedMa
 }
 
 fn promote_map_pairs_to_realized(
-    store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
     stored_schema: &str,
     map_schema: &str,
     pairs: Vec<MapPair>,
@@ -1853,15 +1900,10 @@ fn promote_map_pairs_to_realized(
                     pair.value_schema
                 ));
             }
-            let handle = store.borrow_mut().alloc_realized_ready(
-                descriptors,
-                map_value,
-                stored_value,
-                pair.value_word,
-            )?;
             Ok(MapPair {
-                value_schema: map_value.to_string(),
-                value_word: handle,
+                value_schema: realized_value.to_string(),
+                value_word: pair.value_word,
+                value_realization: Some(Realization::Ready),
                 ..pair
             })
         })
@@ -1869,7 +1911,15 @@ fn promote_map_pairs_to_realized(
 }
 
 fn encode_map_pairs(pairs: &[OrderedMapPair], schema_refs: &[String]) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::with_capacity(8 + pairs.len() * 32);
+    let bitset_words = if pairs
+        .iter()
+        .any(|pair| pair.pair.value_realization.is_some())
+    {
+        map_realization_bitset_words(pairs.len())
+    } else {
+        0
+    };
+    let mut bytes = Vec::with_capacity(8 + pairs.len() * 32 + bitset_words * 8);
     bytes.extend_from_slice(
         &i64::try_from(pairs.len())
             .expect("map pair count fits i64")
@@ -1883,6 +1933,20 @@ fn encode_map_pairs(pairs: &[OrderedMapPair], schema_refs: &[String]) -> Result<
         );
         bytes.extend_from_slice(&pair.pair.value_word.to_le_bytes());
     }
+    if bitset_words > 0 {
+        let mut bitset = vec![0u64; bitset_words];
+        for (index, pair) in pairs.iter().enumerate() {
+            let realization = pair
+                .pair
+                .value_realization
+                .as_ref()
+                .ok_or_else(|| "realized map row missing realization bit".to_string())?;
+            bitset[index / 64] |= realization.bit() << (index % 64);
+        }
+        for word in bitset {
+            bytes.extend_from_slice(&(word as i64).to_le_bytes());
+        }
+    }
     Ok(bytes)
 }
 
@@ -1891,10 +1955,14 @@ fn decode_map_pairs(bytes: &[u8], schema_refs: &[String]) -> Result<Vec<MapPair>
         return Err("Map entry is shorter than its count word".into());
     }
     let count = usize::try_from(read_frame_word(bytes, 0)).map_err(|_| "negative map count")?;
-    let expected = 8 + count * 32;
-    if bytes.len() != expected {
+    let rows_end = 8 + count * 32;
+    let bitset_words = map_realization_bitset_words(count);
+    let expected_plain = rows_end;
+    let expected_realized = rows_end + bitset_words * 8;
+    let has_realization_bitset = bytes.len() == expected_realized && bitset_words > 0;
+    if bytes.len() != expected_plain && !has_realization_bitset {
         return Err(format!(
-            "Map entry has {} bytes, expected {expected}",
+            "Map entry has {} bytes, expected {expected_plain} or {expected_realized}",
             bytes.len()
         ));
     }
@@ -1905,11 +1973,22 @@ fn decode_map_pairs(bytes: &[u8], schema_refs: &[String]) -> Result<Vec<MapPair>
         let key_word = read_frame_word(bytes, at + 8);
         let value_schema = schema_name_for(read_frame_word(bytes, at + 16), schema_refs)?;
         let value_word = read_frame_word(bytes, at + 24);
+        let value_realization = if has_realization_bitset {
+            let bitset_word = read_frame_word(bytes, rows_end + (i / 64) * 8) as u64;
+            Some(if ((bitset_word >> (i % 64)) & 1) == 0 {
+                Realization::Ready
+            } else {
+                Realization::Pending
+            })
+        } else {
+            None
+        };
         pairs.push(MapPair {
             key_schema,
             key_word,
             value_schema,
             value_word,
+            value_realization,
         });
     }
     Ok(pairs)
@@ -1928,9 +2007,16 @@ fn hash_map_pairs(schema: &str, pairs: &[OrderedMapPair]) -> ContentHash {
         hasher.update(pair.pair.key_schema.as_bytes());
         hasher.update(pair.key_hash);
         hasher.update(pair.pair.value_schema.as_bytes());
+        if let Some(realization) = &pair.pair.value_realization {
+            hasher.update(realization.to_word().to_le_bytes());
+        }
         hasher.update(pair.value_hash);
     }
     hasher.finalize().into()
+}
+
+fn map_realization_bitset_words(count: usize) -> usize {
+    count.div_ceil(64)
 }
 
 fn schema_ref_for(schema: &str, schema_refs: &[String]) -> Result<i64, String> {

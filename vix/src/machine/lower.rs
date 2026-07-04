@@ -877,14 +877,11 @@ fn collect_type_schema(ty: &ast::Type, out: &mut Vec<String>) -> Result<(), Stri
 
 fn derived_descriptor(schema: &str) -> Option<Descriptor<String>> {
     let value_schema = realized_value_schema(schema)?;
-    Some(declared_mem::declared_enum(
+    Some(declared_mem::declared_struct(
         schema.to_string(),
         vec![
-            vec![word_descriptor_for_schema(value_schema)],
-            vec![declared_mem::handle(
-                format!("{}Ref", pending_schema(value_schema)),
-                pending_schema(value_schema),
-            )],
+            word_descriptor_for_schema(value_schema),
+            declared_mem::i64_(format!("{schema}::realization_bitset")),
         ],
     ))
 }
@@ -916,6 +913,7 @@ struct LiteralHandles<'a> {
 struct ValueSlot {
     slot: u32,
     schema: String,
+    realization: Option<u32>,
 }
 
 type Bindings = HashMap<String, BindingCell>;
@@ -1017,7 +1015,11 @@ impl<'a> FnLowerer<'a> {
             let schema = type_schema_name(&param.ty)?;
             this.slots.insert(
                 param.name.value.clone(),
-                BindingCell::value(ValueSlot { slot, schema }),
+                BindingCell::value(ValueSlot {
+                    slot,
+                    schema,
+                    realization: None,
+                }),
             );
             arg_offsets.push(slot);
         }
@@ -1128,6 +1130,7 @@ impl<'a> FnLowerer<'a> {
                     return Ok(ValueSlot {
                         slot: dst,
                         schema: "Float".into(),
+                        realization: None,
                     });
                 }
                 let value: i64 = n
@@ -1139,6 +1142,7 @@ impl<'a> FnLowerer<'a> {
                 Ok(ValueSlot {
                     slot: dst,
                     schema: "Int".into(),
+                    realization: None,
                 })
             }
             ast::Expr::Str(s) => {
@@ -1152,6 +1156,7 @@ impl<'a> FnLowerer<'a> {
                 Ok(ValueSlot {
                     slot: dst,
                     schema: "String".into(),
+                    realization: None,
                 })
             }
             ast::Expr::Path(p) => {
@@ -1165,6 +1170,7 @@ impl<'a> FnLowerer<'a> {
                 Ok(ValueSlot {
                     slot: dst,
                     schema: "Path".into(),
+                    realization: None,
                 })
             }
             ast::Expr::Identifier(name) => self.resolve_binding(&name.value),
@@ -1263,6 +1269,7 @@ impl<'a> FnLowerer<'a> {
                 Ok(ValueSlot {
                     slot: dst,
                     schema: schema.into(),
+                    realization: None,
                 })
             }
             ast::Expr::Call(call) => self.call(call),
@@ -1489,6 +1496,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: result,
             schema: result_schema.unwrap_or_else(|| "Int".into()),
+            realization: None,
         })
     }
 
@@ -1600,6 +1608,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: self.fn_returns[name].clone(),
+            realization: None,
         })
     }
 
@@ -1958,6 +1967,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: expected.to_string(),
+            realization: None,
         })
     }
 
@@ -1967,50 +1977,47 @@ impl<'a> FnLowerer<'a> {
         expected: &str,
     ) -> Result<ValueSlot, String> {
         self.expect_schema(&value, &realized_schema(expected))?;
-        let result = self.alloc();
-        let tag = self.store_tag(&value);
-        let ready_tag = self.alloc();
-        self.code.push(Op::ConstI64 {
-            dst: ready_tag,
-            value: 0,
-        });
-        let is_ready = self.alloc();
-        self.code.push(Op::EqI64 {
-            dst: is_ready,
-            a: tag.slot,
-            b: ready_tag,
-        });
+        let Some(flag) = value.realization else {
+            return Err(format!(
+                "{} arrived without a frame realization flag",
+                value.schema
+            ));
+        };
         let pending_jump = self.code.len();
         self.code.push(Op::JumpIfZero {
-            value: is_ready,
+            value: flag,
             target: 0,
         });
 
-        let ready = self.store_read(&value, 0, expected.to_string());
+        let pending = ValueSlot {
+            slot: value.slot,
+            schema: pending_schema(expected),
+            realization: None,
+        };
+        let forced = self.coerce_pending_to_schema(pending, expected)?;
         self.code.push(Op::CopyI64 {
-            dst: result,
-            src: ready.slot,
+            dst: value.slot,
+            src: forced.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: flag,
+            value: 0,
         });
         let end_jump = self.code.len();
         self.code.push(Op::Jump { target: 0 });
 
-        let pending_target = u32::try_from(self.code.len()).expect("code len fits u32");
+        let ready_target = u32::try_from(self.code.len()).expect("code len fits u32");
         self.code[pending_jump] = Op::JumpIfZero {
-            value: is_ready,
-            target: pending_target,
+            value: flag,
+            target: ready_target,
         };
-        let pending = self.store_read(&value, 0, pending_schema(expected));
-        let forced = self.coerce_pending_to_schema(pending, expected)?;
-        self.code.push(Op::CopyI64 {
-            dst: result,
-            src: forced.slot,
-        });
 
         let end = u32::try_from(self.code.len()).expect("code len fits u32");
         self.code[end_jump] = Op::Jump { target: end };
         Ok(ValueSlot {
-            slot: result,
+            slot: value.slot,
             schema: expected.to_string(),
+            realization: None,
         })
     }
 
@@ -2065,6 +2072,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: schema.to_string(),
+            realization: None,
         })
     }
 
@@ -2086,7 +2094,11 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::HostCall {
             host: STORE_READ_HOST,
         });
-        ValueSlot { slot: dst, schema }
+        ValueSlot {
+            slot: dst,
+            schema,
+            realization: None,
+        }
     }
 
     fn store_tag(&mut self, handle: &ValueSlot) -> ValueSlot {
@@ -2106,6 +2118,7 @@ impl<'a> FnLowerer<'a> {
         ValueSlot {
             slot: dst,
             schema: "Int".into(),
+            realization: None,
         }
     }
 
@@ -2130,6 +2143,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: schema.to_string(),
+            realization: None,
         })
     }
 
@@ -2157,7 +2171,7 @@ impl<'a> FnLowerer<'a> {
             map.schema.clone()
         };
         let stored_value = if output_schema == map_schema(key_schema, &realized_value_schema) {
-            self.realize_value(value, value_schema)?
+            self.realize_value(value, value_schema)
         } else {
             value
         };
@@ -2203,25 +2217,54 @@ impl<'a> FnLowerer<'a> {
             dst: region + 48,
             src: stored_value.slot,
         });
+        if let Some(flag) = stored_value.realization {
+            self.code.push(Op::CopyI64 {
+                dst: region + 56,
+                src: flag,
+            });
+        } else {
+            self.code.push(Op::ConstI64 {
+                dst: region + 56,
+                value: 0,
+            });
+        }
         self.code.push(Op::HostCall {
             host: MAP_INSERT_HOST,
         });
         Ok(ValueSlot {
             slot: dst,
             schema: output_schema,
+            realization: None,
         })
     }
 
-    fn realize_value(&mut self, value: ValueSlot, value_schema: &str) -> Result<ValueSlot, String> {
+    fn realize_value(&mut self, value: ValueSlot, value_schema: &str) -> ValueSlot {
         let realized = realized_schema(value_schema);
         if value.schema == realized {
-            return Ok(value);
+            return value;
         }
         if value.schema == pending_schema(value_schema) {
-            return self.store_alloc(&realized, 1, &[value]);
+            let flag = self.alloc();
+            self.code.push(Op::ConstI64 {
+                dst: flag,
+                value: 1,
+            });
+            return ValueSlot {
+                slot: value.slot,
+                schema: realized,
+                realization: Some(flag),
+            };
         }
-        self.expect_schema(&value, value_schema)?;
-        self.store_alloc(&realized, 0, &[value])
+        let flag = self.alloc();
+        self.code.push(Op::ConstI64 {
+            dst: flag,
+            value: 0,
+        });
+        ValueSlot {
+            slot: value.slot,
+            schema: realized,
+            realization: Some(flag),
+        }
     }
 
     fn map_get(
@@ -2266,12 +2309,18 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: option_schema(value_schema),
+            realization: None,
         })
     }
 
     fn option_unwrap(&mut self, option: &ValueSlot, value_schema: &str) -> ValueSlot {
         let input_slot = self.next_input_slot;
         self.next_input_slot += 1;
+        let realization_slot = realized_value_schema(value_schema).map(|_| {
+            let slot = self.next_input_slot;
+            self.next_input_slot += 1;
+            slot
+        });
         let region = self.store_alloc_region;
         self.code.push(Op::ConstI64 {
             dst: region,
@@ -2281,6 +2330,16 @@ impl<'a> FnLowerer<'a> {
             dst: region + 8,
             src: option.slot,
         });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: -1,
+        });
+        if let Some(realization_slot) = realization_slot {
+            self.code.push(Op::ConstI64 {
+                dst: region + 16,
+                value: realization_slot,
+            });
+        }
         self.code.push(Op::HostCall {
             host: OPTION_UNWRAP_HOST,
         });
@@ -2289,9 +2348,18 @@ impl<'a> FnLowerer<'a> {
             dst,
             input: u32::try_from(input_slot).expect("input slot fits u32"),
         });
+        let realization = realization_slot.map(|input| {
+            let flag = self.alloc();
+            self.code.push(Op::Await {
+                dst: flag,
+                input: u32::try_from(input).expect("input slot fits u32"),
+            });
+            flag
+        });
         ValueSlot {
             slot: dst,
             schema: value_schema.to_string(),
+            realization,
         }
     }
 
@@ -2381,6 +2449,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: pending_schema(value_schema),
+            realization: None,
         })
     }
 
@@ -2408,6 +2477,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: kind.to_string(),
+            realization: None,
         })
     }
 
@@ -2448,6 +2518,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Array".into(),
+            realization: None,
         })
     }
 
@@ -2493,6 +2564,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Array".into(),
+            realization: None,
         })
     }
 
@@ -2514,6 +2586,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Tree".into(),
+            realization: None,
         })
     }
 
@@ -2546,6 +2619,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Tree".into(),
+            realization: None,
         })
     }
 
@@ -2586,6 +2660,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Tree".into(),
+            realization: None,
         })
     }
 
@@ -2610,6 +2685,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Path".into(),
+            realization: None,
         })
     }
 }
@@ -2850,7 +2926,7 @@ fn max_store_field_count(block: &ast::Block) -> usize {
     if let Some(tail) = &block.tail {
         in_expr(tail, &mut max);
     }
-    max.max(3)
+    max.max(4)
 }
 
 #[cfg(test)]
@@ -3892,6 +3968,11 @@ pub fn pick(n: Int) -> Float {
                 "{lane:?}"
             );
             assert_eq!(
+                host_call_count(&machine, "pick", STORE_TAG_HOST),
+                0,
+                "frame realization flags replace the old Ready/Pending STORE_TAG barrier on {lane:?}"
+            );
+            assert_eq!(
                 (machine.demand_i64("pick", vec![0]).unwrap() as u64),
                 1.0f64.to_bits(),
                 "{lane:?}"
@@ -3945,6 +4026,11 @@ pub fn pick(n: Int) -> Float {
                 "{lane:?}"
             );
             assert_eq!(
+                host_call_count(&machine, "pick", STORE_TAG_HOST),
+                0,
+                "Ready map entry path no longer pays a STORE_TAG host barrier on {lane:?}"
+            );
+            assert_eq!(
                 (machine.demand_i64("pick", vec![0]).unwrap() as u64),
                 1.0f64.to_bits(),
                 "{lane:?}"
@@ -3987,6 +4073,39 @@ pub fn rl() -> Map<String, Float> {
             assert_eq!(lr, rl, "canonical map dedupes pending entries on {lane:?}");
             assert_eq!(spawned_count(&machine, "left"), 0, "{lane:?}");
             assert_eq!(spawned_count(&machine, "right"), 0, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn ready_and_pending_map_entries_hash_differ_under_bitset_encoding() {
+        let src = r#"
+fn producer() -> Float { 4.2 }
+
+pub fn ready() -> Map<String, Float> {
+    let m: Map<String, Float> = {};
+    m.insert("x", 4.2)
+}
+
+pub fn pending() -> Map<String, Float> {
+    let m: Map<String, Float> = {};
+    m.insert("x", producer())
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let ready = machine.demand_i64("ready", vec![]).unwrap();
+            let pending = machine.demand_i64("pending", vec![]).unwrap();
+            let ready_entry = machine.driver.store_entry(ready).expect("ready entry");
+            let pending_entry = machine.driver.store_entry(pending).expect("pending entry");
+            assert_ne!(
+                ready_entry.content_hash, pending_entry.content_hash,
+                "{lane:?}"
+            );
+            assert_ne!(
+                ready, pending,
+                "Ready(4.2) and Pending(producer-of-4.2) are intentionally distinct on {lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "producer"), 0, "{lane:?}");
         }
     }
 
