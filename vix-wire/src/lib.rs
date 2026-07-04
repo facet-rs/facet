@@ -18,12 +18,16 @@
 //! hash exists?), and seatbelt confinement (runtime side).
 
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use facet::Facet;
 use tokio::sync::Mutex;
 use vix::exec::{ExecPlan, MountedWorld, ObservedWorld, ReadSet, Role, Tree};
-use vix::oracle::{Oracle, PathDemand, PathMissing, PathPending, Value};
+use vix::machine::{
+    Machine, MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun,
+    ValueBundle,
+};
 use vox::Tx;
 
 // ---------------------------------------------------------------------------
@@ -44,12 +48,9 @@ pub struct WireExecRequest {
     pub capability: u64,
     /// Which tool to run (the command grammar's name — toy registry for now).
     pub command: String,
-    /// A shipped vix closure (oracle::ship bytes) evaluated executor-side
-    /// against the Run value; its result is the only thing that crosses.
-    pub observer: Option<Vec<u8>>,
-    /// The vix module the observer closure was born in (v0: source travels;
-    /// later: canonical module bytes from the CAS).
-    pub module: String,
+    /// A shipped machine Pending<T> value evaluated executor-side against the
+    /// Run value; its result is the only thing that crosses.
+    pub observer: Option<ValueBundle>,
 }
 
 #[derive(Facet, Debug, Clone, PartialEq)]
@@ -79,9 +80,9 @@ pub enum WireExecEvent {
         path: String,
         content_hash: u64,
     },
-    /// The observer's result (oracle::ship bytes of the vix value).
+    /// The observer's result as machine store values.
     ObserverResult {
-        value: Vec<u8>,
+        value: ValueBundle,
     },
     Finished {
         ok: bool,
@@ -190,7 +191,7 @@ struct RunTable {
     candidates: HashMap<u64, Vec<CompletedRun>>,
     /// Observer results by (full run identity × observer canonical hash):
     /// one run, many observers, each a distinct memoized VALUE.
-    observers: HashMap<(u64, u64), Vec<u8>>,
+    observers: HashMap<(u64, u64), ValueBundle>,
 }
 
 #[derive(Clone)]
@@ -230,9 +231,24 @@ fn tree_hash(tree: &Tree) -> u64 {
 }
 
 fn content_hash(s: &str) -> u64 {
-    use std::hash::{DefaultHasher, Hash, Hasher};
     let mut h = DefaultHasher::new();
     s.hash(&mut h);
+    h.finish()
+}
+
+fn bundle_hash(bundle: &ValueBundle) -> u64 {
+    let mut h = DefaultHasher::new();
+    bundle.root.hash(&mut h);
+    for value in &bundle.values {
+        value.handle.hash(&mut h);
+        value.schema.hash(&mut h);
+        value.bytes.hash(&mut h);
+        value.content_hash.hash(&mut h);
+    }
+    for code in &bundle.code {
+        code.module_hash.hash(&mut h);
+        code.bytes.hash(&mut h);
+    }
     h.finish()
 }
 
@@ -298,14 +314,12 @@ impl Executor for ExecutorService {
         // Run identity: plan × capability × coarse mounts. Computation
         // identity (for tier-2 candidates): plan × capability only.
         let comp_identity = {
-            use std::hash::{DefaultHasher, Hash, Hasher};
             let mut h = DefaultHasher::new();
             request.plan.hash().hash(&mut h);
             request.capability.hash(&mut h);
             h.finish()
         };
         let identity = {
-            use std::hash::{DefaultHasher, Hash, Hasher};
             let mut h = DefaultHasher::new();
             comp_identity.hash(&mut h);
             for m in &mounts {
@@ -490,13 +504,8 @@ impl ExecutorService {
         done: &CompletedRun,
         events: &Tx<WireExecEvent>,
     ) {
-        if let Some(observer_bytes) = &request.observer {
-            let obs_hash = {
-                use std::hash::{DefaultHasher, Hash, Hasher};
-                let mut h = DefaultHasher::new();
-                observer_bytes.hash(&mut h);
-                h.finish()
-            };
+        if let Some(observer) = &request.observer {
+            let obs_hash = bundle_hash(observer);
             let memo = self
                 .runs_table
                 .lock()
@@ -515,13 +524,11 @@ impl ExecutorService {
                         .get(&done.tree)
                         .cloned()
                         .unwrap_or_default();
-                    let module = request.module.clone();
-                    let bytes = observer_bytes.clone();
-                    let evaluated = tokio::task::spawn_blocking(move || {
-                        evaluate_observer(&module, &bytes, &outputs)
-                    })
-                    .await
-                    .expect("observer task joins");
+                    let observer = observer.clone();
+                    let evaluated =
+                        tokio::task::spawn_blocking(move || evaluate_observer(&observer, &outputs))
+                            .await
+                            .expect("observer task joins");
                     if let Ok(v) = &evaluated {
                         self.runs_table
                             .lock()
@@ -563,7 +570,6 @@ impl ExecutorService {
         events: &Tx<WireExecEvent>,
     ) {
         let comp_identity = {
-            use std::hash::{DefaultHasher, Hash, Hasher};
             let mut h = DefaultHasher::new();
             request.plan.hash().hash(&mut h);
             request.capability.hash(&mut h);
@@ -661,11 +667,11 @@ impl ExecutorService {
 }
 
 // ---------------------------------------------------------------------------
-// The fleet: the oracle's ExecBackend over N wire executors. Placement is
+// The fleet: the machine's ExecBackend over N wire executors. Placement is
 // gravity-first (run where the inputs already live); missing mounts move
 // EXECUTOR→EXECUTOR when any peer has them; the orchestrator uploads only
 // trees it created itself. v0 gap, on purpose: result trees materialize back
-// at the orchestrator (Value::Tree carries bytes) — remote-handle Trees in
+// at the orchestrator (Tree values carry bytes) — remote-handle Trees in
 // the language are the next step; observers are already the way around it.
 // ---------------------------------------------------------------------------
 
@@ -788,10 +794,10 @@ impl FleetBackend {
     }
 }
 
-/// A live wire run the oracle can DEMAND from: paths land as PathReady events
+/// A live wire run the machine can DEMAND from: paths land as PathReady events
 /// arrive; demand_path blocks until its path exists (or the run ends without
 /// it); flush blocks until Finished and materializes the tree (the flagged
-/// v0 gap). std sync primitives on purpose — the oracle blocks a thread, the
+/// v0 gap). std sync primitives on purpose — the machine blocks a thread, the
 /// event feeder runs on the fleet's runtime.
 struct FleetRun {
     fleet_run_id: u64,
@@ -842,8 +848,8 @@ impl FleetRun {
     }
 }
 
-impl vix::oracle::PendingRun for FleetRun {
-    fn demand_path(&self, path: &str) -> Result<PathDemand, String> {
+impl MachinePendingRun for FleetRun {
+    fn demand_path(&self, path: &str) -> Result<MachinePathDemand, String> {
         // Wait only for THIS path — the language-level rmeta move.
         {
             let mut state = self.state.lock().unwrap();
@@ -857,13 +863,13 @@ impl vix::oracle::PendingRun for FleetRun {
                     let (tree, _) = self.flush()?;
                     let prefix = format!("{path}/");
                     return if tree.entries.keys().any(|entry| entry.starts_with(&prefix)) {
-                        Ok(PathDemand::FinishRequired(PathPending {
+                        Ok(MachinePathDemand::FinishRequired {
                             path: path.to_string(),
-                        }))
+                        })
                     } else {
-                        Ok(PathDemand::Missing(PathMissing {
+                        Ok(MachinePathDemand::Missing {
                             path: path.to_string(),
-                        }))
+                        })
                     };
                 }
                 state = self.wake.wait(state).unwrap();
@@ -878,7 +884,7 @@ impl vix::oracle::PendingRun for FleetRun {
                     .ok_or_else(|| format!("`{path}` vanished from the producing space"))
             })
         })?;
-        Ok(PathDemand::File(contents))
+        Ok(MachinePathDemand::File(contents))
     }
 
     fn flush(&self) -> Result<(Tree, vix::exec::ExecEvent), String> {
@@ -919,23 +925,21 @@ impl vix::oracle::PendingRun for FleetRun {
     }
 }
 
-impl vix::oracle::ExecBackend for FleetBackend {
-    fn spawn(
-        &self,
-        command: &str,
-        plan: &ExecPlan,
-        capability: u64,
-        mounts: &[vix::exec::Mount],
-    ) -> Result<Arc<dyn vix::oracle::PendingRun>, String> {
-        // The oracle is sync; bridge onto the runtime this fleet was born on.
+impl MachineExecBackend for FleetBackend {
+    fn spawn(&self, request: MachineExecRequest) -> Result<Arc<dyn MachinePendingRun>, String> {
+        // The machine is sync; bridge onto the runtime this fleet was born on.
         tokio::task::block_in_place(|| {
             self.handle.clone().block_on(async {
-                let mount_hashes: Vec<u64> = mounts.iter().map(|m| m.tree.fingerprint()).collect();
+                let mount_hashes: Vec<u64> = request
+                    .mounts
+                    .iter()
+                    .map(|m| m.tree.fingerprint())
+                    .collect();
                 let target = self.choose(&mount_hashes);
                 let client = self.executors[target].1.clone();
 
                 let mut wire_mounts = Vec::new();
-                for m in mounts {
+                for m in &request.mounts {
                     let hash = self.ensure_mount(target, &m.tree).await?;
                     wire_mounts.push(WireMount {
                         at: m.at.clone(),
@@ -949,12 +953,11 @@ impl vix::oracle::ExecBackend for FleetBackend {
                     state.run_ids
                 };
                 let request = WireExecRequest {
-                    plan: plan.clone(),
+                    plan: request.plan,
                     mounts: wire_mounts,
-                    capability,
-                    command: command.to_string(),
-                    observer: None,
-                    module: String::new(),
+                    capability: request.capability,
+                    command: request.command,
+                    observer: request.observer,
                 };
 
                 let run = Arc::new(FleetRun {
@@ -987,7 +990,7 @@ impl vix::oracle::ExecBackend for FleetBackend {
                     }
                 });
 
-                Ok(run as Arc<dyn vix::oracle::PendingRun>)
+                Ok(run as Arc<dyn MachinePendingRun>)
             })
         })
     }
@@ -996,18 +999,16 @@ impl vix::oracle::ExecBackend for FleetBackend {
 /// Executor-side observer evaluation: reconstitute the closure, bind the Run
 /// value, invoke, ship the result. The observer is generic over its return
 /// type — whatever it returns is what the exec node IS to the graph.
-fn evaluate_observer(module: &str, observer: &[u8], outputs: &Tree) -> Result<Vec<u8>, String> {
-    let oracle = Oracle::load(module)?;
-    let closure = vix::oracle::receive(observer)?;
-    let run = Value::Struct {
-        name: "Run".to_string(),
-        fields: vec![
-            ("ok".to_string(), Value::Bool(true)),
-            ("out".to_string(), Value::Tree(outputs.clone())),
-        ],
-    };
-    let result = oracle.invoke(closure, vec![run])?;
-    vix::oracle::ship(&result)
+fn evaluate_observer(observer: &ValueBundle, outputs: &Tree) -> Result<ValueBundle, String> {
+    let code = observer
+        .code
+        .first()
+        .ok_or_else(|| "observer bundle has no code flesh".to_string())?;
+    let mut machine = Machine::load_code_bundle(code)?;
+    let pending = machine.import_value(observer)?;
+    let run = machine.intern_run_value(true, outputs.clone())?;
+    let result = machine.invoke_pending(pending, &[run])?;
+    machine.export_value(result)
 }
 
 // v0 helpers: whole-tree phon bytes (chunking later).

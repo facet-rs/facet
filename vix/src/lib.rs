@@ -20,14 +20,12 @@ pub mod ast {
 
 pub mod binder;
 pub(crate) mod data;
-pub mod engine;
 pub mod exec;
 pub mod fetch;
-pub mod graph;
 pub mod ide;
 pub mod machine;
 pub(crate) mod module;
-pub mod oracle;
+pub mod value;
 
 /// The tree-sitter grammar.json emitted from grammar.js at build time, embedded so
 /// the runtime parser needs no JS engine.
@@ -131,6 +129,8 @@ impl Default for VixParser {
 
 /// Runtime support for the generated lowering.
 pub mod support {
+    use std::collections::BTreeMap;
+
     use snark::parser::ResolvedCstNode;
 
     /// Half-open byte range into the source, carried by every AST node.
@@ -277,5 +277,96 @@ pub mod support {
             }
         }
         out
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct PathMissing {
+        pub path: String,
+    }
+
+    impl PathMissing {
+        pub fn diagnostic(&self) -> String {
+            format!("path `{}` is missing from resolved tree", self.path)
+        }
+    }
+
+    pub(crate) fn subtree(
+        tree: &crate::exec::Tree,
+        path: &str,
+    ) -> Result<crate::exec::Tree, String> {
+        if let Some(contents) = tree.entries.get(path) {
+            let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
+            return Ok(crate::exec::Tree::of(&[(base, contents.as_str())]));
+        }
+        let prefix = format!("{path}/");
+        let entries: BTreeMap<String, String> = tree
+            .entries
+            .iter()
+            .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|r| (r.to_string(), v.clone())))
+            .collect();
+        if entries.is_empty() {
+            return Err(format!("no `{path}` in tree"));
+        }
+        Ok(crate::exec::Tree { entries })
+    }
+
+    pub(crate) fn assign_roles(
+        command: &str,
+        argv: &[String],
+    ) -> Result<crate::exec::ExecPlan, String> {
+        use crate::exec::Role;
+        let mut out = Vec::new();
+        match command {
+            "cc" => {
+                let mut prev: Option<&str> = None;
+                for arg in argv {
+                    let role = match prev {
+                        Some("-o") => Role::Output,
+                        Some("-I") => Role::SearchDir,
+                        _ if arg.starts_with("/m/") => Role::Input,
+                        _ => Role::Flag,
+                    };
+                    out.push((arg.clone(), role));
+                    prev = Some(arg.as_str());
+                }
+            }
+            "ar" => {
+                for arg in argv {
+                    let role = if arg.starts_with("/m/") {
+                        crate::exec::Role::Input
+                    } else if arg == "rcs" {
+                        Role::Flag
+                    } else {
+                        Role::Output
+                    };
+                    out.push((arg.clone(), role));
+                }
+            }
+            "rustc" => {
+                let mut prev: Option<&str> = None;
+                for arg in argv {
+                    let role = match prev {
+                        Some("-o") => Role::Output,
+                        Some("-L") => Role::SearchDir,
+                        _ if arg.starts_with("/m/") => Role::Input,
+                        _ if arg.starts_with("-L") && arg.contains("/m/") => Role::SearchDir,
+                        _ => Role::Flag,
+                    };
+                    out.push((arg.clone(), role));
+                    prev = Some(arg.as_str());
+                }
+            }
+            other => return Err(format!("no command grammar for `{other}`")),
+        }
+        Ok(crate::exec::ExecPlan { argv: out })
+    }
+
+    pub(crate) fn tool_for(command: &str) -> Result<&'static dyn crate::exec::Tool, String> {
+        match command {
+            "cc" => Ok(&crate::exec::FakeCc),
+            "ar" => Ok(&crate::exec::FakeAr),
+            "rustc" => Ok(&crate::exec::FakeRustc),
+            other => Err(format!("no tool for `{other}`")),
+        }
     }
 }

@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use sha2::{Digest, Sha256};
 use weavy::mem::Descriptor;
 use weavy::mem::Layout;
 use weavy::mem::declared as declared_mem;
@@ -28,12 +29,12 @@ use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST,
-    ARRAY_MAP_PENDING_HOST, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PARSE_HOST, DriveEvent,
+    ARRAY_MAP_PENDING_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PARSE_HOST, DriveEvent,
     DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane,
-    LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, OPTION_UNWRAP_HOST,
-    PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames,
-    RenderVariant, RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, StepMode,
-    TREE_PROJECT_HOST,
+    LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MachineExecBackend,
+    OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST,
+    PENDING_INVOKE_HOST, RenderNames, RenderVariant, RenderedValue, STORE_ALLOC_HOST,
+    STORE_READ_HOST, STORE_TAG_HOST, StepMode, StoreHandle, TREE_PROJECT_HOST, ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -45,13 +46,36 @@ pub struct Machine {
     driver: Driver,
     fn_refs: HashMap<String, usize>,
     fn_params: BTreeMap<String, Vec<String>>,
+    fn_param_names: BTreeMap<String, Vec<String>>,
     fn_returns: BTreeMap<String, String>,
     render_names: RenderNames,
+    source: String,
+    module_hash: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReloadDiff {
     pub changed: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug)]
+pub enum MachineArg {
+    Word(i64),
+    Handle(StoreHandle),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    Path(String),
+    Flag(String),
+    Tree(crate::exec::Tree),
+    LinuxTarget,
+}
+
+#[derive(Clone, Debug)]
+pub struct NamedArg {
+    pub name: String,
+    pub value: MachineArg,
 }
 
 impl Machine {
@@ -60,6 +84,7 @@ impl Machine {
     }
 
     pub fn load_with_lane(source: &str, lane: Lane) -> Result<Machine, String> {
+        let module_hash = module_hash(source);
         let tables = load_module_tables(source)?;
 
         // Deterministic fn_ref assignment: sorted names.
@@ -221,8 +246,11 @@ impl Machine {
             driver,
             fn_refs,
             fn_params: fn_params.into_iter().collect(),
+            fn_param_names: fn_param_names.into_iter().collect(),
             fn_returns: fn_returns.into_iter().collect(),
             render_names,
+            source: source.to_string(),
+            module_hash,
         })
     }
 
@@ -236,8 +264,14 @@ impl Machine {
         self
     }
 
+    pub fn with_exec_backend(mut self, backend: Arc<dyn MachineExecBackend>) -> Self {
+        self.driver.set_exec_backend(Some(backend));
+        self
+    }
+
     pub fn reload(&mut self, source: &str) -> Result<ReloadDiff, String> {
         let before = self.fn_hashes();
+        let module_hash = module_hash(source);
         let tables = load_module_tables(source)?;
 
         let mut names: Vec<&String> = tables.fns.keys().collect();
@@ -357,8 +391,11 @@ impl Machine {
             .reload(Program { fns: task_fns }, lowered, descriptors)?;
         self.fn_refs = fn_refs;
         self.fn_params = fn_params.into_iter().collect();
+        self.fn_param_names = fn_param_names.into_iter().collect();
         self.fn_returns = fn_returns.into_iter().collect();
         self.render_names = render_names;
+        self.source = source.to_string();
+        self.module_hash = module_hash;
 
         let after = self.fn_hashes();
         let changed = before
@@ -382,6 +419,156 @@ impl Machine {
     pub fn demand_f64(&mut self, name: &str, args: Vec<i64>) -> Result<f64, String> {
         let bits = self.demand_i64(name, args)? as u64;
         Ok(f64::from_bits(bits))
+    }
+
+    pub fn call(&mut self, name: &str, args: &[NamedArg]) -> Result<StoreHandle, String> {
+        let params = self
+            .fn_params
+            .get(name)
+            .ok_or_else(|| format!("no function named {name}"))?
+            .clone();
+        let names = self
+            .fn_param_names
+            .get(name)
+            .ok_or_else(|| format!("no parameter names for {name}"))?
+            .clone();
+        let mut words = Vec::with_capacity(params.len());
+        for (param_name, schema) in names.iter().zip(&params) {
+            let arg = args
+                .iter()
+                .find(|arg| arg.name == *param_name)
+                .ok_or_else(|| format!("missing argument `{param_name}`"))?;
+            words.push(self.intern_arg(schema, arg.value.clone())?.0);
+        }
+        self.demand_i64(name, words).map(StoreHandle)
+    }
+
+    pub fn intern_arg(&self, schema: &str, arg: MachineArg) -> Result<StoreHandle, String> {
+        match (schema, arg) {
+            (_, MachineArg::Word(word)) => Ok(StoreHandle(word)),
+            (expected, MachineArg::Handle(handle)) => {
+                if matches!(expected, "Int" | "Float" | "Bool") {
+                    return Ok(handle);
+                }
+                let actual = self
+                    .driver
+                    .store_entry(handle.0)
+                    .ok_or_else(|| format!("store handle {}", handle.0))?
+                    .schema;
+                if actual != expected {
+                    return Err(format!(
+                        "store handle {} is `{actual}`, expected `{expected}`",
+                        handle.0
+                    ));
+                }
+                Ok(handle)
+            }
+            ("Int", MachineArg::Int(value)) => Ok(StoreHandle(value)),
+            ("Float", MachineArg::Float(value)) => Ok(StoreHandle(value.to_bits() as i64)),
+            ("Bool", MachineArg::Bool(value)) => Ok(StoreHandle(value as i64)),
+            ("String", MachineArg::String(value)) => Ok(StoreHandle(
+                self.driver.intern_raw_value("String", value.into_bytes()).0,
+            )),
+            ("Path", MachineArg::Path(value)) => Ok(StoreHandle(
+                self.driver.intern_raw_value("Path", value.into_bytes()).0,
+            )),
+            ("Flag", MachineArg::Flag(value)) => Ok(StoreHandle(
+                self.driver.intern_raw_value("Flag", value.into_bytes()).0,
+            )),
+            ("Tree", MachineArg::Tree(tree)) => {
+                Ok(StoreHandle(self.driver.intern_tree_concrete(tree)))
+            }
+            ("Target", MachineArg::LinuxTarget) => Ok(StoreHandle(self.linux_target_handle())),
+            (expected, other) => Err(format!("cannot intern {other:?} as {expected}")),
+        }
+    }
+
+    pub fn export_value(&self, root: StoreHandle) -> Result<ValueBundle, String> {
+        self.driver
+            .export_value_bundle(root.0, vec![self.code_bundle()])
+    }
+
+    pub fn import_value(&self, bundle: &ValueBundle) -> Result<StoreHandle, String> {
+        self.driver.import_value_bundle(bundle).map(StoreHandle)
+    }
+
+    pub fn pending_function(
+        &self,
+        name: &str,
+        args: &[NamedArg],
+    ) -> Result<(StoreHandle, ValueBundle), String> {
+        let fn_ref = *self
+            .fn_refs
+            .get(name)
+            .ok_or_else(|| format!("no function named {name}"))?;
+        let params = self
+            .fn_params
+            .get(name)
+            .ok_or_else(|| format!("no function named {name}"))?
+            .clone();
+        let names = self
+            .fn_param_names
+            .get(name)
+            .ok_or_else(|| format!("no parameter names for {name}"))?
+            .clone();
+        let mut words = Vec::new();
+        for arg in args {
+            let Some(index) = names.iter().position(|name| name == &arg.name) else {
+                return Err(format!("unknown argument `{}` for {name}", arg.name));
+            };
+            words.push((index, self.intern_arg(&params[index], arg.value.clone())?.0));
+        }
+        words.sort_by_key(|(index, _)| *index);
+        if words
+            .iter()
+            .enumerate()
+            .any(|(expected, (actual, _))| expected != *actual)
+        {
+            return Err(format!("pending args for {name} must be a prefix"));
+        }
+        let words = words.into_iter().map(|(_, word)| word).collect();
+        let (handle, _) = self.driver.pending_for_fn(fn_ref, words)?;
+        let handle = StoreHandle(handle);
+        let bundle = self.export_value(handle)?;
+        Ok((handle, bundle))
+    }
+
+    pub fn invoke_pending(
+        &mut self,
+        pending: StoreHandle,
+        args: &[StoreHandle],
+    ) -> Result<StoreHandle, String> {
+        self.driver
+            .invoke_pending_handle(pending.0, args.iter().map(|arg| arg.0).collect())
+            .map(StoreHandle)
+    }
+
+    pub fn intern_run_value(
+        &self,
+        ok: bool,
+        outputs: crate::exec::Tree,
+    ) -> Result<StoreHandle, String> {
+        self.driver.intern_run_value(ok, outputs).map(StoreHandle)
+    }
+
+    pub fn intern_tree(&self, tree: crate::exec::Tree) -> StoreHandle {
+        StoreHandle(self.driver.intern_tree_concrete(tree))
+    }
+
+    pub fn code_bundle(&self) -> CodeBundle {
+        CodeBundle {
+            module_hash: self.module_hash.clone(),
+            bytes: self.source.as_bytes().to_vec(),
+        }
+    }
+
+    pub fn load_code_bundle(bundle: &CodeBundle) -> Result<Machine, String> {
+        let source = String::from_utf8(bundle.bytes.clone()).map_err(|err| err.to_string())?;
+        let actual = module_hash(&source);
+        if actual != bundle.module_hash {
+            return Err("code bundle hash mismatch".into());
+        }
+        Machine::load(&source)
     }
 
     pub fn linux_target_handle(&self) -> i64 {
@@ -460,6 +647,13 @@ impl Machine {
     }
 }
 
+fn module_hash(source: &str) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-machine-module");
+    hasher.update(source.as_bytes());
+    hasher.finalize().to_vec()
+}
+
 fn schema_names_for(
     tables: &ModuleTables,
     fn_returns: &HashMap<String, String>,
@@ -476,6 +670,7 @@ fn schema_names_for(
         "Cc".to_string(),
         "Ar".to_string(),
         "Rustc".to_string(),
+        "Run".to_string(),
         "Flag".to_string(),
         "Tree".to_string(),
         "Array".to_string(),
@@ -1381,6 +1576,15 @@ fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>
     descriptors
         .entry("Os".into())
         .or_insert_with(|| declared_mem::declared_enum("Os".into(), vec![vec![], vec![], vec![]]));
+    descriptors.entry("Run".into()).or_insert_with(|| {
+        declared_mem::declared_struct(
+            "Run".into(),
+            vec![
+                declared_mem::i64_("RunOk".into()),
+                declared_mem::handle("RunOut".into(), "Tree".into()),
+            ],
+        )
+    });
     descriptors.entry("Doc".into()).or_insert_with(|| {
         declared_mem::declared_enum(
             "Doc".into(),
@@ -5058,11 +5262,7 @@ pub fn main(target: Target) -> Tree {
                 "{lane:?}"
             );
             assert_eq!(run_requested_count(&machine), 1, "{lane:?}");
-            assert_eq!(
-                completed_outputs(&machine),
-                output_set(&["artifact.o"]),
-                "{lane:?}"
-            );
+            assert_eq!(completed_outputs(&machine), Vec::<u64>::new(), "{lane:?}");
             traces.push((lane, machine.trace().to_vec()));
         }
         assert_lane_traces_equal(&traces);
@@ -6481,7 +6681,7 @@ pub fn linker_metadata(input: Blob) -> [String] { elf(input).linker_metadata }
                     super::super::elf::Projection::NeedsGlibc,
                 )
                 .unwrap(),
-                crate::oracle::Value::Str(value) if value == "GLIBC_2.2.5"
+                crate::value::Value::Str(value) if value == "GLIBC_2.2.5"
             ));
 
             let arch = machine.demand_i64("arch", vec![hello]).unwrap();

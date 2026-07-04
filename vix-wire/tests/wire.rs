@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use vix::exec::{ExecPlan, Role, Tree};
-use vix::oracle::{Oracle, Value};
+use vix::machine::{Machine, RenderedValue, ValueBundle};
 use vix_wire::{
     ExecutorClient, ExecutorDispatcher, ExecutorService, FakeRustc, WireExecEvent, WireExecRequest,
     WireMount, WireTool, tree_to_bytes,
@@ -46,7 +46,6 @@ async fn rmeta_streams_before_rlib_finishes() {
         capability: 0xcafe,
         command: "rustc".into(),
         observer: None,
-        module: String::new(),
     };
 
     let (tx, mut rx) = vox::channel::<WireExecEvent>();
@@ -115,13 +114,14 @@ async fn observer_closure_evaluates_on_the_executor() {
     let client: ExecutorClient = vox::connect_lane(&addr).await.unwrap();
 
     let module = r#"
-fn make_observer() -> fn(Run) -> Path {
-    |run| run.out.glob("*.o")
+struct Run { ok: Bool, out: Tree }
+
+fn object_paths(run: Run) -> Array {
+    run.out.glob("*.o")
 }
 "#;
-    let oracle = Oracle::load(module).unwrap();
-    let observer = oracle.call("make_observer", &[]).unwrap();
-    let observer_bytes = vix::oracle::ship(&observer).unwrap();
+    let machine = Machine::load(module).unwrap();
+    let (_, observer) = machine.pending_function("object_paths", &[]).unwrap();
 
     let src = Tree::of(&[("main.c", "int main() { return 0; }")]);
     let src_hash = client.put_tree(tree_to_bytes(&src)).await.unwrap();
@@ -141,8 +141,7 @@ fn make_observer() -> fn(Run) -> Path {
         }],
         capability: 0xcc,
         command: "cc".into(),
-        observer: Some(observer_bytes),
-        module: module.to_string(),
+        observer: Some(observer),
     };
 
     let (tx, mut rx) = vox::channel::<WireExecEvent>();
@@ -155,7 +154,7 @@ fn make_observer() -> fn(Run) -> Path {
     while let Ok(Some(event)) = rx.recv().await {
         match event.get().clone() {
             WireExecEvent::ObserverResult { value } => {
-                observed = Some(vix::oracle::receive(&value).unwrap());
+                observed = Some(render_bundle(module, "Array", &value));
             }
             WireExecEvent::Finished { .. } => break,
             WireExecEvent::Failed { error } => panic!("exec failed: {error}"),
@@ -168,7 +167,12 @@ fn make_observer() -> fn(Run) -> Path {
     // wire is the projection, not the world it observed.
     assert_eq!(
         observed.expect("observer result crossed"),
-        Value::Array(vec![Value::Path("main.o".into())])
+        RenderedValue::Array {
+            element_schema: "Path".into(),
+            items: vec![RenderedValue::Path {
+                value: "main.o".into()
+            }]
+        }
     );
 }
 
@@ -251,7 +255,6 @@ fn cc_request(src_hash: u64) -> WireExecRequest {
         capability: 0xcc,
         command: "cc".into(),
         observer: None,
-        module: String::new(),
     }
 }
 
@@ -279,7 +282,6 @@ async fn identical_concurrent_demands_join_one_process() {
         capability: 0xcafe,
         command: "rustc".into(),
         observer: None,
-        module: String::new(),
     };
 
     // First demand drives; wait until its rmeta lands so the run is live.
@@ -376,19 +378,20 @@ async fn one_run_many_observers_distinct_values() {
     let src_hash = client.put_tree(tree_to_bytes(&src)).await.unwrap();
 
     let module = r#"
-fn globs() -> fn(Run) -> Path {
-    |run| run.out.glob("*.o")
+struct Run { ok: Bool, out: Tree }
+
+fn globs(run: Run) -> Array {
+    run.out.glob("*.o")
 }
-fn just_ok() -> fn(Run) -> Bool {
-    |run| run.ok
+fn just_ok(run: Run) -> Bool {
+    run.ok
 }
 "#;
-    let oracle = Oracle::load(module).unwrap();
-    let glob_obs = vix::oracle::ship(&oracle.call("globs", &[]).unwrap()).unwrap();
-    let ok_obs = vix::oracle::ship(&oracle.call("just_ok", &[]).unwrap()).unwrap();
+    let machine = Machine::load(module).unwrap();
+    let (_, glob_obs) = machine.pending_function("globs", &[]).unwrap();
+    let (_, ok_obs) = machine.pending_function("just_ok", &[]).unwrap();
 
-    let mut base = cc_request(src_hash);
-    base.module = module.to_string();
+    let base = cc_request(src_hash);
 
     let mut with_glob = base.clone();
     with_glob.observer = Some(glob_obs);
@@ -408,15 +411,29 @@ fn just_ok() -> fn(Run) -> Bool {
 
     let value = |events: &[WireExecEvent]| {
         events.iter().find_map(|e| match e {
-            WireExecEvent::ObserverResult { value } => Some(vix::oracle::receive(value).unwrap()),
+            WireExecEvent::ObserverResult { value } => Some(value.clone()),
             _ => None,
         })
     };
     assert_eq!(
-        value(&events_a),
-        Some(Value::Array(vec![Value::Path("main.o".into())]))
+        value(&events_a).map(|bundle| render_bundle(module, "Array", &bundle)),
+        Some(RenderedValue::Array {
+            element_schema: "Path".into(),
+            items: vec![RenderedValue::Path {
+                value: "main.o".into()
+            }]
+        })
     );
-    assert_eq!(value(&events_b), Some(Value::Bool(true)));
+    assert_eq!(
+        value(&events_b).map(|bundle| render_bundle(module, "Bool", &bundle)),
+        Some(RenderedValue::Bool { value: true })
+    );
+}
+
+fn render_bundle(module: &str, schema: &str, bundle: &ValueBundle) -> RenderedValue {
+    let machine = Machine::load(module).unwrap();
+    let handle = machine.import_value(bundle).unwrap();
+    machine.render_value(schema, handle.0).unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

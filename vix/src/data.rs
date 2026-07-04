@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use facet_value::ValueType;
 
 use crate::exec::Tree;
-use crate::oracle::{Payload, Value};
+use crate::value::{Payload, Value};
 
 pub(crate) fn parse_toml(input: Value) -> Result<Value, String> {
     let text = input_text(input)?;
