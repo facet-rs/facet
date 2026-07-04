@@ -79,6 +79,7 @@ export interface SourceEditorProps {
   diagnostic: EditorDiagnostic | null;
   ide: IdeState;
   jump: EditorJump | null;
+  onCursorByte?: (byte: number) => void;
   onChange: (value: string, edit: SourceEdit | null) => void;
 }
 
@@ -418,12 +419,14 @@ const snarkTheme = EditorView.theme({
   },
 });
 
-export function SourceEditor({ input, captures, diagnostic, ide, jump, onChange }: SourceEditorProps) {
+export function SourceEditor({ input, captures, diagnostic, ide, jump, onCursorByte, onChange }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const applyingExternalInputRef = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onCursorByteRef = useRef(onCursorByte);
+  onCursorByteRef.current = onCursorByte;
   const ideRef = useRef<IdeState>(ide);
   ideRef.current = ide;
 
@@ -444,6 +447,9 @@ export function SourceEditor({ input, captures, diagnostic, ide, jump, onChange 
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !applyingExternalInputRef.current) {
             onChangeRef.current(update.state.doc.toString(), sourceEditForUpdate(update));
+          }
+          if (update.docChanged || update.selectionSet) {
+            onCursorByteRef.current?.(utf8ByteLength(update.state.doc.sliceString(0, update.state.selection.main.head)));
           }
         }),
       ],

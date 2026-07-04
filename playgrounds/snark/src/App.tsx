@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { runParse } from "./parseClient";
 import { runBenchmark, BenchBody, benchMeta, type BenchReport } from "./benchmark";
 import { SourceEditor, type EditorJump, type IdeInfo, type IdeState, type SourceEdit } from "./editor";
@@ -434,6 +434,12 @@ export function App() {
   const [input, setInput] = useState(defaultSample?.text ?? "");
   const [machineFn, setMachineFn] = useState(defaultMachineFnForInput(defaultSample?.text ?? ""));
   const [editorJump, setEditorJump] = useState<EditorJump | null>(null);
+  const [sourceCursorByte, setSourceCursorByte] = useState(0);
+  const [traceOpen, setTraceOpen] = useState(false);
+  const [tracePhase, setTracePhase] = useState<TracePhase>("cold");
+  const [traceView, setTraceView] = useState<TraceView>("dag");
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [hoveredTraceId, setHoveredTraceId] = useState<string | null>(null);
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | "bench" | null>(null);
   const [benchReport, setBenchReport] = useState<BenchReport | null>(null);
@@ -522,12 +528,42 @@ export function App() {
   const activeMachineFn = machineOptions.some((option) => option.name === machineFn)
     ? machineFn
     : (machineOptions[0]?.name ?? "");
+  const traceModel = useMemo(
+    () => (result?.vix_machine?.ok ? buildTraceModel(result.vix_machine, tracePhase) : null),
+    [result?.vix_machine, tracePhase],
+  );
 
   useEffect(() => {
     if (activeMachineFn && activeMachineFn !== machineFn) {
       setMachineFn(activeMachineFn);
     }
   }, [activeMachineFn, machineFn]);
+
+  useEffect(() => {
+    setTracePhase("cold");
+    setSelectedTraceId(null);
+    setHoveredTraceId(null);
+  }, [result?.vix_machine]);
+
+  useEffect(() => {
+    if (!traceModel || selectedTraceId === null || traceModel.entities.has(selectedTraceId)) {
+      return;
+    }
+    setSelectedTraceId(traceModel.entities.values().next().value?.id ?? null);
+  }, [selectedTraceId, traceModel]);
+
+  useEffect(() => {
+    if (!traceOpen) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setTraceOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [traceOpen]);
 
   const handleRunBenchmark = async (): Promise<BenchReport> => {
     const grammar = activeGrammarRootId;
@@ -890,25 +926,50 @@ export function App() {
           </div>
         </div>
 
-        <SourceEditor
-          input={input}
-          captures={editorCaptures}
-          diagnostic={editorDiagnostic}
-          ide={result?.vix_ide ?? null}
-          jump={editorJump}
-          onChange={(value, edit) => updateSourceInput(value, "", edit)}
-        />
+        {traceOpen && traceModel ? (
+          <MachineTraceExperience
+            model={traceModel}
+            traceView={traceView}
+            setTraceView={setTraceView}
+            selectedId={selectedTraceId}
+            hoveredId={hoveredTraceId}
+            onSelect={setSelectedTraceId}
+            onHover={setHoveredTraceId}
+            onPhase={setTracePhase}
+            onClose={() => setTraceOpen(false)}
+            onSourceSpan={(span) => {
+              setTraceOpen(false);
+              setEditorJump((current) => ({
+                start_byte: span.start,
+                end_byte: span.end,
+                nonce: (current?.nonce ?? 0) + 1,
+              }));
+            }}
+          />
+        ) : (
+          <SourceEditor
+            input={input}
+            captures={editorCaptures}
+            diagnostic={editorDiagnostic}
+            ide={result?.vix_ide ?? null}
+            jump={editorJump}
+            onCursorByte={(byte) => {
+              setSourceCursorByte(byte);
+              const hit = traceModel ? entityAtSourceByte(traceModel, byte) : null;
+              if (hit) {
+                setSelectedTraceId(hit.id);
+              }
+            }}
+            onChange={(value, edit) => updateSourceInput(value, "", edit)}
+          />
+        )}
 
         <ResultsDock
           result={result}
           machine={result?.vix_machine ?? null}
-          onMachineSpan={(span) =>
-            setEditorJump((current) => ({
-              start_byte: span.start,
-              end_byte: span.end,
-              nonce: (current?.nonce ?? 0) + 1,
-            }))
-          }
+          traceModel={traceModel}
+          sourceCursorByte={sourceCursorByte}
+          onOpenTrace={() => setTraceOpen(true)}
           onUseInput={(value, sourcePath = "") => updateSourceInput(value, sourcePath)}
           bench={{
             report: benchReport,
@@ -988,13 +1049,17 @@ type DockSection = {
 function ResultsDock({
   result,
   machine,
-  onMachineSpan,
+  traceModel,
+  sourceCursorByte,
+  onOpenTrace,
   onUseInput,
   bench,
 }: {
   result: PlaygroundResponse | null;
   machine: VixMachineRun | null;
-  onMachineSpan: (span: VixSpan) => void;
+  traceModel: TraceModel | null;
+  sourceCursorByte: number;
+  onOpenTrace: () => void;
   onUseInput: (value: string, sourcePath?: string) => void;
   bench: { report: BenchReport | null; running: boolean; progress: string; onRun: () => void };
 }) {
@@ -1017,23 +1082,6 @@ function ResultsDock({
   const maxTimingMs = timingRows.reduce((max, row) => Math.max(max, row.ms), 0) || 1;
 
   const sections: DockSection[] = [];
-
-  useEffect(() => {
-    if (machine && active === null) {
-      setActive("machine");
-    }
-  }, [active, machine]);
-
-  if (machine) {
-    sections.push({
-      id: "machine",
-      title: "Machine",
-      meta: machine.ok
-        ? `${machine.fn_name} · ${machine.cold_trace.length}/${machine.warm_trace.length} events`
-        : "blocked",
-      body: <MachineBody run={machine} onMachineSpan={onMachineSpan} />,
-    });
-  }
 
   if (timingRows.length) {
     sections.push({
@@ -1220,6 +1268,7 @@ function ResultsDock({
   });
 
   const activeSection = sections.find((section) => section.id === active) ?? null;
+  const sourceHit = traceModel ? entityAtSourceByte(traceModel, sourceCursorByte) : null;
 
   return (
     <div className="dock">
@@ -1241,6 +1290,21 @@ function ResultsDock({
         </div>
       ) : null}
 
+      {machine ? (
+        <div className="machine-summary-strip">
+          <span>{machine.ok ? `${machine.fn_name} · ${machine.cold_trace.length}/${machine.warm_trace.length} events` : `${machine.fn_name} blocked`}</span>
+          <code>
+            {machine.ok && traceModel
+              ? `${traceModel.runs.length} runs · ${traceModel.observations.length} observations`
+              : machine.error ?? "machine run failed"}
+          </code>
+          {sourceHit ? <small>source touches {sourceHit.label}</small> : null}
+          <button type="button" className="ghost" onClick={onOpenTrace} disabled={!machine.ok}>
+            Open trace
+          </button>
+        </div>
+      ) : null}
+
       <nav className="dock-bar" aria-label="Result panels">
         {sections.map((section) => (
           <button
@@ -1259,25 +1323,6 @@ function ResultsDock({
   );
 }
 
-type MachineNode = {
-  id: string;
-  label: string;
-  detail: string;
-  kind: "spawn" | "memo" | "run" | "ran" | "tier1" | "tier2" | "joined" | "observation" | "replayed" | "pending";
-  timeUs?: number;
-};
-
-type MachineEdge = {
-  from: string;
-  to: string;
-  label: string;
-};
-
-type MachineGraph = {
-  nodes: MachineNode[];
-  edges: MachineEdge[];
-};
-
 type MachineRunSummary = {
   runId: number;
   command: string;
@@ -1294,192 +1339,231 @@ type MachineRunSummary = {
   outputs: RunOutput[];
 };
 
-function MachineBody({ run, onMachineSpan }: { run: VixMachineRun; onMachineSpan: (span: VixSpan) => void }) {
-  const [warm, setWarm] = useState(false);
-  useEffect(() => {
-    setWarm(false);
-  }, [run.fn_name, run.source_kind]);
+type TracePhase = "cold" | "warm";
+type TraceView = "dag" | "timeline" | "runs";
+type TraceEntityKind = "invocation" | "run" | "observation" | "pending";
+type TraceVisual = "spawn" | "memo" | "run" | "ran" | "tier1" | "tier2" | "joined" | "observation" | "replayed" | "pending";
 
-  if (!run.ok) {
-    return (
-      <div className="machine-error">
-        <strong>{run.fn_name}</strong>
-        <code>{run.error ?? "machine run failed"}</code>
-      </div>
-    );
-  }
+type TraceEntity = {
+  id: string;
+  kind: TraceEntityKind;
+  visual: TraceVisual;
+  label: string;
+  detail: string;
+  startIndex: number;
+  endIndex: number;
+  startUs: number | null;
+  endUs: number | null;
+  span: VixSpan | null;
+  fnHash?: string;
+  keyHash?: string;
+  run?: MachineRunSummary;
+  observation?: Extract<VixDriveEvent, { type: "Observation" }>;
+  chips: string[];
+};
 
-  const trace = warm ? run.warm_trace : run.cold_trace;
-  const graph = machineGraph(run, trace, warm);
-  const fnLabels = labelMap(run.fn_hashes);
-  const runLabels = labelMap(run.run_hashes);
-  const runSummaries = runLifecycle(trace, runLabels);
-  const completedRuns = runLifecycle(run.cold_trace, runLabels).filter((event) => event.completedAt !== null);
+type TraceEdge = {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+  kind: "demand" | "spawn" | "run" | "await" | "observe" | "ref";
+};
+
+type TraceModel = {
+  phase: TracePhase;
+  fnName: string;
+  trace: VixDriveEvent[];
+  resultSummary: string[];
+  entities: Map<string, TraceEntity>;
+  invocations: TraceEntity[];
+  runs: TraceEntity[];
+  observations: TraceEntity[];
+  pending: TraceEntity[];
+  edges: TraceEdge[];
+  timelineEndUs: number;
+};
+
+type TraceProjectionProps = {
+  model: TraceModel;
+  selectedId: string | null;
+  hoveredId: string | null;
+  onSelect: (id: string) => void;
+  onHover: (id: string | null) => void;
+};
+
+function MachineTraceExperience({
+  model,
+  traceView,
+  setTraceView,
+  selectedId,
+  hoveredId,
+  onSelect,
+  onHover,
+  onPhase,
+  onClose,
+  onSourceSpan,
+}: {
+  model: TraceModel;
+  traceView: TraceView;
+  setTraceView: (view: TraceView) => void;
+  selectedId: string | null;
+  hoveredId: string | null;
+  onSelect: (id: string | null) => void;
+  onHover: (id: string | null) => void;
+  onPhase: (phase: TracePhase) => void;
+  onClose: () => void;
+  onSourceSpan: (span: VixSpan) => void;
+}) {
+  const activeEntity = selectedId ? model.entities.get(selectedId) ?? null : null;
+  const visibleEntity = (hoveredId ? model.entities.get(hoveredId) : null) ?? activeEntity ?? model.entities.values().next().value ?? null;
+
+  const projectionProps: TraceProjectionProps = {
+    model,
+    selectedId,
+    hoveredId,
+    onSelect,
+    onHover,
+  };
 
   return (
-    <div className="machine-panel">
-      <div className="machine-head">
-        <div className="machine-title">
-          <strong>{run.fn_name}</strong>
-          <span>{warm ? "warm" : "cold"} trace</span>
+    <div className="trace-takeover">
+      <header className="trace-head">
+        <div className="trace-title">
+          <strong>{model.fnName}</strong>
+          <span>{model.phase} machine trace</span>
         </div>
-        <button type="button" className="ghost" onClick={() => setWarm((current) => !current)}>
-          {warm ? "Cold trace" : "Demand again"}
-        </button>
-      </div>
+        <div className="trace-tabs" role="tablist" aria-label="Trace view">
+          {(["dag", "timeline", "runs"] as TraceView[]).map((view) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={traceView === view}
+              className={traceView === view ? "on" : ""}
+              key={view}
+              onClick={() => setTraceView(view)}
+            >
+              {view}
+            </button>
+          ))}
+        </div>
+        <div className="trace-actions">
+          <button type="button" className="ghost" onClick={() => onPhase(model.phase === "cold" ? "warm" : "cold")}>
+            {model.phase === "cold" ? "Demand again" : "Cold trace"}
+          </button>
+          <button type="button" className="ghost" onClick={onClose}>
+            Editor
+          </button>
+        </div>
+      </header>
 
-      <div className="machine-result">
-        {run.result?.tree_entries.length ? (
-          run.result.tree_entries.map((entry) => (
-            <code key={entry.path}>
-              {entry.path} = {entry.contents}
-            </code>
-          ))
-        ) : run.result?.f64_value != null ? (
-          <code>{run.result.f64_value}</code>
-        ) : (
-          <code>{run.result?.schema ?? "no result"}</code>
-        )}
-      </div>
-
-      <div className="machine-graph">
-        {graph.nodes.map((node) => (
-          <div className={`machine-node machine-node-${node.kind}`} key={node.id}>
-            <span>{node.label}</span>
-            <code>{node.detail}</code>
-            {node.timeUs != null ? <em>{formatTimestamp(node.timeUs)}</em> : null}
-          </div>
+      <div className="trace-result">
+        {model.resultSummary.map((entry) => (
+          <code key={entry}>{entry}</code>
         ))}
       </div>
 
-      {graph.edges.length ? (
-        <div className="machine-edges">
-          {graph.edges.map((edge) => (
-            <div className="machine-edge" key={`${edge.from}-${edge.to}-${edge.label}`}>
-              <code>{nodeLabel(graph, edge.from)}</code>
-              <span>{edge.label}</span>
-              <code>{nodeLabel(graph, edge.to)}</code>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {runSummaries.length ? (
-        <div className="machine-runs">
-          {runSummaries.map((event) => (
-            <div
-              className={`machine-run machine-run-${servingClass(event.serving)}`}
-              key={`run-${event.runId}`}
-            >
-              <span>run #{event.runId}</span>
-              <code>{event.outputLabel}</code>
-              <strong>{event.serving ? servingLabel(event.serving) : runStatus(event)}</strong>
-              <small>{runTimestamps(event)}</small>
-              {event.span ? (
-                <button type="button" className="machine-span-link" onClick={() => onMachineSpan(event.span!)}>
-                  span
-                </button>
-              ) : null}
-              <p>
-                {event.commandName}
-                {event.argv.length ? ` ${event.argv.join(" ")}` : ""}
-              </p>
-              {event.describe.length ? <p>{event.describe.join(" ")}</p> : null}
-              {event.outputs.length ? (
-                <div className="machine-run-outputs">
-                  {event.outputs.map((output) => (
-                    <code key={`${event.runId}-${output.path}-${output.hash}`}>
-                      {output.path} · {shortHash(output.hash)}
-                    </code>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="machine-observations">
-        {trace
-          .filter((event): event is Extract<VixDriveEvent, { type: "Observation" }> => event.type === "Observation")
-          .map((event, index) => (
-            <div
-              className={`machine-observation ${event.replayed ? "machine-observation-replayed" : "machine-observation-cold"}`}
-              key={`${event.key}-${event.timestamp_us}-${index}`}
-            >
-              <span>{event.replayed ? "replayed" : "cold"}</span>
-              <code>{event.key_text || shortHash(event.key)}</code>
-              <small>{formatTimestamp(event.timestamp_us)}</small>
-            </div>
-          ))}
+      <div className={`trace-work trace-work-${traceView}`}>
+        {traceView === "dag" ? <TraceDag {...projectionProps} /> : null}
+        {traceView === "timeline" ? <TraceTimeline {...projectionProps} /> : null}
+        {traceView === "runs" ? <TraceRuns {...projectionProps} onSourceSpan={onSourceSpan} /> : null}
+        <TraceDetail entity={visibleEntity} onSourceSpan={onSourceSpan} />
       </div>
-
-      <div className="machine-trace">
-        {trace.map((event, index) => (
-          <div className={`machine-trace-row machine-trace-${event.type}`} key={`${event.type}-${index}`}>
-            <span>{index + 1}</span>
-            <code>{formatDriveEvent(event, fnLabels, runLabels)}</code>
-            {eventTimestamp(event) != null ? <small>{formatTimestamp(eventTimestamp(event)!)}</small> : null}
-          </div>
-        ))}
-      </div>
-
-      {!warm && completedRuns.length ? (
-        <div className="machine-run-summary">
-          {completedRuns.map((event) => (
-            <code key={`completed-${event.runId}`}>{event.outputLabel}</code>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function machineGraph(run: VixMachineRun, trace: VixDriveEvent[], warm: boolean): MachineGraph {
+function buildTraceModel(run: VixMachineRun, phase: TracePhase): TraceModel {
+  const trace = phase === "warm" ? run.warm_trace : run.cold_trace;
   const fnLabels = labelMap(run.fn_hashes);
   const runLabels = labelMap(run.run_hashes);
   const runSummaries = new Map(runLifecycle(trace, runLabels).map((event) => [event.runId, event]));
-  const nodes: MachineNode[] = [];
-  const edges: MachineEdge[] = [];
-  let root: string | null = null;
-  let latestSpawn: string | null = null;
-  let latestObject: string | null = null;
+  const entities = new Map<string, TraceEntity>();
+  const invocations: TraceEntity[] = [];
+  const runs: TraceEntity[] = [];
+  const observations: TraceEntity[] = [];
+  const pending: TraceEntity[] = [];
+  const edges: TraceEdge[] = [];
+  let root: TraceEntity | null = null;
+  let latestInvocation: TraceEntity | null = null;
+  let latestObject: TraceEntity | null = null;
   const latestRunById = new Map<number, string>();
   const materializedOutputs = new Set<string>();
 
-  const addNode = (node: MachineNode) => {
-    nodes.push(node);
-    return node.id;
+  const addEntity = (entity: TraceEntity) => {
+    entities.set(entity.id, entity);
+    if (entity.kind === "invocation") invocations.push(entity);
+    if (entity.kind === "run") runs.push(entity);
+    if (entity.kind === "observation") observations.push(entity);
+    if (entity.kind === "pending") pending.push(entity);
+    return entity;
   };
-  const addEdge = (from: string | null, to: string, label: string) => {
-    if (from && from !== to && !edges.some((edge) => edge.from === from && edge.to === to && edge.label === label)) {
-      edges.push({ from, to, label });
+  const addEdge = (from: TraceEntity | null, to: TraceEntity, label: string, kind: TraceEdge["kind"]) => {
+    if (from && from.id !== to.id && !edges.some((edge) => edge.from === from.id && edge.to === to.id && edge.label === label)) {
+      edges.push({ id: `${from.id}-${to.id}-${label}`, from: from.id, to: to.id, label, kind });
     }
+  };
+  const latestByFn = new Map<string, TraceEntity[]>();
+  const pushInvocation = (event: Extract<VixDriveEvent, { fn_hash: string }>, index: number) => {
+    const label = fnLabels.get(event.fn_hash) ?? shortHash(event.fn_hash);
+    const entity = addEntity({
+      id: `inv-${index}`,
+      kind: "invocation",
+      visual: "spawn",
+      label,
+      detail: "demanded",
+      startIndex: index,
+      endIndex: index,
+      startUs: null,
+      endUs: null,
+      span: null,
+      fnHash: event.fn_hash,
+      chips: ["demand"],
+    });
+    latestByFn.set(event.fn_hash, [...(latestByFn.get(event.fn_hash) ?? []), entity]);
+    root ??= entity;
+    latestInvocation = entity;
+    if (label === "object") latestObject = entity;
+    return entity;
+  };
+  const openInvocation = (event: Extract<VixDriveEvent, { fn_hash: string }>, index: number) => {
+    const candidates = latestByFn.get(event.fn_hash) ?? [];
+    for (let i = candidates.length - 1; i >= 0; i -= 1) {
+      const entity = candidates[i];
+      if (!entity.chips.includes("complete") && !entity.chips.includes("memo")) {
+        return entity;
+      }
+    }
+    return pushInvocation(event, index);
   };
 
   trace.forEach((event, index) => {
-    if (event.type === "Spawned" || event.type === "MemoHit") {
-      const label = fnLabels.get(event.fn_hash) ?? event.fn_hash;
-      const id = addNode({
-        id: `${event.type}-${index}`,
-        label,
-        detail: event.type === "MemoHit" ? "memo hit" : "spawned",
-        kind: event.type === "MemoHit" ? "memo" : "spawn",
-      });
-      if (!root) {
-        root = id;
-      } else if (event.type === "Spawned") {
-        addEdge(root, id, warm ? "memo" : "demand");
+    if (event.type === "Demanded") {
+      const entity = pushInvocation(event, index);
+      addEdge(root && root.id !== entity.id ? root : null, entity, "demand", "demand");
+    } else if (event.type === "Spawned" || event.type === "MemoHit" || event.type === "ParkedOn" || event.type === "Completed") {
+      const entity = openInvocation(event, index);
+      entity.endIndex = index;
+      if (event.type === "Spawned") {
+        entity.detail = "spawned";
+        entity.visual = "spawn";
+        if (!entity.chips.includes("spawn")) entity.chips.push("spawn");
+        addEdge(root && root.id !== entity.id ? root : null, entity, phase === "warm" ? "memo" : "spawn", "spawn");
+      } else if (event.type === "MemoHit") {
+        entity.detail = "memo hit";
+        entity.visual = "memo";
+        entity.chips = [...new Set([...entity.chips, "memo"])];
+      } else if (event.type === "ParkedOn") {
+        entity.detail = "awaiting child";
+        entity.chips = [...new Set([...entity.chips, "await"])];
+      } else {
+        entity.detail = entity.visual === "memo" ? "memo hit" : "completed";
+        entity.chips = [...new Set([...entity.chips, "complete"])];
       }
-      latestSpawn = id;
-      if (label === "object") {
-        latestObject = id;
-      }
-    } else if (event.type === "SpawnedInvocation" && latestSpawn) {
-      const node = nodes.find((candidate) => candidate.id === latestSpawn);
-      if (node) {
-        node.detail = `key ${event.key_hash.slice(0, 8)}`;
-      }
+      latestInvocation = entity;
+    } else if (event.type === "SpawnedInvocation" && latestInvocation) {
+      latestInvocation.keyHash = event.key_hash;
+      latestInvocation.detail = `key ${shortHash(event.key_hash)}`;
     } else if (
       event.type === "RunRequested" ||
       event.type === "RunStarted" ||
@@ -1492,34 +1576,54 @@ function machineGraph(run: VixMachineRun, trace: VixDriveEvent[], warm: boolean)
         materializedOutputs.add(output.path);
       }
       const existing = latestRunById.get(event.run_id);
-      const id =
-        existing ??
-        addNode({
-          id: `run-${index}`,
+      let entity = existing ? entities.get(existing) ?? null : null;
+      if (!entity) {
+        entity = addEntity({
+          id: `run-${event.run_id}`,
+          kind: "run",
+          visual: summary?.serving ? servingClass(summary.serving) : "run",
           label: output,
           detail: summary ? `${summary.commandName} · ${runStatus(summary)}` : event.type.replace(/^Run/, "").toLowerCase(),
-          kind: summary?.serving ? servingClass(summary.serving) : "run",
-          timeUs: event.timestamp_us,
+          startIndex: index,
+          endIndex: index,
+          startUs: summary?.startedAt ?? summary?.requestedAt ?? event.timestamp_us,
+          endUs: summary?.completedAt ?? summary?.startedAt ?? summary?.requestedAt ?? event.timestamp_us,
+          span: summary?.span ?? null,
+          run: summary,
+          chips: summary?.serving ? [servingLabel(summary.serving)] : [runStatus(summary ?? emptyRunSummary(event, runLabels))],
         });
-      latestRunById.set(event.run_id, id);
-      const node = nodes.find((candidate) => candidate.id === id);
-      if (node) {
-        node.kind = summary?.serving ? servingClass(summary.serving) : "run";
-        node.detail = summary?.serving
+        latestRunById.set(event.run_id, entity.id);
+      }
+      if (summary) {
+        entity.run = summary;
+        entity.label = summary.outputLabel;
+        entity.visual = summary.serving ? servingClass(summary.serving) : "run";
+        entity.detail = summary.serving
           ? `${servingLabel(summary.serving)} · ${summary.commandName}`
           : event.type.replace(/^Run/, "").toLowerCase();
-        node.timeUs = event.timestamp_us;
+        entity.startUs = summary.startedAt ?? summary.requestedAt ?? event.timestamp_us;
+        entity.endUs = summary.completedAt ?? summary.startedAt ?? summary.requestedAt ?? event.timestamp_us;
+        entity.span = summary.span;
+        entity.chips = summary.serving ? [servingLabel(summary.serving)] : [runStatus(summary)];
       }
-      addEdge(latestObject ?? latestSpawn ?? root, id, "run");
+      entity.endIndex = index;
+      addEdge(latestObject ?? latestInvocation ?? root, entity, "run", "run");
     } else if (event.type === "Observation") {
-      const id = addNode({
+      const entity = addEntity({
         id: `observation-${index}`,
+        kind: "observation",
+        visual: event.replayed ? "replayed" : "observation",
         label: event.replayed ? "observe replay" : "observe",
         detail: event.key_text || shortHash(event.key),
-        kind: event.replayed ? "replayed" : "observation",
-        timeUs: event.timestamp_us,
+        startIndex: index,
+        endIndex: index,
+        startUs: event.timestamp_us,
+        endUs: event.timestamp_us,
+        span: null,
+        observation: event,
+        chips: [event.replayed ? "replayed" : "cold"],
       });
-      addEdge(latestSpawn ?? root, id, event.replayed ? "replay" : "observe");
+      addEdge(latestInvocation ?? root, entity, event.replayed ? "replay" : "observe", "observe");
     }
   });
 
@@ -1527,16 +1631,211 @@ function machineGraph(run: VixMachineRun, trace: VixDriveEvent[], warm: boolean)
     if (materializedOutputs.has(pending)) {
       continue;
     }
-    const id = addNode({
+    const entity = addEntity({
       id: `pending-${pending}`,
-      label: pending,
-      detail: "PENDING",
       kind: "pending",
+      visual: "pending",
+      label: pending,
+      detail: "present, never lit",
+      startIndex: trace.length,
+      endIndex: trace.length,
+      startUs: null,
+      endUs: null,
+      span: null,
+      chips: ["PENDING"],
     });
-    addEdge(root, id, "ref");
+    addEdge(root, entity, "ref", "ref");
   }
 
-  return { nodes, edges };
+  return {
+    phase,
+    fnName: run.fn_name,
+    trace,
+    resultSummary: machineResultSummary(run),
+    entities,
+    invocations,
+    runs,
+    observations,
+    pending,
+    edges,
+    timelineEndUs: Math.max(1, ...trace.map((event, index) => eventTimestamp(event) ?? index)),
+  };
+}
+
+function TraceDag({ model, selectedId, hoveredId, onSelect, onHover }: TraceProjectionProps) {
+  const layout = layoutTraceDag(model);
+  return (
+    <div className="trace-dag" style={{ minWidth: layout.width, minHeight: layout.height }}>
+      <svg className="trace-dag-lines" width={layout.width} height={layout.height} aria-hidden="true">
+        {model.edges.map((edge) => {
+          const from = layout.nodes.get(edge.from);
+          const to = layout.nodes.get(edge.to);
+          if (!from || !to) return null;
+          const x1 = from.x + from.width;
+          const y1 = from.y + from.height / 2;
+          const x2 = to.x;
+          const y2 = to.y + to.height / 2;
+          const mid = x1 + Math.max(36, (x2 - x1) / 2);
+          return (
+            <g className={`trace-edge trace-edge-${edge.kind}`} key={edge.id}>
+              <path d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`} />
+              <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 5}>{edge.label}</text>
+            </g>
+          );
+        })}
+      </svg>
+      {Array.from(model.entities.values()).map((entity) => {
+        const at = layout.nodes.get(entity.id);
+        if (!at) return null;
+        return (
+          <TraceEntityButton
+            entity={entity}
+            model={model}
+            selectedId={selectedId}
+            hoveredId={hoveredId}
+            onSelect={onSelect}
+            onHover={onHover}
+            className="trace-dag-node"
+            style={{ transform: `translate(${at.x}px, ${at.y}px)`, width: at.width, height: at.height }}
+            key={entity.id}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function TraceTimeline({ model, selectedId, hoveredId, onSelect, onHover }: TraceProjectionProps) {
+  const lanes = timelineLanes(model);
+  return (
+    <div className="trace-timeline">
+      {lanes.map((lane) => (
+        <div className="trace-lane" key={lane.name}>
+          <span>{lane.name}</span>
+          <div className="trace-lane-track">
+            {lane.entities.map((entity) => {
+              const [left, width] = timelineRange(model, entity);
+              return (
+                <button
+                  type="button"
+                  className={traceEntityClass(entity, model, selectedId, hoveredId)}
+                  style={{ left: `${left}%`, width: `${width}%` }}
+                  key={entity.id}
+                  onClick={() => onSelect(entity.id)}
+                  onMouseEnter={() => onHover(entity.id)}
+                  onMouseLeave={() => onHover(null)}
+                  title={`${entity.label}: ${entity.detail}`}
+                >
+                  <span>{entity.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TraceRuns({ model, selectedId, hoveredId, onSelect, onHover, onSourceSpan }: TraceProjectionProps & { onSourceSpan: (span: VixSpan) => void }) {
+  return (
+    <div className="trace-runs">
+      {model.runs.map((entity) => {
+        const run = entity.run;
+        return (
+          <button
+            type="button"
+            className={traceEntityClass(entity, model, selectedId, hoveredId)}
+            key={entity.id}
+            onClick={() => onSelect(entity.id)}
+            onMouseEnter={() => onHover(entity.id)}
+            onMouseLeave={() => onHover(null)}
+          >
+            <span>run #{run?.runId ?? "?"}</span>
+            <code>{entity.label}</code>
+            <strong>{run?.serving ? servingLabel(run.serving) : run ? runStatus(run) : entity.detail}</strong>
+            <small>{run ? runTimestamps(run) : ""}</small>
+            {entity.span ? (
+              <span
+                className="trace-source-chip"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSourceSpan(entity.span!);
+                }}
+              >
+                source
+              </span>
+            ) : null}
+            <p>{run ? `${run.commandName} ${run.argv.join(" ")}` : entity.detail}</p>
+            {run?.describe.length ? <p>{run.describe.join(" ")}</p> : null}
+          </button>
+        );
+      })}
+      {model.runs.length === 0 ? <p className="empty">No runs materialized in this trace.</p> : null}
+    </div>
+  );
+}
+
+function TraceDetail({ entity, onSourceSpan }: { entity: TraceEntity | null; onSourceSpan: (span: VixSpan) => void }) {
+  if (!entity) {
+    return <aside className="trace-detail"><p className="empty">No trace entity selected.</p></aside>;
+  }
+  return (
+    <aside className="trace-detail">
+      <div className="trace-detail-head">
+        <span>{entity.kind}</span>
+        <strong>{entity.label}</strong>
+      </div>
+      <p>{entity.detail}</p>
+      <div className="trace-chip-row">
+        {entity.chips.map((chip) => (
+          <code key={chip}>{chip}</code>
+        ))}
+        {entity.startUs !== null ? <code>{formatTimestamp(entity.startUs)}</code> : null}
+      </div>
+      {entity.keyHash ? <code>key {shortHash(entity.keyHash)}</code> : null}
+      {entity.run ? (
+        <>
+          <code>{entity.run.commandName} {entity.run.argv.join(" ")}</code>
+          {entity.run.outputs.map((output) => (
+            <code key={`${entity.id}-${output.path}`}>{output.path} · {shortHash(output.hash)}</code>
+          ))}
+        </>
+      ) : null}
+      {entity.observation ? <code>{entity.observation.key_text}</code> : null}
+      {entity.span ? (
+        <button type="button" className="btn" onClick={() => onSourceSpan(entity.span!)}>
+          Source span
+        </button>
+      ) : null}
+    </aside>
+  );
+}
+
+function TraceEntityButton({
+  entity,
+  model,
+  selectedId,
+  hoveredId,
+  onSelect,
+  onHover,
+  className,
+  style,
+}: TraceProjectionProps & { entity: TraceEntity; className: string; style?: CSSProperties }) {
+  return (
+    <button
+      type="button"
+      className={`${className} ${traceEntityClass(entity, model, selectedId, hoveredId)}`}
+      style={style}
+      onClick={() => onSelect(entity.id)}
+      onMouseEnter={() => onHover(entity.id)}
+      onMouseLeave={() => onHover(null)}
+    >
+      <span>{entity.label}</span>
+      <code>{entity.detail}</code>
+      {entity.chips.length ? <small>{entity.chips.join(" · ")}</small> : null}
+    </button>
+  );
 }
 
 function pendingOutputs(run: VixMachineRun): string[] {
@@ -1547,6 +1846,148 @@ function pendingOutputs(run: VixMachineRun): string[] {
     return ["left.o"];
   }
   return ["left.o"];
+}
+
+function layoutTraceDag(model: TraceModel): {
+  nodes: Map<string, { x: number; y: number; width: number; height: number }>;
+  width: number;
+  height: number;
+} {
+  const ranks = new Map<string, number>();
+  for (const entity of model.entities.values()) {
+    ranks.set(entity.id, entity.kind === "pending" ? 3 : Math.floor(entity.startIndex / 4));
+  }
+  for (let pass = 0; pass < model.entities.size; pass += 1) {
+    let changed = false;
+    for (const edge of model.edges) {
+      const from = ranks.get(edge.from) ?? 0;
+      const to = ranks.get(edge.to) ?? 0;
+      if (to <= from) {
+        ranks.set(edge.to, from + 1);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  const lanes = new Map<number, TraceEntity[]>();
+  for (const entity of model.entities.values()) {
+    const rank = ranks.get(entity.id) ?? 0;
+    lanes.set(rank, [...(lanes.get(rank) ?? []), entity]);
+  }
+  for (const lane of lanes.values()) {
+    lane.sort((left, right) => left.startIndex - right.startIndex || left.label.localeCompare(right.label));
+  }
+
+  const nodes = new Map<string, { x: number; y: number; width: number; height: number }>();
+  let width = 0;
+  let height = 0;
+  const nodeWidth = 176;
+  const nodeHeight = 62;
+  const xGap = 72;
+  const yGap = 24;
+  for (const [rank, lane] of lanes) {
+    const x = 24 + rank * (nodeWidth + xGap);
+    width = Math.max(width, x + nodeWidth + 24);
+    lane.forEach((entity, index) => {
+      const y = 24 + index * (nodeHeight + yGap);
+      height = Math.max(height, y + nodeHeight + 24);
+      nodes.set(entity.id, { x, y, width: nodeWidth, height: nodeHeight });
+    });
+  }
+  return { nodes, width: Math.max(width, 720), height: Math.max(height, 420) };
+}
+
+function timelineLanes(model: TraceModel): Array<{ name: string; entities: TraceEntity[] }> {
+  const lanes = new Map<string, TraceEntity[]>();
+  const push = (name: string, entity: TraceEntity) => lanes.set(name, [...(lanes.get(name) ?? []), entity]);
+  for (const entity of model.invocations) {
+    push(`fn ${entity.label}`, entity);
+  }
+  for (const entity of model.runs) {
+    push(`cmd ${entity.run?.commandName ?? entity.label}`, entity);
+  }
+  for (const entity of model.observations) {
+    push("observations", entity);
+  }
+  for (const entity of model.pending) {
+    push("pending refs", entity);
+  }
+  return Array.from(lanes.entries()).map(([name, entities]) => ({
+    name,
+    entities: entities.sort((left, right) => left.startIndex - right.startIndex),
+  }));
+}
+
+function timelineRange(model: TraceModel, entity: TraceEntity): [number, number] {
+  const start = entity.startUs ?? eventIndexAsTime(model, entity.startIndex);
+  const end = entity.endUs ?? eventIndexAsTime(model, entity.endIndex);
+  const left = Math.max(0, Math.min(98, (start / model.timelineEndUs) * 100));
+  const width = entity.startUs === entity.endUs || start === end
+    ? 1.2
+    : Math.max(1.2, ((end - start) / model.timelineEndUs) * 100);
+  return [left, Math.min(width, 100 - left)];
+}
+
+function eventIndexAsTime(model: TraceModel, index: number): number {
+  if (model.trace.length <= 1) return 0;
+  return (Math.max(0, index) / (model.trace.length - 1)) * model.timelineEndUs;
+}
+
+function traceEntityClass(
+  entity: TraceEntity,
+  model: TraceModel,
+  selectedId: string | null,
+  hoveredId: string | null,
+): string {
+  const focusId = hoveredId ?? selectedId;
+  const selected = selectedId === entity.id ? " selected" : "";
+  const hovered = hoveredId === entity.id ? " hovered" : "";
+  const related = focusId && focusId !== entity.id && entitiesRelated(model, focusId, entity.id) ? " related" : "";
+  const dimmed = focusId && focusId !== entity.id && !related ? " dimmed" : "";
+  return `trace-entity trace-${entity.visual}${selected}${hovered}${related}${dimmed}`;
+}
+
+function entitiesRelated(model: TraceModel, left: string, right: string): boolean {
+  return model.edges.some((edge) => (edge.from === left && edge.to === right) || (edge.from === right && edge.to === left));
+}
+
+function entityAtSourceByte(model: TraceModel, byte: number): TraceEntity | null {
+  return (
+    Array.from(model.entities.values()).find((entity) => entity.span && entity.span.start <= byte && byte <= entity.span.end) ??
+    null
+  );
+}
+
+function machineResultSummary(run: VixMachineRun): string[] {
+  if (run.result?.tree_entries.length) {
+    return run.result.tree_entries.map((entry) => `${entry.path} = ${entry.contents}`);
+  }
+  if (run.result?.f64_value != null) {
+    return [String(run.result.f64_value)];
+  }
+  return [run.result?.schema ?? "no result"];
+}
+
+function emptyRunSummary(
+  event: Extract<VixDriveEvent, { type: "RunRequested" | "RunStarted" | "RunCompleted" }>,
+  labels: Map<string, string>,
+): MachineRunSummary {
+  return {
+    runId: event.run_id,
+    command: event.command,
+    commandName: event.command_name,
+    output: event.output,
+    outputLabel: labels.get(event.output) ?? event.output,
+    argv: [],
+    describe: [],
+    span: null,
+    requestedAt: null,
+    startedAt: null,
+    completedAt: null,
+    serving: null,
+    outputs: [],
+  };
 }
 
 function runLifecycle(trace: VixDriveEvent[], labels: Map<string, string>): MachineRunSummary[] {
@@ -1656,7 +2097,7 @@ function servingLabel(serving: VixExecServing): string {
   return serving.type;
 }
 
-function servingClass(serving: VixExecServing | null): MachineNode["kind"] {
+function servingClass(serving: VixExecServing | null): TraceVisual {
   switch (serving?.type) {
     case "Ran":
       return "ran";
@@ -1696,10 +2137,6 @@ function shortHash(hash: string): string {
 
 function labelMap(labels: HashLabel[]): Map<string, string> {
   return new Map(labels.map((entry) => [entry.hash, entry.label]));
-}
-
-function nodeLabel(graph: MachineGraph, id: string): string {
-  return graph.nodes.find((node) => node.id === id)?.label ?? id;
 }
 
 function PlanBody({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | null }) {
