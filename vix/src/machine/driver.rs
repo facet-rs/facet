@@ -27,6 +27,7 @@
 //! marks with node identities.
 
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 use std::sync::Arc;
@@ -68,6 +69,9 @@ pub const PENDING_INVOKE_HOST: u32 = 17;
 pub const FETCH_HOST: u32 = 18;
 pub const ARRAY_FILTER_EXCLUDE_HOST: u32 = 19;
 pub const GLOB_HOST: u32 = 20;
+pub const DOC_PARSE_HOST: u32 = 21;
+pub const DOC_GET_HOST: u32 = 22;
+pub const DOC_COERCE_HOST: u32 = 23;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -204,6 +208,19 @@ struct FetchRequest {
 }
 
 #[derive(Clone, Debug)]
+struct DocParseRequest {
+    input_slot: usize,
+    kind: DocParseKind,
+    input: i64,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DocParseKind {
+    Toml,
+    Json,
+}
+
+#[derive(Clone, Debug)]
 struct OptionUnwrapRequest {
     input_slot: usize,
     realization_slot: Option<usize>,
@@ -326,6 +343,8 @@ impl LaneTask {
 
 type ContentHash = [u8; 32];
 type CanonMemoKey = (u64, Vec<ContentHash>);
+#[cfg(test)]
+pub type MapWordRow = (String, i64, String, i64, Option<i64>);
 
 #[derive(Clone, Debug)]
 pub struct StoreEntry {
@@ -366,7 +385,10 @@ struct PendingInvocation {
 
 #[derive(Clone, Debug)]
 enum ArrayEntry {
-    Words(Vec<i64>),
+    Words {
+        elem_schema: String,
+        words: Vec<i64>,
+    },
     Pending(Vec<i64>),
 }
 
@@ -492,8 +514,9 @@ impl ValueStore {
         schema: &str,
         pairs: Vec<MapPair>,
         schema_refs: &[String],
+        descriptors: &HashMap<String, Descriptor<String>>,
     ) -> Result<(i64, bool), String> {
-        let ordered = canonical_map_pairs(self, pairs);
+        let ordered = canonical_map_pairs(self, pairs, descriptors, schema_refs)?;
         let bytes = encode_map_pairs(&ordered, schema_refs)?;
         let content_hash = hash_map_pairs(schema, &ordered);
         Ok(self.alloc_with_hash(schema, bytes, content_hash))
@@ -704,9 +727,15 @@ impl ValueStore {
         (handle, false)
     }
 
-    fn alloc_array_words(&mut self, words: Vec<i64>) -> (i64, bool) {
-        let mut bytes = Vec::with_capacity(16 + words.len() * 8);
+    fn alloc_array_words(
+        &mut self,
+        elem_schema: &str,
+        words: Vec<i64>,
+        schema_refs: &[String],
+    ) -> Result<(i64, bool), String> {
+        let mut bytes = Vec::with_capacity(24 + words.len() * 8);
         bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&schema_ref_for(elem_schema, schema_refs)?.to_le_bytes());
         bytes.extend_from_slice(
             &i64::try_from(words.len())
                 .expect("array length fits i64")
@@ -717,20 +746,17 @@ impl ValueStore {
         }
         let mut hasher = Sha256::new();
         hasher.update(b"vix-array-words");
+        hasher.update(elem_schema.as_bytes());
         hasher.update(
             i64::try_from(words.len())
                 .expect("array length fits i64")
                 .to_le_bytes(),
         );
         for word in &words {
-            let entry = self
-                .entry(*word)
-                .unwrap_or_else(|| panic!("array element handle {word}"));
-            hasher.update(entry.schema.as_bytes());
-            hasher.update(entry.content_hash);
+            hasher.update(canonical_word_hash_in_store(self, elem_schema, *word));
         }
         let content_hash = hasher.finalize().into();
-        self.alloc_with_hash("Array", bytes, content_hash)
+        Ok(self.alloc_with_hash("Array", bytes, content_hash))
     }
 
     fn alloc_pending(&mut self, value_schema: &str, invocation: PendingInvocation) -> (i64, bool) {
@@ -761,7 +787,7 @@ impl ValueStore {
         self.alloc_with_hash("Array", bytes, content_hash)
     }
 
-    fn array_entry(&self, handle: i64) -> Result<ArrayEntry, String> {
+    fn array_entry(&self, handle: i64, schema_refs: &[String]) -> Result<ArrayEntry, String> {
         let entry = self
             .entry(handle)
             .ok_or_else(|| format!("store handle {handle}"))?;
@@ -771,20 +797,22 @@ impl ValueStore {
         let kind = read_frame_word(&entry.bytes, 0);
         match kind {
             0 => {
-                let count =
-                    usize::try_from(read_frame_word(&entry.bytes, 8)).map_err(|_| "array count")?;
-                let expected = 16 + count * 8;
+                let count = usize::try_from(read_frame_word(&entry.bytes, 16))
+                    .map_err(|_| "array count")?;
+                let expected = 24 + count * 8;
                 if entry.bytes.len() != expected {
                     return Err(format!(
                         "Array words entry has {} bytes, expected {expected}",
                         entry.bytes.len()
                     ));
                 }
-                Ok(ArrayEntry::Words(
-                    (0..count)
-                        .map(|i| read_frame_word(&entry.bytes, 16 + i * 8))
+                let elem_schema = schema_name_for(read_frame_word(&entry.bytes, 8), schema_refs)?;
+                Ok(ArrayEntry::Words {
+                    elem_schema,
+                    words: (0..count)
+                        .map(|i| read_frame_word(&entry.bytes, 24 + i * 8))
                         .collect(),
-                ))
+                })
             }
             1 => Ok(ArrayEntry::Pending(decode_handle_list(&entry.bytes)?)),
             other => Err(format!("unknown Array kind {other}")),
@@ -1006,10 +1034,7 @@ impl Driver {
     }
 
     #[cfg(test)]
-    pub fn map_words(
-        &self,
-        handle: i64,
-    ) -> Result<Vec<(String, i64, String, i64, Option<i64>)>, String> {
+    pub fn map_words(&self, handle: i64) -> Result<Vec<MapWordRow>, String> {
         let (_, pairs) = self.store.borrow().map_pairs(handle, &self.schema_refs)?;
         Ok(pairs
             .into_iter()
@@ -1023,6 +1048,26 @@ impl Driver {
                 )
             })
             .collect())
+    }
+
+    #[cfg(test)]
+    pub fn array_words(&self, handle: i64) -> Result<(String, Vec<i64>), String> {
+        match self.store.borrow().array_entry(handle, &self.schema_refs)? {
+            ArrayEntry::Words { elem_schema, words } => Ok((elem_schema, words)),
+            ArrayEntry::Pending(_) => Err("array is pending".into()),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn compare_store_words(&self, schema: &str, a: i64, b: i64) -> Result<Ordering, String> {
+        compare_words(
+            &self.store.borrow(),
+            &self.descriptors,
+            &self.schema_refs,
+            schema,
+            a,
+            b,
+        )
     }
 
     pub fn tree_entries(&mut self, handle: i64) -> Result<BTreeMap<String, String>, String> {
@@ -1139,6 +1184,7 @@ impl Driver {
                     project_requests,
                     exec_requests,
                     fetch_requests,
+                    doc_parse_requests,
                     option_unwraps,
                     pending_coercions,
                     pending_invokes,
@@ -1159,6 +1205,19 @@ impl Driver {
                     }
                     for req in fetch_requests {
                         match self.fetch_request(req) {
+                            Ok((input_slot, value)) => {
+                                if exec.ready.len() <= input_slot {
+                                    exec.ready.resize(input_slot + 1, false);
+                                    exec.awaited.resize(input_slot + 1, 0);
+                                }
+                                exec.ready[input_slot] = true;
+                                exec.awaited[input_slot] = value;
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    for req in doc_parse_requests {
+                        match self.doc_parse_request(req) {
                             Ok((input_slot, value)) => {
                                 if exec.ready.len() <= input_slot {
                                     exec.ready.resize(input_slot + 1, false);
@@ -1313,6 +1372,7 @@ impl Driver {
             let mut project_requests: Vec<ProjectRequest> = Vec::new();
             let mut exec_requests: Vec<ExecRequest> = Vec::new();
             let mut fetch_requests: Vec<FetchRequest> = Vec::new();
+            let mut doc_parse_requests: Vec<DocParseRequest> = Vec::new();
             let mut option_unwraps: Vec<OptionUnwrapRequest> = Vec::new();
             let mut pending_coercions: Vec<PendingCoerceRequest> = Vec::new();
             let mut pending_invokes: Vec<PendingInvokeRequest> = Vec::new();
@@ -1415,10 +1475,12 @@ impl Driver {
                         read_frame_word(frame, store_alloc_region + 8),
                         schema_refs,
                     )?;
-                    let (handle, deduped) =
-                        store_cell
-                            .borrow_mut()
-                            .alloc_map(&schema, Vec::new(), schema_refs)?;
+                    let (handle, deduped) = store_cell.borrow_mut().alloc_map(
+                        &schema,
+                        Vec::new(),
+                        schema_refs,
+                        descriptors,
+                    )?;
                     write_frame_word(frame, dst_slot, handle);
                     store_events.borrow_mut().push(DriveEvent::StoreAlloc {
                         schema_ref: hash_u64(&schema),
@@ -1476,10 +1538,12 @@ impl Driver {
                         value_realization: realized_value_schema(&value_schema)
                             .map(|_| value_realization),
                     });
-                    let (handle, deduped) =
-                        store_cell
-                            .borrow_mut()
-                            .alloc_map(&map_schema, pairs, schema_refs)?;
+                    let (handle, deduped) = store_cell.borrow_mut().alloc_map(
+                        &map_schema,
+                        pairs,
+                        schema_refs,
+                        descriptors,
+                    )?;
                     write_frame_word(frame, dst_slot, handle);
                     store_events.borrow_mut().push(DriveEvent::StoreAlloc {
                         schema_ref: hash_u64(&map_schema),
@@ -1575,13 +1639,26 @@ impl Driver {
             };
 
             let mut array_alloc = |frame: &mut [u8]| {
-                let dst_slot = read_frame_word(frame, primitive_region) as usize;
-                let count = read_frame_word(frame, primitive_region + 16) as usize;
-                let words = (0..count)
-                    .map(|i| read_frame_word(frame, primitive_region + 24 + i * 8))
-                    .collect();
-                let (handle, _) = store_cell.borrow_mut().alloc_array_words(words);
-                write_frame_word(frame, dst_slot, handle);
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let elem_schema =
+                        schema_name_for(read_frame_word(frame, primitive_region + 8), schema_refs)?;
+                    let count = usize::try_from(read_frame_word(frame, primitive_region + 16))
+                        .map_err(|_| "negative array length".to_string())?;
+                    let words = (0..count)
+                        .map(|i| read_frame_word(frame, primitive_region + 24 + i * 8))
+                        .collect();
+                    let (handle, _) = store_cell.borrow_mut().alloc_array_words(
+                        &elem_schema,
+                        words,
+                        schema_refs,
+                    )?;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
             };
 
             let mut array_map_pending = |frame: &mut [u8]| {
@@ -1598,8 +1675,8 @@ impl Driver {
                             Ok((read_frame_word(frame, at), read_frame_word(frame, at + 8)))
                         })
                         .collect::<Result<Vec<_>, String>>()?;
-                    let words = match store_cell.borrow().array_entry(array_handle)? {
-                        ArrayEntry::Words(words) => words,
+                    let words = match store_cell.borrow().array_entry(array_handle, schema_refs)? {
+                        ArrayEntry::Words { words, .. } => words,
                         ArrayEntry::Pending(_) => {
                             return Err("map over pending array is outside slice 4".into());
                         }
@@ -1636,14 +1713,39 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array_handle = read_frame_word(frame, primitive_region + 8);
-                    let pending = match store_cell.borrow().array_entry(array_handle)? {
-                        ArrayEntry::Pending(pending) => pending,
-                        ArrayEntry::Words(_) => {
-                            return Err("collect over scalar array is outside slice 4".into());
+                    let array_entry =
+                        { store_cell.borrow().array_entry(array_handle, schema_refs)? };
+                    match array_entry {
+                        ArrayEntry::Pending(pending) => {
+                            let (handle, _) = store_cell.borrow_mut().alloc_tree_merge(pending);
+                            write_frame_word(frame, dst_slot, handle);
                         }
-                    };
-                    let (handle, _) = store_cell.borrow_mut().alloc_tree_merge(pending);
-                    write_frame_word(frame, dst_slot, handle);
+                        ArrayEntry::Words {
+                            elem_schema,
+                            mut words,
+                        } => {
+                            words.sort_by(|a, b| {
+                                {
+                                    let store = store_cell.borrow();
+                                    compare_words(
+                                        &store,
+                                        descriptors,
+                                        schema_refs,
+                                        &elem_schema,
+                                        *a,
+                                        *b,
+                                    )
+                                }
+                                .expect("array collect comparison")
+                            });
+                            let (handle, _) = store_cell.borrow_mut().alloc_array_words(
+                                &elem_schema,
+                                words,
+                                schema_refs,
+                            )?;
+                            write_frame_word(frame, dst_slot, handle);
+                        }
+                    }
                     Ok(())
                 })();
                 if let Err(err) = result {
@@ -1725,6 +1827,57 @@ impl Driver {
                 });
             };
 
+            let mut doc_parse_host = |frame: &mut [u8]| {
+                let input_slot = read_frame_word(frame, primitive_region) as usize;
+                let kind = match read_frame_word(frame, primitive_region + 8) {
+                    0 => DocParseKind::Toml,
+                    1 => DocParseKind::Json,
+                    other => {
+                        *host_error.borrow_mut() =
+                            Some(format!("unknown document parser kind {other}"));
+                        return;
+                    }
+                };
+                let input = read_frame_word(frame, primitive_region + 16);
+                doc_parse_requests.push(DocParseRequest {
+                    input_slot,
+                    kind,
+                    input,
+                });
+            };
+
+            let mut doc_get_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let doc = read_frame_word(frame, primitive_region + 8);
+                    let key = read_frame_word(frame, primitive_region + 16);
+                    let key = store_cell.borrow().string_value(key, "String")?;
+                    let (handle, _) = doc_get(store_cell, descriptors, schema_refs, doc, &key)?;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut doc_coerce_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let doc = read_frame_word(frame, primitive_region + 8);
+                    let schema = schema_name_for(
+                        read_frame_word(frame, primitive_region + 16),
+                        schema_refs,
+                    )?;
+                    let word = doc_coerce(store_cell, descriptors, doc, &schema)?;
+                    write_frame_word(frame, dst_slot, word);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut array_filter_exclude = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -1737,12 +1890,13 @@ impl Driver {
                             store_cell.borrow().string_value(handle, "Path")
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let words = match store_cell.borrow().array_entry(array_handle)? {
-                        ArrayEntry::Words(words) => words,
-                        ArrayEntry::Pending(_) => {
-                            return Err("filter over pending array is outside B4".into());
-                        }
-                    };
+                    let (elem_schema, words) =
+                        match store_cell.borrow().array_entry(array_handle, schema_refs)? {
+                            ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+                            ArrayEntry::Pending(_) => {
+                                return Err("filter over pending array is outside B4".into());
+                            }
+                        };
                     let kept = words
                         .into_iter()
                         .filter_map(|word| {
@@ -1750,7 +1904,11 @@ impl Driver {
                             (!excluded.iter().any(|excluded| excluded == &path)).then_some(word)
                         })
                         .collect();
-                    let (handle, _) = store_cell.borrow_mut().alloc_array_words(kept);
+                    let (handle, _) = store_cell.borrow_mut().alloc_array_words(
+                        &elem_schema,
+                        kept,
+                        schema_refs,
+                    )?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -1790,7 +1948,10 @@ impl Driver {
                                 .0
                         })
                         .collect();
-                    let (handle, _) = store_cell.borrow_mut().alloc_array_words(words);
+                    let (handle, _) =
+                        store_cell
+                            .borrow_mut()
+                            .alloc_array_words("Path", words, schema_refs)?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -1868,7 +2029,7 @@ impl Driver {
                 });
             };
 
-            let mut hosts: [HostFn<'_>; 21] = [
+            let mut hosts: [HostFn<'_>; 24] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -1890,6 +2051,9 @@ impl Driver {
                 &mut fetch_host,
                 &mut array_filter_exclude,
                 &mut glob_host,
+                &mut doc_parse_host,
+                &mut doc_get_host,
+                &mut doc_coerce_host,
             ];
             let step = exec
                 .task
@@ -1920,6 +2084,7 @@ impl Driver {
                         project_requests,
                         exec_requests,
                         fetch_requests,
+                        doc_parse_requests,
                         option_unwraps,
                         pending_coercions,
                         pending_invokes,
@@ -2309,8 +2474,8 @@ impl Driver {
             "Path" | "String" | "Flag" => {
                 argv.push(String::from_utf8(entry.bytes).map_err(|err| err.to_string())?);
             }
-            "Array" => match { self.store.borrow().array_entry(word)? } {
-                ArrayEntry::Words(words) => {
+            "Array" => match { self.store.borrow().array_entry(word, &self.schema_refs)? } {
+                ArrayEntry::Words { words, .. } => {
                     for word in words {
                         self.splice_word_into_command(word, argv, mounts)?;
                     }
@@ -2375,6 +2540,41 @@ impl Driver {
         let handle = self.store.borrow_mut().alloc_tree_concrete(tree).0;
         Ok((req.input_slot, handle))
     }
+
+    fn doc_parse_request(&mut self, req: DocParseRequest) -> Result<(usize, i64), String> {
+        let input = self.document_input_value(req.input)?;
+        let value = match req.kind {
+            DocParseKind::Toml => crate::data::parse_toml(input)?,
+            DocParseKind::Json => crate::data::parse_json(input)?,
+        };
+        let handle =
+            alloc_doc_from_value(&self.store, &self.descriptors, &self.schema_refs, value)?;
+        Ok((req.input_slot, handle))
+    }
+
+    fn document_input_value(&mut self, handle: i64) -> Result<crate::oracle::Value, String> {
+        let entry = self
+            .store
+            .borrow()
+            .entry(handle)
+            .cloned()
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        match entry.schema.as_str() {
+            "String" => Ok(crate::oracle::Value::Str(
+                String::from_utf8(entry.bytes).map_err(|err| err.to_string())?,
+            )),
+            "Tree" => {
+                let forced = self.force_tree_handle(handle)?;
+                let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
+                    return Err("document parser input tree stayed pending".into());
+                };
+                Ok(crate::oracle::Value::Tree(tree))
+            }
+            other => Err(format!(
+                "document parser input must be String or Tree, got {other}"
+            )),
+        }
+    }
 }
 
 enum Burst {
@@ -2384,6 +2584,7 @@ enum Burst {
         project_requests: Vec<ProjectRequest>,
         exec_requests: Vec<ExecRequest>,
         fetch_requests: Vec<FetchRequest>,
+        doc_parse_requests: Vec<DocParseRequest>,
         option_unwraps: Vec<OptionUnwrapRequest>,
         pending_coercions: Vec<PendingCoerceRequest>,
         pending_invokes: Vec<PendingInvokeRequest>,
@@ -2396,6 +2597,483 @@ fn hash_u64(value: impl Hash) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut h);
     std::hash::Hasher::finish(&h)
+}
+
+#[derive(Clone, Debug)]
+enum DocPayload {
+    Null,
+    Bool(i64),
+    Int(i64),
+    Float(i64),
+    String(i64),
+    Array(i64),
+    Map(i64),
+}
+
+fn alloc_doc_from_value(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    value: crate::oracle::Value,
+) -> Result<i64, String> {
+    match value {
+        crate::oracle::Value::Bool(value) => {
+            alloc_doc_variant(store, descriptors, 1, &[i64::from(value)])
+        }
+        crate::oracle::Value::Int(value) => alloc_doc_variant(store, descriptors, 2, &[value]),
+        crate::oracle::Value::Float(value) => alloc_doc_variant(
+            store,
+            descriptors,
+            3,
+            &[super::value::TotalF64::new(value).get().to_bits() as i64],
+        ),
+        crate::oracle::Value::Str(value) => {
+            let handle = store.borrow_mut().alloc_raw("String", value.into_bytes()).0;
+            alloc_doc_variant(store, descriptors, 4, &[handle])
+        }
+        crate::oracle::Value::Array(values) => {
+            let words = values
+                .into_iter()
+                .map(|value| alloc_doc_from_value(store, descriptors, schema_refs, value))
+                .collect::<Result<Vec<_>, _>>()?;
+            let handle = store
+                .borrow_mut()
+                .alloc_array_words("Doc", words, schema_refs)?
+                .0;
+            alloc_doc_variant(store, descriptors, 5, &[handle])
+        }
+        crate::oracle::Value::Map(entries) => {
+            let mut pairs = Vec::new();
+            for (key, value) in entries {
+                let crate::oracle::Value::Str(key) = key else {
+                    return Err(format!("document object key must be a string, got {key:?}"));
+                };
+                let key_word = store.borrow_mut().alloc_raw("String", key.into_bytes()).0;
+                let value_word = alloc_doc_from_value(store, descriptors, schema_refs, value)?;
+                pairs.push(MapPair {
+                    key_schema: "String".to_string(),
+                    key_word,
+                    value_schema: "Doc".to_string(),
+                    value_word,
+                    value_realization: None,
+                });
+            }
+            let handle = store
+                .borrow_mut()
+                .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors)?
+                .0;
+            alloc_doc_variant(store, descriptors, 6, &[handle])
+        }
+        crate::oracle::Value::Variant {
+            enum_name,
+            name,
+            index,
+            ..
+        } if enum_name == "Option" && name == "None" && index == 1 => {
+            alloc_doc_variant(store, descriptors, 0, &[])
+        }
+        other => Err(format!("document value {other:?} is outside the B5 subset")),
+    }
+}
+
+fn alloc_doc_variant(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    variant_index: u64,
+    fields: &[i64],
+) -> Result<i64, String> {
+    let descriptor = descriptors
+        .get("Doc")
+        .ok_or_else(|| "missing Doc descriptor".to_string())?;
+    let mut bytes = vec![0u8; descriptor.layout.size];
+    write_variant_tag(&mut bytes, descriptor, variant_index);
+    for (index, value) in fields.iter().enumerate() {
+        let offset = field_offset(descriptor, &bytes, index);
+        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+    Ok(store.borrow_mut().alloc("Doc", bytes, descriptors).0)
+}
+
+fn doc_payload(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    handle: i64,
+) -> Result<DocPayload, String> {
+    let entry = store
+        .entry(handle)
+        .ok_or_else(|| format!("store handle {handle}"))?;
+    if entry.schema != "Doc" {
+        return Err(format!("handle {handle} is `{}`, not Doc", entry.schema));
+    }
+    let descriptor = descriptors
+        .get("Doc")
+        .ok_or_else(|| "missing Doc descriptor".to_string())?;
+    Ok(match read_variant_tag(&entry.bytes, descriptor) {
+        0 => DocPayload::Null,
+        1 => DocPayload::Bool(read_frame_word(
+            &entry.bytes,
+            field_offset(descriptor, &entry.bytes, 0),
+        )),
+        2 => DocPayload::Int(read_frame_word(
+            &entry.bytes,
+            field_offset(descriptor, &entry.bytes, 0),
+        )),
+        3 => DocPayload::Float(read_frame_word(
+            &entry.bytes,
+            field_offset(descriptor, &entry.bytes, 0),
+        )),
+        4 => DocPayload::String(read_frame_word(
+            &entry.bytes,
+            field_offset(descriptor, &entry.bytes, 0),
+        )),
+        5 => DocPayload::Array(read_frame_word(
+            &entry.bytes,
+            field_offset(descriptor, &entry.bytes, 0),
+        )),
+        6 => DocPayload::Map(read_frame_word(
+            &entry.bytes,
+            field_offset(descriptor, &entry.bytes, 0),
+        )),
+        other => return Err(format!("unknown Doc tag {other}")),
+    })
+}
+
+fn doc_get(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    doc: i64,
+    key: &str,
+) -> Result<(i64, bool), String> {
+    let map = match doc_payload(&store.borrow(), descriptors, doc)? {
+        DocPayload::Map(handle) => handle,
+        other => return Err(format!("Doc.get expected object, got {other:?}")),
+    };
+    let key_word = store
+        .borrow_mut()
+        .alloc_raw("String", key.as_bytes().to_vec())
+        .0;
+    store
+        .borrow_mut()
+        .map_get(map, "String", key_word, "Doc", descriptors, schema_refs)
+}
+
+fn doc_coerce(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    doc: i64,
+    schema: &str,
+) -> Result<i64, String> {
+    if schema == "Doc" {
+        return Ok(doc);
+    }
+    match (doc_payload(&store.borrow(), descriptors, doc)?, schema) {
+        (DocPayload::Bool(value), "Bool") => Ok(value),
+        (DocPayload::Int(value), "Int") => Ok(value),
+        (DocPayload::Float(value), "Float") => Ok(value),
+        (DocPayload::String(value), "String") => Ok(value),
+        (DocPayload::Array(value), "Array") => Ok(value),
+        (DocPayload::Map(value), "Map<String,Doc>") => Ok(value),
+        (payload, schema) => Err(format!("cannot coerce Doc::{payload:?} to {schema}")),
+    }
+}
+
+fn compare_words(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    schema: &str,
+    a: i64,
+    b: i64,
+) -> Result<Ordering, String> {
+    if a == b && schema != "Float" {
+        return Ok(Ordering::Equal);
+    }
+    match schema {
+        "Int" | "Bool" => Ok(a.cmp(&b)),
+        "Float" => {
+            let a = super::value::TotalF64::new(f64::from_bits(canonicalize_word_for_schema(
+                "Float", a,
+            ) as u64));
+            let b = super::value::TotalF64::new(f64::from_bits(canonicalize_word_for_schema(
+                "Float", b,
+            ) as u64));
+            Ok(a.cmp(&b))
+        }
+        "String" | "Path" | "Flag" | "Cc" | "Ar" => {
+            let a = store.string_value(a, schema)?;
+            let b = store.string_value(b, schema)?;
+            Ok(a.cmp(&b))
+        }
+        "Array" => compare_arrays(store, descriptors, schema_refs, a, b),
+        schema if schema.starts_with("Map<") => compare_maps(store, descriptors, schema_refs, a, b),
+        "Doc" => compare_docs(store, descriptors, schema_refs, a, b),
+        schema => compare_declared_value(store, descriptors, schema_refs, schema, a, b),
+    }
+}
+
+fn compare_arrays(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    a: i64,
+    b: i64,
+) -> Result<Ordering, String> {
+    let (a_schema, a_words) = match store.array_entry(a, schema_refs)? {
+        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+        ArrayEntry::Pending(_) => return Ok(a.cmp(&b)),
+    };
+    let (b_schema, b_words) = match store.array_entry(b, schema_refs)? {
+        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+        ArrayEntry::Pending(_) => return Ok(a.cmp(&b)),
+    };
+    let schema_order = a_schema.cmp(&b_schema);
+    if schema_order != Ordering::Equal {
+        return Ok(schema_order);
+    }
+    compare_word_slices(
+        store,
+        descriptors,
+        schema_refs,
+        &a_schema,
+        &a_words,
+        &b_words,
+    )
+}
+
+fn compare_maps(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    a: i64,
+    b: i64,
+) -> Result<Ordering, String> {
+    let (a_schema, a_pairs) = store.map_pairs(a, schema_refs)?;
+    let (b_schema, b_pairs) = store.map_pairs(b, schema_refs)?;
+    let schema_order = a_schema.cmp(&b_schema);
+    if schema_order != Ordering::Equal {
+        return Ok(schema_order);
+    }
+    for (a_pair, b_pair) in a_pairs.iter().zip(&b_pairs) {
+        let key_schema_order = a_pair.key_schema.cmp(&b_pair.key_schema);
+        if key_schema_order != Ordering::Equal {
+            return Ok(key_schema_order);
+        }
+        let key_order = compare_words(
+            store,
+            descriptors,
+            schema_refs,
+            &a_pair.key_schema,
+            a_pair.key_word,
+            b_pair.key_word,
+        )?;
+        if key_order != Ordering::Equal {
+            return Ok(key_order);
+        }
+        let value_schema_order = a_pair.value_schema.cmp(&b_pair.value_schema);
+        if value_schema_order != Ordering::Equal {
+            return Ok(value_schema_order);
+        }
+        let value_order = compare_words(
+            store,
+            descriptors,
+            schema_refs,
+            &a_pair.value_schema,
+            a_pair.value_word,
+            b_pair.value_word,
+        )?;
+        if value_order != Ordering::Equal {
+            return Ok(value_order);
+        }
+    }
+    Ok(a_pairs.len().cmp(&b_pairs.len()))
+}
+
+fn compare_docs(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    a: i64,
+    b: i64,
+) -> Result<Ordering, String> {
+    let a_payload = doc_payload(store, descriptors, a)?;
+    let b_payload = doc_payload(store, descriptors, b)?;
+    let tag = |payload: &DocPayload| match payload {
+        DocPayload::Null => 0,
+        DocPayload::Bool(_) => 1,
+        DocPayload::Int(_) => 2,
+        DocPayload::Float(_) => 3,
+        DocPayload::String(_) => 4,
+        DocPayload::Array(_) => 5,
+        DocPayload::Map(_) => 6,
+    };
+    let tag_order = tag(&a_payload).cmp(&tag(&b_payload));
+    if tag_order != Ordering::Equal {
+        return Ok(tag_order);
+    }
+    match (a_payload, b_payload) {
+        (DocPayload::Null, DocPayload::Null) => Ok(Ordering::Equal),
+        (DocPayload::Bool(a), DocPayload::Bool(b)) => Ok(a.cmp(&b)),
+        (DocPayload::Int(a), DocPayload::Int(b)) => Ok(a.cmp(&b)),
+        (DocPayload::Float(a), DocPayload::Float(b)) => {
+            compare_words(store, descriptors, schema_refs, "Float", a, b)
+        }
+        (DocPayload::String(a), DocPayload::String(b)) => {
+            compare_words(store, descriptors, schema_refs, "String", a, b)
+        }
+        (DocPayload::Array(a), DocPayload::Array(b)) => {
+            compare_words(store, descriptors, schema_refs, "Array", a, b)
+        }
+        (DocPayload::Map(a), DocPayload::Map(b)) => {
+            compare_words(store, descriptors, schema_refs, "Map<String,Doc>", a, b)
+        }
+        _ => Ok(Ordering::Equal),
+    }
+}
+
+fn compare_declared_value(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    schema: &str,
+    a: i64,
+    b: i64,
+) -> Result<Ordering, String> {
+    let a_entry = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
+    let b_entry = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
+    if a_entry.schema != schema || b_entry.schema != schema {
+        return Err(format!(
+            "compare expected {schema}, got {} and {}",
+            a_entry.schema, b_entry.schema
+        ));
+    }
+    let descriptor = descriptors
+        .get(schema)
+        .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
+    compare_descriptor_bytes(
+        store,
+        descriptors,
+        schema_refs,
+        descriptor,
+        &a_entry.bytes,
+        &b_entry.bytes,
+    )
+}
+
+fn compare_descriptor_bytes(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    descriptor: &Descriptor<String>,
+    a: &[u8],
+    b: &[u8],
+) -> Result<Ordering, String> {
+    match &descriptor.access {
+        Access::Scalar if descriptor.schema == "Float" => compare_words(
+            store,
+            descriptors,
+            schema_refs,
+            "Float",
+            read_frame_word(a, 0),
+            read_frame_word(b, 0),
+        ),
+        Access::Scalar => Ok(a.cmp(b)),
+        Access::Handle { target } => compare_words(
+            store,
+            descriptors,
+            schema_refs,
+            target,
+            read_frame_word(a, 0),
+            read_frame_word(b, 0),
+        ),
+        Access::Record(record) => {
+            for field in &record.fields {
+                let start = field.offset;
+                let end = start + field.descriptor.layout.size;
+                let order = compare_descriptor_bytes(
+                    store,
+                    descriptors,
+                    schema_refs,
+                    &field.descriptor,
+                    &a[start..end],
+                    &b[start..end],
+                )?;
+                if order != Ordering::Equal {
+                    return Ok(order);
+                }
+            }
+            Ok(Ordering::Equal)
+        }
+        Access::Enum(access) => {
+            let a_tag = read_variant_tag(a, descriptor);
+            let b_tag = read_variant_tag(b, descriptor);
+            let tag_order = a_tag.cmp(&b_tag);
+            if tag_order != Ordering::Equal {
+                return Ok(tag_order);
+            }
+            let variant = access
+                .variants
+                .iter()
+                .find(|variant| variant.selector == a_tag)
+                .ok_or_else(|| format!("enum selector {a_tag}"))?;
+            for field in &variant.payload.fields {
+                let start = field.offset;
+                let end = start + field.descriptor.layout.size;
+                let order = compare_descriptor_bytes(
+                    store,
+                    descriptors,
+                    schema_refs,
+                    &field.descriptor,
+                    &a[start..end],
+                    &b[start..end],
+                )?;
+                if order != Ordering::Equal {
+                    return Ok(order);
+                }
+            }
+            Ok(Ordering::Equal)
+        }
+        Access::Array {
+            element,
+            count,
+            stride,
+        } => {
+            for i in 0..*count {
+                let start = i * *stride;
+                let end = start + element.layout.size;
+                let order = compare_descriptor_bytes(
+                    store,
+                    descriptors,
+                    schema_refs,
+                    element,
+                    &a[start..end],
+                    &b[start..end],
+                )?;
+                if order != Ordering::Equal {
+                    return Ok(order);
+                }
+            }
+            Ok(Ordering::Equal)
+        }
+        other => Err(format!("cannot compare descriptor access {other:?}")),
+    }
+}
+
+fn compare_word_slices(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    schema: &str,
+    a: &[i64],
+    b: &[i64],
+) -> Result<Ordering, String> {
+    for (a, b) in a.iter().zip(b) {
+        let order = compare_words(store, descriptors, schema_refs, schema, *a, *b)?;
+        if order != Ordering::Equal {
+            return Ok(order);
+        }
+    }
+    Ok(a.len().cmp(&b.len()))
 }
 
 #[cfg(any(test, feature = "jit"))]
@@ -2489,9 +3167,12 @@ fn write_frame_word(frame: &mut [u8], at: usize, value: i64) {
 
 fn canonicalize_word_for_schema(schema: &str, word: i64) -> i64 {
     if schema == "Float" {
-        super::value::TotalF64::new(f64::from_bits(word as u64))
-            .get()
-            .to_bits() as i64
+        let value = super::value::TotalF64::new(f64::from_bits(word as u64)).get();
+        if value == 0.0 {
+            0.0f64.to_bits() as i64
+        } else {
+            value.to_bits() as i64
+        }
     } else {
         word
     }
@@ -2510,7 +3191,12 @@ fn canonical_word_hash_in_store(store: &ValueStore, schema: &str, word: i64) -> 
     hasher.finalize().into()
 }
 
-fn canonical_map_pairs(store: &ValueStore, pairs: Vec<MapPair>) -> Vec<OrderedMapPair> {
+fn canonical_map_pairs(
+    store: &ValueStore,
+    pairs: Vec<MapPair>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+) -> Result<Vec<OrderedMapPair>, String> {
     let mut pairs: Vec<OrderedMapPair> = pairs
         .into_iter()
         .map(|mut pair| {
@@ -2527,10 +3213,19 @@ fn canonical_map_pairs(store: &ValueStore, pairs: Vec<MapPair>) -> Vec<OrderedMa
         })
         .collect();
     pairs.sort_by(|a, b| {
-        a.pair
-            .key_schema
-            .cmp(&b.pair.key_schema)
-            .then_with(|| a.key_hash.cmp(&b.key_hash))
+        let schema_order = a.pair.key_schema.cmp(&b.pair.key_schema);
+        if schema_order != Ordering::Equal {
+            return schema_order;
+        }
+        compare_words(
+            store,
+            descriptors,
+            schema_refs,
+            &a.pair.key_schema,
+            a.pair.key_word,
+            b.pair.key_word,
+        )
+        .unwrap_or_else(|_| a.key_hash.cmp(&b.key_hash))
     });
     let mut deduped: Vec<OrderedMapPair> = Vec::new();
     for pair in pairs {
@@ -2546,7 +3241,7 @@ fn canonical_map_pairs(store: &ValueStore, pairs: Vec<MapPair>) -> Vec<OrderedMa
         }
         deduped.push(pair);
     }
-    deduped
+    Ok(deduped)
 }
 
 fn promote_map_pairs_to_realized(

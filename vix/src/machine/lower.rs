@@ -28,10 +28,11 @@ use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST,
-    ARRAY_MAP_PENDING_HOST, DriveEvent, Driver, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST,
-    Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, OPTION_UNWRAP_HOST,
-    PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST,
-    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, TREE_PROJECT_HOST,
+    ARRAY_MAP_PENDING_HOST, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PARSE_HOST, DriveEvent, Driver,
+    EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
+    MAP_INSERT_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
+    PENDING_COERCE_HOST, PENDING_INVOKE_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
+    TREE_PROJECT_HOST,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -435,6 +436,9 @@ fn schema_names_for(
         "Tree".to_string(),
         "Array".to_string(),
         "Map".to_string(),
+        "Doc".to_string(),
+        "Option<Doc>".to_string(),
+        "Map<String,Doc>".to_string(),
     ]);
     for schema in fn_returns.values() {
         push_schema_closure(schema, &mut schema_names);
@@ -1282,6 +1286,23 @@ fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>
     descriptors
         .entry("Os".into())
         .or_insert_with(|| declared_mem::declared_enum("Os".into(), vec![vec![], vec![], vec![]]));
+    descriptors.entry("Doc".into()).or_insert_with(|| {
+        declared_mem::declared_enum(
+            "Doc".into(),
+            vec![
+                vec![],
+                vec![declared_mem::i64_("DocBool".into())],
+                vec![declared_mem::i64_("DocInt".into())],
+                vec![declared_mem::f64_("DocFloat".into())],
+                vec![declared_mem::handle("DocString".into(), "String".into())],
+                vec![declared_mem::handle("DocArray".into(), "Array".into())],
+                vec![declared_mem::handle(
+                    "DocMap".into(),
+                    "Map<String,Doc>".into(),
+                )],
+            ],
+        )
+    });
 }
 
 fn derived_descriptor(schema: &str) -> Option<Descriptor<String>> {
@@ -1725,7 +1746,7 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Paren(p) => self.expr(&p.inner),
             ast::Expr::Scoped(path) => self.scoped_value(path),
             ast::Expr::StructLit(lit) => self.struct_literal(lit),
-            ast::Expr::Tuple(tuple) => self.tuple_literal(tuple),
+            ast::Expr::Tuple(tuple) => self.tuple_literal(tuple, expected),
             ast::Expr::Field(field) => self.field_access(field),
             ast::Expr::Binary(b) if b.op.as_str() == "/" => {
                 let left = self.expr(&b.left)?;
@@ -1848,7 +1869,7 @@ impl<'a> FnLowerer<'a> {
                 })
             }
             ast::Expr::Call(call) => self.call(call),
-            ast::Expr::MethodCall(call) => self.method_call(call),
+            ast::Expr::MethodCall(call) => self.method_call(call, expected),
             ast::Expr::Map(map) => self.map_literal(map, expected),
             ast::Expr::Array(array) => self.array_literal(array),
             ast::Expr::Command(command) => self.command_block(command),
@@ -2146,6 +2167,8 @@ impl<'a> FnLowerer<'a> {
         match name {
             "fetch" => return self.fetch_call(call),
             "extract" => return self.extract_call(call),
+            "toml" => return self.doc_parse_call(call, 0),
+            "json" => return self.doc_parse_call(call, 1),
             _ => {}
         }
         if let Some(&fn_ref) = self.fn_refs.get(name) {
@@ -2364,7 +2387,11 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
-    fn method_call(&mut self, call: &ast::MethodCall) -> Result<ValueSlot, String> {
+    fn method_call(
+        &mut self,
+        call: &ast::MethodCall,
+        expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
         let receiver = self.expr(&call.receiver)?;
         match call.name.value.as_str() {
             "with_ext" => {
@@ -2384,7 +2411,7 @@ impl<'a> FnLowerer<'a> {
                 if !call.args.args.is_empty() {
                     return Err("collect takes no arguments".into());
                 }
-                self.array_collect(&receiver)
+                self.array_collect(&receiver, expected)
             }
             "insert" => {
                 let Some((key_schema, value_schema)) = map_schemas(&receiver.schema) else {
@@ -2400,6 +2427,13 @@ impl<'a> FnLowerer<'a> {
                 self.map_insert(&receiver, key, value, key_schema, logical_value_schema)
             }
             "get" => {
+                if receiver.schema == "Doc" {
+                    if call.args.args.len() != 1 {
+                        return Err("Doc.get takes one key".into());
+                    }
+                    let key = self.method_arg(&call.args.args[0], Some("String"))?;
+                    return self.doc_get(&receiver, &key);
+                }
                 let Some((key_schema, value_schema)) = map_schemas(&receiver.schema) else {
                     return Err(format!("get called on {}", receiver.schema));
                 };
@@ -2479,11 +2513,24 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
-    fn tuple_literal(&mut self, tuple: &ast::TupleExpr) -> Result<ValueSlot, String> {
+    fn tuple_literal(
+        &mut self,
+        tuple: &ast::TupleExpr,
+        expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
+        let expected_fields = expected.and_then(tuple_schema_fields);
         let mut fields = Vec::new();
         let mut schemas = Vec::new();
-        for elem in &tuple.elems {
-            let value = self.expr(elem)?;
+        for (index, elem) in tuple.elems.iter().enumerate() {
+            let expected = expected_fields
+                .as_ref()
+                .and_then(|fields| fields.get(index).map(String::as_str));
+            let value = self.expr_expected(elem, expected)?;
+            let value = if let Some(expected) = expected {
+                self.coerce_to_schema(value, expected)?
+            } else {
+                value
+            };
             schemas.push(value.schema.clone());
             fields.push(value);
         }
@@ -2765,7 +2812,50 @@ impl<'a> FnLowerer<'a> {
         if value.schema == realized_schema(expected) {
             return self.coerce_realized_to_schema(value, expected);
         }
+        if value.schema == "Doc"
+            && matches!(
+                expected,
+                "String" | "Int" | "Bool" | "Float" | "Array" | "Map<String,Doc>"
+            )
+        {
+            return self.coerce_doc_to_schema(value, expected);
+        }
         Ok(value)
+    }
+
+    fn coerce_doc_to_schema(
+        &mut self,
+        value: ValueSlot,
+        expected: &str,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(&value, "Doc")?;
+        let schema_ref = *self
+            .schema_refs
+            .get(expected)
+            .ok_or_else(|| format!("no schema ref for {expected}"))?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: value.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: schema_ref,
+        });
+        self.code.push(Op::HostCall {
+            host: DOC_COERCE_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: expected.to_string(),
+            realization: None,
+            pending: None,
+        })
     }
 
     fn coerce_pending_to_schema(
@@ -3369,7 +3459,7 @@ impl<'a> FnLowerer<'a> {
         let mut elems = Vec::new();
         for elem in &array.elems {
             match elem {
-                ast::ArrayElem::Expr(expr) => elems.push(self.expr_expected(expr, Some("Path"))?),
+                ast::ArrayElem::Expr(expr) => elems.push(self.expr(expr)?),
                 ast::ArrayElem::Flag(flag) => {
                     let handle =
                         *self.literal_handles.flags.get(&flag.value).ok_or_else(|| {
@@ -3397,7 +3487,16 @@ impl<'a> FnLowerer<'a> {
         });
         self.code.push(Op::ConstI64 {
             dst: region + 8,
-            value: 0,
+            value: elems
+                .first()
+                .map(|elem| {
+                    self.schema_refs
+                        .get(&elem.schema)
+                        .copied()
+                        .ok_or_else(|| format!("no schema ref for {}", elem.schema))
+                })
+                .transpose()?
+                .unwrap_or(0),
         });
         self.code.push(Op::ConstI64 {
             dst: region + 16,
@@ -3576,7 +3675,11 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
-    fn array_collect(&mut self, receiver: &ValueSlot) -> Result<ValueSlot, String> {
+    fn array_collect(
+        &mut self,
+        receiver: &ValueSlot,
+        expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
         self.expect_schema(receiver, "Array")?;
         let dst = self.alloc();
         let region = self.primitive_region;
@@ -3593,7 +3696,36 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Tree".into(),
+            schema: expected
+                .filter(|schema| *schema == "Array")
+                .unwrap_or("Tree")
+                .into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn doc_get(&mut self, doc: &ValueSlot, key: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(doc, "Doc")?;
+        self.expect_schema(key, "String")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: doc.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: key.slot,
+        });
+        self.code.push(Op::HostCall { host: DOC_GET_HOST });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: option_schema("Doc"),
             realization: None,
             pending: None,
         })
@@ -3770,6 +3902,45 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Tree".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn doc_parse_call(&mut self, call: &ast::Call, kind: i64) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("document parser takes one argument".into());
+        };
+        let input = self.expr(arg)?;
+        if input.schema != "String" && input.schema != "Tree" {
+            return Err(format!("document parser called on {}", input.schema));
+        }
+        let input_slot = self.next_input_slot;
+        self.next_input_slot += 1;
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: input_slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: kind,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: input.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: DOC_PARSE_HOST,
+        });
+        let dst = self.alloc();
+        self.code.push(Op::Await {
+            dst,
+            input: u32::try_from(input_slot).expect("input slot fits u32"),
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Doc".into(),
             realization: None,
             pending: None,
         })
@@ -5878,6 +6049,193 @@ pub fn moved(n: Int) -> Map<String, Float> {
             );
             assert_eq!(spawned_count(&machine, "left"), 0, "{lane:?}");
             assert_eq!(spawned_count(&machine, "right"), 0, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn cargo_toml_projection_runs_on_the_machine() {
+        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/cargo.vix");
+        let manifest =
+            include_str!("../../../playgrounds/snark/src/bundled/vix/samples/fixtures/Cargo.toml");
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let tree = machine
+                .driver
+                .intern_tree_concrete(Tree::of(&[("Cargo.toml", manifest)]));
+            let tuple = machine.demand_i64("cargo_manifest", vec![tree]).unwrap();
+            let name = machine.driver.store_field(tuple, 0).unwrap();
+            let version = machine.driver.store_field(tuple, 1).unwrap();
+            let facet_version = machine.driver.store_field(tuple, 2).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(name, "String").unwrap(),
+                "mini-real-crate",
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.driver.raw_string(version, "String").unwrap(),
+                "0.3.1",
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.driver.raw_string(facet_version, "String").unwrap(),
+                "0.50.0-rc.5",
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn inline_json_structural_values_run_on_the_machine() {
+        let src = r#"
+pub fn parse(input: String) -> (String, Int, Bool) {
+    let doc = json(input);
+    let package = doc.get("package").unwrap();
+    (
+        package.get("name").unwrap(),
+        package.get("version").unwrap(),
+        doc.get("publish").unwrap(),
+    )
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let (input, _) = machine.driver.intern_raw_value(
+                "String",
+                br#"{"package":{"name":"mini-real-crate","version":3},"publish":false}"#.to_vec(),
+            );
+            let tuple = machine.demand_i64("parse", vec![input]).unwrap();
+            let name = machine.driver.store_field(tuple, 0).unwrap();
+            let version = machine.driver.store_field(tuple, 1).unwrap();
+            let publish = machine.driver.store_field(tuple, 2).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(name, "String").unwrap(),
+                "mini-real-crate",
+                "{lane:?}"
+            );
+            assert_eq!(version, 3, "{lane:?}");
+            assert_eq!(publish, 0, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn scalar_array_collect_sorts_and_rejects_arguments() {
+        let bad = r#"
+pub fn bad() -> [Int] {
+    [2, 1].collect(0)
+}
+"#;
+        let good = r#"
+pub fn good() -> [Int] {
+    [2, 1].collect()
+}
+        "#;
+        for lane in lanes() {
+            let err = match Machine::load_with_lane(bad, lane) {
+                Ok(_) => panic!("bad collect loaded on {lane:?}"),
+                Err(err) => err,
+            };
+            assert_eq!(err, "lowering bad: collect takes no arguments", "{lane:?}");
+
+            let mut machine = load_with_lane(good, lane);
+            let array = machine.demand_i64("good", vec![]).unwrap();
+            let (schema, words) = machine.driver.array_words(array).unwrap();
+            assert_eq!(schema, "Int", "{lane:?}");
+            assert_eq!(words, vec![1, 2], "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn store_values_are_totally_ordered_canonically_on_the_machine() {
+        let src = r#"
+enum Choice { A, B(Int), C(Int) }
+
+pub fn a() -> Choice { Choice::A }
+pub fn b1() -> Choice { Choice::B(1) }
+pub fn b2() -> Choice { Choice::B(2) }
+
+pub fn za() -> Map<String, Int> {
+    let m: Map<String, Int> = {};
+    m.insert("z", 1).insert("a", 2)
+}
+
+pub fn az() -> Map<String, Int> {
+    let m: Map<String, Int> = {};
+    m.insert("a", 2).insert("z", 1)
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let a = machine.demand_i64("a", vec![]).unwrap();
+            let b1 = machine.demand_i64("b1", vec![]).unwrap();
+            let b2 = machine.demand_i64("b2", vec![]).unwrap();
+            assert_eq!(
+                machine.driver.compare_store_words("Choice", a, b1).unwrap(),
+                std::cmp::Ordering::Less,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .driver
+                    .compare_store_words("Choice", b1, b2)
+                    .unwrap(),
+                std::cmp::Ordering::Less,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .driver
+                    .compare_store_words("Float", 1.0f64.to_bits() as i64, 2.0f64.to_bits() as i64,)
+                    .unwrap(),
+                std::cmp::Ordering::Less,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .driver
+                    .compare_store_words(
+                        "Float",
+                        f64::INFINITY.to_bits() as i64,
+                        f64::NAN.to_bits() as i64,
+                    )
+                    .unwrap(),
+                std::cmp::Ordering::Less,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .driver
+                    .compare_store_words(
+                        "Float",
+                        0.0f64.to_bits() as i64,
+                        (-0.0f64).to_bits() as i64,
+                    )
+                    .unwrap(),
+                std::cmp::Ordering::Equal,
+                "{lane:?}"
+            );
+
+            let za = machine.demand_i64("za", vec![]).unwrap();
+            let az = machine.demand_i64("az", vec![]).unwrap();
+            let keys = machine
+                .driver
+                .map_words(za)
+                .unwrap()
+                .into_iter()
+                .map(|(_, key, _, _, _)| machine.driver.raw_string(key, "String").unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(keys, vec!["a".to_string(), "z".to_string()], "{lane:?}");
+            assert_eq!(
+                za, az,
+                "canonical map dedupes construction order on {lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .driver
+                    .compare_store_words("Map<String,Int>", za, az)
+                    .unwrap(),
+                std::cmp::Ordering::Equal,
+                "{lane:?}"
+            );
         }
     }
 
