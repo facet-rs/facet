@@ -61,6 +61,7 @@ pub const TREE_PROJECT_HOST: u32 = 12;
 pub const EXEC_HOST: u32 = 13;
 pub const PATH_WITH_EXT_HOST: u32 = 14;
 pub const PENDING_ALLOC_HOST: u32 = 15;
+pub const PENDING_COERCE_HOST: u32 = 16;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -178,9 +179,15 @@ struct ExecRequest {
 }
 
 #[derive(Clone, Debug)]
-struct ForceRequest {
+struct OptionUnwrapRequest {
     input_slot: usize,
     option: i64,
+}
+
+#[derive(Clone, Debug)]
+struct PendingCoerceRequest {
+    input_slot: usize,
+    pending: i64,
 }
 
 /// A running or parked task execution.
@@ -316,7 +323,7 @@ struct OrderedMapPair {
 
 #[derive(Clone, Debug)]
 struct PendingInvocation {
-    fn_ref: usize,
+    closure_hash: u64,
     args: Vec<i64>,
     remaining_arity: usize,
     identity_hash: ContentHash,
@@ -337,7 +344,7 @@ enum TreeEntry {
 #[derive(Clone, Debug)]
 enum OptionPayload {
     None,
-    Some { schema: String, word: i64 },
+    Some { word: i64 },
 }
 
 impl ValueStore {
@@ -434,26 +441,100 @@ impl ValueStore {
         key_schema: &str,
         key_word: i64,
         value_schema: &str,
+        descriptors: &HashMap<String, Descriptor<String>>,
         schema_refs: &[String],
     ) -> Result<(i64, bool), String> {
         let (_, pairs) = self.map_pairs(handle, schema_refs)?;
         let key_hash = canonical_word_hash_in_store(self, key_schema, key_word);
-        let value = pairs
-            .into_iter()
-            .find(|pair| {
-                pair.key_schema == key_schema
-                    && canonical_word_hash_in_store(self, &pair.key_schema, pair.key_word)
-                        == key_hash
-            })
-            .and_then(|pair| {
-                (pair.value_schema == value_schema
-                    || pair.value_schema == pending_schema(value_schema))
-                .then_some((pair.value_schema, pair.value_word))
-            });
-        match value {
-            Some((schema, word)) => self.alloc_option_some(&schema, word, schema_refs),
-            None => self.alloc_option_none(value_schema, schema_refs),
+        for pair in pairs {
+            if pair.key_schema != key_schema
+                || canonical_word_hash_in_store(self, &pair.key_schema, pair.key_word) != key_hash
+            {
+                continue;
+            }
+            if pair.value_schema == value_schema {
+                return self.alloc_option_some(&pair.value_schema, pair.value_word, schema_refs);
+            }
+            if let Some(inner) = realized_value_schema(value_schema) {
+                if pair.value_schema == inner {
+                    let handle = self.alloc_realized_ready(
+                        descriptors,
+                        value_schema,
+                        inner,
+                        pair.value_word,
+                    )?;
+                    return self.alloc_option_some(value_schema, handle, schema_refs);
+                }
+                if pair.value_schema == pending_schema(inner) {
+                    let handle =
+                        self.alloc_realized_pending(descriptors, value_schema, pair.value_word)?;
+                    return self.alloc_option_some(value_schema, handle, schema_refs);
+                }
+            }
+            if pair.value_schema == pending_schema(value_schema) {
+                return self.alloc_option_some(&pair.value_schema, pair.value_word, schema_refs);
+            }
         }
+        self.alloc_option_none(value_schema, schema_refs)
+    }
+
+    fn alloc_realized_ready(
+        &mut self,
+        descriptors: &HashMap<String, Descriptor<String>>,
+        realized_schema: &str,
+        value_schema: &str,
+        value_word: i64,
+    ) -> Result<i64, String> {
+        self.alloc_realized_variant(descriptors, realized_schema, 0, value_schema, value_word)
+    }
+
+    fn alloc_realized_pending(
+        &mut self,
+        descriptors: &HashMap<String, Descriptor<String>>,
+        realized_schema: &str,
+        pending_word: i64,
+    ) -> Result<i64, String> {
+        self.alloc_realized_variant(
+            descriptors,
+            realized_schema,
+            1,
+            realized_schema,
+            pending_word,
+        )
+    }
+
+    fn alloc_realized_variant(
+        &mut self,
+        descriptors: &HashMap<String, Descriptor<String>>,
+        realized_schema: &str,
+        variant_index: usize,
+        value_schema: &str,
+        word: i64,
+    ) -> Result<i64, String> {
+        let descriptor = descriptors
+            .get(realized_schema)
+            .ok_or_else(|| format!("descriptor for schema `{realized_schema}`"))?;
+        let mut bytes = vec![0u8; descriptor.layout.size];
+        write_variant_tag(
+            &mut bytes,
+            descriptor,
+            u64::try_from(variant_index).expect("variant index fits u64"),
+        );
+        let Access::Enum(access) = &descriptor.access else {
+            return Err(format!("{realized_schema} is not an enum descriptor"));
+        };
+        let field = access
+            .variants
+            .get(variant_index)
+            .and_then(|variant| variant.payload.fields.first())
+            .ok_or_else(|| format!("{realized_schema} missing variant {variant_index} payload"))?;
+        let word = canonicalize_word_for_schema(value_schema, word);
+        bytes[field.offset..field.offset + 8].copy_from_slice(&word.to_le_bytes());
+        // Realized<T> hashes through the declared enum layout: Ready hashes
+        // by T's content, Pending hashes by the pending invocation identity.
+        // A Ready(4.2) entry and a Pending(producer-of-4.2) entry therefore
+        // hash differently; identity is finer than content and never forces.
+        Ok(self.alloc(realized_schema, bytes, descriptors).0)
     }
 
     fn alloc_option_none(
@@ -521,7 +602,6 @@ impl ValueStore {
             .get(usize::try_from(schema_ref).map_err(|_| format!("schema ref {schema_ref}"))?)
             .ok_or_else(|| format!("schema ref {schema_ref}"))?;
         Ok(OptionPayload::Some {
-            schema: schema.clone(),
             word: canonicalize_word_for_schema(schema, read_frame_word(&entry.bytes, 16)),
         })
     }
@@ -823,7 +903,8 @@ impl Driver {
                     new_requests,
                     project_requests,
                     exec_requests,
-                    force_requests,
+                    option_unwraps,
+                    pending_coercions,
                     parked_input,
                 } => {
                     for req in exec_requests {
@@ -852,10 +933,9 @@ impl Driver {
                             Err(err) => return Err(err),
                         }
                     }
-                    let mut new_requests = new_requests;
-                    for req in force_requests {
-                        match self.force_request(req, ix) {
-                            Ok(ForceOutcome::Ready { input_slot, value }) => {
+                    for req in option_unwraps {
+                        match self.option_unwrap_request(req) {
+                            Ok((input_slot, value)) => {
                                 if exec.ready.len() <= input_slot {
                                     exec.ready.resize(input_slot + 1, false);
                                     exec.awaited.resize(input_slot + 1, 0);
@@ -863,7 +943,13 @@ impl Driver {
                                 exec.ready[input_slot] = true;
                                 exec.awaited[input_slot] = value;
                             }
-                            Ok(ForceOutcome::Demand(invoke)) => new_requests.push(invoke),
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    let mut new_requests = new_requests;
+                    for req in pending_coercions {
+                        match self.pending_coercion(req, ix) {
+                            Ok(invoke) => new_requests.push(invoke),
                             Err(err) => return Err(err),
                         }
                     }
@@ -968,7 +1054,8 @@ impl Driver {
             let mut requests: Vec<InvokeRequest> = Vec::new();
             let mut project_requests: Vec<ProjectRequest> = Vec::new();
             let mut exec_requests: Vec<ExecRequest> = Vec::new();
-            let mut force_requests: Vec<ForceRequest> = Vec::new();
+            let mut option_unwraps: Vec<OptionUnwrapRequest> = Vec::new();
+            let mut pending_coercions: Vec<PendingCoerceRequest> = Vec::new();
             let descriptors = &self.descriptors;
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
@@ -1109,9 +1196,13 @@ impl Driver {
                     let (stored_schema, mut pairs) =
                         store_cell.borrow().map_pairs(map_handle, schema_refs)?;
                     if stored_schema != map_schema {
-                        return Err(format!(
-                            "expected map schema {map_schema}, got {stored_schema}"
-                        ));
+                        pairs = promote_map_pairs_to_realized(
+                            store_cell,
+                            descriptors,
+                            &stored_schema,
+                            &map_schema,
+                            pairs,
+                        )?;
                     }
                     pairs.push(MapPair {
                         key_schema,
@@ -1156,6 +1247,7 @@ impl Driver {
                         &key_schema,
                         key_word,
                         &value_schema,
+                        descriptors,
                         schema_refs,
                     )?;
                     write_frame_word(frame, dst_slot, handle);
@@ -1169,7 +1261,7 @@ impl Driver {
             let mut option_unwrap = |frame: &mut [u8]| {
                 let input_slot = read_frame_word(frame, store_alloc_region) as usize;
                 let handle = read_frame_word(frame, store_alloc_region + 8);
-                force_requests.push(ForceRequest {
+                option_unwraps.push(OptionUnwrapRequest {
                     input_slot,
                     option: handle,
                 });
@@ -1219,12 +1311,8 @@ impl Driver {
                         .into_iter()
                         .map(|word| {
                             let args = vec![captured, word];
-                            let invocation = pending_invocation_for(
-                                &lowered_fns[fn_ref],
-                                store_cell,
-                                fn_ref,
-                                args,
-                            );
+                            let invocation =
+                                pending_invocation_for(&lowered_fns[fn_ref], store_cell, args);
                             store_cell
                                 .borrow_mut()
                                 .alloc_pending(&lowered_fns[fn_ref].return_schema, invocation)
@@ -1313,8 +1401,7 @@ impl Driver {
                     let args = (0..argc)
                         .map(|i| read_frame_word(frame, primitive_region + 32 + i * 8))
                         .collect::<Vec<_>>();
-                    let invocation =
-                        pending_invocation_for(&lowered_fns[fn_ref], store_cell, fn_ref, args);
+                    let invocation = pending_invocation_for(&lowered_fns[fn_ref], store_cell, args);
                     let (handle, _) = store_cell
                         .borrow_mut()
                         .alloc_pending(&value_schema, invocation);
@@ -1326,7 +1413,16 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 16] = [
+            let mut pending_coerce = |frame: &mut [u8]| {
+                let input_slot = read_frame_word(frame, primitive_region) as usize;
+                let pending = read_frame_word(frame, primitive_region + 8);
+                pending_coercions.push(PendingCoerceRequest {
+                    input_slot,
+                    pending,
+                });
+            };
+
+            let mut hosts: [HostFn<'_>; 17] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -1343,6 +1439,7 @@ impl Driver {
                 &mut exec_host,
                 &mut path_with_ext,
                 &mut pending_alloc,
+                &mut pending_coerce,
             ];
             let step = exec
                 .task
@@ -1372,7 +1469,8 @@ impl Driver {
                         new_requests: requests,
                         project_requests,
                         exec_requests,
-                        force_requests,
+                        option_unwraps,
+                        pending_coercions,
                         parked_input: input,
                     };
                 }
@@ -1419,7 +1517,8 @@ impl Driver {
             TreeEntry::Merge(pending) => {
                 for handle in pending.into_iter().rev() {
                     let invocation = self.store.borrow().pending_invocation(handle)?;
-                    let value = self.demand(invocation.fn_ref, invocation.args)?;
+                    let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
+                    let value = self.demand(fn_ref, invocation.args)?;
                     if let Some(found) = self.project_tree_path_optional(value, path)? {
                         return Ok(found);
                     }
@@ -1432,36 +1531,54 @@ impl Driver {
         }
     }
 
-    fn force_request(&mut self, req: ForceRequest, caller: usize) -> Result<ForceOutcome, String> {
+    fn pending_coercion(
+        &self,
+        req: PendingCoerceRequest,
+        caller: usize,
+    ) -> Result<InvokeRequest, String> {
+        let entry_schema = self
+            .store
+            .borrow()
+            .entry(req.pending)
+            .ok_or_else(|| format!("store handle {}", req.pending))?
+            .schema
+            .clone();
+        let Some(value_schema) = pending_value_schema(&entry_schema) else {
+            return Err(format!(
+                "pending coercion expected Pending<T>, got {entry_schema}"
+            ));
+        };
+        let invocation = self.store.borrow().pending_invocation(req.pending)?;
+        if invocation.remaining_arity != 0 {
+            return Err(format!(
+                "cannot coerce pending {value_schema} with {} remaining args",
+                invocation.remaining_arity
+            ));
+        }
+        Ok(InvokeRequest {
+            caller,
+            input_slot: req.input_slot,
+            fn_ref: self.fn_ref_for_hash(invocation.closure_hash)?,
+            args: invocation.args,
+        })
+    }
+
+    fn option_unwrap_request(&self, req: OptionUnwrapRequest) -> Result<(usize, i64), String> {
         match self
             .store
             .borrow()
             .option_payload(req.option, &self.schema_refs)?
         {
             OptionPayload::None => Err("unwrap on None".into()),
-            OptionPayload::Some { schema, word } => {
-                if let Some(value_schema) = pending_value_schema(&schema) {
-                    let invocation = self.store.borrow().pending_invocation(word)?;
-                    if invocation.remaining_arity != 0 {
-                        return Err(format!(
-                            "cannot force pending {value_schema} with {} remaining args",
-                            invocation.remaining_arity
-                        ));
-                    }
-                    Ok(ForceOutcome::Demand(InvokeRequest {
-                        caller,
-                        input_slot: req.input_slot,
-                        fn_ref: invocation.fn_ref,
-                        args: invocation.args,
-                    }))
-                } else {
-                    Ok(ForceOutcome::Ready {
-                        input_slot: req.input_slot,
-                        value: word,
-                    })
-                }
-            }
+            OptionPayload::Some { word } => Ok((req.input_slot, word)),
         }
+    }
+
+    fn fn_ref_for_hash(&self, closure_hash: u64) -> Result<usize, String> {
+        self.fns
+            .iter()
+            .position(|lowered| lowered.hash == closure_hash)
+            .ok_or_else(|| format!("no function with closure hash {closure_hash:016x}"))
     }
 
     fn project_tree_path_optional(
@@ -1516,15 +1633,11 @@ enum Burst {
         new_requests: Vec<InvokeRequest>,
         project_requests: Vec<ProjectRequest>,
         exec_requests: Vec<ExecRequest>,
-        force_requests: Vec<ForceRequest>,
+        option_unwraps: Vec<OptionUnwrapRequest>,
+        pending_coercions: Vec<PendingCoerceRequest>,
         parked_input: usize,
     },
     Error(String),
-}
-
-enum ForceOutcome {
-    Ready { input_slot: usize, value: i64 },
-    Demand(InvokeRequest),
 }
 
 fn hash_u64(value: impl Hash) -> u64 {
@@ -1586,13 +1699,12 @@ fn memo_key_hash(key: &CanonMemoKey) -> u64 {
 fn pending_invocation_for(
     lowered: &LoweredFn,
     store: &RefCell<ValueStore>,
-    fn_ref: usize,
     args: Vec<i64>,
 ) -> PendingInvocation {
     let store = store.borrow();
     let identity_hash = pending_identity_hash(lowered, &store, &args);
     PendingInvocation {
-        fn_ref,
+        closure_hash: lowered.hash,
         remaining_arity: lowered.arg_schemas.len().saturating_sub(args.len()),
         args,
         identity_hash,
@@ -1683,6 +1795,54 @@ fn canonical_map_pairs(store: &ValueStore, pairs: Vec<MapPair>) -> Vec<OrderedMa
         deduped.push(pair);
     }
     deduped
+}
+
+fn promote_map_pairs_to_realized(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    stored_schema: &str,
+    map_schema: &str,
+    pairs: Vec<MapPair>,
+) -> Result<Vec<MapPair>, String> {
+    let Some((stored_key, stored_value)) = map_schemas(stored_schema) else {
+        return Err(format!("stored schema {stored_schema} is not a Map"));
+    };
+    let Some((map_key, map_value)) = map_schemas(map_schema) else {
+        return Err(format!("target schema {map_schema} is not a Map"));
+    };
+    let Some(realized_value) = realized_value_schema(map_value) else {
+        return Err(format!(
+            "expected map schema {map_schema}, got {stored_schema}"
+        ));
+    };
+    if stored_key != map_key || stored_value != realized_value {
+        return Err(format!(
+            "expected map schema {map_schema}, got {stored_schema}"
+        ));
+    }
+
+    pairs
+        .into_iter()
+        .map(|pair| {
+            if pair.value_schema != stored_value {
+                return Err(format!(
+                    "cannot promote pair value schema {} from {stored_schema} to {map_schema}",
+                    pair.value_schema
+                ));
+            }
+            let handle = store.borrow_mut().alloc_realized_ready(
+                descriptors,
+                map_value,
+                stored_value,
+                pair.value_word,
+            )?;
+            Ok(MapPair {
+                value_schema: map_value.to_string(),
+                value_word: handle,
+                ..pair
+            })
+        })
+        .collect()
 }
 
 fn encode_map_pairs(pairs: &[OrderedMapPair], schema_refs: &[String]) -> Result<Vec<u8>, String> {
@@ -1778,13 +1938,19 @@ fn pending_value_schema(schema: &str) -> Option<&str> {
     schema.strip_prefix("Pending<")?.strip_suffix('>')
 }
 
+fn realized_value_schema(schema: &str) -> Option<&str> {
+    schema.strip_prefix("Realized<")?.strip_suffix('>')
+}
+
+fn map_schemas(schema: &str) -> Option<(&str, &str)> {
+    let inner = schema.strip_prefix("Map<")?.strip_suffix('>')?;
+    let (key, value) = inner.split_once(',')?;
+    Some((key, value))
+}
+
 fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(
-        &i64::try_from(invocation.fn_ref)
-            .expect("fn ref fits i64")
-            .to_le_bytes(),
-    );
+    bytes.extend_from_slice(&invocation.closure_hash.to_le_bytes());
     bytes.extend_from_slice(
         &i64::try_from(invocation.args.len())
             .expect("argc fits i64")
@@ -1806,7 +1972,8 @@ fn decode_pending_invocation(bytes: &[u8]) -> Result<PendingInvocation, String> 
     if bytes.len() < 56 {
         return Err("pending invocation too short".into());
     }
-    let fn_ref = usize::try_from(read_frame_word(bytes, 0)).map_err(|_| "fn ref")?;
+    let closure_hash =
+        u64::from_le_bytes(bytes[0..8].try_into().expect("pending closure hash word"));
     let argc = usize::try_from(read_frame_word(bytes, 8)).map_err(|_| "argc")?;
     let remaining_arity =
         usize::try_from(read_frame_word(bytes, 16)).map_err(|_| "remaining arity")?;
@@ -1824,7 +1991,7 @@ fn decode_pending_invocation(bytes: &[u8]) -> Result<PendingInvocation, String> 
         .map(|i| read_frame_word(bytes, 56 + i * 8))
         .collect();
     Ok(PendingInvocation {
-        fn_ref,
+        closure_hash,
         args,
         remaining_arity,
         identity_hash,
