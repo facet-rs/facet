@@ -2477,6 +2477,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-lsp"
+version = "0.0.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "facet-testhelpers",
+]
+
+[[package]]
 name = "facet-lua"
 version = "0.50.0-rc.5"
 dependencies = [
@@ -8211,6 +8220,19 @@ dependencies = [
  "flate2",
  "tar",
  "ureq",
+ "vix",
+]
+
+[[package]]
+name = "vix-lsp"
+version = "0.0.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "facet-lsp",
+ "facet-testhelpers",
+ "tracing",
+ "tracing-subscriber",
  "vix",
 ]
 

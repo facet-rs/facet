@@ -1,0 +1,19 @@
+[package]
+name = "facet-lsp"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Small Facet-derived LSP 3.17 type subset and JSON-RPC framing."
+
+[dependencies]
+facet.workspace = true
+facet-json.workspace = true
+
+[dev-dependencies]
+facet-testhelpers.workspace = true
+
+[lints]
+workspace = true
