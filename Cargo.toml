@@ -3,6 +3,7 @@ members = [
   "gingembre-snark-spike",
   "snark-ts-diff",
   "vix",
+  "vix-fetch",
   "vix-wire",
   "vix-daemon",
   # core

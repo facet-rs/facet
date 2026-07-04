@@ -1,0 +1,12 @@
+[package]
+name = "vix-fetch"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Real fetch backend for vix archives."
+
+[dependencies]
+vix = { path = "../vix" }
+flate2 = "1.1"
+tar = "0.4"
+ureq = "3.3"
