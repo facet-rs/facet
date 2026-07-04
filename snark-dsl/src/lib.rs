@@ -10,6 +10,9 @@ use std::{
 #[cfg(feature = "boa")]
 use boa_engine::{Context, JsValue, Source};
 
+#[cfg(feature = "typed-ast")]
+pub mod typed_ast;
+
 const OFFICIAL_TREE_SITTER_DSL: &str = include_str!("../vendor/tree-sitter-generate-0.26.9/dsl.js");
 const OFFICIAL_ENTRYPOINT_MARKER: &str =
     "const grammarPath = getEnv(\"TREE_SITTER_GRAMMAR_PATH\");";

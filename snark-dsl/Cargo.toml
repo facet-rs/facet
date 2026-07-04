@@ -8,9 +8,13 @@ publish = false
 default = []
 boa = ["dep:boa_engine"]
 native = ["boa", "boa_engine/float16", "boa_engine/xsum", "dep:tempfile"]
+typed-ast = ["native", "dep:facet", "dep:facet-json", "dep:snark"]
 
 [dependencies]
 boa_engine = { version = "0.21.1", default-features = false, optional = true }
+facet = { workspace = true, optional = true }
+facet-json = { workspace = true, optional = true }
+snark = { path = "../snark", features = ["json-import"], optional = true }
 tempfile = { version = "3.23.0", optional = true }
 thiserror = "2.0.17"
 

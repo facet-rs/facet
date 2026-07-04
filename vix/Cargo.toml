@@ -26,10 +26,7 @@ sha2.workspace = true
 weavy = { path = "../weavy" }
 
 [build-dependencies]
-snark = { path = "../snark", features = ["json-import"] }
-snark-dsl = { path = "../snark-dsl", features = ["native"] }
-facet = { path = "../facet" }
-facet-json = { path = "../facet-json" }
+snark-dsl = { path = "../snark-dsl", features = ["typed-ast"] }
 
 # The graph demand engine's driver uses only core::future (vix stays
 # wasm-clean); tokio is DEV-only, an executor + timers for the demand tests.

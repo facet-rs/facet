@@ -20,10 +20,7 @@ snark = { path = "../snark", features = ["json-import"] }
 weavy.workspace = true
 
 [build-dependencies]
-facet.workspace = true
-facet-json.workspace = true
-snark = { path = "../snark", features = ["json-import"] }
-snark-dsl = { path = "../snark-dsl", features = ["native"] }
+snark-dsl = { path = "../snark-dsl", features = ["typed-ast"] }
 
 [dev-dependencies]
 facet = { path = "../facet" }

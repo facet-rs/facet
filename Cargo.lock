@@ -2211,7 +2211,6 @@ version = "0.1.3"
 dependencies = [
  "facet",
  "facet-core",
- "facet-json",
  "snark",
  "snark-dsl",
  "weavy",
@@ -6620,6 +6619,9 @@ name = "snark-dsl"
 version = "0.1.0"
 dependencies = [
  "boa_engine",
+ "facet",
+ "facet-json",
+ "snark",
  "tempfile",
  "thiserror 2.0.18",
 ]
