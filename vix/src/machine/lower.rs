@@ -18,6 +18,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use weavy::mem::Descriptor;
 use weavy::mem::Layout;
@@ -26,12 +27,14 @@ use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 
 use super::TotalF64;
 use super::driver::{
-    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_MAP_PENDING_HOST, DriveEvent, Driver,
-    EXEC_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
-    OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST,
-    PENDING_INVOKE_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, TREE_PROJECT_HOST,
+    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST,
+    ARRAY_MAP_PENDING_HOST, DriveEvent, Driver, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST,
+    Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, OPTION_UNWRAP_HOST,
+    PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST,
+    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, TREE_PROJECT_HOST,
 };
 use crate::ast;
+use crate::fetch::FetchBackend;
 use crate::module::{ModuleTables, VariantShape, load_module_tables, type_schema_name};
 
 /// The machine facade for this slice: load source, demand a function's
@@ -118,9 +121,11 @@ impl Machine {
             .collect();
         let string_handles = string_handles(&tables);
         let path_handles = path_handles(&tables, string_handles.len());
+        let flag_handles = flag_handles(&tables, string_handles.len() + path_handles.len());
         let literal_handles = LiteralHandles {
             strings: &string_handles,
             paths: &path_handles,
+            flags: &flag_handles,
         };
         let signatures = FnSignatures {
             returns: &fn_returns,
@@ -199,8 +204,24 @@ impl Machine {
             let (actual, _) = driver.intern_raw_value("Path", value.as_bytes().to_vec());
             assert_eq!(actual, *expected, "path handle assignment is deterministic");
         }
+        let mut flag_handles_sorted: Vec<(&String, &i64)> = flag_handles.iter().collect();
+        flag_handles_sorted.sort_by_key(|(_, handle)| **handle);
+        for (value, expected) in flag_handles_sorted {
+            let (actual, _) = driver.intern_raw_value("Flag", value.as_bytes().to_vec());
+            assert_eq!(actual, *expected, "flag handle assignment is deterministic");
+        }
 
         Ok(Machine { driver, fn_refs })
+    }
+
+    pub fn with_fetch_backend(mut self, backend: impl FetchBackend + 'static) -> Self {
+        self.driver.set_fetch_backend(Arc::new(backend));
+        self
+    }
+
+    pub fn with_fetch_backend_arc(mut self, backend: Arc<dyn FetchBackend>) -> Self {
+        self.driver.set_fetch_backend(backend);
+        self
     }
 
     pub fn reload(&mut self, source: &str) -> Result<ReloadDiff, String> {
@@ -261,9 +282,11 @@ impl Machine {
         let schema_refs = self.driver.schema_ref_map_for(&schema_names);
         let string_handles = live_string_handles(&self.driver, &tables);
         let path_handles = live_path_handles(&self.driver, &tables);
+        let flag_handles = live_flag_handles(&self.driver, &tables);
         let literal_handles = LiteralHandles {
             strings: &string_handles,
             paths: &path_handles,
+            flags: &flag_handles,
         };
         let signatures = FnSignatures {
             returns: &fn_returns,
@@ -362,7 +385,7 @@ impl Machine {
     }
 
     pub fn tree_entries(
-        &self,
+        &mut self,
         handle: i64,
     ) -> Result<std::collections::BTreeMap<String, String>, String> {
         self.driver.tree_entries(handle)
@@ -405,8 +428,10 @@ fn schema_names_for(
         "Path".to_string(),
         "Bool".to_string(),
         "Target".to_string(),
+        "Os".to_string(),
         "Cc".to_string(),
         "Ar".to_string(),
+        "Flag".to_string(),
         "Tree".to_string(),
         "Array".to_string(),
         "Map".to_string(),
@@ -524,6 +549,37 @@ fn path_literals(tables: &ModuleTables) -> BTreeSet<String> {
     paths
 }
 
+fn flag_handles(tables: &ModuleTables, offset: usize) -> HashMap<String, i64> {
+    flag_literals(tables)
+        .into_iter()
+        .enumerate()
+        .map(|(ix, value)| {
+            (
+                value,
+                i64::try_from(offset + ix).expect("flag handle fits i64"),
+            )
+        })
+        .collect()
+}
+
+fn live_flag_handles(driver: &Driver, tables: &ModuleTables) -> HashMap<String, i64> {
+    flag_literals(tables)
+        .into_iter()
+        .map(|value| {
+            let (handle, _) = driver.intern_raw_value("Flag", value.as_bytes().to_vec());
+            (value, handle)
+        })
+        .collect()
+}
+
+fn flag_literals(tables: &ModuleTables) -> BTreeSet<String> {
+    let mut flags = BTreeSet::new();
+    for item in tables.fns.values() {
+        collect_block_flags(&item.body, &mut flags);
+    }
+    flags
+}
+
 fn collect_block_strings(block: &ast::Block, out: &mut BTreeSet<String>) {
     for stmt in &block.stmts {
         match stmt {
@@ -545,6 +601,18 @@ fn collect_block_paths(block: &ast::Block, out: &mut BTreeSet<String>) {
     }
     if let Some(tail) = &block.tail {
         collect_expr_paths(tail, out);
+    }
+}
+
+fn collect_block_flags(block: &ast::Block, out: &mut BTreeSet<String>) {
+    for stmt in &block.stmts {
+        match stmt {
+            ast::Stmt::Let(l) => collect_expr_flags(&l.value, out),
+            ast::Stmt::Expr(e) => collect_expr_flags(&e.expr, out),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_expr_flags(tail, out);
     }
 }
 
@@ -675,8 +743,9 @@ fn collect_expr_strings(expr: &ast::Expr, out: &mut BTreeSet<String>) {
         }
         ast::Expr::Array(a) => {
             for elem in &a.elems {
-                if let ast::ArrayElem::Expr(e) = elem {
-                    collect_expr_strings(e, out);
+                match elem {
+                    ast::ArrayElem::Expr(e) => collect_expr_strings(e, out),
+                    ast::ArrayElem::Flag(_) => {}
                 }
             }
         }
@@ -699,13 +768,101 @@ fn collect_expr_strings(expr: &ast::Expr, out: &mut BTreeSet<String>) {
         ast::Expr::Closure(c) => collect_expr_strings(&c.body, out),
         ast::Expr::Command(c) => {
             for part in &c.parts {
-                if let ast::CommandPart::Splice(s) = part {
-                    collect_expr_strings(&s.expr, out);
+                match part {
+                    ast::CommandPart::Token(token) => {
+                        out.insert(token.value.clone());
+                    }
+                    ast::CommandPart::Splice(s) => collect_expr_strings(&s.expr, out),
                 }
             }
         }
         ast::Expr::Scoped(_)
         | ast::Expr::Identifier(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+    }
+}
+
+fn collect_expr_flags(expr: &ast::Expr, out: &mut BTreeSet<String>) {
+    match expr {
+        ast::Expr::Array(a) => {
+            for elem in &a.elems {
+                match elem {
+                    ast::ArrayElem::Flag(flag) => {
+                        out.insert(flag.value.clone());
+                    }
+                    ast::ArrayElem::Expr(expr) => collect_expr_flags(expr, out),
+                }
+            }
+        }
+        ast::Expr::Binary(b) => {
+            collect_expr_flags(&b.left, out);
+            collect_expr_flags(&b.right, out);
+        }
+        ast::Expr::Unary(u) => collect_expr_flags(&u.operand, out),
+        ast::Expr::Call(c) => {
+            for arg in &c.args.args {
+                match arg {
+                    ast::Arg::Expr(e) => collect_expr_flags(e, out),
+                    ast::Arg::Kwarg(k) => collect_expr_flags(&k.value, out),
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::MethodCall(m) => {
+            collect_expr_flags(&m.receiver, out);
+            for arg in &m.args.args {
+                match arg {
+                    ast::Arg::Expr(e) => collect_expr_flags(e, out),
+                    ast::Arg::Kwarg(k) => collect_expr_flags(&k.value, out),
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::Match(m) => {
+            collect_expr_flags(&m.scrutinee, out);
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    collect_expr_flags(guard, out);
+                }
+                collect_expr_flags(&arm.value, out);
+            }
+        }
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                collect_expr_flags(&field.value, out);
+            }
+            for spread in &lit.spreads {
+                if let Some(base) = &spread.base {
+                    collect_expr_flags(base, out);
+                }
+            }
+        }
+        ast::Expr::Paren(p) => collect_expr_flags(&p.inner, out),
+        ast::Expr::Field(f) => collect_expr_flags(&f.receiver, out),
+        ast::Expr::Tuple(t) => {
+            for elem in &t.elems {
+                collect_expr_flags(elem, out);
+            }
+        }
+        ast::Expr::Map(m) => {
+            for entry in &m.entries {
+                collect_expr_flags(&entry.key, out);
+                collect_expr_flags(&entry.value, out);
+            }
+        }
+        ast::Expr::Closure(c) => collect_expr_flags(&c.body, out),
+        ast::Expr::Command(c) => {
+            for part in &c.parts {
+                if let ast::CommandPart::Splice(s) = part {
+                    collect_expr_flags(&s.expr, out);
+                }
+            }
+        }
+        ast::Expr::Scoped(_)
+        | ast::Expr::Identifier(_)
+        | ast::Expr::Str(_)
         | ast::Expr::Path(_)
         | ast::Expr::Number(_)
         | ast::Expr::Bool(_) => {}
@@ -1122,6 +1279,9 @@ fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>
             vec![declared_mem::handle("OsRef".into(), "Os".into())],
         )
     });
+    descriptors
+        .entry("Os".into())
+        .or_insert_with(|| declared_mem::declared_enum("Os".into(), vec![vec![], vec![], vec![]]));
 }
 
 fn derived_descriptor(schema: &str) -> Option<Descriptor<String>> {
@@ -1251,6 +1411,7 @@ struct LoweredInfo {
 struct LiteralHandles<'a> {
     strings: &'a HashMap<String, i64>,
     paths: &'a HashMap<String, i64>,
+    flags: &'a HashMap<String, i64>,
 }
 
 #[derive(Clone)]
@@ -1400,7 +1561,7 @@ impl<'a> FnLowerer<'a> {
         this.next += 8 * 2;
         this.primitive_region = this.next;
         let primitive_words = max_store_fields.max(max_argc);
-        this.next += 8 * (8 + u32::try_from(primitive_words).expect("primitive word count"));
+        this.next += 8 * (128 + u32::try_from(primitive_words).expect("primitive word count"));
 
         let return_schema = item
             .return_type
@@ -1647,6 +1808,30 @@ impl<'a> FnLowerer<'a> {
                             "Bool",
                         )
                     }
+                    ("!=", _, _) => {
+                        if a.schema != r.schema {
+                            return Err(format!(
+                                "cannot compare {} to {} in the machine B4 subset",
+                                a.schema, r.schema
+                            ));
+                        }
+                        (
+                            Op::NeI64 {
+                                dst,
+                                a: a.slot,
+                                b: r.slot,
+                            },
+                            "Bool",
+                        )
+                    }
+                    ("&&", "Bool", "Bool") => (
+                        Op::MulI64 {
+                            dst,
+                            a: a.slot,
+                            b: r.slot,
+                        },
+                        "Bool",
+                    ),
                     (other, _, _) => {
                         return Err(format!(
                             "operator {other:?} on {} and {} is outside the machine slice-3 subset",
@@ -1818,11 +2003,21 @@ impl<'a> FnLowerer<'a> {
                     }
                 }
                 ast::Pattern::Identifier(name) => {
-                    if i != last {
+                    if let Some(variant_index) =
+                        self.shorthand_unit_variant(&scrut.schema, &name.value)
+                    {
+                        self.variant_match_test(
+                            &scrut,
+                            &scrut.schema,
+                            variant_index,
+                            &mut skip_patches,
+                        )?;
+                    } else if i != last {
                         return Err("binding arm must be last".into());
+                    } else {
+                        self.slots
+                            .insert(name.value.clone(), BindingCell::value(scrut.clone()));
                     }
-                    self.slots
-                        .insert(name.value.clone(), BindingCell::value(scrut.clone()));
                 }
                 other => {
                     return Err(format!("pattern {other:?} is outside the slice-2 subset"));
@@ -1948,6 +2143,11 @@ impl<'a> FnLowerer<'a> {
                 return Err(format!("callee {other:?} is outside the slice-1 subset"));
             }
         };
+        match name {
+            "fetch" => return self.fetch_call(call),
+            "extract" => return self.extract_call(call),
+            _ => {}
+        }
         if let Some(&fn_ref) = self.fn_refs.get(name) {
             let param_names = self
                 .signatures
@@ -2177,6 +2377,8 @@ impl<'a> FnLowerer<'a> {
                 let ext = self.method_arg(arg, Some("String"))?;
                 self.path_with_ext(&receiver, &ext)
             }
+            "glob" => self.tree_glob(&receiver, call),
+            "filter" => self.array_filter_exclude(&receiver, call),
             "map" => self.array_map_pending(&receiver, call),
             "collect" => {
                 if !call.args.args.is_empty() {
@@ -2475,6 +2677,20 @@ impl<'a> FnLowerer<'a> {
             target: 0,
         });
         Ok(())
+    }
+
+    fn shorthand_unit_variant(&self, enum_name: &str, variant_name: &str) -> Option<usize> {
+        if let Some(info) = self.tables.enums.get(enum_name) {
+            return info.variants.iter().position(|(name, shape)| {
+                name == variant_name && matches!(shape, VariantShape::Unit)
+            });
+        }
+        match (enum_name, variant_name) {
+            ("Os", "Linux") => Some(0),
+            ("Os", "Macos") => Some(1),
+            ("Os", "Windows") => Some(2),
+            _ => None,
+        }
     }
 
     fn bind_payload_pattern(
@@ -3152,13 +3368,26 @@ impl<'a> FnLowerer<'a> {
     fn array_literal(&mut self, array: &ast::Array) -> Result<ValueSlot, String> {
         let mut elems = Vec::new();
         for elem in &array.elems {
-            let ast::ArrayElem::Expr(expr) = elem else {
-                return Err("array flags are outside the machine slice-4 subset".into());
+            match elem {
+                ast::ArrayElem::Expr(expr) => elems.push(self.expr_expected(expr, Some("Path"))?),
+                ast::ArrayElem::Flag(flag) => {
+                    let handle =
+                        *self.literal_handles.flags.get(&flag.value).ok_or_else(|| {
+                            format!("flag literal {:?} was not interned", flag.value)
+                        })?;
+                    let slot = self.alloc();
+                    self.code.push(Op::ConstI64 {
+                        dst: slot,
+                        value: handle,
+                    });
+                    elems.push(ValueSlot {
+                        slot,
+                        schema: "Flag".into(),
+                        realization: None,
+                        pending: None,
+                    });
+                }
             };
-            elems.push(self.expr_expected(expr, Some("Path"))?);
-        }
-        if elems.iter().any(|elem| elem.schema != "Path") {
-            return Err("slice-4 array literals are Path arrays only".into());
         }
         let dst = self.alloc();
         let region = self.primitive_region;
@@ -3168,7 +3397,7 @@ impl<'a> FnLowerer<'a> {
         });
         self.code.push(Op::ConstI64 {
             dst: region + 8,
-            value: *self.schema_refs.get("Path").expect("Path schema ref"),
+            value: 0,
         });
         self.code.push(Op::ConstI64 {
             dst: region + 16,
@@ -3191,6 +3420,88 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn tree_glob(
+        &mut self,
+        receiver: &ValueSlot,
+        call: &ast::MethodCall,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Tree")?;
+        let [arg] = call.args.args.as_slice() else {
+            return Err("glob takes one pattern".into());
+        };
+        let pattern = self.method_arg(arg, Some("String"))?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: pattern.slot,
+        });
+        self.code.push(Op::HostCall { host: GLOB_HOST });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Array".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn array_filter_exclude(
+        &mut self,
+        receiver: &ValueSlot,
+        call: &ast::MethodCall,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        let [ast::Arg::Expr(ast::Expr::Closure(closure))] = call.args.args.as_slice() else {
+            return Err("slice B4 array filter requires a single closure argument".into());
+        };
+        let [param] = closure.params.as_slice() else {
+            return Err("slice B4 array filter closure must have one parameter".into());
+        };
+        let excluded = filter_excluded_paths(&closure.body, &param.value)?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: i64::try_from(excluded.len()).expect("excluded path count fits i64"),
+        });
+        for (index, path) in excluded.iter().enumerate() {
+            let handle = *self
+                .literal_handles
+                .paths
+                .get(path)
+                .ok_or_else(|| format!("path literal {path:?} was not interned"))?;
+            self.code.push(Op::ConstI64 {
+                dst: region + 24 + 8 * u32::try_from(index).expect("excluded path index"),
+                value: handle,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: ARRAY_FILTER_EXCLUDE_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Array".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
     fn array_map_pending(
         &mut self,
         receiver: &ValueSlot,
@@ -3200,14 +3511,23 @@ impl<'a> FnLowerer<'a> {
         let [ast::Arg::Expr(ast::Expr::Closure(closure))] = call.args.args.as_slice() else {
             return Err("slice-4 array map requires a single closure argument".into());
         };
-        let (fn_name, captured_name, param_name) = partial_named_fn_closure(closure)?;
+        let (fn_name, args) = partial_named_fn_closure(closure)?;
         let fn_ref = *self
             .fn_refs
             .get(fn_name)
             .ok_or_else(|| format!("unknown function {fn_name}"))?;
-        let captured = self
-            .resolve_binding(captured_name, None)
-            .map_err(|_| format!("unbound capture {captured_name}"))?;
+        let mut lowered_args = Vec::new();
+        for arg in &args {
+            match arg {
+                ClosureMapArg::Param => lowered_args.push(None),
+                ClosureMapArg::Capture(name) => {
+                    let captured = self
+                        .resolve_binding(name, None)
+                        .map_err(|_| format!("unbound capture {name}"))?;
+                    lowered_args.push(Some(captured));
+                }
+            }
+        }
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {
@@ -3222,14 +3542,32 @@ impl<'a> FnLowerer<'a> {
             dst: region + 16,
             value: i64::try_from(fn_ref).expect("fn ref fits i64"),
         });
-        self.code.push(Op::CopyI64 {
+        self.code.push(Op::ConstI64 {
             dst: region + 24,
-            src: captured.slot,
+            value: i64::try_from(lowered_args.len()).expect("map arg count fits i64"),
         });
+        for (index, arg) in lowered_args.iter().enumerate() {
+            let at = region + 32 + 16 * u32::try_from(index).expect("map arg index");
+            match arg {
+                Some(slot) => {
+                    self.code.push(Op::ConstI64 { dst: at, value: 0 });
+                    self.code.push(Op::CopyI64 {
+                        dst: at + 8,
+                        src: slot.slot,
+                    });
+                }
+                None => {
+                    self.code.push(Op::ConstI64 { dst: at, value: 1 });
+                    self.code.push(Op::ConstI64 {
+                        dst: at + 8,
+                        value: 0,
+                    });
+                }
+            }
+        }
         self.code.push(Op::HostCall {
             host: ARRAY_MAP_PENDING_HOST,
         });
-        let _ = param_name;
         Ok(ValueSlot {
             slot: dst,
             schema: "Array".into(),
@@ -3296,18 +3634,38 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn command_block(&mut self, command: &ast::CommandBlock) -> Result<ValueSlot, String> {
-        if command.command.value != "cc" {
+        if !matches!(command.command.value.as_str(), "cc" | "ar") {
             return Err(format!(
-                "command {} is outside the machine slice-4 subset",
+                "command {} is outside the machine B4 subset",
                 command.command.value
             ));
         }
         let capability = self
             .resolve_binding(&command.command.value, None)
             .map_err(|_| format!("no capability `{}` in scope", command.command.value))?;
-        let output = command_output_path_expr(command)
-            .ok_or_else(|| "slice-4 cc command requires `-o {path}`".to_string())
-            .and_then(|expr| self.expr_expected(expr, Some("Path")))?;
+        enum LoweredCommandPart {
+            Token(i64),
+            Splice(ValueSlot),
+        }
+        let mut parts = Vec::with_capacity(command.parts.len());
+        for part in &command.parts {
+            match part {
+                ast::CommandPart::Token(token) => {
+                    let handle =
+                        *self
+                            .literal_handles
+                            .strings
+                            .get(&token.value)
+                            .ok_or_else(|| {
+                                format!("command token {:?} was not interned", token.value)
+                            })?;
+                    parts.push(LoweredCommandPart::Token(handle));
+                }
+                ast::CommandPart::Splice(splice) => {
+                    parts.push(LoweredCommandPart::Splice(self.expr(&splice.expr)?));
+                }
+            }
+        }
         let input_slot = self.next_input_slot;
         self.next_input_slot += 1;
         let region = self.primitive_region;
@@ -3315,14 +3673,45 @@ impl<'a> FnLowerer<'a> {
             dst: region,
             value: input_slot,
         });
-        self.code.push(Op::CopyI64 {
+        self.code.push(Op::ConstI64 {
             dst: region + 8,
-            src: capability.slot,
+            value: command_kind(&command.command.value)?,
         });
         self.code.push(Op::CopyI64 {
             dst: region + 16,
-            src: output.slot,
+            src: capability.slot,
         });
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: i64::try_from(parts.len()).expect("command part count fits i64"),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 32,
+            value: command.span.start.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 40,
+            value: command.span.end.into(),
+        });
+        for (index, part) in parts.iter().enumerate() {
+            let at = region + 48 + 16 * u32::try_from(index).expect("command part index");
+            match part {
+                LoweredCommandPart::Token(handle) => {
+                    self.code.push(Op::ConstI64 { dst: at, value: 0 });
+                    self.code.push(Op::ConstI64 {
+                        dst: at + 8,
+                        value: *handle,
+                    });
+                }
+                LoweredCommandPart::Splice(value) => {
+                    self.code.push(Op::ConstI64 { dst: at, value: 1 });
+                    self.code.push(Op::CopyI64 {
+                        dst: at + 8,
+                        src: value.slot,
+                    });
+                }
+            }
+        }
         self.code.push(Op::HostCall { host: EXEC_HOST });
         let dst = self.alloc();
         self.code.push(Op::Await {
@@ -3335,6 +3724,62 @@ impl<'a> FnLowerer<'a> {
             realization: None,
             pending: None,
         })
+    }
+
+    fn fetch_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let mut url = None;
+        let mut sha256 = None;
+        for arg in &call.args.args {
+            let ast::Arg::Kwarg(kwarg) = arg else {
+                return Err("fetch arguments must be named".into());
+            };
+            match kwarg.name.value.as_str() {
+                "url" => url = Some(self.expr_expected(&kwarg.value, Some("String"))?),
+                "sha256" => sha256 = Some(self.expr_expected(&kwarg.value, Some("String"))?),
+                other => return Err(format!("fetch got unknown argument `{other}`")),
+            }
+        }
+        let url = url.ok_or_else(|| "fetch requires a url".to_string())?;
+        let input_slot = self.next_input_slot;
+        self.next_input_slot += 1;
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: input_slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: url.slot,
+        });
+        match sha256 {
+            Some(sha256) => self.code.push(Op::CopyI64 {
+                dst: region + 16,
+                src: sha256.slot,
+            }),
+            None => self.code.push(Op::ConstI64 {
+                dst: region + 16,
+                value: -1,
+            }),
+        }
+        self.code.push(Op::HostCall { host: FETCH_HOST });
+        let dst = self.alloc();
+        self.code.push(Op::Await {
+            dst,
+            input: u32::try_from(input_slot).expect("input slot fits u32"),
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Tree".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn extract_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("extract takes a tree".into());
+        };
+        self.expr_expected(arg, Some("Tree"))
     }
 
     fn path_with_ext(&mut self, path: &ValueSlot, ext: &ValueSlot) -> Result<ValueSlot, String> {
@@ -3449,7 +3894,8 @@ fn strict_binary_operand_schema<'a>(op: &str, left: &'a str, right: &'a str) -> 
     match (op, left) {
         ("+" | "-" | "*", "Int")
         | ("+" | "*", "Float")
-        | ("==", "Int" | "Float" | "String" | "Path" | "Bool") => Some(left),
+        | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool")
+        | ("&&", "Bool") => Some(left),
         _ => None,
     }
 }
@@ -3458,7 +3904,14 @@ fn option_value_schema(schema: &str) -> Option<&str> {
     schema.strip_prefix("Option<")?.strip_suffix('>')
 }
 
-fn partial_named_fn_closure(closure: &ast::Closure) -> Result<(&str, &str, &str), String> {
+enum ClosureMapArg<'a> {
+    Capture(&'a str),
+    Param,
+}
+
+fn partial_named_fn_closure(
+    closure: &ast::Closure,
+) -> Result<(&str, Vec<ClosureMapArg<'_>>), String> {
     let [param] = closure.params.as_slice() else {
         return Err("slice-4 map closure must have one parameter".into());
     };
@@ -3468,36 +3921,61 @@ fn partial_named_fn_closure(closure: &ast::Closure) -> Result<(&str, &str, &str)
     let ast::PathRef::Identifier(fn_name) = &call.callee else {
         return Err("slice-4 map closure callee must be a named function".into());
     };
-    let [
-        ast::Arg::Expr(ast::Expr::Identifier(captured)),
-        ast::Arg::Expr(ast::Expr::Identifier(argument)),
-    ] = call.args.args.as_slice()
-    else {
-        return Err("slice-4 map closure must call f(captured, parameter)".into());
-    };
-    if argument.value != param.value {
-        return Err(format!(
-            "slice-4 map closure argument must be parameter {}, got {}",
-            param.value, argument.value
-        ));
-    }
-    Ok((
-        fn_name.value.as_str(),
-        captured.value.as_str(),
-        param.value.as_str(),
-    ))
-}
-
-fn command_output_path_expr(command: &ast::CommandBlock) -> Option<&ast::Expr> {
-    let mut saw_output = false;
-    for part in &command.parts {
-        match part {
-            ast::CommandPart::Token(token) if token.value == "-o" => saw_output = true,
-            ast::CommandPart::Splice(splice) if saw_output => return Some(&splice.expr),
-            _ => saw_output = false,
+    let mut args = Vec::new();
+    let mut saw_param = false;
+    for arg in &call.args.args {
+        let ast::Arg::Expr(ast::Expr::Identifier(name)) = arg else {
+            return Err("slice-4 map closure arguments must be identifiers".into());
+        };
+        if name.value == param.value {
+            saw_param = true;
+            args.push(ClosureMapArg::Param);
+        } else {
+            args.push(ClosureMapArg::Capture(name.value.as_str()));
         }
     }
-    None
+    if !saw_param {
+        return Err(format!(
+            "slice-4 map closure must pass parameter {}",
+            param.value
+        ));
+    }
+    Ok((fn_name.value.as_str(), args))
+}
+
+fn filter_excluded_paths(expr: &ast::Expr, param: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    collect_filter_excluded_paths(expr, param, &mut out)?;
+    Ok(out)
+}
+
+fn collect_filter_excluded_paths(
+    expr: &ast::Expr,
+    param: &str,
+    out: &mut Vec<String>,
+) -> Result<(), String> {
+    match expr {
+        ast::Expr::Binary(binary) if binary.op == "&&" => {
+            collect_filter_excluded_paths(&binary.left, param, out)?;
+            collect_filter_excluded_paths(&binary.right, param, out)
+        }
+        ast::Expr::Binary(binary) if binary.op == "!=" => match (&binary.left, &binary.right) {
+            (ast::Expr::Identifier(name), ast::Expr::Path(path)) if name.value == param => {
+                out.push(path.value.clone());
+                Ok(())
+            }
+            _ => Err("slice B4 filter supports `param != p\"...\"` clauses".into()),
+        },
+        _ => Err("slice B4 filter supports `&&` of path exclusions".into()),
+    }
+}
+
+fn command_kind(command: &str) -> Result<i64, String> {
+    match command {
+        "cc" => Ok(0),
+        "ar" => Ok(1),
+        other => Err(format!("command {other} is outside B4")),
+    }
 }
 
 fn resolve_variant_segments(
@@ -3637,6 +4115,8 @@ fn max_store_field_count(block: &ast::Block) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exec::{ExecEvent, Tree};
+    use crate::fetch::FakeFetchBackend;
     use std::collections::BTreeMap;
     use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -3662,6 +4142,26 @@ pub fn poly(n: Int) -> Int {
         Machine::load_with_lane(source, lane).unwrap_or_else(|err| {
             panic!("loads on {lane:?}: {err}");
         })
+    }
+
+    fn lua_fetch_backend() -> FakeFetchBackend {
+        FakeFetchBackend::new().with_archive(
+            "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+            b"lua-5.4.8 fixture archive",
+            Tree::of(&[
+                ("lua-5.4.8/src/lua.h", "// lua.h api"),
+                (
+                    "lua-5.4.8/src/lua.c",
+                    "#include \"lua.h\"\n// interpreter main",
+                ),
+                ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
+                ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
+                (
+                    "lua-5.4.8/src/luac.c",
+                    "#include \"lua.h\"\n// compiler main",
+                ),
+            ]),
+        )
     }
 
     #[test]
@@ -4490,7 +4990,7 @@ pub fn main() -> String {
                 .trace()
                 .iter()
                 .filter_map(|event| match event {
-                    DriveEvent::Observation { key, replayed } => Some((*key, *replayed)),
+                    DriveEvent::Observation { key, replayed, .. } => Some((*key, *replayed)),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -4502,6 +5002,348 @@ pub fn main() -> String {
             traces.push((lane, machine.trace().to_vec()));
         }
         assert_lane_traces_equal(&traces);
+    }
+
+    #[test]
+    fn lua_vix_runs_on_machine_with_exec_depth_contract() {
+        const FETCH_PIN: &str = "fetch:https://www.lua.org/ftp/lua-5.4.8.tar.gz:sha256:f5c9123295667d2cc0841c03490f04d6e66d0eac5e440ab386a944eec30e64d7";
+        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/lua.vix");
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut machine = Machine::load_with_lane(src, lane)
+                .unwrap()
+                .with_fetch_backend(lua_fetch_backend());
+            let target = machine.linux_target_handle();
+            let handle = machine.demand_i64("lua", vec![target]).unwrap();
+            let entries = machine.tree_entries(handle).unwrap();
+            assert!(entries.contains_key("lua"), "{lane:?}: {entries:?}");
+            assert!(entries["lua"].starts_with("obj("), "{lane:?}: {entries:?}");
+
+            let requested = machine
+                .trace()
+                .iter()
+                .filter(|event| matches!(event, DriveEvent::RunRequested { .. }))
+                .count();
+            let started = machine
+                .trace()
+                .iter()
+                .filter(|event| matches!(event, DriveEvent::RunStarted { .. }))
+                .count();
+            let completed = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::RunCompleted {
+                        command_name,
+                        serving,
+                        outputs,
+                        ..
+                    } => Some((command_name.as_str(), serving, outputs)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(requested, 5, "{lane:?}: {:?}", machine.trace());
+            assert_eq!(started, 5, "{lane:?}: {:?}", machine.trace());
+            assert_eq!(completed.len(), 3, "{lane:?}: {completed:?}");
+            assert!(
+                completed
+                    .iter()
+                    .all(|(command, serving, _)| *command == "cc" && **serving == ExecEvent::Ran),
+                "{lane:?}: {completed:?}"
+            );
+            assert!(
+                completed
+                    .iter()
+                    .any(|(_, _, outputs)| outputs.iter().any(|(path, _)| path == "lua")),
+                "{lane:?}: {completed:?}"
+            );
+            let observations = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::Observation {
+                        key_text, replayed, ..
+                    } => Some((key_text.as_str(), *replayed)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                observations.contains(&(FETCH_PIN, false)),
+                "{lane:?}: {observations:?}"
+            );
+
+            let lua_hash = machine.fn_hash("lua").expect("lua hash");
+            machine.clear_trace();
+            let warm = machine.demand_i64("lua", vec![target]).unwrap();
+            assert_eq!(warm, handle, "{lane:?}");
+            assert_eq!(
+                machine.trace(),
+                &[
+                    DriveEvent::Demanded { fn_hash: lua_hash },
+                    DriveEvent::MemoHit { fn_hash: lua_hash },
+                ],
+                "{lane:?}"
+            );
+            traces.push((lane, machine.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
+    }
+
+    #[test]
+    fn machine_fetch_without_declared_checksum_pins_and_replays() {
+        const URL: &str = "https://example.org/source.tar.gz";
+        let src = format!(
+            r#"
+use vix::Tree;
+
+pub fn src_tree(nonce: Int) -> Tree {{
+    fetch(url: "{URL}")
+}}
+"#
+        );
+        for lane in lanes() {
+            let backend = FakeFetchBackend::new().with_archive(
+                URL,
+                b"source fixture archive",
+                Tree::of(&[("src/lib.rs", "pub fn f() {}")]),
+            );
+            let mut machine = Machine::load_with_lane(&src, lane)
+                .unwrap()
+                .with_fetch_backend(backend);
+            let first = machine.demand_i64("src_tree", vec![1]).unwrap();
+            assert_eq!(
+                machine.tree_entries(first).unwrap(),
+                BTreeMap::from([("src/lib.rs".to_string(), "pub fn f() {}".to_string())]),
+                "{lane:?}"
+            );
+            let second = machine.demand_i64("src_tree", vec![2]).unwrap();
+            assert_eq!(first, second, "{lane:?}");
+            let observations = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::Observation {
+                        key_text, replayed, ..
+                    } if key_text.starts_with("fetch:") => Some((key_text.clone(), *replayed)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                observations,
+                vec![
+                    (format!("fetch:{URL}:observed"), false),
+                    (format!("fetch:{URL}:observed"), true),
+                ],
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn machine_fetch_declared_checksum_replays_pin() {
+        const URL: &str = "https://example.org/lua.tar.gz";
+        let sha256 = crate::fetch::sha256_hex(b"example fixture archive");
+        let src = format!(
+            r#"
+use vix::Tree;
+
+pub fn src_tree(nonce: Int) -> Tree {{
+    fetch(url: "{URL}", sha256: "{sha256}")
+}}
+"#
+        );
+        for lane in lanes() {
+            let backend = FakeFetchBackend::new().with_archive(
+                URL,
+                b"example fixture archive",
+                Tree::of(&[("src/lib.rs", "pub fn f() {}")]),
+            );
+            let mut machine = Machine::load_with_lane(&src, lane)
+                .unwrap()
+                .with_fetch_backend(backend);
+            let first = machine.demand_i64("src_tree", vec![1]).unwrap();
+            let second = machine.demand_i64("src_tree", vec![2]).unwrap();
+            assert_eq!(first, second, "{lane:?}");
+            let observations = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::Observation {
+                        key_text, replayed, ..
+                    } if key_text.starts_with("fetch:") => Some((key_text.clone(), *replayed)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let key = format!("fetch:{URL}:sha256:{sha256}");
+            assert_eq!(
+                observations,
+                vec![(key.clone(), false), (key, true)],
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn machine_fn_memo_and_exec_tiers_compose() {
+        let src = r#"
+use vix::{Tree, Path, Target};
+use caps::Cc;
+
+fn get_cc(target: Target) -> Cc {
+    Cc::acquire(target)
+}
+
+fn object(cc: Cc, src: Tree, unit: Path) -> Tree {
+    cc! { -O2 -I {src} -c {src / unit} -o {unit.with_ext("o")} }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = machine.linux_target_handle();
+            let cc = machine.demand_i64("get_cc", vec![target]).unwrap();
+            let unit = machine
+                .driver
+                .intern_raw_value("Path", b"lapi.c".to_vec())
+                .0;
+            let tree_v1 = machine.intern_tree_concrete(Tree::of(&[
+                ("lapi.c", "#include \"lua.h\"\n// api impl"),
+                ("lua.h", "// the api"),
+                ("README", "docs, never read by cc"),
+            ]));
+            let first = machine
+                .demand_i64("object", vec![cc, tree_v1, unit])
+                .unwrap();
+            let first_entries = machine.tree_entries(first).unwrap();
+
+            let tree_v2 = machine.intern_tree_concrete(Tree::of(&[
+                ("lapi.c", "#include \"lua.h\"\n// api impl"),
+                ("lua.h", "// the api"),
+                ("README", "docs, EDITED, still never read"),
+            ]));
+            machine.clear_trace();
+            let second = machine
+                .demand_i64("object", vec![cc, tree_v2, unit])
+                .unwrap();
+            assert_eq!(
+                machine.tree_entries(second).unwrap(),
+                first_entries,
+                "{lane:?}"
+            );
+            assert!(
+                machine.trace().iter().any(|event| matches!(
+                    event,
+                    DriveEvent::RunCompleted {
+                        command_name,
+                        serving: ExecEvent::Tier2Cutoff { verified: 3 },
+                        ..
+                    } if command_name == "cc"
+                )),
+                "{lane:?}: {:?}",
+                machine.trace()
+            );
+
+            let tree_v3 = machine.intern_tree_concrete(Tree::of(&[
+                ("lapi.c", "#include \"lua.h\"\n// api impl"),
+                ("lua.h", "// the api CHANGED"),
+                ("README", "docs, EDITED, still never read"),
+            ]));
+            machine.clear_trace();
+            let third = machine
+                .demand_i64("object", vec![cc, tree_v3, unit])
+                .unwrap();
+            assert_ne!(
+                machine.tree_entries(third).unwrap(),
+                first_entries,
+                "{lane:?}"
+            );
+            assert!(
+                machine.trace().iter().any(|event| matches!(
+                    event,
+                    DriveEvent::RunCompleted {
+                        serving: ExecEvent::Ran,
+                        ..
+                    }
+                )),
+                "{lane:?}: {:?}",
+                machine.trace()
+            );
+        }
+    }
+
+    #[test]
+    fn machine_commuting_flags_share_exec_identity() {
+        let src = r#"
+use vix::{Tree, Path, Target};
+use caps::Cc;
+
+fn get_cc(target: Target) -> Cc {
+    Cc::acquire(target)
+}
+
+fn a(cc: Cc, src: Tree, unit: Path) -> Tree {
+    cc! { -O2 -Wall -I {src} -c {src / unit} -o {unit.with_ext("o")} }
+}
+
+fn b(cc: Cc, src: Tree, unit: Path) -> Tree {
+    cc! { -Wall -O2 -I {src} -c {src / unit} -o {unit.with_ext("o")} }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = machine.linux_target_handle();
+            let cc = machine.demand_i64("get_cc", vec![target]).unwrap();
+            let unit = machine
+                .driver
+                .intern_raw_value("Path", b"lapi.c".to_vec())
+                .0;
+            let tree = machine.intern_tree_concrete(Tree::of(&[
+                ("lapi.c", "#include \"lua.h\"\n// api impl"),
+                ("lua.h", "// the api"),
+            ]));
+            let first = machine.demand_i64("a", vec![cc, tree, unit]).unwrap();
+            let first_entries = machine.tree_entries(first).unwrap();
+            machine.clear_trace();
+            let second = machine.demand_i64("b", vec![cc, tree, unit]).unwrap();
+            assert_eq!(
+                machine.tree_entries(second).unwrap(),
+                first_entries,
+                "{lane:?}"
+            );
+            let requested = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::RunRequested { argv, .. } => Some(argv.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(requested.len(), 1, "{lane:?}: {requested:?}");
+            assert_eq!(
+                requested[0],
+                vec![
+                    "-Wall".to_string(),
+                    "-O2".to_string(),
+                    "-I".to_string(),
+                    "/m/0".to_string(),
+                    "-c".to_string(),
+                    "/m/1/lapi.c".to_string(),
+                    "-o".to_string(),
+                    "lapi.o".to_string(),
+                ],
+                "{lane:?}"
+            );
+            assert!(
+                machine.trace().iter().any(|event| matches!(
+                    event,
+                    DriveEvent::RunCompleted {
+                        serving: ExecEvent::Tier1Hit,
+                        ..
+                    }
+                )),
+                "{lane:?}: {:?}",
+                machine.trace()
+            );
+        }
     }
 
     fn anti_nix_diamond() -> &'static str {
@@ -5134,7 +5976,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     fn started_outputs(machine: &Machine) -> Vec<u64> {
         run_outputs(machine, |event| match event {
-            DriveEvent::RunStarted { command, output } => {
+            DriveEvent::RunStarted {
+                command, output, ..
+            } => {
                 assert_eq!(*command, trace_hash("cc"));
                 Some(*output)
             }
@@ -5144,7 +5988,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     fn completed_outputs(machine: &Machine) -> Vec<u64> {
         run_outputs(machine, |event| match event {
-            DriveEvent::RunCompleted { command, output } => {
+            DriveEvent::RunCompleted {
+                command, output, ..
+            } => {
                 assert_eq!(*command, trace_hash("cc"));
                 Some(*output)
             }

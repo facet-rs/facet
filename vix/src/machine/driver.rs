@@ -29,6 +29,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 #[cfg(any(test, feature = "jit"))]
@@ -38,6 +39,7 @@ use weavy::mem::{Access, Descriptor, Tag};
 use weavy::task::Op;
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
 
+use crate::fetch::{FetchBackend, NoFetchBackend};
 use crate::oracle::{assign_roles, tool_for};
 
 /// INVOKE request frame contract (the lowering and this driver's
@@ -63,6 +65,9 @@ pub const PATH_WITH_EXT_HOST: u32 = 14;
 pub const PENDING_ALLOC_HOST: u32 = 15;
 pub const PENDING_COERCE_HOST: u32 = 16;
 pub const PENDING_INVOKE_HOST: u32 = 17;
+pub const FETCH_HOST: u32 = 18;
+pub const ARRAY_FILTER_EXCLUDE_HOST: u32 = 19;
+pub const GLOB_HOST: u32 = 20;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -107,55 +112,55 @@ pub struct LoweredFn {
 
 /// Driver-level events (join the unified trace via lowering-emitted
 /// marks later; recorded directly in this slice).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DriveEvent {
     /// Demand arrived for (fn hash, memo-key hash of args).
-    Demanded {
-        fn_hash: u64,
-    },
+    Demanded { fn_hash: u64 },
     /// Served from memo — NO task existed.
-    MemoHit {
-        fn_hash: u64,
-    },
+    MemoHit { fn_hash: u64 },
     /// Spawned a task (memo miss).
-    Spawned {
-        fn_hash: u64,
-    },
+    Spawned { fn_hash: u64 },
     /// A task parked awaiting another invocation's result.
-    ParkedOn {
-        fn_hash: u64,
-    },
+    ParkedOn { fn_hash: u64 },
     /// An invocation completed and fed its awaiters.
-    Completed {
-        fn_hash: u64,
-    },
+    Completed { fn_hash: u64 },
     /// A concrete invocation identity spawned. `key_hash` is the
     /// canonical memo-key hash, including canonicalized args.
-    SpawnedInvocation {
-        fn_hash: u64,
-        key_hash: u64,
-    },
+    SpawnedInvocation { fn_hash: u64, key_hash: u64 },
     /// A value-store allocation occurred. `deduped` means the store
     /// returned an existing handle for canonical content.
-    StoreAlloc {
-        schema_ref: u64,
-        deduped: bool,
-    },
+    StoreAlloc { schema_ref: u64, deduped: bool },
     RunRequested {
         command: u64,
         output: u64,
+        run_id: u64,
+        command_name: String,
+        argv: Vec<String>,
+        describe: Vec<String>,
+        span: Option<(u32, u32)>,
+        timestamp_us: u64,
     },
     RunStarted {
         command: u64,
         output: u64,
+        run_id: u64,
+        command_name: String,
+        timestamp_us: u64,
     },
     RunCompleted {
         command: u64,
         output: u64,
+        run_id: u64,
+        command_name: String,
+        serving: crate::exec::ExecEvent,
+        outputs: Vec<(String, String)>,
+        timestamp_us: u64,
     },
     Observation {
         key: u64,
         replayed: bool,
+        key_text: String,
+        timestamp_us: u64,
     },
 }
 
@@ -179,8 +184,23 @@ struct ProjectRequest {
 #[derive(Clone, Debug)]
 struct ExecRequest {
     input_slot: usize,
+    command: String,
     capability: i64,
-    output: i64,
+    parts: Vec<CommandRequestPart>,
+    span: Option<(u32, u32)>,
+}
+
+#[derive(Clone, Debug)]
+enum CommandRequestPart {
+    Token(i64),
+    Splice(i64),
+}
+
+#[derive(Clone, Debug)]
+struct FetchRequest {
+    input_slot: usize,
+    url: i64,
+    sha256: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -354,6 +374,19 @@ enum ArrayEntry {
 enum TreeEntry {
     Concrete(crate::exec::Tree),
     Merge(Vec<i64>),
+    Exec(u64),
+}
+
+#[derive(Clone, Debug)]
+struct PendingExecRun {
+    command: String,
+    plan: crate::exec::ExecPlan,
+    capability: u64,
+    mounts: Vec<crate::exec::Mount>,
+    output: String,
+    scheduled: bool,
+    completed: Option<(crate::exec::Outcome, crate::exec::ExecEvent)>,
+    completion_logged: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -770,6 +803,23 @@ impl ValueStore {
         self.alloc_with_hash("Tree", bytes, content_hash)
     }
 
+    fn alloc_tree_exec(&mut self, run_id: u64, identity: ContentHash) -> (i64, bool) {
+        let mut bytes = Vec::with_capacity(16);
+        bytes.extend_from_slice(&2i64.to_le_bytes());
+        bytes.extend_from_slice(
+            &i64::try_from(run_id)
+                .expect("run id fits i64")
+                .to_le_bytes(),
+        );
+        let handle = i64::try_from(self.entries.len()).expect("store handle fits i64");
+        self.entries.push(StoreEntry {
+            schema: "Tree".to_string(),
+            bytes,
+            content_hash: identity,
+        });
+        (handle, false)
+    }
+
     fn tree_entry(&self, handle: i64) -> Result<TreeEntry, String> {
         let entry = self
             .entry(handle)
@@ -781,6 +831,17 @@ impl ValueStore {
         match kind {
             0 => Ok(TreeEntry::Concrete(decode_concrete_tree(&entry.bytes)?)),
             1 => Ok(TreeEntry::Merge(decode_handle_list(&entry.bytes)?)),
+            2 => {
+                if entry.bytes.len() != 16 {
+                    return Err(format!(
+                        "Tree exec entry has {} bytes, expected 16",
+                        entry.bytes.len()
+                    ));
+                }
+                Ok(TreeEntry::Exec(
+                    u64::try_from(read_frame_word(&entry.bytes, 8)).map_err(|_| "run id")?,
+                ))
+            }
             other => Err(format!("unknown Tree kind {other}")),
         }
     }
@@ -810,6 +871,10 @@ pub struct Driver {
     memo: HashMap<CanonMemoKey, i64>,
     journal: BTreeMap<String, i64>,
     exec_cache: crate::exec::ExecCache,
+    fetch_backend: Arc<dyn FetchBackend>,
+    runs: BTreeMap<u64, PendingExecRun>,
+    next_run_id: u64,
+    trace_clock: u64,
     pub trace: Vec<DriveEvent>,
     store: RefCell<ValueStore>,
 }
@@ -845,6 +910,10 @@ impl Driver {
             memo: HashMap::new(),
             journal: BTreeMap::new(),
             exec_cache: crate::exec::ExecCache::new(),
+            fetch_backend: Arc::new(NoFetchBackend),
+            runs: BTreeMap::new(),
+            next_run_id: 0,
+            trace_clock: 0,
             trace: Vec::new(),
             store: RefCell::new(ValueStore::default()),
         })
@@ -862,6 +931,16 @@ impl Driver {
         self.descriptors = descriptors;
         self.trace.clear();
         Ok(())
+    }
+
+    pub fn set_fetch_backend(&mut self, backend: Arc<dyn FetchBackend>) {
+        self.fetch_backend = backend;
+    }
+
+    fn next_timestamp(&mut self) -> u64 {
+        let value = self.trace_clock;
+        self.trace_clock = self.trace_clock.saturating_add(1);
+        value
     }
 
     /// How many memo entries exist (tests: warm behavior).
@@ -946,10 +1025,11 @@ impl Driver {
             .collect())
     }
 
-    pub fn tree_entries(&self, handle: i64) -> Result<BTreeMap<String, String>, String> {
+    pub fn tree_entries(&mut self, handle: i64) -> Result<BTreeMap<String, String>, String> {
+        let handle = self.force_tree_handle(handle)?;
         match self.store.borrow().tree_entry(handle)? {
             TreeEntry::Concrete(tree) => Ok(tree.entries),
-            TreeEntry::Merge(_) => Err("handle is a pending merge tree, not concrete".into()),
+            TreeEntry::Merge(_) | TreeEntry::Exec(_) => Err("tree force returned pending".into()),
         }
     }
 
@@ -972,19 +1052,25 @@ impl Driver {
     }
 
     pub fn intern_linux_target(&self) -> (i64, bool) {
-        self.store
-            .borrow_mut()
-            .alloc_raw("Target", 0x391c555cf0975f9cu64.to_le_bytes().to_vec())
+        self.intern_structured_target(0).unwrap_or_else(|_| {
+            self.store
+                .borrow_mut()
+                .alloc_raw("Target", 0x391c555cf0975f9cu64.to_le_bytes().to_vec())
+        })
     }
 
     #[cfg(test)]
     pub fn intern_windows_target(&self) -> Result<(i64, bool), String> {
+        self.intern_structured_target(2)
+    }
+
+    fn intern_structured_target(&self, os_index: u64) -> Result<(i64, bool), String> {
         let os_descriptor = self
             .descriptors
             .get("Os")
             .ok_or_else(|| "missing Os descriptor".to_string())?;
         let mut os_bytes = vec![0u8; os_descriptor.layout.size];
-        write_variant_tag(&mut os_bytes, os_descriptor, 2);
+        write_variant_tag(&mut os_bytes, os_descriptor, os_index);
         let os = self
             .store
             .borrow_mut()
@@ -1052,6 +1138,7 @@ impl Driver {
                     new_requests,
                     project_requests,
                     exec_requests,
+                    fetch_requests,
                     option_unwraps,
                     pending_coercions,
                     pending_invokes,
@@ -1059,6 +1146,19 @@ impl Driver {
                 } => {
                     for req in exec_requests {
                         match self.execute_request(req) {
+                            Ok((input_slot, value)) => {
+                                if exec.ready.len() <= input_slot {
+                                    exec.ready.resize(input_slot + 1, false);
+                                    exec.awaited.resize(input_slot + 1, 0);
+                                }
+                                exec.ready[input_slot] = true;
+                                exec.awaited[input_slot] = value;
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    for req in fetch_requests {
+                        match self.fetch_request(req) {
                             Ok((input_slot, value)) => {
                                 if exec.ready.len() <= input_slot {
                                     exec.ready.resize(input_slot + 1, false);
@@ -1212,6 +1312,7 @@ impl Driver {
             let mut requests: Vec<InvokeRequest> = Vec::new();
             let mut project_requests: Vec<ProjectRequest> = Vec::new();
             let mut exec_requests: Vec<ExecRequest> = Vec::new();
+            let mut fetch_requests: Vec<FetchRequest> = Vec::new();
             let mut option_unwraps: Vec<OptionUnwrapRequest> = Vec::new();
             let mut pending_coercions: Vec<PendingCoerceRequest> = Vec::new();
             let mut pending_invokes: Vec<PendingInvokeRequest> = Vec::new();
@@ -1219,6 +1320,7 @@ impl Driver {
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
             let journal_cell = RefCell::new(&mut self.journal);
+            let clock_cell = RefCell::new(&mut self.trace_clock);
             let lowered_fns = &self.fns;
             let store_events = RefCell::new(Vec::new());
             let mut invoke = |frame: &mut [u8]| {
@@ -1453,9 +1555,17 @@ impl Driver {
                         (handle, false)
                     };
                     write_frame_word(frame, dst_slot, handle);
+                    let timestamp_us = {
+                        let mut clock = clock_cell.borrow_mut();
+                        let value = **clock;
+                        **clock = value.saturating_add(1);
+                        value
+                    };
                     store_events.borrow_mut().push(DriveEvent::Observation {
                         key: hash_u64(&key),
                         replayed,
+                        key_text: key,
+                        timestamp_us,
                     });
                     Ok(())
                 })();
@@ -1480,7 +1590,14 @@ impl Driver {
                     let array_handle = read_frame_word(frame, primitive_region + 8);
                     let fn_ref = usize::try_from(read_frame_word(frame, primitive_region + 16))
                         .map_err(|_| "negative fn ref".to_string())?;
-                    let captured = read_frame_word(frame, primitive_region + 24);
+                    let arg_count = usize::try_from(read_frame_word(frame, primitive_region + 24))
+                        .map_err(|_| "negative map arg count".to_string())?;
+                    let arg_specs = (0..arg_count)
+                        .map(|index| {
+                            let at = primitive_region + 32 + index * 16;
+                            Ok((read_frame_word(frame, at), read_frame_word(frame, at + 8)))
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
                     let words = match store_cell.borrow().array_entry(array_handle)? {
                         ArrayEntry::Words(words) => words,
                         ArrayEntry::Pending(_) => {
@@ -1490,7 +1607,14 @@ impl Driver {
                     let pending = words
                         .into_iter()
                         .map(|word| {
-                            let args = vec![captured, word];
+                            let args = arg_specs
+                                .iter()
+                                .map(|(kind, value)| match kind {
+                                    0 => *value,
+                                    1 => word,
+                                    other => panic!("unknown map arg kind {other}"),
+                                })
+                                .collect();
                             let invocation =
                                 pending_invocation_for(&lowered_fns[fn_ref], store_cell, args);
                             store_cell
@@ -1540,13 +1664,139 @@ impl Driver {
 
             let mut exec_host = |frame: &mut [u8]| {
                 let input_slot = read_frame_word(frame, primitive_region) as usize;
-                let capability = read_frame_word(frame, primitive_region + 8);
-                let output = read_frame_word(frame, primitive_region + 16);
+                let command = match read_frame_word(frame, primitive_region + 8) {
+                    0 => "cc",
+                    1 => "ar",
+                    other => {
+                        *host_error.borrow_mut() = Some(format!("unknown command kind {other}"));
+                        return;
+                    }
+                }
+                .to_string();
+                let capability = read_frame_word(frame, primitive_region + 16);
+                let part_count =
+                    match usize::try_from(read_frame_word(frame, primitive_region + 24)) {
+                        Ok(value) => value,
+                        Err(_) => {
+                            *host_error.borrow_mut() = Some("negative command part count".into());
+                            return;
+                        }
+                    };
+                let span_start = read_frame_word(frame, primitive_region + 32);
+                let span_end = read_frame_word(frame, primitive_region + 40);
+                let span = if span_start >= 0 && span_end >= 0 {
+                    Some((span_start as u32, span_end as u32))
+                } else {
+                    None
+                };
+                let mut parts = Vec::with_capacity(part_count);
+                for index in 0..part_count {
+                    let at = primitive_region + 48 + index * 16;
+                    let kind = read_frame_word(frame, at);
+                    let word = read_frame_word(frame, at + 8);
+                    let part = match kind {
+                        0 => CommandRequestPart::Token(word),
+                        1 => CommandRequestPart::Splice(word),
+                        other => {
+                            *host_error.borrow_mut() =
+                                Some(format!("unknown command part kind {other}"));
+                            return;
+                        }
+                    };
+                    parts.push(part);
+                }
                 exec_requests.push(ExecRequest {
                     input_slot,
+                    command,
                     capability,
-                    output,
+                    parts,
+                    span,
                 });
+            };
+
+            let mut fetch_host = |frame: &mut [u8]| {
+                let input_slot = read_frame_word(frame, primitive_region) as usize;
+                let url = read_frame_word(frame, primitive_region + 8);
+                let sha256 = read_frame_word(frame, primitive_region + 16);
+                fetch_requests.push(FetchRequest {
+                    input_slot,
+                    url,
+                    sha256,
+                });
+            };
+
+            let mut array_filter_exclude = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let array_handle = read_frame_word(frame, primitive_region + 8);
+                    let count = usize::try_from(read_frame_word(frame, primitive_region + 16))
+                        .map_err(|_| "negative filter exclusion count")?;
+                    let excluded = (0..count)
+                        .map(|i| {
+                            let handle = read_frame_word(frame, primitive_region + 24 + i * 8);
+                            store_cell.borrow().string_value(handle, "Path")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let words = match store_cell.borrow().array_entry(array_handle)? {
+                        ArrayEntry::Words(words) => words,
+                        ArrayEntry::Pending(_) => {
+                            return Err("filter over pending array is outside B4".into());
+                        }
+                    };
+                    let kept = words
+                        .into_iter()
+                        .filter_map(|word| {
+                            let path = store_cell.borrow().string_value(word, "Path").ok()?;
+                            (!excluded.iter().any(|excluded| excluded == &path)).then_some(word)
+                        })
+                        .collect();
+                    let (handle, _) = store_cell.borrow_mut().alloc_array_words(kept);
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut glob_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let tree_handle = read_frame_word(frame, primitive_region + 8);
+                    let pattern_handle = read_frame_word(frame, primitive_region + 16);
+                    let pattern = store_cell.borrow().string_value(pattern_handle, "String")?;
+                    let suffix = pattern
+                        .strip_prefix('*')
+                        .ok_or_else(|| "glob v0 supports `*.ext` patterns".to_string())?;
+                    let tree = match store_cell.borrow().tree_entry(tree_handle)? {
+                        TreeEntry::Concrete(tree) => tree,
+                        TreeEntry::Merge(_) | TreeEntry::Exec(_) => {
+                            return Err("glob on pending tree is outside B4".into());
+                        }
+                    };
+                    let mut paths: Vec<String> = tree
+                        .entries
+                        .keys()
+                        .filter(|path| !path.contains('/') && path.ends_with(suffix))
+                        .cloned()
+                        .collect();
+                    paths.sort();
+                    let words = paths
+                        .into_iter()
+                        .map(|path| {
+                            store_cell
+                                .borrow_mut()
+                                .alloc_raw("Path", path.into_bytes())
+                                .0
+                        })
+                        .collect();
+                    let (handle, _) = store_cell.borrow_mut().alloc_array_words(words);
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
             };
 
             let mut path_with_ext = |frame: &mut [u8]| {
@@ -1618,7 +1868,7 @@ impl Driver {
                 });
             };
 
-            let mut hosts: [HostFn<'_>; 18] = [
+            let mut hosts: [HostFn<'_>; 21] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -1637,6 +1887,9 @@ impl Driver {
                 &mut pending_alloc,
                 &mut pending_coerce,
                 &mut pending_invoke,
+                &mut fetch_host,
+                &mut array_filter_exclude,
+                &mut glob_host,
             ];
             let step = exec
                 .task
@@ -1666,6 +1919,7 @@ impl Driver {
                         new_requests: requests,
                         project_requests,
                         exec_requests,
+                        fetch_requests,
                         option_unwraps,
                         pending_coercions,
                         pending_invokes,
@@ -1725,6 +1979,48 @@ impl Driver {
                     path: path.to_string(),
                 }
                 .diagnostic())
+            }
+            TreeEntry::Exec(run_id) => {
+                let tree = if self
+                    .runs
+                    .get(&run_id)
+                    .ok_or_else(|| format!("run {run_id}"))?
+                    .mounts
+                    .is_empty()
+                {
+                    self.finish_run(run_id)?
+                } else {
+                    self.schedule_run(run_id)?.outputs
+                };
+                let projected = crate::oracle::subtree(&tree, path)?;
+                Ok(self.store.borrow_mut().alloc_tree_concrete(projected).0)
+            }
+        }
+    }
+
+    fn force_tree_handle(&mut self, tree_handle: i64) -> Result<i64, String> {
+        let tree = self.store.borrow().tree_entry(tree_handle)?;
+        match tree {
+            TreeEntry::Concrete(_) => Ok(tree_handle),
+            TreeEntry::Merge(pending) => {
+                let mut merged = crate::exec::Tree::default();
+                for handle in pending {
+                    let invocation = self.store.borrow().pending_invocation(handle)?;
+                    let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
+                    let value = self.demand(fn_ref, invocation.args)?;
+                    let value = self.force_tree_handle(value)?;
+                    let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(value)? else {
+                        return Err("forced merge branch stayed pending".into());
+                    };
+                    for (path, contents) in tree.entries {
+                        merged.entries.insert(path, contents);
+                    }
+                }
+                Ok(self.store.borrow_mut().alloc_tree_concrete(merged).0)
+            }
+            TreeEntry::Exec(run_id) => {
+                let tree = self.finish_run(run_id)?;
+                Ok(self.store.borrow_mut().alloc_tree_concrete(tree).0)
             }
         }
     }
@@ -1821,8 +2117,24 @@ impl Driver {
         path: &str,
     ) -> Result<Option<i64>, String> {
         let tree = self.store.borrow().tree_entry(tree_handle)?;
-        let TreeEntry::Concrete(tree) = tree else {
-            return Err("nested merge tree projection is outside slice 4".into());
+        let tree = match tree {
+            TreeEntry::Concrete(tree) => tree,
+            TreeEntry::Exec(run_id) => {
+                if self
+                    .runs
+                    .get(&run_id)
+                    .ok_or_else(|| format!("run {run_id}"))?
+                    .mounts
+                    .is_empty()
+                {
+                    self.finish_run(run_id)?
+                } else {
+                    self.schedule_run(run_id)?.outputs
+                }
+            }
+            TreeEntry::Merge(_) => {
+                return Err("nested merge tree projection is outside slice 4".into());
+            }
         };
         match crate::oracle::subtree(&tree, path) {
             Ok(projected) => Ok(Some(
@@ -1833,30 +2145,234 @@ impl Driver {
     }
 
     fn execute_request(&mut self, req: ExecRequest) -> Result<(usize, i64), String> {
-        let output = self.store.borrow().string_value(req.output, "Path")?;
-        let cap_key = self.store.borrow().string_value(req.capability, "Cc")?;
-        let cap_hash = cc_capability_hash(&cap_key);
-        let argv = vec!["-o".to_string(), output.clone()];
-        let plan = assign_roles("cc", &argv)?;
-        let tool = tool_for("cc")?;
-        self.trace.push(DriveEvent::RunRequested {
-            command: hash_u64("cc"),
-            output: hash_u64(&output),
-        });
-        self.trace.push(DriveEvent::RunStarted {
-            command: hash_u64("cc"),
-            output: hash_u64(&output),
-        });
-        let outcome = self.exec_cache.exec(&plan, cap_hash, &[], tool)?;
-        self.trace.push(DriveEvent::RunCompleted {
-            command: hash_u64("cc"),
-            output: hash_u64(&output),
-        });
-        let handle = self
+        let cap_key = self
             .store
-            .borrow_mut()
-            .alloc_tree_concrete(outcome.outputs)
-            .0;
+            .borrow()
+            .string_value(req.capability, &cap_schema(&req.command))?;
+        let cap_hash = capability_hash(&req.command, &cap_key);
+        let mut argv = Vec::new();
+        let mut mounts = Vec::new();
+        for part in req.parts {
+            match part {
+                CommandRequestPart::Token(handle) => {
+                    argv.push(self.store.borrow().string_value(handle, "String")?);
+                }
+                CommandRequestPart::Splice(word) => {
+                    self.splice_word_into_command(word, &mut argv, &mut mounts)?;
+                }
+            }
+        }
+        let plan = assign_roles(&req.command, &argv)?;
+        let output = plan
+            .argv
+            .iter()
+            .find(|(_, role)| *role == crate::exec::Role::Output)
+            .map(|(path, _)| path.clone())
+            .unwrap_or_default();
+        let identity = pending_exec_identity_hash(&req.command, &plan, cap_hash, &mounts);
+        let run_id = self.next_run_id;
+        self.next_run_id = self.next_run_id.saturating_add(1);
+        let timestamp_us = self.next_timestamp();
+        self.trace.push(DriveEvent::RunRequested {
+            command: hash_u64(&req.command),
+            output: hash_u64(&output),
+            run_id,
+            command_name: req.command.clone(),
+            argv: argv.clone(),
+            describe: crate::exec::describe(&req.command, &plan),
+            span: req.span,
+            timestamp_us,
+        });
+        self.runs.insert(
+            run_id,
+            PendingExecRun {
+                command: req.command,
+                plan,
+                capability: cap_hash,
+                mounts,
+                output,
+                scheduled: false,
+                completed: None,
+                completion_logged: false,
+            },
+        );
+        let handle = self.store.borrow_mut().alloc_tree_exec(run_id, identity).0;
+        Ok((req.input_slot, handle))
+    }
+
+    fn schedule_run(&mut self, run_id: u64) -> Result<crate::exec::Outcome, String> {
+        let needs_start = self
+            .runs
+            .get(&run_id)
+            .ok_or_else(|| format!("run {run_id}"))?
+            .completed
+            .is_none();
+        if !self
+            .runs
+            .get(&run_id)
+            .ok_or_else(|| format!("run {run_id}"))?
+            .scheduled
+        {
+            let (command, output) = {
+                let run = self.runs.get_mut(&run_id).expect("run checked");
+                run.scheduled = true;
+                (run.command.clone(), run.output.clone())
+            };
+            let timestamp_us = self.next_timestamp();
+            self.trace.push(DriveEvent::RunStarted {
+                command: hash_u64(&command),
+                output: hash_u64(&output),
+                run_id,
+                command_name: command,
+                timestamp_us,
+            });
+        }
+        if needs_start {
+            let (command, plan, capability, mounts) = {
+                let run = self.runs.get(&run_id).expect("run checked");
+                (
+                    run.command.clone(),
+                    run.plan.clone(),
+                    run.capability,
+                    run.mounts.clone(),
+                )
+            };
+            let tool = tool_for(&command)?;
+            let outcome = self.exec_cache.exec(&plan, capability, &mounts, tool)?;
+            let event = self
+                .exec_cache
+                .events
+                .last()
+                .cloned()
+                .expect("exec pushed an event");
+            let run = self.runs.get_mut(&run_id).expect("run checked");
+            run.completed = Some((outcome, event));
+        }
+        Ok(self
+            .runs
+            .get(&run_id)
+            .and_then(|run| run.completed.as_ref().map(|(outcome, _)| outcome.clone()))
+            .expect("scheduled run completed"))
+    }
+
+    fn finish_run(&mut self, run_id: u64) -> Result<crate::exec::Tree, String> {
+        let outcome = self.schedule_run(run_id)?;
+        let should_log = !self
+            .runs
+            .get(&run_id)
+            .ok_or_else(|| format!("run {run_id}"))?
+            .completion_logged;
+        if should_log {
+            let (command, output, serving, outputs) = {
+                let run = self.runs.get_mut(&run_id).expect("run checked");
+                run.completion_logged = true;
+                let (_, event) = run.completed.as_ref().expect("run completed");
+                (
+                    run.command.clone(),
+                    run.output.clone(),
+                    event.clone(),
+                    outcome
+                        .outputs
+                        .entries
+                        .iter()
+                        .map(|(path, contents)| (path.clone(), contents.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            };
+            let timestamp_us = self.next_timestamp();
+            self.trace.push(DriveEvent::RunCompleted {
+                command: hash_u64(&command),
+                output: hash_u64(&output),
+                run_id,
+                command_name: command,
+                serving,
+                outputs,
+                timestamp_us,
+            });
+        }
+        Ok(outcome.outputs)
+    }
+
+    fn splice_word_into_command(
+        &mut self,
+        word: i64,
+        argv: &mut Vec<String>,
+        mounts: &mut Vec<crate::exec::Mount>,
+    ) -> Result<(), String> {
+        let entry = self
+            .store
+            .borrow()
+            .entry(word)
+            .cloned()
+            .ok_or_else(|| format!("cannot splice scalar word {word} into a command"))?;
+        match entry.schema.as_str() {
+            "Path" | "String" | "Flag" => {
+                argv.push(String::from_utf8(entry.bytes).map_err(|err| err.to_string())?);
+            }
+            "Array" => match { self.store.borrow().array_entry(word)? } {
+                ArrayEntry::Words(words) => {
+                    for word in words {
+                        self.splice_word_into_command(word, argv, mounts)?;
+                    }
+                }
+                ArrayEntry::Pending(_) => {
+                    return Err("pending arrays cannot be spliced into commands".into());
+                }
+            },
+            "Tree" => {
+                let forced = self.force_tree_handle(word)?;
+                let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
+                    return Err("forced command tree stayed pending".into());
+                };
+                let root = format!("/m/{}", mounts.len());
+                let text = if tree.entries.len() == 1 {
+                    format!("{root}/{}", tree.entries.keys().next().expect("one entry"))
+                } else {
+                    root.clone()
+                };
+                mounts.push(crate::exec::Mount { at: root, tree });
+                argv.push(text);
+            }
+            other => return Err(format!("cannot splice {other} into a command")),
+        }
+        Ok(())
+    }
+
+    fn fetch_request(&mut self, req: FetchRequest) -> Result<(usize, i64), String> {
+        let url = self.store.borrow().string_value(req.url, "String")?;
+        let declared_sha256 = if req.sha256 < 0 {
+            None
+        } else {
+            Some(self.store.borrow().string_value(req.sha256, "String")?)
+        };
+        let key = match &declared_sha256 {
+            Some(sha) => format!("fetch:{url}:sha256:{sha}"),
+            None => format!("fetch:{url}:observed"),
+        };
+        let (tree, replayed, pin) = if let Some(pin) = self.journal.get(&key).copied() {
+            let pinned = self.store.borrow().string_value(pin, "String")?;
+            let fetched = self.fetch_backend.fetch(&url, Some(&pinned))?;
+            (fetched.tree, true, pinned)
+        } else {
+            let fetched = self.fetch_backend.fetch(&url, declared_sha256.as_deref())?;
+            (fetched.tree, false, fetched.actual_sha256)
+        };
+        if !replayed {
+            let pin_handle = self
+                .store
+                .borrow_mut()
+                .alloc_raw("String", pin.into_bytes())
+                .0;
+            self.journal.insert(key.clone(), pin_handle);
+        }
+        let timestamp_us = self.next_timestamp();
+        self.trace.push(DriveEvent::Observation {
+            key: hash_u64(&key),
+            replayed,
+            key_text: key,
+            timestamp_us,
+        });
+        let handle = self.store.borrow_mut().alloc_tree_concrete(tree).0;
         Ok((req.input_slot, handle))
     }
 }
@@ -1867,6 +2383,7 @@ enum Burst {
         new_requests: Vec<InvokeRequest>,
         project_requests: Vec<ProjectRequest>,
         exec_requests: Vec<ExecRequest>,
+        fetch_requests: Vec<FetchRequest>,
         option_unwraps: Vec<OptionUnwrapRequest>,
         pending_coercions: Vec<PendingCoerceRequest>,
         pending_invokes: Vec<PendingInvokeRequest>,
@@ -2448,6 +2965,52 @@ fn cc_capability_hash(fingerprint: &str) -> u64 {
         )],
     };
     value.canon_hash()
+}
+
+fn ar_capability_hash(fingerprint: &str) -> u64 {
+    let value = crate::oracle::Value::Struct {
+        name: "Ar".into(),
+        fields: vec![(
+            "fingerprint".into(),
+            crate::oracle::Value::Str(fingerprint.to_string()),
+        )],
+    };
+    value.canon_hash()
+}
+
+fn cap_schema(command: &str) -> String {
+    match command {
+        "cc" => "Cc",
+        "ar" => "Ar",
+        _ => "Cc",
+    }
+    .to_string()
+}
+
+fn capability_hash(command: &str, fingerprint: &str) -> u64 {
+    match command {
+        "cc" => cc_capability_hash(fingerprint),
+        "ar" => ar_capability_hash(fingerprint),
+        _ => hash_u64(fingerprint),
+    }
+}
+
+fn pending_exec_identity_hash(
+    command: &str,
+    plan: &crate::exec::ExecPlan,
+    capability: u64,
+    mounts: &[crate::exec::Mount],
+) -> ContentHash {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-pending-exec");
+    hasher.update(command.as_bytes());
+    hasher.update(plan.identity_hash().to_le_bytes());
+    hasher.update(capability.to_le_bytes());
+    for mount in mounts {
+        hasher.update(mount.at.as_bytes());
+        hasher.update(mount.tree.fingerprint().to_le_bytes());
+    }
+    hasher.finalize().into()
 }
 
 fn hash_value_bytes(

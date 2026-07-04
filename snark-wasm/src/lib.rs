@@ -225,25 +225,25 @@ fn trace_events(events: &[vix::machine::driver::DriveEvent]) -> Vec<VixDriveEven
                 schema_ref: hex_hash(schema_ref),
                 deduped,
             },
-            vix::machine::driver::DriveEvent::RunRequested { command, output } => {
-                VixDriveEvent::RunRequested {
-                    command: hex_hash(command),
-                    output: hex_hash(output),
-                }
-            }
-            vix::machine::driver::DriveEvent::RunStarted { command, output } => {
-                VixDriveEvent::RunStarted {
-                    command: hex_hash(command),
-                    output: hex_hash(output),
-                }
-            }
-            vix::machine::driver::DriveEvent::RunCompleted { command, output } => {
-                VixDriveEvent::RunCompleted {
-                    command: hex_hash(command),
-                    output: hex_hash(output),
-                }
-            }
-            vix::machine::driver::DriveEvent::Observation { key, replayed } => {
+            vix::machine::driver::DriveEvent::RunRequested {
+                command, output, ..
+            } => VixDriveEvent::RunRequested {
+                command: hex_hash(command),
+                output: hex_hash(output),
+            },
+            vix::machine::driver::DriveEvent::RunStarted {
+                command, output, ..
+            } => VixDriveEvent::RunStarted {
+                command: hex_hash(command),
+                output: hex_hash(output),
+            },
+            vix::machine::driver::DriveEvent::RunCompleted {
+                command, output, ..
+            } => VixDriveEvent::RunCompleted {
+                command: hex_hash(command),
+                output: hex_hash(output),
+            },
+            vix::machine::driver::DriveEvent::Observation { key, replayed, .. } => {
                 VixDriveEvent::Observation {
                     key: hex_hash(key),
                     replayed,
