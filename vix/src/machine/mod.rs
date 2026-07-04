@@ -18,10 +18,12 @@
 //!   statically knows the type: that is not a tag. If a safety net is
 //!   ever wanted, it is static validation of lowered programs
 //!   (wasm-style), never runtime checks.
-//! - **Two layout authorities, one description vocabulary.** Rust-
-//!   authored types are described by facet. Vix-authored types own an
-//!   optimized ABI (what a Rust enum would do), RECORDED as a
-//!   [`value::Layout`] and observable from Rust. Layouts are
+//! - **Two layout authorities, one description vocabulary — and the
+//!   vocabulary is `weavy::mem`.** Rust-authored types reach it from
+//!   facet shapes; vix/fable-authored types reach it from the
+//!   language's checker computing an optimized ABI (what a Rust enum
+//!   would do) and emitting the same `weavy::mem::Descriptor`s,
+//!   schema-keyed by content-addressed type identity. Layouts are
 //!   compile-time knowledge plus introspection metadata (DWARF-like);
 //!   execution never dispatches on them.
 //! - **Demand drives everything; suspension is only for the
@@ -53,4 +55,4 @@
 
 pub mod value;
 
-pub use value::{Field, FieldKind, Layout, LayoutId, Registry, TotalF64, Variant};
+pub use value::TotalF64;
