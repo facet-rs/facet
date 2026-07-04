@@ -1,0 +1,39 @@
+# vix — the build language. v0: the grammar-derived typed AST over snark's parser.
+#
+# The grammar (playgrounds/snark/src/bundled/vix/grammar.js) is the single source of
+# truth: build.rs derives the typed AST *and* its resolved-CST lowering from it. The
+# same grammar file drives the playground. Nobody hand-writes the AST.
+
+[package]
+name = "vix"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "The vix build language: grammar-derived typed AST over snark."
+
+[dependencies]
+snark = { path = "../snark", features = ["json-import"] }
+facet = { path = "../facet" }
+facet-json = { path = "../facet-json" }
+facet-toml = { path = "../facet-toml" }
+facet-value = { path = "../facet-value", default-features = false, features = ["alloc"] }
+hex.workspace = true
+phon = { path = "../phon/rust/phon", default-features = false }
+sha2.workspace = true
+# vix lowers to weavy (portability is weavy's concern — constitution
+# A6); the dependency activates when the typed instruction vocabulary
+# lands via the fable-teeth work.
+weavy = { path = "../weavy" }
+
+[features]
+default = []
+jit = ["weavy/jit"]
+
+[build-dependencies]
+snark-dsl = { path = "../snark-dsl", features = ["typed-ast"] }
+
+# The graph demand engine's driver uses only core::future (vix stays
+# wasm-clean); tokio is DEV-only, an executor + timers for the demand tests.
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+weavy = { path = "../weavy", features = ["jit"] }

@@ -168,7 +168,13 @@ function ScalingChart({ samples }: { samples: BenchSample[] }) {
   );
 }
 
-export function BenchPanel({
+export function benchMeta(report: BenchReport | null): string {
+  if (!report) return "size ladder";
+  const linear = report.scalingIndex <= 1.35;
+  return `${report.samples.length} samples · ×${report.scalingIndex.toFixed(2)}/step ${linear ? "(linear)" : "(super-linear!)"}`;
+}
+
+export function BenchBody({
   report,
   running,
   progress,
@@ -179,18 +185,8 @@ export function BenchPanel({
   progress: string;
   onRun: () => void;
 }) {
-  const linear = report ? report.scalingIndex <= 1.35 : false;
   return (
-    <details className="panel bench-panel" open>
-      <summary>
-        <span className="panel-title">Benchmark</span>
-        <span className="panel-meta">
-          {report
-            ? `${report.samples.length} samples · scaling ×${report.scalingIndex.toFixed(2)}/step ${linear ? "(linear)" : "(super-linear!)"}`
-            : "size ladder"}
-        </span>
-      </summary>
-      <div className="panel-body">
+    <div className="bench-body">
         <div className="bench-controls">
           <button type="button" className="btn btn-accent" onClick={onRun} disabled={running}>
             {running ? `Running… ${progress}` : "Run benchmark"}
@@ -239,7 +235,6 @@ export function BenchPanel({
             ) : null}
           </>
         ) : null}
-      </div>
-    </details>
+    </div>
   );
 }

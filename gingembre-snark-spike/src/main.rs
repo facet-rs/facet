@@ -2851,7 +2851,6 @@ fn run_ops_via_weavy_jit<T: facet::Facet<'static>>(ops: &[BuildOp]) -> T {
 /// leaf text, ordered children, and range. `ResolvedCstNode` implements it in snark, and so
 /// does the lightweight `LeanNode` a lean parse->AST driver would emit — proving
 /// materialization is decoupled from snark's rich tree machinery.
-
 /// A lightweight parse node — kind + text + ordered children, nothing else. What a lean
 /// deterministic parse->AST driver emits per reduce. Built here FROM a `ResolvedCstNode`
 /// only to prove the materializer is byte-identical over it; the real driver builds it directly.

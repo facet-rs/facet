@@ -1,0 +1,3 @@
+pub fn glibc_policy(input: Blob) -> Bool {
+    elf(input).needs_glibc == "GLIBC_2.24"
+}

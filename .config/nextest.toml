@@ -16,6 +16,11 @@ command = 'scripts/setup-vox-typescript.sh'
 command = 'scripts/setup-vox-typescript.cmd'
 
 [profile.default]
+# Hard cap on any single test: flag as slow at 60s, kill at 3x (180s). A stuck
+# test (deadlocked select loop, wedged websocket) should fail loudly, not hang
+# the run. Genuinely long tests can opt out via per-test overrides.
+slow-timeout = { period = "60s", terminate-after = 3 }
+
 [[profile.default.scripts]]
 filter = 'all()'
 platform = { host = "cfg(unix)" }

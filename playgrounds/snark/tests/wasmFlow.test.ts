@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import test from "node:test";
 
-import { SnarkPlaygroundSession, initSync } from "../../../snark-wasm/pkg/snark_wasm.js";
+import { SnarkPlaygroundSession, initSync, runVixMachine } from "../../../snark-wasm/pkg/snark_wasm.js";
 import {
   normalizeBundleFiles,
   preferredGrammarRootId,
@@ -1634,6 +1634,76 @@ module.exports = grammar({
   });
 });
 
+test("runs merge-demand selected through the vix machine wasm export", () => {
+  const source = readFileSync(new URL("../src/bundled/vix/samples/merge-demand.vix", import.meta.url), "utf8");
+  const response = JSON.parse(runVixMachine(source, "selected")) as {
+    ok: boolean;
+    result: { tree_entries: Array<{ path: string; contents: string }> };
+    cold_trace: Array<{ type: string; output?: string }>;
+    warm_trace: Array<{ type: string; output?: string }>;
+    run_hashes: Array<{ hash: string; label: string }>;
+  };
+  const runLabels = new Map(response.run_hashes.map((entry) => [entry.hash, entry.label]));
+  const coldOutputs = response.cold_trace
+    .filter((event) => event.type === "RunCompleted")
+    .map((event) => runLabels.get(event.output ?? "") ?? event.output);
+
+  assert.equal(response.ok, true);
+  assert.deepEqual(response.result.tree_entries, [
+    { path: "wanted.o", contents: "obj(9259fea8a69f1945)" },
+  ]);
+  assert.deepEqual(coldOutputs, ["wanted.o"]);
+  assert.equal(
+    response.cold_trace.some((event) => runLabels.get(event.output ?? "") === "left.o"),
+    false,
+  );
+  assert.deepEqual(
+    response.warm_trace.map((event) => event.type),
+    ["Demanded", "MemoHit"],
+  );
+});
+
+test("runs eval demo through the vix machine wasm export", () => {
+  const source = readFileSync(new URL("../src/bundled/vix/samples/eval.vix", import.meta.url), "utf8");
+  const response = JSON.parse(runVixMachine(source, "demo")) as {
+    ok: boolean;
+    result: { schema: string; f64_value: number | null };
+    cold_trace: Array<{ type: string }>;
+    warm_trace: Array<{ type: string }>;
+  };
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.schema, "Float");
+  assert.equal(response.result.f64_value, 42);
+  assert.ok(response.cold_trace.length > 0);
+  assert.deepEqual(
+    response.warm_trace.map((event) => event.type),
+    ["Demanded", "MemoHit"],
+  );
+});
+
+test("runs lua through the vix machine wasm export with the fixture fetch backend", () => {
+  const source = readFileSync(new URL("../src/bundled/vix/samples/lua.vix", import.meta.url), "utf8");
+  const response = JSON.parse(runVixMachine(source, "lua")) as {
+    ok: boolean;
+    result: { tree_entries: Array<{ path: string; contents: string }> };
+    cold_trace: Array<{ type: string; command_name?: string; serving?: { type: string } }>;
+    warm_trace: Array<{ type: string }>;
+  };
+  const runCompletions = response.cold_trace.filter((event) => event.type === "RunCompleted");
+
+  assert.equal(response.ok, true);
+  assert.ok(response.result.tree_entries.length > 0);
+  assert.ok(response.cold_trace.length > 0);
+  assert.ok(runCompletions.length > 0);
+  assert.ok(runCompletions.every((event) => event.command_name === "cc" || event.command_name === "ar"));
+  assert.ok(runCompletions.every((event) => event.serving?.type));
+  assert.deepEqual(
+    response.warm_trace.map((event) => event.type),
+    ["Demanded", "MemoHit"],
+  );
+});
+
 test("runs every vendored grammar sample through generated grammar.json and Snark WASM", async () => {
   const root = new URL("../src/bundled/", import.meta.url);
   const grammarIds = readdirSync(root)
@@ -1690,6 +1760,7 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
       },
       { id: "diff", sample: "samples/t-apply-1.patch", ok: true, language: "diff", errorCount: 0, missingCount: 0 },
       { id: "dot", sample: "samples/crazy.gv", ok: true, language: "dot", errorCount: 0, missingCount: 0 },
+      { id: "fable", sample: "samples/readme.fable", ok: true, language: "fable", errorCount: 0, missingCount: 0 },
       { id: "fences", sample: "samples/demo.md", ok: true, language: "fences", errorCount: 0, missingCount: 0 },
       {
         id: "gingembre",
@@ -1720,6 +1791,7 @@ test("runs every vendored grammar sample through generated grammar.json and Snar
       { id: "nginx", sample: "samples/basic.conf", ok: true, language: "nginx", errorCount: 0, missingCount: 0 },
       { id: "proto", sample: "samples/addressbook.proto", ok: true, language: "proto", errorCount: 0, missingCount: 0 },
       { id: "thrift", sample: "samples/tutorial.thrift", ok: true, language: "thrift", errorCount: 0, missingCount: 0 },
+      { id: "vix", sample: "samples/cargo.vix", ok: true, language: "vix", errorCount: 0, missingCount: 0 },
       { id: "yuri", sample: "samples/example.yuri", ok: true, language: "yuri", errorCount: 0, missingCount: 0 },
     ],
   );
@@ -1741,6 +1813,7 @@ test("runs every non-error vendored sample through generated grammar.json and Sn
     const runnableFiles = await runnableFilesForBundle(files, rootId);
     const samples = projectedFilesForGrammarRootId(files, rootId)
       .filter((file) => file.path.startsWith("samples/"))
+      .filter((file) => !file.path.startsWith("samples/fixtures/"))
       .filter((file) => !isErrorSamplePath(file.path))
       // Skip the big benchmark-ladder rungs (e.g. graphql's 256KB/1MB): they exist for
       // the interactive throughput bench, and if a grammar mis-lexes them, error

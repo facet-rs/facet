@@ -3,29 +3,29 @@
 //! Common modes:
 //!
 //!   # single input, prepare once, parse N times, report best (min) ms
-//!   cargo run --release -p snark-ts-diff -- <grammar.js|grammar.json> <input-file> [iters]
+//!   `cargo run --release -p snark-ts-diff -- <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # recovering parse, prepare once, parse N times, report best (min) ms
-//!   cargo run --release -p snark-ts-diff -- recover <grammar.js|grammar.json> <input-file> [iters]
+//!   `cargo run --release -p snark-ts-diff -- recover <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # strict parse while collecting reusable-node metadata, matching the
 //!   # playground path that seeds incremental reparse.
-//!   cargo run --release -p snark-ts-diff -- collect <grammar.js|grammar.json> <input-file> [iters]
+//!   `cargo run --release -p snark-ts-diff -- collect <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # strict parse to ranged CST, using the deterministic direct resolved-tree path
-//!   cargo run --release -p snark-ts-diff -- resolved <grammar.js|grammar.json> <input-file> [iters]
+//!   `cargo run --release -p snark-ts-diff -- resolved <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # strict parse to arena-backed ranged CST, skipping owned recursive materialization
-//!   cargo run --release -p snark-ts-diff -- resolved-cst <grammar.js|grammar.json> <input-file> [iters]
+//!   `cargo run --release -p snark-ts-diff -- resolved-cst <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # strict parse to arena-backed ranged CST while retaining execution counters
-//!   cargo run --release -p snark-ts-diff -- resolved-cst-report <grammar.js|grammar.json> <input-file> [iters]
+//!   `cargo run --release -p snark-ts-diff -- resolved-cst-report <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # strict parse with the same execution counters as hostcalls mode
-//!   cargo run --release -p snark-ts-diff -- report <grammar.js|grammar.json> <input-file> [iters]
+//!   `cargo run --release -p snark-ts-diff -- report <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # strict parse through Weavy host-call blocks; requires --features jit
-//!   cargo run --release -p snark-ts-diff --features jit -- hostcalls <grammar.js|grammar.json> <input-file> [iters]
+//!   `cargo run --release -p snark-ts-diff --features jit -- hostcalls <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # lowering/JIT readiness for one grammar
 //!   cargo run --release -p snark-ts-diff -- readiness <grammar.js|grammar.json>
@@ -34,7 +34,7 @@
 //!   # a table of ms + bytes/ms + ratio-vs-previous. The `x_prev` column is the
 //!   # tell: object counts double each row, so a LINEAR parser holds ~2.0 and a
 //!   # QUADRATIC one climbs toward ~4.0 (and bytes/ms halves).
-//!   cargo run --release -p snark-ts-diff -- ladder <grammar.js> [max_objects]
+//!   `cargo run --release -p snark-ts-diff -- ladder <grammar.js> [max_objects]`
 //!
 //! Fixtures are generated with facet-json (never hand-emitted) as `[{"k":0,
 //! "v":"x0"},…]`, which the bundled `jsonb` grammar accepts.

@@ -1436,6 +1436,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2209,9 +2218,10 @@ dependencies = [
 name = "fable"
 version = "0.1.3"
 dependencies = [
- "cstree",
  "facet",
  "facet-core",
+ "snark",
+ "snark-dsl",
  "weavy",
 ]
 
@@ -2473,6 +2483,15 @@ dependencies = [
  "facet-core",
  "facet-json",
  "insta",
+]
+
+[[package]]
+name = "facet-lsp"
+version = "0.0.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "facet-testhelpers",
 ]
 
 [[package]]
@@ -3017,6 +3036,16 @@ dependencies = [
  "libc",
  "thiserror 1.0.69",
  "winapi",
+]
+
+[[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -6608,6 +6637,9 @@ name = "snark-dsl"
 version = "0.1.0"
 dependencies = [
  "boa_engine",
+ "facet",
+ "facet-json",
+ "snark",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -6647,7 +6679,10 @@ dependencies = [
 name = "snark-wasm"
 version = "0.0.1"
 dependencies = [
+ "facet",
+ "facet-json",
  "snark-playground",
+ "vix",
  "wasm-bindgen",
 ]
 
@@ -7104,6 +7139,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "symlink"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7153,6 +7194,17 @@ name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
 
 [[package]]
 name = "target-triple"
@@ -7821,6 +7873,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-appender"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
+dependencies = [
+ "crossbeam-channel",
+ "symlink",
+ "thiserror 2.0.18",
+ "time",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tracing-attributes"
 version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8143,6 +8208,75 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vix"
+version = "0.0.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "facet-toml",
+ "facet-value",
+ "hex",
+ "phon",
+ "sha2 0.10.9",
+ "snark",
+ "snark-dsl",
+ "tokio",
+ "weavy",
+]
+
+[[package]]
+name = "vix-daemon"
+version = "0.0.0"
+dependencies = [
+ "eyre",
+ "facet",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vix",
+ "vox",
+ "vox-codegen",
+ "vox-schema",
+]
+
+[[package]]
+name = "vix-fetch"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "tar",
+ "ureq",
+ "vix",
+]
+
+[[package]]
+name = "vix-lsp"
+version = "0.0.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "facet-lsp",
+ "facet-testhelpers",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "vix",
+]
+
+[[package]]
+name = "vix-wire"
+version = "0.0.0"
+dependencies = [
+ "eyre",
+ "facet",
+ "phon",
+ "tokio",
+ "vix",
+ "vox",
+ "vox-schema",
+]
 
 [[package]]
 name = "vox"
@@ -8553,6 +8687,7 @@ name = "weavy"
 version = "0.2.2"
 dependencies = [
  "copypatch",
+ "tokio",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@ import {
   drawSelection,
   keymap,
   lineNumbers,
+  ViewPlugin,
   WidgetType,
   type ViewUpdate,
 } from "@codemirror/view";
@@ -36,10 +37,49 @@ export interface SourceEdit {
   new_end_byte: number;
 }
 
+export interface EditorJump {
+  start_byte: number;
+  end_byte: number;
+  nonce: number;
+}
+
+/** Language-level IDE bindings (vix Ring 2): symbols, references, unresolved names. */
+export interface IdeSymbol {
+  name: string;
+  kind: string;
+  start: number;
+  end: number;
+}
+
+export interface IdeRef {
+  start: number;
+  end: number;
+  symbol: number;
+}
+
+export interface IdeUnresolved {
+  name: string;
+  start: number;
+  end: number;
+}
+
+export interface IdeInfo {
+  error: string | null;
+  symbols: IdeSymbol[];
+  refs: IdeRef[];
+  unresolved: IdeUnresolved[];
+}
+
+/** Bindings plus the exact input they were computed for — stale bindings are unusable. */
+export type IdeState = { ide: IdeInfo; input: string } | null;
+
 export interface SourceEditorProps {
   input: string;
   captures: CaptureRange[];
   diagnostic: EditorDiagnostic | null;
+  ide: IdeState;
+  jump: EditorJump | null;
+  onCursorByte?: (byte: number) => void;
   onChange: (value: string, edit: SourceEdit | null) => void;
 }
 
@@ -177,6 +217,145 @@ function buildDecorations(
   return { decorations, errorLine };
 }
 
+// ---------------------------------------------------------------------------
+// IDE ops (vix Ring 2): occurrence highlighting, cmd-click go-to-def, F2 rename.
+// The binder runs in the parse worker; here we only project its spans. Every op
+// checks that the bindings were computed for the CURRENT document — during the
+// parse round trip after an edit they're stale and everything quietly no-ops.
+// ---------------------------------------------------------------------------
+
+/** Poked when fresh bindings arrive so the plugin recomputes without an edit. */
+const ideRefresh = StateEffect.define<null>();
+
+type IdeByteSpan = { start: number; end: number };
+
+function ideSymbolAt(ide: IdeInfo, byte: number): number | null {
+  const hit = (span: IdeByteSpan) => span.start <= byte && byte <= span.end;
+  for (const ref of ide.refs) {
+    if (hit(ref)) return ref.symbol;
+  }
+  for (let i = 0; i < ide.symbols.length; i += 1) {
+    if (hit(ide.symbols[i])) return i;
+  }
+  return null;
+}
+
+function ideOccurrences(ide: IdeInfo, symbol: number): IdeByteSpan[] {
+  const out: IdeByteSpan[] = [{ start: ide.symbols[symbol].start, end: ide.symbols[symbol].end }];
+  for (const ref of ide.refs) {
+    if (ref.symbol === symbol) out.push({ start: ref.start, end: ref.end });
+  }
+  out.sort((a, b) => a.start - b.start);
+  return out;
+}
+
+function freshIde(state: EditorState, entry: IdeState): IdeInfo | null {
+  if (!entry || entry.ide.error !== null) return null;
+  return entry.input === state.doc.toString() ? entry.ide : null;
+}
+
+function buildIdeDecorations(state: EditorState, entry: IdeState): DecorationSet {
+  const ide = freshIde(state, entry);
+  if (!ide) return Decoration.none;
+  const doc = state.doc.toString();
+  const byteMap = byteOffsetMap(doc);
+  const toChar = (byte: number) => Math.min(byteMap[byte] ?? doc.length, doc.length);
+  const entries: { from: number; to: number; deco: Decoration }[] = [];
+
+  for (const u of ide.unresolved) {
+    const [from, to] = [toChar(u.start), toChar(u.end)];
+    if (to > from) entries.push({ from, to, deco: Decoration.mark({ class: "cm-unresolved" }) });
+  }
+
+  const cursor = state.selection.main.head;
+  const symbol = ideSymbolAt(ide, utf8ByteLength(doc.slice(0, cursor)));
+  if (symbol !== null) {
+    const def = ide.symbols[symbol];
+    for (const occ of ideOccurrences(ide, symbol)) {
+      const [from, to] = [toChar(occ.start), toChar(occ.end)];
+      const isDef = occ.start === def.start && occ.end === def.end;
+      if (to > from) {
+        entries.push({ from, to, deco: Decoration.mark({ class: isDef ? "cm-occ cm-occ-def" : "cm-occ" }) });
+      }
+    }
+  }
+
+  entries.sort((left, right) => left.from - right.from || left.to - right.to);
+  return Decoration.set(
+    entries.map((entry) => entry.deco.range(entry.from, entry.to)),
+    true,
+  );
+}
+
+function ideExtensions(ideRef: { current: IdeState }) {
+  const plugin = ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet = Decoration.none;
+
+      constructor(view: EditorView) {
+        this.decorations = buildIdeDecorations(view.state, ideRef.current);
+      }
+
+      update(update: ViewUpdate) {
+        const poked = update.transactions.some((tr) => tr.effects.some((e) => e.is(ideRefresh)));
+        if (update.docChanged || update.selectionSet || poked) {
+          this.decorations = buildIdeDecorations(update.state, ideRef.current);
+        }
+      }
+    },
+    { decorations: (value) => value.decorations },
+  );
+
+  const goToDefinition = EditorView.domEventHandlers({
+    mousedown(event, view) {
+      if (!(event.metaKey || event.ctrlKey)) return false;
+      const ide = freshIde(view.state, ideRef.current);
+      if (!ide) return false;
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos === null) return false;
+      const doc = view.state.doc.toString();
+      const symbol = ideSymbolAt(ide, utf8ByteLength(doc.slice(0, pos)));
+      if (symbol === null) return false;
+      const byteMap = byteOffsetMap(doc);
+      const def = ide.symbols[symbol];
+      const [from, to] = [byteMap[def.start] ?? 0, byteMap[def.end] ?? 0];
+      view.dispatch({
+        selection: { anchor: from, head: to },
+        effects: EditorView.scrollIntoView(from, { y: "center" }),
+      });
+      event.preventDefault();
+      return true;
+    },
+  });
+
+  const rename = (view: EditorView): boolean => {
+    const ide = freshIde(view.state, ideRef.current);
+    if (!ide) return false;
+    const doc = view.state.doc.toString();
+    const cursor = view.state.selection.main.head;
+    const symbol = ideSymbolAt(ide, utf8ByteLength(doc.slice(0, cursor)));
+    if (symbol === null) return false;
+    const current = ide.symbols[symbol];
+    const next = window.prompt(`Rename ${current.kind} \`${current.name}\` to:`, current.name);
+    if (!next || next === current.name) return true;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(next)) {
+      window.alert(`\`${next}\` is not a valid vix identifier`);
+      return true;
+    }
+    const byteMap = byteOffsetMap(doc);
+    view.dispatch({
+      changes: ideOccurrences(ide, symbol).map((occ) => ({
+        from: byteMap[occ.start] ?? 0,
+        to: byteMap[occ.end] ?? 0,
+        insert: next,
+      })),
+    });
+    return true;
+  };
+
+  return [plugin, goToDefinition, keymap.of([{ key: "F2", run: rename }])];
+}
+
 function sourceEditForUpdate(update: ViewUpdate): SourceEdit | null {
   let edit: SourceEdit | null = null;
   let changeCount = 0;
@@ -240,12 +419,16 @@ const snarkTheme = EditorView.theme({
   },
 });
 
-export function SourceEditor({ input, captures, diagnostic, onChange }: SourceEditorProps) {
+export function SourceEditor({ input, captures, diagnostic, ide, jump, onCursorByte, onChange }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const applyingExternalInputRef = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onCursorByteRef = useRef(onCursorByte);
+  onCursorByteRef.current = onCursorByte;
+  const ideRef = useRef<IdeState>(ide);
+  ideRef.current = ide;
 
   // Create the EditorView once; React never re-renders its content.
   useEffect(() => {
@@ -260,9 +443,13 @@ export function SourceEditor({ input, captures, diagnostic, onChange }: SourceEd
         decorationField,
         errorGutterClass,
         snarkTheme,
+        ...ideExtensions(ideRef),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !applyingExternalInputRef.current) {
             onChangeRef.current(update.state.doc.toString(), sourceEditForUpdate(update));
+          }
+          if (update.docChanged || update.selectionSet) {
+            onCursorByteRef.current?.(utf8ByteLength(update.state.doc.sliceString(0, update.state.selection.main.head)));
           }
         }),
       ],
@@ -301,6 +488,27 @@ export function SourceEditor({ input, captures, diagnostic, onChange }: SourceEd
     }
     view.dispatch({ effects: setDecorations.of(buildDecorations(view.state, captures, diagnostic)) });
   }, [captures, diagnostic]);
+
+  // Poke the IDE plugin when fresh bindings arrive (the ref already holds them).
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: ideRefresh.of(null) });
+  }, [ide]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !jump) {
+      return;
+    }
+    const doc = view.state.doc.toString();
+    const byteMap = byteOffsetMap(doc);
+    const from = Math.min(byteMap[jump.start_byte] ?? doc.length, doc.length);
+    const to = Math.min(byteMap[jump.end_byte] ?? from, doc.length);
+    view.dispatch({
+      selection: { anchor: from, head: Math.max(from, to) },
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
+    view.focus();
+  }, [jump]);
 
   return <div className="editor" ref={hostRef} />;
 }
