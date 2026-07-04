@@ -95,8 +95,7 @@ fn compile_fn(f: &crate::task::Fn) -> CompiledFn {
         sites.push((start, cont));
     }
     let done = layout.emit_stencil(task_stencils::DONE);
-    for i in 0..sites.len() {
-        let (start, cont) = sites[i];
+    for (i, &(start, cont)) in sites.iter().enumerate() {
         let target = starts.get(i + 1).copied().unwrap_or(done);
         for &rel in cont {
             layout.patch_continuation(start + rel, target);
