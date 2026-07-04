@@ -73,8 +73,6 @@ pub struct FableQueryPlan<T, Output> {
 /// This is the lower-level form used by transform/debug-shell style callers
 /// that expose more than one typed root to a script.
 pub struct FableRootPlan {
-    #[cfg(test)]
-    lowered: FableLowered,
     task: FableTaskPlan,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
@@ -85,8 +83,6 @@ pub struct FableRootPlan {
 /// All roots must be read-only. The final top-level statement must be a boolean
 /// expression; earlier statements may bind typed locals.
 pub struct FableRootPredicatePlan {
-    #[cfg(test)]
-    lowered: FableLowered,
     task: FableTaskPlan,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
@@ -98,8 +94,6 @@ pub struct FableRootPredicatePlan {
 /// expression compatible with `Output`; earlier statements may bind typed
 /// locals.
 pub struct FableRootQueryPlan<Output> {
-    #[cfg(test)]
-    lowered: FableLowered,
     task: FableTaskPlan,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
@@ -1218,8 +1212,6 @@ impl FableRootPlan {
         let task = FableTaskPlan::from_lowered(&lowered, &functions, layout, None)?;
 
         Ok(Self {
-            #[cfg(test)]
-            lowered,
             task,
             roots: roots.into(),
             declared_types,
@@ -1279,8 +1271,6 @@ impl FableRootPredicatePlan {
             FableTaskPlan::from_lowered(&lowered, &functions, layout, Some(FableQueryType::Bool))?;
 
         Ok(Self {
-            #[cfg(test)]
-            lowered,
             task,
             roots: roots.into(),
             declared_types,
@@ -1346,8 +1336,6 @@ where
             FableTaskPlan::from_lowered(&lowered, &functions, layout, Some(Output::query_type()))?;
 
         Ok(Self {
-            #[cfg(test)]
-            lowered,
             task,
             roots: roots.into(),
             declared_types,
@@ -5011,7 +4999,7 @@ pub enum FableError {
         /// Human-readable invariant violation.
         reason: &'static str,
     },
-    /// A dense block reference was missing.
+    /// A lowered block reference was missing.
     MissingBlock {
         /// Missing block reference.
         block: BlockRef,
@@ -9877,7 +9865,6 @@ fn binary_actual(lhs: &'static str, rhs: &'static str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use facet::Facet;
-    use weavy::ir::{IntrinsicDescriptor, dense_lowered_analysis};
     use weavy::mem::{Access, Tag};
 
     use super::*;
@@ -10058,7 +10045,7 @@ mod tests {
     }
 
     #[test]
-    fn exposes_compiled_root_program_as_canonical_weavy_ir() {
+    fn exposes_compiled_root_program_as_task_execution() {
         let roots = [
             FableRootSpec::read_only::<TransformInput>("in"),
             FableRootSpec::read_write::<TransformOutput>("out"),
@@ -10077,44 +10064,6 @@ mod tests {
             &roots,
         )
         .unwrap();
-
-        let analysis = dense_lowered_analysis(&plan.lowered);
-        let shape = analysis.program_stats;
-        assert_eq!(shape.block_count, 2);
-        assert_eq!(shape.root.op_count, 3);
-        assert_eq!(shape.blocks.op_count, 2);
-        assert_eq!(shape.total.intrinsic_op_count, 5);
-        assert_eq!(shape.total.control_op_count, 0);
-        assert_eq!(shape.total.memory_op_count, 0);
-
-        let counts = analysis.intrinsic_counts;
-        assert_eq!(
-            counts[&IntrinsicDescriptor {
-                dialect: "fable",
-                name: "let",
-            }],
-            1
-        );
-        assert_eq!(
-            counts[&IntrinsicDescriptor {
-                dialect: "fable",
-                name: "assign",
-            }],
-            3
-        );
-        assert_eq!(
-            counts[&IntrinsicDescriptor {
-                dialect: "fable",
-                name: "branch",
-            }],
-            1
-        );
-
-        let effects = analysis.effect_stats;
-        assert_eq!(effects.total.intrinsic_op_count, 5);
-        assert_eq!(effects.total.typed_memory_overwrite_count, 3);
-        assert!(effects.total.side_channel_count >= 2);
-        assert_eq!(effects.total.barrier_count, 5);
 
         let input = transform_input();
         let mut output = transform_output();
@@ -10209,16 +10158,6 @@ mod tests {
 
         assert!(result);
         assert!(stats.step_count >= 2);
-
-        let analysis = dense_lowered_analysis(&plan.plan.lowered);
-        assert_eq!(analysis.program_stats.root.op_count, 2);
-        assert_eq!(
-            analysis.intrinsic_counts[&IntrinsicDescriptor {
-                dialect: "fable",
-                name: "predicate",
-            }],
-            1
-        );
     }
 
     #[test]
@@ -10335,16 +10274,6 @@ mod tests {
 
         assert_eq!(result, "Ada Lovelace");
         assert!(stats.step_count >= 2);
-
-        let analysis = dense_lowered_analysis(&plan.plan.lowered);
-        assert_eq!(analysis.program_stats.root.op_count, 2);
-        assert_eq!(
-            analysis.intrinsic_counts[&IntrinsicDescriptor {
-                dialect: "fable",
-                name: "query",
-            }],
-            1
-        );
     }
 
     #[test]
@@ -10682,7 +10611,7 @@ find_item(0);
     }
 
     #[test]
-    fn else_if_uses_dense_child_blocks() {
+    fn else_if_uses_child_blocks() {
         let mut value = state();
 
         apply(
