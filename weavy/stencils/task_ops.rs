@@ -50,6 +50,10 @@ pub struct Ctx {
 extern "C" {
     /// The continuation hole (patched to the next stencil, or DONE).
     fn weavy_cont(cx: *mut Ctx);
+    /// Conditional continuation patched to the zero/taken target.
+    fn weavy_zero(cx: *mut Ctx);
+    /// Conditional continuation patched to the nonzero/fallthrough target.
+    fn weavy_nonzero(cx: *mut Ctx);
 }
 
 macro_rules! cont {
@@ -61,6 +65,19 @@ macro_rules! cont {
         #[cfg(not(tailcall))]
         {
             weavy_cont($cx);
+        }
+    }};
+}
+
+macro_rules! branch_to {
+    ($target:ident, $cx:ident) => {{
+        #[cfg(tailcall)]
+        {
+            become $target($cx);
+        }
+        #[cfg(not(tailcall))]
+        {
+            $target($cx);
         }
     }};
 }
@@ -132,6 +149,58 @@ pub unsafe extern "C" fn weavy_task_copy(cx: *mut Ctx) {
     let v = read_i64(c.frame, src);
     write_i64(c.frame, dst, v);
     cont!(cx);
+}
+
+macro_rules! cmp_i64_stencil {
+    ($name:ident, $op:tt) => {
+        /// i64 comparison — immediates: [dst, a, b]. Writes 0/1.
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(cx: *mut Ctx) {
+            let c = &mut *cx;
+            let dst = *c.prog;
+            let a = *c.prog.add(1);
+            let b = *c.prog.add(2);
+            c.prog = c.prog.add(3);
+            let result = i64::from(read_i64(c.frame, a) $op read_i64(c.frame, b));
+            write_i64(c.frame, dst, result);
+            cont!(cx);
+        }
+    };
+}
+
+cmp_i64_stencil!(weavy_task_eq, ==);
+cmp_i64_stencil!(weavy_task_ne, !=);
+cmp_i64_stencil!(weavy_task_lt, <);
+cmp_i64_stencil!(weavy_task_le, <=);
+cmp_i64_stencil!(weavy_task_gt, >);
+cmp_i64_stencil!(weavy_task_ge, >=);
+
+/// Unconditional branch — immediates: [target_prog_delta]. The continuation
+/// hole is patched to the target stencil instead of the lexical successor.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_jump(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let delta = *c.prog as i64 as isize;
+    c.prog = c.prog.offset(delta);
+    cont!(cx);
+}
+
+/// Branch to `target` when `frame[value] == 0`, otherwise fall through —
+/// immediates: [value, taken_prog_delta, fallthrough_prog_delta]. The two
+/// continuation holes are patched separately.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_jump_if_zero(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let value = *c.prog;
+    let taken_delta = *c.prog.add(1) as i64 as isize;
+    let fallthrough_delta = *c.prog.add(2) as i64 as isize;
+    if read_i64(c.frame, value) == 0 {
+        c.prog = c.prog.offset(taken_delta);
+        branch_to!(weavy_zero, cx);
+    } else {
+        c.prog = c.prog.offset(fallthrough_delta);
+        branch_to!(weavy_nonzero, cx);
+    }
 }
 
 /// `frame[dst] = frame[base + frame[index]*stride]` — immediates:

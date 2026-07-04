@@ -73,37 +73,49 @@ impl JitProgram {
         if !available() {
             return None;
         }
-        if program
-            .fns
-            .iter()
-            .flat_map(|f| &f.code)
-            .any(op_needs_unimplemented_stencil)
-        {
-            return None;
-        }
         let fns = program.fns.iter().map(|f| compile_fn(f, mode)).collect();
         Some(JitProgram { fns })
     }
 }
 
-fn op_needs_unimplemented_stencil(op: &Op) -> bool {
-    matches!(
-        op,
-        Op::EqI64 { .. }
-            | Op::NeI64 { .. }
-            | Op::LtI64 { .. }
-            | Op::LeI64 { .. }
-            | Op::GtI64 { .. }
-            | Op::GeI64 { .. }
-            | Op::Jump { .. }
-            | Op::JumpIfZero { .. }
-    )
-}
-
 /// First emitted stencil at or after op `i` (stripped ops have no
 /// stencil of their own; control flows to whatever follows them).
 fn next_emitted(starts: &[Option<usize>], i: usize, done: usize) -> usize {
-    starts[i..].iter().flatten().next().copied().unwrap_or(done)
+    starts
+        .iter()
+        .skip(i)
+        .flatten()
+        .next()
+        .copied()
+        .unwrap_or(done)
+}
+
+fn next_emitted_prog(
+    starts: &[Option<usize>],
+    prog_starts: &[Option<usize>],
+    i: usize,
+    done: usize,
+) -> usize {
+    starts
+        .iter()
+        .enumerate()
+        .skip(i)
+        .find_map(|(j, start)| start.and_then(|_| prog_starts[j]))
+        .unwrap_or(done)
+}
+
+fn prog_delta(from: usize, to: usize) -> u64 {
+    (to as i64 - from as i64) as u64
+}
+
+#[derive(Clone, Copy)]
+enum Continuations {
+    Fallthrough(&'static [usize]),
+    Jump(&'static [usize]),
+    JumpIfZero {
+        taken: &'static [usize],
+        fallthrough: &'static [usize],
+    },
 }
 
 fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
@@ -116,40 +128,110 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
     // patch sites; collect call descriptors keyed by continuation.
     // Stripped ops record no start — they own no instructions.
     let mut starts: Vec<Option<usize>> = Vec::with_capacity(f.code.len());
-    let mut sites: Vec<(usize, &'static [usize])> = Vec::new();
+    let mut sites: Vec<(usize, Continuations)> = Vec::new();
     for op in &f.code {
         if stripped(op) {
             starts.push(None);
             continue;
         }
-        let (bytes, cont): (&[u8], &'static [usize]) = match op {
-            Op::ConstI64 { .. } => (task_stencils::CONST, task_stencils::CONST_CONT),
-            Op::AddI64 { .. } => (task_stencils::ADD, task_stencils::ADD_CONT),
-            Op::MulI64 { .. } => (task_stencils::MUL, task_stencils::MUL_CONT),
-            Op::SubI64 { .. } => (task_stencils::SUB, task_stencils::SUB_CONT),
-            Op::CopyI64 { .. } => (task_stencils::COPY, task_stencils::COPY_CONT),
-            Op::EqI64 { .. }
-            | Op::NeI64 { .. }
-            | Op::LtI64 { .. }
-            | Op::LeI64 { .. }
-            | Op::GtI64 { .. }
-            | Op::GeI64 { .. }
-            | Op::Jump { .. }
-            | Op::JumpIfZero { .. } => {
-                unreachable!("compile_with_mode rejects ops without stencils")
-            }
-            Op::LoadIndexedI64 { .. } => (task_stencils::LOAD_IX, task_stencils::LOAD_IX_CONT),
-            Op::StoreIndexedI64 { .. } => (task_stencils::STORE_IX, task_stencils::STORE_IX_CONT),
-            Op::Await { .. } => (task_stencils::AWAIT, task_stencils::AWAIT_CONT),
-            Op::Call { .. } => (task_stencils::CALL, task_stencils::CALL_CONT),
-            Op::Ret { .. } => (task_stencils::RET, task_stencils::RET_CONT),
-            Op::HostCall { .. } => (task_stencils::HOSTCALL, task_stencils::HOSTCALL_CONT),
+        let (bytes, cont): (&[u8], Continuations) = match op {
+            Op::ConstI64 { .. } => (
+                task_stencils::CONST,
+                Continuations::Fallthrough(task_stencils::CONST_CONT),
+            ),
+            Op::AddI64 { .. } => (
+                task_stencils::ADD,
+                Continuations::Fallthrough(task_stencils::ADD_CONT),
+            ),
+            Op::MulI64 { .. } => (
+                task_stencils::MUL,
+                Continuations::Fallthrough(task_stencils::MUL_CONT),
+            ),
+            Op::SubI64 { .. } => (
+                task_stencils::SUB,
+                Continuations::Fallthrough(task_stencils::SUB_CONT),
+            ),
+            Op::CopyI64 { .. } => (
+                task_stencils::COPY,
+                Continuations::Fallthrough(task_stencils::COPY_CONT),
+            ),
+            Op::EqI64 { .. } => (
+                task_stencils::EQ,
+                Continuations::Fallthrough(task_stencils::EQ_CONT),
+            ),
+            Op::NeI64 { .. } => (
+                task_stencils::NE,
+                Continuations::Fallthrough(task_stencils::NE_CONT),
+            ),
+            Op::LtI64 { .. } => (
+                task_stencils::LT,
+                Continuations::Fallthrough(task_stencils::LT_CONT),
+            ),
+            Op::LeI64 { .. } => (
+                task_stencils::LE,
+                Continuations::Fallthrough(task_stencils::LE_CONT),
+            ),
+            Op::GtI64 { .. } => (
+                task_stencils::GT,
+                Continuations::Fallthrough(task_stencils::GT_CONT),
+            ),
+            Op::GeI64 { .. } => (
+                task_stencils::GE,
+                Continuations::Fallthrough(task_stencils::GE_CONT),
+            ),
+            Op::Jump { .. } => (
+                task_stencils::JUMP,
+                Continuations::Jump(task_stencils::JUMP_CONT),
+            ),
+            Op::JumpIfZero { .. } => (
+                task_stencils::JUMP_IF_ZERO,
+                Continuations::JumpIfZero {
+                    taken: task_stencils::JUMP_IF_ZERO_TAKEN_CONT,
+                    fallthrough: task_stencils::JUMP_IF_ZERO_FALLTHROUGH_CONT,
+                },
+            ),
+            Op::LoadIndexedI64 { .. } => (
+                task_stencils::LOAD_IX,
+                Continuations::Fallthrough(task_stencils::LOAD_IX_CONT),
+            ),
+            Op::StoreIndexedI64 { .. } => (
+                task_stencils::STORE_IX,
+                Continuations::Fallthrough(task_stencils::STORE_IX_CONT),
+            ),
+            Op::Await { .. } => (
+                task_stencils::AWAIT,
+                Continuations::Fallthrough(task_stencils::AWAIT_CONT),
+            ),
+            Op::Call { .. } => (
+                task_stencils::CALL,
+                Continuations::Fallthrough(task_stencils::CALL_CONT),
+            ),
+            Op::Ret { .. } => (
+                task_stencils::RET,
+                Continuations::Fallthrough(task_stencils::RET_CONT),
+            ),
+            Op::HostCall { .. } => (
+                task_stencils::HOSTCALL,
+                Continuations::Fallthrough(task_stencils::HOSTCALL_CONT),
+            ),
             // A 64-bit immediate store is type-blind: ConstF64 IS the
             // CONST stencil with float bits in the immediate.
-            Op::ConstF64 { .. } => (task_stencils::CONST, task_stencils::CONST_CONT),
-            Op::AddF64 { .. } => (task_stencils::ADD_F64, task_stencils::ADD_F64_CONT),
-            Op::MulF64 { .. } => (task_stencils::MUL_F64, task_stencils::MUL_F64_CONT),
-            Op::Trace { .. } => (task_stencils::TRACE, task_stencils::TRACE_CONT),
+            Op::ConstF64 { .. } => (
+                task_stencils::CONST,
+                Continuations::Fallthrough(task_stencils::CONST_CONT),
+            ),
+            Op::AddF64 { .. } => (
+                task_stencils::ADD_F64,
+                Continuations::Fallthrough(task_stencils::ADD_F64_CONT),
+            ),
+            Op::MulF64 { .. } => (
+                task_stencils::MUL_F64,
+                Continuations::Fallthrough(task_stencils::MUL_F64_CONT),
+            ),
+            Op::Trace { .. } => (
+                task_stencils::TRACE,
+                Continuations::Fallthrough(task_stencils::TRACE_CONT),
+            ),
         };
         let start = layout.emit_stencil(bytes);
         starts.push(Some(start));
@@ -163,10 +245,68 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
         let Some(start) = *start_opt else { continue };
         let (_, cont) = sites[emitted_ix];
         emitted_ix += 1;
-        let target = next_emitted(&starts, i + 1, done);
-        for &rel in cont {
-            layout.patch_continuation(start + rel, target);
+        match cont {
+            Continuations::Fallthrough(relocs) => {
+                let target = next_emitted(&starts, i + 1, done);
+                for &rel in relocs {
+                    layout.patch_continuation(start + rel, target);
+                }
+            }
+            Continuations::Jump(relocs) => {
+                let Op::Jump { target } = &f.code[i] else {
+                    unreachable!("jump continuation kind only assigned to Jump")
+                };
+                let target = next_emitted(&starts, *target as usize, done);
+                for &rel in relocs {
+                    layout.patch_continuation(start + rel, target);
+                }
+            }
+            Continuations::JumpIfZero { taken, fallthrough } => {
+                let Op::JumpIfZero { target, .. } = &f.code[i] else {
+                    unreachable!("conditional continuation kind only assigned to JumpIfZero")
+                };
+                let taken_target = next_emitted(&starts, *target as usize, done);
+                let fallthrough_target = next_emitted(&starts, i + 1, done);
+                for &rel in taken {
+                    layout.patch_continuation(start + rel, taken_target);
+                }
+                for &rel in fallthrough {
+                    layout.patch_continuation(start + rel, fallthrough_target);
+                }
+            }
         }
+    }
+
+    let mut prog_starts = Vec::with_capacity(f.code.len());
+    let mut prog_len = 0usize;
+    for op in &f.code {
+        if stripped(op) {
+            prog_starts.push(None);
+            continue;
+        }
+        prog_starts.push(Some(prog_len));
+        prog_len += match op {
+            Op::ConstI64 { .. } | Op::ConstF64 { .. } => 2,
+            Op::CopyI64 { .. } => 2,
+            Op::AddI64 { .. }
+            | Op::MulI64 { .. }
+            | Op::SubI64 { .. }
+            | Op::EqI64 { .. }
+            | Op::NeI64 { .. }
+            | Op::LtI64 { .. }
+            | Op::LeI64 { .. }
+            | Op::GtI64 { .. }
+            | Op::GeI64 { .. }
+            | Op::AddF64 { .. }
+            | Op::MulF64 { .. } => 3,
+            Op::Jump { .. } => 1,
+            Op::JumpIfZero { .. } => 3,
+            Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
+            Op::Await { .. } => 3,
+            Op::Call { .. } => 1,
+            Op::Ret { .. } => 2,
+            Op::HostCall { .. } | Op::Trace { .. } => 2,
+        };
     }
 
     // Pass 2: the immediate stream, in op order (consumption order).
@@ -181,20 +321,31 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 layout.push_prog_word(root.prog_index, u64::from(*dst));
                 layout.push_prog_word(root.prog_index, u64::from(*src));
             }
-            Op::AddI64 { dst, a, b } | Op::MulI64 { dst, a, b } | Op::SubI64 { dst, a, b } => {
+            Op::AddI64 { dst, a, b }
+            | Op::MulI64 { dst, a, b }
+            | Op::SubI64 { dst, a, b }
+            | Op::EqI64 { dst, a, b }
+            | Op::NeI64 { dst, a, b }
+            | Op::LtI64 { dst, a, b }
+            | Op::LeI64 { dst, a, b }
+            | Op::GtI64 { dst, a, b }
+            | Op::GeI64 { dst, a, b } => {
                 layout.push_prog_word(root.prog_index, u64::from(*dst));
                 layout.push_prog_word(root.prog_index, u64::from(*a));
                 layout.push_prog_word(root.prog_index, u64::from(*b));
             }
-            Op::EqI64 { .. }
-            | Op::NeI64 { .. }
-            | Op::LtI64 { .. }
-            | Op::LeI64 { .. }
-            | Op::GtI64 { .. }
-            | Op::GeI64 { .. }
-            | Op::Jump { .. }
-            | Op::JumpIfZero { .. } => {
-                unreachable!("compile_with_mode rejects ops without stencils")
+            Op::Jump { target } => {
+                let here = prog_starts[i].expect("jumps are never stripped");
+                let target = next_emitted_prog(&starts, &prog_starts, *target as usize, prog_len);
+                layout.push_prog_word(root.prog_index, prog_delta(here, target));
+            }
+            Op::JumpIfZero { value, target } => {
+                let here = prog_starts[i].expect("branches are never stripped");
+                let taken = next_emitted_prog(&starts, &prog_starts, *target as usize, prog_len);
+                let fallthrough = next_emitted_prog(&starts, &prog_starts, i + 1, prog_len);
+                layout.push_prog_word(root.prog_index, u64::from(*value));
+                layout.push_prog_word(root.prog_index, prog_delta(here, taken));
+                layout.push_prog_word(root.prog_index, prog_delta(here, fallthrough));
             }
             Op::LoadIndexedI64 {
                 dst,
@@ -707,7 +858,16 @@ mod tests {
     /// Drive interp and JIT through the same schedule; assert identical
     /// steps, results, and traces.
     fn differential(program: &Program, entry: FnId, schedule: &[(&[bool], &[i64])]) {
-        let mut interp = Task::spawn(program, entry);
+        differential_with_mode(program, entry, schedule, TraceMode::Innards);
+    }
+
+    fn differential_with_mode(
+        program: &Program,
+        entry: FnId,
+        schedule: &[(&[bool], &[i64])],
+        mode: TraceMode,
+    ) {
+        let mut interp = Task::spawn_with_mode(program, entry, mode);
         let mut interp_steps = Vec::new();
         for (ready, awaited) in schedule {
             let step = interp.run(program, ready, awaited);
@@ -717,8 +877,12 @@ mod tests {
             }
         }
 
-        let Some(jit) = JitProgram::compile(program) else {
-            return; // no JIT on this target — interp already asserted by task::tests
+        let Some(jit) = JitProgram::compile_with_mode(program, mode) else {
+            assert!(
+                !available(),
+                "task JIT refused a program on a native copy-and-patch target"
+            );
+            return;
         };
         let mut task = JitTask::spawn(&jit, entry);
         let mut jit_steps = Vec::new();
@@ -733,6 +897,230 @@ mod tests {
         assert_eq!(jit_steps, interp_steps, "step sequences diverge");
         assert_eq!(task.result, interp.result, "results diverge");
         assert_eq!(task.trace, interp.trace, "frame traces diverge");
+    }
+
+    #[test]
+    fn i64_comparisons_match_the_interpreter() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(10),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 3 },
+                    Op::ConstI64 { dst: 8, value: 5 },
+                    Op::ConstI64 { dst: 16, value: 5 },
+                    Op::EqI64 {
+                        dst: 24,
+                        a: 8,
+                        b: 16,
+                    },
+                    Op::NeI64 {
+                        dst: 32,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::LtI64 {
+                        dst: 40,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::LeI64 {
+                        dst: 48,
+                        a: 8,
+                        b: 16,
+                    },
+                    Op::GtI64 {
+                        dst: 56,
+                        a: 8,
+                        b: 0,
+                    },
+                    Op::GeI64 {
+                        dst: 64,
+                        a: 8,
+                        b: 16,
+                    },
+                    Op::AddI64 {
+                        dst: 72,
+                        a: 24,
+                        b: 32,
+                    },
+                    Op::AddI64 {
+                        dst: 72,
+                        a: 72,
+                        b: 40,
+                    },
+                    Op::AddI64 {
+                        dst: 72,
+                        a: 72,
+                        b: 48,
+                    },
+                    Op::AddI64 {
+                        dst: 72,
+                        a: 72,
+                        b: 56,
+                    },
+                    Op::AddI64 {
+                        dst: 72,
+                        a: 72,
+                        b: 64,
+                    },
+                    Op::Ret { src: 72, size: 8 },
+                ],
+            }],
+        };
+        differential(&program, FnId(0), &[(&[], &[])]);
+
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(interp.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(interp.result_i64(), 6);
+    }
+
+    #[test]
+    fn forward_jump_matches_the_interpreter() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(1),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 1 },
+                    Op::Jump { target: 3 },
+                    Op::ConstI64 { dst: 0, value: 99 },
+                    Op::ConstI64 { dst: 0, value: 41 },
+                    Op::Ret { src: 0, size: 8 },
+                ],
+            }],
+        };
+        differential(&program, FnId(0), &[(&[], &[])]);
+    }
+
+    #[test]
+    fn backward_jump_loop_matches_the_interpreter() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(5),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 5 },
+                    Op::ConstI64 { dst: 8, value: 0 },
+                    Op::ConstI64 { dst: 16, value: 0 },
+                    Op::ConstI64 { dst: 24, value: 1 },
+                    Op::EqI64 {
+                        dst: 32,
+                        a: 0,
+                        b: 16,
+                    },
+                    Op::JumpIfZero {
+                        value: 32,
+                        target: 7,
+                    },
+                    Op::Ret { src: 8, size: 8 },
+                    Op::AddI64 { dst: 8, a: 8, b: 0 },
+                    Op::SubI64 {
+                        dst: 0,
+                        a: 0,
+                        b: 24,
+                    },
+                    Op::Jump { target: 4 },
+                ],
+            }],
+        };
+        differential(&program, FnId(0), &[(&[], &[])]);
+
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(interp.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(interp.result_i64(), 15);
+    }
+
+    #[test]
+    fn jump_if_zero_taken_and_not_taken_match_the_interpreter() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(3),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::JumpIfZero {
+                        value: 0,
+                        target: 4,
+                    },
+                    Op::ConstI64 { dst: 8, value: 99 },
+                    Op::Jump { target: 5 },
+                    Op::ConstI64 { dst: 8, value: 10 },
+                    Op::ConstI64 { dst: 0, value: 1 },
+                    Op::JumpIfZero {
+                        value: 0,
+                        target: 9,
+                    },
+                    Op::ConstI64 { dst: 16, value: 5 },
+                    Op::AddI64 {
+                        dst: 8,
+                        a: 8,
+                        b: 16,
+                    },
+                    Op::Ret { src: 8, size: 8 },
+                ],
+            }],
+        };
+        differential(&program, FnId(0), &[(&[], &[])]);
+    }
+
+    #[test]
+    fn match_shaped_eq_jump_chain_matches_the_interpreter() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(6),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 2 },
+                    Op::ConstI64 { dst: 8, value: 1 },
+                    Op::EqI64 {
+                        dst: 16,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::JumpIfZero {
+                        value: 16,
+                        target: 7,
+                    },
+                    Op::ConstI64 { dst: 24, value: 10 },
+                    Op::CopyI64 { dst: 40, src: 24 },
+                    Op::Jump { target: 15 },
+                    Op::ConstI64 { dst: 8, value: 2 },
+                    Op::EqI64 {
+                        dst: 16,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::JumpIfZero {
+                        value: 16,
+                        target: 13,
+                    },
+                    Op::ConstI64 { dst: 24, value: 20 },
+                    Op::CopyI64 { dst: 40, src: 24 },
+                    Op::Jump { target: 15 },
+                    Op::ConstI64 { dst: 24, value: 30 },
+                    Op::CopyI64 { dst: 40, src: 24 },
+                    Op::Ret { src: 40, size: 8 },
+                ],
+            }],
+        };
+        differential(&program, FnId(0), &[(&[], &[])]);
+    }
+
+    #[test]
+    fn production_branch_target_into_trace_lands_on_next_emitted_stencil() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(2),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::JumpIfZero {
+                        value: 0,
+                        target: 3,
+                    },
+                    Op::ConstI64 { dst: 8, value: 99 },
+                    Op::Trace { id: 42 },
+                    Op::ConstI64 { dst: 8, value: 77 },
+                    Op::Ret { src: 8, size: 8 },
+                ],
+            }],
+        };
+        differential_with_mode(&program, FnId(0), &[(&[], &[])], TraceMode::Production);
     }
 
     fn frame_of_i64s(n: usize) -> Layout {
