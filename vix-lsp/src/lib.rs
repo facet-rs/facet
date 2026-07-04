@@ -74,10 +74,10 @@ pub fn init_tracing() {
             .with(filter)
             .with(stderr_layer)
             .with(file_layer);
-        if tracing::subscriber::set_global_default(subscriber).is_ok() {
-            if let Some(err) = file_error {
-                warn!(error = %err, "failed to initialize vix-lsp file logging");
-            }
+        if tracing::subscriber::set_global_default(subscriber).is_ok()
+            && let Some(err) = file_error
+        {
+            warn!(error = %err, "failed to initialize vix-lsp file logging");
         }
     });
 }
