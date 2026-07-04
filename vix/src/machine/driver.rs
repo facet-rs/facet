@@ -45,6 +45,63 @@ use crate::fetch::{FetchBackend, NoFetchBackend};
 use crate::support::{PathMissing, assign_roles, subtree, tool_for};
 use crate::value::{Payload, Value};
 
+#[derive(Clone, Debug, PartialEq, Eq, Facet)]
+pub struct StoreValue {
+    pub handle: u64,
+    pub schema: String,
+    pub bytes: Vec<u8>,
+    pub content_hash: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Facet)]
+pub struct CodeRef {
+    pub module_hash: Vec<u8>,
+    pub closure_hash: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Facet)]
+pub struct CodeBundle {
+    pub module_hash: Vec<u8>,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Facet)]
+pub struct ValueBundle {
+    pub root: u64,
+    pub values: Vec<StoreValue>,
+    pub code: Vec<CodeBundle>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StoreHandle(pub i64);
+
+#[derive(Clone, Debug)]
+pub struct MachineExecRequest {
+    pub command: String,
+    pub plan: crate::exec::ExecPlan,
+    pub capability: u64,
+    pub mounts: Vec<crate::exec::Mount>,
+    pub output: String,
+    pub span: Option<(u32, u32)>,
+    pub observer: Option<ValueBundle>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MachinePathDemand {
+    File(String),
+    FinishRequired { path: String },
+    Missing { path: String },
+}
+
+pub trait MachinePendingRun: Send + Sync {
+    fn demand_path(&self, path: &str) -> Result<MachinePathDemand, String>;
+    fn flush(&self) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String>;
+}
+
+pub trait MachineExecBackend: Send + Sync {
+    fn spawn(&self, request: MachineExecRequest) -> Result<Arc<dyn MachinePendingRun>, String>;
+}
+
 /// INVOKE request frame contract (the lowering and this driver's
 /// shared knowledge): at `INVOKE_REGION` the body lays out
 /// [input_slot, fn_ref, argc, arg0, arg1, ...] as i64 words before
@@ -546,7 +603,7 @@ enum TreeEntry {
     Exec(u64),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct PendingExecRun {
     command: String,
     plan: crate::exec::ExecPlan,
@@ -556,6 +613,8 @@ struct PendingExecRun {
     scheduled: bool,
     completed: Option<(crate::exec::Outcome, crate::exec::ExecEvent)>,
     completion_logged: bool,
+    remote: Option<Arc<dyn MachinePendingRun>>,
+    span: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -610,6 +669,36 @@ impl ValueStore {
         usize::try_from(handle)
             .ok()
             .and_then(|index| self.entries.get(index))
+    }
+
+    fn entries(&self) -> Vec<StoreEntry> {
+        self.entries.clone()
+    }
+
+    fn insert_at(&mut self, handle: usize, entry: StoreEntry) -> Result<(), String> {
+        let key = (entry.schema.clone(), entry.content_hash);
+        if let Some(existing) = self.entries.get(handle) {
+            if existing.schema == entry.schema
+                && existing.bytes == entry.bytes
+                && existing.content_hash == entry.content_hash
+            {
+                self.by_content.insert(key, handle as i64);
+                return Ok(());
+            }
+            return Err(format!(
+                "store handle {handle} already holds `{}`, cannot import `{}`",
+                existing.schema, entry.schema
+            ));
+        }
+        if handle != self.entries.len() {
+            return Err(format!(
+                "cannot import sparse store handle {handle}; next handle is {}",
+                self.entries.len()
+            ));
+        }
+        self.entries.push(entry);
+        self.by_content.insert(key, handle as i64);
+        Ok(())
     }
 
     fn alloc(
@@ -1047,6 +1136,7 @@ pub struct Driver {
     journal: BTreeMap<String, i64>,
     exec_cache: crate::exec::ExecCache,
     fetch_backend: Arc<dyn FetchBackend>,
+    exec_backend: Option<Arc<dyn MachineExecBackend>>,
     elf_projection_memo: HashMap<(ContentHash, super::elf::Projection), i64>,
     runs: BTreeMap<u64, PendingExecRun>,
     next_run_id: u64,
@@ -1089,6 +1179,7 @@ impl Driver {
             journal: BTreeMap::new(),
             exec_cache: crate::exec::ExecCache::new(),
             fetch_backend: Arc::new(NoFetchBackend),
+            exec_backend: None,
             elf_projection_memo: HashMap::new(),
             runs: BTreeMap::new(),
             next_run_id: 0,
@@ -1116,6 +1207,10 @@ impl Driver {
 
     pub fn set_fetch_backend(&mut self, backend: Arc<dyn FetchBackend>) {
         self.fetch_backend = backend;
+    }
+
+    pub fn set_exec_backend(&mut self, backend: Option<Arc<dyn MachineExecBackend>>) {
+        self.exec_backend = backend;
     }
 
     pub fn set_event_sink(&mut self, sink: Option<DriveEventSink>) {
@@ -1171,6 +1266,53 @@ impl Driver {
 
     pub fn store_entry(&self, handle: i64) -> Option<StoreEntry> {
         self.store.borrow().entry(handle).cloned()
+    }
+
+    pub fn export_value_bundle(
+        &self,
+        root: i64,
+        code: Vec<CodeBundle>,
+    ) -> Result<ValueBundle, String> {
+        let values = self
+            .store
+            .borrow()
+            .entries()
+            .into_iter()
+            .enumerate()
+            .map(|(handle, entry)| StoreValue {
+                handle: u64::try_from(handle).expect("store handle fits u64"),
+                schema: entry.schema,
+                bytes: entry.bytes,
+                content_hash: entry.content_hash.to_vec(),
+            })
+            .collect();
+        Ok(ValueBundle {
+            root: u64::try_from(root).map_err(|_| format!("negative root handle {root}"))?,
+            values,
+            code,
+        })
+    }
+
+    pub fn import_value_bundle(&self, bundle: &ValueBundle) -> Result<i64, String> {
+        let mut values = bundle.values.clone();
+        values.sort_by_key(|value| value.handle);
+        let mut store = self.store.borrow_mut();
+        for value in values {
+            let content_hash: ContentHash = value
+                .content_hash
+                .as_slice()
+                .try_into()
+                .map_err(|_| format!("content hash has {} bytes", value.content_hash.len()))?;
+            store.insert_at(
+                usize::try_from(value.handle).map_err(|_| format!("handle {}", value.handle))?,
+                StoreEntry {
+                    schema: value.schema,
+                    bytes: value.bytes,
+                    content_hash,
+                },
+            )?;
+        }
+        i64::try_from(bundle.root).map_err(|_| format!("root handle {}", bundle.root))
     }
 
     #[cfg(test)]
@@ -1266,13 +1408,66 @@ impl Driver {
         }
     }
 
-    #[cfg(test)]
     pub fn intern_tree_concrete(&self, tree: crate::exec::Tree) -> i64 {
         self.store.borrow_mut().alloc_tree_concrete(tree).0
     }
 
+    pub fn intern_run_value(&self, ok: bool, outputs: crate::exec::Tree) -> Result<i64, String> {
+        let out = self.store.borrow_mut().alloc_tree_concrete(outputs).0;
+        let descriptor = self
+            .descriptors
+            .get("Run")
+            .ok_or_else(|| "missing Run descriptor".to_string())?;
+        let mut bytes = vec![0u8; descriptor.layout.size];
+        let ok_offset = field_offset(descriptor, &bytes, 0);
+        bytes[ok_offset..ok_offset + 8].copy_from_slice(&(ok as i64).to_le_bytes());
+        let out_offset = field_offset(descriptor, &bytes, 1);
+        bytes[out_offset..out_offset + 8].copy_from_slice(&out.to_le_bytes());
+        Ok(self
+            .store
+            .borrow_mut()
+            .alloc("Run", bytes, &self.descriptors)
+            .0)
+    }
+
     pub fn fn_hash(&self, fn_ref: usize) -> u64 {
         self.fns[fn_ref].hash
+    }
+
+    pub fn pending_for_fn(&self, fn_ref: usize, args: Vec<i64>) -> Result<(i64, String), String> {
+        let lowered = self
+            .fns
+            .get(fn_ref)
+            .ok_or_else(|| format!("function ref {fn_ref}"))?;
+        if args.len() > lowered.arg_schemas.len() {
+            return Err(format!(
+                "pending invocation got {} args, expected at most {}",
+                args.len(),
+                lowered.arg_schemas.len()
+            ));
+        }
+        let invocation = pending_invocation_for(lowered, &self.store, args);
+        let schema = lowered.return_schema.clone();
+        let handle = self.store.borrow_mut().alloc_pending(&schema, invocation).0;
+        Ok((handle, pending_schema(&schema)))
+    }
+
+    pub fn invoke_pending_handle(&mut self, pending: i64, args: Vec<i64>) -> Result<i64, String> {
+        let invocation = self.store.borrow().pending_invocation(pending)?;
+        if invocation.primitive.is_some() {
+            return Err("primitive pending values are not callable".into());
+        }
+        if invocation.remaining_arity != args.len() {
+            return Err(format!(
+                "pending invocation expected {} argument(s), got {}",
+                invocation.remaining_arity,
+                args.len()
+            ));
+        }
+        let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
+        let mut all_args = invocation.args;
+        all_args.extend(args);
+        self.demand(fn_ref, all_args)
     }
 
     #[cfg(test)]
@@ -2361,19 +2556,12 @@ impl Driver {
                 .diagnostic())
             }
             TreeEntry::Exec(run_id) => {
-                let tree = if self
-                    .runs
-                    .get(&run_id)
-                    .ok_or_else(|| format!("run {run_id}"))?
-                    .mounts
-                    .is_empty()
-                {
-                    self.finish_run(run_id)?
-                } else {
-                    self.schedule_run(run_id)?.outputs
-                };
-                let projected = subtree(&tree, path)?;
-                Ok(self.store.borrow_mut().alloc_tree_concrete(projected).0)
+                self.demand_exec_path(run_id, path, false)?.ok_or_else(|| {
+                    PathMissing {
+                        path: path.to_string(),
+                    }
+                    .diagnostic()
+                })
             }
         }
     }
@@ -2513,17 +2701,7 @@ impl Driver {
         let tree = match tree {
             TreeEntry::Concrete(tree) => tree,
             TreeEntry::Exec(run_id) => {
-                if self
-                    .runs
-                    .get(&run_id)
-                    .ok_or_else(|| format!("run {run_id}"))?
-                    .mounts
-                    .is_empty()
-                {
-                    self.finish_run(run_id)?
-                } else {
-                    self.schedule_run(run_id)?.outputs
-                }
+                return self.demand_exec_path(run_id, path, true);
             }
             TreeEntry::Merge(_) => {
                 return Err("nested merge tree projection is outside slice 4".into());
@@ -2587,19 +2765,27 @@ impl Driver {
                 scheduled: false,
                 completed: None,
                 completion_logged: false,
+                remote: None,
+                span: req.span,
             },
         );
         let handle = self.store.borrow_mut().alloc_tree_exec(run_id, identity).0;
         Ok((req.input_slot, handle))
     }
 
-    fn schedule_run(&mut self, run_id: u64) -> Result<crate::exec::Outcome, String> {
+    fn ensure_run_started(&mut self, run_id: u64) -> Result<(), String> {
         let needs_start = self
             .runs
             .get(&run_id)
             .ok_or_else(|| format!("run {run_id}"))?
             .completed
-            .is_none();
+            .is_none()
+            && self
+                .runs
+                .get(&run_id)
+                .ok_or_else(|| format!("run {run_id}"))?
+                .remote
+                .is_none();
         if !self
             .runs
             .get(&run_id)
@@ -2630,22 +2816,110 @@ impl Driver {
                     run.mounts.clone(),
                 )
             };
-            let tool = tool_for(&command)?;
-            let outcome = self.exec_cache.exec(&plan, capability, &mounts, tool)?;
-            let event = self
-                .exec_cache
-                .events
-                .last()
-                .cloned()
-                .expect("exec pushed an event");
-            let run = self.runs.get_mut(&run_id).expect("run checked");
-            run.completed = Some((outcome, event));
+            if let Some(backend) = &self.exec_backend {
+                let request = {
+                    let run = self.runs.get(&run_id).expect("run checked");
+                    MachineExecRequest {
+                        command,
+                        plan,
+                        capability,
+                        mounts,
+                        output: run.output.clone(),
+                        span: run.span,
+                        observer: None,
+                    }
+                };
+                let remote = backend.spawn(request)?;
+                let run = self.runs.get_mut(&run_id).expect("run checked");
+                run.remote = Some(remote);
+            } else {
+                let tool = tool_for(&command)?;
+                let outcome = self.exec_cache.exec(&plan, capability, &mounts, tool)?;
+                let event = self
+                    .exec_cache
+                    .events
+                    .last()
+                    .cloned()
+                    .expect("exec pushed an event");
+                let run = self.runs.get_mut(&run_id).expect("run checked");
+                run.completed = Some((outcome, event));
+            }
         }
-        Ok(self
+        Ok(())
+    }
+
+    fn demand_exec_path(
+        &mut self,
+        run_id: u64,
+        path: &str,
+        complete_on_file: bool,
+    ) -> Result<Option<i64>, String> {
+        self.ensure_run_started(run_id)?;
+        if let Some(remote) = self.runs.get(&run_id).and_then(|run| run.remote.clone()) {
+            match remote.demand_path(path)? {
+                MachinePathDemand::File(contents) => {
+                    if complete_on_file {
+                        let _ = self.finish_run(run_id)?;
+                    }
+                    let base = path.rsplit_once('/').map(|(_, base)| base).unwrap_or(path);
+                    let tree = crate::exec::Tree::of(&[(base, contents.as_str())]);
+                    Ok(Some(self.store.borrow_mut().alloc_tree_concrete(tree).0))
+                }
+                MachinePathDemand::FinishRequired { .. } => {
+                    let tree = self.finish_run(run_id)?;
+                    match subtree(&tree, path) {
+                        Ok(projected) => Ok(Some(
+                            self.store.borrow_mut().alloc_tree_concrete(projected).0,
+                        )),
+                        Err(_) => Ok(None),
+                    }
+                }
+                MachinePathDemand::Missing { .. } => {
+                    let _ = self.finish_run(run_id)?;
+                    Ok(None)
+                }
+            }
+        } else {
+            let outcome = self.schedule_run(run_id)?;
+            match subtree(&outcome.outputs, path) {
+                Ok(projected) => {
+                    if complete_on_file {
+                        let _ = self.finish_run(run_id)?;
+                    }
+                    Ok(Some(
+                        self.store.borrow_mut().alloc_tree_concrete(projected).0,
+                    ))
+                }
+                Err(_) => {
+                    let _ = self.finish_run(run_id)?;
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    fn schedule_run(&mut self, run_id: u64) -> Result<crate::exec::Outcome, String> {
+        self.ensure_run_started(run_id)?;
+        if let Some(outcome) = self
             .runs
             .get(&run_id)
             .and_then(|run| run.completed.as_ref().map(|(outcome, _)| outcome.clone()))
-            .expect("scheduled run completed"))
+        {
+            return Ok(outcome);
+        }
+        if let Some(remote) = self.runs.get(&run_id).and_then(|run| run.remote.clone()) {
+            let (tree, event) = remote.flush()?;
+            let outcome = crate::exec::Outcome {
+                outputs: tree,
+                read_set: crate::exec::ReadSet::default(),
+            };
+            let run = self.runs.get_mut(&run_id).expect("run checked");
+            run.completed = Some((outcome.clone(), event));
+            return Ok(outcome);
+        }
+        Err(format!(
+            "scheduled run {run_id} has no local or remote completion"
+        ))
     }
 
     fn finish_run(&mut self, run_id: u64) -> Result<crate::exec::Tree, String> {

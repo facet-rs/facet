@@ -1,11 +1,11 @@
 //! The whole arc in one test: a vix program's command blocks dispatching over
 //! vox to a FLEET of executors — snark parses, the binder resolves, the
-//! oracle demands, runs join/cut off, and trees move executor→executor while
+//! machine demands, runs join/cut off, and trees move executor→executor while
 //! the orchestrator holds hashes.
 
 use vix::exec::{ExecEvent, Tree};
 use vix::fetch::FakeFetchBackend;
-use vix::oracle::{Event, Oracle, Value};
+use vix::machine::{DriveEvent, Machine, MachineArg, NamedArg};
 use vix_wire::{ExecutorDispatcher, ExecutorService, FleetBackend, Placement, Transfer};
 
 const LUA_URL: &str = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
@@ -52,10 +52,10 @@ async fn spawn_executor() -> String {
     addr
 }
 
-fn target() -> Value {
-    Value::Struct {
-        name: "Target".into(),
-        fields: vec![("os".into(), Value::Str("linux-x86_64".into()))],
+fn linux_arg(name: &str) -> NamedArg {
+    NamedArg {
+        name: name.into(),
+        value: MachineArg::LinuxTarget,
     }
 }
 
@@ -71,32 +71,34 @@ async fn lua_builds_across_two_machines() {
         .await
         .expect("fleet connects");
 
-    let oracle = Oracle::load(&lua_source())
+    let mut machine = Machine::load(&lua_source())
         .expect("lua.vix loads")
         .with_fetch_backend(lua_fetch_backend())
-        .with_backend(Box::new(fleet));
+        .with_exec_backend(std::sync::Arc::new(fleet));
 
-    let out = oracle.call("lua", &[("target", target())]).unwrap();
-    let Value::Tree(bin) = &out else {
-        panic!("lua() returns a Tree, got {out:?}");
-    };
+    let out = machine.call("lua", &[linux_arg("target")]).unwrap();
+    let bin = machine.tree_entries(out.0).unwrap();
     assert!(
-        bin.entries.contains_key("lua"),
+        bin.contains_key("lua"),
         "the linked binary came back across the wire: {bin:?}"
     );
 
     // Demand-truthful accounting: 5 dispatches, but only 3 FLUSHES — main's
     // object and the archive are only ever PROJECTED (one path each), so
     // they never flush. Projection doesn't force, even across machines.
-    let events = oracle.events();
+    let events = machine.trace();
     let spawns = events
         .iter()
-        .filter(|e| matches!(e, Event::Created { .. }))
+        .filter(|e| matches!(e, DriveEvent::RunRequested { .. }))
         .count();
     let execs: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Finished { command, event, .. } => Some((command.clone(), event.clone())),
+            DriveEvent::RunCompleted {
+                command_name,
+                serving,
+                ..
+            } => Some((command_name.clone(), serving.clone())),
             _ => None,
         })
         .collect();
@@ -106,13 +108,17 @@ async fn lua_builds_across_two_machines() {
 
     // Warm rebuild: ONE event, the fn-level memo hit. The fleet is not even
     // consulted.
-    let before = oracle.events().len();
-    let again = oracle.call("lua", &[("target", target())]).unwrap();
+    machine.clear_trace();
+    let again = machine.call("lua", &[linux_arg("target")]).unwrap();
     assert_eq!(out, again);
-    let warm = &oracle.events()[before..];
-    assert_eq!(warm.len(), 1, "{warm:?}");
-    assert!(
-        matches!(&warm[0], Event::Hit { func, .. } if func == "lua"),
+    let warm = machine.trace();
+    let lua_hash = machine.fn_hash("lua").unwrap();
+    assert_eq!(
+        warm,
+        &[
+            DriveEvent::Demanded { fn_hash: lua_hash },
+            DriveEvent::MemoHit { fn_hash: lua_hash }
+        ],
         "{warm:?}"
     );
 }
@@ -125,27 +131,15 @@ async fn trees_gravity_pull_between_executors() {
         .await
         .expect("fleet connects");
 
-    let oracle = Oracle::load(&lua_source())
+    let mut machine = Machine::load(&lua_source())
         .expect("lua.vix loads")
         .with_fetch_backend(lua_fetch_backend());
     // Run and THEN inspect the fleet's transfer log (with_backend consumes
     // it, so keep a probe first).
     let probe = std::sync::Arc::new(fleet);
-    struct Shared(std::sync::Arc<FleetBackend>);
-    impl vix::oracle::ExecBackend for Shared {
-        fn spawn(
-            &self,
-            command: &str,
-            plan: &vix::exec::ExecPlan,
-            capability: u64,
-            mounts: &[vix::exec::Mount],
-        ) -> Result<std::sync::Arc<dyn vix::oracle::PendingRun>, String> {
-            self.0.spawn(command, plan, capability, mounts)
-        }
-    }
-    let oracle = oracle.with_backend(Box::new(Shared(probe.clone())));
+    machine = machine.with_exec_backend(probe.clone());
 
-    oracle.call("lua", &[("target", target())]).unwrap();
+    machine.call("lua", &[linux_arg("target")]).unwrap();
 
     let transfers = probe.transfers();
     let pulls: Vec<_> = transfers
@@ -195,6 +189,9 @@ async fn language_level_pipelining_b_finishes_while_a_still_runs() {
 use vix::{Tree, Path, Target};
 use caps::{Rustc, Cc};
 
+fn get_rustc(t: Target) -> Rustc { Rustc::acquire(t) }
+fn get_cc(t: Target) -> Cc { Cc::acquire(t) }
+
 /// B consumes exactly one path of A's output: the rmeta. A's rlib may take
 /// forever; B does not care. Demand is the await.
 pub fn pipeline(rustc: Rustc, cc: Cc, a_src: Tree, b_src: Tree) -> Tree {
@@ -202,55 +199,52 @@ pub fn pipeline(rustc: Rustc, cc: Cc, a_src: Tree, b_src: Tree) -> Tree {
     cc! { {a_out / p"lib.rmeta"} -c {b_src / p"b.c"} -o b.o }
 }
 "#;
-    let fleet = FleetBackend::connect(Placement::Gravity, &[addr])
-        .await
-        .expect("fleet connects");
-    let oracle = Oracle::load(module)
-        .expect("module loads")
-        .with_backend(Box::new(fleet));
-
-    let a_src = Value::Tree(vix::exec::Tree::of(&[("lib.rs", "pub fn answer() {}")]));
-    let b_src = Value::Tree(vix::exec::Tree::of(&[("b.c", "int b() { return 1; }")]));
-
-    // Capabilities: acquire through the oracle's primitives.
-    let target = Value::Struct {
-        name: "Target".into(),
-        fields: vec![("os".into(), Value::Str("linux".into()))],
-    };
-    let acquire = |kind: &str| {
-        let src = format!("fn get(t: Target) -> {kind} {{ {kind}::acquire(t) }}");
-        let o = Oracle::load(&src).unwrap();
-        o.call("get", &[("t", target.clone())]).unwrap()
-    };
-    let rustc_v = acquire("Rustc");
-    let cc_v = acquire("Cc");
+    let fleet = std::sync::Arc::new(
+        FleetBackend::connect(Placement::Gravity, &[addr])
+            .await
+            .expect("fleet connects"),
+    );
+    let a_src = Tree::of(&[("lib.rs", "pub fn answer() {}")]);
+    let b_src = Tree::of(&[("b.c", "int b() { return 1; }")]);
 
     // The call runs on a blocking thread; if evaluation were strict it would
     // hang on A's flush and the timeout below would fire (the gate opens only
     // AFTER the call completes).
     let call_task = {
-        let args = [
-            ("rustc", rustc_v),
-            ("cc", cc_v),
-            ("a_src", a_src),
-            ("b_src", b_src),
-        ];
+        let fleet = fleet.clone();
+        let module = module.to_string();
         tokio::task::spawn_blocking(move || {
-            let out = oracle
-                .call(
-                    "pipeline",
-                    &args
-                        .iter()
-                        .map(|(n, v)| (*n, v.clone()))
-                        .collect::<Vec<_>>(),
-                )
-                .expect("pipeline evaluates");
-            let events = oracle.events();
-            (out, events)
+            let mut machine = Machine::load(&module)
+                .expect("module loads")
+                .with_exec_backend(fleet);
+            let rustc_v = machine.call("get_rustc", &[linux_arg("t")]).unwrap();
+            let cc_v = machine.call("get_cc", &[linux_arg("t")]).unwrap();
+            let args = [
+                NamedArg {
+                    name: "rustc".into(),
+                    value: MachineArg::Handle(rustc_v),
+                },
+                NamedArg {
+                    name: "cc".into(),
+                    value: MachineArg::Handle(cc_v),
+                },
+                NamedArg {
+                    name: "a_src".into(),
+                    value: MachineArg::Tree(a_src),
+                },
+                NamedArg {
+                    name: "b_src".into(),
+                    value: MachineArg::Tree(b_src),
+                },
+            ];
+            let out = machine.call("pipeline", &args).expect("pipeline evaluates");
+            let entries = machine.tree_entries(out.0).expect("pipeline tree");
+            let events = machine.trace().to_vec();
+            (entries, events)
         })
     };
 
-    let (out, events) = tokio::time::timeout(std::time::Duration::from_secs(20), call_task)
+    let (b_out, events) = tokio::time::timeout(std::time::Duration::from_secs(120), call_task)
         .await
         .expect("DEMAND-DRIVEN: the call must complete while A is still gated")
         .expect("call task joins");
@@ -258,24 +252,21 @@ pub fn pipeline(rustc: Rustc, cc: Cc, a_src: Tree, b_src: Tree) -> Tree {
     // Only now does A get to finish its "codegen" — B never needed it.
     open_gate();
 
-    let Value::Tree(b_out) = &out else {
-        panic!("pipeline returns B's tree, got {out:?}");
-    };
-    assert!(b_out.entries.contains_key("b.o"), "{b_out:?}");
+    assert!(b_out.contains_key("b.o"), "{b_out:?}");
 
     // Two dispatches; only B ever FLUSHED (the edge demanded it). A's run
     // has no completion event: its rmeta was projected, nothing more.
     let spawns: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Created { command, .. } => Some(command.as_str()),
+            DriveEvent::RunRequested { command_name, .. } => Some(command_name.as_str()),
             _ => None,
         })
         .collect();
     let flushes: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Finished { command, .. } => Some(command.as_str()),
+            DriveEvent::RunCompleted { command_name, .. } => Some(command_name.as_str()),
             _ => None,
         })
         .collect();
