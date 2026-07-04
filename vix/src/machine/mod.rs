@@ -1,55 +1,56 @@
-//! The machine — vix's evaluator, final shape. There is exactly one.
+//! The machine — vix's evaluator. There is exactly one, ever.
 //!
-//! This module exists because of a ruling (engine-demand-semantics.md,
-//! amendment A5, 2026-07-04): the two-evaluator era is over. The eager
-//! oracle and the recursive-driver engine are FROZEN — no new semantics
-//! land in them, ever — and both get deleted once the corpus passes
-//! here. There is no intermediate path; this is the final shape, built
-//! deliberately small before it is built large.
+//! Governing rulings: engine-demand-semantics.md amendments A5 and A6
+//! in the vixen repo (docs/design/). The load-bearing parts, restated
+//! where implementers will actually read them:
 //!
-//! Conventions that are not up for renegotiation (each has a ruling
-//! behind it; see the constitution and the taste record in the vixen
-//! repo, docs/design/):
-//!
-//! - **Demand drives everything.** Nothing forces locally. The demand
-//!   graph of the constitution is the program; evaluation is demand
-//!   backpropagating from selected outputs. Suspension happens ONLY at
-//!   run boundaries; the pending frontier is enumerable at any moment.
-//! - **The driver is an async runtime, not a recursion.** Worker
-//!   threads pick up ready nodes; work-stealing is legal because
-//!   scheduling order is unobservable by construction (canonical total
-//!   order over values, canonical collect).
-//! - **Execution is weavy-shaped.** Node bodies lower to the
-//!   weavy-async machine: explicit context, operand stack, suspend by
-//!   returning up, resume by re-entry. The interpreter lane is the
-//!   reference and is always available (wasm/iOS forbid JIT); stencils
-//!   are an accelerator that may lag, never a prerequisite.
-//! - **Values: scalars unboxed, composites behind handles.** See
-//!   [`value`]. There is no boxed do-everything Value enum here and
-//!   there never will be one; that enum is a frozen-evaluator artifact.
-//! - **Types have two authorities, one description vocabulary.** A type
-//!   defined in Rust is described by facet — that is how lowering knows
-//!   how to build and read it. A type defined in vix owns an optimized
-//!   ABI (roughly what a Rust enum would do), and that ABI is RECORDED
-//!   as a [`value::Layout`] and OBSERVABLE from Rust. Never two worlds
-//!   for one type.
+//! - **One implementation of vix.** Not a reference, not an oracle, not
+//!   an interpreter tier, not a simplified or eager one. The frozen
+//!   legacy evaluators (oracle.rs, engine.rs) die at corpus parity.
+//!   Correctness is defined by the written semantics plus the pinned
+//!   trace corpus — never by agreement with another implementation.
+//! - **Typed instructions over UNTAGGED operands.** `AddI64` and
+//!   `AddF64` are different instructions, chosen at lowering time
+//!   because the types are known then. Runtime never asks what a value
+//!   is. No tags, no kind-markers, no fallible arithmetic, no checked
+//!   mode — no dynamic-language machinery of any sort. A sum type's
+//!   discriminant is the type's own layout, matched by code that
+//!   statically knows the type: that is not a tag. If a safety net is
+//!   ever wanted, it is static validation of lowered programs
+//!   (wasm-style), never runtime checks.
+//! - **Two layout authorities, one description vocabulary.** Rust-
+//!   authored types are described by facet. Vix-authored types own an
+//!   optimized ABI (what a Rust enum would do), RECORDED as a
+//!   [`value::Layout`] and observable from Rust. Layouts are
+//!   compile-time knowledge plus introspection metadata (DWARF-like);
+//!   execution never dispatches on them.
+//! - **Demand drives everything; suspension is only for the
+//!   started-and-blocked.** An undemanded node is pure data — no
+//!   future, no frame, no cost; graphs have millions of nodes. A
+//!   computation suspends only after it began and cannot make forward
+//!   progress. Joint-demand batching at memo boundaries is a scheduler
+//!   policy about when to begin — never a return to spawning.
+//! - **Vix lowers to weavy; portability is weavy's concern.** How a
+//!   target executes (JIT or portable) is invisible above the
+//!   waterline. Fable (this repo, ../fable) is a SIBLING language on
+//!   the same substrate — it grows the shared teeth first (typed user
+//!   types, host async, the ABI/frame model) because small programs
+//!   derisk the substrate; vix never lowers through it.
+//! - **One unified trace; instrumentation is weavy IR.** Emit IR with
+//!   the instrumentation the mode wants (tests trace innards,
+//!   production keeps suspension points); weavy strips by mode. Tests
+//!   are assertions over traces — sequences, presence, ABSENCE
+//!   (absence is how laziness is proven).
 //! - **Persist facts keyed by content, never positions.** The lowering
-//!   cache (canonical hash → graph shape) is primary machinery, not an
-//!   optimization; per-evaluation node indices die with the evaluation.
-//! - **Semantics land once.** Here. The corpus pins behavior with
-//!   absolute assertions (expected values, event multisets, journal
-//!   pins) — correctness is never "agrees with a second implementation".
+//!   cache (canonical hash → lowered program) is primary machinery;
+//!   per-evaluation state dies with the evaluation.
 //!
-//! Build order (kept current as slices land): value model (this
-//! commit) → node graph + async driver → lowering from the typed AST
-//! with the content-keyed lowering cache → exec/journal seams → corpus
-//! parity → the frozen evaluators are deleted.
+//! Build order from here: fable×weavy teeth (typed instruction
+//! vocabulary, frames/ABI, layouts in motion, host async) → vix
+//! lowering onto that substrate → the milestone: a compound value from
+//! several producers, one path selected, unselected producers provably
+//! never executing (trace absence), through the VM and JIT.
 
-pub mod graph;
 pub mod value;
 
-pub use graph::{Graph, InputId, MachineError, NodeId, NodeOp};
-pub use value::{
-    Field, Handle, Layout, LayoutError, LayoutId, Registry, Slot, SlotTy, Store, TotalF64,
-    ValueRef, Variant,
-};
+pub use value::{Field, FieldKind, Layout, LayoutId, Registry, TotalF64, Variant};

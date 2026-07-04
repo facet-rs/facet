@@ -15,8 +15,8 @@
 //! runtime often lives. So the async substrate has two execution lanes with
 //! IDENTICAL semantics:
 //!
-//! - [`Interp`] — a pure-Rust interpreter over the op list. Always available,
-//!   no `unsafe`, no executable memory. This is the REFERENCE.
+//! - [`Machine::Interp`] — a pure-Rust interpreter over the op list. Always
+//!   available, no `unsafe`, no executable memory. This is the REFERENCE.
 //! - the JIT lane — the copy-and-patch chain, native-only (`jit` feature +
 //!   supported target), for speed. It must match the interpreter exactly
 //!   (differential tests assert same result AND same suspension trace).
@@ -24,23 +24,10 @@
 //! [`AsyncExec::new`] picks the JIT when available and falls back to the
 //! interpreter otherwise; [`AsyncExec::interpret`] forces the portable lane.
 //!
-//! # The operand word is GENERIC
-//!
-//! Everything here is parameterized over [`Word`] — the operand type on the
-//! stack. `i64` is the canonical instantiation (and the only one the JIT lane
-//! compiles today: stencils have an ABI, so a new word grows a new stencil
-//! set). vix instantiates the lane with its `Slot` word; lane selection has
-//! two axes — JIT when the target supports it AND the word has stencils,
-//! interpreter otherwise. A word whose arithmetic can fail (a tagged word)
-//! reports [`WordFault`]s; faults surface as [`Step::Faulted`], and the vix
-//! machine driver treats them as values. This wrapper's [`Future`] treats
-//! them as lowering bugs (panic), matching the old strict behavior for `i64`
-//! programs, which cannot fault.
-//!
 //! # Why suspension works in BOTH lanes
 //!
 //! The state that must survive a suspend is never on the C stack. In the
-//! interpreter it's the machine's own fields (a program counter + a `Vec`
+//! interpreter it's the [`Machine`]'s own fields (a program counter + a `Vec`
 //! operand stack); suspend is a plain `return`. In the JIT it's an explicit
 //! `Ctx` struct + the driver, and the guaranteed-tail-call discipline
 //! (`become`, see `build.rs`) means the whole chain runs in one driver-owned
@@ -64,89 +51,26 @@
 //! parked state (await index + operand-stack snapshot). These are backend-
 //! agnostic — the same story on an iPhone (interpreted) and a build server
 //! (JIT'd).
+//!
+//! # Scope (v1)
+//!
+//! The operand type is `i64` — enough to prove and exercise the substrate on
+//! both backends. The successor is a TYPED instruction vocabulary over
+//! untagged operands (AddI64 ≠ AddF64; types resolved at lowering, never at
+//! runtime — constitution A6: no tags, no dynamic machinery, ever), designed
+//! deliberately with the fable-teeth work — NOT a generic tagged word. The
+//! suspend/resume PROTOCOL here is the reusable part.
 
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
-/// An operand word: what lives on the lane's stack. `i64` is the canonical
-/// instantiation; vix instantiates with its `Slot`. Arithmetic is fallible so
-/// tagged words can refuse mismatched operands ([`WordFault`]); `i64` never
-/// faults.
-pub trait Word: Copy + core::fmt::Debug + PartialEq + Unpin + 'static {
-    fn add(self, rhs: Self) -> Result<Self, WordFault>;
-    fn mul(self, rhs: Self) -> Result<Self, WordFault>;
-
-    /// Placeholder for not-yet-ready awaited values; never observed by a
-    /// correct lane (the readiness array guards every read).
-    fn filler() -> Self;
-
-    /// The word's JIT lane for this program, if this target and this word
-    /// have one. Default: none — the interpreter carries the semantics.
-    fn jit_lane(ops: &[Op<Self>]) -> Option<Box<dyn Machine<Self>>>
-    where
-        Self: Sized,
-    {
-        let _ = ops;
-        None
-    }
-}
-
-impl Word for i64 {
-    fn add(self, rhs: Self) -> Result<Self, WordFault> {
-        Ok(self.wrapping_add(rhs))
-    }
-
-    fn mul(self, rhs: Self) -> Result<Self, WordFault> {
-        Ok(self.wrapping_mul(rhs))
-    }
-
-    fn filler() -> Self {
-        0
-    }
-
-    fn jit_lane(ops: &[Op<Self>]) -> Option<Box<dyn Machine<Self>>> {
-        #[cfg(feature = "jit")]
-        {
-            if let Some(m) = jit_lane::JitMachine::compile(ops) {
-                return Some(Box::new(m));
-            }
-        }
-        let _ = ops;
-        None
-    }
-}
-
-/// A word refused an operation: the program is malformed for this word (a
-/// lowering bug, or an untyped program probing a tagged word). Faults are
-/// deterministic and identical across lanes by construction — a faulting
-/// program never reaches a JIT lane (only stencil-backed words compile, and
-/// stencil-backed words don't fault).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WordFault {
-    TypeMismatch { op: &'static str },
-    StackUnderflow { op: &'static str },
-    EmptyResult,
-}
-
-impl core::fmt::Display for WordFault {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            WordFault::TypeMismatch { op } => write!(f, "{op}: operand type mismatch"),
-            WordFault::StackUnderflow { op } => write!(f, "{op}: operand stack underflow"),
-            WordFault::EmptyResult => write!(f, "program finished with an empty stack"),
-        }
-    }
-}
-
-impl std::error::Error for WordFault {}
-
 /// One op in an async program. `Await` points are numbered in program order;
-/// the caller supplies one input per await, in the same order.
+/// the caller supplies one input future per await, in the same order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Op<W> {
+pub enum Op {
     /// Push an immediate onto the operand stack.
-    Push(W),
+    Push(i64),
     /// Suspend point: await the next external input, pushing its value when
     /// ready.
     Await,
@@ -157,7 +81,7 @@ pub enum Op<W> {
 }
 
 /// Number of await (suspend) points in an op list.
-pub fn await_count<W>(ops: &[Op<W>]) -> usize {
+pub fn await_count(ops: &[Op]) -> usize {
     ops.iter().filter(|o| matches!(o, Op::Await)).count()
 }
 
@@ -173,50 +97,41 @@ pub struct SuspendEvent {
 /// The live state of a currently-suspended chain (for inspection/debugging).
 /// Backend-agnostic: identical on the interpreter and the JIT.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Suspension<W> {
+pub struct Suspension {
     /// The await point the chain is parked on.
     pub await_index: usize,
     /// Snapshot of the operand stack below the suspend point.
-    pub stack: Vec<W>,
+    pub stack: Vec<i64>,
 }
 
 /// The result of running a lane from its current resume point.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Step<W> {
-    Done(W),
-    /// Parked on this await point (program order).
+enum Step {
+    Done(i64),
     Suspended(usize),
-    /// The word refused an op — malformed program for this word.
-    Faulted(WordFault),
 }
 
-/// An execution lane: run from the current resume point until done, suspended,
-/// or faulted, over host readiness/value arrays. The lane owns its own resume
-/// state (a program counter or a chain cursor) and operand stack. This is THE
-/// seam a demand driver plugs into: vix's machine drives lanes directly;
-/// [`AsyncExec`] wraps one lane in a `Future` over boxed inputs.
-pub trait Machine<W: Word> {
-    fn run(&mut self, ready: &[bool], awaited: &[W]) -> Step<W>;
-    fn stack(&self) -> &[W];
+/// An execution lane: run from the current resume point until done or
+/// suspended, over host readiness/value arrays. The lane owns its own resume
+/// state (a program counter or a chain cursor) and operand stack.
+trait Machine {
+    fn run(&mut self, ready: &[i64], awaited: &[i64]) -> Step;
+    fn stack(&self) -> &[i64];
 }
 
 // ---------------------------------------------------------------------------
 // Interpreter lane — ALWAYS available (iOS, wasm, anything). The reference.
 // ---------------------------------------------------------------------------
 
-/// The reference lane: pure Rust, no `unsafe`, runs anywhere, defines the
-/// semantics the JIT must match.
-#[derive(Debug)]
-pub struct Interp<W> {
-    ops: Vec<Op<W>>,
+struct Interp {
+    ops: Vec<Op>,
     /// `await_index_at[pc]` is the await index when `ops[pc] == Await`.
     await_index_at: Vec<usize>,
     pc: usize,
-    stack: Vec<W>,
+    stack: Vec<i64>,
 }
 
-impl<W: Word> Interp<W> {
-    pub fn new(ops: &[Op<W>]) -> Self {
+impl Interp {
+    fn new(ops: &[Op]) -> Self {
         let mut await_index_at = vec![0usize; ops.len()];
         let mut next = 0;
         for (pc, op) in ops.iter().enumerate() {
@@ -232,50 +147,34 @@ impl<W: Word> Interp<W> {
             stack: Vec::new(),
         }
     }
-
-    fn binary(
-        &mut self,
-        op_name: &'static str,
-        apply: impl Fn(W, W) -> Result<W, WordFault>,
-    ) -> Result<(), WordFault> {
-        let b = self
-            .stack
-            .pop()
-            .ok_or(WordFault::StackUnderflow { op: op_name })?;
-        let a = self
-            .stack
-            .pop()
-            .ok_or(WordFault::StackUnderflow { op: op_name })?;
-        self.stack.push(apply(a, b)?);
-        Ok(())
-    }
 }
 
-impl<W: Word> Machine<W> for Interp<W> {
-    fn run(&mut self, ready: &[bool], awaited: &[W]) -> Step<W> {
+impl Machine for Interp {
+    fn run(&mut self, ready: &[i64], awaited: &[i64]) -> Step {
         loop {
             if self.pc >= self.ops.len() {
-                return match self.stack.last() {
-                    Some(result) => Step::Done(*result),
-                    None => Step::Faulted(WordFault::EmptyResult),
-                };
+                return Step::Done(*self.stack.last().expect("non-empty result stack"));
             }
             match self.ops[self.pc] {
-                Op::Push(w) => {
-                    self.stack.push(w);
+                Op::Push(n) => {
+                    self.stack.push(n);
                     self.pc += 1;
                 }
-                Op::Add => match self.binary("Add", W::add) {
-                    Ok(()) => self.pc += 1,
-                    Err(fault) => return Step::Faulted(fault),
-                },
-                Op::Mul => match self.binary("Mul", W::mul) {
-                    Ok(()) => self.pc += 1,
-                    Err(fault) => return Step::Faulted(fault),
-                },
+                Op::Add => {
+                    let b = self.stack.pop().unwrap();
+                    let a = self.stack.pop().unwrap();
+                    self.stack.push(a + b);
+                    self.pc += 1;
+                }
+                Op::Mul => {
+                    let b = self.stack.pop().unwrap();
+                    let a = self.stack.pop().unwrap();
+                    self.stack.push(a * b);
+                    self.pc += 1;
+                }
                 Op::Await => {
                     let idx = self.await_index_at[self.pc];
-                    if ready[idx] {
+                    if ready[idx] != 0 {
                         self.stack.push(awaited[idx]);
                         self.pc += 1;
                     } else {
@@ -287,14 +186,13 @@ impl<W: Word> Machine<W> for Interp<W> {
         }
     }
 
-    fn stack(&self) -> &[W] {
+    fn stack(&self) -> &[i64] {
         &self.stack
     }
 }
 
 // ---------------------------------------------------------------------------
-// JIT lane — native-only acceleration; i64 words only (stencils have an ABI;
-// a new word grows a new stencil set). Must match the interpreter exactly.
+// JIT lane — native-only acceleration; must match the interpreter exactly.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "jit")]
@@ -331,12 +229,10 @@ mod jit_lane {
         suspended: i64,
         resume_scratch: u64,
         await_index_scratch: u64,
-        /// The stencil ABI takes readiness as i64 words; converted per run.
-        ready_scratch: Vec<i64>,
     }
 
     impl JitMachine {
-        pub fn compile(ops: &[Op<i64>]) -> Option<JitMachine> {
+        pub fn compile(ops: &[Op]) -> Option<JitMachine> {
             if !available() {
                 return None;
             }
@@ -384,16 +280,12 @@ mod jit_lane {
                 suspended: 0,
                 resume_scratch: 0,
                 await_index_scratch: 0,
-                ready_scratch: Vec::new(),
             })
         }
     }
 
-    impl Machine<i64> for JitMachine {
-        fn run(&mut self, ready: &[bool], awaited: &[i64]) -> Step<i64> {
-            self.ready_scratch.clear();
-            self.ready_scratch
-                .extend(ready.iter().map(|&r| i64::from(r)));
+    impl Machine for JitMachine {
+        fn run(&mut self, ready: &[i64], awaited: &[i64]) -> Step {
             let entry = if self.started {
                 self.resume_offset
             } else {
@@ -405,7 +297,7 @@ mod jit_lane {
             let mut ctx = Ctx {
                 prog: self.prog,
                 sp: unsafe { base.add(self.sp_len) },
-                ready: self.ready_scratch.as_ptr(),
+                ready: ready.as_ptr(),
                 awaited: awaited.as_ptr(),
                 resume: &mut self.resume_scratch,
                 await_index: &mut self.await_index_scratch,
@@ -431,8 +323,8 @@ mod jit_lane {
     }
 }
 
-/// Whether the JIT async lane is usable on this target (for i64 words). When
-/// false, [`AsyncExec::new`] uses the interpreter (always available).
+/// Whether the JIT async lane is usable on this target. When false,
+/// [`AsyncExec::new`] uses the interpreter (which is always available).
 pub fn jit_available() -> bool {
     #[cfg(feature = "jit")]
     {
@@ -444,9 +336,12 @@ pub fn jit_available() -> bool {
     }
 }
 
-fn best_machine<W: Word>(ops: &[Op<W>]) -> (Box<dyn Machine<W>>, bool) {
-    if let Some(m) = W::jit_lane(ops) {
-        return (m, true);
+fn best_machine(ops: &[Op]) -> (Box<dyn Machine>, bool) {
+    #[cfg(feature = "jit")]
+    {
+        if let Some(m) = jit_lane::JitMachine::compile(ops) {
+            return (Box::new(m), true);
+        }
     }
     (Box::new(Interp::new(ops)), false)
 }
@@ -455,33 +350,30 @@ fn best_machine<W: Word>(ops: &[Op<W>]) -> (Box<dyn Machine<W>>, bool) {
 /// input future per await; each poll drives every unresolved input, then runs
 /// the lane until it completes or parks.
 ///
-/// Depends only on `core::future` — no async runtime. Provide any executor
-/// (the tests use tokio) and any input futures (in production: vox streams,
-/// remote fetches). A [`Step::Faulted`] here is a panic: this wrapper serves
-/// programs whose words don't fault (i64) or whose lowering guarantees typed
-/// programs; a driver that treats faults as values (vix's machine) drives
-/// lanes directly through [`Machine`].
-pub struct AsyncExec<W: Word = i64> {
-    machine: Box<dyn Machine<W>>,
+/// Depends only on `core::future` — no async runtime. Provide any executor (the
+/// tests use tokio) and any input futures (in production: vox streams, remote
+/// fetches).
+pub struct AsyncExec {
+    machine: Box<dyn Machine>,
     /// True if the JIT lane is in use (else the interpreter). Observable so
     /// callers/tests can confirm the portable fallback engaged.
     jit: bool,
-    inners: Vec<Pin<Box<dyn Future<Output = W>>>>,
+    inners: Vec<Pin<Box<dyn Future<Output = i64>>>>,
     resolved: Vec<bool>,
-    ready: Vec<bool>,
-    awaited: Vec<W>,
+    ready: Vec<i64>,
+    awaited: Vec<i64>,
     /// Set while parked: the await index we're blocked on.
     parked_on: Option<usize>,
     /// The debuggable suspension timeline (append-only).
     pub trace: Vec<SuspendEvent>,
 }
 
-impl<W: Word> AsyncExec<W> {
+impl AsyncExec {
     fn with_machine(
-        machine: Box<dyn Machine<W>>,
+        machine: Box<dyn Machine>,
         jit: bool,
-        ops: &[Op<W>],
-        inners: Vec<Pin<Box<dyn Future<Output = W>>>>,
+        ops: &[Op],
+        inners: Vec<Pin<Box<dyn Future<Output = i64>>>>,
     ) -> Self {
         let n = await_count(ops);
         assert_eq!(inners.len(), n, "one input future per await point");
@@ -490,22 +382,22 @@ impl<W: Word> AsyncExec<W> {
             jit,
             inners,
             resolved: vec![false; n],
-            ready: vec![false; n],
-            awaited: vec![W::filler(); n],
+            ready: vec![0; n],
+            awaited: vec![0; n],
             parked_on: None,
             trace: Vec::new(),
         }
     }
 
-    /// Best available lane: JIT when this target and word support it, else
-    /// the interpreter. One input future per await, in program order.
-    pub fn new(ops: &[Op<W>], inners: Vec<Pin<Box<dyn Future<Output = W>>>>) -> Self {
+    /// Best available lane: JIT when this target supports it, else the
+    /// interpreter. One input future per await, in program order.
+    pub fn new(ops: &[Op], inners: Vec<Pin<Box<dyn Future<Output = i64>>>>) -> Self {
         let (machine, jit) = best_machine(ops);
         Self::with_machine(machine, jit, ops, inners)
     }
 
     /// Force the portable interpreter lane (the reference; always available).
-    pub fn interpret(ops: &[Op<W>], inners: Vec<Pin<Box<dyn Future<Output = W>>>>) -> Self {
+    pub fn interpret(ops: &[Op], inners: Vec<Pin<Box<dyn Future<Output = i64>>>>) -> Self {
         Self::with_machine(Box::new(Interp::new(ops)), false, ops, inners)
     }
 
@@ -515,7 +407,7 @@ impl<W: Word> AsyncExec<W> {
     }
 
     /// The live suspended state, if the chain is currently parked.
-    pub fn suspension(&self) -> Option<Suspension<W>> {
+    pub fn suspension(&self) -> Option<Suspension> {
         self.parked_on.map(|await_index| Suspension {
             await_index,
             stack: self.machine.stack().to_vec(),
@@ -523,10 +415,10 @@ impl<W: Word> AsyncExec<W> {
     }
 }
 
-impl<W: Word> Future for AsyncExec<W> {
-    type Output = W;
+impl Future for AsyncExec {
+    type Output = i64;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<W> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<i64> {
         let this = &mut *self;
 
         // Drive EVERY unresolved input; independent awaits make progress
@@ -536,7 +428,7 @@ impl<W: Word> Future for AsyncExec<W> {
                 && let Poll::Ready(value) = this.inners[i].as_mut().poll(cx)
             {
                 this.awaited[i] = value;
-                this.ready[i] = true;
+                this.ready[i] = 1;
                 this.resolved[i] = true;
             }
         }
@@ -546,7 +438,7 @@ impl<W: Word> Future for AsyncExec<W> {
         // suspend point. (Restores per-node waker precision that the single
         // driver otherwise loses.)
         if let Some(i) = this.parked_on
-            && !this.ready[i]
+            && this.ready[i] == 0
         {
             return Poll::Pending;
         }
@@ -560,9 +452,6 @@ impl<W: Word> Future for AsyncExec<W> {
                     stack_depth: this.machine.stack().len(),
                 });
                 Poll::Pending
-            }
-            Step::Faulted(fault) => {
-                panic!("async chain faulted: {fault} (malformed program — a lowering bug)")
             }
         }
     }
@@ -601,7 +490,7 @@ mod tests {
     async fn interpreter_and_jit_agree_differentially() {
         // The JIT is an accelerator that MUST match the reference interpreter —
         // same result, same suspension trace — on every program.
-        let programs: &[&[Op<i64>]] = &[
+        let programs: &[&[Op]] = &[
             &[Op::Push(40), Op::Await, Op::Add],
             &[Op::Await, Op::Await, Op::Mul],
             &[Op::Push(10), Op::Push(20), Op::Add, Op::Await, Op::Mul],
@@ -666,16 +555,5 @@ mod tests {
         .await;
         assert!(inspected);
         assert_eq!(result, 120);
-    }
-
-    #[test]
-    fn faults_are_values_at_the_lane_level() {
-        // A driver that owns its lane (vix's machine) sees faults as data.
-        let ops = [Op::Push(1), Op::Add];
-        let mut lane = Interp::new(&ops);
-        assert_eq!(
-            lane.run(&[], &[]),
-            Step::Faulted(WordFault::StackUnderflow { op: "Add" })
-        );
     }
 }

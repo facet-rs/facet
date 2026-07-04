@@ -1,50 +1,29 @@
-//! The value model: scalars unboxed in [`Slot`]s, composites behind
-//! [`Handle`]s, every composite's ABI recorded as a [`Layout`] that
-//! Rust can introspect.
+//! Layout descriptions and value-semantic primitives.
 //!
-//! The ruling this implements (constitution A5): types come from Rust
-//! or from vix. Rust-authored types are described by facet (bridge
-//! lands with the lowering slice). Vix-authored types own their ABI —
-//! optimized, enum-shaped, never boxed-forever — but that ABI must be
-//! recorded and observable from Rust. [`Layout`] is that record;
-//! [`ValueRef`] is that observation.
+//! The two-authority ruling (constitution A5/A6): a type defined in
+//! Rust is described by facet; a type defined in vix owns an optimized
+//! ABI — recorded here as a [`Layout`] so Rust can introspect any vix
+//! value without a Rust definition of its type existing anywhere.
+//! Layouts are COMPILE-TIME knowledge and debug-side metadata: lowering
+//! consults them to pick instructions and offsets; running code never
+//! dispatches on them. There are no tagged operands anywhere in this
+//! machine (A6) — a sum type's discriminant lives in its own layout,
+//! matched by code that statically knows the type.
 //!
-//! Storage today keeps composite fields as a slot row behind the
-//! handle; the recorded layout is the contract, so byte-exact packing
-//! (niches, payload overlap) can evolve behind it without touching any
-//! consumer. That dial is an implementation choice, not a shape choice
-//! — nothing outside this file may depend on how a composite is stored.
+//! Byte-exact packing (niches, payload overlap — "what a Rust enum
+//! would do") is computed by the lowering slice and recorded per
+//! variant/field; the description vocabulary below is what it fills
+//! in. Field kinds name compile-time storage classes, not runtime
+//! checks.
 
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-/// One operand word. This is what lives on the machine's operand stack
-/// and in a composite's field row: small scalars directly, everything
-/// else as a [`Handle`]. `Copy`, totally ordered, hashable — every vix
-/// value is (invariant: canonical total order).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Slot {
-    Unit,
-    Bool(bool),
-    I64(i64),
-    F64(TotalF64),
-    Handle(Handle),
-}
-
-/// A reference to a composite in a [`Store`]. Opaque outside this
-/// module; meaningful only with the store that issued it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Handle(u32);
-
-/// A registered [`Layout`]'s identity within a [`Registry`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LayoutId(u32);
-
 /// `f64` under the IEEE totalOrder relation, NaN canonicalized at
 /// construction so equality, ordering, and hashing agree. The language
 /// deliberately trades IEEE comparison semantics for a total order
-/// (invariant: every value hashable AND totally ordered).
+/// (invariant: every vix value is hashable AND totally ordered).
 #[derive(Clone, Copy)]
 pub struct TotalF64(f64);
 
@@ -90,34 +69,29 @@ impl Hash for TotalF64 {
     }
 }
 
-/// The kind of value a field holds, at slot granularity. Typed
-/// refinement (which layout a handle field must point at) arrives with
-/// the type-checking slice; the vocabulary already leaves room for it.
+/// A registered [`Layout`]'s identity within a [`Registry`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LayoutId(u32);
+
+/// The compile-time storage class of a field. This is TYPE information
+/// consumed by lowering (instruction selection, offsets) and by
+/// introspection — never consulted by running code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SlotTy {
+pub enum FieldKind {
     Unit,
     Bool,
     I64,
     F64,
-    Handle,
-}
-
-impl SlotTy {
-    fn admits(self, slot: &Slot) -> bool {
-        matches!(
-            (self, slot),
-            (SlotTy::Unit, Slot::Unit)
-                | (SlotTy::Bool, Slot::Bool(_))
-                | (SlotTy::I64, Slot::I64(_))
-                | (SlotTy::F64, Slot::F64(_))
-                | (SlotTy::Handle, Slot::Handle(_))
-        )
-    }
+    /// A reference to another composite (tree, closure, string,
+    /// user type) — typed refinement (WHICH layout it must point at)
+    /// arrives with the checking slice.
+    Ref,
 }
 
 /// The recorded ABI of a composite type: the artifact that makes a
 /// vix-authored type observable from Rust. A struct is a layout with
-/// exactly one variant.
+/// exactly one variant; an enum's discriminant is part of THIS record,
+/// i.e. of the type itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub name: String,
@@ -133,12 +107,12 @@ pub struct Variant {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Field {
     pub name: String,
-    pub ty: SlotTy,
+    pub kind: FieldKind,
 }
 
 /// Where layouts live. Registration order is not identity-bearing;
 /// content-addressed layout identity joins with the lowering slice
-/// (layouts of vix types hash like everything else the type-closure
+/// (a vix type's layout hashes like everything else the type-closure
 /// hash covers).
 #[derive(Debug, Default)]
 pub struct Registry {
@@ -161,182 +135,9 @@ impl Registry {
     }
 }
 
-/// Composite storage. Allocation validates against the recorded layout
-/// — a value that disagrees with its own description cannot exist.
-#[derive(Debug, Default)]
-pub struct Store {
-    composites: Vec<Composite>,
-}
-
-#[derive(Debug)]
-struct Composite {
-    layout: LayoutId,
-    variant: u32,
-    fields: Box<[Slot]>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum LayoutError {
-    NoSuchVariant {
-        type_name: String,
-        variant: String,
-    },
-    FieldArity {
-        type_name: String,
-        variant: String,
-        expected: usize,
-        got: usize,
-    },
-    FieldKind {
-        type_name: String,
-        variant: String,
-        field: String,
-        expected: SlotTy,
-        got: Slot,
-    },
-}
-
-impl fmt::Display for LayoutError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LayoutError::NoSuchVariant { type_name, variant } => {
-                write!(f, "{type_name} has no variant named {variant}")
-            }
-            LayoutError::FieldArity {
-                type_name,
-                variant,
-                expected,
-                got,
-            } => write!(
-                f,
-                "{type_name}::{variant} takes {expected} field(s), got {got}"
-            ),
-            LayoutError::FieldKind {
-                type_name,
-                variant,
-                field,
-                expected,
-                got,
-            } => write!(
-                f,
-                "{type_name}::{variant}.{field} expects {expected:?}, got {got:?}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for LayoutError {}
-
-impl Store {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn alloc(
-        &mut self,
-        registry: &Registry,
-        layout: LayoutId,
-        variant: &str,
-        fields: &[Slot],
-    ) -> Result<Handle, LayoutError> {
-        let desc = registry.get(layout);
-        let (variant_ix, variant_desc) = desc
-            .variants
-            .iter()
-            .enumerate()
-            .find(|(_, v)| v.name == variant)
-            .ok_or_else(|| LayoutError::NoSuchVariant {
-                type_name: desc.name.clone(),
-                variant: variant.to_owned(),
-            })?;
-        if variant_desc.fields.len() != fields.len() {
-            return Err(LayoutError::FieldArity {
-                type_name: desc.name.clone(),
-                variant: variant.to_owned(),
-                expected: variant_desc.fields.len(),
-                got: fields.len(),
-            });
-        }
-        for (field_desc, slot) in variant_desc.fields.iter().zip(fields) {
-            if !field_desc.ty.admits(slot) {
-                return Err(LayoutError::FieldKind {
-                    type_name: desc.name.clone(),
-                    variant: variant.to_owned(),
-                    field: field_desc.name.clone(),
-                    expected: field_desc.ty,
-                    got: *slot,
-                });
-            }
-        }
-        let handle = Handle(u32::try_from(self.composites.len()).expect("store fits u32"));
-        self.composites.push(Composite {
-            layout,
-            variant: u32::try_from(variant_ix).expect("variant index fits u32"),
-            fields: fields.into(),
-        });
-        Ok(handle)
-    }
-
-    /// Observe a composite through its recorded layout — the
-    /// introspection half of the ruling: Rust reads any vix-authored
-    /// value without a Rust definition of its type existing anywhere.
-    pub fn read<'s>(&'s self, registry: &'s Registry, handle: Handle) -> ValueRef<'s> {
-        let composite = &self.composites[handle.0 as usize];
-        let layout = registry.get(composite.layout);
-        ValueRef {
-            layout,
-            variant: &layout.variants[composite.variant as usize],
-            fields: &composite.fields,
-        }
-    }
-}
-
-/// A composite viewed through its recorded layout.
-#[derive(Clone, Copy)]
-pub struct ValueRef<'s> {
-    layout: &'s Layout,
-    variant: &'s Variant,
-    fields: &'s [Slot],
-}
-
-impl<'s> ValueRef<'s> {
-    pub fn type_name(&self) -> &'s str {
-        &self.layout.name
-    }
-
-    pub fn variant_name(&self) -> &'s str {
-        &self.variant.name
-    }
-
-    pub fn field(&self, name: &str) -> Option<Slot> {
-        self.variant
-            .fields
-            .iter()
-            .position(|f| f.name == name)
-            .map(|ix| self.fields[ix])
-    }
-
-    pub fn fields(&self) -> impl Iterator<Item = (&'s str, Slot)> + '_ {
-        self.variant
-            .fields
-            .iter()
-            .map(|f| f.name.as_str())
-            .zip(self.fields.iter().copied())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn slots_stay_small() {
-        assert!(
-            std::mem::size_of::<Slot>() <= 16,
-            "Slot grew past two words: {}",
-            std::mem::size_of::<Slot>()
-        );
-    }
 
     #[test]
     fn floats_are_totally_ordered_and_hash_consistently() {
@@ -356,15 +157,19 @@ mod tests {
         assert_eq!(TotalF64::new(f64::NAN), TotalF64::new(-f64::NAN));
     }
 
-    fn verdict_layout(registry: &mut Registry) -> LayoutId {
-        registry.register(Layout {
+    #[test]
+    fn vix_authored_layouts_are_recorded_and_introspectable() {
+        let mut registry = Registry::new();
+        // No Rust type named Verdict exists anywhere; this record IS
+        // the type's ABI as far as Rust observation is concerned.
+        let id = registry.register(Layout {
             name: "Verdict".to_owned(),
             variants: vec![
                 Variant {
                     name: "Pass".to_owned(),
                     fields: vec![Field {
                         name: "score".to_owned(),
-                        ty: SlotTy::I64,
+                        kind: FieldKind::I64,
                     }],
                 },
                 Variant {
@@ -372,73 +177,23 @@ mod tests {
                     fields: vec![
                         Field {
                             name: "code".to_owned(),
-                            ty: SlotTy::I64,
+                            kind: FieldKind::I64,
                         },
                         Field {
                             name: "cause".to_owned(),
-                            ty: SlotTy::Handle,
+                            kind: FieldKind::Ref,
                         },
                     ],
                 },
             ],
-        })
-    }
+        });
 
-    #[test]
-    fn vix_authored_layout_is_recorded_and_observable_from_rust() {
-        let mut registry = Registry::new();
-        let verdict = verdict_layout(&mut registry);
-        let mut store = Store::new();
-
-        // No Rust type named Verdict exists anywhere; the recorded
-        // layout alone makes the value buildable and readable.
-        let pass = store
-            .alloc(&registry, verdict, "Pass", &[Slot::I64(42)])
-            .expect("valid Pass");
-        let fail = store
-            .alloc(
-                &registry,
-                verdict,
-                "Fail",
-                &[Slot::I64(3), Slot::Handle(pass)],
-            )
-            .expect("valid Fail");
-
-        let read = store.read(&registry, fail);
-        assert_eq!(read.type_name(), "Verdict");
-        assert_eq!(read.variant_name(), "Fail");
-        assert_eq!(read.field("code"), Some(Slot::I64(3)));
-
-        // Introspection walks handles: observe the nested composite.
-        let Some(Slot::Handle(cause)) = read.field("cause") else {
-            panic!("cause should be a handle");
-        };
-        let nested = store.read(&registry, cause);
-        assert_eq!(nested.variant_name(), "Pass");
-        assert_eq!(nested.field("score"), Some(Slot::I64(42)));
-        assert_eq!(
-            nested.fields().collect::<Vec<_>>(),
-            vec![("score", Slot::I64(42))]
-        );
-    }
-
-    #[test]
-    fn alloc_validates_against_the_recorded_layout() {
-        let mut registry = Registry::new();
-        let verdict = verdict_layout(&mut registry);
-        let mut store = Store::new();
-
-        assert!(matches!(
-            store.alloc(&registry, verdict, "Maybe", &[]),
-            Err(LayoutError::NoSuchVariant { .. })
-        ));
-        assert!(matches!(
-            store.alloc(&registry, verdict, "Pass", &[]),
-            Err(LayoutError::FieldArity { expected: 1, got: 0, .. })
-        ));
-        assert!(matches!(
-            store.alloc(&registry, verdict, "Pass", &[Slot::Bool(true)]),
-            Err(LayoutError::FieldKind { .. })
-        ));
+        let layout = registry.get(id);
+        assert_eq!(layout.name, "Verdict");
+        assert_eq!(layout.variants.len(), 2);
+        let fail = &layout.variants[1];
+        assert_eq!(fail.name, "Fail");
+        assert_eq!(fail.fields[1].name, "cause");
+        assert_eq!(fail.fields[1].kind, FieldKind::Ref);
     }
 }

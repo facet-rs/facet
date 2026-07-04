@@ -20,9 +20,9 @@ facet-value = { path = "../facet-value", default-features = false, features = ["
 hex.workspace = true
 phon = { path = "../phon/rust/phon", default-features = false }
 sha2.workspace = true
-# The machine's node bodies run on weavy's async lane (interp lane by
-# default — wasm-clean; the JIT lane arrives via feature unification in
-# native binaries that enable weavy/jit).
+# vix lowers to weavy (portability is weavy's concern — constitution
+# A6); the dependency activates when the typed instruction vocabulary
+# lands via the fable-teeth work.
 weavy = { path = "../weavy" }
 
 [build-dependencies]
