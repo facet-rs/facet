@@ -2859,6 +2859,7 @@ enum UIntExpr {
         function: FableUnsignedUnary,
         value: Box<NumberExpr>,
     },
+    PathLen(FieldPath),
     StringLen(Box<StringExpr>),
     Min(Box<UIntExpr>, Box<UIntExpr>),
     Max(Box<UIntExpr>, Box<UIntExpr>),
@@ -3060,22 +3061,6 @@ struct FieldPath {
     steps: Box<[FieldStep]>,
 }
 
-impl FieldPath {
-    fn ptr_mut(&self, mut ptr: PtrMut) -> Result<PtrMut, FableError> {
-        for step in self.steps.iter() {
-            ptr = unsafe { step.ptr_mut(ptr)? };
-        }
-        Ok(ptr)
-    }
-
-    fn ptr_const(&self, mut ptr: PtrConst) -> Result<PtrConst, FableError> {
-        for step in self.steps.iter() {
-            ptr = unsafe { step.ptr_const(ptr)? };
-        }
-        Ok(ptr)
-    }
-}
-
 #[derive(Debug)]
 enum FieldStep {
     Field {
@@ -3086,6 +3071,11 @@ enum FieldStep {
         shape: &'static Shape,
         index: usize,
     },
+    DynamicListIndex {
+        source: Box<str>,
+        shape: &'static Shape,
+        index: Box<NumberExpr>,
+    },
     ArrayIndex {
         source: Box<str>,
         shape: &'static Shape,
@@ -3093,12 +3083,26 @@ enum FieldStep {
         stride: usize,
         index: usize,
     },
+    DynamicArrayIndex {
+        source: Box<str>,
+        shape: &'static Shape,
+        len: usize,
+        stride: usize,
+        index: Box<NumberExpr>,
+    },
     SliceIndex {
         source: Box<str>,
         shape: &'static Shape,
         len: unsafe extern "C" fn(PtrConst) -> usize,
         stride: usize,
         index: usize,
+    },
+    DynamicSliceIndex {
+        source: Box<str>,
+        shape: &'static Shape,
+        len: unsafe extern "C" fn(PtrConst) -> usize,
+        stride: usize,
+        index: Box<NumberExpr>,
     },
 }
 
@@ -3126,6 +3130,11 @@ impl FieldStep {
                     index_out_of_bounds(source, *index, len)
                 })
             }
+            Self::DynamicListIndex { .. }
+            | Self::DynamicArrayIndex { .. }
+            | Self::DynamicSliceIndex { .. } => Err(FableError::MalformedProgram {
+                reason: "dynamic field step was evaluated without an interpreter",
+            }),
             Self::ArrayIndex {
                 source,
                 shape,
@@ -3184,6 +3193,11 @@ impl FieldStep {
                     index_out_of_bounds(source, *index, len)
                 })
             }
+            Self::DynamicListIndex { .. }
+            | Self::DynamicArrayIndex { .. }
+            | Self::DynamicSliceIndex { .. } => Err(FableError::MalformedProgram {
+                reason: "dynamic field step was evaluated without an interpreter",
+            }),
             Self::ArrayIndex {
                 source,
                 shape,
@@ -3769,7 +3783,13 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn lower_declared_field_expr(&self, expr: &Expr) -> Result<Option<ExprPlan>, FableError> {
-        let path = collect_path(expr)?;
+        let path = match collect_path(expr) {
+            Ok(path) => path,
+            Err(FableError::Unsupported { feature }) if feature == "dynamic index paths" => {
+                return Ok(None);
+            }
+            Err(err) => return Err(err),
+        };
         let Some(PathSegment::Name(root_name)) = path.first() else {
             return Ok(None);
         };
@@ -4418,6 +4438,16 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             raw_args.push(&arg.expr);
         }
         signature.validate_arity(raw_args.len())?;
+        if name == "len"
+            && let [arg] = raw_args.as_slice()
+            && let Ok(path) = self.resolve_path(arg)
+            && path.scalar.is_none()
+            && is_list_like_shape(path.shape)
+        {
+            return Ok(ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::PathLen(
+                path,
+            ))));
+        }
 
         let mut args = Vec::with_capacity(raw_args.len());
         for expr in raw_args {
@@ -4442,7 +4472,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         }))
     }
 
-    fn lower_writable_path(&self, expr: &Expr) -> Result<FieldPath, FableError> {
+    fn lower_writable_path(&mut self, expr: &Expr) -> Result<FieldPath, FableError> {
         if let Expr::Var(var) = expr
             && self.find_local(name_text(&var.name)).is_some()
         {
@@ -4466,7 +4496,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         Ok(path)
     }
 
-    fn lower_readable_path(&self, expr: &Expr) -> Result<FieldPath, FableError> {
+    fn lower_readable_path(&mut self, expr: &Expr) -> Result<FieldPath, FableError> {
         let path = self.resolve_path(expr)?;
         let Some(scalar) = path.scalar else {
             return Err(FableError::Unsupported {
@@ -4477,45 +4507,53 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         Ok(path)
     }
 
-    fn resolve_path(&self, expr: &Expr) -> Result<FieldPath, FableError> {
-        let segments = collect_path(expr)?;
-        let Some((first, rest)) = segments.split_first() else {
+    fn resolve_path(&mut self, expr: &Expr) -> Result<FieldPath, FableError> {
+        let mut segments = self.collect_runtime_path(expr)?.into_iter();
+        let Some(first) = segments.next() else {
             return Err(FableError::MalformedSyntax {
                 reason: "empty field path",
             });
         };
-        let PathSegment::Name(first) = first else {
+        let RuntimePathSegment::Name(first) = first else {
             return Err(FableError::MalformedSyntax {
                 reason: "path did not start with a variable reference",
             });
         };
         let Some(root) = self.roots.iter().position(|root| root.name == first) else {
             return Err(FableError::ExpectedRoot {
-                found: first.clone(),
+                found: first,
             });
         };
 
         let mut shape = self.roots[root].shape;
-        let mut source = first.clone();
-        let mut steps = Vec::with_capacity(rest.len());
-        for segment in rest {
+        let mut source = self.roots[root].name.to_owned();
+        let mut steps = Vec::new();
+        for segment in segments {
             match segment {
-                PathSegment::Name(field_name) => {
-                    let field = find_field(shape, field_name)?;
+                RuntimePathSegment::Name(field_name) => {
+                    let field = find_field(shape, &field_name)?;
                     let field_shape = field.shape.get();
                     source.push('.');
-                    source.push_str(field_name);
+                    source.push_str(&field_name);
                     steps.push(FieldStep::Field {
                         offset: field.offset,
                     });
                     shape = field_shape;
                 }
-                PathSegment::Index { index, literal } => {
+                RuntimePathSegment::Index { index, label } => {
                     source.push('[');
-                    source.push_str(literal);
+                    source.push_str(&label);
                     source.push(']');
-                    let (step, element_shape) =
-                        index_step(shape, *index, source.clone().into_boxed_str())?;
+                    let (step, element_shape) = match index {
+                        RuntimeIndex::Literal(index) => {
+                            index_step(shape, index, source.clone().into_boxed_str())?
+                        }
+                        RuntimeIndex::Dynamic(index) => dynamic_index_step(
+                            shape,
+                            index,
+                            source.clone().into_boxed_str(),
+                        )?,
+                    };
                     steps.push(step);
                     shape = element_shape;
                 }
@@ -4530,6 +4568,44 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             scalar,
             steps: steps.into_boxed_slice(),
         })
+    }
+
+    fn collect_runtime_path(&mut self, expr: &Expr) -> Result<Vec<RuntimePathSegment>, FableError> {
+        match expr {
+            Expr::Var(var) => Ok(vec![RuntimePathSegment::Name(
+                name_text(&var.name).to_owned(),
+            )]),
+            Expr::Field(field) => {
+                let mut path = self.collect_runtime_path(&field.base)?;
+                path.push(RuntimePathSegment::Name(
+                    name_text(&field.field_name).to_owned(),
+                ));
+                Ok(path)
+            }
+            Expr::Index(index) => {
+                let mut path = self.collect_runtime_path(&index.base)?;
+                if let Ok((index, literal)) = literal_index(&index.index) {
+                    path.push(RuntimePathSegment::Index {
+                        index: RuntimeIndex::Literal(index),
+                        label: literal,
+                    });
+                } else {
+                    let index_expr = expect_number_plan(self.lower_expr(&index.index)?)?;
+                    path.push(RuntimePathSegment::Index {
+                        index: RuntimeIndex::Dynamic(Box::new(index_expr)),
+                        label: "dynamic".to_owned(),
+                    });
+                }
+                Ok(path)
+            }
+            Expr::Paren(paren) => self.collect_runtime_path(&paren.expr),
+            Expr::Call(_) => Err(FableError::Unsupported {
+                feature: "call paths".into(),
+            }),
+            _ => Err(FableError::Unsupported {
+                feature: "non-path assignment targets".into(),
+            }),
+        }
     }
 
     fn declare_local(&mut self, name: String, expr: &ExprPlan) -> Result<LocalRef, FableError> {
@@ -5772,7 +5848,11 @@ impl FableInterp {
             .ok_or(FableError::MalformedProgram {
                 reason: "path referenced missing runtime root",
             })?;
-        path.ptr_const(root.ptr.as_const())
+        let mut ptr = root.ptr.as_const();
+        for step in path.steps.iter() {
+            ptr = unsafe { self.step_ptr_const(step, ptr)? };
+        }
+        Ok(ptr)
     }
 
     fn path_ptr_mut(&self, path: &FieldPath) -> Result<PtrMut, FableError> {
@@ -5787,7 +5867,150 @@ impl FableInterp {
                 name: root.name.to_owned(),
             });
         };
-        path.ptr_mut(ptr)
+        let mut ptr = ptr;
+        for step in path.steps.iter() {
+            ptr = unsafe { self.step_ptr_mut(step, ptr)? };
+        }
+        Ok(ptr)
+    }
+
+    unsafe fn step_ptr_const(
+        &self,
+        step: &FieldStep,
+        ptr: PtrConst,
+    ) -> Result<PtrConst, FableError> {
+        match step {
+            FieldStep::DynamicListIndex {
+                source,
+                shape,
+                index,
+            } => {
+                let index = self.eval_index_usize(index)?;
+                let Def::List(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic list index step did not point to a list shape",
+                    });
+                };
+                unsafe { (def.vtable.get)(ptr, index, shape) }.ok_or_else(|| {
+                    let len = unsafe { (def.vtable.len)(ptr) };
+                    index_out_of_bounds(source, index, len)
+                })
+            }
+            FieldStep::DynamicArrayIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let index = self.eval_index_usize(index)?;
+                if index >= *len {
+                    return Err(index_out_of_bounds(source, index, *len));
+                }
+                let Def::Array(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic array index step did not point to an array shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            FieldStep::DynamicSliceIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let index = self.eval_index_usize(index)?;
+                let runtime_len = unsafe { len(ptr) };
+                if index >= runtime_len {
+                    return Err(index_out_of_bounds(source, index, runtime_len));
+                }
+                let Def::Slice(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic slice index step did not point to a slice shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            _ => unsafe { step.ptr_const(ptr) },
+        }
+    }
+
+    unsafe fn step_ptr_mut(&self, step: &FieldStep, ptr: PtrMut) -> Result<PtrMut, FableError> {
+        match step {
+            FieldStep::DynamicListIndex {
+                source,
+                shape,
+                index,
+            } => {
+                let index = self.eval_index_usize(index)?;
+                let Def::List(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic list index step did not point to a list shape",
+                    });
+                };
+                let Some(get_mut) = def.vtable.get_mut else {
+                    return Err(FableError::Unsupported {
+                        feature: format!("mutable index access on {shape}"),
+                    });
+                };
+                unsafe { get_mut(ptr, index, shape) }.ok_or_else(|| {
+                    let len = unsafe { (def.vtable.len)(ptr.as_const()) };
+                    index_out_of_bounds(source, index, len)
+                })
+            }
+            FieldStep::DynamicArrayIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let index = self.eval_index_usize(index)?;
+                if index >= *len {
+                    return Err(index_out_of_bounds(source, index, *len));
+                }
+                let Def::Array(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic array index step did not point to an array shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_mut_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            FieldStep::DynamicSliceIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let index = self.eval_index_usize(index)?;
+                let runtime_len = unsafe { len(ptr.as_const()) };
+                if index >= runtime_len {
+                    return Err(index_out_of_bounds(source, index, runtime_len));
+                }
+                let Def::Slice(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic slice index step did not point to a slice shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_mut_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            _ => unsafe { step.ptr_mut(ptr) },
+        }
+    }
+
+    fn eval_index_usize(&self, index: &NumberExpr) -> Result<usize, FableError> {
+        let value = self.eval_number_as_u128(index)?;
+        usize::try_from(value).map_err(|_| FableError::InvalidLiteral {
+            literal: value.to_string(),
+            reason: "index value is out of range",
+        })
     }
 
     fn init_local(&mut self, local: LocalRef, expr: &ExprPlan) -> Result<(), FableError> {
@@ -6263,6 +6486,7 @@ impl FableInterp {
             UIntExpr::Local(local) => self.local_u128(*local),
             UIntExpr::DeclaredRead(read) => self.read_declared_u128(*read),
             UIntExpr::HostUnary { function, value } => function(self.eval_number_as_u128(value)?),
+            UIntExpr::PathLen(path) => self.path_len(path).map(|len| len as u128),
             UIntExpr::StringLen(expr) => Ok(self.eval_string(expr)?.len() as u128),
             UIntExpr::Min(lhs, rhs) => {
                 let lhs = self.eval_u128(lhs)?;
@@ -6286,6 +6510,19 @@ impl FableInterp {
                 lhs.checked_add(rhs)
                     .ok_or_else(|| number_out_of_range(ScalarType::U128, format!("{lhs} + {rhs}")))
             }
+        }
+    }
+
+    fn path_len(&self, path: &FieldPath) -> Result<usize, FableError> {
+        let ptr = self.path_ptr_const(path)?;
+        match path.shape.def {
+            Def::List(def) => Ok(unsafe { (def.vtable.len)(ptr) }),
+            Def::Array(def) => Ok(def.n),
+            Def::Slice(def) => Ok(unsafe { (def.vtable.len)(ptr) }),
+            _ => Err(FableError::TypeMismatch {
+                expected: "list-like value".into(),
+                actual: "non-list path",
+            }),
         }
     }
 
@@ -7453,7 +7690,17 @@ fn expect_declared_value_expr(expr: &ExprPlan) -> Result<&DeclaredValueExpr, Fab
 #[derive(Debug)]
 enum PathSegment {
     Name(String),
-    Index { index: usize, literal: String },
+    Index,
+}
+
+enum RuntimePathSegment {
+    Name(String),
+    Index { index: RuntimeIndex, label: String },
+}
+
+enum RuntimeIndex {
+    Literal(usize),
+    Dynamic(Box<NumberExpr>),
 }
 
 fn name_text(name: &Name) -> &str {
@@ -7472,8 +7719,8 @@ fn collect_path(expr: &Expr) -> Result<Vec<PathSegment>, FableError> {
         }
         Expr::Index(index) => {
             let mut path = collect_path(&index.base)?;
-            let (index, literal) = literal_index(&index.index)?;
-            path.push(PathSegment::Index { index, literal });
+            let _ = literal_index(&index.index)?;
+            path.push(PathSegment::Index);
             Ok(path)
         }
         Expr::Paren(paren) => collect_path(&paren.expr),
@@ -7526,6 +7773,50 @@ fn index_step(
         )),
         Def::Slice(def) => Ok((
             FieldStep::SliceIndex {
+                source,
+                shape,
+                len: def.vtable.len,
+                stride: element_stride(def.t(), shape)?,
+                index,
+            },
+            def.t(),
+        )),
+        _ => Err(FableError::Unsupported {
+            feature: format!("index access on {shape}"),
+        }),
+    }
+}
+
+fn is_list_like_shape(shape: &'static Shape) -> bool {
+    matches!(shape.def, Def::List(_) | Def::Array(_) | Def::Slice(_))
+}
+
+fn dynamic_index_step(
+    shape: &'static Shape,
+    index: Box<NumberExpr>,
+    source: Box<str>,
+) -> Result<(FieldStep, &'static Shape), FableError> {
+    match shape.def {
+        Def::List(def) => Ok((
+            FieldStep::DynamicListIndex {
+                source,
+                shape,
+                index,
+            },
+            def.t(),
+        )),
+        Def::Array(def) => Ok((
+            FieldStep::DynamicArrayIndex {
+                source,
+                shape,
+                len: def.n,
+                stride: element_stride(def.t(), shape)?,
+                index,
+            },
+            def.t(),
+        )),
+        Def::Slice(def) => Ok((
+            FieldStep::DynamicSliceIndex {
                 source,
                 shape,
                 len: def.vtable.len,
@@ -8320,6 +8611,62 @@ mod tests {
         assert_eq!(visits, 5);
         assert_eq!(score, 1.75);
         assert_eq!(age, 18);
+    }
+
+    #[test]
+    fn evaluates_dynamic_indexes_against_root_lists_and_arrays() {
+        let value = state();
+
+        let user_age: i32 = query(
+            &value,
+            r#"
+                let i = 1;
+                root.users[i].age
+            "#,
+        )
+        .unwrap();
+        let checkpoint: i32 = query(
+            &value,
+            r#"
+                let i = 2;
+                root.checkpoints[i]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(user_age, 30);
+        assert_eq!(checkpoint, 3);
+    }
+
+    #[test]
+    fn evaluates_len_against_root_list_paths() {
+        let value = state();
+
+        let len: usize = query(&value, "len(root.users)").unwrap();
+
+        assert_eq!(len, 2);
+    }
+
+    #[test]
+    fn reports_dynamic_index_out_of_bounds_at_runtime() {
+        let value = state();
+        let err = query::<_, i32>(
+            &value,
+            r#"
+                let i = len(root.users);
+                root.users[i].age
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FableError::IndexOutOfBounds {
+                path,
+                index: 2,
+                len: 2,
+            } if path == "root.users[dynamic]"
+        ));
     }
 
     #[test]
@@ -9138,15 +9485,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_dynamic_index_paths() {
-        let err = compile_err("root.users[root.visits].name = \"Ada\"");
+    fn applies_dynamic_index_paths() {
+        let mut value = state();
 
-        assert!(matches!(
-            err,
-            FableError::Unsupported {
-                feature
-            } if feature == "dynamic index paths"
-        ));
+        FablePlan::<State>::compile("root.users[root.visits].name = \"Ada\";")
+            .unwrap()
+            .apply(&mut value)
+            .unwrap();
+
+        assert_eq!(value.users[1].name, "Ada");
     }
 
     #[test]
