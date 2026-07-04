@@ -26,7 +26,7 @@ module.exports = grammar({
   rules: {
     source_file: ($) => repeat(field("item", $._item)),
 
-    _item: ($) => choice($.struct_decl, $.enum_decl, $._statement),
+    _item: ($) => choice($.struct_decl, $.enum_decl, $.fn_decl, $._statement),
 
     struct_decl: ($) =>
       seq("struct", field("name", $.type_identifier), field("fields", $.type_field_list)),
@@ -42,6 +42,20 @@ module.exports = grammar({
 
     enum_variant_decl: ($) =>
       seq(field("name", $.type_identifier), optional(field("fields", $.type_field_list))),
+
+    fn_decl: ($) =>
+      seq(
+        "fn",
+        field("name", $.identifier),
+        field("params", $.param_list),
+        "->",
+        field("return_ty", $._type_expr),
+        field("body", $.block),
+      ),
+
+    param_list: ($) => seq("(", sepBy(",", field("param", $.param)), ")"),
+
+    param: ($) => seq(field("name", $._name), ":", field("ty", $._type_expr)),
 
     type_field_list: ($) => seq("{", sepBy(",", field("field", $.type_field)), "}"),
 

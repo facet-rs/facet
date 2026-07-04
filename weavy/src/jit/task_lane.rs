@@ -73,9 +73,32 @@ impl JitProgram {
         if !available() {
             return None;
         }
+        if program
+            .fns
+            .iter()
+            .flat_map(|f| &f.code)
+            .any(op_needs_unimplemented_stencil)
+        {
+            return None;
+        }
         let fns = program.fns.iter().map(|f| compile_fn(f, mode)).collect();
         Some(JitProgram { fns })
     }
+}
+
+fn op_needs_unimplemented_stencil(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::SubI64 { .. }
+            | Op::EqI64 { .. }
+            | Op::NeI64 { .. }
+            | Op::LtI64 { .. }
+            | Op::LeI64 { .. }
+            | Op::GtI64 { .. }
+            | Op::GeI64 { .. }
+            | Op::Jump { .. }
+            | Op::JumpIfZero { .. }
+    )
 }
 
 /// First emitted stencil at or after op `i` (stripped ops have no
@@ -104,6 +127,17 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::ConstI64 { .. } => (task_stencils::CONST, task_stencils::CONST_CONT),
             Op::AddI64 { .. } => (task_stencils::ADD, task_stencils::ADD_CONT),
             Op::MulI64 { .. } => (task_stencils::MUL, task_stencils::MUL_CONT),
+            Op::SubI64 { .. }
+            | Op::EqI64 { .. }
+            | Op::NeI64 { .. }
+            | Op::LtI64 { .. }
+            | Op::LeI64 { .. }
+            | Op::GtI64 { .. }
+            | Op::GeI64 { .. }
+            | Op::Jump { .. }
+            | Op::JumpIfZero { .. } => {
+                unreachable!("compile_with_mode rejects ops without stencils")
+            }
             Op::LoadIndexedI64 { .. } => (task_stencils::LOAD_IX, task_stencils::LOAD_IX_CONT),
             Op::StoreIndexedI64 { .. } => (task_stencils::STORE_IX, task_stencils::STORE_IX_CONT),
             Op::Await { .. } => (task_stencils::AWAIT, task_stencils::AWAIT_CONT),
@@ -148,12 +182,33 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 layout.push_prog_word(root.prog_index, u64::from(*a));
                 layout.push_prog_word(root.prog_index, u64::from(*b));
             }
-            Op::LoadIndexedI64 { dst, base, index, stride } => {
+            Op::SubI64 { .. }
+            | Op::EqI64 { .. }
+            | Op::NeI64 { .. }
+            | Op::LtI64 { .. }
+            | Op::LeI64 { .. }
+            | Op::GtI64 { .. }
+            | Op::GeI64 { .. }
+            | Op::Jump { .. }
+            | Op::JumpIfZero { .. } => {
+                unreachable!("compile_with_mode rejects ops without stencils")
+            }
+            Op::LoadIndexedI64 {
+                dst,
+                base,
+                index,
+                stride,
+            } => {
                 for v in [dst, base, index, stride] {
                     layout.push_prog_word(root.prog_index, u64::from(*v));
                 }
             }
-            Op::StoreIndexedI64 { base, index, stride, src } => {
+            Op::StoreIndexedI64 {
+                base,
+                index,
+                stride,
+                src,
+            } => {
                 for v in [base, index, stride, src] {
                     layout.push_prog_word(root.prog_index, u64::from(*v));
                 }
@@ -293,7 +348,8 @@ impl JitTask {
         hosts: &mut [HostFn<'_>],
     ) -> TaskStep {
         self.ready_scratch.clear();
-        self.ready_scratch.extend(ready.iter().map(|&r| i64::from(r)));
+        self.ready_scratch
+            .extend(ready.iter().map(|&r| i64::from(r)));
         if let Some(input) = self.parked_on
             && ready.get(input as usize).copied().unwrap_or(false)
         {
@@ -301,7 +357,11 @@ impl JitTask {
             self.trace.push(TaskEvent::Resumed);
         }
         loop {
-            let frame = self.frames.last().expect("running task has a frame").clone();
+            let frame = self
+                .frames
+                .last()
+                .expect("running task has a frame")
+                .clone();
             let compiled = &program.fns[frame.fn_id.0 as usize];
 
             let entry_prog = compiled.native.entry_prog();
@@ -405,7 +465,6 @@ impl JitTask {
             }
         }
     }
-
 }
 
 /// The JIT lane bundled with its compiled program, for
@@ -416,12 +475,7 @@ pub struct JitRunning<'p> {
 }
 
 impl Advance for JitRunning<'_> {
-    fn advance(
-        &mut self,
-        ready: &[bool],
-        awaited: &[i64],
-        hosts: &mut [HostFn<'_>],
-    ) -> TaskStep {
+    fn advance(&mut self, ready: &[bool], awaited: &[i64], hosts: &mut [HostFn<'_>]) -> TaskStep {
         self.task.run_hosted(self.program, ready, awaited, hosts)
     }
 
@@ -444,7 +498,11 @@ mod tests {
                 code: vec![
                     Op::Await { dst: 0, input: 0 },
                     Op::Await { dst: 8, input: 1 },
-                    Op::AddI64 { dst: 16, a: 0, b: 8 },
+                    Op::AddI64 {
+                        dst: 16,
+                        a: 0,
+                        b: 8,
+                    },
                     Op::Ret { src: 16, size: 8 },
                 ],
             }],
@@ -456,11 +514,10 @@ mod tests {
             program: &jit,
             task: JitTask::spawn(&jit, FnId(0)),
         };
-        let slow: core::pin::Pin<Box<dyn core::future::Future<Output = i64>>> =
-            Box::pin(async {
-                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-                40
-            });
+        let slow: core::pin::Pin<Box<dyn core::future::Future<Output = i64>>> = Box::pin(async {
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            40
+        });
         let fast: core::pin::Pin<Box<dyn core::future::Future<Output = i64>>> =
             Box::pin(async { 2 });
         let result = crate::task::TaskExec::new(running, vec![slow, fast], vec![]).await;
@@ -476,7 +533,15 @@ mod tests {
                     code: vec![
                         Op::Trace { id: 10 },
                         Op::ConstI64 { dst: 0, value: 5 },
-                        Op::Call { callee: FnId(1), args: vec![ArgCopy { src: 0, dst: 0, size: 8 }], ret: 8 },
+                        Op::Call {
+                            callee: FnId(1),
+                            args: vec![ArgCopy {
+                                src: 0,
+                                dst: 0,
+                                size: 8,
+                            }],
+                            ret: 8,
+                        },
                         Op::Trace { id: 11 },
                         Op::Ret { src: 8, size: 8 },
                     ],
@@ -543,11 +608,25 @@ mod tests {
             fns: vec![TaskFn {
                 frame: Layout { size: 32, align: 8 },
                 code: vec![
-                    Op::ConstF64 { dst: 0, bits: 2.5f64.to_bits() },
+                    Op::ConstF64 {
+                        dst: 0,
+                        bits: 2.5f64.to_bits(),
+                    },
                     Op::Await { dst: 8, input: 0 },
-                    Op::MulF64 { dst: 16, a: 0, b: 8 },
-                    Op::ConstF64 { dst: 24, bits: 0.125f64.to_bits() },
-                    Op::AddF64 { dst: 16, a: 16, b: 24 },
+                    Op::MulF64 {
+                        dst: 16,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::ConstF64 {
+                        dst: 24,
+                        bits: 0.125f64.to_bits(),
+                    },
+                    Op::AddF64 {
+                        dst: 16,
+                        a: 16,
+                        b: 24,
+                    },
                     Op::Ret { src: 16, size: 8 },
                 ],
             }],
@@ -597,7 +676,12 @@ mod tests {
         );
         assert_eq!(interp.result_i64(), 61);
         assert_eq!(interp_calls, 1);
-        assert!(!interp.trace.iter().any(|e| matches!(e, TaskEvent::Parked { .. })));
+        assert!(
+            !interp
+                .trace
+                .iter()
+                .any(|e| matches!(e, TaskEvent::Parked { .. }))
+        );
 
         let Some(jit) = JitProgram::compile(&program) else {
             return;
@@ -619,11 +703,7 @@ mod tests {
 
     /// Drive interp and JIT through the same schedule; assert identical
     /// steps, results, and traces.
-    fn differential(
-        program: &Program,
-        entry: FnId,
-        schedule: &[(&[bool], &[i64])],
-    ) {
+    fn differential(program: &Program, entry: FnId, schedule: &[(&[bool], &[i64])]) {
         let mut interp = Task::spawn(program, entry);
         let mut interp_steps = Vec::new();
         for (ready, awaited) in schedule {
@@ -653,7 +733,10 @@ mod tests {
     }
 
     fn frame_of_i64s(n: usize) -> Layout {
-        Layout { size: n * 8, align: 8 }
+        Layout {
+            size: n * 8,
+            align: 8,
+        }
     }
 
     #[test]
@@ -668,20 +751,40 @@ mod tests {
                         Op::Call {
                             callee: FnId(1),
                             args: vec![
-                                ArgCopy { src: 0, dst: 0, size: 8 },
-                                ArgCopy { src: 8, dst: 8, size: 8 },
+                                ArgCopy {
+                                    src: 0,
+                                    dst: 0,
+                                    size: 8,
+                                },
+                                ArgCopy {
+                                    src: 8,
+                                    dst: 8,
+                                    size: 8,
+                                },
                             ],
                             ret: 16,
                         },
-                        Op::AddI64 { dst: 16, a: 16, b: 0 },
+                        Op::AddI64 {
+                            dst: 16,
+                            a: 16,
+                            b: 0,
+                        },
                         Op::Ret { src: 16, size: 8 },
                     ],
                 },
                 TaskFn {
                     frame: frame_of_i64s(3),
                     code: vec![
-                        Op::MulI64 { dst: 16, a: 0, b: 8 },
-                        Op::AddI64 { dst: 16, a: 16, b: 0 },
+                        Op::MulI64 {
+                            dst: 16,
+                            a: 0,
+                            b: 8,
+                        },
+                        Op::AddI64 {
+                            dst: 16,
+                            a: 16,
+                            b: 0,
+                        },
                         Op::Ret { src: 16, size: 8 },
                     ],
                 },
@@ -698,7 +801,11 @@ mod tests {
                     frame: frame_of_i64s(2),
                     code: vec![
                         Op::ConstI64 { dst: 0, value: 100 },
-                        Op::Call { callee: FnId(1), args: vec![], ret: 8 },
+                        Op::Call {
+                            callee: FnId(1),
+                            args: vec![],
+                            ret: 8,
+                        },
                         Op::AddI64 { dst: 8, a: 8, b: 0 },
                         Op::Ret { src: 8, size: 8 },
                     ],
@@ -713,11 +820,7 @@ mod tests {
                 },
             ],
         };
-        differential(
-            &program,
-            FnId(0),
-            &[(&[false], &[0]), (&[true], &[21])],
-        );
+        differential(&program, FnId(0), &[(&[false], &[0]), (&[true], &[21])]);
     }
 
     #[test]
@@ -728,42 +831,91 @@ mod tests {
         let mut caller_code = vec![Op::ConstI64 { dst: 0, value: 7 }];
         for k in 0..6i64 {
             caller_code.push(Op::ConstI64 { dst: 64, value: k });
-            caller_code.push(Op::ConstI64 { dst: 72, value: 10 * (k + 1) });
-            caller_code.push(Op::StoreIndexedI64 { base: 8, index: 64, stride: 8, src: 72 });
+            caller_code.push(Op::ConstI64 {
+                dst: 72,
+                value: 10 * (k + 1),
+            });
+            caller_code.push(Op::StoreIndexedI64 {
+                base: 8,
+                index: 64,
+                stride: 8,
+                src: 72,
+            });
         }
         caller_code.push(Op::Call {
             callee: FnId(1),
-            args: vec![ArgCopy { src: 8, dst: 0, size: 48 }],
+            args: vec![ArgCopy {
+                src: 8,
+                dst: 0,
+                size: 48,
+            }],
             ret: 56,
         });
         caller_code.push(Op::ConstI64 { dst: 64, value: 2 });
-        caller_code.push(Op::LoadIndexedI64 { dst: 72, base: 8, index: 64, stride: 8 });
-        caller_code.push(Op::AddI64 { dst: 56, a: 56, b: 72 });
+        caller_code.push(Op::LoadIndexedI64 {
+            dst: 72,
+            base: 8,
+            index: 64,
+            stride: 8,
+        });
+        caller_code.push(Op::AddI64 {
+            dst: 56,
+            a: 56,
+            b: 72,
+        });
         caller_code.push(Op::Ret { src: 56, size: 8 });
 
         let callee_code = vec![
             Op::Await { dst: 48, input: 0 },
-            Op::LoadIndexedI64 { dst: 56, base: 0, index: 48, stride: 8 },
+            Op::LoadIndexedI64 {
+                dst: 56,
+                base: 0,
+                index: 48,
+                stride: 8,
+            },
             Op::ConstI64 { dst: 72, value: 1 },
-            Op::AddI64 { dst: 48, a: 48, b: 72 },
-            Op::LoadIndexedI64 { dst: 64, base: 0, index: 48, stride: 8 },
-            Op::AddI64 { dst: 72, a: 56, b: 64 },
-            Op::ConstI64 { dst: 56, value: 999 },
-            Op::StoreIndexedI64 { base: 0, index: 48, stride: 8, src: 56 },
+            Op::AddI64 {
+                dst: 48,
+                a: 48,
+                b: 72,
+            },
+            Op::LoadIndexedI64 {
+                dst: 64,
+                base: 0,
+                index: 48,
+                stride: 8,
+            },
+            Op::AddI64 {
+                dst: 72,
+                a: 56,
+                b: 64,
+            },
+            Op::ConstI64 {
+                dst: 56,
+                value: 999,
+            },
+            Op::StoreIndexedI64 {
+                base: 0,
+                index: 48,
+                stride: 8,
+                src: 56,
+            },
             Op::Ret { src: 72, size: 8 },
         ];
 
         let program = Program {
             fns: vec![
-                TaskFn { frame: frame_of_i64s(10), code: caller_code },
-                TaskFn { frame: frame_of_i64s(10), code: callee_code },
+                TaskFn {
+                    frame: frame_of_i64s(10),
+                    code: caller_code,
+                },
+                TaskFn {
+                    frame: frame_of_i64s(10),
+                    code: callee_code,
+                },
             ],
         };
-        differential(
-            &program,
-            FnId(0),
-            &[(&[false], &[0]), (&[true], &[2])],
-        );
+        differential(&program, FnId(0), &[(&[false], &[0]), (&[true], &[2])]);
     }
 
     #[test]
@@ -773,9 +925,18 @@ mod tests {
                 TaskFn {
                     frame: Layout { size: 40, align: 8 },
                     code: vec![
-                        Op::Call { callee: FnId(1), args: vec![], ret: 0 },
+                        Op::Call {
+                            callee: FnId(1),
+                            args: vec![],
+                            ret: 0,
+                        },
                         Op::ConstI64 { dst: 24, value: 1 },
-                        Op::LoadIndexedI64 { dst: 32, base: 0, index: 24, stride: 8 },
+                        Op::LoadIndexedI64 {
+                            dst: 32,
+                            base: 0,
+                            index: 24,
+                            stride: 8,
+                        },
                         Op::Ret { src: 32, size: 8 },
                     ],
                 },
@@ -784,13 +945,28 @@ mod tests {
                     code: vec![
                         Op::ConstI64 { dst: 24, value: 0 },
                         Op::ConstI64 { dst: 32, value: 5 },
-                        Op::StoreIndexedI64 { base: 0, index: 24, stride: 8, src: 32 },
+                        Op::StoreIndexedI64 {
+                            base: 0,
+                            index: 24,
+                            stride: 8,
+                            src: 32,
+                        },
                         Op::ConstI64 { dst: 24, value: 1 },
                         Op::ConstI64 { dst: 32, value: 6 },
-                        Op::StoreIndexedI64 { base: 0, index: 24, stride: 8, src: 32 },
+                        Op::StoreIndexedI64 {
+                            base: 0,
+                            index: 24,
+                            stride: 8,
+                            src: 32,
+                        },
                         Op::ConstI64 { dst: 24, value: 2 },
                         Op::ConstI64 { dst: 32, value: 7 },
-                        Op::StoreIndexedI64 { base: 0, index: 24, stride: 8, src: 32 },
+                        Op::StoreIndexedI64 {
+                            base: 0,
+                            index: 24,
+                            stride: 8,
+                            src: 32,
+                        },
                         Op::Ret { src: 0, size: 24 },
                     ],
                 },

@@ -16,6 +16,7 @@ use weavy::ir::{
 use weavy::mem::declared as declared_mem;
 use weavy::mem::runtime::RawScratch;
 use weavy::mem::{Access as WeavyAccess, Tag as WeavyTag};
+use weavy::task::{Fn as TaskFn, FnId as TaskFnId, HostFn, Op as TaskOp, Program as TaskProgram};
 use weavy::{BlockRef, Control, RunError, RunStats, Step};
 
 use crate::ast::{
@@ -91,6 +92,7 @@ pub struct FableRootPredicatePlan {
 /// locals.
 pub struct FableRootQueryPlan<Output> {
     lowered: FableLowered,
+    task_query: Option<FableTaskQueryPlan>,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
     _marker: PhantomData<fn() -> Output>,
@@ -1049,14 +1051,7 @@ impl FableRootPlan {
     /// Run this plan against explicitly bound root values.
     pub fn apply(&self, roots: &mut [FableRootValue<'_>]) -> Result<(), FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        let mut interp = FableInterp {
-            roots: runtime_roots,
-            locals: LocalSlots::default(),
-            declared_types: self.declared_types.clone(),
-            predicate_result: None,
-            query_result: None,
-        };
-        weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)
+        run_dense_apply_in_task(&self.lowered, runtime_roots, self.declared_types.clone())
     }
 
     /// Run this plan and return Weavy execution counters.
@@ -1065,14 +1060,11 @@ impl FableRootPlan {
         roots: &mut [FableRootValue<'_>],
     ) -> Result<RunStats, FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        let mut interp = FableInterp {
-            roots: runtime_roots,
-            locals: LocalSlots::default(),
-            declared_types: self.declared_types.clone(),
-            predicate_result: None,
-            query_result: None,
-        };
-        weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)
+        run_dense_apply_in_task_with_stats(
+            &self.lowered,
+            runtime_roots,
+            self.declared_types.clone(),
+        )
     }
 
     fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
@@ -1116,17 +1108,7 @@ impl FableRootPredicatePlan {
     /// Run this predicate against explicitly bound root values.
     pub fn evaluate(&self, roots: &mut [FableRootValue<'_>]) -> Result<bool, FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        let mut interp = FableInterp {
-            roots: runtime_roots,
-            locals: LocalSlots::default(),
-            declared_types: self.declared_types.clone(),
-            predicate_result: None,
-            query_result: None,
-        };
-        weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)?;
-        interp.predicate_result.ok_or(FableError::MalformedProgram {
-            reason: "predicate plan did not write a result",
-        })
+        run_dense_predicate_in_task(&self.lowered, runtime_roots, self.declared_types.clone())
     }
 
     /// Run this predicate and return Weavy execution counters.
@@ -1135,20 +1117,11 @@ impl FableRootPredicatePlan {
         roots: &mut [FableRootValue<'_>],
     ) -> Result<(bool, RunStats), FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        let mut interp = FableInterp {
-            roots: runtime_roots,
-            locals: LocalSlots::default(),
-            declared_types: self.declared_types.clone(),
-            predicate_result: None,
-            query_result: None,
-        };
-        let stats = weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)?;
-        let result = interp
-            .predicate_result
-            .ok_or(FableError::MalformedProgram {
-                reason: "predicate plan did not write a result",
-            })?;
-        Ok((result, stats))
+        run_dense_predicate_in_task_with_stats(
+            &self.lowered,
+            runtime_roots,
+            self.declared_types.clone(),
+        )
     }
 
     fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
@@ -1175,6 +1148,17 @@ where
         validate_read_only_root_specs(roots, "query roots must be read-only")?;
 
         let root = parse(src).map_err(|error| FableError::Parse { error })?;
+        let task_query = FableTaskQueryPlan::from_source(&root, roots, Output::query_type())?;
+        if task_query.is_some() {
+            let declared_types = FableDeclaredTypes::from_source(&root)?;
+            return Ok(Self {
+                lowered: FableLowered::new(Vec::new(), Vec::new()),
+                task_query,
+                roots: roots.into(),
+                declared_types,
+                _marker: PhantomData,
+            });
+        }
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_query_root(&root, Output::query_type())?;
         let declared_types = lowerer.declared_types.clone();
@@ -1182,6 +1166,7 @@ where
 
         Ok(Self {
             lowered: FableLowered::new(program, blocks),
+            task_query: None,
             roots: roots.into(),
             declared_types,
             _marker: PhantomData,
@@ -1195,21 +1180,12 @@ where
 
     /// Run this query against explicitly bound root values.
     pub fn evaluate(&self, roots: &mut [FableRootValue<'_>]) -> Result<Output, FableError> {
+        if let Some(task_query) = &self.task_query {
+            validate_runtime_roots(roots)?;
+            return task_query.evaluate();
+        }
         let runtime_roots = self.runtime_roots(roots)?;
-        let mut interp = FableInterp {
-            roots: runtime_roots,
-            locals: LocalSlots::default(),
-            declared_types: self.declared_types.clone(),
-            predicate_result: None,
-            query_result: None,
-        };
-        weavy::run_dense(&self.lowered, &mut interp).map_err(run_error)?;
-        interp
-            .query_result
-            .ok_or(FableError::MalformedProgram {
-                reason: "query plan did not write a result",
-            })?
-            .into_result()
+        run_dense_query_in_task(&self.lowered, runtime_roots, self.declared_types.clone())
     }
 
     /// Run this query and return Weavy execution counters.
@@ -1217,22 +1193,16 @@ where
         &self,
         roots: &mut [FableRootValue<'_>],
     ) -> Result<(Output, RunStats), FableError> {
+        if let Some(task_query) = &self.task_query {
+            validate_runtime_roots(roots)?;
+            return Ok((task_query.evaluate()?, RunStats::default()));
+        }
         let runtime_roots = self.runtime_roots(roots)?;
-        let mut interp = FableInterp {
-            roots: runtime_roots,
-            locals: LocalSlots::default(),
-            declared_types: self.declared_types.clone(),
-            predicate_result: None,
-            query_result: None,
-        };
-        let stats = weavy::run_dense_with_stats(&self.lowered, &mut interp).map_err(run_error)?;
-        let result = interp
-            .query_result
-            .ok_or(FableError::MalformedProgram {
-                reason: "query plan did not write a result",
-            })?
-            .into_result()?;
-        Ok((result, stats))
+        run_dense_query_in_task_with_stats(
+            &self.lowered,
+            runtime_roots,
+            self.declared_types.clone(),
+        )
     }
 
     fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
@@ -1330,11 +1300,851 @@ where
         .apply(input, output)
 }
 
+#[derive(Clone)]
+struct FableTaskQueryPlan {
+    program: TaskProgram,
+    result: TaskType,
+}
+
+impl FableTaskQueryPlan {
+    fn from_source(
+        root: &ast::SourceFile,
+        roots: &[FableRootSpec],
+        query_type: FableQueryType,
+    ) -> Result<Option<Self>, FableError> {
+        let functions: Vec<&ast::FnDecl> = root
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Fn(function) => Some(function.as_ref()),
+                _ => None,
+            })
+            .collect();
+        if functions.is_empty() {
+            return Ok(None);
+        }
+        if !roots.is_empty() {
+            return Err(FableError::Unsupported {
+                feature: "user functions over root values".into(),
+            });
+        }
+
+        let statements: Vec<&Stmt> = root
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Stmt(stmt) => Some(stmt),
+                Item::Struct(_) | Item::Enum(_) | Item::Fn(_) => None,
+            })
+            .collect();
+        let [Stmt::Expr(final_expr)] = statements.as_slice() else {
+            return Err(FableError::Unsupported {
+                feature: "function scripts must end with one query expression".into(),
+            });
+        };
+
+        let mut signatures = BTreeMap::new();
+        for (index, function) in functions.iter().enumerate() {
+            let name = function.name.value.clone();
+            if signatures.contains_key(&name) {
+                return Err(FableError::DuplicateLocal { name });
+            }
+            signatures.insert(
+                name,
+                TaskSignature {
+                    fn_id: TaskFnId(u32::try_from(index + 1).map_err(|_| {
+                        FableError::MalformedProgram {
+                            reason: "too many task functions",
+                        }
+                    })?),
+                    params: function
+                        .params
+                        .params
+                        .iter()
+                        .map(|param| TaskType::from_type_expr(&param.ty))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    result: TaskType::from_type_expr(&function.return_ty)?,
+                },
+            );
+        }
+
+        let mut program = TaskProgram { fns: Vec::new() };
+        let mut root_compiler = TaskFnCompiler::new(&signatures);
+        let result = root_compiler.compile_expr(&final_expr.expr)?;
+        let expected = TaskType::from_query_type(query_type)?;
+        if result.ty != expected {
+            return Err(FableError::TypeMismatch {
+                expected: expected.name().to_owned(),
+                actual: result.ty.name(),
+            });
+        }
+        root_compiler.code.push(TaskOp::Ret {
+            src: result.slot,
+            size: 8,
+        });
+        program.fns.push(root_compiler.finish());
+
+        for function in functions {
+            let signature = signatures
+                .get(function.name.value.as_str())
+                .expect("signature exists");
+            let mut compiler = TaskFnCompiler::new(&signatures);
+            for (param, ty) in function.params.params.iter().zip(&signature.params) {
+                let name = name_text(&param.name).to_owned();
+                let slot = compiler.alloc_slot(*ty);
+                compiler.locals.insert(name, TaskValue { ty: *ty, slot });
+            }
+            let result = compiler.compile_block_value(&function.body, signature.result)?;
+            compiler.copy_slot(result.slot, signature.result, result.slot);
+            compiler.code.push(TaskOp::Ret {
+                src: result.slot,
+                size: 8,
+            });
+            program.fns.push(compiler.finish());
+        }
+
+        Ok(Some(Self {
+            program,
+            result: expected,
+        }))
+    }
+
+    fn evaluate<Output>(&self) -> Result<Output, FableError>
+    where
+        Output: FableQueryResult,
+    {
+        let mut task = weavy::task::Task::spawn(&self.program, TaskFnId(0));
+        match task.run(&self.program, &[], &[]) {
+            weavy::task::TaskStep::Done => {}
+            weavy::task::TaskStep::Parked { .. } => {
+                return Err(FableError::MalformedProgram {
+                    reason: "synchronous fable task parked",
+                });
+            }
+        }
+        let value = i64::from_le_bytes(task.result[..8].try_into().map_err(|_| {
+            FableError::MalformedProgram {
+                reason: "task query result was not 8 bytes",
+            }
+        })?);
+        match self.result {
+            TaskType::I64 => FableQueryOutput::Signed(value as i128).into_result(),
+            TaskType::Bool => FableQueryOutput::Bool(value != 0).into_result(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TaskType {
+    I64,
+    Bool,
+}
+
+impl TaskType {
+    fn from_type_expr(ty: &ast::TypeExpr) -> Result<Self, FableError> {
+        match ty {
+            ast::TypeExpr::Scalar(name) if name.value == "i64" => Ok(TaskType::I64),
+            ast::TypeExpr::Scalar(name) if name.value == "bool" => Ok(TaskType::Bool),
+            ast::TypeExpr::Scalar(name) => Err(FableError::Unsupported {
+                feature: format!("task function scalar type {}", name.value),
+            }),
+            ast::TypeExpr::Declared(name) => Err(FableError::Unsupported {
+                feature: format!("task function declared type {}", name.name.value),
+            }),
+        }
+    }
+
+    fn from_query_type(query_type: FableQueryType) -> Result<Self, FableError> {
+        match query_type {
+            FableQueryType::Bool => Ok(TaskType::Bool),
+            FableQueryType::Signed => Ok(TaskType::I64),
+            other => Err(FableError::Unsupported {
+                feature: format!("task function query result {}", other.name()),
+            }),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            TaskType::I64 => "i64",
+            TaskType::Bool => "bool",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct TaskSignature {
+    fn_id: TaskFnId,
+    params: Vec<TaskType>,
+    result: TaskType,
+}
+
+#[derive(Clone, Copy)]
+struct TaskValue {
+    ty: TaskType,
+    slot: u32,
+}
+
+struct TaskFnCompiler<'a> {
+    signatures: &'a BTreeMap<String, TaskSignature>,
+    locals: BTreeMap<String, TaskValue>,
+    code: Vec<TaskOp>,
+    slot_count: usize,
+}
+
+impl<'a> TaskFnCompiler<'a> {
+    fn new(signatures: &'a BTreeMap<String, TaskSignature>) -> Self {
+        Self {
+            signatures,
+            locals: BTreeMap::new(),
+            code: Vec::new(),
+            slot_count: 0,
+        }
+    }
+
+    fn alloc_slot(&mut self, ty: TaskType) -> u32 {
+        let slot = self.slot_count;
+        self.slot_count += 1;
+        match ty {
+            TaskType::I64 | TaskType::Bool => u32::try_from(slot * 8).expect("frame offset"),
+        }
+    }
+
+    fn finish(self) -> TaskFn {
+        let fields = (0..self.slot_count)
+            .map(|_| declared_mem::i64_(()))
+            .collect();
+        let frame = declared_mem::declared_struct((), fields).layout;
+        TaskFn {
+            frame,
+            code: self.code,
+        }
+    }
+
+    fn compile_block_value(
+        &mut self,
+        block: &Block,
+        expected: TaskType,
+    ) -> Result<TaskValue, FableError> {
+        let Some((last, prefix)) = block.stmts.split_last() else {
+            return Err(FableError::Unsupported {
+                feature: "function block without result expression".into(),
+            });
+        };
+        for stmt in prefix {
+            self.compile_stmt(stmt)?;
+        }
+        self.compile_stmt_value(last, expected)
+    }
+
+    fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), FableError> {
+        match stmt {
+            Stmt::Let(let_stmt) => {
+                let value = self.compile_expr(&let_stmt.value)?;
+                let local = self.alloc_slot(value.ty);
+                self.copy_slot(value.slot, value.ty, local);
+                let name = name_text(&let_stmt.name).to_owned();
+                if self
+                    .locals
+                    .insert(
+                        name.clone(),
+                        TaskValue {
+                            ty: value.ty,
+                            slot: local,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(FableError::DuplicateLocal { name });
+                }
+                Ok(())
+            }
+            Stmt::Expr(expr) => self.compile_expr(&expr.expr).map(drop),
+            Stmt::If(if_stmt) => self.compile_if_value(if_stmt, TaskType::I64).map(drop),
+            Stmt::Assign(_) => Err(FableError::Unsupported {
+                feature: "assignment inside task functions".into(),
+            }),
+        }
+    }
+
+    fn compile_stmt_value(
+        &mut self,
+        stmt: &Stmt,
+        expected: TaskType,
+    ) -> Result<TaskValue, FableError> {
+        match stmt {
+            Stmt::Expr(expr) => {
+                let value = self.compile_expr(&expr.expr)?;
+                self.expect_type(expected, value)?;
+                Ok(value)
+            }
+            Stmt::If(if_stmt) => self.compile_if_value(if_stmt, expected),
+            Stmt::Let(_) | Stmt::Assign(_) => Err(FableError::Unsupported {
+                feature: "function block must end with an expression".into(),
+            }),
+        }
+    }
+
+    fn compile_if_value(
+        &mut self,
+        if_stmt: &IfStmt,
+        expected: TaskType,
+    ) -> Result<TaskValue, FableError> {
+        let condition = self.compile_expr(&if_stmt.condition)?;
+        self.expect_type(TaskType::Bool, condition)?;
+        let out = self.alloc_slot(expected);
+        let jump_to_else = self.code.len();
+        self.code.push(TaskOp::JumpIfZero {
+            value: condition.slot,
+            target: 0,
+        });
+        let then_value = self.compile_block_value(&if_stmt.then, expected)?;
+        self.copy_slot(then_value.slot, expected, out);
+        let jump_to_end = self.code.len();
+        self.code.push(TaskOp::Jump { target: 0 });
+        let else_start = self.code.len();
+        self.patch_jump(jump_to_else, else_start)?;
+        let else_value = self.compile_else_value(&if_stmt.else_clause, expected)?;
+        self.copy_slot(else_value.slot, expected, out);
+        let end = self.code.len();
+        self.patch_jump(jump_to_end, end)?;
+        Ok(TaskValue {
+            ty: expected,
+            slot: out,
+        })
+    }
+
+    fn compile_else_value(
+        &mut self,
+        else_clause: &Option<ElseClause>,
+        expected: TaskType,
+    ) -> Result<TaskValue, FableError> {
+        let Some(else_clause) = else_clause else {
+            return Err(FableError::Unsupported {
+                feature: "value-producing if without else".into(),
+            });
+        };
+        if let Some(if_stmt) = &else_clause.if_stmt {
+            self.compile_if_value(if_stmt, expected)
+        } else if let Some(block) = &else_clause.block {
+            self.compile_block_value(block, expected)
+        } else {
+            Err(FableError::MalformedSyntax {
+                reason: "else clause without body",
+            })
+        }
+    }
+
+    fn compile_expr(&mut self, expr: &Expr) -> Result<TaskValue, FableError> {
+        match expr {
+            Expr::Literal(literal) => self.compile_literal(literal),
+            Expr::Var(var) => {
+                let name = name_text(&var.name);
+                self.locals
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| FableError::ExpectedRoot {
+                        found: name.to_owned(),
+                    })
+            }
+            Expr::Paren(paren) => self.compile_expr(&paren.expr),
+            Expr::Unary(unary) => self.compile_unary(unary),
+            Expr::Binary(binary) => self.compile_binary(binary),
+            Expr::Call(call) => self.compile_call(call),
+            Expr::Field(_)
+            | Expr::Index(_)
+            | Expr::StructLiteral(_)
+            | Expr::EnumVariant(_)
+            | Expr::Match(_) => Err(FableError::Unsupported {
+                feature: "task function expression".into(),
+            }),
+        }
+    }
+
+    fn compile_literal(&mut self, literal: &Literal) -> Result<TaskValue, FableError> {
+        let (ty, value) = match literal {
+            Literal::True(_) => (TaskType::Bool, 1),
+            Literal::False(_) => (TaskType::Bool, 0),
+            Literal::Int(text) => (
+                TaskType::I64,
+                text.value
+                    .parse::<i64>()
+                    .map_err(|_| FableError::InvalidLiteral {
+                        literal: text.value.clone(),
+                        reason: "integer literal is out of range",
+                    })?,
+            ),
+            Literal::Null(_) | Literal::Float(_) | Literal::Str(_) => {
+                return Err(FableError::Unsupported {
+                    feature: "task function literal".into(),
+                });
+            }
+        };
+        let slot = self.alloc_slot(ty);
+        self.code.push(TaskOp::ConstI64 { dst: slot, value });
+        Ok(TaskValue { ty, slot })
+    }
+
+    fn compile_unary(&mut self, unary: &UnaryExpr) -> Result<TaskValue, FableError> {
+        let operand = self.compile_expr(&unary.operand)?;
+        match unary_op(unary)? {
+            UnaryOp::Not => {
+                self.expect_type(TaskType::Bool, operand)?;
+                let zero = self.const_i64(0);
+                let slot = self.alloc_slot(TaskType::Bool);
+                self.code.push(TaskOp::EqI64 {
+                    dst: slot,
+                    a: operand.slot,
+                    b: zero,
+                });
+                Ok(TaskValue {
+                    ty: TaskType::Bool,
+                    slot,
+                })
+            }
+            UnaryOp::Neg => {
+                self.expect_type(TaskType::I64, operand)?;
+                let zero = self.const_i64(0);
+                let slot = self.alloc_slot(TaskType::I64);
+                self.code.push(TaskOp::SubI64 {
+                    dst: slot,
+                    a: zero,
+                    b: operand.slot,
+                });
+                Ok(TaskValue {
+                    ty: TaskType::I64,
+                    slot,
+                })
+            }
+        }
+    }
+
+    fn compile_binary(&mut self, binary: &BinaryExpr) -> Result<TaskValue, FableError> {
+        let lhs = self.compile_expr(&binary.lhs)?;
+        let rhs = self.compile_expr(&binary.rhs)?;
+        match binary_op(binary)? {
+            BinaryOp::Add | BinaryOp::Sub => {
+                self.expect_type(TaskType::I64, lhs)?;
+                self.expect_type(TaskType::I64, rhs)?;
+                let slot = self.alloc_slot(TaskType::I64);
+                let op = match binary_op(binary)? {
+                    BinaryOp::Add => TaskOp::AddI64 {
+                        dst: slot,
+                        a: lhs.slot,
+                        b: rhs.slot,
+                    },
+                    BinaryOp::Sub => TaskOp::SubI64 {
+                        dst: slot,
+                        a: lhs.slot,
+                        b: rhs.slot,
+                    },
+                    _ => unreachable!(),
+                };
+                self.code.push(op);
+                Ok(TaskValue {
+                    ty: TaskType::I64,
+                    slot,
+                })
+            }
+            BinaryOp::Eq
+            | BinaryOp::Neq
+            | BinaryOp::Lt
+            | BinaryOp::Gt
+            | BinaryOp::Le
+            | BinaryOp::Ge => {
+                if lhs.ty != rhs.ty {
+                    return Err(FableError::TypeMismatch {
+                        expected: lhs.ty.name().to_owned(),
+                        actual: rhs.ty.name(),
+                    });
+                }
+                let slot = self.alloc_slot(TaskType::Bool);
+                let op = match binary_op(binary)? {
+                    BinaryOp::Eq => TaskOp::EqI64 {
+                        dst: slot,
+                        a: lhs.slot,
+                        b: rhs.slot,
+                    },
+                    BinaryOp::Neq => TaskOp::NeI64 {
+                        dst: slot,
+                        a: lhs.slot,
+                        b: rhs.slot,
+                    },
+                    BinaryOp::Lt => TaskOp::LtI64 {
+                        dst: slot,
+                        a: lhs.slot,
+                        b: rhs.slot,
+                    },
+                    BinaryOp::Gt => TaskOp::GtI64 {
+                        dst: slot,
+                        a: lhs.slot,
+                        b: rhs.slot,
+                    },
+                    BinaryOp::Le => TaskOp::LeI64 {
+                        dst: slot,
+                        a: lhs.slot,
+                        b: rhs.slot,
+                    },
+                    BinaryOp::Ge => TaskOp::GeI64 {
+                        dst: slot,
+                        a: lhs.slot,
+                        b: rhs.slot,
+                    },
+                    _ => unreachable!(),
+                };
+                self.code.push(op);
+                Ok(TaskValue {
+                    ty: TaskType::Bool,
+                    slot,
+                })
+            }
+            BinaryOp::And | BinaryOp::Or => {
+                self.expect_type(TaskType::Bool, lhs)?;
+                self.expect_type(TaskType::Bool, rhs)?;
+                let slot = self.alloc_slot(TaskType::Bool);
+                match binary_op(binary)? {
+                    BinaryOp::And => self.code.push(TaskOp::MulI64 {
+                        dst: slot,
+                        a: lhs.slot,
+                        b: rhs.slot,
+                    }),
+                    BinaryOp::Or => {
+                        let sum = self.alloc_slot(TaskType::I64);
+                        self.code.push(TaskOp::AddI64 {
+                            dst: sum,
+                            a: lhs.slot,
+                            b: rhs.slot,
+                        });
+                        let zero = self.const_i64(0);
+                        self.code.push(TaskOp::NeI64 {
+                            dst: slot,
+                            a: sum,
+                            b: zero,
+                        });
+                    }
+                    _ => unreachable!(),
+                }
+                Ok(TaskValue {
+                    ty: TaskType::Bool,
+                    slot,
+                })
+            }
+        }
+    }
+
+    fn compile_call(&mut self, call: &CallExpr) -> Result<TaskValue, FableError> {
+        let name = call_callee_name(&call.callee)?;
+        let signature = self
+            .signatures
+            .get(name.as_str())
+            .ok_or_else(|| FableError::Unsupported {
+                feature: format!("task function call to {name}"),
+            })?
+            .clone();
+        if signature.params.len() != call.args.args.len() {
+            return Err(FableError::Unsupported {
+                feature: format!("{} argument count", name),
+            });
+        }
+        let mut copies = Vec::with_capacity(signature.params.len());
+        for (arg, expected) in call.args.args.iter().zip(&signature.params) {
+            let value = self.compile_expr(&arg.expr)?;
+            self.expect_type(*expected, value)?;
+            let dst =
+                u32::try_from(copies.len() * 8).map_err(|_| FableError::MalformedProgram {
+                    reason: "argument offset overflow",
+                })?;
+            copies.push(weavy::task::ArgCopy {
+                src: value.slot,
+                dst,
+                size: 8,
+            });
+        }
+        let slot = self.alloc_slot(signature.result);
+        self.code.push(TaskOp::Call {
+            callee: signature.fn_id,
+            args: copies,
+            ret: slot,
+        });
+        Ok(TaskValue {
+            ty: signature.result,
+            slot,
+        })
+    }
+
+    fn copy_slot(&mut self, src: u32, ty: TaskType, dst: u32) {
+        let zero = self.const_i64(0);
+        match ty {
+            TaskType::I64 | TaskType::Bool => self.code.push(TaskOp::AddI64 {
+                dst,
+                a: src,
+                b: zero,
+            }),
+        }
+    }
+
+    fn const_i64(&mut self, value: i64) -> u32 {
+        let slot = self.alloc_slot(TaskType::I64);
+        self.code.push(TaskOp::ConstI64 { dst: slot, value });
+        slot
+    }
+
+    fn expect_type(&self, expected: TaskType, value: TaskValue) -> Result<(), FableError> {
+        if value.ty == expected {
+            Ok(())
+        } else {
+            Err(FableError::TypeMismatch {
+                expected: expected.name().to_owned(),
+                actual: value.ty.name(),
+            })
+        }
+    }
+
+    fn patch_jump(&mut self, index: usize, target: usize) -> Result<(), FableError> {
+        let target = u32::try_from(target).map_err(|_| FableError::MalformedProgram {
+            reason: "jump target overflow",
+        })?;
+        match self.code.get_mut(index) {
+            Some(TaskOp::Jump { target: slot }) | Some(TaskOp::JumpIfZero { target: slot, .. }) => {
+                *slot = target;
+                Ok(())
+            }
+            _ => Err(FableError::MalformedProgram {
+                reason: "attempted to patch non-jump task op",
+            }),
+        }
+    }
+}
+
 fn run_error(err: RunError<BlockRef, FableError>) -> FableError {
     match err {
         RunError::Step(err) => err,
         RunError::MissingBlock(block) => FableError::MissingBlock { block },
     }
+}
+
+fn host_task_program(result_size: u32) -> TaskProgram {
+    TaskProgram {
+        fns: vec![TaskFn {
+            frame: weavy::mem::Layout {
+                size: result_size as usize,
+                align: 1,
+            },
+            code: vec![
+                TaskOp::HostCall { host: 0 },
+                TaskOp::Ret {
+                    src: 0,
+                    size: result_size,
+                },
+            ],
+        }],
+    }
+}
+
+fn run_single_host_task(host: &mut dyn FnMut(&mut [u8])) {
+    let program = host_task_program(0);
+    let mut task = weavy::task::Task::spawn(&program, TaskFnId(0));
+    let mut hosts: [HostFn<'_>; 1] = [host];
+    let step = task.run_hosted(&program, &[], &[], &mut hosts);
+    debug_assert_eq!(step, weavy::task::TaskStep::Done);
+}
+
+fn dense_interp(roots: Vec<RuntimeRoot>, declared_types: FableDeclaredTypes) -> FableInterp {
+    FableInterp {
+        roots,
+        locals: LocalSlots::default(),
+        declared_types,
+        predicate_result: None,
+        query_result: None,
+    }
+}
+
+fn run_dense_apply_in_task(
+    lowered: &FableLowered,
+    roots: Vec<RuntimeRoot>,
+    declared_types: FableDeclaredTypes,
+) -> Result<(), FableError> {
+    let mut roots = Some(roots);
+    let mut result = Ok(());
+    {
+        let mut host = |_: &mut [u8]| {
+            let Some(roots) = roots.take() else {
+                result = Err(FableError::MalformedProgram {
+                    reason: "apply host task ran more than once",
+                });
+                return;
+            };
+            let mut interp = dense_interp(roots, declared_types.clone());
+            result = weavy::run_dense(lowered, &mut interp).map_err(run_error);
+        };
+        run_single_host_task(&mut host);
+    }
+    result
+}
+
+fn run_dense_apply_in_task_with_stats(
+    lowered: &FableLowered,
+    roots: Vec<RuntimeRoot>,
+    declared_types: FableDeclaredTypes,
+) -> Result<RunStats, FableError> {
+    let mut roots = Some(roots);
+    let mut result = Err(FableError::MalformedProgram {
+        reason: "apply host task did not run",
+    });
+    {
+        let mut host = |_: &mut [u8]| {
+            let Some(roots) = roots.take() else {
+                result = Err(FableError::MalformedProgram {
+                    reason: "apply host task ran more than once",
+                });
+                return;
+            };
+            let mut interp = dense_interp(roots, declared_types.clone());
+            result = weavy::run_dense_with_stats(lowered, &mut interp).map_err(run_error);
+        };
+        run_single_host_task(&mut host);
+    }
+    result
+}
+
+fn run_dense_predicate_in_task(
+    lowered: &FableLowered,
+    roots: Vec<RuntimeRoot>,
+    declared_types: FableDeclaredTypes,
+) -> Result<bool, FableError> {
+    let mut roots = Some(roots);
+    let mut result = Err(FableError::MalformedProgram {
+        reason: "predicate host task did not run",
+    });
+    {
+        let mut host = |_: &mut [u8]| {
+            let Some(roots) = roots.take() else {
+                result = Err(FableError::MalformedProgram {
+                    reason: "predicate host task ran more than once",
+                });
+                return;
+            };
+            let mut interp = dense_interp(roots, declared_types.clone());
+            result = weavy::run_dense(lowered, &mut interp)
+                .map_err(run_error)
+                .and_then(|()| {
+                    interp.predicate_result.ok_or(FableError::MalformedProgram {
+                        reason: "predicate plan did not write a result",
+                    })
+                });
+        };
+        run_single_host_task(&mut host);
+    }
+    result
+}
+
+fn run_dense_predicate_in_task_with_stats(
+    lowered: &FableLowered,
+    roots: Vec<RuntimeRoot>,
+    declared_types: FableDeclaredTypes,
+) -> Result<(bool, RunStats), FableError> {
+    let mut roots = Some(roots);
+    let mut result = Err(FableError::MalformedProgram {
+        reason: "predicate host task did not run",
+    });
+    {
+        let mut host = |_: &mut [u8]| {
+            let Some(roots) = roots.take() else {
+                result = Err(FableError::MalformedProgram {
+                    reason: "predicate host task ran more than once",
+                });
+                return;
+            };
+            let mut interp = dense_interp(roots, declared_types.clone());
+            result = weavy::run_dense_with_stats(lowered, &mut interp)
+                .map_err(run_error)
+                .and_then(|stats| {
+                    let value = interp
+                        .predicate_result
+                        .ok_or(FableError::MalformedProgram {
+                            reason: "predicate plan did not write a result",
+                        })?;
+                    Ok((value, stats))
+                });
+        };
+        run_single_host_task(&mut host);
+    }
+    result
+}
+
+fn run_dense_query_in_task<Output>(
+    lowered: &FableLowered,
+    roots: Vec<RuntimeRoot>,
+    declared_types: FableDeclaredTypes,
+) -> Result<Output, FableError>
+where
+    Output: FableQueryResult,
+{
+    let mut roots = Some(roots);
+    let mut result = Err(FableError::MalformedProgram {
+        reason: "query host task did not run",
+    });
+    {
+        let mut host = |_: &mut [u8]| {
+            let Some(roots) = roots.take() else {
+                result = Err(FableError::MalformedProgram {
+                    reason: "query host task ran more than once",
+                });
+                return;
+            };
+            let mut interp = dense_interp(roots, declared_types.clone());
+            result = weavy::run_dense(lowered, &mut interp)
+                .map_err(run_error)
+                .and_then(|()| {
+                    interp
+                        .query_result
+                        .ok_or(FableError::MalformedProgram {
+                            reason: "query plan did not write a result",
+                        })?
+                        .into_result()
+                });
+        };
+        run_single_host_task(&mut host);
+    }
+    result
+}
+
+fn run_dense_query_in_task_with_stats<Output>(
+    lowered: &FableLowered,
+    roots: Vec<RuntimeRoot>,
+    declared_types: FableDeclaredTypes,
+) -> Result<(Output, RunStats), FableError>
+where
+    Output: FableQueryResult,
+{
+    let mut roots = Some(roots);
+    let mut result = Err(FableError::MalformedProgram {
+        reason: "query host task did not run",
+    });
+    {
+        let mut host = |_: &mut [u8]| {
+            let Some(roots) = roots.take() else {
+                result = Err(FableError::MalformedProgram {
+                    reason: "query host task ran more than once",
+                });
+                return;
+            };
+            let mut interp = dense_interp(roots, declared_types.clone());
+            result = weavy::run_dense_with_stats(lowered, &mut interp)
+                .map_err(run_error)
+                .and_then(|stats| {
+                    let value = interp
+                        .query_result
+                        .ok_or(FableError::MalformedProgram {
+                            reason: "query plan did not write a result",
+                        })?
+                        .into_result()?;
+                    Ok((value, stats))
+                });
+        };
+        run_single_host_task(&mut host);
+    }
+    result
 }
 
 fn validate_root_specs(roots: &[FableRootSpec]) -> Result<(), FableError> {
@@ -2558,7 +3368,7 @@ impl FableDeclaredTypes {
             let (name, decl) = match item {
                 Item::Struct(decl) => (decl.name.value.clone(), DeclRef::Struct(decl)),
                 Item::Enum(decl) => (decl.name.value.clone(), DeclRef::Enum(decl)),
-                Item::Stmt(_) => continue,
+                Item::Fn(_) | Item::Stmt(_) => continue,
             };
             if by_name.insert(name.clone(), decls.len()).is_some() {
                 return Err(FableError::AmbiguousType { name });
@@ -2839,7 +3649,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         for item in &root.items {
             match item {
                 Item::Stmt(stmt) => statements.push(stmt),
-                Item::Struct(_) | Item::Enum(_) => {}
+                Item::Struct(_) | Item::Enum(_) | Item::Fn(_) => {}
             }
         }
         Ok(statements)
@@ -8370,6 +9180,57 @@ a.x + b.x;
             ),
             FableError::Unsupported { feature } if feature == "non-exhaustive match on Thing"
         ));
+    }
+
+    #[test]
+    fn task_functions_support_deep_direct_recursion() {
+        let plan = FableRootQueryPlan::<i128>::compile(
+            r#"
+fn countdown(n: i64) -> i64 {
+  if n == 0 {
+    0;
+  } else {
+    countdown(n - 1);
+  }
+}
+countdown(100000);
+"#,
+            &[],
+        )
+        .expect("recursive function query compiles");
+        let mut roots = [];
+
+        assert_eq!(plan.evaluate(&mut roots).expect("query runs"), 0);
+    }
+
+    #[test]
+    fn task_functions_support_mutual_recursion() {
+        let plan = FableRootQueryPlan::<bool>::compile(
+            r#"
+fn even(n: i64) -> bool {
+  if n == 0 {
+    true;
+  } else {
+    odd(n - 1);
+  }
+}
+
+fn odd(n: i64) -> bool {
+  if n == 0 {
+    false;
+  } else {
+    even(n - 1);
+  }
+}
+
+even(101);
+"#,
+            &[],
+        )
+        .expect("mutual recursion query compiles");
+        let mut roots = [];
+
+        assert!(!plan.evaluate(&mut roots).expect("query runs"));
     }
 
     fn compile_err(src: &str) -> FableError {

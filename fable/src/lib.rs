@@ -249,6 +249,35 @@ match shape {
         };
         assert_eq!(wildcard.value, "_");
     }
+
+    #[test]
+    fn generated_ast_covers_function_declarations() {
+        let src = r#"
+fn add_one(value: i64) -> i64 {
+  value + 1;
+}
+"#;
+        let root = parse(src).expect("valid fable source");
+
+        let [Item::Fn(function)] = root.items.as_slice() else {
+            panic!("expected one function declaration");
+        };
+        assert_eq!(function.name.value, "add_one");
+        assert_eq!(function.params.params.len(), 1);
+        let Name::Ident(param_name) = &function.params.params[0].name else {
+            panic!("expected identifier parameter name");
+        };
+        assert_eq!(param_name.value, "value");
+        let TypeExpr::Scalar(param_ty) = &function.params.params[0].ty else {
+            panic!("expected scalar parameter type");
+        };
+        assert_eq!(param_ty.value, "i64");
+        let TypeExpr::Scalar(return_ty) = &function.return_ty else {
+            panic!("expected scalar return type");
+        };
+        assert_eq!(return_ty.value, "i64");
+        assert_eq!(function.body.stmts.len(), 1);
+    }
 }
 
 /// Runtime support for the generated snark AST lowering.

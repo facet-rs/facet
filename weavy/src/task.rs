@@ -75,8 +75,26 @@ pub enum Op {
     ConstI64 { dst: u32, value: i64 },
     /// `frame[dst] = frame[a] + frame[b]` (i64, wrapping).
     AddI64 { dst: u32, a: u32, b: u32 },
+    /// `frame[dst] = frame[a] - frame[b]` (i64, wrapping).
+    SubI64 { dst: u32, a: u32, b: u32 },
     /// `frame[dst] = frame[a] * frame[b]` (i64, wrapping).
     MulI64 { dst: u32, a: u32, b: u32 },
+    /// `frame[dst] = (frame[a] == frame[b]) as i64`.
+    EqI64 { dst: u32, a: u32, b: u32 },
+    /// `frame[dst] = (frame[a] != frame[b]) as i64`.
+    NeI64 { dst: u32, a: u32, b: u32 },
+    /// `frame[dst] = (frame[a] < frame[b]) as i64`.
+    LtI64 { dst: u32, a: u32, b: u32 },
+    /// `frame[dst] = (frame[a] <= frame[b]) as i64`.
+    LeI64 { dst: u32, a: u32, b: u32 },
+    /// `frame[dst] = (frame[a] > frame[b]) as i64`.
+    GtI64 { dst: u32, a: u32, b: u32 },
+    /// `frame[dst] = (frame[a] >= frame[b]) as i64`.
+    GeI64 { dst: u32, a: u32, b: u32 },
+    /// Continue at absolute instruction index `target` in the current function.
+    Jump { target: u32 },
+    /// Continue at `target` when `frame[value] == 0`, otherwise fall through.
+    JumpIfZero { value: u32, target: u32 },
     /// Frame-direct call: allocate the callee's frame in the task
     /// arena, copy `args`, enter. The callee's `Ret` writes `size`
     /// bytes into THIS frame at `ret`.
@@ -156,7 +174,9 @@ pub type BoxedHostFn<'h> = Box<dyn FnMut(&mut [u8]) + 'h>;
 pub enum TaskEvent {
     FrameEntered(FnId),
     FrameExited(FnId),
-    Parked { input: u32 },
+    Parked {
+        input: u32,
+    },
     Resumed,
     /// An [`Op::Trace`] instrumentation mark (Innards mode only).
     Mark(u32),
@@ -300,11 +320,65 @@ impl Task {
                     write_i64_at(&mut self.arena, base + dst as usize, va.wrapping_add(vb));
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
+                Op::SubI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + a as usize);
+                    let vb = read_i64_at(&self.arena, base + b as usize);
+                    write_i64_at(&mut self.arena, base + dst as usize, va.wrapping_sub(vb));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
                 Op::MulI64 { dst, a, b } => {
                     let va = read_i64_at(&self.arena, base + a as usize);
                     let vb = read_i64_at(&self.arena, base + b as usize);
                     write_i64_at(&mut self.arena, base + dst as usize, va.wrapping_mul(vb));
                     self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::EqI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + a as usize);
+                    let vb = read_i64_at(&self.arena, base + b as usize);
+                    write_i64_at(&mut self.arena, base + dst as usize, i64::from(va == vb));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::NeI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + a as usize);
+                    let vb = read_i64_at(&self.arena, base + b as usize);
+                    write_i64_at(&mut self.arena, base + dst as usize, i64::from(va != vb));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::LtI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + a as usize);
+                    let vb = read_i64_at(&self.arena, base + b as usize);
+                    write_i64_at(&mut self.arena, base + dst as usize, i64::from(va < vb));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::LeI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + a as usize);
+                    let vb = read_i64_at(&self.arena, base + b as usize);
+                    write_i64_at(&mut self.arena, base + dst as usize, i64::from(va <= vb));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::GtI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + a as usize);
+                    let vb = read_i64_at(&self.arena, base + b as usize);
+                    write_i64_at(&mut self.arena, base + dst as usize, i64::from(va > vb));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::GeI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + a as usize);
+                    let vb = read_i64_at(&self.arena, base + b as usize);
+                    write_i64_at(&mut self.arena, base + dst as usize, i64::from(va >= vb));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::Jump { target } => {
+                    self.frames.last_mut().expect("frame").pc = target as usize;
+                }
+                Op::JumpIfZero { value, target } => {
+                    let v = read_i64_at(&self.arena, base + value as usize);
+                    let frame = self.frames.last_mut().expect("frame");
+                    if v == 0 {
+                        frame.pc = target as usize;
+                    } else {
+                        frame.pc += 1;
+                    }
                 }
                 Op::Call { callee, args, ret } => {
                     // Advance the caller past the call BEFORE entering:
@@ -317,8 +391,7 @@ impl Task {
                         // callee's statically known offsets.
                         let src = base + copy.src as usize;
                         let dst = callee_frame + copy.dst as usize;
-                        self.arena
-                            .copy_within(src..src + copy.size as usize, dst);
+                        self.arena.copy_within(src..src + copy.size as usize, dst);
                     }
                     self.frames.push(FrameRecord {
                         fn_id: callee,
@@ -379,13 +452,21 @@ impl Task {
                 Op::AddF64 { dst, a, b } => {
                     let va = f64::from_bits(read_i64_at(&self.arena, base + a as usize) as u64);
                     let vb = f64::from_bits(read_i64_at(&self.arena, base + b as usize) as u64);
-                    write_i64_at(&mut self.arena, base + dst as usize, (va + vb).to_bits() as i64);
+                    write_i64_at(
+                        &mut self.arena,
+                        base + dst as usize,
+                        (va + vb).to_bits() as i64,
+                    );
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::MulF64 { dst, a, b } => {
                     let va = f64::from_bits(read_i64_at(&self.arena, base + a as usize) as u64);
                     let vb = f64::from_bits(read_i64_at(&self.arena, base + b as usize) as u64);
-                    write_i64_at(&mut self.arena, base + dst as usize, (va * vb).to_bits() as i64);
+                    write_i64_at(
+                        &mut self.arena,
+                        base + dst as usize,
+                        (va * vb).to_bits() as i64,
+                    );
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::HostCall { host } => {
@@ -423,12 +504,7 @@ impl Task {
 /// executor driver below (and vix's demand driver later) can hold
 /// either without caring which.
 pub trait Advance {
-    fn advance(
-        &mut self,
-        ready: &[bool],
-        awaited: &[i64],
-        hosts: &mut [HostFn<'_>],
-    ) -> TaskStep;
+    fn advance(&mut self, ready: &[bool], awaited: &[i64], hosts: &mut [HostFn<'_>]) -> TaskStep;
     fn result_bytes(&self) -> &[u8];
 }
 
@@ -439,12 +515,7 @@ pub struct Running<'p> {
 }
 
 impl Advance for Running<'_> {
-    fn advance(
-        &mut self,
-        ready: &[bool],
-        awaited: &[i64],
-        hosts: &mut [HostFn<'_>],
-    ) -> TaskStep {
+    fn advance(&mut self, ready: &[bool], awaited: &[i64], hosts: &mut [HostFn<'_>]) -> TaskStep {
         self.task.run_hosted(self.program, ready, awaited, hosts)
     }
 
@@ -519,9 +590,15 @@ impl<A: Advance + Unpin> Future for TaskExec<'_, A> {
             return Poll::Pending;
         }
 
-        let mut host_refs: Vec<HostFn<'_>> =
-            this.hosts.iter_mut().map(|h| h.as_mut() as HostFn<'_>).collect();
-        match this.lane.advance(&this.ready, &this.awaited, &mut host_refs) {
+        let mut host_refs: Vec<HostFn<'_>> = this
+            .hosts
+            .iter_mut()
+            .map(|h| h.as_mut() as HostFn<'_>)
+            .collect();
+        match this
+            .lane
+            .advance(&this.ready, &this.awaited, &mut host_refs)
+        {
             TaskStep::Done => Poll::Ready(this.lane.result_bytes().to_vec()),
             TaskStep::Parked { input } => {
                 this.parked_on = Some(input);
@@ -542,8 +619,8 @@ fn write_i64_at(arena: &mut [u8], at: usize, value: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mem::declared::{declared_struct, i64_};
     use crate::mem::Access;
+    use crate::mem::declared::{declared_struct, i64_};
 
     fn frame_of_i64s(n: usize) -> Layout {
         Layout {
@@ -557,8 +634,16 @@ mod tests {
         Fn {
             frame: frame_of_i64s(3),
             code: vec![
-                Op::MulI64 { dst: 16, a: 0, b: 8 },
-                Op::AddI64 { dst: 16, a: 16, b: 0 },
+                Op::MulI64 {
+                    dst: 16,
+                    a: 0,
+                    b: 8,
+                },
+                Op::AddI64 {
+                    dst: 16,
+                    a: 16,
+                    b: 0,
+                },
                 Op::Ret { src: 16, size: 8 },
             ],
         }
@@ -578,12 +663,24 @@ mod tests {
                         Op::Call {
                             callee: FnId(1),
                             args: vec![
-                                ArgCopy { src: 0, dst: 0, size: 8 },
-                                ArgCopy { src: 8, dst: 8, size: 8 },
+                                ArgCopy {
+                                    src: 0,
+                                    dst: 0,
+                                    size: 8,
+                                },
+                                ArgCopy {
+                                    src: 8,
+                                    dst: 8,
+                                    size: 8,
+                                },
                             ],
                             ret: 16,
                         },
-                        Op::AddI64 { dst: 16, a: 16, b: 0 },
+                        Op::AddI64 {
+                            dst: 16,
+                            a: 16,
+                            b: 0,
+                        },
                         Op::Ret { src: 16, size: 8 },
                     ],
                 },
@@ -638,7 +735,10 @@ mod tests {
         };
         let mut task = Task::spawn(&program, FnId(0));
 
-        assert_eq!(task.run(&program, &[false], &[0]), TaskStep::Parked { input: 0 });
+        assert_eq!(
+            task.run(&program, &[false], &[0]),
+            TaskStep::Parked { input: 0 }
+        );
         assert_eq!(task.depth(), 2, "both frames live while parked");
         assert!(task.trace.contains(&TaskEvent::Parked { input: 0 }));
 
@@ -659,16 +759,18 @@ mod tests {
         let program = Program {
             fns: vec![Fn {
                 frame: frame_of_i64s(1),
-                code: vec![
-                    Op::Await { dst: 0, input: 0 },
-                    Op::Ret { src: 0, size: 8 },
-                ],
+                code: vec![Op::Await { dst: 0, input: 0 }, Op::Ret { src: 0, size: 8 }],
             }],
         };
         let mut task = Task::spawn(&program, FnId(0));
         assert_eq!(task.run(&program, &[true], &[42]), TaskStep::Done);
         assert_eq!(task.result_i64(), 42);
-        assert!(!task.trace.iter().any(|e| matches!(e, TaskEvent::Parked { .. })));
+        assert!(
+            !task
+                .trace
+                .iter()
+                .any(|e| matches!(e, TaskEvent::Parked { .. }))
+        );
     }
 
     #[test]
@@ -694,8 +796,16 @@ mod tests {
                         Op::Call {
                             callee: FnId(1),
                             args: vec![
-                                ArgCopy { src: 0, dst: x, size: 8 },
-                                ArgCopy { src: 8, dst: y, size: 8 },
+                                ArgCopy {
+                                    src: 0,
+                                    dst: x,
+                                    size: 8,
+                                },
+                                ArgCopy {
+                                    src: 8,
+                                    dst: y,
+                                    size: 8,
+                                },
                             ],
                             ret: 16,
                         },
@@ -705,7 +815,11 @@ mod tests {
                 Fn {
                     frame: frame_desc.layout,
                     code: vec![
-                        Op::MulI64 { dst: out, a: x, b: y },
+                        Op::MulI64 {
+                            dst: out,
+                            a: x,
+                            b: y,
+                        },
                         Op::Ret { src: out, size: 8 },
                     ],
                 },
@@ -724,13 +838,19 @@ mod tests {
         // ArgCopy; the callee parks on an await with the composite
         // live in BOTH frames; the callee mutates ITS copy; the
         // caller's copy is untouched (value semantics).
-        use crate::mem::declared::{array_of, declared_struct, i64_};
         use crate::mem::Access;
+        use crate::mem::declared::{array_of, declared_struct, i64_};
 
         // Caller frame: (header, arr[6], out, idx, val).
         let caller_desc = declared_struct(
             (),
-            vec![i64_(()), array_of((), i64_(()), 6), i64_(()), i64_(()), i64_(())],
+            vec![
+                i64_(()),
+                array_of((), i64_(()), 6),
+                i64_(()),
+                i64_(()),
+                i64_(()),
+            ],
         );
         let Access::Record(caller_rec) = &caller_desc.access else {
             panic!("record");
@@ -741,59 +861,140 @@ mod tests {
         // Callee frame: (arr[6], ix, a, b, sum).
         let callee_desc = declared_struct(
             (),
-            vec![array_of((), i64_(()), 6), i64_(()), i64_(()), i64_(()), i64_(())],
+            vec![
+                array_of((), i64_(()), 6),
+                i64_(()),
+                i64_(()),
+                i64_(()),
+                i64_(()),
+            ],
         );
         let Access::Record(callee_rec) = &callee_desc.access else {
             panic!("record");
         };
         let coff = |i: usize| u32::try_from(callee_rec.fields[i].offset).unwrap();
         let (c_arr, c_ix, c_a, c_b, c_sum) = (coff(0), coff(1), coff(2), coff(3), coff(4));
-        assert_eq!(callee_rec.fields[0].descriptor.layout.size, 48, "inline, unboxed");
+        assert_eq!(
+            callee_rec.fields[0].descriptor.layout.size, 48,
+            "inline, unboxed"
+        );
 
-        let mut caller_code = vec![Op::ConstI64 { dst: header, value: 7 }];
+        let mut caller_code = vec![Op::ConstI64 {
+            dst: header,
+            value: 7,
+        }];
         // Fill arr[k] = 10*(k+1) through the dynamic-index op.
         for k in 0..6i64 {
             caller_code.push(Op::ConstI64 { dst: idx, value: k });
-            caller_code.push(Op::ConstI64 { dst: val, value: 10 * (k + 1) });
-            caller_code.push(Op::StoreIndexedI64 { base: arr, index: idx, stride: 8, src: val });
+            caller_code.push(Op::ConstI64 {
+                dst: val,
+                value: 10 * (k + 1),
+            });
+            caller_code.push(Op::StoreIndexedI64 {
+                base: arr,
+                index: idx,
+                stride: 8,
+                src: val,
+            });
         }
         caller_code.push(Op::Call {
             callee: FnId(1),
             // ONE copy moves the whole 48-byte composite by value.
-            args: vec![ArgCopy { src: arr, dst: c_arr, size: 48 }],
+            args: vec![ArgCopy {
+                src: arr,
+                dst: c_arr,
+                size: 48,
+            }],
             ret: out,
         });
         // Prove the caller's copy survived the callee's mutation:
         // reload own arr[2] (callee overwrites its own arr[2] with 999).
         caller_code.push(Op::ConstI64 { dst: idx, value: 2 });
-        caller_code.push(Op::LoadIndexedI64 { dst: val, base: arr, index: idx, stride: 8 });
-        caller_code.push(Op::AddI64 { dst: out, a: out, b: val });
+        caller_code.push(Op::LoadIndexedI64 {
+            dst: val,
+            base: arr,
+            index: idx,
+            stride: 8,
+        });
+        caller_code.push(Op::AddI64 {
+            dst: out,
+            a: out,
+            b: val,
+        });
         caller_code.push(Op::Ret { src: out, size: 8 });
 
         let callee_code = vec![
             // Park FIRST — the 48-byte composite is live in both
             // frames across the suspension.
-            Op::Await { dst: c_ix, input: 0 },
-            Op::LoadIndexedI64 { dst: c_a, base: c_arr, index: c_ix, stride: 8 },
-            Op::ConstI64 { dst: c_sum, value: 1 },
-            Op::AddI64 { dst: c_ix, a: c_ix, b: c_sum },
-            Op::LoadIndexedI64 { dst: c_b, base: c_arr, index: c_ix, stride: 8 },
-            Op::AddI64 { dst: c_sum, a: c_a, b: c_b },
+            Op::Await {
+                dst: c_ix,
+                input: 0,
+            },
+            Op::LoadIndexedI64 {
+                dst: c_a,
+                base: c_arr,
+                index: c_ix,
+                stride: 8,
+            },
+            Op::ConstI64 {
+                dst: c_sum,
+                value: 1,
+            },
+            Op::AddI64 {
+                dst: c_ix,
+                a: c_ix,
+                b: c_sum,
+            },
+            Op::LoadIndexedI64 {
+                dst: c_b,
+                base: c_arr,
+                index: c_ix,
+                stride: 8,
+            },
+            Op::AddI64 {
+                dst: c_sum,
+                a: c_a,
+                b: c_b,
+            },
             // Mutate OUR copy: arr[ix] = 999 (value semantics check).
-            Op::ConstI64 { dst: c_a, value: 999 },
-            Op::StoreIndexedI64 { base: c_arr, index: c_ix, stride: 8, src: c_a },
-            Op::Ret { src: c_sum, size: 8 },
+            Op::ConstI64 {
+                dst: c_a,
+                value: 999,
+            },
+            Op::StoreIndexedI64 {
+                base: c_arr,
+                index: c_ix,
+                stride: 8,
+                src: c_a,
+            },
+            Op::Ret {
+                src: c_sum,
+                size: 8,
+            },
         ];
 
         let program = Program {
             fns: vec![
-                Fn { frame: caller_desc.layout, code: caller_code },
-                Fn { frame: callee_desc.layout, code: callee_code },
+                Fn {
+                    frame: caller_desc.layout,
+                    code: caller_code,
+                },
+                Fn {
+                    frame: callee_desc.layout,
+                    code: callee_code,
+                },
             ],
         };
         let mut task = Task::spawn(&program, FnId(0));
-        assert_eq!(task.run(&program, &[false], &[0]), TaskStep::Parked { input: 0 });
-        assert_eq!(task.depth(), 2, "parked with 48-byte composites live in both frames");
+        assert_eq!(
+            task.run(&program, &[false], &[0]),
+            TaskStep::Parked { input: 0 }
+        );
+        assert_eq!(
+            task.depth(),
+            2,
+            "parked with 48-byte composites live in both frames"
+        );
 
         // ix=2: a=arr[2]=30, b=arr[3]=40, sum=70; caller adds its own
         // UNMUTATED arr[2]=30 → 100. (If by-value copying were shared,
@@ -813,9 +1014,18 @@ mod tests {
                     // (ret_arr[3] @0, idx @24, out @32)
                     frame: Layout { size: 40, align: 8 },
                     code: vec![
-                        Op::Call { callee: FnId(1), args: vec![], ret: 0 },
+                        Op::Call {
+                            callee: FnId(1),
+                            args: vec![],
+                            ret: 0,
+                        },
                         Op::ConstI64 { dst: 24, value: 1 },
-                        Op::LoadIndexedI64 { dst: 32, base: 0, index: 24, stride: 8 },
+                        Op::LoadIndexedI64 {
+                            dst: 32,
+                            base: 0,
+                            index: 24,
+                            stride: 8,
+                        },
                         Op::Ret { src: 32, size: 8 },
                     ],
                 },
@@ -825,13 +1035,28 @@ mod tests {
                     code: vec![
                         Op::ConstI64 { dst: 24, value: 0 },
                         Op::ConstI64 { dst: 32, value: 5 },
-                        Op::StoreIndexedI64 { base: 0, index: 24, stride: 8, src: 32 },
+                        Op::StoreIndexedI64 {
+                            base: 0,
+                            index: 24,
+                            stride: 8,
+                            src: 32,
+                        },
                         Op::ConstI64 { dst: 24, value: 1 },
                         Op::ConstI64 { dst: 32, value: 6 },
-                        Op::StoreIndexedI64 { base: 0, index: 24, stride: 8, src: 32 },
+                        Op::StoreIndexedI64 {
+                            base: 0,
+                            index: 24,
+                            stride: 8,
+                            src: 32,
+                        },
                         Op::ConstI64 { dst: 24, value: 2 },
                         Op::ConstI64 { dst: 32, value: 7 },
-                        Op::StoreIndexedI64 { base: 0, index: 24, stride: 8, src: 32 },
+                        Op::StoreIndexedI64 {
+                            base: 0,
+                            index: 24,
+                            stride: 8,
+                            src: 32,
+                        },
                         Op::Ret { src: 0, size: 24 },
                     ],
                 },
@@ -839,7 +1064,11 @@ mod tests {
         };
         let mut task = Task::spawn(&program, FnId(0));
         assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
-        assert_eq!(task.result_i64(), 6, "indexed into the 24-byte returned composite");
+        assert_eq!(
+            task.result_i64(),
+            6,
+            "indexed into the 24-byte returned composite"
+        );
     }
 
     fn later(value: i64, ms: u64) -> Pin<Box<dyn Future<Output = i64>>> {
@@ -859,8 +1088,15 @@ mod tests {
                 Fn {
                     frame: frame_of_i64s(2),
                     code: vec![
-                        Op::ConstI64 { dst: 0, value: 1000 },
-                        Op::Call { callee: FnId(1), args: vec![], ret: 8 },
+                        Op::ConstI64 {
+                            dst: 0,
+                            value: 1000,
+                        },
+                        Op::Call {
+                            callee: FnId(1),
+                            args: vec![],
+                            ret: 8,
+                        },
                         Op::AddI64 { dst: 8, a: 8, b: 0 },
                         Op::Ret { src: 8, size: 8 },
                     ],
@@ -870,7 +1106,11 @@ mod tests {
                     code: vec![
                         Op::Await { dst: 0, input: 0 },
                         Op::Await { dst: 8, input: 1 },
-                        Op::MulI64 { dst: 16, a: 0, b: 8 },
+                        Op::MulI64 {
+                            dst: 16,
+                            a: 0,
+                            b: 8,
+                        },
                         Op::Ret { src: 16, size: 8 },
                     ],
                 },
@@ -882,7 +1122,10 @@ mod tests {
         };
         let exec = TaskExec::new(running, vec![later(6, 60), later(7, 20)], vec![]);
         let result = exec.await;
-        assert_eq!(i64::from_le_bytes(result[..8].try_into().unwrap()), 6 * 7 + 1000);
+        assert_eq!(
+            i64::from_le_bytes(result[..8].try_into().unwrap()),
+            6 * 7 + 1000
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -935,7 +1178,11 @@ mod tests {
             code: vec![
                 Op::Call {
                     callee: FnId(2),
-                    args: vec![ArgCopy { src: 0, dst: 0, size: 8 }],
+                    args: vec![ArgCopy {
+                        src: 0,
+                        dst: 0,
+                        size: 8,
+                    }],
                     ret: 8,
                 },
                 Op::AddI64 { dst: 8, a: 8, b: 0 },
@@ -948,7 +1195,11 @@ mod tests {
                 Op::ConstI64 { dst: 0, value: 10 },
                 Op::Call {
                     callee: FnId(1),
-                    args: vec![ArgCopy { src: 0, dst: 0, size: 8 }],
+                    args: vec![ArgCopy {
+                        src: 0,
+                        dst: 0,
+                        size: 8,
+                    }],
                     ret: 8,
                 },
                 Op::Ret { src: 8, size: 8 },
@@ -962,5 +1213,128 @@ mod tests {
         // leaf: 10+1=11; mid: 11+10=21.
         assert_eq!(task.result_i64(), 21);
         assert_eq!(task.depth(), 0);
+    }
+
+    #[test]
+    fn direct_recursion_uses_task_frames_not_the_rust_stack() {
+        let countdown = Fn {
+            frame: frame_of_i64s(6),
+            code: vec![
+                Op::ConstI64 { dst: 8, value: 0 },
+                Op::EqI64 {
+                    dst: 24,
+                    a: 0,
+                    b: 8,
+                },
+                Op::JumpIfZero {
+                    value: 24,
+                    target: 4,
+                },
+                Op::Ret { src: 8, size: 8 },
+                Op::ConstI64 { dst: 16, value: 1 },
+                Op::SubI64 {
+                    dst: 32,
+                    a: 0,
+                    b: 16,
+                },
+                Op::Call {
+                    callee: FnId(0),
+                    args: vec![ArgCopy {
+                        src: 32,
+                        dst: 0,
+                        size: 8,
+                    }],
+                    ret: 40,
+                },
+                Op::Ret { src: 40, size: 8 },
+            ],
+        };
+        let program = Program {
+            fns: vec![countdown],
+        };
+        let mut task = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
+        task.write_i64(0, 100_000);
+
+        assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(task.result_i64(), 0);
+        assert_eq!(task.depth(), 0);
+    }
+
+    #[test]
+    fn mutual_recursion_calls_through_recorded_fn_ids() {
+        let even = Fn {
+            frame: frame_of_i64s(6),
+            code: vec![
+                Op::ConstI64 { dst: 8, value: 0 },
+                Op::EqI64 {
+                    dst: 24,
+                    a: 0,
+                    b: 8,
+                },
+                Op::JumpIfZero {
+                    value: 24,
+                    target: 5,
+                },
+                Op::ConstI64 { dst: 40, value: 1 },
+                Op::Ret { src: 40, size: 8 },
+                Op::ConstI64 { dst: 16, value: 1 },
+                Op::SubI64 {
+                    dst: 32,
+                    a: 0,
+                    b: 16,
+                },
+                Op::Call {
+                    callee: FnId(1),
+                    args: vec![ArgCopy {
+                        src: 32,
+                        dst: 0,
+                        size: 8,
+                    }],
+                    ret: 40,
+                },
+                Op::Ret { src: 40, size: 8 },
+            ],
+        };
+        let odd = Fn {
+            frame: frame_of_i64s(6),
+            code: vec![
+                Op::ConstI64 { dst: 8, value: 0 },
+                Op::EqI64 {
+                    dst: 24,
+                    a: 0,
+                    b: 8,
+                },
+                Op::JumpIfZero {
+                    value: 24,
+                    target: 5,
+                },
+                Op::ConstI64 { dst: 40, value: 0 },
+                Op::Ret { src: 40, size: 8 },
+                Op::ConstI64 { dst: 16, value: 1 },
+                Op::SubI64 {
+                    dst: 32,
+                    a: 0,
+                    b: 16,
+                },
+                Op::Call {
+                    callee: FnId(0),
+                    args: vec![ArgCopy {
+                        src: 32,
+                        dst: 0,
+                        size: 8,
+                    }],
+                    ret: 40,
+                },
+                Op::Ret { src: 40, size: 8 },
+            ],
+        };
+        let program = Program {
+            fns: vec![even, odd],
+        };
+        let mut task = Task::spawn(&program, FnId(0));
+        task.write_i64(0, 101);
+
+        assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(task.result_i64(), 0);
     }
 }
