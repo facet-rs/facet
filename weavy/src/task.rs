@@ -90,6 +90,27 @@ pub enum Op {
     /// `frame[dst]` and continue; otherwise PARK the task. Sync host
     /// calls are deliberately NOT this op.
     Await { dst: u32, input: u32 },
+    /// `frame[dst] = frame[base + frame[index]*stride]` — dynamic
+    /// indexing into an INLINE composite (an array living in the
+    /// frame, unboxed). Bounds are the checker's obligation: the
+    /// count is static in the array's declared layout; a lowering
+    /// that emits an out-of-range index has a compiler bug, and a
+    /// validation pass may reject programs statically — never a
+    /// runtime tag or check here (constitution A6).
+    LoadIndexedI64 {
+        dst: u32,
+        base: u32,
+        index: u32,
+        stride: u32,
+    },
+    /// `frame[base + frame[index]*stride] = frame[src]` — the store
+    /// twin of [`Op::LoadIndexedI64`], same obligations.
+    StoreIndexedI64 {
+        base: u32,
+        index: u32,
+        stride: u32,
+        src: u32,
+    },
 }
 
 /// Frame-granular trace events (the ruled vocabulary, recorded
@@ -249,6 +270,30 @@ impl Task {
                             return TaskStep::Done;
                         }
                     }
+                }
+                Op::LoadIndexedI64 {
+                    dst,
+                    base: arr,
+                    index,
+                    stride,
+                } => {
+                    let ix = read_i64_at(&self.arena, base + index as usize);
+                    let at = base + arr as usize + ix as usize * stride as usize;
+                    let v = read_i64_at(&self.arena, at);
+                    write_i64_at(&mut self.arena, base + dst as usize, v);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::StoreIndexedI64 {
+                    base: arr,
+                    index,
+                    stride,
+                    src,
+                } => {
+                    let ix = read_i64_at(&self.arena, base + index as usize);
+                    let v = read_i64_at(&self.arena, base + src as usize);
+                    let at = base + arr as usize + ix as usize * stride as usize;
+                    write_i64_at(&mut self.arena, at, v);
+                    self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::Await { dst, input } => {
                     let idx = input as usize;
@@ -458,6 +503,132 @@ mod tests {
         let mut task = Task::spawn(&program, FnId(0));
         assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
         assert_eq!(task.result_i64(), 54);
+    }
+
+    #[test]
+    fn inline_composites_pass_by_value_and_survive_parking() {
+        // Amos's stress: a 48-byte inline array of six i64s living IN
+        // frames (the "stack" that happens to be arena-heap), never
+        // boxed. The whole array crosses a call BY VALUE in one
+        // ArgCopy; the callee parks on an await with the composite
+        // live in BOTH frames; the callee mutates ITS copy; the
+        // caller's copy is untouched (value semantics).
+        use crate::mem::declared::{array_of, declared_struct, i64_};
+        use crate::mem::Access;
+
+        // Caller frame: (header, arr[6], out, idx, val).
+        let caller_desc = declared_struct(
+            (),
+            vec![i64_(()), array_of((), i64_(()), 6), i64_(()), i64_(()), i64_(())],
+        );
+        let Access::Record(caller_rec) = &caller_desc.access else {
+            panic!("record");
+        };
+        let off = |i: usize| u32::try_from(caller_rec.fields[i].offset).unwrap();
+        let (header, arr, out, idx, val) = (off(0), off(1), off(2), off(3), off(4));
+
+        // Callee frame: (arr[6], ix, a, b, sum).
+        let callee_desc = declared_struct(
+            (),
+            vec![array_of((), i64_(()), 6), i64_(()), i64_(()), i64_(()), i64_(())],
+        );
+        let Access::Record(callee_rec) = &callee_desc.access else {
+            panic!("record");
+        };
+        let coff = |i: usize| u32::try_from(callee_rec.fields[i].offset).unwrap();
+        let (c_arr, c_ix, c_a, c_b, c_sum) = (coff(0), coff(1), coff(2), coff(3), coff(4));
+        assert_eq!(callee_rec.fields[0].descriptor.layout.size, 48, "inline, unboxed");
+
+        let mut caller_code = vec![Op::ConstI64 { dst: header, value: 7 }];
+        // Fill arr[k] = 10*(k+1) through the dynamic-index op.
+        for k in 0..6i64 {
+            caller_code.push(Op::ConstI64 { dst: idx, value: k });
+            caller_code.push(Op::ConstI64 { dst: val, value: 10 * (k + 1) });
+            caller_code.push(Op::StoreIndexedI64 { base: arr, index: idx, stride: 8, src: val });
+        }
+        caller_code.push(Op::Call {
+            callee: FnId(1),
+            // ONE copy moves the whole 48-byte composite by value.
+            args: vec![ArgCopy { src: arr, dst: c_arr, size: 48 }],
+            ret: out,
+        });
+        // Prove the caller's copy survived the callee's mutation:
+        // reload own arr[2] (callee overwrites its own arr[2] with 999).
+        caller_code.push(Op::ConstI64 { dst: idx, value: 2 });
+        caller_code.push(Op::LoadIndexedI64 { dst: val, base: arr, index: idx, stride: 8 });
+        caller_code.push(Op::AddI64 { dst: out, a: out, b: val });
+        caller_code.push(Op::Ret { src: out, size: 8 });
+
+        let callee_code = vec![
+            // Park FIRST — the 48-byte composite is live in both
+            // frames across the suspension.
+            Op::Await { dst: c_ix, input: 0 },
+            Op::LoadIndexedI64 { dst: c_a, base: c_arr, index: c_ix, stride: 8 },
+            Op::ConstI64 { dst: c_sum, value: 1 },
+            Op::AddI64 { dst: c_ix, a: c_ix, b: c_sum },
+            Op::LoadIndexedI64 { dst: c_b, base: c_arr, index: c_ix, stride: 8 },
+            Op::AddI64 { dst: c_sum, a: c_a, b: c_b },
+            // Mutate OUR copy: arr[ix] = 999 (value semantics check).
+            Op::ConstI64 { dst: c_a, value: 999 },
+            Op::StoreIndexedI64 { base: c_arr, index: c_ix, stride: 8, src: c_a },
+            Op::Ret { src: c_sum, size: 8 },
+        ];
+
+        let program = Program {
+            fns: vec![
+                Fn { frame: caller_desc.layout, code: caller_code },
+                Fn { frame: callee_desc.layout, code: callee_code },
+            ],
+        };
+        let mut task = Task::spawn(&program, FnId(0));
+        assert_eq!(task.run(&program, &[false], &[0]), TaskStep::Parked { input: 0 });
+        assert_eq!(task.depth(), 2, "parked with 48-byte composites live in both frames");
+
+        // ix=2: a=arr[2]=30, b=arr[3]=40, sum=70; caller adds its own
+        // UNMUTATED arr[2]=30 → 100. (If by-value copying were shared,
+        // the callee's 999 would bleed through and this would be 1069.)
+        assert_eq!(task.run(&program, &[true], &[2]), TaskStep::Done);
+        assert_eq!(task.result_i64(), 100);
+    }
+
+    #[test]
+    fn composite_returns_flow_through_ret_slots() {
+        // A callee builds a 24-byte inline array and returns the WHOLE
+        // composite through the caller's designated slot (sret shape);
+        // the caller indexes into the returned bytes in place.
+        let program = Program {
+            fns: vec![
+                Fn {
+                    // (ret_arr[3] @0, idx @24, out @32)
+                    frame: Layout { size: 40, align: 8 },
+                    code: vec![
+                        Op::Call { callee: FnId(1), args: vec![], ret: 0 },
+                        Op::ConstI64 { dst: 24, value: 1 },
+                        Op::LoadIndexedI64 { dst: 32, base: 0, index: 24, stride: 8 },
+                        Op::Ret { src: 32, size: 8 },
+                    ],
+                },
+                Fn {
+                    // (arr[3] @0, idx @24, val @32)
+                    frame: Layout { size: 40, align: 8 },
+                    code: vec![
+                        Op::ConstI64 { dst: 24, value: 0 },
+                        Op::ConstI64 { dst: 32, value: 5 },
+                        Op::StoreIndexedI64 { base: 0, index: 24, stride: 8, src: 32 },
+                        Op::ConstI64 { dst: 24, value: 1 },
+                        Op::ConstI64 { dst: 32, value: 6 },
+                        Op::StoreIndexedI64 { base: 0, index: 24, stride: 8, src: 32 },
+                        Op::ConstI64 { dst: 24, value: 2 },
+                        Op::ConstI64 { dst: 32, value: 7 },
+                        Op::StoreIndexedI64 { base: 0, index: 24, stride: 8, src: 32 },
+                        Op::Ret { src: 0, size: 24 },
+                    ],
+                },
+            ],
+        };
+        let mut task = Task::spawn(&program, FnId(0));
+        assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(task.result_i64(), 6, "indexed into the 24-byte returned composite");
     }
 
     #[test]

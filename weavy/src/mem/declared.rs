@@ -61,6 +61,31 @@ pub fn f64_<SchemaRef>(schema: SchemaRef) -> Descriptor<SchemaRef> {
     scalar(schema, 8, 8)
 }
 
+/// An INLINE fixed-count array: `count` elements, `stride` apart,
+/// living wherever the descriptor is placed (a frame, a struct field)
+/// — unboxed, part of the containing layout's bytes.
+#[must_use]
+pub fn array_of<SchemaRef>(
+    schema: SchemaRef,
+    element: Descriptor<SchemaRef>,
+    count: usize,
+) -> Descriptor<SchemaRef> {
+    let align = element.layout.align.max(1);
+    let stride = align_up(element.layout.size, align);
+    Descriptor {
+        schema,
+        layout: Layout {
+            size: stride * count,
+            align,
+        },
+        access: Access::Array {
+            element: Box::new(element),
+            count,
+            stride,
+        },
+    }
+}
+
 /// Lay out a declared struct. `fields` are the field descriptors in
 /// DECLARATION order; the returned record's `FieldAccess` vec keeps
 /// that order (field index = declaration index, forever), while the
