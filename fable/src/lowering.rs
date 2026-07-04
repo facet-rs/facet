@@ -14,6 +14,8 @@ use weavy::ir::{
     IntrinsicDescriptor, IntrinsicOp, MemoryRegion, TypedMemoryAccess, WeavyOp,
 };
 use weavy::mem::declared as declared_mem;
+use weavy::mem::runtime::RawScratch;
+use weavy::mem::{Access as WeavyAccess, Tag as WeavyTag};
 use weavy::{BlockRef, Control, RunError, RunStats, Step};
 
 use crate::ast::{
@@ -155,6 +157,14 @@ impl FableDeclaredTypes {
     /// Whether the source declared no fable types.
     pub fn is_empty(&self) -> bool {
         self.types.is_empty()
+    }
+
+    fn index_of(&self, name: &str) -> Option<usize> {
+        self.by_name.get(name).copied()
+    }
+
+    fn by_index(&self, index: usize) -> Option<&FableDeclaredType> {
+        self.types.get(index)
     }
 }
 
@@ -1042,6 +1052,7 @@ impl FableRootPlan {
         let mut interp = FableInterp {
             roots: runtime_roots,
             locals: LocalSlots::default(),
+            declared_types: self.declared_types.clone(),
             predicate_result: None,
             query_result: None,
         };
@@ -1057,6 +1068,7 @@ impl FableRootPlan {
         let mut interp = FableInterp {
             roots: runtime_roots,
             locals: LocalSlots::default(),
+            declared_types: self.declared_types.clone(),
             predicate_result: None,
             query_result: None,
         };
@@ -1107,6 +1119,7 @@ impl FableRootPredicatePlan {
         let mut interp = FableInterp {
             roots: runtime_roots,
             locals: LocalSlots::default(),
+            declared_types: self.declared_types.clone(),
             predicate_result: None,
             query_result: None,
         };
@@ -1125,6 +1138,7 @@ impl FableRootPredicatePlan {
         let mut interp = FableInterp {
             roots: runtime_roots,
             locals: LocalSlots::default(),
+            declared_types: self.declared_types.clone(),
             predicate_result: None,
             query_result: None,
         };
@@ -1185,6 +1199,7 @@ where
         let mut interp = FableInterp {
             roots: runtime_roots,
             locals: LocalSlots::default(),
+            declared_types: self.declared_types.clone(),
             predicate_result: None,
             query_result: None,
         };
@@ -1206,6 +1221,7 @@ where
         let mut interp = FableInterp {
             roots: runtime_roots,
             locals: LocalSlots::default(),
+            declared_types: self.declared_types.clone(),
             predicate_result: None,
             query_result: None,
         };
@@ -1783,6 +1799,7 @@ enum ExprPlan {
     String(StringExpr),
     Number(NumberExpr),
     Value(ValueExpr),
+    Match(Box<MatchExprPlan>),
 }
 
 impl ExprPlan {
@@ -1796,6 +1813,7 @@ impl ExprPlan {
             ExprPlan::Number(NumberExpr::Unsigned(_)) => "unsigned number",
             ExprPlan::Number(NumberExpr::Float(_)) => "float",
             ExprPlan::Value(_) => "typed value",
+            ExprPlan::Match(expr) => expr.result_kind.name(),
         }
     }
 }
@@ -1810,6 +1828,7 @@ enum LocalRef {
     Unsigned(usize),
     Float(usize),
     Value { index: usize, shape: &'static Shape },
+    Declared { index: usize, type_index: usize },
 }
 
 impl LocalRef {
@@ -1823,8 +1842,87 @@ impl LocalRef {
             LocalRef::Unsigned(_) => "unsigned number",
             LocalRef::Float(_) => "float",
             LocalRef::Value { .. } => "typed value",
+            LocalRef::Declared { .. } => "declared value",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeclaredScalar {
+    Unit,
+    Bool,
+    Char,
+    String,
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    ISize,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    USize,
+    F32,
+    F64,
+}
+
+impl DeclaredScalar {
+    fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "unit" => Self::Unit,
+            "bool" => Self::Bool,
+            "char" => Self::Char,
+            "string" => Self::String,
+            "i8" => Self::I8,
+            "i16" => Self::I16,
+            "i32" => Self::I32,
+            "i64" => Self::I64,
+            "i128" => Self::I128,
+            "isize" => Self::ISize,
+            "u8" => Self::U8,
+            "u16" => Self::U16,
+            "u32" => Self::U32,
+            "u64" => Self::U64,
+            "u128" => Self::U128,
+            "usize" => Self::USize,
+            "f32" => Self::F32,
+            "f64" => Self::F64,
+            _ => return None,
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Unit => "unit",
+            Self::Bool => "bool",
+            Self::Char => "char",
+            Self::String => "string",
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::I128 => "i128",
+            Self::ISize => "isize",
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+            Self::U64 => "u64",
+            Self::U128 => "u128",
+            Self::USize => "usize",
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DeclaredScalarRead {
+    local: LocalRef,
+    offset: usize,
+    scalar: DeclaredScalar,
 }
 
 #[derive(Debug)]
@@ -1832,6 +1930,7 @@ enum UnitExpr {
     Null,
     Read(FieldPath),
     Local(LocalRef),
+    DeclaredRead(DeclaredScalarRead),
     HostFieldMut {
         function: FableFieldMutUnary,
         field: FieldPath,
@@ -1843,6 +1942,7 @@ enum BoolExpr {
     Literal(bool),
     Read(FieldPath),
     Local(LocalRef),
+    DeclaredRead(DeclaredScalarRead),
     HostFieldPredicate {
         function: FableFieldBoolUnary,
         field: FieldPath,
@@ -1888,6 +1988,7 @@ enum CmpOp {
 enum CharExpr {
     Read(FieldPath),
     Local(LocalRef),
+    DeclaredRead(DeclaredScalarRead),
 }
 
 #[derive(Debug)]
@@ -1895,6 +1996,7 @@ enum StringExpr {
     Literal(String),
     Read(FieldPath),
     Local(LocalRef),
+    DeclaredRead(DeclaredScalarRead),
     HostFieldString {
         function: FableFieldStringUnary,
         field: FieldPath,
@@ -1918,6 +2020,7 @@ enum NumberExpr {
 enum IntExpr {
     Read(FieldPath),
     Local(LocalRef),
+    DeclaredRead(DeclaredScalarRead),
     HostUnary {
         function: FableSignedUnary,
         value: Box<NumberExpr>,
@@ -1938,6 +2041,7 @@ enum IntExpr {
 enum UIntExpr {
     Read(FieldPath),
     Local(LocalRef),
+    DeclaredRead(DeclaredScalarRead),
     Literal(u128),
     HostUnary {
         function: FableUnsignedUnary,
@@ -1958,6 +2062,7 @@ enum UIntExpr {
 enum FloatExpr {
     Read(FieldPath),
     Local(LocalRef),
+    DeclaredRead(DeclaredScalarRead),
     Literal(f64),
     HostUnary {
         function: FableFloatUnary,
@@ -1979,6 +2084,7 @@ enum FloatExpr {
 enum ValueExpr {
     Struct(StructExpr),
     Local(LocalRef),
+    Declared(DeclaredValueExpr),
 }
 
 #[derive(Debug)]
@@ -1995,17 +2101,64 @@ struct StructFieldInit {
     value: ExprPlan,
 }
 
+#[derive(Debug)]
+enum DeclaredValueExpr {
+    Struct(DeclaredStructExpr),
+    Enum(DeclaredEnumExpr),
+    Local(LocalRef),
+    Field(DeclaredValueField),
+}
+
+#[derive(Debug)]
+struct DeclaredStructExpr {
+    type_index: usize,
+    fields: Box<[DeclaredFieldInit]>,
+}
+
+#[derive(Debug)]
+struct DeclaredEnumExpr {
+    type_index: usize,
+    selector: u64,
+    tag_offset: usize,
+    tag_width: usize,
+    fields: Box<[DeclaredFieldInit]>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DeclaredValueField {
+    local: LocalRef,
+    type_index: usize,
+    offset: usize,
+}
+
+#[derive(Debug)]
+struct DeclaredFieldInit {
+    offset: usize,
+    ty: DeclaredFieldType,
+    value: ExprPlan,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeclaredFieldType {
+    Scalar(DeclaredScalar),
+    Declared(usize),
+}
+
 impl ValueExpr {
     fn shape(&self) -> &'static Shape {
         match self {
             Self::Struct(expr) => expr.shape,
             Self::Local(LocalRef::Value { shape, .. }) => shape,
+            Self::Declared(_) => unreachable!("declared values do not have Facet shapes"),
             Self::Local(_) => unreachable!("value expression local must refer to a value slot"),
         }
     }
 
     fn kind_name(&self) -> &'static str {
-        "typed value"
+        match self {
+            Self::Declared(_) => "declared value",
+            _ => "typed value",
+        }
     }
 }
 
@@ -2013,6 +2166,66 @@ impl StructExpr {
     fn kind_name(&self) -> &'static str {
         "typed value"
     }
+}
+
+impl DeclaredValueExpr {
+    fn type_index(&self) -> usize {
+        match self {
+            Self::Struct(expr) => expr.type_index,
+            Self::Enum(expr) => expr.type_index,
+            Self::Local(LocalRef::Declared { type_index, .. }) => *type_index,
+            Self::Field(field) => field.type_index,
+            Self::Local(_) => unreachable!("declared value local must refer to declared slot"),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MatchExprPlan {
+    scrutinee: DeclaredValueExpr,
+    enum_type_index: usize,
+    result_kind: FableQueryType,
+    arms: Box<[MatchArmPlan]>,
+}
+
+#[derive(Debug)]
+struct MatchArmPlan {
+    selector: Option<u64>,
+    bindings: Box<[MatchBindingPlan]>,
+    prefix: FableProgram,
+    result: ExprPlan,
+}
+
+#[derive(Debug)]
+enum MatchBindingPlan {
+    Scalar {
+        local: LocalRef,
+        offset: usize,
+        scalar: DeclaredScalar,
+    },
+    Declared {
+        local: LocalRef,
+        offset: usize,
+        type_index: usize,
+    },
+}
+
+struct ExpectedDeclaredField {
+    name: String,
+    offset: usize,
+    ty: DeclaredFieldType,
+}
+
+struct ExpectedDeclaredVariant {
+    selector: u64,
+    tag_offset: usize,
+    tag_width: usize,
+    fields: Vec<ExpectedDeclaredField>,
+}
+
+struct LoweredBlockResult {
+    prefix: FableProgram,
+    result: ExprPlan,
 }
 
 #[derive(Debug)]
@@ -2199,6 +2412,7 @@ struct LocalAllocator {
     unsigned_count: usize,
     float_count: usize,
     value_count: usize,
+    declared_count: usize,
 }
 
 impl LocalAllocator {
@@ -2239,15 +2453,82 @@ impl LocalAllocator {
                 self.float_count += 1;
                 LocalRef::Float(index)
             }
-            ExprPlan::Value(expr) => {
-                let index = self.value_count;
-                self.value_count += 1;
-                LocalRef::Value {
-                    index,
-                    shape: expr.shape(),
+            ExprPlan::Value(expr) => match expr {
+                ValueExpr::Declared(expr) => {
+                    let index = self.declared_count;
+                    self.declared_count += 1;
+                    LocalRef::Declared {
+                        index,
+                        type_index: expr.type_index(),
+                    }
                 }
+                _ => {
+                    let index = self.value_count;
+                    self.value_count += 1;
+                    LocalRef::Value {
+                        index,
+                        shape: expr.shape(),
+                    }
+                }
+            },
+            ExprPlan::Match(_) => unreachable!("match expressions cannot allocate locals directly"),
+        }
+    }
+
+    fn allocate_declared_scalar(&mut self, scalar: DeclaredScalar) -> LocalRef {
+        match scalar {
+            DeclaredScalar::Unit => {
+                let index = self.unit_count;
+                self.unit_count += 1;
+                LocalRef::Unit(index)
+            }
+            DeclaredScalar::Bool => {
+                let index = self.bool_count;
+                self.bool_count += 1;
+                LocalRef::Bool(index)
+            }
+            DeclaredScalar::Char => {
+                let index = self.char_count;
+                self.char_count += 1;
+                LocalRef::Char(index)
+            }
+            DeclaredScalar::String => {
+                let index = self.string_count;
+                self.string_count += 1;
+                LocalRef::String(index)
+            }
+            DeclaredScalar::I8
+            | DeclaredScalar::I16
+            | DeclaredScalar::I32
+            | DeclaredScalar::I64
+            | DeclaredScalar::I128
+            | DeclaredScalar::ISize => {
+                let index = self.signed_count;
+                self.signed_count += 1;
+                LocalRef::Signed(index)
+            }
+            DeclaredScalar::U8
+            | DeclaredScalar::U16
+            | DeclaredScalar::U32
+            | DeclaredScalar::U64
+            | DeclaredScalar::U128
+            | DeclaredScalar::USize => {
+                let index = self.unsigned_count;
+                self.unsigned_count += 1;
+                LocalRef::Unsigned(index)
+            }
+            DeclaredScalar::F32 | DeclaredScalar::F64 => {
+                let index = self.float_count;
+                self.float_count += 1;
+                LocalRef::Float(index)
             }
         }
+    }
+
+    fn allocate_declared_value(&mut self, type_index: usize) -> LocalRef {
+        let index = self.declared_count;
+        self.declared_count += 1;
+        LocalRef::Declared { index, type_index }
     }
 }
 
@@ -2646,6 +2927,9 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 path_to_expr(path)
             }
             Expr::Field(_) => {
+                if let Some(expr) = self.lower_declared_field_expr(expr)? {
+                    return Ok(expr);
+                }
                 let path = self.lower_readable_path(expr)?;
                 path_to_expr(path)
             }
@@ -2657,22 +2941,70 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                 path_to_expr(path)
             }
             Expr::StructLiteral(literal) => self.lower_struct_literal(literal),
-            Expr::EnumVariant(_) => Err(FableError::Unsupported {
-                feature: "enum variant construction before checker wiring".into(),
-            }),
-            Expr::Match(_) => Err(FableError::Unsupported {
-                feature: "match expressions before checker wiring".into(),
-            }),
+            Expr::EnumVariant(expr) => self.lower_enum_variant_expr(expr),
+            Expr::Match(expr) => self.lower_match_expr(expr),
             Expr::Call(call) => self.lower_call(call),
         }
+    }
+
+    fn lower_declared_field_expr(&self, expr: &Expr) -> Result<Option<ExprPlan>, FableError> {
+        let path = collect_path(expr)?;
+        let Some(PathSegment::Name(root_name)) = path.first() else {
+            return Ok(None);
+        };
+        let Some(local @ LocalRef::Declared { type_index, .. }) = self.find_local(root_name) else {
+            return Ok(None);
+        };
+
+        let mut current_type_index = type_index;
+        let mut offset = 0usize;
+        let mut segments = path.iter().skip(1).peekable();
+        while let Some(segment) = segments.next() {
+            let PathSegment::Name(field_name) = segment else {
+                return Err(FableError::Unsupported {
+                    feature: "index access on declared values".into(),
+                });
+            };
+            let field = self.declared_field(current_type_index, field_name)?;
+            offset += field.offset;
+            let is_last = segments.peek().is_none();
+            match field.ty {
+                DeclaredFieldType::Scalar(scalar) if is_last => {
+                    return Ok(Some(declared_scalar_expr(DeclaredScalarRead {
+                        local,
+                        offset,
+                        scalar,
+                    })));
+                }
+                DeclaredFieldType::Scalar(scalar) => {
+                    return Err(FableError::Unsupported {
+                        feature: format!("field access through scalar {}", scalar.name()),
+                    });
+                }
+                DeclaredFieldType::Declared(next_type_index) if is_last => {
+                    return Ok(Some(ExprPlan::Value(ValueExpr::Declared(
+                        DeclaredValueExpr::Field(DeclaredValueField {
+                            local,
+                            type_index: next_type_index,
+                            offset,
+                        }),
+                    ))));
+                }
+                DeclaredFieldType::Declared(next_type_index) => {
+                    current_type_index = next_type_index;
+                }
+            }
+        }
+
+        Ok(Some(ExprPlan::Value(ValueExpr::Declared(
+            DeclaredValueExpr::Local(local),
+        ))))
     }
 
     fn lower_struct_literal(&mut self, literal: &StructLiteral) -> Result<ExprPlan, FableError> {
         let type_name = literal.type_name.value.as_str();
         if self.declared_types.get(type_name).is_some() {
-            return Err(FableError::Unsupported {
-                feature: "declared struct construction before value lowering".into(),
-            });
+            return self.lower_declared_struct_literal(literal);
         }
         let shape = self.resolve_type_name(type_name)?;
         if !shape.is_pod() {
@@ -2728,6 +3060,419 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             shape,
             fields: fields.into_boxed_slice(),
         })))
+    }
+
+    fn lower_declared_struct_literal(
+        &mut self,
+        literal: &StructLiteral,
+    ) -> Result<ExprPlan, FableError> {
+        let type_name = literal.type_name.value.as_str();
+        let type_index = self.declared_type_index(type_name)?;
+        let expected = self.declared_struct_fields(type_index)?;
+
+        let mut supplied = BTreeMap::new();
+        for field in &literal.fields {
+            let name = name_text(&field.name).to_owned();
+            if supplied.insert(name.clone(), field).is_some() {
+                return Err(FableError::DuplicateStructField { field: name });
+            }
+        }
+
+        let mut fields = Vec::with_capacity(expected.len());
+        for expected in expected {
+            let Some(field) = supplied.remove(&expected.name) else {
+                return Err(FableError::Unsupported {
+                    feature: format!("{} literal is missing field {}", type_name, expected.name),
+                });
+            };
+            let value = self.lower_expr(&field.value)?;
+            validate_declared_assignment(expected.ty, &value, &self.declared_types)?;
+            fields.push(DeclaredFieldInit {
+                offset: expected.offset,
+                ty: expected.ty,
+                value,
+            });
+        }
+
+        if let Some((name, _)) = supplied.into_iter().next() {
+            return Err(FableError::Unsupported {
+                feature: format!("{type_name} has no field named {name}"),
+            });
+        }
+
+        Ok(ExprPlan::Value(ValueExpr::Declared(
+            DeclaredValueExpr::Struct(DeclaredStructExpr {
+                type_index,
+                fields: fields.into_boxed_slice(),
+            }),
+        )))
+    }
+
+    fn lower_enum_variant_expr(
+        &mut self,
+        expr: &ast::EnumVariantExpr,
+    ) -> Result<ExprPlan, FableError> {
+        let type_name = expr.path.type_name.value.as_str();
+        let variant_name = expr.path.variant_name.value.as_str();
+        let type_index = self.declared_type_index(type_name)?;
+        let expected = self.declared_variant_fields(type_index, variant_name)?;
+
+        let supplied_fields: &[ast::StructField] = expr
+            .fields
+            .as_ref()
+            .map(|fields| fields.fields.as_slice())
+            .unwrap_or(&[]);
+        let mut supplied = BTreeMap::new();
+        for field in supplied_fields {
+            let name = name_text(&field.name).to_owned();
+            if supplied.insert(name.clone(), field).is_some() {
+                return Err(FableError::DuplicateStructField { field: name });
+            }
+        }
+
+        let mut fields = Vec::with_capacity(expected.fields.len());
+        for expected_field in expected.fields {
+            let Some(field) = supplied.remove(&expected_field.name) else {
+                return Err(FableError::Unsupported {
+                    feature: format!(
+                        "{}::{} literal is missing field {}",
+                        type_name, variant_name, expected_field.name
+                    ),
+                });
+            };
+            let value = self.lower_expr(&field.value)?;
+            validate_declared_assignment(expected_field.ty, &value, &self.declared_types)?;
+            fields.push(DeclaredFieldInit {
+                offset: expected_field.offset,
+                ty: expected_field.ty,
+                value,
+            });
+        }
+
+        if let Some((name, _)) = supplied.into_iter().next() {
+            return Err(FableError::Unsupported {
+                feature: format!("{type_name}::{variant_name} has no field named {name}"),
+            });
+        }
+
+        Ok(ExprPlan::Value(ValueExpr::Declared(
+            DeclaredValueExpr::Enum(DeclaredEnumExpr {
+                type_index,
+                selector: expected.selector,
+                tag_offset: expected.tag_offset,
+                tag_width: expected.tag_width,
+                fields: fields.into_boxed_slice(),
+            }),
+        )))
+    }
+
+    fn declared_type_index(&self, name: &str) -> Result<usize, FableError> {
+        self.declared_types
+            .index_of(name)
+            .ok_or_else(|| FableError::UnknownType {
+                name: name.to_owned(),
+            })
+    }
+
+    fn declared_type(&self, type_index: usize) -> Result<&FableDeclaredType, FableError> {
+        self.declared_types
+            .by_index(type_index)
+            .ok_or(FableError::MalformedProgram {
+                reason: "declared type index was missing",
+            })
+    }
+
+    fn declared_struct_fields(
+        &self,
+        type_index: usize,
+    ) -> Result<Vec<ExpectedDeclaredField>, FableError> {
+        let declared = self.declared_type(type_index)?;
+        let FableDeclaredTypeKind::Struct { fields } = declared.kind() else {
+            return Err(FableError::Unsupported {
+                feature: format!("struct literal for non-struct type {}", declared.name()),
+            });
+        };
+        let WeavyAccess::Record(record) = &declared.descriptor().access else {
+            return Err(FableError::MalformedProgram {
+                reason: "declared struct did not have record descriptor",
+            });
+        };
+        fields
+            .iter()
+            .zip(&record.fields)
+            .map(|(field, access)| {
+                Ok(ExpectedDeclaredField {
+                    name: field.name.clone(),
+                    offset: access.offset,
+                    ty: self.declared_field_type(&field.type_name)?,
+                })
+            })
+            .collect()
+    }
+
+    fn declared_variant_fields(
+        &self,
+        type_index: usize,
+        variant_name: &str,
+    ) -> Result<ExpectedDeclaredVariant, FableError> {
+        let declared = self.declared_type(type_index)?;
+        let FableDeclaredTypeKind::Enum { variants } = declared.kind() else {
+            return Err(FableError::Unsupported {
+                feature: format!("variant construction for non-enum type {}", declared.name()),
+            });
+        };
+        let WeavyAccess::Enum(enum_access) = &declared.descriptor().access else {
+            return Err(FableError::MalformedProgram {
+                reason: "declared enum did not have enum descriptor",
+            });
+        };
+        let variant_index = variants
+            .iter()
+            .position(|variant| variant.name == variant_name)
+            .ok_or_else(|| FableError::Unsupported {
+                feature: format!("{} has no variant named {variant_name}", declared.name()),
+            })?;
+        let variant = &variants[variant_index];
+        let access = &enum_access.variants[variant_index];
+        let WeavyTag::Direct {
+            offset: tag_offset,
+            width: tag_width,
+        } = enum_access.tag
+        else {
+            return Err(FableError::Unsupported {
+                feature: "non-direct declared enum tags".into(),
+            });
+        };
+        let fields = variant
+            .fields
+            .iter()
+            .zip(&access.payload.fields)
+            .map(|(field, access)| {
+                Ok(ExpectedDeclaredField {
+                    name: field.name.clone(),
+                    offset: access.offset,
+                    ty: self.declared_field_type(&field.type_name)?,
+                })
+            })
+            .collect::<Result<Vec<_>, FableError>>()?;
+        Ok(ExpectedDeclaredVariant {
+            selector: access.selector,
+            tag_offset,
+            tag_width,
+            fields,
+        })
+    }
+
+    fn declared_field(
+        &self,
+        type_index: usize,
+        field_name: &str,
+    ) -> Result<ExpectedDeclaredField, FableError> {
+        self.declared_struct_fields(type_index)?
+            .into_iter()
+            .find(|field| field.name == field_name)
+            .ok_or_else(|| {
+                let type_name = self
+                    .declared_type(type_index)
+                    .map(|ty| ty.name().to_owned())
+                    .unwrap_or_else(|_| "<missing>".to_owned());
+                FableError::Unsupported {
+                    feature: format!("{type_name} has no field named {field_name}"),
+                }
+            })
+    }
+
+    fn declared_field_type(&self, type_name: &str) -> Result<DeclaredFieldType, FableError> {
+        if let Some(scalar) = DeclaredScalar::from_name(type_name) {
+            return Ok(DeclaredFieldType::Scalar(scalar));
+        }
+        self.declared_type_index(type_name)
+            .map(DeclaredFieldType::Declared)
+    }
+
+    fn lower_match_expr(&mut self, expr: &ast::MatchExpr) -> Result<ExprPlan, FableError> {
+        let scrutinee = self.lower_expr(&expr.scrutinee)?;
+        let ExprPlan::Value(ValueExpr::Declared(scrutinee)) = scrutinee else {
+            return Err(FableError::TypeMismatch {
+                expected: "declared enum".into(),
+                actual: scrutinee.kind_name(),
+            });
+        };
+        let enum_type_index = scrutinee.type_index();
+        let (enum_name, variant_count) = {
+            let declared = self.declared_type(enum_type_index)?;
+            let FableDeclaredTypeKind::Enum { variants } = declared.kind() else {
+                return Err(FableError::TypeMismatch {
+                    expected: "declared enum".into(),
+                    actual: "declared struct",
+                });
+            };
+            (declared.name().to_owned(), variants.len())
+        };
+        let mut covered = vec![false; variant_count];
+        let mut wildcard = false;
+        let mut arms = Vec::with_capacity(expr.arms.len());
+        let mut result_kind: Option<FableQueryType> = None;
+
+        for (arm_index, arm) in expr.arms.iter().enumerate() {
+            if wildcard {
+                return Err(FableError::Unsupported {
+                    feature: "match wildcard arm must be trailing".into(),
+                });
+            }
+            let lowered = self.lower_match_arm(arm, enum_type_index)?;
+            if let Some(selector) = lowered.selector {
+                let variant_index =
+                    usize::try_from(selector).map_err(|_| FableError::MalformedProgram {
+                        reason: "variant selector did not fit usize",
+                    })?;
+                if let Some(slot) = covered.get_mut(variant_index) {
+                    *slot = true;
+                }
+            } else {
+                wildcard = true;
+            }
+            let arm_kind = expr_query_type(&lowered.result)?;
+            if let Some(result_kind) = result_kind {
+                if result_kind != arm_kind {
+                    return Err(FableError::TypeMismatch {
+                        expected: result_kind.name().to_owned(),
+                        actual: arm_kind.name(),
+                    });
+                }
+            } else {
+                result_kind = Some(arm_kind);
+            }
+            if arm_index + 1 == expr.arms.len() && lowered.selector.is_none() {
+                wildcard = true;
+            }
+            arms.push(lowered);
+        }
+
+        if arms.is_empty() {
+            return Err(FableError::Unsupported {
+                feature: "match without arms".into(),
+            });
+        }
+        if !wildcard && covered.iter().any(|covered| !covered) {
+            return Err(FableError::Unsupported {
+                feature: format!("non-exhaustive match on {enum_name}"),
+            });
+        }
+
+        Ok(ExprPlan::Match(Box::new(MatchExprPlan {
+            scrutinee,
+            enum_type_index,
+            result_kind: result_kind.expect("non-empty match has result kind"),
+            arms: arms.into_boxed_slice(),
+        })))
+    }
+
+    fn lower_match_arm(
+        &mut self,
+        arm: &ast::MatchArm,
+        enum_type_index: usize,
+    ) -> Result<MatchArmPlan, FableError> {
+        self.scopes.push(BTreeMap::new());
+        let (selector, bindings) = match &arm.pattern {
+            ast::MatchPattern::Wildcard(_) => (None, Vec::new()),
+            ast::MatchPattern::Variant(pattern) => {
+                self.lower_variant_pattern(pattern, enum_type_index)?
+            }
+        };
+        let result = self.lower_block_result(&arm.body)?;
+        self.scopes.pop();
+        Ok(MatchArmPlan {
+            selector,
+            bindings: bindings.into_boxed_slice(),
+            prefix: result.prefix,
+            result: result.result,
+        })
+    }
+
+    fn lower_variant_pattern(
+        &mut self,
+        pattern: &ast::VariantPattern,
+        enum_type_index: usize,
+    ) -> Result<(Option<u64>, Vec<MatchBindingPlan>), FableError> {
+        let enum_type = self.declared_type(enum_type_index)?;
+        let pattern_type = pattern.path.type_name.value.as_str();
+        if pattern_type != enum_type.name() {
+            return Err(FableError::TypeMismatch {
+                expected: enum_type.name().to_owned(),
+                actual: "different declared enum",
+            });
+        }
+        let variant_name = pattern.path.variant_name.value.as_str();
+        let expected = self.declared_variant_fields(enum_type_index, variant_name)?;
+        let supplied_fields: &[ast::PatternField] = pattern
+            .fields
+            .as_ref()
+            .map(|fields| fields.fields.as_slice())
+            .unwrap_or(&[]);
+        let mut supplied = BTreeMap::new();
+        for field in supplied_fields {
+            let name = name_text(&field.name).to_owned();
+            if supplied.insert(name.clone(), field).is_some() {
+                return Err(FableError::DuplicateStructField { field: name });
+            }
+        }
+
+        let mut bindings = Vec::with_capacity(expected.fields.len());
+        for field in expected.fields {
+            if supplied.remove(&field.name).is_none() {
+                return Err(FableError::Unsupported {
+                    feature: format!("{variant_name} pattern is missing field {}", field.name),
+                });
+            }
+            let local = match field.ty {
+                DeclaredFieldType::Scalar(scalar) => self.locals.allocate_declared_scalar(scalar),
+                DeclaredFieldType::Declared(type_index) => {
+                    self.locals.allocate_declared_value(type_index)
+                }
+            };
+            self.insert_local(field.name.clone(), local)?;
+            let binding = match field.ty {
+                DeclaredFieldType::Scalar(scalar) => MatchBindingPlan::Scalar {
+                    local,
+                    offset: field.offset,
+                    scalar,
+                },
+                DeclaredFieldType::Declared(type_index) => MatchBindingPlan::Declared {
+                    local,
+                    offset: field.offset,
+                    type_index,
+                },
+            };
+            bindings.push(binding);
+        }
+        if let Some((name, _)) = supplied.into_iter().next() {
+            return Err(FableError::Unsupported {
+                feature: format!("{variant_name} has no field named {name}"),
+            });
+        }
+        Ok((Some(expected.selector), bindings))
+    }
+
+    fn lower_block_result(&mut self, block: &Block) -> Result<LoweredBlockResult, FableError> {
+        let Some((last, prefix)) = block.stmts.split_last() else {
+            return Err(FableError::Unsupported {
+                feature: "match arm without result expression".into(),
+            });
+        };
+        let mut program = Vec::with_capacity(prefix.len());
+        for stmt in prefix {
+            program.push(self.lower_stmt(stmt)?);
+        }
+        let Stmt::Expr(expr) = last else {
+            return Err(FableError::Unsupported {
+                feature: "match arm must end with an expression".into(),
+            });
+        };
+        Ok(LoweredBlockResult {
+            prefix: program,
+            result: self.lower_expr(&expr.expr)?,
+        })
     }
 
     fn resolve_type_name(&self, name: &str) -> Result<&'static Shape, FableError> {
@@ -2944,6 +3689,17 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn declare_local(&mut self, name: String, expr: &ExprPlan) -> Result<LocalRef, FableError> {
+        if matches!(expr, ExprPlan::Match(_)) {
+            return Err(FableError::Unsupported {
+                feature: "binding match results".into(),
+            });
+        }
+        let local = self.locals.allocate(expr);
+        self.insert_local(name, local)?;
+        Ok(local)
+    }
+
+    fn insert_local(&mut self, name: String, local: LocalRef) -> Result<(), FableError> {
         if self.roots.iter().any(|root| root.name == name) {
             return Err(FableError::ReservedLocalName { name });
         }
@@ -2953,9 +3709,8 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         if scope.contains_key(&name) {
             return Err(FableError::DuplicateLocal { name });
         }
-        let local = self.locals.allocate(expr);
         scope.insert(name, local);
-        Ok(local)
+        Ok(())
     }
 
     fn find_local(&self, name: &str) -> Option<LocalRef> {
@@ -3547,14 +4302,14 @@ fn call_callee_name(callee: &Expr) -> Result<String, FableError> {
 
 fn validate_query_expr(query_type: FableQueryType, expr: &ExprPlan) -> Result<(), FableError> {
     let ok = match query_type {
-        FableQueryType::Unit => matches!(expr, ExprPlan::Unit(_)),
-        FableQueryType::Bool => matches!(expr, ExprPlan::Bool(_)),
-        FableQueryType::Char => matches!(expr, ExprPlan::Char(_)),
-        FableQueryType::String => matches!(expr, ExprPlan::String(_)),
+        FableQueryType::Unit => matches!(expr, ExprPlan::Unit(_) | ExprPlan::Match(_)),
+        FableQueryType::Bool => matches!(expr, ExprPlan::Bool(_) | ExprPlan::Match(_)),
+        FableQueryType::Char => matches!(expr, ExprPlan::Char(_) | ExprPlan::Match(_)),
+        FableQueryType::String => matches!(expr, ExprPlan::String(_) | ExprPlan::Match(_)),
         FableQueryType::Signed | FableQueryType::Unsigned | FableQueryType::Float => {
-            matches!(expr, ExprPlan::Number(_))
+            matches!(expr, ExprPlan::Number(_) | ExprPlan::Match(_))
         }
-    };
+    } && expr_query_type(expr)? == query_type;
     if ok {
         Ok(())
     } else {
@@ -3562,6 +4317,22 @@ fn validate_query_expr(query_type: FableQueryType, expr: &ExprPlan) -> Result<()
             expected: query_type.name().into(),
             actual: expr.kind_name(),
         })
+    }
+}
+
+fn expr_query_type(expr: &ExprPlan) -> Result<FableQueryType, FableError> {
+    match expr {
+        ExprPlan::Unit(_) => Ok(FableQueryType::Unit),
+        ExprPlan::Bool(_) => Ok(FableQueryType::Bool),
+        ExprPlan::Char(_) => Ok(FableQueryType::Char),
+        ExprPlan::String(_) => Ok(FableQueryType::String),
+        ExprPlan::Number(NumberExpr::Signed(_)) => Ok(FableQueryType::Signed),
+        ExprPlan::Number(NumberExpr::Unsigned(_)) => Ok(FableQueryType::Unsigned),
+        ExprPlan::Number(NumberExpr::Float(_)) => Ok(FableQueryType::Float),
+        ExprPlan::Match(expr) => Ok(expr.result_kind),
+        ExprPlan::Value(_) => Err(FableError::Unsupported {
+            feature: "typed value query results".into(),
+        }),
     }
 }
 
@@ -3605,6 +4376,9 @@ fn local_to_expr(local: LocalRef) -> ExprPlan {
         LocalRef::Unsigned(_) => ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::Local(local))),
         LocalRef::Float(_) => ExprPlan::Number(NumberExpr::Float(FloatExpr::Local(local))),
         LocalRef::Value { .. } => ExprPlan::Value(ValueExpr::Local(local)),
+        LocalRef::Declared { .. } => {
+            ExprPlan::Value(ValueExpr::Declared(DeclaredValueExpr::Local(local)))
+        }
     }
 }
 
@@ -3700,6 +4474,193 @@ fn validate_assignment(
     }
 }
 
+fn declared_scalar_expr(read: DeclaredScalarRead) -> ExprPlan {
+    match read.scalar {
+        DeclaredScalar::Unit => ExprPlan::Unit(UnitExpr::DeclaredRead(read)),
+        DeclaredScalar::Bool => ExprPlan::Bool(BoolExpr::DeclaredRead(read)),
+        DeclaredScalar::Char => ExprPlan::Char(CharExpr::DeclaredRead(read)),
+        DeclaredScalar::String => ExprPlan::String(StringExpr::DeclaredRead(read)),
+        DeclaredScalar::I8
+        | DeclaredScalar::I16
+        | DeclaredScalar::I32
+        | DeclaredScalar::I64
+        | DeclaredScalar::I128
+        | DeclaredScalar::ISize => {
+            ExprPlan::Number(NumberExpr::Signed(IntExpr::DeclaredRead(read)))
+        }
+        DeclaredScalar::U8
+        | DeclaredScalar::U16
+        | DeclaredScalar::U32
+        | DeclaredScalar::U64
+        | DeclaredScalar::U128
+        | DeclaredScalar::USize => {
+            ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::DeclaredRead(read)))
+        }
+        DeclaredScalar::F32 | DeclaredScalar::F64 => {
+            ExprPlan::Number(NumberExpr::Float(FloatExpr::DeclaredRead(read)))
+        }
+    }
+}
+
+fn validate_declared_assignment(
+    expected: DeclaredFieldType,
+    expr: &ExprPlan,
+    declared_types: &FableDeclaredTypes,
+) -> Result<(), FableError> {
+    match expected {
+        DeclaredFieldType::Scalar(scalar) => validate_declared_scalar_assignment(scalar, expr),
+        DeclaredFieldType::Declared(type_index) => {
+            let actual = match expr {
+                ExprPlan::Value(ValueExpr::Declared(value)) => Some(value.type_index()),
+                _ => None,
+            };
+            if actual == Some(type_index) {
+                Ok(())
+            } else {
+                let expected = declared_types
+                    .by_index(type_index)
+                    .map(FableDeclaredType::name)
+                    .unwrap_or("<missing declared type>");
+                Err(FableError::TypeMismatch {
+                    expected: expected.to_owned(),
+                    actual: expr.kind_name(),
+                })
+            }
+        }
+    }
+}
+
+fn validate_declared_scalar_assignment(
+    scalar: DeclaredScalar,
+    expr: &ExprPlan,
+) -> Result<(), FableError> {
+    let ok = match scalar {
+        DeclaredScalar::Unit => matches!(expr, ExprPlan::Unit(_)),
+        DeclaredScalar::Bool => matches!(expr, ExprPlan::Bool(_)),
+        DeclaredScalar::Char => matches!(expr, ExprPlan::Char(_) | ExprPlan::String(_)),
+        DeclaredScalar::String => matches!(expr, ExprPlan::String(_) | ExprPlan::Char(_)),
+        DeclaredScalar::I8
+        | DeclaredScalar::I16
+        | DeclaredScalar::I32
+        | DeclaredScalar::I64
+        | DeclaredScalar::I128
+        | DeclaredScalar::ISize
+        | DeclaredScalar::U8
+        | DeclaredScalar::U16
+        | DeclaredScalar::U32
+        | DeclaredScalar::U64
+        | DeclaredScalar::U128
+        | DeclaredScalar::USize
+        | DeclaredScalar::F32
+        | DeclaredScalar::F64 => matches!(expr, ExprPlan::Number(_)),
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(FableError::TypeMismatch {
+            expected: scalar.name().to_owned(),
+            actual: expr.kind_name(),
+        })
+    }
+}
+
+trait DeclaredIntBytes {
+    fn write_ne_bytes(self, dst: *mut u8);
+}
+
+macro_rules! impl_declared_int_bytes {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl DeclaredIntBytes for $ty {
+                fn write_ne_bytes(self, dst: *mut u8) {
+                    let bytes = self.to_ne_bytes();
+                    unsafe { copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len()) };
+                }
+            }
+        )*
+    };
+}
+
+impl_declared_int_bytes!(
+    i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize,
+);
+
+fn declared_scalar_number_target(scalar: DeclaredScalar) -> ScalarType {
+    match scalar {
+        DeclaredScalar::I8 => ScalarType::I8,
+        DeclaredScalar::I16 => ScalarType::I16,
+        DeclaredScalar::I32 => ScalarType::I32,
+        DeclaredScalar::I64 => ScalarType::I64,
+        DeclaredScalar::I128 => ScalarType::I128,
+        DeclaredScalar::ISize => ScalarType::ISize,
+        DeclaredScalar::U8 => ScalarType::U8,
+        DeclaredScalar::U16 => ScalarType::U16,
+        DeclaredScalar::U32 => ScalarType::U32,
+        DeclaredScalar::U64 => ScalarType::U64,
+        DeclaredScalar::U128 => ScalarType::U128,
+        DeclaredScalar::USize => ScalarType::USize,
+        DeclaredScalar::F32 => ScalarType::F32,
+        DeclaredScalar::F64 => ScalarType::F64,
+        DeclaredScalar::Unit
+        | DeclaredScalar::Bool
+        | DeclaredScalar::Char
+        | DeclaredScalar::String => ScalarType::Unit,
+    }
+}
+
+fn read_signed_scalar_from_ptr(scalar: DeclaredScalar, ptr: *const u8) -> Result<i128, FableError> {
+    Ok(match scalar {
+        DeclaredScalar::I8 => i8::from_ne_bytes(read_ptr_array(ptr)) as i128,
+        DeclaredScalar::I16 => i16::from_ne_bytes(read_ptr_array(ptr)) as i128,
+        DeclaredScalar::I32 => i32::from_ne_bytes(read_ptr_array(ptr)) as i128,
+        DeclaredScalar::I64 => i64::from_ne_bytes(read_ptr_array(ptr)) as i128,
+        DeclaredScalar::I128 => i128::from_ne_bytes(read_ptr_array(ptr)),
+        DeclaredScalar::ISize => isize::from_ne_bytes(read_ptr_array(ptr)) as i128,
+        _ => {
+            return Err(FableError::MalformedProgram {
+                reason: "declared signed binding used non-signed scalar",
+            });
+        }
+    })
+}
+
+fn read_unsigned_scalar_from_ptr(
+    scalar: DeclaredScalar,
+    ptr: *const u8,
+) -> Result<u128, FableError> {
+    Ok(match scalar {
+        DeclaredScalar::U8 => u8::from_ne_bytes(read_ptr_array(ptr)) as u128,
+        DeclaredScalar::U16 => u16::from_ne_bytes(read_ptr_array(ptr)) as u128,
+        DeclaredScalar::U32 => u32::from_ne_bytes(read_ptr_array(ptr)) as u128,
+        DeclaredScalar::U64 => u64::from_ne_bytes(read_ptr_array(ptr)) as u128,
+        DeclaredScalar::U128 => u128::from_ne_bytes(read_ptr_array(ptr)),
+        DeclaredScalar::USize => usize::from_ne_bytes(read_ptr_array(ptr)) as u128,
+        _ => {
+            return Err(FableError::MalformedProgram {
+                reason: "declared unsigned binding used non-unsigned scalar",
+            });
+        }
+    })
+}
+
+fn read_float_scalar_from_ptr(scalar: DeclaredScalar, ptr: *const u8) -> Result<f64, FableError> {
+    Ok(match scalar {
+        DeclaredScalar::F32 => f32::from_ne_bytes(read_ptr_array(ptr)) as f64,
+        DeclaredScalar::F64 => f64::from_ne_bytes(read_ptr_array(ptr)),
+        _ => {
+            return Err(FableError::MalformedProgram {
+                reason: "declared float binding used non-float scalar",
+            });
+        }
+    })
+}
+
+fn read_ptr_array<const N: usize>(ptr: *const u8) -> [u8; N] {
+    let mut out = [0; N];
+    unsafe { copy_nonoverlapping(ptr, out.as_mut_ptr(), N) };
+    out
+}
+
 #[derive(Default)]
 struct LocalSlots {
     units: Vec<bool>,
@@ -3710,11 +4671,56 @@ struct LocalSlots {
     unsigned: Vec<Option<u128>>,
     floats: Vec<Option<f64>>,
     values: Vec<Option<OwnedValue>>,
+    declared: Vec<Option<DeclaredOwnedValue>>,
 }
 
 struct OwnedValue {
     shape: &'static Shape,
     ptr: PtrMut,
+}
+
+struct DeclaredOwnedValue {
+    type_index: usize,
+    scratch: RawScratch,
+    size: usize,
+}
+
+impl DeclaredOwnedValue {
+    fn zeroed(type_index: usize, descriptor: &FableDeclaredDescriptor) -> Result<Self, FableError> {
+        let scratch =
+            RawScratch::new(descriptor.layout.size, descriptor.layout.align).map_err(|_| {
+                FableError::Unsupported {
+                    feature: format!(
+                        "allocating declared value layout size={} align={}",
+                        descriptor.layout.size, descriptor.layout.align
+                    ),
+                }
+            })?;
+        if descriptor.layout.size != 0 {
+            unsafe { std::ptr::write_bytes(scratch.ptr(), 0, descriptor.layout.size) };
+        }
+        Ok(Self {
+            type_index,
+            scratch,
+            size: descriptor.layout.size,
+        })
+    }
+
+    fn copy_from(
+        type_index: usize,
+        descriptor: &FableDeclaredDescriptor,
+        src: *const u8,
+    ) -> Result<Self, FableError> {
+        let value = Self::zeroed(type_index, descriptor)?;
+        if descriptor.layout.size != 0 {
+            unsafe { copy_nonoverlapping(src, value.scratch.ptr(), descriptor.layout.size) };
+        }
+        Ok(value)
+    }
+
+    fn ptr(&self) -> *mut u8 {
+        self.scratch.ptr()
+    }
 }
 
 impl OwnedValue {
@@ -3798,6 +4804,7 @@ impl Drop for StructInitGuard {
 struct FableInterp {
     roots: Vec<RuntimeRoot>,
     locals: LocalSlots,
+    declared_types: FableDeclaredTypes,
     predicate_result: Option<bool>,
     query_result: Option<FableQueryOutput>,
 }
@@ -3942,6 +4949,11 @@ impl FableInterp {
                 let value = self.eval_value(shape, expect_value_expr(expr)?)?;
                 set_slot(&mut self.locals.values, index, Some(value));
             }
+            LocalRef::Declared { index, type_index } => {
+                let value =
+                    self.eval_declared_value(type_index, expect_declared_value_expr(expr)?)?;
+                set_slot(&mut self.locals.declared, index, Some(value));
+            }
         }
         Ok(())
     }
@@ -3954,6 +4966,7 @@ impl FableInterp {
             ExprPlan::String(expr) => self.eval_string(expr).map(drop),
             ExprPlan::Number(expr) => self.eval_number_for_effect(expr),
             ExprPlan::Value(expr) => self.eval_value_for_effect(expr),
+            ExprPlan::Match(expr) => self.eval_match_for_effect(expr),
         }
     }
 
@@ -3975,10 +4988,171 @@ impl FableInterp {
             ExprPlan::Number(NumberExpr::Float(expr)) => {
                 Ok(FableQueryOutput::Float(self.eval_f64(expr)?))
             }
+            ExprPlan::Match(expr) => self.eval_match_query(expr),
             ExprPlan::Value(_) => Err(FableError::Unsupported {
                 feature: "querying typed values".into(),
             }),
         }
+    }
+
+    fn eval_match_for_effect(&mut self, expr: &MatchExprPlan) -> Result<(), FableError> {
+        let scrutinee = self.eval_declared_value(expr.enum_type_index, &expr.scrutinee)?;
+        let selector = self.read_declared_tag(&scrutinee, expr.enum_type_index)?;
+        let arm = expr
+            .arms
+            .iter()
+            .find(|arm| arm.selector == Some(selector))
+            .or_else(|| expr.arms.iter().find(|arm| arm.selector.is_none()))
+            .ok_or(FableError::MalformedProgram {
+                reason: "match had no selected arm",
+            })?;
+        self.init_match_bindings(&arm.bindings, &scrutinee)?;
+        self.eval_arm_prefix(&arm.prefix)?;
+        self.eval_expr(&arm.result)
+    }
+
+    fn eval_match_query(&mut self, expr: &MatchExprPlan) -> Result<FableQueryOutput, FableError> {
+        let scrutinee = self.eval_declared_value(expr.enum_type_index, &expr.scrutinee)?;
+        let selector = self.read_declared_tag(&scrutinee, expr.enum_type_index)?;
+        let arm = expr
+            .arms
+            .iter()
+            .find(|arm| arm.selector == Some(selector))
+            .or_else(|| expr.arms.iter().find(|arm| arm.selector.is_none()))
+            .ok_or(FableError::MalformedProgram {
+                reason: "match had no selected arm",
+            })?;
+        self.init_match_bindings(&arm.bindings, &scrutinee)?;
+        self.eval_arm_prefix(&arm.prefix)?;
+        self.eval_query(&arm.result)
+    }
+
+    fn read_declared_tag(
+        &self,
+        value: &DeclaredOwnedValue,
+        type_index: usize,
+    ) -> Result<u64, FableError> {
+        let descriptor = self.declared_descriptor(type_index)?;
+        let WeavyAccess::Enum(access) = &descriptor.access else {
+            return Err(FableError::MalformedProgram {
+                reason: "match scrutinee descriptor was not an enum",
+            });
+        };
+        let WeavyTag::Direct { offset, width } = access.tag else {
+            return Err(FableError::Unsupported {
+                feature: "non-direct declared enum tags".into(),
+            });
+        };
+        let bytes = unsafe { std::slice::from_raw_parts(value.ptr().add(offset), width) };
+        Ok(match width {
+            0 => 0,
+            1 => bytes[0].into(),
+            2 => u16::from_ne_bytes(bytes.try_into().expect("tag width checked")).into(),
+            4 => u32::from_ne_bytes(bytes.try_into().expect("tag width checked")).into(),
+            8 => u64::from_ne_bytes(bytes.try_into().expect("tag width checked")),
+            _ => {
+                return Err(FableError::MalformedProgram {
+                    reason: "declared enum tag width was invalid",
+                });
+            }
+        })
+    }
+
+    fn init_match_bindings(
+        &mut self,
+        bindings: &[MatchBindingPlan],
+        scrutinee: &DeclaredOwnedValue,
+    ) -> Result<(), FableError> {
+        for binding in bindings {
+            match *binding {
+                MatchBindingPlan::Scalar {
+                    local,
+                    offset,
+                    scalar,
+                } => {
+                    self.init_scalar_binding(local, scalar, unsafe { scrutinee.ptr().add(offset) })?
+                }
+                MatchBindingPlan::Declared {
+                    local,
+                    offset,
+                    type_index,
+                } => {
+                    let LocalRef::Declared { index, .. } = local else {
+                        return Err(local_kind_mismatch("declared value", local));
+                    };
+                    let descriptor = self.declared_descriptor(type_index)?;
+                    let value = DeclaredOwnedValue::copy_from(type_index, descriptor, unsafe {
+                        scrutinee.ptr().add(offset).cast_const()
+                    })?;
+                    set_slot(&mut self.locals.declared, index, Some(value));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn init_scalar_binding(
+        &mut self,
+        local: LocalRef,
+        scalar: DeclaredScalar,
+        ptr: *const u8,
+    ) -> Result<(), FableError> {
+        match (local, scalar) {
+            (LocalRef::Unit(index), DeclaredScalar::Unit) => {
+                set_slot(&mut self.locals.units, index, true);
+            }
+            (LocalRef::Bool(index), DeclaredScalar::Bool) => {
+                set_slot(&mut self.locals.bools, index, Some(unsafe { *ptr != 0 }));
+            }
+            (LocalRef::Char(index), DeclaredScalar::Char) => {
+                let bytes = unsafe { std::slice::from_raw_parts(ptr, 4) };
+                let value = u32::from_ne_bytes(bytes.try_into().expect("char width checked"));
+                let value = char::from_u32(value).ok_or(FableError::MalformedProgram {
+                    reason: "declared char bytes were not a valid scalar value",
+                })?;
+                set_slot(&mut self.locals.chars, index, Some(value));
+            }
+            (LocalRef::Signed(index), _) => {
+                let value = read_signed_scalar_from_ptr(scalar, ptr)?;
+                set_slot(&mut self.locals.signed, index, Some(value));
+            }
+            (LocalRef::Unsigned(index), _) => {
+                let value = read_unsigned_scalar_from_ptr(scalar, ptr)?;
+                set_slot(&mut self.locals.unsigned, index, Some(value));
+            }
+            (LocalRef::Float(index), _) => {
+                let value = read_float_scalar_from_ptr(scalar, ptr)?;
+                set_slot(&mut self.locals.floats, index, Some(value));
+            }
+            (LocalRef::String(_), DeclaredScalar::String) => {
+                return Err(FableError::Unsupported {
+                    feature: "declared string field runtime".into(),
+                });
+            }
+            _ => return Err(local_kind_mismatch(scalar.name(), local)),
+        }
+        Ok(())
+    }
+
+    fn eval_arm_prefix(&mut self, prefix: &[FableWeavyOp]) -> Result<(), FableError> {
+        for op in prefix {
+            let WeavyOp::Intrinsic(intrinsic) = op else {
+                return Err(FableError::Unsupported {
+                    feature: "non-intrinsic match arm prefix".into(),
+                });
+            };
+            match intrinsic {
+                FableIntrinsic::Branch { .. } => {
+                    return Err(FableError::Unsupported {
+                        feature: "branching inside match arm prefixes".into(),
+                    });
+                }
+                _ => {
+                    self.step_intrinsic(intrinsic)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn eval_unit(&self, expr: &UnitExpr) -> Result<(), FableError> {
@@ -3989,6 +5163,7 @@ impl FableInterp {
                 Ok(())
             }
             UnitExpr::Local(local) => self.local_unit(*local),
+            UnitExpr::DeclaredRead(read) => self.read_declared_unit(*read),
             UnitExpr::HostFieldMut { function, field } => function(self.field_mut(field)?),
         }
     }
@@ -4001,6 +5176,7 @@ impl FableInterp {
                 Ok(*unsafe { ptr.get::<bool>() })
             }
             BoolExpr::Local(local) => self.local_bool(*local),
+            BoolExpr::DeclaredRead(read) => self.read_declared_bool(*read),
             BoolExpr::HostFieldPredicate { function, field } => function(self.field_ref(field)?),
             BoolExpr::HostStringPredicate { function, lhs, rhs } => {
                 let lhs = self.eval_string(lhs)?;
@@ -4056,6 +5232,7 @@ impl FableInterp {
                 Ok(*unsafe { ptr.get::<char>() })
             }
             CharExpr::Local(local) => self.local_char(*local),
+            CharExpr::DeclaredRead(read) => self.read_declared_char(*read),
         }
     }
 
@@ -4067,6 +5244,7 @@ impl FableInterp {
                 unsafe { self.read_string_path(path, ptr) }
             }
             StringExpr::Local(local) => self.local_string(*local),
+            StringExpr::DeclaredRead(read) => self.read_declared_string(*read),
             StringExpr::HostFieldString { function, field } => function(self.field_ref(field)?),
             StringExpr::HostUnary { function, value } => {
                 let value = self.eval_string(value)?;
@@ -4140,6 +5318,7 @@ impl FableInterp {
                 unsafe { self.read_signed_path(field_scalar(path)?, ptr) }
             }
             IntExpr::Local(local) => self.local_i128(*local),
+            IntExpr::DeclaredRead(read) => self.read_declared_i128(*read),
             IntExpr::HostUnary { function, value } => function(self.eval_number_as_i128(value)?),
             IntExpr::Min(lhs, rhs) => {
                 let lhs = self.eval_number_as_i128(lhs)?;
@@ -4207,6 +5386,7 @@ impl FableInterp {
                 unsafe { self.read_unsigned_path(field_scalar(path)?, ptr) }
             }
             UIntExpr::Local(local) => self.local_u128(*local),
+            UIntExpr::DeclaredRead(read) => self.read_declared_u128(*read),
             UIntExpr::HostUnary { function, value } => function(self.eval_number_as_u128(value)?),
             UIntExpr::StringLen(expr) => Ok(self.eval_string(expr)?.len() as u128),
             UIntExpr::Min(lhs, rhs) => {
@@ -4269,6 +5449,7 @@ impl FableInterp {
                 }
             }
             FloatExpr::Local(local) => self.local_f64(*local),
+            FloatExpr::DeclaredRead(read) => self.read_declared_f64(*read),
             FloatExpr::HostUnary { function, value } => function(self.eval_number_as_f64(value)?),
             FloatExpr::Min(lhs, rhs) => {
                 min_f64(self.eval_number_as_f64(lhs)?, self.eval_number_as_f64(rhs)?)
@@ -4327,6 +5508,111 @@ impl FableInterp {
             NumberExpr::Unsigned(expr) => Ok(self.eval_u128(expr)? as f64),
             NumberExpr::Float(expr) => self.eval_f64(expr),
         }
+    }
+
+    fn declared_local(&self, local: LocalRef) -> Result<&DeclaredOwnedValue, FableError> {
+        let LocalRef::Declared { index, .. } = local else {
+            return Err(local_kind_mismatch("declared value", local));
+        };
+        self.locals
+            .declared
+            .get(index)
+            .and_then(Option::as_ref)
+            .ok_or_else(uninitialized_local)
+    }
+
+    fn read_declared_unit(&self, read: DeclaredScalarRead) -> Result<(), FableError> {
+        let _ = self.declared_local(read.local)?;
+        Ok(())
+    }
+
+    fn read_declared_bool(&self, read: DeclaredScalarRead) -> Result<bool, FableError> {
+        Ok(self.read_declared_bytes(read, 1)?[0] != 0)
+    }
+
+    fn read_declared_char(&self, read: DeclaredScalarRead) -> Result<char, FableError> {
+        let value = u32::from_ne_bytes(self.read_declared_array(read)?);
+        char::from_u32(value).ok_or(FableError::MalformedProgram {
+            reason: "declared char bytes were not a valid scalar value",
+        })
+    }
+
+    fn read_declared_string(&self, _read: DeclaredScalarRead) -> Result<String, FableError> {
+        Err(FableError::Unsupported {
+            feature: "declared string field runtime".into(),
+        })
+    }
+
+    fn read_declared_i128(&self, read: DeclaredScalarRead) -> Result<i128, FableError> {
+        Ok(match read.scalar {
+            DeclaredScalar::I8 => i8::from_ne_bytes(self.read_declared_array(read)?) as i128,
+            DeclaredScalar::I16 => i16::from_ne_bytes(self.read_declared_array(read)?) as i128,
+            DeclaredScalar::I32 => i32::from_ne_bytes(self.read_declared_array(read)?) as i128,
+            DeclaredScalar::I64 => i64::from_ne_bytes(self.read_declared_array(read)?) as i128,
+            DeclaredScalar::I128 => i128::from_ne_bytes(self.read_declared_array(read)?),
+            DeclaredScalar::ISize => isize::from_ne_bytes(self.read_declared_array(read)?) as i128,
+            _ => {
+                return Err(FableError::MalformedProgram {
+                    reason: "declared signed read used non-signed scalar",
+                });
+            }
+        })
+    }
+
+    fn read_declared_u128(&self, read: DeclaredScalarRead) -> Result<u128, FableError> {
+        Ok(match read.scalar {
+            DeclaredScalar::U8 => u8::from_ne_bytes(self.read_declared_array(read)?) as u128,
+            DeclaredScalar::U16 => u16::from_ne_bytes(self.read_declared_array(read)?) as u128,
+            DeclaredScalar::U32 => u32::from_ne_bytes(self.read_declared_array(read)?) as u128,
+            DeclaredScalar::U64 => u64::from_ne_bytes(self.read_declared_array(read)?) as u128,
+            DeclaredScalar::U128 => u128::from_ne_bytes(self.read_declared_array(read)?),
+            DeclaredScalar::USize => usize::from_ne_bytes(self.read_declared_array(read)?) as u128,
+            _ => {
+                return Err(FableError::MalformedProgram {
+                    reason: "declared unsigned read used non-unsigned scalar",
+                });
+            }
+        })
+    }
+
+    fn read_declared_f64(&self, read: DeclaredScalarRead) -> Result<f64, FableError> {
+        Ok(match read.scalar {
+            DeclaredScalar::F32 => f32::from_ne_bytes(self.read_declared_array(read)?) as f64,
+            DeclaredScalar::F64 => f64::from_ne_bytes(self.read_declared_array(read)?),
+            _ => {
+                return Err(FableError::MalformedProgram {
+                    reason: "declared float read used non-float scalar",
+                });
+            }
+        })
+    }
+
+    fn read_declared_array<const N: usize>(
+        &self,
+        read: DeclaredScalarRead,
+    ) -> Result<[u8; N], FableError> {
+        let bytes = self.read_declared_bytes(read, N)?;
+        let mut out = [0; N];
+        out.copy_from_slice(bytes);
+        Ok(out)
+    }
+
+    fn read_declared_bytes(
+        &self,
+        read: DeclaredScalarRead,
+        len: usize,
+    ) -> Result<&[u8], FableError> {
+        let value = self.declared_local(read.local)?;
+        let start = read.offset;
+        let end = start.checked_add(len).ok_or(FableError::MalformedProgram {
+            reason: "declared scalar read offset overflowed",
+        })?;
+        if end > value.size {
+            return Err(FableError::MalformedProgram {
+                reason: "declared scalar read exceeded value layout",
+            });
+        }
+        Ok(unsafe { std::slice::from_raw_parts(value.ptr().add(start), len) })
     }
 
     fn compare_numbers(&self, lhs: &NumberExpr, rhs: &NumberExpr) -> Result<Ordering, FableError> {
@@ -4418,12 +5704,246 @@ impl FableInterp {
                 unsafe { self.init_struct_value(expr) }
             }
             ValueExpr::Local(local) => self.take_local_value(*local, shape),
+            ValueExpr::Declared(_) => Err(FableError::TypeMismatch {
+                expected: format!("{shape}"),
+                actual: "declared value",
+            }),
         }
+    }
+
+    fn eval_declared_value(
+        &mut self,
+        type_index: usize,
+        expr: &DeclaredValueExpr,
+    ) -> Result<DeclaredOwnedValue, FableError> {
+        if expr.type_index() != type_index {
+            let expected = self.declared_type_name(type_index)?;
+            return Err(FableError::TypeMismatch {
+                expected,
+                actual: "declared value",
+            });
+        }
+        match expr {
+            DeclaredValueExpr::Struct(expr) => self.init_declared_struct_value(expr),
+            DeclaredValueExpr::Enum(expr) => self.init_declared_enum_value(expr),
+            DeclaredValueExpr::Local(local) => self.copy_declared_local(*local),
+            DeclaredValueExpr::Field(field) => self.copy_declared_field(*field),
+        }
+    }
+
+    fn init_declared_struct_value(
+        &mut self,
+        expr: &DeclaredStructExpr,
+    ) -> Result<DeclaredOwnedValue, FableError> {
+        let descriptor = self.declared_descriptor(expr.type_index)?.clone();
+        let value = DeclaredOwnedValue::zeroed(expr.type_index, &descriptor)?;
+        for field in expr.fields.iter() {
+            self.write_declared_field(value.ptr(), field)?;
+        }
+        Ok(value)
+    }
+
+    fn init_declared_enum_value(
+        &mut self,
+        expr: &DeclaredEnumExpr,
+    ) -> Result<DeclaredOwnedValue, FableError> {
+        let descriptor = self.declared_descriptor(expr.type_index)?.clone();
+        let value = DeclaredOwnedValue::zeroed(expr.type_index, &descriptor)?;
+        self.write_declared_tag(value.ptr(), expr.tag_offset, expr.tag_width, expr.selector)?;
+        for field in expr.fields.iter() {
+            self.write_declared_field(value.ptr(), field)?;
+        }
+        Ok(value)
+    }
+
+    fn copy_declared_local(&self, local: LocalRef) -> Result<DeclaredOwnedValue, FableError> {
+        let value = self.declared_local(local)?;
+        let descriptor = self.declared_descriptor(value.type_index)?;
+        DeclaredOwnedValue::copy_from(value.type_index, descriptor, value.ptr().cast_const())
+    }
+
+    fn copy_declared_field(
+        &self,
+        field: DeclaredValueField,
+    ) -> Result<DeclaredOwnedValue, FableError> {
+        let source = self.declared_local(field.local)?;
+        let descriptor = self.declared_descriptor(field.type_index)?;
+        DeclaredOwnedValue::copy_from(field.type_index, descriptor, unsafe {
+            source.ptr().add(field.offset).cast_const()
+        })
+    }
+
+    fn declared_descriptor(
+        &self,
+        type_index: usize,
+    ) -> Result<&FableDeclaredDescriptor, FableError> {
+        Ok(self
+            .declared_types
+            .by_index(type_index)
+            .ok_or(FableError::MalformedProgram {
+                reason: "declared type index was missing at runtime",
+            })?
+            .descriptor())
+    }
+
+    fn declared_type_name(&self, type_index: usize) -> Result<String, FableError> {
+        Ok(self
+            .declared_types
+            .by_index(type_index)
+            .ok_or(FableError::MalformedProgram {
+                reason: "declared type index was missing at runtime",
+            })?
+            .name()
+            .to_owned())
+    }
+
+    fn write_declared_field(
+        &mut self,
+        base: *mut u8,
+        field: &DeclaredFieldInit,
+    ) -> Result<(), FableError> {
+        let dst = unsafe { base.add(field.offset) };
+        match field.ty {
+            DeclaredFieldType::Scalar(scalar) => {
+                self.write_declared_scalar(dst, scalar, &field.value)
+            }
+            DeclaredFieldType::Declared(type_index) => {
+                let value = self
+                    .eval_declared_value(type_index, expect_declared_value_expr(&field.value)?)?;
+                if value.size != 0 {
+                    unsafe { copy_nonoverlapping(value.ptr(), dst, value.size) };
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn write_declared_tag(
+        &self,
+        base: *mut u8,
+        offset: usize,
+        width: usize,
+        selector: u64,
+    ) -> Result<(), FableError> {
+        let dst = unsafe { base.add(offset) };
+        match width {
+            0 => Ok(()),
+            1 => {
+                let value = u8::try_from(selector)
+                    .map_err(|_| number_out_of_range(ScalarType::U8, selector.to_string()))?;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 1) };
+                Ok(())
+            }
+            2 => {
+                let value = u16::try_from(selector)
+                    .map_err(|_| number_out_of_range(ScalarType::U16, selector.to_string()))?;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 2) };
+                Ok(())
+            }
+            4 => {
+                let value = u32::try_from(selector)
+                    .map_err(|_| number_out_of_range(ScalarType::U32, selector.to_string()))?;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 4) };
+                Ok(())
+            }
+            8 => {
+                unsafe { copy_nonoverlapping(selector.to_ne_bytes().as_ptr(), dst, 8) };
+                Ok(())
+            }
+            _ => Err(FableError::MalformedProgram {
+                reason: "declared enum tag width was invalid",
+            }),
+        }
+    }
+
+    fn write_declared_scalar(
+        &mut self,
+        dst: *mut u8,
+        scalar: DeclaredScalar,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        match scalar {
+            DeclaredScalar::Unit => self.eval_unit(expect_unit_expr(expr)?),
+            DeclaredScalar::Bool => {
+                let value = u8::from(self.eval_bool(expect_bool_expr(expr)?)?);
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 1) };
+                Ok(())
+            }
+            DeclaredScalar::Char => {
+                let value = self.eval_char_assign(expr)? as u32;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 4) };
+                Ok(())
+            }
+            DeclaredScalar::String => Err(FableError::Unsupported {
+                feature: "declared string field runtime".into(),
+            }),
+            DeclaredScalar::I8 => self.write_declared_signed::<i8>(dst, scalar, expr),
+            DeclaredScalar::I16 => self.write_declared_signed::<i16>(dst, scalar, expr),
+            DeclaredScalar::I32 => self.write_declared_signed::<i32>(dst, scalar, expr),
+            DeclaredScalar::I64 => self.write_declared_signed::<i64>(dst, scalar, expr),
+            DeclaredScalar::I128 => self.write_declared_signed::<i128>(dst, scalar, expr),
+            DeclaredScalar::ISize => self.write_declared_signed::<isize>(dst, scalar, expr),
+            DeclaredScalar::U8 => self.write_declared_unsigned::<u8>(dst, scalar, expr),
+            DeclaredScalar::U16 => self.write_declared_unsigned::<u16>(dst, scalar, expr),
+            DeclaredScalar::U32 => self.write_declared_unsigned::<u32>(dst, scalar, expr),
+            DeclaredScalar::U64 => self.write_declared_unsigned::<u64>(dst, scalar, expr),
+            DeclaredScalar::U128 => self.write_declared_unsigned::<u128>(dst, scalar, expr),
+            DeclaredScalar::USize => self.write_declared_unsigned::<usize>(dst, scalar, expr),
+            DeclaredScalar::F32 => {
+                let value = self.eval_number_as_f64(expect_number_expr(expr)?)? as f32;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 4) };
+                Ok(())
+            }
+            DeclaredScalar::F64 => {
+                let value = self.eval_number_as_f64(expect_number_expr(expr)?)?;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 8) };
+                Ok(())
+            }
+        }
+    }
+
+    fn write_declared_unsigned<T>(
+        &self,
+        dst: *mut u8,
+        target: DeclaredScalar,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<u128> + Copy,
+        T: DeclaredIntBytes,
+    {
+        let value = self.eval_number_as_u128(expect_number_expr(expr)?)?;
+        let converted = T::try_from(value).map_err(|_| {
+            number_out_of_range(declared_scalar_number_target(target), value.to_string())
+        })?;
+        converted.write_ne_bytes(dst);
+        Ok(())
+    }
+
+    fn write_declared_signed<T>(
+        &self,
+        dst: *mut u8,
+        target: DeclaredScalar,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<i128> + Copy,
+        T: DeclaredIntBytes,
+    {
+        let value = self.eval_number_as_i128(expect_number_expr(expr)?)?;
+        let converted = T::try_from(value).map_err(|_| {
+            number_out_of_range(declared_scalar_number_target(target), value.to_string())
+        })?;
+        converted.write_ne_bytes(dst);
+        Ok(())
     }
 
     fn eval_value_for_effect(&mut self, expr: &ValueExpr) -> Result<(), FableError> {
         match expr {
             ValueExpr::Struct(expr) => unsafe { self.init_struct_value(expr) }.map(drop),
+            ValueExpr::Declared(expr) => {
+                self.eval_declared_value(expr.type_index(), expr).map(drop)
+            }
             ValueExpr::Local(local) => {
                 let LocalRef::Value { index, .. } = *local else {
                     return Err(local_kind_mismatch("typed value", *local));
@@ -4948,6 +6468,16 @@ fn expect_value_expr(expr: &ExprPlan) -> Result<&ValueExpr, FableError> {
         ExprPlan::Value(expr) => Ok(expr),
         other => Err(FableError::TypeMismatch {
             expected: "typed value".into(),
+            actual: other.kind_name(),
+        }),
+    }
+}
+
+fn expect_declared_value_expr(expr: &ExprPlan) -> Result<&DeclaredValueExpr, FableError> {
+    match expr {
+        ExprPlan::Value(ValueExpr::Declared(expr)) => Ok(expr),
+        other => Err(FableError::TypeMismatch {
+            expected: "declared value".into(),
             actual: other.kind_name(),
         }),
     }
@@ -6750,6 +8280,98 @@ enum Same { Other }
         ));
     }
 
+    #[test]
+    fn declared_structs_and_enums_construct_match_and_query() {
+        let plan = FableRootQueryPlan::<i128>::compile(
+            r#"
+struct Point { x: i64, y: i64 }
+enum Shape {
+  Empty,
+  Hit { payload: Point },
+}
+let shape = Shape::Hit { payload: Point { x: 40, y: 2 } };
+match shape {
+  Shape::Empty => { 0 - 0; },
+  Shape::Hit { payload } => { payload.x + payload.y; },
+}
+"#,
+            &[],
+        )
+        .expect("declared query compiles");
+        let mut roots = [];
+
+        assert_eq!(plan.evaluate(&mut roots).expect("query runs"), 42);
+    }
+
+    #[test]
+    fn declared_match_supports_bare_variants_and_scalar_payload_bindings() {
+        let plan = FableRootQueryPlan::<i128>::compile(
+            r#"
+enum Thing {
+  Empty,
+  Num { value: i64 },
+}
+let thing = Thing::Num { value: 7 };
+match thing {
+  Thing::Empty => { 0 - 0; },
+  Thing::Num { value } => { value + 35; },
+}
+"#,
+            &[],
+        )
+        .expect("declared scalar payload match compiles");
+        let mut roots = [];
+
+        assert_eq!(plan.evaluate(&mut roots).expect("query runs"), 42);
+    }
+
+    #[test]
+    fn declared_struct_let_binding_copies_bytes() {
+        let plan = FableRootQueryPlan::<i128>::compile(
+            r#"
+struct Point { x: i64 }
+let a = Point { x: 21 };
+let b = a;
+a.x + b.x;
+"#,
+            &[],
+        )
+        .expect("declared copy query compiles");
+        let mut roots = [];
+
+        assert_eq!(plan.evaluate(&mut roots).expect("query runs"), 42);
+    }
+
+    #[test]
+    fn declared_value_checker_reports_required_errors() {
+        assert!(matches!(
+            root_query_compile_err::<i128>("struct Point { x: i64 } let p = Point { x: 1, y: 2 }; p.x"),
+            FableError::Unsupported { feature } if feature == "Point has no field named y"
+        ));
+        assert!(matches!(
+            root_query_compile_err::<i128>("struct Point { x: i64 } let p = Point { }; p.x"),
+            FableError::Unsupported { feature } if feature == "Point literal is missing field x"
+        ));
+        assert!(matches!(
+            root_query_compile_err::<i128>("struct Point { x: i64 } let p = Point { x: 1, x: 2 }; p.x"),
+            FableError::DuplicateStructField { field } if field == "x"
+        ));
+        assert!(matches!(
+            root_query_compile_err::<i128>("struct Point { x: i64 } let p = Point { x: true }; p.x"),
+            FableError::TypeMismatch { expected, actual } if expected == "i64" && actual == "bool"
+        ));
+        assert!(matches!(
+            root_query_compile_err::<u128>("enum Thing { Empty } let thing = Thing::Missing; 0;"),
+            FableError::Unsupported { feature } if feature == "Thing has no variant named Missing"
+        ));
+        assert!(matches!(
+            root_query_compile_err::<u128>(
+                "enum Thing { A, B } let thing = Thing::A; match thing { Thing::A => { 1; } }",
+            ),
+            FableError::Unsupported { feature } if feature == "non-exhaustive match on Thing"
+        ));
+    }
+
     fn compile_err(src: &str) -> FableError {
         match FablePlan::<State>::compile(src) {
             Ok(_) => panic!("expected Fable compilation to fail"),
@@ -6760,6 +8382,16 @@ enum Same { Other }
     fn root_compile_err(src: &str) -> FableError {
         match FableRootPlan::compile(src, &[]) {
             Ok(_) => panic!("expected Fable root compilation to fail"),
+            Err(err) => err,
+        }
+    }
+
+    fn root_query_compile_err<Output>(src: &str) -> FableError
+    where
+        Output: FableQueryResult,
+    {
+        match FableRootQueryPlan::<Output>::compile(src, &[]) {
+            Ok(_) => panic!("expected Fable root query compilation to fail"),
             Err(err) => err,
         }
     }
