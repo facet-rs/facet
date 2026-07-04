@@ -4,9 +4,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use weavy::mem::declared as declared_mem;
 use weavy::mem::{Access, Descriptor, Layout};
 
+use crate::VixParser;
 use crate::ast::{self, EnumItem, Expr, Item, SourceFile, Span, StructItem};
 use crate::binder::{self, SymbolKind};
-use crate::VixParser;
 
 #[derive(Clone)]
 pub(crate) struct EnumInfo {

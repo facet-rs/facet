@@ -27,12 +27,14 @@
 //! marks with node identities.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 
 use sha2::{Digest, Sha256};
 use weavy::mem::{Access, Descriptor, Tag};
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
+
+use crate::oracle::{assign_roles, tool_for};
 
 /// INVOKE request frame contract (the lowering and this driver's
 /// shared knowledge): at `INVOKE_REGION` the body lays out
@@ -47,6 +49,13 @@ pub const MAP_EMPTY_HOST: u32 = 4;
 pub const MAP_INSERT_HOST: u32 = 5;
 pub const MAP_GET_HOST: u32 = 6;
 pub const OPTION_UNWRAP_HOST: u32 = 7;
+pub const ACQUIRE_HOST: u32 = 8;
+pub const ARRAY_ALLOC_HOST: u32 = 9;
+pub const ARRAY_MAP_PENDING_HOST: u32 = 10;
+pub const ARRAY_COLLECT_HOST: u32 = 11;
+pub const TREE_PROJECT_HOST: u32 = 12;
+pub const EXEC_HOST: u32 = 13;
+pub const PATH_WITH_EXT_HOST: u32 = 14;
 
 /// One compiled vix function: its task program identity plus where its
 /// INVOKE region and argument slots live. Cached content-addressed —
@@ -77,6 +86,8 @@ pub struct LoweredFn {
     pub store_read_region: u32,
     /// Byte offset of this function's STORE_TAG region: [dst_slot, handle].
     pub store_tag_region: u32,
+    /// Byte offset of miscellaneous primitive host region.
+    pub primitive_region: u32,
 }
 
 /// Driver-level events (join the unified trace via lowering-emitted
@@ -84,18 +95,49 @@ pub struct LoweredFn {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DriveEvent {
     /// Demand arrived for (fn hash, memo-key hash of args).
-    Demanded { fn_hash: u64 },
+    Demanded {
+        fn_hash: u64,
+    },
     /// Served from memo — NO task existed.
-    MemoHit { fn_hash: u64 },
+    MemoHit {
+        fn_hash: u64,
+    },
     /// Spawned a task (memo miss).
-    Spawned { fn_hash: u64 },
+    Spawned {
+        fn_hash: u64,
+    },
     /// A task parked awaiting another invocation's result.
-    ParkedOn { fn_hash: u64 },
+    ParkedOn {
+        fn_hash: u64,
+    },
     /// An invocation completed and fed its awaiters.
-    Completed { fn_hash: u64 },
+    Completed {
+        fn_hash: u64,
+    },
+    /// A concrete invocation identity spawned. `key_hash` is the
+    /// canonical memo-key hash, including canonicalized args.
+    SpawnedInvocation {
+        fn_hash: u64,
+        key_hash: u64,
+    },
     /// A value-store allocation occurred. `deduped` means the store
     /// returned an existing handle for canonical content.
-    StoreAlloc { schema_ref: u64, deduped: bool },
+    StoreAlloc {
+        schema_ref: u64,
+        deduped: bool,
+    },
+    RunRequested {
+        command: u64,
+        output: u64,
+    },
+    RunStarted {
+        command: u64,
+        output: u64,
+    },
+    RunCompleted {
+        command: u64,
+        output: u64,
+    },
 }
 
 /// A pending invocation request captured by the INVOKE host during a
@@ -106,6 +148,20 @@ struct InvokeRequest {
     input_slot: usize,
     fn_ref: usize,
     args: Vec<i64>,
+}
+
+#[derive(Clone, Debug)]
+struct ProjectRequest {
+    input_slot: usize,
+    tree: i64,
+    path: i64,
+}
+
+#[derive(Clone, Debug)]
+struct ExecRequest {
+    input_slot: usize,
+    capability: i64,
+    output: i64,
 }
 
 /// A running or parked task execution.
@@ -149,6 +205,25 @@ struct OrderedMapPair {
     pair: MapPair,
     key_hash: ContentHash,
     value_hash: ContentHash,
+}
+
+#[derive(Clone, Debug)]
+struct PendingInvocation {
+    fn_ref: usize,
+    args: Vec<i64>,
+    identity_hash: ContentHash,
+}
+
+#[derive(Clone, Debug)]
+enum ArrayEntry {
+    Words(Vec<i64>),
+    Pending(Vec<PendingInvocation>),
+}
+
+#[derive(Clone, Debug)]
+enum TreeEntry {
+    Concrete(crate::exec::Tree),
+    Merge(Vec<PendingInvocation>),
 }
 
 impl ValueStore {
@@ -352,6 +427,111 @@ impl ValueStore {
         self.by_content.insert(key, handle);
         (handle, false)
     }
+
+    fn alloc_array_words(&mut self, words: Vec<i64>) -> (i64, bool) {
+        let mut bytes = Vec::with_capacity(16 + words.len() * 8);
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(
+            &i64::try_from(words.len())
+                .expect("array length fits i64")
+                .to_le_bytes(),
+        );
+        for word in &words {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"vix-array-words");
+        hasher.update(
+            i64::try_from(words.len())
+                .expect("array length fits i64")
+                .to_le_bytes(),
+        );
+        for word in &words {
+            let entry = self
+                .entry(*word)
+                .unwrap_or_else(|| panic!("array element handle {word}"));
+            hasher.update(entry.schema.as_bytes());
+            hasher.update(entry.content_hash);
+        }
+        let content_hash = hasher.finalize().into();
+        self.alloc_with_hash("Array", bytes, content_hash)
+    }
+
+    fn alloc_array_pending(&mut self, pending: Vec<PendingInvocation>) -> (i64, bool) {
+        let bytes = encode_pending_list(1, &pending);
+        let content_hash = hash_pending_list(b"vix-array-pending", &pending);
+        self.alloc_with_hash("Array", bytes, content_hash)
+    }
+
+    fn array_entry(&self, handle: i64) -> Result<ArrayEntry, String> {
+        let entry = self
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        if entry.schema != "Array" {
+            return Err(format!("handle {handle} is `{}`, not Array", entry.schema));
+        }
+        let kind = read_frame_word(&entry.bytes, 0);
+        match kind {
+            0 => {
+                let count =
+                    usize::try_from(read_frame_word(&entry.bytes, 8)).map_err(|_| "array count")?;
+                let expected = 16 + count * 8;
+                if entry.bytes.len() != expected {
+                    return Err(format!(
+                        "Array words entry has {} bytes, expected {expected}",
+                        entry.bytes.len()
+                    ));
+                }
+                Ok(ArrayEntry::Words(
+                    (0..count)
+                        .map(|i| read_frame_word(&entry.bytes, 16 + i * 8))
+                        .collect(),
+                ))
+            }
+            1 => Ok(ArrayEntry::Pending(decode_pending_list(&entry.bytes)?)),
+            other => Err(format!("unknown Array kind {other}")),
+        }
+    }
+
+    fn alloc_tree_concrete(&mut self, tree: crate::exec::Tree) -> (i64, bool) {
+        let bytes = encode_concrete_tree(&tree);
+        let content_hash = hash_concrete_tree(&tree);
+        self.alloc_with_hash("Tree", bytes, content_hash)
+    }
+
+    fn alloc_tree_merge(&mut self, pending: Vec<PendingInvocation>) -> (i64, bool) {
+        let bytes = encode_pending_list(1, &pending);
+        let content_hash = hash_pending_list(b"vix-tree-merge", &pending);
+        self.alloc_with_hash("Tree", bytes, content_hash)
+    }
+
+    fn tree_entry(&self, handle: i64) -> Result<TreeEntry, String> {
+        let entry = self
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        if entry.schema != "Tree" {
+            return Err(format!("handle {handle} is `{}`, not Tree", entry.schema));
+        }
+        let kind = read_frame_word(&entry.bytes, 0);
+        match kind {
+            0 => Ok(TreeEntry::Concrete(decode_concrete_tree(&entry.bytes)?)),
+            1 => Ok(TreeEntry::Merge(decode_pending_list(&entry.bytes)?)),
+            other => Err(format!("unknown Tree kind {other}")),
+        }
+    }
+
+    fn string_value(&self, handle: i64, schema: &str) -> Result<String, String> {
+        let entry = self
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        if entry.schema != schema {
+            return Err(format!(
+                "handle {handle} is `{}`, not {schema}",
+                entry.schema
+            ));
+        }
+        String::from_utf8(entry.bytes.clone()).map_err(|err| err.to_string())
+    }
 }
 
 /// The demand scheduler.
@@ -361,6 +541,7 @@ pub struct Driver {
     descriptors: HashMap<String, Descriptor<String>>,
     schema_refs: Vec<String>,
     memo: HashMap<CanonMemoKey, i64>,
+    exec_cache: crate::exec::ExecCache,
     pub trace: Vec<DriveEvent>,
     store: RefCell<ValueStore>,
 }
@@ -381,6 +562,7 @@ impl Driver {
             descriptors,
             schema_refs: Vec::new(),
             memo: HashMap::new(),
+            exec_cache: crate::exec::ExecCache::new(),
             trace: Vec::new(),
             store: RefCell::new(ValueStore::default()),
         }
@@ -409,12 +591,25 @@ impl Driver {
         self.store.borrow().entry(handle).cloned()
     }
 
+    pub fn tree_entries(&self, handle: i64) -> Result<BTreeMap<String, String>, String> {
+        match self.store.borrow().tree_entry(handle)? {
+            TreeEntry::Concrete(tree) => Ok(tree.entries),
+            TreeEntry::Merge(_) => Err("handle is a pending merge tree, not concrete".into()),
+        }
+    }
+
     pub fn fn_hash(&self, fn_ref: usize) -> u64 {
         self.fns[fn_ref].hash
     }
 
     pub fn intern_raw_value(&self, schema: &str, bytes: Vec<u8>) -> (i64, bool) {
         self.store.borrow_mut().alloc_raw(schema, bytes)
+    }
+
+    pub fn intern_linux_target(&self) -> (i64, bool) {
+        self.store
+            .borrow_mut()
+            .alloc_raw("Target", 0x391c555cf0975f9cu64.to_le_bytes().to_vec())
     }
 
     /// Demand one invocation's identity: the edge of the machine.
@@ -463,8 +658,36 @@ impl Driver {
                 }
                 Burst::Pending {
                     new_requests,
+                    project_requests,
+                    exec_requests,
                     parked_input,
                 } => {
+                    for req in exec_requests {
+                        match self.execute_request(req) {
+                            Ok((input_slot, value)) => {
+                                if exec.ready.len() <= input_slot {
+                                    exec.ready.resize(input_slot + 1, false);
+                                    exec.awaited.resize(input_slot + 1, 0);
+                                }
+                                exec.ready[input_slot] = true;
+                                exec.awaited[input_slot] = value;
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    for req in project_requests {
+                        match self.project_request(req) {
+                            Ok((input_slot, value)) => {
+                                if exec.ready.len() <= input_slot {
+                                    exec.ready.resize(input_slot + 1, false);
+                                    exec.awaited.resize(input_slot + 1, 0);
+                                }
+                                exec.ready[input_slot] = true;
+                                exec.awaited[input_slot] = value;
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    }
                     for req in new_requests {
                         let req_key = self.memo_key(req.fn_ref, &req.args);
                         self.trace.push(DriveEvent::Demanded { fn_hash: req_key.0 });
@@ -525,6 +748,10 @@ impl Driver {
         self.trace.push(DriveEvent::Spawned {
             fn_hash: lowered.hash,
         });
+        self.trace.push(DriveEvent::SpawnedInvocation {
+            fn_hash: lowered.hash,
+            key_hash: memo_key_hash(&key),
+        });
         let mut task = Task::spawn(&self.program, lowered.task_fn);
         for (offset, value) in lowered.arg_offsets.iter().zip(args) {
             task.write_i64(*offset, *value);
@@ -548,6 +775,7 @@ impl Driver {
         let store_alloc_region = lowered.store_alloc_region as usize;
         let store_read_region = lowered.store_read_region as usize;
         let store_tag_region = lowered.store_tag_region as usize;
+        let primitive_region = lowered.primitive_region as usize;
         loop {
             // Size the input arrays BEFORE the burst (slots the body
             // registers this burst get sized on the next iteration —
@@ -558,9 +786,12 @@ impl Driver {
             exec.awaited.resize(want, 0);
 
             let mut requests: Vec<InvokeRequest> = Vec::new();
+            let mut project_requests: Vec<ProjectRequest> = Vec::new();
+            let mut exec_requests: Vec<ExecRequest> = Vec::new();
             let descriptors = &self.descriptors;
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
+            let lowered_fns = &self.fns;
             let store_events = RefCell::new(Vec::new());
             let mut invoke = |frame: &mut [u8]| {
                 let word = |i: usize| {
@@ -767,7 +998,133 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 8] = [
+            let mut acquire = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let kind_ref = read_frame_word(frame, primitive_region + 8);
+                    let kind = schema_name_for(kind_ref, schema_refs)?;
+                    let target = read_frame_word(frame, primitive_region + 16);
+                    let target_hash = target_hash(store_cell, target)?;
+                    let key = format!("acquire:{kind}:{target_hash:x}");
+                    let (handle, _) = store_cell.borrow_mut().alloc_raw(&kind, key.into_bytes());
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut array_alloc = |frame: &mut [u8]| {
+                let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                let count = read_frame_word(frame, primitive_region + 16) as usize;
+                let words = (0..count)
+                    .map(|i| read_frame_word(frame, primitive_region + 24 + i * 8))
+                    .collect();
+                let (handle, _) = store_cell.borrow_mut().alloc_array_words(words);
+                write_frame_word(frame, dst_slot, handle);
+            };
+
+            let mut array_map_pending = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let array_handle = read_frame_word(frame, primitive_region + 8);
+                    let fn_ref = usize::try_from(read_frame_word(frame, primitive_region + 16))
+                        .map_err(|_| "negative fn ref".to_string())?;
+                    let captured = read_frame_word(frame, primitive_region + 24);
+                    let words = match store_cell.borrow().array_entry(array_handle)? {
+                        ArrayEntry::Words(words) => words,
+                        ArrayEntry::Pending(_) => {
+                            return Err("map over pending array is outside slice 4".into());
+                        }
+                    };
+                    let pending = words
+                        .into_iter()
+                        .map(|word| {
+                            let args = vec![captured, word];
+                            let identity_hash = pending_identity_hash(
+                                &lowered_fns[fn_ref],
+                                &store_cell.borrow(),
+                                &args,
+                            );
+                            PendingInvocation {
+                                fn_ref,
+                                args,
+                                identity_hash,
+                            }
+                        })
+                        .collect();
+                    let (handle, _) = store_cell.borrow_mut().alloc_array_pending(pending);
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut array_collect = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let array_handle = read_frame_word(frame, primitive_region + 8);
+                    let pending = match store_cell.borrow().array_entry(array_handle)? {
+                        ArrayEntry::Pending(pending) => pending,
+                        ArrayEntry::Words(_) => {
+                            return Err("collect over scalar array is outside slice 4".into());
+                        }
+                    };
+                    let (handle, _) = store_cell.borrow_mut().alloc_tree_merge(pending);
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut tree_project = |frame: &mut [u8]| {
+                let input_slot = read_frame_word(frame, primitive_region) as usize;
+                let tree = read_frame_word(frame, primitive_region + 8);
+                let path = read_frame_word(frame, primitive_region + 16);
+                project_requests.push(ProjectRequest {
+                    input_slot,
+                    tree,
+                    path,
+                });
+            };
+
+            let mut exec_host = |frame: &mut [u8]| {
+                let input_slot = read_frame_word(frame, primitive_region) as usize;
+                let capability = read_frame_word(frame, primitive_region + 8);
+                let output = read_frame_word(frame, primitive_region + 16);
+                exec_requests.push(ExecRequest {
+                    input_slot,
+                    capability,
+                    output,
+                });
+            };
+
+            let mut path_with_ext = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let path = read_frame_word(frame, primitive_region + 8);
+                    let ext = read_frame_word(frame, primitive_region + 16);
+                    let path = store_cell.borrow().string_value(path, "Path")?;
+                    let ext = store_cell.borrow().string_value(ext, "String")?;
+                    let stem = path.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(&path);
+                    let value = format!("{stem}.{ext}");
+                    let (handle, _) = store_cell
+                        .borrow_mut()
+                        .alloc_raw("Path", value.into_bytes());
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut hosts: [HostFn<'_>; 15] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -776,6 +1133,13 @@ impl Driver {
                 &mut map_insert,
                 &mut map_get,
                 &mut option_unwrap,
+                &mut acquire,
+                &mut array_alloc,
+                &mut array_map_pending,
+                &mut array_collect,
+                &mut tree_project,
+                &mut exec_host,
+                &mut path_with_ext,
             ];
             let step = exec
                 .task
@@ -803,6 +1167,8 @@ impl Driver {
                     }
                     return Burst::Pending {
                         new_requests: requests,
+                        project_requests,
+                        exec_requests,
                         parked_input: input,
                     };
                 }
@@ -832,12 +1198,87 @@ impl Driver {
             word
         }
     }
+
+    fn project_request(&mut self, req: ProjectRequest) -> Result<(usize, i64), String> {
+        let path = self.store.borrow().string_value(req.path, "Path")?;
+        let value = self.project_tree_path(req.tree, &path)?;
+        Ok((req.input_slot, value))
+    }
+
+    fn project_tree_path(&mut self, tree_handle: i64, path: &str) -> Result<i64, String> {
+        let tree = self.store.borrow().tree_entry(tree_handle)?;
+        match tree {
+            TreeEntry::Concrete(tree) => {
+                let projected = crate::oracle::subtree(&tree, path)?;
+                Ok(self.store.borrow_mut().alloc_tree_concrete(projected).0)
+            }
+            TreeEntry::Merge(pending) => {
+                for invocation in pending.into_iter().rev() {
+                    let value = self.demand(invocation.fn_ref, invocation.args)?;
+                    if let Some(found) = self.project_tree_path_optional(value, path)? {
+                        return Ok(found);
+                    }
+                }
+                Err(crate::oracle::PathMissing {
+                    path: path.to_string(),
+                }
+                .diagnostic())
+            }
+        }
+    }
+
+    fn project_tree_path_optional(
+        &mut self,
+        tree_handle: i64,
+        path: &str,
+    ) -> Result<Option<i64>, String> {
+        let tree = self.store.borrow().tree_entry(tree_handle)?;
+        let TreeEntry::Concrete(tree) = tree else {
+            return Err("nested merge tree projection is outside slice 4".into());
+        };
+        match crate::oracle::subtree(&tree, path) {
+            Ok(projected) => Ok(Some(
+                self.store.borrow_mut().alloc_tree_concrete(projected).0,
+            )),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn execute_request(&mut self, req: ExecRequest) -> Result<(usize, i64), String> {
+        let output = self.store.borrow().string_value(req.output, "Path")?;
+        let cap_key = self.store.borrow().string_value(req.capability, "Cc")?;
+        let cap_hash = cc_capability_hash(&cap_key);
+        let argv = vec!["-o".to_string(), output.clone()];
+        let plan = assign_roles("cc", &argv)?;
+        let tool = tool_for("cc")?;
+        self.trace.push(DriveEvent::RunRequested {
+            command: hash_u64("cc"),
+            output: hash_u64(&output),
+        });
+        self.trace.push(DriveEvent::RunStarted {
+            command: hash_u64("cc"),
+            output: hash_u64(&output),
+        });
+        let outcome = self.exec_cache.exec(&plan, cap_hash, &[], tool)?;
+        self.trace.push(DriveEvent::RunCompleted {
+            command: hash_u64("cc"),
+            output: hash_u64(&output),
+        });
+        let handle = self
+            .store
+            .borrow_mut()
+            .alloc_tree_concrete(outcome.outputs)
+            .0;
+        Ok((req.input_slot, handle))
+    }
 }
 
 enum Burst {
     Done(i64),
     Pending {
         new_requests: Vec<InvokeRequest>,
+        project_requests: Vec<ProjectRequest>,
+        exec_requests: Vec<ExecRequest>,
         parked_input: usize,
     },
     Error(String),
@@ -847,6 +1288,26 @@ fn hash_u64(value: impl Hash) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut h);
     std::hash::Hasher::finish(&h)
+}
+
+fn memo_key_hash(key: &CanonMemoKey) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    key.0.hash(&mut h);
+    for arg in &key.1 {
+        arg.hash(&mut h);
+    }
+    std::hash::Hasher::finish(&h)
+}
+
+fn pending_identity_hash(lowered: &LoweredFn, store: &ValueStore, args: &[i64]) -> ContentHash {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-pending-invocation");
+    hasher.update(lowered.hash.to_le_bytes());
+    for (&word, schema) in args.iter().zip(&lowered.arg_schemas) {
+        hasher.update(schema.as_bytes());
+        hasher.update(canonical_word_hash_in_store(store, schema, word));
+    }
+    hasher.finalize().into()
 }
 
 fn read_frame_word(frame: &[u8], at: usize) -> i64 {
@@ -1002,6 +1463,198 @@ fn schema_name_for(schema_ref: i64, schema_refs: &[String]) -> Result<String, St
 
 fn option_schema(value_schema: &str) -> String {
     format!("Option<{value_schema}>")
+}
+
+fn encode_pending_list(kind: i64, pending: &[PendingInvocation]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&kind.to_le_bytes());
+    bytes.extend_from_slice(
+        &i64::try_from(pending.len())
+            .expect("pending length fits i64")
+            .to_le_bytes(),
+    );
+    for invocation in pending {
+        bytes.extend_from_slice(
+            &i64::try_from(invocation.fn_ref)
+                .expect("fn ref fits i64")
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(
+            &i64::try_from(invocation.args.len())
+                .expect("argc fits i64")
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(&invocation.identity_hash);
+        for arg in &invocation.args {
+            bytes.extend_from_slice(&arg.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+fn decode_pending_list(bytes: &[u8]) -> Result<Vec<PendingInvocation>, String> {
+    if bytes.len() < 16 {
+        return Err("pending list too short".into());
+    }
+    let count = usize::try_from(read_frame_word(bytes, 8)).map_err(|_| "pending count")?;
+    let mut at = 16;
+    let mut pending = Vec::with_capacity(count);
+    for _ in 0..count {
+        let fn_ref = usize::try_from(read_frame_word(bytes, at)).map_err(|_| "fn ref")?;
+        let argc = usize::try_from(read_frame_word(bytes, at + 8)).map_err(|_| "argc")?;
+        at += 16;
+        if bytes.len() < at + 32 {
+            return Err("pending invocation identity truncated".into());
+        }
+        let identity_hash: ContentHash = bytes[at..at + 32]
+            .try_into()
+            .expect("pending identity hash length");
+        at += 32;
+        if bytes.len() < at + argc * 8 {
+            return Err("pending invocation truncated".into());
+        }
+        let args = (0..argc)
+            .map(|i| read_frame_word(bytes, at + i * 8))
+            .collect();
+        at += argc * 8;
+        pending.push(PendingInvocation {
+            fn_ref,
+            args,
+            identity_hash,
+        });
+    }
+    if at != bytes.len() {
+        return Err(format!(
+            "pending list has {} trailing bytes",
+            bytes.len() - at
+        ));
+    }
+    Ok(pending)
+}
+
+fn hash_pending_list(domain: &[u8], pending: &[PendingInvocation]) -> ContentHash {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(
+        i64::try_from(pending.len())
+            .expect("pending length fits i64")
+            .to_le_bytes(),
+    );
+    for invocation in pending {
+        hasher.update(
+            i64::try_from(invocation.fn_ref)
+                .expect("fn ref fits i64")
+                .to_le_bytes(),
+        );
+        hasher.update(invocation.identity_hash);
+    }
+    hasher.finalize().into()
+}
+
+fn encode_concrete_tree(tree: &crate::exec::Tree) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0i64.to_le_bytes());
+    bytes.extend_from_slice(
+        &i64::try_from(tree.entries.len())
+            .expect("tree entry count fits i64")
+            .to_le_bytes(),
+    );
+    for (path, contents) in &tree.entries {
+        encode_string(path, &mut bytes);
+        encode_string(contents, &mut bytes);
+    }
+    bytes
+}
+
+fn decode_concrete_tree(bytes: &[u8]) -> Result<crate::exec::Tree, String> {
+    if bytes.len() < 16 {
+        return Err("tree entry too short".into());
+    }
+    let count = usize::try_from(read_frame_word(bytes, 8)).map_err(|_| "tree entry count")?;
+    let mut at = 16;
+    let mut entries = BTreeMap::new();
+    for _ in 0..count {
+        let path = decode_string(bytes, &mut at)?;
+        let contents = decode_string(bytes, &mut at)?;
+        entries.insert(path, contents);
+    }
+    if at != bytes.len() {
+        return Err(format!(
+            "tree entry has {} trailing bytes",
+            bytes.len() - at
+        ));
+    }
+    Ok(crate::exec::Tree { entries })
+}
+
+fn hash_concrete_tree(tree: &crate::exec::Tree) -> ContentHash {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-tree-concrete");
+    for (path, contents) in &tree.entries {
+        hasher.update(
+            i64::try_from(path.len())
+                .expect("path length fits i64")
+                .to_le_bytes(),
+        );
+        hasher.update(path.as_bytes());
+        hasher.update(
+            i64::try_from(contents.len())
+                .expect("contents length fits i64")
+                .to_le_bytes(),
+        );
+        hasher.update(contents.as_bytes());
+    }
+    hasher.finalize().into()
+}
+
+fn encode_string(value: &str, bytes: &mut Vec<u8>) {
+    bytes.extend_from_slice(
+        &i64::try_from(value.len())
+            .expect("string length fits i64")
+            .to_le_bytes(),
+    );
+    bytes.extend_from_slice(value.as_bytes());
+}
+
+fn decode_string(bytes: &[u8], at: &mut usize) -> Result<String, String> {
+    if bytes.len() < *at + 8 {
+        return Err("string length truncated".into());
+    }
+    let len = usize::try_from(read_frame_word(bytes, *at)).map_err(|_| "string length")?;
+    *at += 8;
+    if bytes.len() < *at + len {
+        return Err("string data truncated".into());
+    }
+    let value = String::from_utf8(bytes[*at..*at + len].to_vec()).map_err(|err| err.to_string())?;
+    *at += len;
+    Ok(value)
+}
+
+fn target_hash(store: &RefCell<ValueStore>, handle: i64) -> Result<u64, String> {
+    let store = store.borrow();
+    let entry = store
+        .entry(handle)
+        .ok_or_else(|| format!("store handle {handle}"))?;
+    if entry.schema != "Target" {
+        return Err(format!("handle {handle} is `{}`, not Target", entry.schema));
+    }
+    if entry.bytes.len() != 8 {
+        return Err(format!("Target entry has {} bytes", entry.bytes.len()));
+    }
+    Ok(u64::from_le_bytes(
+        entry.bytes[..8].try_into().expect("target hash bytes"),
+    ))
+}
+
+fn cc_capability_hash(fingerprint: &str) -> u64 {
+    let value = crate::oracle::Value::Struct {
+        name: "Cc".into(),
+        fields: vec![(
+            "fingerprint".into(),
+            crate::oracle::Value::Str(fingerprint.to_string()),
+        )],
+    };
+    value.canon_hash()
 }
 
 fn hash_value_bytes(
@@ -1189,8 +1842,8 @@ fn field_offset(descriptor: &Descriptor<String>, bytes: &[u8], field_index: usiz
 #[cfg(test)]
 mod tests {
     use super::*;
-    use weavy::mem::declared as declared_mem;
     use weavy::mem::Layout;
+    use weavy::mem::declared as declared_mem;
     use weavy::task::{ArgCopy, Fn as TaskFn, Op};
 
     /// Build the classic: fib(n) = n < 2 ? n : fib(n-1) + fib(n-2),
@@ -1254,6 +1907,7 @@ mod tests {
             store_alloc_region: 0,
             store_read_region: 0,
             store_tag_region: 0,
+            primitive_region: 0,
         }];
         (program, fns)
     }
@@ -1347,6 +2001,7 @@ mod tests {
             store_alloc_region: 0,
             store_read_region: 0,
             store_tag_region: 0,
+            primitive_region: 0,
         });
         let mut driver = Driver::new(program, fns);
         let zero = driver.memo_key(0, &[0]);
@@ -1414,6 +2069,7 @@ mod tests {
             store_alloc_region: 0,
             store_read_region: 0,
             store_tag_region: 0,
+            primitive_region: 0,
         }];
         let mut driver = Driver::new(program, fns);
         assert_eq!(driver.demand(0, vec![6]).unwrap(), 42);
@@ -1461,6 +2117,7 @@ mod tests {
                 store_alloc_region: 0,
                 store_read_region: 48,
                 store_tag_region: 80,
+                primitive_region: 0,
             }],
             descriptors,
         );
@@ -1509,10 +2166,12 @@ mod tests {
 
         assert_eq!(driver.demand(0, vec![]).unwrap(), 21);
         assert_eq!(driver.store_len(), 1);
-        assert!(driver
-            .trace
-            .iter()
-            .any(|e| matches!(e, DriveEvent::StoreAlloc { deduped: false, .. })));
+        assert!(
+            driver
+                .trace
+                .iter()
+                .any(|e| matches!(e, DriveEvent::StoreAlloc { deduped: false, .. }))
+        );
     }
 
     #[test]
@@ -1547,10 +2206,12 @@ mod tests {
 
         assert_eq!(driver.demand(0, vec![]).unwrap(), 1);
         assert_eq!(driver.store_len(), 1);
-        assert!(driver
-            .trace
-            .iter()
-            .any(|e| matches!(e, DriveEvent::StoreAlloc { deduped: true, .. })));
+        assert!(
+            driver
+                .trace
+                .iter()
+                .any(|e| matches!(e, DriveEvent::StoreAlloc { deduped: true, .. }))
+        );
     }
 
     #[test]

@@ -20,13 +20,15 @@ use std::collections::{BTreeSet, HashMap};
 use weavy::mem::Layout;
 use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 
-use super::driver::{
-    DriveEvent, Driver, LoweredFn, INVOKE_HOST, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
-    OPTION_UNWRAP_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
-};
 use super::TotalF64;
+use super::driver::{
+    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_MAP_PENDING_HOST, DriveEvent, Driver,
+    EXEC_HOST, INVOKE_HOST, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
+    OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
+    TREE_PROJECT_HOST,
+};
 use crate::ast;
-use crate::module::{load_module_tables, type_schema_name, ModuleTables, VariantShape};
+use crate::module::{ModuleTables, VariantShape, load_module_tables, type_schema_name};
 
 /// The machine facade for this slice: load source, demand a function's
 /// value at the edge.
@@ -75,7 +77,15 @@ impl Machine {
             })
             .collect::<Result<_, String>>()?;
         let mut schema_names: Vec<String> = tables.descriptors.keys().cloned().collect();
-        schema_names.extend(["String".to_string(), "Map".to_string()]);
+        schema_names.extend([
+            "String".to_string(),
+            "Path".to_string(),
+            "Target".to_string(),
+            "Cc".to_string(),
+            "Tree".to_string(),
+            "Array".to_string(),
+            "Map".to_string(),
+        ]);
         for schema in fn_returns.values() {
             schema_names.push(schema.clone());
             if let Some(value_schema) = map_value_schema(schema) {
@@ -106,6 +116,11 @@ impl Machine {
             })
             .collect();
         let string_handles = string_handles(&tables);
+        let path_handles = path_handles(&tables, string_handles.len());
+        let literal_handles = LiteralHandles {
+            strings: &string_handles,
+            paths: &path_handles,
+        };
 
         let mut task_fns = Vec::with_capacity(names.len());
         let mut lowered = Vec::with_capacity(names.len());
@@ -119,7 +134,7 @@ impl Machine {
                 &fn_returns,
                 &fn_params,
                 &schema_refs,
-                &string_handles,
+                literal_handles,
             )
             .map_err(|e| format!("lowering {name}: {e}"))?;
             task_fns.push(task_fn);
@@ -139,6 +154,7 @@ impl Machine {
                 store_alloc_region: info.store_alloc_region,
                 store_read_region: info.store_read_region,
                 store_tag_region: info.store_tag_region,
+                primitive_region: info.primitive_region,
             });
         }
 
@@ -160,6 +176,12 @@ impl Machine {
                 "string handle assignment is deterministic"
             );
         }
+        let mut path_handles_sorted: Vec<(&String, &i64)> = path_handles.iter().collect();
+        path_handles_sorted.sort_by_key(|(_, handle)| **handle);
+        for (value, expected) in path_handles_sorted {
+            let (actual, _) = driver.intern_raw_value("Path", value.as_bytes().to_vec());
+            assert_eq!(actual, *expected, "path handle assignment is deterministic");
+        }
 
         Ok(Machine { driver, fn_refs })
     }
@@ -178,6 +200,10 @@ impl Machine {
         Ok(f64::from_bits(bits))
     }
 
+    pub fn linux_target_handle(&self) -> i64 {
+        self.driver.intern_linux_target().0
+    }
+
     pub fn trace(&self) -> &[DriveEvent] {
         &self.driver.trace
     }
@@ -188,6 +214,13 @@ impl Machine {
 
     pub fn store_len(&self) -> usize {
         self.driver.store_len()
+    }
+
+    pub fn tree_entries(
+        &self,
+        handle: i64,
+    ) -> Result<std::collections::BTreeMap<String, String>, String> {
+        self.driver.tree_entries(handle)
     }
 
     pub fn fn_hash(&self, name: &str) -> Option<u64> {
@@ -209,6 +242,23 @@ fn string_handles(tables: &ModuleTables) -> HashMap<String, i64> {
         .collect()
 }
 
+fn path_handles(tables: &ModuleTables, offset: usize) -> HashMap<String, i64> {
+    let mut paths = BTreeSet::new();
+    for item in tables.fns.values() {
+        collect_block_paths(&item.body, &mut paths);
+    }
+    paths
+        .into_iter()
+        .enumerate()
+        .map(|(ix, value)| {
+            (
+                value,
+                i64::try_from(offset + ix).expect("path handle fits i64"),
+            )
+        })
+        .collect()
+}
+
 fn collect_block_strings(block: &ast::Block, out: &mut BTreeSet<String>) {
     for stmt in &block.stmts {
         match stmt {
@@ -218,6 +268,97 @@ fn collect_block_strings(block: &ast::Block, out: &mut BTreeSet<String>) {
     }
     if let Some(tail) = &block.tail {
         collect_expr_strings(tail, out);
+    }
+}
+
+fn collect_block_paths(block: &ast::Block, out: &mut BTreeSet<String>) {
+    for stmt in &block.stmts {
+        match stmt {
+            ast::Stmt::Let(l) => collect_expr_paths(&l.value, out),
+            ast::Stmt::Expr(e) => collect_expr_paths(&e.expr, out),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_expr_paths(tail, out);
+    }
+}
+
+fn collect_expr_paths(expr: &ast::Expr, out: &mut BTreeSet<String>) {
+    match expr {
+        ast::Expr::Path(p) => {
+            out.insert(p.value.clone());
+        }
+        ast::Expr::Binary(b) => {
+            collect_expr_paths(&b.left, out);
+            collect_expr_paths(&b.right, out);
+        }
+        ast::Expr::Unary(u) => collect_expr_paths(&u.operand, out),
+        ast::Expr::Call(c) => {
+            for arg in &c.args.args {
+                match arg {
+                    ast::Arg::Expr(e) => collect_expr_paths(e, out),
+                    ast::Arg::Kwarg(k) => collect_expr_paths(&k.value, out),
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::MethodCall(m) => {
+            collect_expr_paths(&m.receiver, out);
+            for arg in &m.args.args {
+                match arg {
+                    ast::Arg::Expr(e) => collect_expr_paths(e, out),
+                    ast::Arg::Kwarg(k) => collect_expr_paths(&k.value, out),
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::Match(m) => {
+            collect_expr_paths(&m.scrutinee, out);
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    collect_expr_paths(guard, out);
+                }
+                collect_expr_paths(&arm.value, out);
+            }
+        }
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                collect_expr_paths(&field.value, out);
+            }
+        }
+        ast::Expr::Paren(p) => collect_expr_paths(&p.inner, out),
+        ast::Expr::Field(f) => collect_expr_paths(&f.receiver, out),
+        ast::Expr::Tuple(t) => {
+            for elem in &t.elems {
+                collect_expr_paths(elem, out);
+            }
+        }
+        ast::Expr::Array(a) => {
+            for elem in &a.elems {
+                if let ast::ArrayElem::Expr(e) = elem {
+                    collect_expr_paths(e, out);
+                }
+            }
+        }
+        ast::Expr::Map(m) => {
+            for entry in &m.entries {
+                collect_expr_paths(&entry.key, out);
+                collect_expr_paths(&entry.value, out);
+            }
+        }
+        ast::Expr::Closure(c) => collect_expr_paths(&c.body, out),
+        ast::Expr::Command(c) => {
+            for part in &c.parts {
+                if let ast::CommandPart::Splice(s) = part {
+                    collect_expr_paths(&s.expr, out);
+                }
+            }
+        }
+        ast::Expr::Scoped(_)
+        | ast::Expr::Identifier(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
     }
 }
 
@@ -290,9 +431,15 @@ fn collect_expr_strings(expr: &ast::Expr, out: &mut BTreeSet<String>) {
                 }
             }
         }
-        ast::Expr::Closure(_)
-        | ast::Expr::Command(_)
-        | ast::Expr::Scoped(_)
+        ast::Expr::Closure(c) => collect_expr_strings(&c.body, out),
+        ast::Expr::Command(c) => {
+            for part in &c.parts {
+                if let ast::CommandPart::Splice(s) = part {
+                    collect_expr_strings(&s.expr, out);
+                }
+            }
+        }
+        ast::Expr::Scoped(_)
         | ast::Expr::Identifier(_)
         | ast::Expr::Path(_)
         | ast::Expr::Number(_)
@@ -363,6 +510,13 @@ struct LoweredInfo {
     store_alloc_region: u32,
     store_read_region: u32,
     store_tag_region: u32,
+    primitive_region: u32,
+}
+
+#[derive(Clone, Copy)]
+struct LiteralHandles<'a> {
+    strings: &'a HashMap<String, i64>,
+    paths: &'a HashMap<String, i64>,
 }
 
 #[derive(Clone)]
@@ -377,7 +531,7 @@ struct FnLowerer<'a> {
     fn_returns: &'a HashMap<String, String>,
     fn_params: &'a HashMap<String, Vec<String>>,
     schema_refs: &'a HashMap<String, i64>,
-    string_handles: &'a HashMap<String, i64>,
+    literal_handles: LiteralHandles<'a>,
     slots: HashMap<String, ValueSlot>,
     next: u32,
     code: Vec<Op>,
@@ -385,6 +539,7 @@ struct FnLowerer<'a> {
     store_alloc_region: u32,
     store_read_region: u32,
     store_tag_region: u32,
+    primitive_region: u32,
     next_input_slot: i64,
 }
 
@@ -396,7 +551,7 @@ impl<'a> FnLowerer<'a> {
         fn_returns: &'a HashMap<String, String>,
         fn_params: &'a HashMap<String, Vec<String>>,
         schema_refs: &'a HashMap<String, i64>,
-        string_handles: &'a HashMap<String, i64>,
+        literal_handles: LiteralHandles<'a>,
     ) -> Result<(TaskFn, LoweredInfo), String> {
         let mut this = FnLowerer {
             tables,
@@ -404,7 +559,7 @@ impl<'a> FnLowerer<'a> {
             fn_returns,
             fn_params,
             schema_refs,
-            string_handles,
+            literal_handles,
             slots: HashMap::new(),
             next: 0,
             code: Vec::new(),
@@ -412,6 +567,7 @@ impl<'a> FnLowerer<'a> {
             store_alloc_region: 0,
             store_read_region: 0,
             store_tag_region: 0,
+            primitive_region: 0,
             next_input_slot: 0,
         };
 
@@ -436,6 +592,8 @@ impl<'a> FnLowerer<'a> {
         this.next += 8 * 3;
         this.store_tag_region = this.next;
         this.next += 8 * 2;
+        this.primitive_region = this.next;
+        this.next += 8 * (8 + u32::try_from(max_store_fields).expect("field count fits u32"));
 
         let return_schema = item
             .return_type
@@ -464,6 +622,7 @@ impl<'a> FnLowerer<'a> {
                 store_alloc_region: this.store_alloc_region,
                 store_read_region: this.store_read_region,
                 store_tag_region: this.store_tag_region,
+                primitive_region: this.primitive_region,
             },
         ))
     }
@@ -542,7 +701,8 @@ impl<'a> FnLowerer<'a> {
             }
             ast::Expr::Str(s) => {
                 let value = *self
-                    .string_handles
+                    .literal_handles
+                    .strings
                     .get(&s.value)
                     .ok_or_else(|| format!("string literal {:?} was not interned", s.value))?;
                 let dst = self.alloc();
@@ -550,6 +710,19 @@ impl<'a> FnLowerer<'a> {
                 Ok(ValueSlot {
                     slot: dst,
                     schema: "String".into(),
+                })
+            }
+            ast::Expr::Path(p) => {
+                let value = *self
+                    .literal_handles
+                    .paths
+                    .get(&p.value)
+                    .ok_or_else(|| format!("path literal {:?} was not interned", p.value))?;
+                let dst = self.alloc();
+                self.code.push(Op::ConstI64 { dst, value });
+                Ok(ValueSlot {
+                    slot: dst,
+                    schema: "Path".into(),
                 })
             }
             ast::Expr::Identifier(name) => self
@@ -560,6 +733,20 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Paren(p) => self.expr(&p.inner),
             ast::Expr::Scoped(path) => self.scoped_value(path),
             ast::Expr::StructLit(lit) => self.struct_literal(lit),
+            ast::Expr::Binary(b) if b.op == "/" => {
+                let left = self.expr(&b.left)?;
+                let right = self.expr(&b.right)?;
+                match (left.schema.as_str(), right.schema.as_str()) {
+                    ("Tree", "Path") => self.tree_project(&left, &right),
+                    ("Path", "Path") => {
+                        Err("Path / Path is outside the machine slice-4 subset".into())
+                    }
+                    _ => Err(format!(
+                        "`/` on {} and {} is outside the machine slice-4 subset",
+                        left.schema, right.schema
+                    )),
+                }
+            }
             ast::Expr::Binary(b) => {
                 let a = self.expr(&b.left)?;
                 let r = self.expr(&b.right)?;
@@ -637,6 +824,8 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Call(call) => self.call(call),
             ast::Expr::MethodCall(call) => self.method_call(call),
             ast::Expr::Map(map) => self.map_literal(map, expected),
+            ast::Expr::Array(array) => self.array_literal(array),
+            ast::Expr::Command(command) => self.command_block(command),
             ast::Expr::Match(m) => self.match_expr(m),
             other => Err(format!(
                 "expression {other:?} is outside the slice-1 subset"
@@ -684,10 +873,10 @@ impl<'a> FnLowerer<'a> {
                     });
                 }
                 ast::Pattern::Str(s) => {
-                    let value = *self
-                        .string_handles
-                        .get(&s.value)
-                        .ok_or_else(|| format!("string pattern {:?} was not interned", s.value))?;
+                    let value =
+                        *self.literal_handles.strings.get(&s.value).ok_or_else(|| {
+                            format!("string pattern {:?} was not interned", s.value)
+                        })?;
                     let lit = self.alloc();
                     self.code.push(Op::ConstI64 { dst: lit, value });
                     let test = self.alloc();
@@ -830,6 +1019,9 @@ impl<'a> FnLowerer<'a> {
         if let Some(value) = self.variant_constructor_call(call)? {
             return Ok(value);
         }
+        if let Some(value) = self.builtin_scoped_call(call)? {
+            return Ok(value);
+        }
         let name = match &call.callee {
             ast::PathRef::Identifier(name) => &name.value,
             other => {
@@ -901,9 +1093,43 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn builtin_scoped_call(&mut self, call: &ast::Call) -> Result<Option<ValueSlot>, String> {
+        let ast::PathRef::Scoped(path) = &call.callee else {
+            return Ok(None);
+        };
+        let segments: Vec<&str> = path.segments.iter().map(|s| s.value.as_str()).collect();
+        match segments.as_slice() {
+            ["Cc", "acquire"] => {
+                let [ast::Arg::Expr(target)] = call.args.args.as_slice() else {
+                    return Err("Cc::acquire takes one target".into());
+                };
+                let target = self.expr_expected(target, Some("Target"))?;
+                Ok(Some(self.acquire("Cc", &target)?))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn method_call(&mut self, call: &ast::MethodCall) -> Result<ValueSlot, String> {
         let receiver = self.expr(&call.receiver)?;
         match call.name.value.as_str() {
+            "with_ext" => {
+                if receiver.schema != "Path" {
+                    return Err(format!("with_ext called on {}", receiver.schema));
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("Path.with_ext takes one extension".into());
+                };
+                let ext = self.method_arg(arg, Some("String"))?;
+                self.path_with_ext(&receiver, &ext)
+            }
+            "map" => self.array_map_pending(&receiver, call),
+            "collect" => {
+                if !call.args.args.is_empty() {
+                    return Err("collect takes no arguments".into());
+                }
+                self.array_collect(&receiver)
+            }
             "insert" => {
                 let Some((key_schema, value_schema)) = map_schemas(&receiver.schema) else {
                     return Err(format!("insert called on {}", receiver.schema));
@@ -1391,6 +1617,239 @@ impl<'a> FnLowerer<'a> {
             schema: value_schema.to_string(),
         }
     }
+
+    fn acquire(&mut self, kind: &str, target: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(target, "Target")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        let kind_ref = *self
+            .schema_refs
+            .get(kind)
+            .ok_or_else(|| format!("no schema ref for {kind}"))?;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: kind_ref,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: target.slot,
+        });
+        self.code.push(Op::HostCall { host: ACQUIRE_HOST });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: kind.to_string(),
+        })
+    }
+
+    fn array_literal(&mut self, array: &ast::Array) -> Result<ValueSlot, String> {
+        let mut elems = Vec::new();
+        for elem in &array.elems {
+            let ast::ArrayElem::Expr(expr) = elem else {
+                return Err("array flags are outside the machine slice-4 subset".into());
+            };
+            elems.push(self.expr_expected(expr, Some("Path"))?);
+        }
+        if elems.iter().any(|elem| elem.schema != "Path") {
+            return Err("slice-4 array literals are Path arrays only".into());
+        }
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: *self.schema_refs.get("Path").expect("Path schema ref"),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: i64::try_from(elems.len()).expect("array length fits i64"),
+        });
+        for (index, elem) in elems.iter().enumerate() {
+            self.code.push(Op::CopyI64 {
+                dst: region + 24 + 8 * u32::try_from(index).expect("array index fits u32"),
+                src: elem.slot,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: ARRAY_ALLOC_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Array".into(),
+        })
+    }
+
+    fn array_map_pending(
+        &mut self,
+        receiver: &ValueSlot,
+        call: &ast::MethodCall,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        let [ast::Arg::Expr(ast::Expr::Closure(closure))] = call.args.args.as_slice() else {
+            return Err("slice-4 array map requires a single closure argument".into());
+        };
+        let (fn_name, captured_name, param_name) = partial_named_fn_closure(closure)?;
+        let fn_ref = *self
+            .fn_refs
+            .get(fn_name)
+            .ok_or_else(|| format!("unknown function {fn_name}"))?;
+        let captured = self
+            .slots
+            .get(captured_name)
+            .cloned()
+            .ok_or_else(|| format!("unbound capture {captured_name}"))?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: i64::try_from(fn_ref).expect("fn ref fits i64"),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 24,
+            src: captured.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: ARRAY_MAP_PENDING_HOST,
+        });
+        let _ = param_name;
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Array".into(),
+        })
+    }
+
+    fn array_collect(&mut self, receiver: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: ARRAY_COLLECT_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Tree".into(),
+        })
+    }
+
+    fn tree_project(&mut self, tree: &ValueSlot, path: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(tree, "Tree")?;
+        self.expect_schema(path, "Path")?;
+        let input_slot = self.next_input_slot;
+        self.next_input_slot += 1;
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: input_slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: tree.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: path.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: TREE_PROJECT_HOST,
+        });
+        let dst = self.alloc();
+        self.code.push(Op::Await {
+            dst,
+            input: u32::try_from(input_slot).expect("input slot fits u32"),
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Tree".into(),
+        })
+    }
+
+    fn command_block(&mut self, command: &ast::CommandBlock) -> Result<ValueSlot, String> {
+        if command.command.value != "cc" {
+            return Err(format!(
+                "command {} is outside the machine slice-4 subset",
+                command.command.value
+            ));
+        }
+        let capability = self
+            .slots
+            .get(&command.command.value)
+            .cloned()
+            .ok_or_else(|| format!("no capability `{}` in scope", command.command.value))?;
+        let output = command_output_path_expr(command)
+            .ok_or_else(|| "slice-4 cc command requires `-o {path}`".to_string())
+            .and_then(|expr| self.expr_expected(expr, Some("Path")))?;
+        let input_slot = self.next_input_slot;
+        self.next_input_slot += 1;
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: input_slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: capability.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: output.slot,
+        });
+        self.code.push(Op::HostCall { host: EXEC_HOST });
+        let dst = self.alloc();
+        self.code.push(Op::Await {
+            dst,
+            input: u32::try_from(input_slot).expect("input slot fits u32"),
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Tree".into(),
+        })
+    }
+
+    fn path_with_ext(&mut self, path: &ValueSlot, ext: &ValueSlot) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: path.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: ext.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: PATH_WITH_EXT_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Path".into(),
+        })
+    }
 }
 
 fn path_ref_segments(path: &ast::PathRef) -> Result<Vec<String>, String> {
@@ -1416,6 +1875,48 @@ fn option_schema(value_schema: &str) -> String {
 
 fn option_value_schema(schema: &str) -> Option<&str> {
     schema.strip_prefix("Option<")?.strip_suffix('>')
+}
+
+fn partial_named_fn_closure(closure: &ast::Closure) -> Result<(&str, &str, &str), String> {
+    let [param] = closure.params.as_slice() else {
+        return Err("slice-4 map closure must have one parameter".into());
+    };
+    let ast::Expr::Call(call) = &closure.body else {
+        return Err("slice-4 map closure body must be a named function call".into());
+    };
+    let ast::PathRef::Identifier(fn_name) = &call.callee else {
+        return Err("slice-4 map closure callee must be a named function".into());
+    };
+    let [
+        ast::Arg::Expr(ast::Expr::Identifier(captured)),
+        ast::Arg::Expr(ast::Expr::Identifier(argument)),
+    ] = call.args.args.as_slice()
+    else {
+        return Err("slice-4 map closure must call f(captured, parameter)".into());
+    };
+    if argument.value != param.value {
+        return Err(format!(
+            "slice-4 map closure argument must be parameter {}, got {}",
+            param.value, argument.value
+        ));
+    }
+    Ok((
+        fn_name.value.as_str(),
+        captured.value.as_str(),
+        param.value.as_str(),
+    ))
+}
+
+fn command_output_path_expr(command: &ast::CommandBlock) -> Option<&ast::Expr> {
+    let mut saw_output = false;
+    for part in &command.parts {
+        match part {
+            ast::CommandPart::Token(token) if token.value == "-o" => saw_output = true,
+            ast::CommandPart::Splice(splice) if saw_output => return Some(&splice.expr),
+            _ => saw_output = false,
+        }
+    }
+    None
 }
 
 fn resolve_variant_segments(
@@ -1555,6 +2056,8 @@ fn max_store_field_count(block: &ast::Block) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use std::hash::{DefaultHasher, Hash, Hasher};
 
     const CORPUS: &str = r#"
 fn square(x: Int) -> Int { x * x }
@@ -1963,5 +2466,150 @@ fn missing() -> Float {
             .and_then(|mut machine| machine.demand_i64("missing", vec![]))
             .unwrap_err();
         assert!(err.contains("unwrap on None"), "{err}");
+    }
+
+    fn trace_hash(value: &str) -> u64 {
+        let mut h = DefaultHasher::new();
+        value.hash(&mut h);
+        h.finish()
+    }
+
+    fn expected_object() -> BTreeMap<String, String> {
+        BTreeMap::from([("wanted.o".to_string(), "obj(9259fea8a69f1945)".to_string())])
+    }
+
+    fn spawned_count(machine: &Machine, name: &str) -> usize {
+        let hash = machine.fn_hash(name).expect("function hash");
+        machine
+            .trace()
+            .iter()
+            .filter(|event| matches!(event, DriveEvent::Spawned { fn_hash } if *fn_hash == hash))
+            .count()
+    }
+
+    fn run_outputs(machine: &Machine, pick: impl Fn(&DriveEvent) -> Option<u64>) -> Vec<u64> {
+        let mut outputs: Vec<u64> = machine.trace().iter().filter_map(pick).collect();
+        outputs.sort();
+        outputs
+    }
+
+    fn started_outputs(machine: &Machine) -> Vec<u64> {
+        run_outputs(machine, |event| match event {
+            DriveEvent::RunStarted { command, output } => {
+                assert_eq!(*command, trace_hash("cc"));
+                Some(*output)
+            }
+            _ => None,
+        })
+    }
+
+    fn completed_outputs(machine: &Machine) -> Vec<u64> {
+        run_outputs(machine, |event| match event {
+            DriveEvent::RunCompleted { command, output } => {
+                assert_eq!(*command, trace_hash("cc"));
+                Some(*output)
+            }
+            _ => None,
+        })
+    }
+
+    fn output_set(paths: &[&str]) -> Vec<u64> {
+        let mut values: Vec<u64> = paths.iter().map(|path| trace_hash(path)).collect();
+        values.sort();
+        values
+    }
+
+    fn load_merge_demand() -> Machine {
+        Machine::load(include_str!(
+            "../../../playgrounds/snark/src/bundled/vix/samples/merge-demand.vix"
+        ))
+        .expect("merge-demand.vix loads")
+    }
+
+    #[test]
+    fn merge_demand_selected_tunnels_and_never_runs_left() {
+        let mut machine = load_merge_demand();
+        let target = machine.linux_target_handle();
+        let handle = machine.demand_i64("selected", vec![target]).unwrap();
+
+        assert_eq!(machine.tree_entries(handle).unwrap(), expected_object());
+        assert_eq!(spawned_count(&machine, "selected"), 1);
+        assert_eq!(spawned_count(&machine, "object"), 1);
+        assert_eq!(started_outputs(&machine), output_set(&["wanted.o"]));
+        assert_eq!(completed_outputs(&machine), output_set(&["wanted.o"]));
+        assert!(
+            !machine
+                .trace()
+                .iter()
+                .any(|event| matches!(event, DriveEvent::RunRequested { output, .. } if *output == trace_hash("left.o"))),
+            "left.o producer is never requested"
+        );
+
+        let selected_hash = machine.fn_hash("selected").expect("selected hash");
+        machine.clear_trace();
+        let warm = machine.demand_i64("selected", vec![target]).unwrap();
+        assert_eq!(warm, handle);
+        assert_eq!(
+            machine.trace(),
+            &[
+                DriveEvent::Demanded {
+                    fn_hash: selected_hash
+                },
+                DriveEvent::MemoHit {
+                    fn_hash: selected_hash
+                },
+            ],
+            "warm selected demand is exactly root memo hit"
+        );
+    }
+
+    #[test]
+    fn merge_demand_fallback_falls_left_after_right_absence() {
+        let mut machine = load_merge_demand();
+        let target = machine.linux_target_handle();
+        let handle = machine.demand_i64("fallback", vec![target]).unwrap();
+
+        assert_eq!(machine.tree_entries(handle).unwrap(), expected_object());
+        assert_eq!(spawned_count(&machine, "fallback"), 1);
+        assert_eq!(
+            spawned_count(&machine, "object"),
+            2,
+            "right.o is run to prove absence, then wanted.o is demanded"
+        );
+        assert_eq!(
+            started_outputs(&machine),
+            output_set(&["right.o", "wanted.o"])
+        );
+        assert_eq!(
+            completed_outputs(&machine),
+            output_set(&["right.o", "wanted.o"])
+        );
+        assert!(
+            !machine
+                .trace()
+                .iter()
+                .any(|event| matches!(event, DriveEvent::RunRequested { output, .. } if *output == trace_hash("left.o"))),
+            "left.o is outside fallback's demanded path"
+        );
+    }
+
+    #[test]
+    fn merge_demand_subtree_chain_refines_without_left() {
+        let mut machine = load_merge_demand();
+        let target = machine.linux_target_handle();
+        let handle = machine.demand_i64("subtree_chain", vec![target]).unwrap();
+
+        assert_eq!(machine.tree_entries(handle).unwrap(), expected_object());
+        assert_eq!(spawned_count(&machine, "subtree_chain"), 1);
+        assert_eq!(spawned_count(&machine, "object"), 1);
+        assert_eq!(started_outputs(&machine), output_set(&["x/wanted.o"]));
+        assert_eq!(completed_outputs(&machine), output_set(&["x/wanted.o"]));
+        assert!(
+            !machine
+                .trace()
+                .iter()
+                .any(|event| matches!(event, DriveEvent::RunRequested { output, .. } if *output == trace_hash("left.o"))),
+            "left.o producer is never requested through the subtree chain"
+        );
     }
 }
