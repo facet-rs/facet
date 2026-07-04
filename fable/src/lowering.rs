@@ -5,6 +5,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::mem::{align_of, size_of};
 use std::ptr::copy_nonoverlapping;
+use std::rc::Rc;
 
 use facet_core::{
     Def, EnumRepr, Facet, PtrConst, PtrMut, PtrUninit, ScalarType, Shape, StructKind, Type,
@@ -74,6 +75,7 @@ pub struct FableRootPlan {
     lowered: FableLowered,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
 }
 
 /// A reusable lowered Fable predicate over explicitly named roots.
@@ -84,6 +86,7 @@ pub struct FableRootPredicatePlan {
     lowered: FableLowered,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
 }
 
 /// A reusable lowered Fable query over explicitly named roots.
@@ -96,6 +99,7 @@ pub struct FableRootQueryPlan<Output> {
     task_query: Option<FableTaskQueryPlan>,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
     _marker: PhantomData<fn() -> Output>,
 }
 
@@ -1035,12 +1039,13 @@ impl FableRootPlan {
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_root(&root)?;
         let declared_types = lowerer.declared_types.clone();
-        let blocks = lowerer.into_blocks();
+        let (blocks, functions) = lowerer.finish();
 
         Ok(Self {
             lowered: FableLowered::new(program, blocks),
             roots: roots.into(),
             declared_types,
+            functions: Rc::new(functions),
         })
     }
 
@@ -1052,7 +1057,12 @@ impl FableRootPlan {
     /// Run this plan against explicitly bound root values.
     pub fn apply(&self, roots: &mut [FableRootValue<'_>]) -> Result<(), FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        run_dense_apply_in_task(&self.lowered, runtime_roots, self.declared_types.clone())
+        run_dense_apply_in_task(
+            &self.lowered,
+            runtime_roots,
+            self.declared_types.clone(),
+            self.functions.clone(),
+        )
     }
 
     /// Run this plan and return Weavy execution counters.
@@ -1065,6 +1075,7 @@ impl FableRootPlan {
             &self.lowered,
             runtime_roots,
             self.declared_types.clone(),
+            self.functions.clone(),
         )
     }
 
@@ -1092,12 +1103,13 @@ impl FableRootPredicatePlan {
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_predicate_root(&root)?;
         let declared_types = lowerer.declared_types.clone();
-        let blocks = lowerer.into_blocks();
+        let (blocks, functions) = lowerer.finish();
 
         Ok(Self {
             lowered: FableLowered::new(program, blocks),
             roots: roots.into(),
             declared_types,
+            functions: Rc::new(functions),
         })
     }
 
@@ -1109,7 +1121,12 @@ impl FableRootPredicatePlan {
     /// Run this predicate against explicitly bound root values.
     pub fn evaluate(&self, roots: &mut [FableRootValue<'_>]) -> Result<bool, FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        run_dense_predicate_in_task(&self.lowered, runtime_roots, self.declared_types.clone())
+        run_dense_predicate_in_task(
+            &self.lowered,
+            runtime_roots,
+            self.declared_types.clone(),
+            self.functions.clone(),
+        )
     }
 
     /// Run this predicate and return Weavy execution counters.
@@ -1122,6 +1139,7 @@ impl FableRootPredicatePlan {
             &self.lowered,
             runtime_roots,
             self.declared_types.clone(),
+            self.functions.clone(),
         )
     }
 
@@ -1157,19 +1175,21 @@ where
                 task_query,
                 roots: roots.into(),
                 declared_types,
+                functions: Rc::default(),
                 _marker: PhantomData,
             });
         }
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_query_root(&root, Output::query_type())?;
         let declared_types = lowerer.declared_types.clone();
-        let blocks = lowerer.into_blocks();
+        let (blocks, functions) = lowerer.finish();
 
         Ok(Self {
             lowered: FableLowered::new(program, blocks),
             task_query: None,
             roots: roots.into(),
             declared_types,
+            functions: Rc::new(functions),
             _marker: PhantomData,
         })
     }
@@ -1186,7 +1206,12 @@ where
             return task_query.evaluate();
         }
         let runtime_roots = self.runtime_roots(roots)?;
-        run_dense_query_in_task(&self.lowered, runtime_roots, self.declared_types.clone())
+        run_dense_query_in_task(
+            &self.lowered,
+            runtime_roots,
+            self.declared_types.clone(),
+            self.functions.clone(),
+        )
     }
 
     /// Run this query and return Weavy execution counters.
@@ -1203,6 +1228,7 @@ where
             &self.lowered,
             runtime_roots,
             self.declared_types.clone(),
+            self.functions.clone(),
         )
     }
 
@@ -1325,9 +1351,7 @@ impl FableTaskQueryPlan {
             return Ok(None);
         }
         if !roots.is_empty() {
-            return Err(FableError::Unsupported {
-                feature: "user functions over root values".into(),
-            });
+            return Ok(None);
         }
 
         let statements: Vec<&Stmt> = root
@@ -1950,12 +1974,17 @@ fn run_single_host_task(host: &mut dyn FnMut(&mut [u8])) {
     debug_assert_eq!(step, weavy::task::TaskStep::Done);
 }
 
-fn dense_interp(roots: Vec<RuntimeRoot>, declared_types: FableDeclaredTypes) -> FableInterp {
+fn dense_interp(
+    roots: Vec<RuntimeRoot>,
+    declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
+) -> FableInterp {
     FableInterp {
         roots,
         locals: LocalSlots::default(),
         value_store: FableValueStore::default(),
         declared_types,
+        functions,
         predicate_result: None,
         query_result: None,
     }
@@ -1965,6 +1994,7 @@ fn run_dense_apply_in_task(
     lowered: &FableLowered,
     roots: Vec<RuntimeRoot>,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
 ) -> Result<(), FableError> {
     let mut roots = Some(roots);
     let mut result = Ok(());
@@ -1976,7 +2006,7 @@ fn run_dense_apply_in_task(
                 });
                 return;
             };
-            let mut interp = dense_interp(roots, declared_types.clone());
+            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
             result = weavy::run_dense(lowered, &mut interp).map_err(run_error);
         };
         run_single_host_task(&mut host);
@@ -1988,6 +2018,7 @@ fn run_dense_apply_in_task_with_stats(
     lowered: &FableLowered,
     roots: Vec<RuntimeRoot>,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
 ) -> Result<RunStats, FableError> {
     let mut roots = Some(roots);
     let mut result = Err(FableError::MalformedProgram {
@@ -2001,7 +2032,7 @@ fn run_dense_apply_in_task_with_stats(
                 });
                 return;
             };
-            let mut interp = dense_interp(roots, declared_types.clone());
+            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
             result = weavy::run_dense_with_stats(lowered, &mut interp).map_err(run_error);
         };
         run_single_host_task(&mut host);
@@ -2013,6 +2044,7 @@ fn run_dense_predicate_in_task(
     lowered: &FableLowered,
     roots: Vec<RuntimeRoot>,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
 ) -> Result<bool, FableError> {
     let mut roots = Some(roots);
     let mut result = Err(FableError::MalformedProgram {
@@ -2026,7 +2058,7 @@ fn run_dense_predicate_in_task(
                 });
                 return;
             };
-            let mut interp = dense_interp(roots, declared_types.clone());
+            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
             result = weavy::run_dense(lowered, &mut interp)
                 .map_err(run_error)
                 .and_then(|()| {
@@ -2044,6 +2076,7 @@ fn run_dense_predicate_in_task_with_stats(
     lowered: &FableLowered,
     roots: Vec<RuntimeRoot>,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
 ) -> Result<(bool, RunStats), FableError> {
     let mut roots = Some(roots);
     let mut result = Err(FableError::MalformedProgram {
@@ -2057,7 +2090,7 @@ fn run_dense_predicate_in_task_with_stats(
                 });
                 return;
             };
-            let mut interp = dense_interp(roots, declared_types.clone());
+            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
             result = weavy::run_dense_with_stats(lowered, &mut interp)
                 .map_err(run_error)
                 .and_then(|stats| {
@@ -2078,6 +2111,7 @@ fn run_dense_query_in_task<Output>(
     lowered: &FableLowered,
     roots: Vec<RuntimeRoot>,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
 ) -> Result<Output, FableError>
 where
     Output: FableQueryResult,
@@ -2094,7 +2128,7 @@ where
                 });
                 return;
             };
-            let mut interp = dense_interp(roots, declared_types.clone());
+            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
             result = weavy::run_dense(lowered, &mut interp)
                 .map_err(run_error)
                 .and_then(|()| {
@@ -2115,6 +2149,7 @@ fn run_dense_query_in_task_with_stats<Output>(
     lowered: &FableLowered,
     roots: Vec<RuntimeRoot>,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
 ) -> Result<(Output, RunStats), FableError>
 where
     Output: FableQueryResult,
@@ -2131,7 +2166,7 @@ where
                 });
                 return;
             };
-            let mut interp = dense_interp(roots, declared_types.clone());
+            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
             result = weavy::run_dense_with_stats(lowered, &mut interp)
                 .map_err(run_error)
                 .and_then(|stats| {
@@ -2603,6 +2638,46 @@ impl FableQueryOutput {
     }
 }
 
+#[derive(Default)]
+struct FableFunctions {
+    plans: Vec<FableFunctionPlan>,
+}
+
+impl FableFunctions {
+    fn get(&self, index: usize) -> Result<&FableFunctionPlan, FableError> {
+        self.plans.get(index).ok_or(FableError::MalformedProgram {
+            reason: "function call referenced a missing function",
+        })
+    }
+}
+
+#[derive(Clone)]
+struct FableFunctionSignature {
+    index: usize,
+    params: Vec<FableQueryType>,
+    result: FableQueryType,
+}
+
+struct FableFunctionPlan {
+    params: Box<[(LocalRef, FableQueryType)]>,
+    result: FableQueryType,
+    prefix: FableProgram,
+    result_expr: ExprPlan,
+}
+
+#[derive(Debug)]
+struct FunctionCallExpr {
+    function: usize,
+    args: Box<[FunctionArgPlan]>,
+    result: FableQueryType,
+}
+
+#[derive(Debug)]
+struct FunctionArgPlan {
+    expected: FableQueryType,
+    expr: ExprPlan,
+}
+
 #[derive(Debug)]
 enum ExprPlan {
     Unit(UnitExpr),
@@ -2612,6 +2687,7 @@ enum ExprPlan {
     Number(NumberExpr),
     Value(ValueExpr),
     Match(Box<MatchExprPlan>),
+    If(Box<IfExprPlan>),
 }
 
 impl ExprPlan {
@@ -2626,6 +2702,7 @@ impl ExprPlan {
             ExprPlan::Number(NumberExpr::Float(_)) => "float",
             ExprPlan::Value(_) => "typed value",
             ExprPlan::Match(expr) => expr.result_kind().name(),
+            ExprPlan::If(expr) => expr.result_kind.name(),
         }
     }
 }
@@ -2745,6 +2822,7 @@ enum UnitExpr {
     Read(FieldPath),
     Local(LocalRef),
     DeclaredRead(DeclaredScalarRead),
+    FunctionCall(Box<FunctionCallExpr>),
     HostFieldMut {
         function: FableFieldMutUnary,
         field: FieldPath,
@@ -2757,6 +2835,7 @@ enum BoolExpr {
     Read(FieldPath),
     Local(LocalRef),
     DeclaredRead(DeclaredScalarRead),
+    FunctionCall(Box<FunctionCallExpr>),
     HostFieldPredicate {
         function: FableFieldBoolUnary,
         field: FieldPath,
@@ -2803,6 +2882,7 @@ enum CharExpr {
     Read(FieldPath),
     Local(LocalRef),
     DeclaredRead(DeclaredScalarRead),
+    FunctionCall(Box<FunctionCallExpr>),
 }
 
 #[derive(Debug)]
@@ -2811,6 +2891,7 @@ enum StringExpr {
     Read(FieldPath),
     Local(LocalRef),
     DeclaredRead(DeclaredScalarRead),
+    FunctionCall(Box<FunctionCallExpr>),
     HostFieldString {
         function: FableFieldStringUnary,
         field: FieldPath,
@@ -2836,6 +2917,7 @@ enum IntExpr {
     Read(FieldPath),
     Local(LocalRef),
     DeclaredRead(DeclaredScalarRead),
+    FunctionCall(Box<FunctionCallExpr>),
     HostUnary {
         function: FableSignedUnary,
         value: Box<NumberExpr>,
@@ -2857,6 +2939,7 @@ enum UIntExpr {
     Read(FieldPath),
     Local(LocalRef),
     DeclaredRead(DeclaredScalarRead),
+    FunctionCall(Box<FunctionCallExpr>),
     Literal(u128),
     HostUnary {
         function: FableUnsignedUnary,
@@ -2879,6 +2962,7 @@ enum FloatExpr {
     Read(FieldPath),
     Local(LocalRef),
     DeclaredRead(DeclaredScalarRead),
+    FunctionCall(Box<FunctionCallExpr>),
     Literal(f64),
     HostUnary {
         function: FableFloatUnary,
@@ -3090,9 +3174,18 @@ struct ExpectedDeclaredVariant {
     fields: Vec<ExpectedDeclaredField>,
 }
 
+#[derive(Debug)]
 struct LoweredBlockResult {
     prefix: FableProgram,
     result: ExprPlan,
+}
+
+#[derive(Debug)]
+struct IfExprPlan {
+    condition: BoolExpr,
+    then_result: LoweredBlockResult,
+    else_result: LoweredBlockResult,
+    result_kind: FableQueryType,
 }
 
 #[derive(Debug)]
@@ -3378,7 +3471,49 @@ impl LocalAllocator {
                     }
                 }
             },
-            ExprPlan::Match(_) => unreachable!("match expressions cannot allocate locals directly"),
+            ExprPlan::Match(_) | ExprPlan::If(_) => {
+                unreachable!("control expressions cannot allocate locals directly")
+            }
+        }
+    }
+
+    fn allocate_query_type(&mut self, ty: FableQueryType) -> LocalRef {
+        match ty {
+            FableQueryType::Unit => {
+                let index = self.unit_count;
+                self.unit_count += 1;
+                LocalRef::Unit(index)
+            }
+            FableQueryType::Bool => {
+                let index = self.bool_count;
+                self.bool_count += 1;
+                LocalRef::Bool(index)
+            }
+            FableQueryType::Char => {
+                let index = self.char_count;
+                self.char_count += 1;
+                LocalRef::Char(index)
+            }
+            FableQueryType::String => {
+                let index = self.string_count;
+                self.string_count += 1;
+                LocalRef::String(index)
+            }
+            FableQueryType::Signed => {
+                let index = self.signed_count;
+                self.signed_count += 1;
+                LocalRef::Signed(index)
+            }
+            FableQueryType::Unsigned => {
+                let index = self.unsigned_count;
+                self.unsigned_count += 1;
+                LocalRef::Unsigned(index)
+            }
+            FableQueryType::Float => {
+                let index = self.float_count;
+                self.float_count += 1;
+                LocalRef::Float(index)
+            }
         }
     }
 
@@ -3654,6 +3789,8 @@ struct Lowerer<'intrinsics> {
     locals: LocalAllocator,
     type_shapes: Vec<&'static Shape>,
     declared_types: FableDeclaredTypes,
+    function_signatures: BTreeMap<String, FableFunctionSignature>,
+    functions: Vec<FableFunctionPlan>,
     blocks: Vec<FableProgram>,
 }
 
@@ -3670,12 +3807,19 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             locals: LocalAllocator::default(),
             type_shapes,
             declared_types: FableDeclaredTypes::default(),
+            function_signatures: BTreeMap::new(),
+            functions: Vec::new(),
             blocks: Vec::new(),
         }
     }
 
-    fn into_blocks(self) -> Vec<FableProgram> {
-        self.blocks
+    fn finish(self) -> (Vec<FableProgram>, FableFunctions) {
+        (
+            self.blocks,
+            FableFunctions {
+                plans: self.functions,
+            },
+        )
     }
 
     fn lower_root(&mut self, root: &ast::SourceFile) -> Result<FableProgram, FableError> {
@@ -3746,6 +3890,8 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         root: &'ast ast::SourceFile,
     ) -> Result<Vec<&'ast Stmt>, FableError> {
         self.declared_types = FableDeclaredTypes::from_source(root)?;
+        self.collect_function_signatures(root)?;
+        self.lower_functions(root)?;
         let mut statements = Vec::new();
         for item in &root.items {
             match item {
@@ -3754,6 +3900,84 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             }
         }
         Ok(statements)
+    }
+
+    fn collect_function_signatures(&mut self, root: &ast::SourceFile) -> Result<(), FableError> {
+        self.function_signatures.clear();
+        for item in &root.items {
+            let Item::Fn(function) = item else {
+                continue;
+            };
+            let name = function.name.value.clone();
+            if self.function_signatures.contains_key(&name) {
+                return Err(FableError::DuplicateLocal { name });
+            }
+            let params = function
+                .params
+                .params
+                .iter()
+                .map(|param| function_type_from_type_expr(&param.ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            let result = function_type_from_type_expr(&function.return_ty)?;
+            let index = self.function_signatures.len();
+            self.function_signatures.insert(
+                name,
+                FableFunctionSignature {
+                    index,
+                    params,
+                    result,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn lower_functions(&mut self, root: &ast::SourceFile) -> Result<(), FableError> {
+        self.functions.clear();
+        for item in &root.items {
+            let Item::Fn(function) = item else {
+                continue;
+            };
+            let plan = self.lower_function(function)?;
+            self.functions.push(plan);
+        }
+        Ok(())
+    }
+
+    fn lower_function(&mut self, function: &ast::FnDecl) -> Result<FableFunctionPlan, FableError> {
+        let name = function.name.value.as_str();
+        let signature = self
+            .function_signatures
+            .get(name)
+            .ok_or(FableError::MalformedProgram {
+                reason: "function signature was missing",
+            })?;
+        let params = signature.params.clone();
+        let result = signature.result;
+
+        self.scopes.push(BTreeMap::new());
+        let mut param_refs = Vec::with_capacity(function.params.params.len());
+        for (param, ty) in function.params.params.iter().zip(&params) {
+            let local = self.locals.allocate_query_type(*ty);
+            self.insert_local(name_text(&param.name).to_owned(), local)?;
+            param_refs.push((local, *ty));
+        }
+        let body = self.lower_block_result(&function.body)?;
+        self.scopes.pop();
+
+        if !expr_assignable_to_query_type(result, &body.result)? {
+            return Err(FableError::TypeMismatch {
+                expected: result.name().to_owned(),
+                actual: body.result.kind_name(),
+            });
+        }
+
+        Ok(FableFunctionPlan {
+            params: param_refs.into_boxed_slice(),
+            result,
+            prefix: body.prefix,
+            result_expr: body.result,
+        })
     }
 
     fn lower_statements<'ast>(
@@ -4334,9 +4558,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             actual: scrutinee.kind_name(),
         })?;
         let enum_name = short_shape_name(enum_shape).to_owned();
-        let (enum_name, variant_count) = {
-            (enum_name, enum_type.variants.len())
-        };
+        let (enum_name, variant_count) = { (enum_name, enum_type.variants.len()) };
         let mut covered = vec![false; variant_count];
         let mut wildcard = false;
         let mut arms = Vec::with_capacity(expr.arms.len());
@@ -4461,7 +4683,10 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             .enumerate()
             .find(|(_, variant)| variant.name == variant_name)
             .ok_or_else(|| FableError::Unsupported {
-                feature: format!("{} has no variant named {variant_name}", short_shape_name(enum_shape)),
+                feature: format!(
+                    "{} has no variant named {variant_name}",
+                    short_shape_name(enum_shape)
+                ),
             })?;
         let supplied_fields: &[ast::PatternField] = pattern
             .fields
@@ -4586,15 +4811,63 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         for stmt in prefix {
             program.push(self.lower_stmt(stmt)?);
         }
-        let Stmt::Expr(expr) = last else {
-            return Err(FableError::Unsupported {
-                feature: "match arm must end with an expression".into(),
-            });
-        };
         Ok(LoweredBlockResult {
             prefix: program,
-            result: self.lower_expr(&expr.expr)?,
+            result: self.lower_tail_stmt_result(last)?,
         })
+    }
+
+    fn lower_tail_stmt_result(&mut self, stmt: &Stmt) -> Result<ExprPlan, FableError> {
+        match stmt {
+            Stmt::Expr(expr) => self.lower_expr(&expr.expr),
+            Stmt::If(if_stmt) => self.lower_if_expr(if_stmt),
+            Stmt::Let(_) | Stmt::Assign(_) => Err(FableError::Unsupported {
+                feature: "value block must end with an expression".into(),
+            }),
+        }
+    }
+
+    fn lower_if_expr(&mut self, if_stmt: &IfStmt) -> Result<ExprPlan, FableError> {
+        let condition = expect_bool_plan(self.lower_expr(&if_stmt.condition)?)?;
+        let then_result = self.lower_block_result(&if_stmt.then)?;
+        let else_result = self.lower_else_result(&if_stmt.else_clause)?;
+        let then_kind = expr_query_type(&then_result.result)?;
+        let else_kind = expr_query_type(&else_result.result)?;
+        if then_kind != else_kind {
+            return Err(FableError::TypeMismatch {
+                expected: then_kind.name().to_owned(),
+                actual: else_kind.name(),
+            });
+        }
+        Ok(ExprPlan::If(Box::new(IfExprPlan {
+            condition,
+            then_result,
+            else_result,
+            result_kind: then_kind,
+        })))
+    }
+
+    fn lower_else_result(
+        &mut self,
+        else_clause: &Option<ElseClause>,
+    ) -> Result<LoweredBlockResult, FableError> {
+        let Some(else_clause) = else_clause else {
+            return Err(FableError::Unsupported {
+                feature: "value-producing if without else".into(),
+            });
+        };
+        if let Some(if_stmt) = &else_clause.if_stmt {
+            Ok(LoweredBlockResult {
+                prefix: Vec::new(),
+                result: self.lower_if_expr(if_stmt)?,
+            })
+        } else if let Some(block) = &else_clause.block {
+            self.lower_block_result(block)
+        } else {
+            Err(FableError::MalformedSyntax {
+                reason: "else clause without body",
+            })
+        }
     }
 
     fn resolve_type_name(&self, name: &str) -> Result<&'static Shape, FableError> {
@@ -4684,6 +4957,9 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
     fn lower_call(&mut self, call: &CallExpr) -> Result<ExprPlan, FableError> {
         let name = call_callee_name(&call.callee)?;
+        if let Some(signature) = self.function_signatures.get(name.as_str()).cloned() {
+            return self.lower_function_call(call, &signature);
+        }
         let signature =
             self.intrinsics
                 .signature(&name)
@@ -4720,6 +4996,40 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             });
         }
         lower_intrinsic(signature, args)
+    }
+
+    fn lower_function_call(
+        &mut self,
+        call: &CallExpr,
+        signature: &FableFunctionSignature,
+    ) -> Result<ExprPlan, FableError> {
+        if signature.params.len() != call.args.args.len() {
+            return Err(FableError::Unsupported {
+                feature: format!("{} argument count", call_callee_name(&call.callee)?),
+            });
+        }
+
+        let mut args = Vec::with_capacity(signature.params.len());
+        for (arg, expected) in call.args.args.iter().zip(&signature.params) {
+            let expr = self.lower_expr(&arg.expr)?;
+            if !expr_assignable_to_query_type(*expected, &expr)? {
+                return Err(FableError::TypeMismatch {
+                    expected: expected.name().to_owned(),
+                    actual: expr.kind_name(),
+                });
+            }
+            args.push(FunctionArgPlan {
+                expected: *expected,
+                expr,
+            });
+        }
+
+        let call = FunctionCallExpr {
+            function: signature.index,
+            args: args.into_boxed_slice(),
+            result: signature.result,
+        };
+        Ok(function_call_expr(call))
     }
 
     fn lower_cmp(&self, op: CmpOp, lhs: ExprPlan, rhs: ExprPlan) -> Result<ExprPlan, FableError> {
@@ -4826,11 +5136,9 @@ impl<'intrinsics> Lowerer<'intrinsics> {
                         RuntimeIndex::Literal(index) => {
                             index_step(shape, index, source.clone().into_boxed_str())?
                         }
-                        RuntimeIndex::Dynamic(index) => dynamic_index_step(
-                            shape,
-                            index,
-                            source.clone().into_boxed_str(),
-                        )?,
+                        RuntimeIndex::Dynamic(index) => {
+                            dynamic_index_step(shape, index, source.clone().into_boxed_str())?
+                        }
                     };
                     steps.push(step);
                     shape = element_shape;
@@ -5512,12 +5820,27 @@ fn call_callee_name(callee: &Expr) -> Result<String, FableError> {
 
 fn validate_query_expr(query_type: FableQueryType, expr: &ExprPlan) -> Result<(), FableError> {
     let ok = match query_type {
-        FableQueryType::Unit => matches!(expr, ExprPlan::Unit(_) | ExprPlan::Match(_)),
-        FableQueryType::Bool => matches!(expr, ExprPlan::Bool(_) | ExprPlan::Match(_)),
-        FableQueryType::Char => matches!(expr, ExprPlan::Char(_) | ExprPlan::Match(_)),
-        FableQueryType::String => matches!(expr, ExprPlan::String(_) | ExprPlan::Match(_)),
+        FableQueryType::Unit => matches!(
+            expr,
+            ExprPlan::Unit(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+        ),
+        FableQueryType::Bool => matches!(
+            expr,
+            ExprPlan::Bool(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+        ),
+        FableQueryType::Char => matches!(
+            expr,
+            ExprPlan::Char(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+        ),
+        FableQueryType::String => matches!(
+            expr,
+            ExprPlan::String(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+        ),
         FableQueryType::Signed | FableQueryType::Unsigned | FableQueryType::Float => {
-            matches!(expr, ExprPlan::Number(_) | ExprPlan::Match(_))
+            matches!(
+                expr,
+                ExprPlan::Number(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+            )
         }
     } && expr_query_type(expr)? == query_type;
     if ok {
@@ -5530,6 +5853,40 @@ fn validate_query_expr(query_type: FableQueryType, expr: &ExprPlan) -> Result<()
     }
 }
 
+fn expr_assignable_to_query_type(
+    query_type: FableQueryType,
+    expr: &ExprPlan,
+) -> Result<bool, FableError> {
+    Ok(match query_type {
+        FableQueryType::Unit => matches!(
+            expr,
+            ExprPlan::Unit(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+        ),
+        FableQueryType::Bool => matches!(
+            expr,
+            ExprPlan::Bool(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+        ),
+        FableQueryType::Char => {
+            matches!(
+                expr,
+                ExprPlan::Char(_) | ExprPlan::String(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+            )
+        }
+        FableQueryType::String => {
+            matches!(
+                expr,
+                ExprPlan::String(_) | ExprPlan::Char(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+            )
+        }
+        FableQueryType::Signed | FableQueryType::Unsigned | FableQueryType::Float => {
+            matches!(
+                expr,
+                ExprPlan::Number(_) | ExprPlan::Match(_) | ExprPlan::If(_)
+            )
+        }
+    })
+}
+
 fn expr_query_type(expr: &ExprPlan) -> Result<FableQueryType, FableError> {
     match expr {
         ExprPlan::Unit(_) => Ok(FableQueryType::Unit),
@@ -5540,9 +5897,53 @@ fn expr_query_type(expr: &ExprPlan) -> Result<FableQueryType, FableError> {
         ExprPlan::Number(NumberExpr::Unsigned(_)) => Ok(FableQueryType::Unsigned),
         ExprPlan::Number(NumberExpr::Float(_)) => Ok(FableQueryType::Float),
         ExprPlan::Match(expr) => Ok(expr.result_kind()),
+        ExprPlan::If(expr) => Ok(expr.result_kind),
         ExprPlan::Value(_) => Err(FableError::Unsupported {
             feature: "typed value query results".into(),
         }),
+    }
+}
+
+fn function_type_from_type_expr(ty: &ast::TypeExpr) -> Result<FableQueryType, FableError> {
+    let name = match ty {
+        ast::TypeExpr::Scalar(name) => name,
+        ast::TypeExpr::Declared(name) => {
+            return Err(FableError::Unsupported {
+                feature: format!("function declared type {}", name.name.value),
+            });
+        }
+    };
+    Ok(match name.value.as_str() {
+        "unit" => FableQueryType::Unit,
+        "bool" => FableQueryType::Bool,
+        "char" => FableQueryType::Char,
+        "string" => FableQueryType::String,
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => FableQueryType::Signed,
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => FableQueryType::Unsigned,
+        "f32" | "f64" => FableQueryType::Float,
+        other => {
+            return Err(FableError::Unsupported {
+                feature: format!("function scalar type {other}"),
+            });
+        }
+    })
+}
+
+fn function_call_expr(call: FunctionCallExpr) -> ExprPlan {
+    match call.result {
+        FableQueryType::Unit => ExprPlan::Unit(UnitExpr::FunctionCall(Box::new(call))),
+        FableQueryType::Bool => ExprPlan::Bool(BoolExpr::FunctionCall(Box::new(call))),
+        FableQueryType::Char => ExprPlan::Char(CharExpr::FunctionCall(Box::new(call))),
+        FableQueryType::String => ExprPlan::String(StringExpr::FunctionCall(Box::new(call))),
+        FableQueryType::Signed => {
+            ExprPlan::Number(NumberExpr::Signed(IntExpr::FunctionCall(Box::new(call))))
+        }
+        FableQueryType::Unsigned => {
+            ExprPlan::Number(NumberExpr::Unsigned(UIntExpr::FunctionCall(Box::new(call))))
+        }
+        FableQueryType::Float => {
+            ExprPlan::Number(NumberExpr::Float(FloatExpr::FunctionCall(Box::new(call))))
+        }
     }
 }
 
@@ -6062,6 +6463,7 @@ struct FableInterp {
     locals: LocalSlots,
     value_store: FableValueStore,
     declared_types: FableDeclaredTypes,
+    functions: Rc<FableFunctions>,
     predicate_result: Option<bool>,
     query_result: Option<FableQueryOutput>,
 }
@@ -6341,6 +6743,71 @@ impl FableInterp {
         })
     }
 
+    fn eval_function_call(&self, call: &FunctionCallExpr) -> Result<FableQueryOutput, FableError> {
+        let function = self.functions.get(call.function)?;
+        if call.result != function.result {
+            return Err(FableError::MalformedProgram {
+                reason: "function call result type did not match function plan",
+            });
+        }
+        if call.args.len() != function.params.len() {
+            return Err(FableError::MalformedProgram {
+                reason: "function call argument count did not match function plan",
+            });
+        }
+
+        let mut frame = LocalSlots::default();
+        for (arg, (local, expected)) in call.args.iter().zip(function.params.iter()) {
+            if arg.expected != *expected {
+                return Err(FableError::MalformedProgram {
+                    reason: "function call argument type did not match function plan",
+                });
+            }
+            let value = self.eval_function_arg(arg.expected, &arg.expr)?;
+            init_query_local(&mut frame, *local, arg.expected, value)?;
+        }
+
+        let mut child = FableInterp {
+            roots: self.roots.clone(),
+            locals: frame,
+            value_store: FableValueStore::default(),
+            declared_types: self.declared_types.clone(),
+            functions: self.functions.clone(),
+            predicate_result: None,
+            query_result: None,
+        };
+        child.eval_arm_prefix(&function.prefix)?;
+        let output = child.eval_query(&function.result_expr)?;
+        coerce_query_output(function.result, output)
+    }
+
+    fn eval_function_arg(
+        &self,
+        expected: FableQueryType,
+        expr: &ExprPlan,
+    ) -> Result<FableQueryOutput, FableError> {
+        match expected {
+            FableQueryType::Unit => {
+                self.eval_unit(expect_unit_expr(expr)?)?;
+                Ok(FableQueryOutput::Unit)
+            }
+            FableQueryType::Bool => Ok(FableQueryOutput::Bool(
+                self.eval_bool(expect_bool_expr(expr)?)?,
+            )),
+            FableQueryType::Char => Ok(FableQueryOutput::Char(self.eval_char_assign(expr)?)),
+            FableQueryType::String => Ok(FableQueryOutput::String(self.eval_string_assign(expr)?)),
+            FableQueryType::Signed => Ok(FableQueryOutput::Signed(
+                self.eval_number_as_i128(expect_number_expr(expr)?)?,
+            )),
+            FableQueryType::Unsigned => Ok(FableQueryOutput::Unsigned(
+                self.eval_number_as_u128(expect_number_expr(expr)?)?,
+            )),
+            FableQueryType::Float => Ok(FableQueryOutput::Float(
+                self.eval_number_as_f64(expect_number_expr(expr)?)?,
+            )),
+        }
+    }
+
     fn init_local(&mut self, local: LocalRef, expr: &ExprPlan) -> Result<(), FableError> {
         match local {
             LocalRef::Unit(index) => {
@@ -6398,6 +6865,7 @@ impl FableInterp {
             ExprPlan::Number(expr) => self.eval_number_for_effect(expr),
             ExprPlan::Value(expr) => self.eval_value_for_effect(expr),
             ExprPlan::Match(expr) => self.eval_match_for_effect(expr),
+            ExprPlan::If(expr) => self.eval_if_for_effect(expr),
         }
     }
 
@@ -6420,10 +6888,34 @@ impl FableInterp {
                 Ok(FableQueryOutput::Float(self.eval_f64(expr)?))
             }
             ExprPlan::Match(expr) => self.eval_match_query(expr),
+            ExprPlan::If(expr) => self.eval_if_query(expr),
             ExprPlan::Value(_) => Err(FableError::Unsupported {
                 feature: "querying typed values".into(),
             }),
         }
+    }
+
+    fn selected_if_branch<'expr>(
+        &mut self,
+        expr: &'expr IfExprPlan,
+    ) -> Result<&'expr LoweredBlockResult, FableError> {
+        if self.eval_bool(&expr.condition)? {
+            Ok(&expr.then_result)
+        } else {
+            Ok(&expr.else_result)
+        }
+    }
+
+    fn eval_if_for_effect(&mut self, expr: &IfExprPlan) -> Result<(), FableError> {
+        let branch = self.selected_if_branch(expr)?;
+        self.eval_arm_prefix(&branch.prefix)?;
+        self.eval_expr(&branch.result)
+    }
+
+    fn eval_if_query(&mut self, expr: &IfExprPlan) -> Result<FableQueryOutput, FableError> {
+        let branch = self.selected_if_branch(expr)?;
+        self.eval_arm_prefix(&branch.prefix)?;
+        self.eval_query(&branch.result)
     }
 
     fn eval_match_for_effect(&mut self, expr: &MatchExprPlan) -> Result<(), FableError> {
@@ -6478,10 +6970,7 @@ impl FableInterp {
         self.eval_query(&arm.result)
     }
 
-    fn eval_facet_match_for_effect(
-        &mut self,
-        expr: &FacetMatchExprPlan,
-    ) -> Result<(), FableError> {
+    fn eval_facet_match_for_effect(&mut self, expr: &FacetMatchExprPlan) -> Result<(), FableError> {
         let (ptr, shape) = self.value_ptr_const(&expr.scrutinee)?;
         if shape != expr.enum_shape {
             return Err(FableError::MalformedProgram {
@@ -6604,12 +7093,13 @@ impl FableInterp {
         let enum_type = facet_enum_type(shape).ok_or(FableError::MalformedProgram {
             reason: "facet match binding shape was not an enum",
         })?;
-        let variant = enum_type
-            .variants
-            .get(variant_index)
-            .ok_or(FableError::MalformedProgram {
-                reason: "facet match variant index was out of bounds",
-            })?;
+        let variant =
+            enum_type
+                .variants
+                .get(variant_index)
+                .ok_or(FableError::MalformedProgram {
+                    reason: "facet match variant index was out of bounds",
+                })?;
         for binding in bindings {
             let field = variant.data.fields.get(binding.field_index).ok_or(
                 FableError::MalformedProgram {
@@ -6768,6 +7258,16 @@ impl FableInterp {
             }
             UnitExpr::Local(local) => self.local_unit(*local),
             UnitExpr::DeclaredRead(read) => self.read_declared_unit(*read),
+            UnitExpr::FunctionCall(call) => {
+                let value = self.eval_function_call(call)?;
+                let FableQueryOutput::Unit = coerce_query_output(FableQueryType::Unit, value)?
+                else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "unit function call returned non-unit value",
+                    });
+                };
+                Ok(())
+            }
             UnitExpr::HostFieldMut { function, field } => function(self.field_mut(field)?),
         }
     }
@@ -6781,6 +7281,16 @@ impl FableInterp {
             }
             BoolExpr::Local(local) => self.local_bool(*local),
             BoolExpr::DeclaredRead(read) => self.read_declared_bool(*read),
+            BoolExpr::FunctionCall(call) => {
+                let FableQueryOutput::Bool(value) =
+                    coerce_query_output(FableQueryType::Bool, self.eval_function_call(call)?)?
+                else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "bool function call returned non-bool value",
+                    });
+                };
+                Ok(value)
+            }
             BoolExpr::HostFieldPredicate { function, field } => function(self.field_ref(field)?),
             BoolExpr::HostStringPredicate { function, lhs, rhs } => {
                 let lhs = self.eval_string(lhs)?;
@@ -6837,6 +7347,16 @@ impl FableInterp {
             }
             CharExpr::Local(local) => self.local_char(*local),
             CharExpr::DeclaredRead(read) => self.read_declared_char(*read),
+            CharExpr::FunctionCall(call) => {
+                let FableQueryOutput::Char(value) =
+                    coerce_query_output(FableQueryType::Char, self.eval_function_call(call)?)?
+                else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "char function call returned non-char value",
+                    });
+                };
+                Ok(value)
+            }
         }
     }
 
@@ -6849,6 +7369,16 @@ impl FableInterp {
             }
             StringExpr::Local(local) => self.local_string(*local),
             StringExpr::DeclaredRead(read) => self.read_declared_string(*read),
+            StringExpr::FunctionCall(call) => {
+                let FableQueryOutput::String(value) =
+                    coerce_query_output(FableQueryType::String, self.eval_function_call(call)?)?
+                else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "string function call returned non-string value",
+                    });
+                };
+                Ok(value)
+            }
             StringExpr::HostFieldString { function, field } => function(self.field_ref(field)?),
             StringExpr::HostUnary { function, value } => {
                 let value = self.eval_string(value)?;
@@ -6924,6 +7454,16 @@ impl FableInterp {
             }
             IntExpr::Local(local) => self.local_i128(*local),
             IntExpr::DeclaredRead(read) => self.read_declared_i128(*read),
+            IntExpr::FunctionCall(call) => {
+                let FableQueryOutput::Signed(value) =
+                    coerce_query_output(FableQueryType::Signed, self.eval_function_call(call)?)?
+                else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "signed function call returned non-signed value",
+                    });
+                };
+                Ok(value)
+            }
             IntExpr::HostUnary { function, value } => function(self.eval_number_as_i128(value)?),
             IntExpr::Min(lhs, rhs) => {
                 let lhs = self.eval_number_as_i128(lhs)?;
@@ -6992,6 +7532,16 @@ impl FableInterp {
             }
             UIntExpr::Local(local) => self.local_u128(*local),
             UIntExpr::DeclaredRead(read) => self.read_declared_u128(*read),
+            UIntExpr::FunctionCall(call) => {
+                let FableQueryOutput::Unsigned(value) =
+                    coerce_query_output(FableQueryType::Unsigned, self.eval_function_call(call)?)?
+                else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "unsigned function call returned non-unsigned value",
+                    });
+                };
+                Ok(value)
+            }
             UIntExpr::HostUnary { function, value } => function(self.eval_number_as_u128(value)?),
             UIntExpr::PathLen(path) => self.path_len(path).map(|len| len as u128),
             UIntExpr::StringLen(expr) => Ok(self.eval_string(expr)?.len() as u128),
@@ -7042,7 +7592,10 @@ impl FableInterp {
             .get(index)
             .and_then(|value| *value)
             .map(|value| {
-                debug_assert_eq!(value.shape, local_value_shape(local).expect("borrowed shape"));
+                debug_assert_eq!(
+                    value.shape,
+                    local_value_shape(local).expect("borrowed shape")
+                );
                 value.ptr
             })
             .ok_or_else(uninitialized_local)
@@ -7084,6 +7637,16 @@ impl FableInterp {
             }
             FloatExpr::Local(local) => self.local_f64(*local),
             FloatExpr::DeclaredRead(read) => self.read_declared_f64(*read),
+            FloatExpr::FunctionCall(call) => {
+                let FableQueryOutput::Float(value) =
+                    coerce_query_output(FableQueryType::Float, self.eval_function_call(call)?)?
+                else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "float function call returned non-float value",
+                    });
+                };
+                Ok(value)
+            }
             FloatExpr::HostUnary { function, value } => function(self.eval_number_as_f64(value)?),
             FloatExpr::Min(lhs, rhs) => {
                 min_f64(self.eval_number_as_f64(lhs)?, self.eval_number_as_f64(rhs)?)
@@ -7689,25 +8252,23 @@ impl FableInterp {
             ValueExpr::Declared(expr) => {
                 self.eval_declared_value(expr.type_index(), expr).map(drop)
             }
-            ValueExpr::Local(local) => {
-                match *local {
-                    LocalRef::Value { index, .. } => {
-                        if self
-                            .locals
-                            .values
-                            .get(index)
-                            .and_then(Option::as_ref)
-                            .is_some()
-                        {
-                            Ok(())
-                        } else {
-                            Err(uninitialized_local())
-                        }
+            ValueExpr::Local(local) => match *local {
+                LocalRef::Value { index, .. } => {
+                    if self
+                        .locals
+                        .values
+                        .get(index)
+                        .and_then(Option::as_ref)
+                        .is_some()
+                    {
+                        Ok(())
+                    } else {
+                        Err(uninitialized_local())
                     }
-                    LocalRef::BorrowedValue { .. } => self.borrowed_local_ptr(*local).map(drop),
-                    _ => Err(local_kind_mismatch("typed value", *local)),
                 }
-            }
+                LocalRef::BorrowedValue { .. } => self.borrowed_local_ptr(*local).map(drop),
+                _ => Err(local_kind_mismatch("typed value", *local)),
+            },
         }
     }
 
@@ -8030,6 +8591,107 @@ fn set_slot<T: Default>(slots: &mut Vec<T>, index: usize, value: T) {
         slots.resize_with(index + 1, T::default);
     }
     slots[index] = value;
+}
+
+fn init_query_local(
+    locals: &mut LocalSlots,
+    local: LocalRef,
+    expected: FableQueryType,
+    value: FableQueryOutput,
+) -> Result<(), FableError> {
+    match (local, expected, value) {
+        (LocalRef::Unit(index), FableQueryType::Unit, FableQueryOutput::Unit) => {
+            set_slot(&mut locals.units, index, true);
+        }
+        (LocalRef::Bool(index), FableQueryType::Bool, FableQueryOutput::Bool(value)) => {
+            set_slot(&mut locals.bools, index, Some(value));
+        }
+        (LocalRef::Char(index), FableQueryType::Char, FableQueryOutput::Char(value)) => {
+            set_slot(&mut locals.chars, index, Some(value));
+        }
+        (LocalRef::String(index), FableQueryType::String, FableQueryOutput::String(value)) => {
+            set_slot(&mut locals.strings, index, Some(value));
+        }
+        (LocalRef::Signed(index), FableQueryType::Signed, FableQueryOutput::Signed(value)) => {
+            set_slot(&mut locals.signed, index, Some(value));
+        }
+        (
+            LocalRef::Unsigned(index),
+            FableQueryType::Unsigned,
+            FableQueryOutput::Unsigned(value),
+        ) => {
+            set_slot(&mut locals.unsigned, index, Some(value));
+        }
+        (LocalRef::Float(index), FableQueryType::Float, FableQueryOutput::Float(value)) => {
+            set_slot(&mut locals.floats, index, Some(value));
+        }
+        (local, expected, _) => {
+            return Err(FableError::TypeMismatch {
+                expected: expected.name().to_owned(),
+                actual: local.kind_name(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn coerce_query_output(
+    expected: FableQueryType,
+    value: FableQueryOutput,
+) -> Result<FableQueryOutput, FableError> {
+    Ok(match (expected, value) {
+        (FableQueryType::Unit, FableQueryOutput::Unit) => FableQueryOutput::Unit,
+        (FableQueryType::Bool, FableQueryOutput::Bool(value)) => FableQueryOutput::Bool(value),
+        (FableQueryType::Char, FableQueryOutput::Char(value)) => FableQueryOutput::Char(value),
+        (FableQueryType::Char, FableQueryOutput::String(value)) => {
+            FableQueryOutput::Char(expect_single_char(value)?)
+        }
+        (FableQueryType::String, FableQueryOutput::String(value)) => {
+            FableQueryOutput::String(value)
+        }
+        (FableQueryType::String, FableQueryOutput::Char(value)) => {
+            FableQueryOutput::String(value.to_string())
+        }
+        (FableQueryType::Signed, FableQueryOutput::Signed(value)) => {
+            FableQueryOutput::Signed(value)
+        }
+        (FableQueryType::Signed, FableQueryOutput::Unsigned(value)) => FableQueryOutput::Signed(
+            i128::try_from(value)
+                .map_err(|_| number_out_of_range(ScalarType::I128, value.to_string()))?,
+        ),
+        (FableQueryType::Unsigned, FableQueryOutput::Unsigned(value)) => {
+            FableQueryOutput::Unsigned(value)
+        }
+        (FableQueryType::Unsigned, FableQueryOutput::Signed(value)) => FableQueryOutput::Unsigned(
+            u128::try_from(value)
+                .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string()))?,
+        ),
+        (FableQueryType::Float, FableQueryOutput::Float(value)) => FableQueryOutput::Float(value),
+        (FableQueryType::Float, FableQueryOutput::Signed(value)) => {
+            FableQueryOutput::Float(value as f64)
+        }
+        (FableQueryType::Float, FableQueryOutput::Unsigned(value)) => {
+            FableQueryOutput::Float(value as f64)
+        }
+        (expected, value) => {
+            return Err(FableError::TypeMismatch {
+                expected: expected.name().to_owned(),
+                actual: query_output_kind_name(&value),
+            });
+        }
+    })
+}
+
+fn query_output_kind_name(value: &FableQueryOutput) -> &'static str {
+    match value {
+        FableQueryOutput::Unit => "unit",
+        FableQueryOutput::Bool(_) => "bool",
+        FableQueryOutput::Char(_) => "char",
+        FableQueryOutput::String(_) => "string",
+        FableQueryOutput::Signed(_) => "signed number",
+        FableQueryOutput::Unsigned(_) => "unsigned number",
+        FableQueryOutput::Float(_) => "float",
+    }
 }
 
 fn local_kind_mismatch(expected: &'static str, actual: LocalRef) -> FableError {
@@ -9299,6 +9961,58 @@ mod tests {
         let mut values = [FableRootValue::read_only("root", &ast)];
 
         assert!(plan.evaluate(&mut values).unwrap());
+    }
+
+    #[test]
+    fn fable_query_finds_identifier_declaration_in_generated_ast() {
+        let source = "let first = 1;\nlet answer = 42;\n";
+        let ast = parse(source).unwrap();
+        let wanted = String::from("answer");
+        let roots = [
+            FableRootSpec::read_only::<ast::SourceFile>("root"),
+            FableRootSpec::read_only::<String>("wanted"),
+        ];
+        let plan = FableRootQueryPlan::<u128>::compile(
+            r#"
+fn find_item(i: usize) -> usize {
+  if i >= len(root.items) {
+    len(root.items);
+  } else {
+    match root.items[i] {
+      Item::Stmt { stmt } => {
+        match stmt {
+          Stmt::Let { let_stmt } => {
+            match let_stmt.name {
+              Name::Ident { ident } => {
+                if ident.value == wanted {
+                  let_stmt.span.start;
+                } else {
+                  find_item(i + 1);
+                }
+              },
+              _ => { find_item(i + 1); },
+            };
+          },
+          _ => { find_item(i + 1); },
+        };
+      },
+      _ => { find_item(i + 1); },
+    };
+  }
+}
+
+find_item(0);
+"#,
+            &roots,
+        )
+        .unwrap();
+        let mut values = [
+            FableRootValue::read_only("root", &ast),
+            FableRootValue::read_only("wanted", &wanted),
+        ];
+        let expected = source.find("let answer").unwrap() as u128;
+
+        assert_eq!(plan.evaluate(&mut values).unwrap(), expected);
     }
 
     #[test]
