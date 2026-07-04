@@ -53,6 +53,7 @@
 //! several producers, one path selected, unselected producers provably
 //! never executing (trace absence), through the VM and JIT.
 
+pub mod driver;
 pub mod value;
 
 pub use value::TotalF64;
