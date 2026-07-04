@@ -93,6 +93,10 @@ fn join_tree_path(base: &str, tail: &str) -> String {
     }
 }
 
+fn is_tree_producing_value(value: &Value) -> bool {
+    matches!(value, Value::Tree(_) | Value::PendingTree { .. })
+}
+
 pub struct Engine {
     tables: ModuleTables,
     arena: Vec<NodeState>,
@@ -217,6 +221,20 @@ impl Engine {
                     self.arena[node] = NodeState::Thunk { expr, env };
                     return result;
                 }
+                if let Demand::Path(path) = &kind
+                    && let Expr::MethodCall(method) = expr.as_ref()
+                    && method.name.value == "collect"
+                {
+                    let result = match self.eval(&method.receiver, env.clone()) {
+                        Ok(recv) => {
+                            let args = self.eval_args(&method.args, env.clone());
+                            self.project_collect(recv, args, path)
+                        }
+                        Err(err) => Err(err),
+                    };
+                    self.arena[node] = NodeState::Thunk { expr, env };
+                    return result;
+                }
                 if let Demand::Path(tail) = &kind
                     && let Expr::Binary(binary) = expr.as_ref()
                     && binary.op == "/"
@@ -294,9 +312,29 @@ impl Engine {
                     }
                 }
             }
-            Value::MergedTree(values) => self.project_merged_tree(values, path),
             Value::Path(base) => Ok(Value::Path(format!("{base}/{path}"))),
             other => Ok(other),
+        }
+    }
+
+    fn project_collect(&mut self, recv: Value, args: Vec<CallArg>, path: &str) -> EvalResult {
+        let positional = args
+            .into_iter()
+            .map(|arg| self.demand(arg.node, Demand::Identity))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !positional.is_empty() {
+            return Err("collect takes no arguments".to_string());
+        }
+        match recv {
+            Value::Array(values)
+                if !values.is_empty() && values.iter().all(is_tree_producing_value) =>
+            {
+                self.project_merged_tree(values, path)
+            }
+            other => {
+                let collected = self.collect_value(other)?;
+                self.project_value(collected, path)
+            }
         }
     }
 
@@ -355,7 +393,6 @@ impl Engine {
                     }
                 }
             }
-            Value::MergedTree(values) => self.project_merged_tree_candidate(values, path),
             other => Err(format!("collect: expected tree, got {other:?}")),
         }
     }
@@ -363,19 +400,6 @@ impl Engine {
     fn deep_force_value(&mut self, value: Value) -> EvalResult {
         Ok(match value {
             Value::PendingTree { run } => Value::Tree(self.force_and_note(run)?),
-            Value::MergedTree(values) => {
-                let mut merged = crate::exec::Tree::default();
-                for value in values {
-                    let value = self.deep_force_value(value)?;
-                    let Value::Tree(tree) = value else {
-                        return Err(format!("collect: expected tree, got {value:?}"));
-                    };
-                    for (path, contents) in tree.entries {
-                        merged.entries.insert(path, contents);
-                    }
-                }
-                Value::Tree(merged)
-            }
             Value::Tuple(values) => Value::Tuple(
                 values
                     .into_iter()
@@ -1336,7 +1360,7 @@ impl Engine {
             if !positional.is_empty() {
                 return Err("collect takes no arguments".to_string());
             }
-            return self.collect_method(recv);
+            return self.collect_value(recv);
         }
 
         let recv = self.force_value(recv)?;
@@ -1429,18 +1453,21 @@ impl Engine {
         }
     }
 
-    fn collect_method(&mut self, recv: Value) -> EvalResult {
+    fn collect_value(&mut self, recv: Value) -> EvalResult {
         match recv {
             Value::Array(mut values) => {
-                if !values.is_empty()
-                    && values.iter().all(|value| {
-                        matches!(
-                            value,
-                            Value::Tree(_) | Value::PendingTree { .. } | Value::MergedTree(_)
-                        )
-                    })
-                {
-                    return Ok(Value::MergedTree(values));
+                if !values.is_empty() && values.iter().all(is_tree_producing_value) {
+                    let mut merged = crate::exec::Tree::default();
+                    for value in values {
+                        let value = self.deep_force_value(value)?;
+                        let Value::Tree(tree) = value else {
+                            return Err(format!("collect: expected tree, got {value:?}"));
+                        };
+                        for (path, contents) in tree.entries {
+                            merged.entries.insert(path, contents);
+                        }
+                    }
+                    return Ok(Value::Tree(merged));
                 }
                 values.sort();
                 Ok(Value::Array(values))

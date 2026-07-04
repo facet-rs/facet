@@ -90,9 +90,6 @@ pub enum Value {
     PendingTree {
         run: u64,
     },
-    /// Engine-internal lazy merge of tree-producing values. The oracle stays
-    /// eager, but `Value` owns the shippable data shape both evaluators share.
-    MergedTree(Vec<Value>),
 }
 
 #[derive(facet::Facet, Debug, Clone)]
@@ -120,8 +117,8 @@ impl Value {
             Value::Fn { .. } => 11,
             Value::Closure { .. } => 12,
             Value::Partial { .. } => 13,
-            // Pending/merged trees rank AS trees: identity forces them into one.
-            Value::Tree(_) | Value::PendingTree { .. } | Value::MergedTree(_) => 14,
+            // Pending trees rank AS trees: identity forces them into one.
+            Value::Tree(_) | Value::PendingTree { .. } => 14,
         }
     }
 
@@ -131,10 +128,6 @@ impl Value {
         match self {
             Value::Tree(t) => Some(t.clone()),
             Value::PendingTree { run } => Some(force_run(*run).expect("pending run flushes").0),
-            Value::MergedTree(values) => Some(
-                merge_tree_values(values.clone(), &|id| force_run(id).map(|(tree, _)| tree))
-                    .expect("merged tree forces"),
-            ),
             _ => None,
         }
     }
@@ -172,7 +165,6 @@ impl Value {
                 format!("tree({:08x}, {} paths)", h.finish() as u32, t.entries.len())
             }
             Value::PendingTree { run } => format!("pending(run {run})"),
-            Value::MergedTree(values) => format!("merged-tree({} inputs)", values.len()),
         }
     }
 
@@ -242,7 +234,7 @@ impl Value {
                     v.hash_into(h);
                 }
             }
-            Value::Tree(_) | Value::PendingTree { .. } | Value::MergedTree(_) => {
+            Value::Tree(_) | Value::PendingTree { .. } => {
                 self.forced_tree().expect("tree rank").fingerprint().hash(h)
             }
         }
@@ -333,8 +325,8 @@ impl Ord for Value {
                 self.canon_hash().cmp(&other.canon_hash())
             }
             (
-                Value::Tree(_) | Value::PendingTree { .. } | Value::MergedTree(_),
-                Value::Tree(_) | Value::PendingTree { .. } | Value::MergedTree(_),
+                Value::Tree(_) | Value::PendingTree { .. },
+                Value::Tree(_) | Value::PendingTree { .. },
             ) => {
                 let a = self.forced_tree().expect("tree rank");
                 let b = other.forced_tree().expect("tree rank");
@@ -374,30 +366,12 @@ pub fn deep_force(value: Value) -> Result<Value, String> {
     deep_force_with(value, &|id| force_run(id).map(|(t, _)| t))
 }
 
-fn merge_tree_values(
-    values: Vec<Value>,
-    force: &impl Fn(u64) -> Result<crate::exec::Tree, String>,
-) -> Result<crate::exec::Tree, String> {
-    let mut merged = crate::exec::Tree::default();
-    for value in values {
-        let value = deep_force_with(value, force)?;
-        let Value::Tree(tree) = value else {
-            return Err(format!("collect: expected tree, got {value:?}"));
-        };
-        for (path, contents) in tree.entries {
-            merged.entries.insert(path, contents);
-        }
-    }
-    Ok(merged)
-}
-
 fn deep_force_with(
     value: Value,
     force: &impl Fn(u64) -> Result<crate::exec::Tree, String>,
 ) -> Result<Value, String> {
     Ok(match value {
         Value::PendingTree { run } => Value::Tree(force(run)?),
-        Value::MergedTree(values) => Value::Tree(merge_tree_values(values, force)?),
         Value::Tuple(vs) => Value::Tuple(
             vs.into_iter()
                 .map(|v| deep_force_with(v, force))
