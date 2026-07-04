@@ -43,6 +43,13 @@
 //!   production keeps suspension points); weavy strips by mode. Tests
 //!   are assertions over traces — sequences, presence, ABSENCE
 //!   (absence is how laziness is proven).
+//! - **Wasm must execute, not just build.** Machine changes have a
+//!   wasm floor because `wasm32` has 32-bit `usize`; any value-store
+//!   word, handle, hash, run id, timestamp, or frame word that is
+//!   semantically 64-bit must stay `i64`/`u64` until an explicitly
+//!   checked small index conversion. The permanent smoke is the
+//!   playground `runVixMachine` flow over `merge-demand::selected`
+//!   and `eval::demo`.
 //! - **Persist facts keyed by content, never positions.** The lowering
 //!   cache (canonical hash → lowered program) is primary machinery;
 //!   per-evaluation state dies with the evaluation.

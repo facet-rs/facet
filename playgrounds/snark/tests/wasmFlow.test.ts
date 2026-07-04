@@ -1663,6 +1663,25 @@ test("runs merge-demand selected through the vix machine wasm export", () => {
   );
 });
 
+test("runs eval demo through the vix machine wasm export", () => {
+  const source = readFileSync(new URL("../src/bundled/vix/samples/eval.vix", import.meta.url), "utf8");
+  const response = JSON.parse(runVixMachine(source, "demo")) as {
+    ok: boolean;
+    result: { schema: string; f64_value: number | null };
+    cold_trace: Array<{ type: string }>;
+    warm_trace: Array<{ type: string }>;
+  };
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.schema, "Float");
+  assert.equal(response.result.f64_value, 42);
+  assert.ok(response.cold_trace.length > 0);
+  assert.deepEqual(
+    response.warm_trace.map((event) => event.type),
+    ["Demanded", "MemoHit"],
+  );
+});
+
 test("runs every vendored grammar sample through generated grammar.json and Snark WASM", async () => {
   const root = new URL("../src/bundled/", import.meta.url);
   const grammarIds = readdirSync(root)

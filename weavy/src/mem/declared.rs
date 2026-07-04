@@ -68,10 +68,7 @@ pub fn f64_<SchemaRef>(schema: SchemaRef) -> Descriptor<SchemaRef> {
 pub fn handle<SchemaRef>(schema: SchemaRef, target: SchemaRef) -> Descriptor<SchemaRef> {
     Descriptor {
         schema,
-        layout: Layout {
-            size: core::mem::size_of::<usize>(),
-            align: core::mem::align_of::<usize>(),
-        },
+        layout: Layout { size: 8, align: 8 },
         access: Access::Handle { target },
     }
 }
@@ -337,13 +334,7 @@ mod tests {
     #[test]
     fn handles_are_word_sized_and_record_their_target_schema() {
         let h = handle("TreeRef", "Tree");
-        assert_eq!(
-            h.layout,
-            Layout {
-                size: core::mem::size_of::<usize>(),
-                align: core::mem::align_of::<usize>(),
-            }
-        );
+        assert_eq!(h.layout, Layout { size: 8, align: 8 });
         let Access::Handle { target } = &h.access else {
             panic!("handle access expected");
         };
