@@ -1,6 +1,8 @@
 //! Design probes: run the corpus through the oracle and observe identity,
 //! caching, observations, and total order doing what the synthesis doc claims.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use vix::oracle::{Event, Oracle, Payload, Value};
 
 fn sample(name: &str) -> String {
@@ -9,6 +11,76 @@ fn sample(name: &str) -> String {
         env!("CARGO_MANIFEST_DIR"),
     ))
     .expect("read sample")
+}
+
+fn anti_nix_diamond() -> &'static str {
+    r#"
+fn leaf() -> Int {
+    1
+}
+
+fn left() -> Int {
+    leaf() + 10
+}
+
+fn right() -> Int {
+    leaf() + 20
+}
+
+fn independent() -> Int {
+    5
+}
+
+fn never_demanded() -> Int {
+    100
+}
+
+pub fn main() -> Int {
+    left() + right() + independent()
+}
+"#
+}
+
+fn event_counts(events: &[Event]) -> BTreeMap<&'static str, usize> {
+    let mut counts = BTreeMap::new();
+    for event in events {
+        let key = match event {
+            Event::Miss { .. } => "miss",
+            Event::Hit { .. } => "hit",
+            Event::Created { .. } => "created",
+            Event::Scheduled { .. } => "scheduled",
+            Event::Observation { .. } => "observation",
+            Event::Finished { .. } => "finished",
+        };
+        *counts.entry(key).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn missed_functions(events: &[Event]) -> BTreeSet<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Miss { func, .. } => Some(func.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn hit_functions(events: &[Event]) -> BTreeSet<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Hit { func, .. } => Some(func.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn assert_zero_cost_reload(events: &[Event]) {
+    let counts = event_counts(events);
+    assert_eq!(counts.get("miss").copied().unwrap_or(0), 0, "{events:?}");
+    assert_eq!(counts.get("created").copied().unwrap_or(0), 0, "{events:?}");
 }
 
 #[test]
@@ -50,6 +122,101 @@ fn memo_hits_and_identity_survives_trivia() {
     let c = Oracle::load(&changed).unwrap();
     assert_ne!(a.fn_hash("demo"), c.fn_hash("demo"));
     assert_eq!(a.fn_hash("eval"), c.fn_hash("eval"), "eval didn't change");
+}
+
+#[test]
+fn warm_reload_trivia_anywhere_costs_zero_misses_and_zero_runs() {
+    let mut oracle = Oracle::load(anti_nix_diamond()).expect("load");
+    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(37));
+
+    let reformatted = anti_nix_diamond()
+        .replace(
+            "fn leaf() -> Int {",
+            "// top-level trivia\nfn leaf() -> Int {\n    // leaf",
+        )
+        .replace("fn left() -> Int {", "fn left() -> Int {\n\n    // left")
+        .replace("fn right() -> Int {", "fn right() -> Int {\n    // right")
+        .replace(
+            "fn never_demanded() -> Int {",
+            "fn never_demanded() -> Int {\n    // dead code trivia",
+        )
+        .replace("left() + right()", "left()   +   right()");
+    oracle.reload(&reformatted).expect("reload");
+
+    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(37));
+    let events = oracle.events();
+    assert_zero_cost_reload(&events);
+    assert_eq!(hit_functions(&events), BTreeSet::from(["main".to_string()]));
+}
+
+#[test]
+fn warm_reload_leaf_semantic_edit_currently_hits_stale_entry() {
+    let mut oracle = Oracle::load(anti_nix_diamond()).expect("load");
+    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(37));
+
+    let edited =
+        anti_nix_diamond().replace("fn leaf() -> Int {\n    1", "fn leaf() -> Int {\n    2");
+    oracle.reload(&edited).expect("reload");
+
+    assert_eq!(
+        oracle.call("main", &[]).unwrap(),
+        Value::Int(37),
+        "measured current behavior: unchanged entry memo key hides the edited leaf"
+    );
+    let events = oracle.events();
+    assert_eq!(missed_functions(&events), BTreeSet::new(), "{events:?}");
+    assert_eq!(hit_functions(&events), BTreeSet::from(["main".to_string()]));
+    assert_eq!(
+        event_counts(&events),
+        BTreeMap::from([("hit", 1)]),
+        "{events:?}"
+    );
+}
+
+#[test]
+#[ignore = "theoretical anti-Nix blast radius is not implemented: unchanged dependents can currently hit stale memo entries"]
+fn warm_reload_leaf_semantic_edit_misses_exact_theoretical_blast_radius() {
+    let mut oracle = Oracle::load(anti_nix_diamond()).expect("load");
+    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(37));
+
+    let edited =
+        anti_nix_diamond().replace("fn leaf() -> Int {\n    1", "fn leaf() -> Int {\n    2");
+    oracle.reload(&edited).expect("reload");
+
+    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(39));
+    let events = oracle.events();
+    assert_eq!(
+        missed_functions(&events),
+        BTreeSet::from([
+            "leaf".to_string(),
+            "left".to_string(),
+            "main".to_string(),
+            "right".to_string(),
+        ]),
+        "{events:?}"
+    );
+    assert_eq!(
+        hit_functions(&events),
+        BTreeSet::from(["independent".to_string()]),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn warm_reload_never_demanded_semantic_edit_costs_zero_misses() {
+    let mut oracle = Oracle::load(anti_nix_diamond()).expect("load");
+    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(37));
+
+    let edited = anti_nix_diamond().replace(
+        "fn never_demanded() -> Int {\n    100",
+        "fn never_demanded() -> Int {\n    101",
+    );
+    oracle.reload(&edited).expect("reload");
+
+    assert_eq!(oracle.call("main", &[]).unwrap(), Value::Int(37));
+    let events = oracle.events();
+    assert_zero_cost_reload(&events);
+    assert_eq!(hit_functions(&events), BTreeSet::from(["main".to_string()]));
 }
 
 #[test]
