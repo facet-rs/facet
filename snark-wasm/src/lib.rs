@@ -188,6 +188,9 @@ pub fn run_vix_machine(source: &str, fn_name: &str) -> String {
 
 fn run_vix_machine_inner(source: &str, fn_name: &str) -> Result<VixMachineRun, String> {
     let mut machine = vix::machine::lower::Machine::load(source)?;
+    if source_kind(source) == "lua" {
+        machine = machine.with_fetch_backend(lua_fetch_backend());
+    }
     let args = match fn_name {
         "selected" | "fallback" | "subtree_chain" | "lua" | "main" => {
             vec![machine.linux_target_handle()]
@@ -372,6 +375,26 @@ fn serving_event(event: &vix::exec::ExecEvent) -> VixExecServing {
     }
 }
 
+fn lua_fetch_backend() -> vix::fetch::FakeFetchBackend {
+    vix::fetch::FakeFetchBackend::new().with_archive(
+        "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+        b"lua-5.4.8 fixture archive",
+        vix::exec::Tree::of(&[
+            ("lua-5.4.8/src/lua.h", "// lua.h api"),
+            (
+                "lua-5.4.8/src/lua.c",
+                "#include \"lua.h\"\n// interpreter main",
+            ),
+            ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
+            ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
+            (
+                "lua-5.4.8/src/luac.c",
+                "#include \"lua.h\"\n// compiler main",
+            ),
+        ]),
+    )
+}
+
 fn function_hashes(machine: &vix::machine::lower::Machine) -> Vec<HashLabel> {
     let mut out: Vec<_> = [
         "selected",
@@ -429,6 +452,8 @@ fn source_kind(source: &str) -> &'static str {
         "merge-demand"
     } else if source.contains("pub fn demo() -> Float") {
         "eval"
+    } else if source.contains("lua-5.4.8") && source.contains("pub fn lua") {
+        "lua"
     } else {
         "vix"
     }

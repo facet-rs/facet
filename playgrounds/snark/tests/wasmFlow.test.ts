@@ -1682,6 +1682,28 @@ test("runs eval demo through the vix machine wasm export", () => {
   );
 });
 
+test("runs lua through the vix machine wasm export with the fixture fetch backend", () => {
+  const source = readFileSync(new URL("../src/bundled/vix/samples/lua.vix", import.meta.url), "utf8");
+  const response = JSON.parse(runVixMachine(source, "lua")) as {
+    ok: boolean;
+    result: { tree_entries: Array<{ path: string; contents: string }> };
+    cold_trace: Array<{ type: string; command_name?: string; serving?: { type: string } }>;
+    warm_trace: Array<{ type: string }>;
+  };
+  const runCompletions = response.cold_trace.filter((event) => event.type === "RunCompleted");
+
+  assert.equal(response.ok, true);
+  assert.ok(response.result.tree_entries.length > 0);
+  assert.ok(response.cold_trace.length > 0);
+  assert.ok(runCompletions.length > 0);
+  assert.ok(runCompletions.every((event) => event.command_name === "cc" || event.command_name === "ar"));
+  assert.ok(runCompletions.every((event) => event.serving?.type));
+  assert.deepEqual(
+    response.warm_trace.map((event) => event.type),
+    ["Demanded", "MemoHit"],
+  );
+});
+
 test("runs every vendored grammar sample through generated grammar.json and Snark WASM", async () => {
   const root = new URL("../src/bundled/", import.meta.url);
   const grammarIds = readdirSync(root)
