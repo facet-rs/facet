@@ -2,7 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use vix::engine::Engine;
 use vix::exec::ExecEvent;
+use vix::fetch::FakeFetchBackend;
 use vix::oracle::{Event, Oracle, Payload, Value};
+
+const LUA_URL: &str = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
+const LUA_ARCHIVE_BYTES: &[u8] = b"lua-5.4.8 fixture archive";
 
 fn sample(name: &str) -> String {
     std::fs::read_to_string(format!(
@@ -18,6 +22,26 @@ fn sample_fixture(name: &str) -> String {
         env!("CARGO_MANIFEST_DIR"),
     ))
     .expect("read sample fixture")
+}
+
+fn lua_fetch_backend() -> FakeFetchBackend {
+    FakeFetchBackend::new().with_archive(
+        LUA_URL,
+        LUA_ARCHIVE_BYTES,
+        vix::exec::Tree::of(&[
+            ("lua-5.4.8/src/lua.h", "// lua.h api"),
+            (
+                "lua-5.4.8/src/lua.c",
+                "#include \"lua.h\"\n// interpreter main",
+            ),
+            ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
+            ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
+            (
+                "lua-5.4.8/src/luac.c",
+                "#include \"lua.h\"\n// compiler main",
+            ),
+        ]),
+    )
 }
 
 fn artifact_object(path: &str) -> Value {
@@ -142,8 +166,13 @@ fn assert_created_subset(engine: &[Event], oracle: &[Event]) {
 }
 
 fn assert_full_contract(source: &str, func: &str, args: &[(&str, Value)], exact_created: bool) {
-    let oracle = Oracle::load(source).expect("oracle load");
-    let mut engine = Engine::load(source).expect("engine load");
+    let backend = lua_fetch_backend();
+    let oracle = Oracle::load(source)
+        .expect("oracle load")
+        .with_fetch_backend(backend.clone());
+    let mut engine = Engine::load(source)
+        .expect("engine load")
+        .with_fetch_backend(backend);
     let oracle_value = oracle.call(func, args).expect("oracle call");
     let engine_value = engine.call(func, args).expect("engine call");
     assert_eq!(engine_value, oracle_value);
@@ -164,6 +193,7 @@ fn assert_full_contract(source: &str, func: &str, args: &[(&str, Value)], exact_
         observation_keys(&oracle_events),
         "Observation key sets differ\nengine={engine_events:?}\noracle={oracle_events:?}"
     );
+    assert_eq!(engine.journal(), oracle.journal(), "journal pins differ");
     assert_misses_subset(&engine_events, &oracle_events);
     if exact_created {
         assert_eq!(
@@ -194,8 +224,13 @@ fn engine_matches_oracle_on_types_vix() {
 #[test]
 fn engine_matches_oracle_on_lua_vix_exec_seam() {
     let src = sample("lua.vix");
-    let oracle = Oracle::load(&src).expect("oracle load");
-    let mut engine = Engine::load(&src).expect("engine load");
+    let backend = lua_fetch_backend();
+    let oracle = Oracle::load(&src)
+        .expect("oracle load")
+        .with_fetch_backend(backend.clone());
+    let mut engine = Engine::load(&src)
+        .expect("engine load")
+        .with_fetch_backend(backend);
 
     let oracle_value = oracle
         .call("lua", &[("target", target())])
@@ -218,6 +253,7 @@ fn engine_matches_oracle_on_lua_vix_exec_seam() {
         observation_keys(&engine_events),
         observation_keys(&oracle_events)
     );
+    assert_eq!(engine.journal(), oracle.journal());
     assert_misses_subset(&engine_events, &oracle_events);
 }
 
@@ -260,9 +296,64 @@ pub fn parse(input: String) -> (String, Int, Bool) {
 }
 
 #[test]
+fn engine_matches_oracle_on_fetch_without_declared_checksum() {
+    const URL: &str = "https://example.org/source.tar.gz";
+    const ARCHIVE: &[u8] = b"source fixture archive";
+    let expected_pin = vix::fetch::sha256_hex(ARCHIVE);
+    let src = format!(
+        r#"
+use vix::Tree;
+
+pub fn src_tree(nonce: Int) -> Tree {{
+    fetch(url: "{URL}")
+}}
+"#
+    );
+    let backend = FakeFetchBackend::new().with_archive(
+        URL,
+        ARCHIVE,
+        vix::exec::Tree::of(&[("src/lib.rs", "pub fn f() {}")]),
+    );
+    let oracle = Oracle::load(&src)
+        .expect("oracle load")
+        .with_fetch_backend(backend.clone());
+    let mut engine = Engine::load(&src)
+        .expect("engine load")
+        .with_fetch_backend(backend);
+
+    let oracle_first = oracle
+        .call("src_tree", &[("nonce", Value::Int(1))])
+        .expect("oracle first call");
+    let oracle_second = oracle
+        .call("src_tree", &[("nonce", Value::Int(2))])
+        .expect("oracle second call");
+    let engine_first = engine
+        .call("src_tree", &[("nonce", Value::Int(1))])
+        .expect("engine first call");
+    let engine_second = engine
+        .call("src_tree", &[("nonce", Value::Int(2))])
+        .expect("engine second call");
+
+    assert_eq!(oracle_first, engine_first);
+    assert_eq!(oracle_second, engine_second);
+    assert_eq!(oracle_first, oracle_second);
+    assert_eq!(engine.journal(), oracle.journal());
+    assert_eq!(
+        oracle.journal(),
+        BTreeMap::from([(format!("fetch:{URL}:observed"), Value::Str(expected_pin))])
+    );
+    assert_eq!(
+        observation_keys(&engine.events()),
+        observation_keys(&oracle.events())
+    );
+}
+
+#[test]
 fn warm_engine_lua_second_call_is_one_hit() {
     let src = sample("lua.vix");
-    let mut engine = Engine::load(&src).expect("engine load");
+    let mut engine = Engine::load(&src)
+        .expect("engine load")
+        .with_fetch_backend(lua_fetch_backend());
 
     let first = engine.call("lua", &[("target", target())]).unwrap();
     let before = engine.events().len();

@@ -8,7 +8,7 @@ use caps::{Cc, Ar};
 fn sources() -> Tree {
     let tar = fetch(
         url: "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
-        sha256: "4f18ddae154e9f5d79f21e9a6ba48e5b5f5b2e6ab5e2c4a1e0d3b7f1b7de00d1",
+        sha256: "f5c9123295667d2cc0841c03490f04d6e66d0eac5e440ab386a944eec30e64d7",
     );
     extract(tar) / p"lua-5.4.8/src"
 }

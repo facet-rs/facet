@@ -26,9 +26,11 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
 
 use crate::ast::Spanned;
 use crate::ast::{self, Arg, ArrayElem, Block, CommandPart, Expr, Member, PathRef, Pattern, Stmt};
+use crate::fetch::{FetchBackend, NoFetchBackend};
 use crate::module::{EnumInfo, ModuleTables, StructInfo, VariantShape, load_module_tables};
 
 // ---------------------------------------------------------------------------
@@ -596,6 +598,7 @@ pub struct Oracle {
     sink: Option<EventSink>,
     exec_cache: RefCell<crate::exec::ExecCache>,
     backend: Option<Box<dyn ExecBackend>>,
+    fetch_backend: Arc<dyn FetchBackend>,
     /// Run ids this oracle spawned that haven't logged their Exec event yet
     /// (logged on the first oracle-side force; identity-side forces from
     /// Ord/Hash are silent — they have no oracle in scope).
@@ -630,6 +633,7 @@ impl Oracle {
             sink: None,
             exec_cache: RefCell::new(crate::exec::ExecCache::new()),
             backend: None,
+            fetch_backend: Arc::new(NoFetchBackend),
             unlogged_runs: RefCell::new(HashMap::new()),
             scheduled: RefCell::new(std::collections::HashSet::new()),
             fn_stack: RefCell::new(Vec::new()),
@@ -663,6 +667,15 @@ impl Oracle {
     pub fn with_backend(mut self, backend: Box<dyn ExecBackend>) -> Self {
         self.backend = Some(backend);
         self
+    }
+
+    pub fn with_fetch_backend(mut self, backend: impl FetchBackend + 'static) -> Self {
+        self.fetch_backend = Arc::new(backend);
+        self
+    }
+
+    pub fn journal(&self) -> BTreeMap<String, Value> {
+        self.journal.borrow().clone()
     }
 
     /// Install a live event sink (the daemon streams + gates through it).
@@ -1558,43 +1571,26 @@ impl Oracle {
         value
     }
 
-    /// `fetch(url: …, sha256: …)` — pure BECAUSE the checksum is the identity.
     fn fetch(&self, args: Vec<(Option<String>, Value)>) -> EvalResult {
-        let sha = args
-            .iter()
-            .find(|(n, _)| n.as_deref() == Some("sha256"))
-            .map(|(_, v)| v.clone())
-            .ok_or("fetch requires a sha256: the checksum IS the identity")?;
-        let Value::Str(sha) = sha else {
-            return Err("sha256 must be a string".to_string());
-        };
-        Ok(self.observe(format!("fetch:{sha}"), || {
-            Value::Tree(crate::exec::Tree::of(&[("tarball", sha.as_str())]))
-        }))
+        let (url, sha256) = fetch_args(args.into_iter())?;
+        let (value, observation) = crate::fetch::fetch_value(
+            &mut self.journal.borrow_mut(),
+            self.fetch_backend.as_ref(),
+            url,
+            sha256,
+        )?;
+        self.emit(Event::Observation {
+            key: observation.key,
+            replayed: observation.replayed,
+        });
+        Ok(value)
     }
 
-    /// `extract(tar)` — pure function of the tarball's content. The oracle
-    /// fabricates a lua-shaped source tree (deterministic in the tar hash) so
-    /// the whole build pipeline has something real to chew.
     fn extract(&self, args: Vec<(Option<String>, Value)>) -> EvalResult {
-        let Some((_, tar)) = args.first() else {
+        let Some((_, tree)) = args.first() else {
             return Err("extract takes a tree".to_string());
         };
-        let tar_hash = tar.canon_hash();
-        let header = format!("// lua.h api ({tar_hash:016x})");
-        Ok(Value::Tree(crate::exec::Tree::of(&[
-            ("lua-5.4.8/src/lua.h", header.as_str()),
-            (
-                "lua-5.4.8/src/lua.c",
-                "#include \"lua.h\"\n// interpreter main",
-            ),
-            ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
-            ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
-            (
-                "lua-5.4.8/src/luac.c",
-                "#include \"lua.h\"\n// compiler main",
-            ),
-        ])))
+        self.force_value(tree.clone())
     }
 
     fn toml(&self, args: Vec<(Option<String>, Value)>) -> EvalResult {
@@ -1876,6 +1872,33 @@ fn parse_number(text: &str) -> Value {
     } else {
         Value::Int(text.parse().unwrap_or(0))
     }
+}
+
+fn fetch_args(
+    args: impl Iterator<Item = (Option<String>, Value)>,
+) -> Result<(String, Option<String>), String> {
+    let mut url = None;
+    let mut sha256 = None;
+    for (name, value) in args {
+        match name.as_deref() {
+            Some("url") => {
+                let Value::Str(value) = value else {
+                    return Err("fetch url must be a string".to_string());
+                };
+                url = Some(value);
+            }
+            Some("sha256") => {
+                let Value::Str(value) = value else {
+                    return Err("fetch sha256 must be a string".to_string());
+                };
+                sha256 = Some(value);
+            }
+            Some(name) => return Err(format!("fetch got unknown argument `{name}`")),
+            None => return Err("fetch arguments must be named".to_string()),
+        }
+    }
+    let url = url.ok_or_else(|| "fetch requires a url".to_string())?;
+    Ok((url, sha256))
 }
 
 fn option_some(v: Value) -> Value {

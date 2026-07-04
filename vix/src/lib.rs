@@ -22,6 +22,7 @@ pub mod binder;
 pub(crate) mod data;
 pub mod engine;
 pub mod exec;
+pub mod fetch;
 pub mod graph;
 pub mod ide;
 pub(crate) mod module;

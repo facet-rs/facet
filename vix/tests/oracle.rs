@@ -3,6 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use vix::exec::Tree;
+use vix::fetch::{FakeFetchBackend, sha256_hex};
 use vix::oracle::{Event, Oracle, Payload, Value};
 
 fn sample(name: &str) -> String {
@@ -300,17 +302,29 @@ fn toolchain_acquires_capabilities_and_updates_records() {
 
 #[test]
 fn fetch_pins_the_journal_and_replays() {
-    let src = r#"
+    const URL: &str = "https://example.org/lua.tar.gz";
+    const ARCHIVE: &[u8] = b"example fixture archive";
+    let sha256 = sha256_hex(ARCHIVE);
+    let src = format!(
+        r#"
 use vix::Tree;
 
-fn src_tree(nonce: Int) -> Tree {
+fn src_tree(nonce: Int) -> Tree {{
     fetch(
-        url: "https://example.org/lua.tar.gz",
-        sha256: "abc123",
+        url: "{URL}",
+        sha256: "{sha256}",
     )
-}
-"#;
-    let oracle = Oracle::load(src).expect("load");
+}}
+"#
+    );
+    let backend = FakeFetchBackend::new().with_archive(
+        URL,
+        ARCHIVE,
+        Tree::of(&[("src/lib.rs", "pub fn f() {}")]),
+    );
+    let oracle = Oracle::load(&src)
+        .expect("load")
+        .with_fetch_backend(backend);
     let a = oracle
         .call("src_tree", &[("nonce", Value::Int(1))])
         .unwrap();
@@ -332,9 +346,13 @@ fn src_tree(nonce: Int) -> Tree {
     assert_eq!(
         obs,
         vec![
-            ("fetch:abc123".to_string(), false),
-            ("fetch:abc123".to_string(), true),
+            (format!("fetch:{URL}:sha256:{sha256}"), false),
+            (format!("fetch:{URL}:sha256:{sha256}"), true),
         ]
+    );
+    assert_eq!(
+        oracle.journal(),
+        BTreeMap::from([(format!("fetch:{URL}:sha256:{sha256}"), Value::Str(sha256))])
     );
 }
 

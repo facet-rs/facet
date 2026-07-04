@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::ast::{self, Arg, ArrayElem, Block, CommandPart, Expr, Member, PathRef, Pattern, Stmt};
 use crate::exec::ExecCache;
+use crate::fetch::{FetchBackend, NoFetchBackend};
 use crate::module::{ModuleTables, VariantShape, load_module_tables};
 use crate::oracle::{Event, LocalRun, Payload, PendingRun, Value};
 use crate::oracle::{assign_roles, runs, splice_into, subtree, tool_for};
@@ -87,6 +88,7 @@ pub struct Engine {
     arena: Vec<NodeState>,
     memo: HashMap<(u64, u64), Value>,
     journal: BTreeMap<String, Value>,
+    fetch_backend: Arc<dyn FetchBackend>,
     exec_cache: ExecCache,
     unlogged_runs: HashMap<u64, (String, crate::support::Span)>,
     scheduled: HashSet<u64>,
@@ -103,6 +105,7 @@ impl Engine {
             arena: Vec::new(),
             memo: HashMap::new(),
             journal: BTreeMap::new(),
+            fetch_backend: Arc::new(NoFetchBackend),
             exec_cache: ExecCache::new(),
             unlogged_runs: HashMap::new(),
             scheduled: HashSet::new(),
@@ -126,6 +129,15 @@ impl Engine {
 
     pub fn events(&self) -> Vec<Event> {
         self.events.clone()
+    }
+
+    pub fn with_fetch_backend(mut self, backend: impl FetchBackend + 'static) -> Self {
+        self.fetch_backend = Arc::new(backend);
+        self
+    }
+
+    pub fn journal(&self) -> BTreeMap<String, Value> {
+        self.journal.clone()
     }
 
     fn alloc_thunk(&mut self, expr: Expr, env: Env) -> NodeId {
@@ -1119,41 +1131,42 @@ impl Engine {
     }
 
     fn fetch(&mut self, args: Vec<CallArg>) -> EvalResult {
-        let mut sha = None;
+        let mut url = None;
+        let mut sha256 = None;
         for arg in args {
             let value = self.demand(arg.node, Demand::Identity)?;
-            if arg.name.as_deref() == Some("sha256") {
-                sha = Some(value);
+            match arg.name.as_deref() {
+                Some("url") => {
+                    let Value::Str(value) = value else {
+                        return Err("fetch url must be a string".to_string());
+                    };
+                    url = Some(value);
+                }
+                Some("sha256") => {
+                    let Value::Str(value) = value else {
+                        return Err("fetch sha256 must be a string".to_string());
+                    };
+                    sha256 = Some(value);
+                }
+                Some(name) => return Err(format!("fetch got unknown argument `{name}`")),
+                None => return Err("fetch arguments must be named".to_string()),
             }
         }
-        let Some(Value::Str(sha)) = sha else {
-            return Err("fetch requires a string sha256: the checksum IS the identity".to_string());
-        };
-        Ok(self.observe(format!("fetch:{sha}"), || {
-            Value::Tree(crate::exec::Tree::of(&[("tarball", sha.as_str())]))
-        }))
+        let url = url.ok_or_else(|| "fetch requires a url".to_string())?;
+        let (value, observation) =
+            crate::fetch::fetch_value(&mut self.journal, self.fetch_backend.as_ref(), url, sha256)?;
+        self.emit(Event::Observation {
+            key: observation.key,
+            replayed: observation.replayed,
+        });
+        Ok(value)
     }
 
     fn extract(&mut self, args: Vec<CallArg>) -> EvalResult {
         let Some(arg) = args.first() else {
             return Err("extract takes a tree".to_string());
         };
-        let tar = self.demand(arg.node, Demand::Identity)?;
-        let tar_hash = tar.canon_hash();
-        let header = format!("// lua.h api ({tar_hash:016x})");
-        Ok(Value::Tree(crate::exec::Tree::of(&[
-            ("lua-5.4.8/src/lua.h", header.as_str()),
-            (
-                "lua-5.4.8/src/lua.c",
-                "#include \"lua.h\"\n// interpreter main",
-            ),
-            ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
-            ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
-            (
-                "lua-5.4.8/src/luac.c",
-                "#include \"lua.h\"\n// compiler main",
-            ),
-        ])))
+        self.demand(arg.node, Demand::Identity)
     }
 
     fn toml(&mut self, args: Vec<CallArg>) -> EvalResult {

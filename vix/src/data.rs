@@ -95,7 +95,7 @@ fn from_facet_value(value: &facet_value::Value) -> Result<Value, String> {
 fn option_none() -> Value {
     Value::Variant {
         enum_name: "Option".to_string(),
-        index: 0,
+        index: 1,
         name: "None".to_string(),
         payload: Payload::Unit,
     }

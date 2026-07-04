@@ -3,7 +3,11 @@
 //! sketch building end to end inside the oracle.
 
 use vix::exec::{ExecEvent, Tree};
+use vix::fetch::FakeFetchBackend;
 use vix::oracle::{Event, Oracle, Value};
+
+const LUA_URL: &str = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
+const LUA_ARCHIVE_BYTES: &[u8] = b"lua-5.4.8 fixture archive";
 
 fn lua_source() -> String {
     std::fs::read_to_string(concat!(
@@ -20,9 +24,31 @@ fn target() -> Value {
     }
 }
 
+fn lua_fetch_backend() -> FakeFetchBackend {
+    FakeFetchBackend::new().with_archive(
+        LUA_URL,
+        LUA_ARCHIVE_BYTES,
+        Tree::of(&[
+            ("lua-5.4.8/src/lua.h", "// lua.h api"),
+            (
+                "lua-5.4.8/src/lua.c",
+                "#include \"lua.h\"\n// interpreter main",
+            ),
+            ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
+            ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
+            (
+                "lua-5.4.8/src/luac.c",
+                "#include \"lua.h\"\n// compiler main",
+            ),
+        ]),
+    )
+}
+
 #[test]
 fn lua_builds_end_to_end() {
-    let oracle = Oracle::load(&lua_source()).expect("load");
+    let oracle = Oracle::load(&lua_source())
+        .expect("load")
+        .with_fetch_backend(lua_fetch_backend());
     let out = oracle.call("lua", &[("target", target())]).unwrap();
 
     // The pipeline: fetch -> extract -> subtree -> glob/filter -> 2 unit

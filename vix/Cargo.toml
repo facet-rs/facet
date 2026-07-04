@@ -17,7 +17,9 @@ facet = { path = "../facet" }
 facet-json = { path = "../facet-json" }
 facet-toml = { path = "../facet-toml" }
 facet-value = { path = "../facet-value", default-features = false, features = ["alloc"] }
+hex.workspace = true
 phon = { path = "../phon/rust/phon", default-features = false }
+sha2.workspace = true
 
 [build-dependencies]
 snark = { path = "../snark", features = ["json-import"] }
