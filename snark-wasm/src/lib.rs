@@ -1,6 +1,10 @@
 #![forbid(unsafe_code)]
 //! WebAssembly bindings for Snark playgrounds.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+use facet::Facet;
 use wasm_bindgen::prelude::*;
 
 /// Prepared Snark playground session for one grammar bundle.
@@ -45,4 +49,271 @@ pub fn vix_bindings(source: &str) -> String {
 #[wasm_bindgen(js_name = vixHighlights)]
 pub fn vix_highlights(source: &str) -> String {
     vix::ide::highlights_json(source)
+}
+
+#[derive(Facet)]
+struct VixMachineRun {
+    ok: bool,
+    error: Option<String>,
+    source_kind: String,
+    fn_name: String,
+    result: Option<VixMachineResult>,
+    cold_trace: Vec<VixDriveEvent>,
+    warm_trace: Vec<VixDriveEvent>,
+    fn_hashes: Vec<HashLabel>,
+    run_hashes: Vec<HashLabel>,
+}
+
+#[derive(Facet)]
+struct VixMachineResult {
+    schema: String,
+    i64_value: Option<i64>,
+    f64_value: Option<f64>,
+    tree_entries: Vec<TreeEntry>,
+}
+
+#[derive(Facet)]
+struct TreeEntry {
+    path: String,
+    contents: String,
+}
+
+#[derive(Facet)]
+struct HashLabel {
+    hash: String,
+    label: String,
+}
+
+#[repr(u8)]
+#[derive(Facet)]
+#[facet(tag = "type")]
+pub enum VixDriveEvent {
+    Demanded { fn_hash: String },
+    MemoHit { fn_hash: String },
+    Spawned { fn_hash: String },
+    ParkedOn { fn_hash: String },
+    Completed { fn_hash: String },
+    SpawnedInvocation { fn_hash: String, key_hash: String },
+    StoreAlloc { schema_ref: String, deduped: bool },
+    RunRequested { command: String, output: String },
+    RunStarted { command: String, output: String },
+    RunCompleted { command: String, output: String },
+}
+
+#[wasm_bindgen(js_name = runVixMachine)]
+pub fn run_vix_machine(source: &str, fn_name: &str) -> String {
+    let out = match run_vix_machine_inner(source, fn_name) {
+        Ok(out) => out,
+        Err(error) => VixMachineRun {
+            ok: false,
+            error: Some(error),
+            source_kind: source_kind(source).to_string(),
+            fn_name: fn_name.to_string(),
+            result: None,
+            cold_trace: Vec::new(),
+            warm_trace: Vec::new(),
+            fn_hashes: Vec::new(),
+            run_hashes: run_hashes(source),
+        },
+    };
+    facet_json::to_string(&out).expect("VixMachineRun serializes")
+}
+
+fn run_vix_machine_inner(source: &str, fn_name: &str) -> Result<VixMachineRun, String> {
+    let mut machine = vix::machine::lower::Machine::load(source)?;
+    let args = match fn_name {
+        "selected" | "fallback" | "subtree_chain" | "lua" | "main" => {
+            vec![machine.linux_target_handle()]
+        }
+        "demo" => Vec::new(),
+        other => {
+            return Err(format!(
+                "run-on-machine does not know arguments for `{other}`"
+            ));
+        }
+    };
+    let source_kind = source_kind(source).to_string();
+    let fn_hashes = function_hashes(&machine);
+    let handle = match fn_name {
+        "demo" => {
+            let value = machine.demand_f64(fn_name, args.clone())?;
+            let cold_trace = trace_events(machine.trace());
+            machine.clear_trace();
+            let _warm = machine.demand_f64(fn_name, args)?;
+            let warm_trace = trace_events(machine.trace());
+            return Ok(VixMachineRun {
+                ok: true,
+                error: None,
+                source_kind,
+                fn_name: fn_name.to_string(),
+                result: Some(VixMachineResult {
+                    schema: "Float".to_string(),
+                    i64_value: None,
+                    f64_value: Some(value),
+                    tree_entries: Vec::new(),
+                }),
+                cold_trace,
+                warm_trace,
+                fn_hashes,
+                run_hashes: run_hashes(source),
+            });
+        }
+        _ => machine.demand_i64(fn_name, args.clone())?,
+    };
+    let tree_entries = machine
+        .tree_entries(handle)?
+        .into_iter()
+        .map(|(path, contents)| TreeEntry { path, contents })
+        .collect();
+    let cold_trace = trace_events(machine.trace());
+    machine.clear_trace();
+    let warm = machine.demand_i64(fn_name, args)?;
+    if warm != handle {
+        return Err(format!(
+            "warm demand for `{fn_name}` returned handle {warm}, expected {handle}"
+        ));
+    }
+    let warm_trace = trace_events(machine.trace());
+    Ok(VixMachineRun {
+        ok: true,
+        error: None,
+        source_kind,
+        fn_name: fn_name.to_string(),
+        result: Some(VixMachineResult {
+            schema: "Tree".to_string(),
+            i64_value: Some(handle),
+            f64_value: None,
+            tree_entries,
+        }),
+        cold_trace,
+        warm_trace,
+        fn_hashes,
+        run_hashes: run_hashes(source),
+    })
+}
+
+fn trace_events(events: &[vix::machine::driver::DriveEvent]) -> Vec<VixDriveEvent> {
+    events
+        .iter()
+        .map(|event| match *event {
+            vix::machine::driver::DriveEvent::Demanded { fn_hash } => VixDriveEvent::Demanded {
+                fn_hash: hex_hash(fn_hash),
+            },
+            vix::machine::driver::DriveEvent::MemoHit { fn_hash } => VixDriveEvent::MemoHit {
+                fn_hash: hex_hash(fn_hash),
+            },
+            vix::machine::driver::DriveEvent::Spawned { fn_hash } => VixDriveEvent::Spawned {
+                fn_hash: hex_hash(fn_hash),
+            },
+            vix::machine::driver::DriveEvent::ParkedOn { fn_hash } => VixDriveEvent::ParkedOn {
+                fn_hash: hex_hash(fn_hash),
+            },
+            vix::machine::driver::DriveEvent::Completed { fn_hash } => VixDriveEvent::Completed {
+                fn_hash: hex_hash(fn_hash),
+            },
+            vix::machine::driver::DriveEvent::SpawnedInvocation { fn_hash, key_hash } => {
+                VixDriveEvent::SpawnedInvocation {
+                    fn_hash: hex_hash(fn_hash),
+                    key_hash: hex_hash(key_hash),
+                }
+            }
+            vix::machine::driver::DriveEvent::StoreAlloc {
+                schema_ref,
+                deduped,
+            } => VixDriveEvent::StoreAlloc {
+                schema_ref: hex_hash(schema_ref),
+                deduped,
+            },
+            vix::machine::driver::DriveEvent::RunRequested { command, output } => {
+                VixDriveEvent::RunRequested {
+                    command: hex_hash(command),
+                    output: hex_hash(output),
+                }
+            }
+            vix::machine::driver::DriveEvent::RunStarted { command, output } => {
+                VixDriveEvent::RunStarted {
+                    command: hex_hash(command),
+                    output: hex_hash(output),
+                }
+            }
+            vix::machine::driver::DriveEvent::RunCompleted { command, output } => {
+                VixDriveEvent::RunCompleted {
+                    command: hex_hash(command),
+                    output: hex_hash(output),
+                }
+            }
+        })
+        .collect()
+}
+
+fn function_hashes(machine: &vix::machine::lower::Machine) -> Vec<HashLabel> {
+    let mut out: Vec<_> = [
+        "selected",
+        "fallback",
+        "subtree_chain",
+        "object",
+        "eval",
+        "demo",
+        "lua",
+        "main",
+    ]
+    .into_iter()
+    .filter_map(|name| {
+        machine.fn_hash(name).map(|hash| HashLabel {
+            hash: hex_hash(hash),
+            label: name.to_string(),
+        })
+    })
+    .collect();
+    out.sort_by(|left, right| left.label.cmp(&right.label));
+    out.dedup_by(|left, right| left.hash == right.hash);
+    out
+}
+
+fn run_hashes(source: &str) -> Vec<HashLabel> {
+    let mut labels = vec![
+        "cc",
+        "wanted.o",
+        "left.o",
+        "right.o",
+        "x/wanted.o",
+        "lua.o",
+        "lapi.o",
+    ];
+    if source.contains("merge-demand.vix")
+        || source.contains("left.c")
+        || source.contains("wanted.c")
+    {
+        labels.extend(["x", "wanted.c", "left.c", "right.c"]);
+    }
+    let mut out: Vec<_> = labels
+        .into_iter()
+        .map(|label| HashLabel {
+            hash: hex_hash(trace_hash(label)),
+            label: label.to_string(),
+        })
+        .collect();
+    out.sort_by(|left, right| left.label.cmp(&right.label));
+    out.dedup_by(|left, right| left.hash == right.hash);
+    out
+}
+
+fn source_kind(source: &str) -> &'static str {
+    if source.contains("left.c") && source.contains("subtree_chain") {
+        "merge-demand"
+    } else if source.contains("pub fn demo() -> Float") {
+        "eval"
+    } else {
+        "vix"
+    }
+}
+
+fn trace_hash(value: &str) -> u64 {
+    let mut h = DefaultHasher::new();
+    value.hash(&mut h);
+    h.finish()
+}
+
+fn hex_hash(value: u64) -> String {
+    format!("{value:016x}")
 }

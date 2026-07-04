@@ -36,6 +36,8 @@ export const vendoredGrammars: VendoredGrammar[] = grammarIds.map((id) => ({
 export const vendoredFiles: DslBundleFile[] = sortedFiles(normalizeBundleFiles(allFiles));
 
 /** Grammar selected on first open. */
-export const defaultVendoredRootId = grammarIds.includes("gingembre")
-  ? "gingembre"
+export const defaultVendoredRootId = grammarIds.includes("vix")
+  ? "vix"
+  : grammarIds.includes("gingembre")
+    ? "gingembre"
   : (grammarIds[0] ?? "");

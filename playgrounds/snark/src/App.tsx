@@ -286,7 +286,50 @@ type PlaygroundResponse = {
   timings: Timings;
   /** vix IDE bindings (attached client-side from the worker's vix lane). */
   vix_ide?: IdeState;
+  /** vix machine run (attached client-side from the worker's vix lane). */
+  vix_machine?: VixMachineRun | null;
 };
+
+type VixMachineRun = {
+  ok: boolean;
+  error: string | null;
+  source_kind: string;
+  fn_name: string;
+  result: VixMachineResult | null;
+  cold_trace: VixDriveEvent[];
+  warm_trace: VixDriveEvent[];
+  fn_hashes: HashLabel[];
+  run_hashes: HashLabel[];
+};
+
+type VixMachineResult = {
+  schema: string;
+  i64_value: number | null;
+  f64_value: number | null;
+  tree_entries: TreeEntry[];
+};
+
+type TreeEntry = {
+  path: string;
+  contents: string;
+};
+
+type HashLabel = {
+  hash: string;
+  label: string;
+};
+
+type VixDriveEvent =
+  | { type: "Demanded"; fn_hash: string }
+  | { type: "MemoHit"; fn_hash: string }
+  | { type: "Spawned"; fn_hash: string }
+  | { type: "ParkedOn"; fn_hash: string }
+  | { type: "Completed"; fn_hash: string }
+  | { type: "SpawnedInvocation"; fn_hash: string; key_hash: string }
+  | { type: "StoreAlloc"; schema_ref: string; deduped: boolean }
+  | { type: "RunRequested"; command: string; output: string }
+  | { type: "RunStarted"; command: string; output: string }
+  | { type: "RunCompleted"; command: string; output: string };
 
 const defaultFiles: BundleFile[] = vendoredFiles;
 // One frame (~60fps). Leading-edge throttle interval for live re-parsing.
@@ -316,7 +359,12 @@ const routedSample = initialRouteValid
       (file) => file.path === initialRoute.sample,
     )
   : undefined;
-const defaultSample = routedSample ?? preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
+const defaultSample =
+  routedSample ??
+  sourceExamplesForGrammarRootId(defaultFiles, defaultGrammarRoot).find(
+    (file) => defaultGrammarRoot === "vix" && file.path === "samples/merge-demand.vix",
+  ) ??
+  preferredSampleForGrammarRootId(defaultFiles, defaultGrammarRoot);
 
 type PendingSourceEdit = {
   oldInput: string;
@@ -332,6 +380,7 @@ export function App() {
   const [selectedGrammarRoot, setSelectedGrammarRoot] = useState(defaultGrammarRoot);
   const [selectedSamplePath, setSelectedSamplePath] = useState(defaultSample?.path ?? "");
   const [input, setInput] = useState(defaultSample?.text ?? "");
+  const [machineFn, setMachineFn] = useState(defaultMachineFnForInput(defaultSample?.text ?? ""));
   const [result, setResult] = useState<PlaygroundResponse | null>(null);
   const [busyTask, setBusyTask] = useState<"parse" | "tests" | "bench" | null>(null);
   const [benchReport, setBenchReport] = useState<BenchReport | null>(null);
@@ -368,6 +417,7 @@ export function App() {
     setSelectedGrammarRoot(nextGrammarRoot);
     setSelectedSamplePath(sample?.path ?? "");
     setInput(sample?.text ?? "");
+    setMachineFn(defaultMachineFnForInput(sample?.text ?? ""));
     setResult(null);
     writeHashRoute(nextGrammarRoot, sample?.path ?? "");
   };
@@ -412,6 +462,19 @@ export function App() {
     [projectedFiles],
   );
   const busy = busyTask !== null;
+  const machineOptions = useMemo(
+    () => (activeGrammarRootId === "vix" ? vixMachineOptions(input) : []),
+    [activeGrammarRootId, input],
+  );
+  const activeMachineFn = machineOptions.some((option) => option.name === machineFn)
+    ? machineFn
+    : (machineOptions[0]?.name ?? "");
+
+  useEffect(() => {
+    if (activeMachineFn && activeMachineFn !== machineFn) {
+      setMachineFn(activeMachineFn);
+    }
+  }, [activeMachineFn, machineFn]);
 
   const handleRunBenchmark = async (): Promise<BenchReport> => {
     const grammar = activeGrammarRootId;
@@ -513,7 +576,7 @@ export function App() {
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [activeGrammarRootId, files, hasBundledTests, input, projectedFiles]);
+  }, [activeGrammarRootId, activeMachineFn, files, hasBundledTests, input, projectedFiles]);
 
   async function loadFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) {
@@ -537,6 +600,7 @@ export function App() {
     setSelectedGrammarRoot(nextGrammarRoot);
     setSelectedSamplePath(nextSample?.path ?? "");
     setInput(nextSample?.text ?? "");
+    setMachineFn(defaultMachineFnForInput(nextSample?.text ?? ""));
     setResult(null);
   }
 
@@ -544,6 +608,9 @@ export function App() {
     pendingSourceEditRef.current = edit ? { oldInput: input, edit } : null;
     setInput(nextInput);
     setSelectedSamplePath(samplePath);
+    if (!edit) {
+      setMachineFn(defaultMachineFnForInput(nextInput));
+    }
     // On an incremental edit, keep the last result so the editor remaps its existing
     // highlight decorations through the change (CodeMirror does this for us) instead of
     // flashing unstyled until the next parse lands. Only drop highlights on a full
@@ -589,7 +656,7 @@ export function App() {
         baselineInputRef.current === pendingEdit.oldInput &&
         pendingEdit.oldInput !== input;
 
-      let result: { response: string; prepared: boolean; vix: string | null };
+      let result: { response: string; prepared: boolean; vix: string | null; vixMachine: string | null };
       try {
         result = await runParse({
           key,
@@ -599,6 +666,7 @@ export function App() {
           edit: useReparse ? pendingEdit.edit : null,
           useReparse,
           vixIde: activeGrammarRootId === "vix",
+          vixMachineFn: activeGrammarRootId === "vix" ? activeMachineFn : null,
         });
       } catch (error) {
         // A worker/prepare failure: force a fresh prepare on the next run.
@@ -611,6 +679,7 @@ export function App() {
       const parsed = JSON.parse(result.response) as PlaygroundResponse;
       // IDE bindings only make sense against the exact input they were computed for.
       parsed.vix_ide = result.vix ? { ide: JSON.parse(result.vix) as IdeInfo, input } : null;
+      parsed.vix_machine = result.vixMachine ? (JSON.parse(result.vixMachine) as VixMachineRun) : null;
       if (runBundledTests) {
         bundledTestSnapshotRef.current = {
           key,
@@ -743,6 +812,20 @@ export function App() {
                 ))}
               </select>
             ) : null}
+            {machineOptions.length > 0 ? (
+              <select
+                aria-label="Run on machine"
+                className="select"
+                value={activeMachineFn}
+                onChange={(event) => setMachineFn(event.currentTarget.value)}
+              >
+                {machineOptions.map((option) => (
+                  <option key={option.name} value={option.name}>
+                    machine · {option.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
           </div>
           <div className="toolbar-end">
             <StatusPill result={result} busyTask={busyTask} />
@@ -764,6 +847,7 @@ export function App() {
 
         <ResultsDock
           result={result}
+          machine={result?.vix_machine ?? null}
           onUseInput={(value, sourcePath = "") => updateSourceInput(value, sourcePath)}
           bench={{
             report: benchReport,
@@ -842,10 +926,12 @@ type DockSection = {
 // nothing is expanded until asked, and the editor owns the viewport.
 function ResultsDock({
   result,
+  machine,
   onUseInput,
   bench,
 }: {
   result: PlaygroundResponse | null;
+  machine: VixMachineRun | null;
   onUseInput: (value: string, sourcePath?: string) => void;
   bench: { report: BenchReport | null; running: boolean; progress: string; onRun: () => void };
 }) {
@@ -868,6 +954,23 @@ function ResultsDock({
   const maxTimingMs = timingRows.reduce((max, row) => Math.max(max, row.ms), 0) || 1;
 
   const sections: DockSection[] = [];
+
+  useEffect(() => {
+    if (machine && active === null) {
+      setActive("machine");
+    }
+  }, [active, machine]);
+
+  if (machine) {
+    sections.push({
+      id: "machine",
+      title: "Machine",
+      meta: machine.ok
+        ? `${machine.fn_name} · ${machine.cold_trace.length}/${machine.warm_trace.length} events`
+        : "blocked",
+      body: <MachineBody run={machine} />,
+    });
+  }
 
   if (timingRows.length) {
     sections.push({
@@ -1091,6 +1194,258 @@ function ResultsDock({
       </nav>
     </div>
   );
+}
+
+type MachineNode = {
+  id: string;
+  label: string;
+  detail: string;
+  kind: "spawn" | "memo" | "run" | "pending";
+};
+
+type MachineEdge = {
+  from: string;
+  to: string;
+  label: string;
+};
+
+type MachineGraph = {
+  nodes: MachineNode[];
+  edges: MachineEdge[];
+};
+
+function MachineBody({ run }: { run: VixMachineRun }) {
+  const [warm, setWarm] = useState(false);
+  useEffect(() => {
+    setWarm(false);
+  }, [run.fn_name, run.source_kind]);
+
+  if (!run.ok) {
+    return (
+      <div className="machine-error">
+        <strong>{run.fn_name}</strong>
+        <code>{run.error ?? "machine run failed"}</code>
+      </div>
+    );
+  }
+
+  const trace = warm ? run.warm_trace : run.cold_trace;
+  const graph = machineGraph(run, trace, warm);
+  const fnLabels = labelMap(run.fn_hashes);
+  const runLabels = labelMap(run.run_hashes);
+  const completedRuns = runEvents(run.cold_trace, runLabels, "RunCompleted");
+
+  return (
+    <div className="machine-panel">
+      <div className="machine-head">
+        <div className="machine-title">
+          <strong>{run.fn_name}</strong>
+          <span>{warm ? "warm" : "cold"} trace</span>
+        </div>
+        <button type="button" className="ghost" onClick={() => setWarm((current) => !current)}>
+          {warm ? "Cold trace" : "Demand again"}
+        </button>
+      </div>
+
+      <div className="machine-result">
+        {run.result?.tree_entries.length ? (
+          run.result.tree_entries.map((entry) => (
+            <code key={entry.path}>
+              {entry.path} = {entry.contents}
+            </code>
+          ))
+        ) : run.result?.f64_value != null ? (
+          <code>{run.result.f64_value}</code>
+        ) : (
+          <code>{run.result?.schema ?? "no result"}</code>
+        )}
+      </div>
+
+      <div className="machine-graph">
+        {graph.nodes.map((node) => (
+          <div className={`machine-node machine-node-${node.kind}`} key={node.id}>
+            <span>{node.label}</span>
+            <code>{node.detail}</code>
+          </div>
+        ))}
+      </div>
+
+      {graph.edges.length ? (
+        <div className="machine-edges">
+          {graph.edges.map((edge) => (
+            <div className="machine-edge" key={`${edge.from}-${edge.to}-${edge.label}`}>
+              <code>{nodeLabel(graph, edge.from)}</code>
+              <span>{edge.label}</span>
+              <code>{nodeLabel(graph, edge.to)}</code>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="machine-runs">
+        {runEvents(trace, runLabels).map((event, index) => (
+          <div className={`machine-run machine-run-${event.kind}`} key={`${event.kind}-${event.output}-${index}`}>
+            <span>{event.kind.replace(/^Run/, "")}</span>
+            <code>{event.output}</code>
+          </div>
+        ))}
+      </div>
+
+      <div className="machine-trace">
+        {trace.map((event, index) => (
+          <div className="machine-trace-row" key={`${event.type}-${index}`}>
+            <span>{index + 1}</span>
+            <code>{formatDriveEvent(event, fnLabels, runLabels)}</code>
+          </div>
+        ))}
+      </div>
+
+      {!warm && completedRuns.length ? (
+        <div className="machine-run-summary">
+          {completedRuns.map((event) => (
+            <code key={`${event.kind}-${event.output}`}>{event.output}</code>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function machineGraph(run: VixMachineRun, trace: VixDriveEvent[], warm: boolean): MachineGraph {
+  const fnLabels = labelMap(run.fn_hashes);
+  const runLabels = labelMap(run.run_hashes);
+  const nodes: MachineNode[] = [];
+  const edges: MachineEdge[] = [];
+  let root: string | null = null;
+  let latestSpawn: string | null = null;
+  let latestObject: string | null = null;
+  const latestRunByOutput = new Map<string, string>();
+
+  const addNode = (node: MachineNode) => {
+    nodes.push(node);
+    return node.id;
+  };
+  const addEdge = (from: string | null, to: string, label: string) => {
+    if (from && from !== to && !edges.some((edge) => edge.from === from && edge.to === to && edge.label === label)) {
+      edges.push({ from, to, label });
+    }
+  };
+
+  trace.forEach((event, index) => {
+    if (event.type === "Spawned" || event.type === "MemoHit") {
+      const label = fnLabels.get(event.fn_hash) ?? event.fn_hash;
+      const id = addNode({
+        id: `${event.type}-${index}`,
+        label,
+        detail: event.type === "MemoHit" ? "memo hit" : "spawned",
+        kind: event.type === "MemoHit" ? "memo" : "spawn",
+      });
+      if (!root) {
+        root = id;
+      } else if (event.type === "Spawned") {
+        addEdge(root, id, warm ? "memo" : "demand");
+      }
+      latestSpawn = id;
+      if (label === "object") {
+        latestObject = id;
+      }
+    } else if (event.type === "SpawnedInvocation" && latestSpawn) {
+      const node = nodes.find((candidate) => candidate.id === latestSpawn);
+      if (node) {
+        node.detail = `key ${event.key_hash.slice(0, 8)}`;
+      }
+    } else if (
+      event.type === "RunRequested" ||
+      event.type === "RunStarted" ||
+      event.type === "RunCompleted"
+    ) {
+      const output = runLabels.get(event.output) ?? event.output;
+      const existing = latestRunByOutput.get(output);
+      const id =
+        existing ??
+        addNode({
+          id: `run-${index}`,
+          label: output,
+          detail: event.type.replace(/^Run/, "").toLowerCase(),
+          kind: "run",
+        });
+      latestRunByOutput.set(output, id);
+      const node = nodes.find((candidate) => candidate.id === id);
+      if (node) {
+        node.detail = event.type.replace(/^Run/, "").toLowerCase();
+      }
+      addEdge(latestObject ?? latestSpawn ?? root, id, "run");
+    }
+  });
+
+  for (const pending of pendingOutputs(run)) {
+    if (latestRunByOutput.has(pending)) {
+      continue;
+    }
+    const id = addNode({
+      id: `pending-${pending}`,
+      label: pending,
+      detail: "PENDING",
+      kind: "pending",
+    });
+    addEdge(root, id, "ref");
+  }
+
+  return { nodes, edges };
+}
+
+function pendingOutputs(run: VixMachineRun): string[] {
+  if (run.source_kind !== "merge-demand" || run.fn_name === "demo") {
+    return [];
+  }
+  if (run.fn_name === "fallback") {
+    return ["left.o"];
+  }
+  return ["left.o"];
+}
+
+function runEvents(trace: VixDriveEvent[], labels: Map<string, string>, only?: string) {
+  return trace
+    .filter(
+      (event): event is Extract<VixDriveEvent, { output: string; type: string }> =>
+        (event.type === "RunRequested" || event.type === "RunStarted" || event.type === "RunCompleted") &&
+        (!only || event.type === only),
+    )
+    .map((event) => ({
+      kind: event.type,
+      output: labels.get(event.output) ?? event.output,
+    }));
+}
+
+function formatDriveEvent(
+  event: VixDriveEvent,
+  fnLabels: Map<string, string>,
+  runLabels: Map<string, string>,
+): string {
+  switch (event.type) {
+    case "Demanded":
+    case "MemoHit":
+    case "Spawned":
+    case "ParkedOn":
+    case "Completed":
+      return `${event.type} ${fnLabels.get(event.fn_hash) ?? event.fn_hash}`;
+    case "SpawnedInvocation":
+      return `${event.type} ${fnLabels.get(event.fn_hash) ?? event.fn_hash} ${event.key_hash.slice(0, 8)}`;
+    case "StoreAlloc":
+      return `${event.type} schema ${event.schema_ref.slice(0, 8)} ${event.deduped ? "deduped" : "new"}`;
+    case "RunRequested":
+    case "RunStarted":
+    case "RunCompleted":
+      return `${event.type} ${runLabels.get(event.output) ?? event.output}`;
+  }
+}
+
+function labelMap(labels: HashLabel[]): Map<string, string> {
+  return new Map(labels.map((entry) => [entry.hash, entry.label]));
+}
+
+function nodeLabel(graph: MachineGraph, id: string): string {
+  return graph.nodes.find((node) => node.id === id)?.label ?? id;
 }
 
 function PlanBody({ plan, parse }: { plan: PlanOutput; parse: ParseOutput | null }) {
@@ -1377,6 +1732,20 @@ function InventoryGroup({ title, paths }: { title: string; paths: string[] }) {
       </ul>
     </div>
   );
+}
+
+function vixMachineOptions(input: string): Array<{ name: string }> {
+  if (input.includes("pub fn selected") && input.includes("pub fn fallback")) {
+    return [{ name: "selected" }, { name: "fallback" }, { name: "subtree_chain" }];
+  }
+  if (input.includes("pub fn demo() -> Float")) {
+    return [{ name: "demo" }];
+  }
+  return [];
+}
+
+function defaultMachineFnForInput(input: string): string {
+  return vixMachineOptions(input)[0]?.name ?? "";
 }
 
 function rawBrowserPath(file: File) {

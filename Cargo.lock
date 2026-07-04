@@ -6661,6 +6661,8 @@ dependencies = [
 name = "snark-wasm"
 version = "0.0.1"
 dependencies = [
+ "facet",
+ "facet-json",
  "snark-playground",
  "vix",
  "wasm-bindgen",

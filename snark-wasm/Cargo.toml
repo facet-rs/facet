@@ -12,6 +12,8 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+facet.workspace = true
+facet-json.workspace = true
 snark-playground = { path = "../snark-playground" }
 vix = { path = "../vix" }
 wasm-bindgen.workspace = true
