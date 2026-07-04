@@ -167,6 +167,26 @@ impl ValueStore {
         self.by_content.insert(key, handle);
         (handle, false)
     }
+
+    fn alloc_raw(&mut self, schema: &str, bytes: Vec<u8>) -> (i64, bool) {
+        let mut hasher = Sha256::new();
+        hasher.update(b"vix-raw-value");
+        hasher.update(schema.as_bytes());
+        hasher.update(&bytes);
+        let content_hash = hasher.finalize().into();
+        let key = (schema.to_string(), content_hash);
+        if let Some(handle) = self.by_content.get(&key).copied() {
+            return (handle, true);
+        }
+        let handle = i64::try_from(self.entries.len()).expect("store handle fits i64");
+        self.entries.push(StoreEntry {
+            schema: schema.to_string(),
+            bytes,
+            content_hash,
+        });
+        self.by_content.insert(key, handle);
+        (handle, false)
+    }
 }
 
 /// The demand scheduler.
@@ -222,6 +242,14 @@ impl Driver {
 
     pub fn store_entry(&self, handle: i64) -> Option<StoreEntry> {
         self.store.borrow().entry(handle).cloned()
+    }
+
+    pub fn fn_hash(&self, fn_ref: usize) -> u64 {
+        self.fns[fn_ref].hash
+    }
+
+    pub fn intern_raw_value(&self, schema: &str, bytes: Vec<u8>) -> (i64, bool) {
+        self.store.borrow_mut().alloc_raw(schema, bytes)
     }
 
     /// Demand one invocation's identity: the edge of the machine.
@@ -670,7 +698,14 @@ fn write_alloc_fields(
     for (i, field) in fields.iter().enumerate() {
         let value = read_frame_word(frame, field_base + i * 8);
         let dst = field.offset;
-        bytes[dst..dst + 8].copy_from_slice(&value.to_le_bytes());
+        let field_size = field.descriptor.layout.size;
+        assert!(
+            field_size <= 8,
+            "STORE_ALLOC field {} has {} bytes; slice-2 stores word fields only",
+            i,
+            field_size
+        );
+        bytes[dst..dst + field_size].copy_from_slice(&value.to_le_bytes()[..field_size]);
     }
 }
 

@@ -1,16 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use crate::VixParser;
+use weavy::mem::declared as declared_mem;
+use weavy::mem::{Access, Descriptor, Layout};
+
 use crate::ast::{self, EnumItem, Expr, Item, SourceFile, Span, StructItem};
 use crate::binder::{self, SymbolKind};
+use crate::VixParser;
 
 #[derive(Clone)]
 pub(crate) struct EnumInfo {
     pub(crate) variants: Vec<(String, VariantShape)>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum VariantShape {
     Unit,
     Tuple(usize),
@@ -29,6 +32,7 @@ pub(crate) struct ModuleTables {
     pub(crate) fn_hashes: HashMap<String, u64>,
     pub(crate) enums: HashMap<String, EnumInfo>,
     pub(crate) structs: HashMap<String, StructInfo>,
+    pub(crate) descriptors: HashMap<String, Descriptor<String>>,
 }
 
 pub(crate) fn load_module_tables(source: &str) -> Result<ModuleTables, String> {
@@ -92,6 +96,7 @@ pub(crate) fn load_module_tables(source: &str) -> Result<ModuleTables, String> {
             Item::Use(_) => {}
         }
     }
+    let descriptors = declared_descriptors(&file)?;
     let fn_hashes = closure_fn_hashes(&file, &bare_fn_hashes, &type_hashes, &fn_spans, &type_spans)
         .into_iter()
         .collect();
@@ -100,7 +105,107 @@ pub(crate) fn load_module_tables(source: &str) -> Result<ModuleTables, String> {
         fn_hashes,
         enums,
         structs,
+        descriptors,
     })
+}
+
+pub(crate) fn type_schema_name(ty: &ast::Type) -> Result<String, String> {
+    match ty {
+        ast::Type::Path(path) => type_path_schema_name(path),
+        ast::Type::Generic(generic) => type_path_schema_name(&generic.base),
+        ast::Type::Array(_) => Ok("Array".into()),
+        ast::Type::Tuple(_) => Ok("Tuple".into()),
+        ast::Type::Fn(_) => Ok("Fn".into()),
+    }
+}
+
+pub(crate) fn type_path_schema_name(path: &ast::TypePath) -> Result<String, String> {
+    if path.segments.len() == 1 {
+        Ok(path.segments[0].value.clone())
+    } else {
+        Err(format!(
+            "qualified type path {path:?} is outside the machine slice-2 subset"
+        ))
+    }
+}
+
+fn declared_descriptors(file: &SourceFile) -> Result<HashMap<String, Descriptor<String>>, String> {
+    let mut descriptors = HashMap::new();
+    descriptors.insert("Int".into(), declared_mem::i64_("Int".into()));
+
+    for item in &file.items {
+        match item {
+            Item::Struct(s) => {
+                let fields = if let Some(fields) = &s.fields {
+                    fields
+                        .fields
+                        .iter()
+                        .map(|field| descriptor_for_type(&field.ty))
+                        .collect::<Result<Vec<_>, _>>()?
+                } else if let Some(tuple) = &s.tuple {
+                    tuple
+                        .types
+                        .iter()
+                        .map(descriptor_for_type)
+                        .collect::<Result<Vec<_>, _>>()?
+                } else {
+                    Vec::new()
+                };
+                descriptors.insert(
+                    s.name.value.clone(),
+                    declared_mem::declared_struct(s.name.value.clone(), fields),
+                );
+            }
+            Item::Enum(e) => {
+                let variants = e
+                    .variants
+                    .iter()
+                    .map(|variant| {
+                        if let Some(tuple) = &variant.tuple {
+                            tuple
+                                .types
+                                .iter()
+                                .map(descriptor_for_type)
+                                .collect::<Result<Vec<_>, _>>()
+                        } else if let Some(fields) = &variant.fields {
+                            fields
+                                .fields
+                                .iter()
+                                .map(|field| descriptor_for_type(&field.ty))
+                                .collect::<Result<Vec<_>, _>>()
+                        } else {
+                            Ok(Vec::new())
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                descriptors.insert(
+                    e.name.value.clone(),
+                    declared_mem::declared_enum(e.name.value.clone(), variants),
+                );
+            }
+            Item::Fn(_) | Item::Use(_) => {}
+        }
+    }
+    Ok(descriptors)
+}
+
+fn descriptor_for_type(ty: &ast::Type) -> Result<Descriptor<String>, String> {
+    let schema = type_schema_name(ty)?;
+    Ok(match schema.as_str() {
+        "Int" => declared_mem::i64_("Int".into()),
+        "String" => handle_i64("StringRef", "String"),
+        other => handle_i64(format!("{other}Ref"), other.to_string()),
+    })
+}
+
+fn handle_i64(schema: impl Into<String>, target: impl Into<String>) -> Descriptor<String> {
+    Descriptor {
+        schema: schema.into(),
+        layout: Layout { size: 8, align: 8 },
+        access: Access::Handle {
+            target: target.into(),
+        },
+    }
 }
 
 fn closure_fn_hashes(

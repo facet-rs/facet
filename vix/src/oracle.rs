@@ -672,6 +672,7 @@ impl Oracle {
             fn_hashes,
             enums,
             structs,
+            ..
         } = load_module_tables(source)?;
         Ok(Oracle {
             fns,
@@ -702,6 +703,7 @@ impl Oracle {
             fn_hashes,
             enums,
             structs,
+            ..
         } = load_module_tables(source)?;
         self.fns = fns;
         self.fn_hashes = fn_hashes;
