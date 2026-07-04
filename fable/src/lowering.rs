@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -12,14 +13,14 @@ use facet_core::{
     UserType,
 };
 use weavy::ir::{
-    ControlOp, DenseWeavyLowered, DenseWeavyProgram, EffectContract, EffectResource,
-    IntrinsicDescriptor, IntrinsicOp, MemoryRegion, TypedMemoryAccess, WeavyOp,
+    DenseWeavyLowered, DenseWeavyProgram, EffectContract, EffectResource, IntrinsicDescriptor,
+    IntrinsicOp, MemoryRegion, TypedMemoryAccess, WeavyOp,
 };
 use weavy::mem::declared as declared_mem;
 use weavy::mem::runtime::RawScratch;
 use weavy::mem::{Access as WeavyAccess, Tag as WeavyTag};
 use weavy::task::{Fn as TaskFn, FnId as TaskFnId, HostFn, Op as TaskOp, Program as TaskProgram};
-use weavy::{BlockRef, Control, RunError, RunStats, Step};
+use weavy::{BlockRef, RunStats};
 
 use crate::ast::{
     self, BinaryExpr, Block, CallExpr, ElseClause, Expr, IfStmt, Item, Literal, Name, Stmt,
@@ -72,10 +73,11 @@ pub struct FableQueryPlan<T, Output> {
 /// This is the lower-level form used by transform/debug-shell style callers
 /// that expose more than one typed root to a script.
 pub struct FableRootPlan {
+    #[cfg(test)]
     lowered: FableLowered,
+    task: FableTaskPlan,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
 }
 
 /// A reusable lowered Fable predicate over explicitly named roots.
@@ -83,10 +85,11 @@ pub struct FableRootPlan {
 /// All roots must be read-only. The final top-level statement must be a boolean
 /// expression; earlier statements may bind typed locals.
 pub struct FableRootPredicatePlan {
+    #[cfg(test)]
     lowered: FableLowered,
+    task: FableTaskPlan,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
 }
 
 /// A reusable lowered Fable query over explicitly named roots.
@@ -95,11 +98,11 @@ pub struct FableRootPredicatePlan {
 /// expression compatible with `Output`; earlier statements may bind typed
 /// locals.
 pub struct FableRootQueryPlan<Output> {
+    #[cfg(test)]
     lowered: FableLowered,
-    task_query: Option<FableTaskQueryPlan>,
+    task: FableTaskPlan,
     roots: Box<[FableRootSpec]>,
     declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
     _marker: PhantomData<fn() -> Output>,
 }
 
@@ -138,6 +141,175 @@ impl FableQueryType {
             FableQueryType::Float => "float",
         }
     }
+}
+
+#[derive(Clone)]
+struct FableTaskPlan {
+    program: TaskProgram,
+    hosts: Rc<FableTaskHosts>,
+    result: Option<FableQueryType>,
+    layout: FableFrameLayout,
+}
+
+#[derive(Default)]
+struct FableTaskHosts {
+    ops: Vec<FableHostOp>,
+}
+
+#[derive(Clone)]
+enum FableHostOp {
+    InternString {
+        dst: u32,
+        value: String,
+    },
+    ReadPath {
+        dst: u32,
+        path: FieldPath,
+        kind: FableHostSlotKind,
+    },
+    ReadPathLen {
+        dst: u32,
+        path: FieldPath,
+    },
+    EvalBool {
+        dst: u32,
+        expr: BoolExpr,
+    },
+    EvalString {
+        dst: u32,
+        expr: StringExpr,
+    },
+    ReadValuePath {
+        dst: u32,
+        path: FieldPath,
+    },
+    ReadFacetTag {
+        dst: u32,
+        src: u32,
+        shape: &'static Shape,
+    },
+    BindFacet {
+        src: u32,
+        shape: &'static Shape,
+        variant_index: usize,
+        bindings: Box<[FacetMatchBindingPlan]>,
+    },
+    EvalDeclared {
+        dst: u32,
+        type_index: usize,
+        expr: DeclaredValueExpr,
+    },
+    ReadDeclaredScalar {
+        dst: u32,
+        read: DeclaredScalarRead,
+        kind: FableHostSlotKind,
+    },
+    ReadDeclaredTag {
+        dst: u32,
+        src: u32,
+        type_index: usize,
+    },
+    BindDeclared {
+        src: u32,
+        bindings: Box<[MatchBindingPlan]>,
+    },
+    Let {
+        local: LocalRef,
+        value: ExprPlan,
+    },
+    Assign {
+        target: FieldPath,
+        value: ExprPlan,
+    },
+    EvalExpr {
+        expr: ExprPlan,
+    },
+    EvalValue {
+        dst: u32,
+        shape: &'static Shape,
+        expr: ValueExpr,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum FableHostSlotKind {
+    Unit,
+    Bool,
+    Char,
+    String,
+    Signed,
+    Unsigned,
+    Float,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FableFrameLayout {
+    unit_base: usize,
+    bool_base: usize,
+    char_base: usize,
+    string_base: usize,
+    signed_base: usize,
+    unsigned_base: usize,
+    float_base: usize,
+    value_base: usize,
+    borrowed_value_base: usize,
+    declared_base: usize,
+    local_size: usize,
+}
+
+impl FableFrameLayout {
+    const SLOT_SIZE: usize = 8;
+
+    fn from_allocator(locals: &LocalAllocator) -> Self {
+        let mut next = 0usize;
+        let unit_base = take_base(&mut next, locals.unit_count);
+        let bool_base = take_base(&mut next, locals.bool_count);
+        let char_base = take_base(&mut next, locals.char_count);
+        let string_base = take_base(&mut next, locals.string_count);
+        let signed_base = take_base(&mut next, locals.signed_count);
+        let unsigned_base = take_base(&mut next, locals.unsigned_count);
+        let float_base = take_base(&mut next, locals.float_count);
+        let value_base = take_base(&mut next, locals.value_count);
+        let borrowed_value_base = take_base(&mut next, locals.borrowed_value_count);
+        let declared_base = take_base(&mut next, locals.declared_count);
+        Self {
+            unit_base,
+            bool_base,
+            char_base,
+            string_base,
+            signed_base,
+            unsigned_base,
+            float_base,
+            value_base,
+            borrowed_value_base,
+            declared_base,
+            local_size: next,
+        }
+    }
+
+    fn local_slot(self, local: LocalRef) -> u32 {
+        let offset = match local {
+            LocalRef::Unit(index) => self.unit_base + index * Self::SLOT_SIZE,
+            LocalRef::Bool(index) => self.bool_base + index * Self::SLOT_SIZE,
+            LocalRef::Char(index) => self.char_base + index * Self::SLOT_SIZE,
+            LocalRef::String(index) => self.string_base + index * Self::SLOT_SIZE,
+            LocalRef::Signed(index) => self.signed_base + index * Self::SLOT_SIZE,
+            LocalRef::Unsigned(index) => self.unsigned_base + index * Self::SLOT_SIZE,
+            LocalRef::Float(index) => self.float_base + index * Self::SLOT_SIZE,
+            LocalRef::Value { index, .. } => self.value_base + index * Self::SLOT_SIZE,
+            LocalRef::BorrowedValue { index, .. } => {
+                self.borrowed_value_base + index * Self::SLOT_SIZE
+            }
+            LocalRef::Declared { index, .. } => self.declared_base + index * Self::SLOT_SIZE,
+        };
+        u32::try_from(offset).expect("fable task frame offset")
+    }
+}
+
+fn take_base(next: &mut usize, count: usize) -> usize {
+    let base = *next;
+    *next += count * FableFrameLayout::SLOT_SIZE;
+    base
 }
 
 /// A fable-declared type descriptor keyed by fable schema/type names.
@@ -1039,13 +1211,16 @@ impl FableRootPlan {
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_root(&root)?;
         let declared_types = lowerer.declared_types.clone();
-        let (blocks, functions) = lowerer.finish();
+        let (blocks, functions, layout) = lowerer.finish();
+        let lowered = FableLowered::new(program, blocks);
+        let task = FableTaskPlan::from_lowered(&lowered, &functions, layout, None)?;
 
         Ok(Self {
-            lowered: FableLowered::new(program, blocks),
+            #[cfg(test)]
+            lowered,
+            task,
             roots: roots.into(),
             declared_types,
-            functions: Rc::new(functions),
         })
     }
 
@@ -1057,12 +1232,8 @@ impl FableRootPlan {
     /// Run this plan against explicitly bound root values.
     pub fn apply(&self, roots: &mut [FableRootValue<'_>]) -> Result<(), FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        run_dense_apply_in_task(
-            &self.lowered,
-            runtime_roots,
-            self.declared_types.clone(),
-            self.functions.clone(),
-        )
+        self.task
+            .execute_apply(runtime_roots, self.declared_types.clone())
     }
 
     /// Run this plan and return Weavy execution counters.
@@ -1071,12 +1242,9 @@ impl FableRootPlan {
         roots: &mut [FableRootValue<'_>],
     ) -> Result<RunStats, FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        run_dense_apply_in_task_with_stats(
-            &self.lowered,
-            runtime_roots,
-            self.declared_types.clone(),
-            self.functions.clone(),
-        )
+        self.task
+            .execute_apply(runtime_roots, self.declared_types.clone())?;
+        Ok(self.task.run_stats())
     }
 
     fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
@@ -1103,13 +1271,17 @@ impl FableRootPredicatePlan {
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_predicate_root(&root)?;
         let declared_types = lowerer.declared_types.clone();
-        let (blocks, functions) = lowerer.finish();
+        let (blocks, functions, layout) = lowerer.finish();
+        let lowered = FableLowered::new(program, blocks);
+        let task =
+            FableTaskPlan::from_lowered(&lowered, &functions, layout, Some(FableQueryType::Bool))?;
 
         Ok(Self {
-            lowered: FableLowered::new(program, blocks),
+            #[cfg(test)]
+            lowered,
+            task,
             roots: roots.into(),
             declared_types,
-            functions: Rc::new(functions),
         })
     }
 
@@ -1121,12 +1293,9 @@ impl FableRootPredicatePlan {
     /// Run this predicate against explicitly bound root values.
     pub fn evaluate(&self, roots: &mut [FableRootValue<'_>]) -> Result<bool, FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        run_dense_predicate_in_task(
-            &self.lowered,
-            runtime_roots,
-            self.declared_types.clone(),
-            self.functions.clone(),
-        )
+        self.task
+            .execute_query(runtime_roots, self.declared_types.clone())
+            .and_then(FableQueryOutput::into_result)
     }
 
     /// Run this predicate and return Weavy execution counters.
@@ -1135,12 +1304,11 @@ impl FableRootPredicatePlan {
         roots: &mut [FableRootValue<'_>],
     ) -> Result<(bool, RunStats), FableError> {
         let runtime_roots = self.runtime_roots(roots)?;
-        run_dense_predicate_in_task_with_stats(
-            &self.lowered,
-            runtime_roots,
-            self.declared_types.clone(),
-            self.functions.clone(),
-        )
+        let value = self
+            .task
+            .execute_query(runtime_roots, self.declared_types.clone())
+            .and_then(FableQueryOutput::into_result)?;
+        Ok((value, self.task.run_stats()))
     }
 
     fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
@@ -1167,29 +1335,20 @@ where
         validate_read_only_root_specs(roots, "query roots must be read-only")?;
 
         let root = parse(src).map_err(|error| FableError::Parse { error })?;
-        let task_query = FableTaskQueryPlan::from_source(&root, roots, Output::query_type())?;
-        if task_query.is_some() {
-            let declared_types = FableDeclaredTypes::from_source(&root)?;
-            return Ok(Self {
-                lowered: FableLowered::new(Vec::new(), Vec::new()),
-                task_query,
-                roots: roots.into(),
-                declared_types,
-                functions: Rc::default(),
-                _marker: PhantomData,
-            });
-        }
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_query_root(&root, Output::query_type())?;
         let declared_types = lowerer.declared_types.clone();
-        let (blocks, functions) = lowerer.finish();
+        let (blocks, functions, layout) = lowerer.finish();
+        let lowered = FableLowered::new(program, blocks);
+        let task =
+            FableTaskPlan::from_lowered(&lowered, &functions, layout, Some(Output::query_type()))?;
 
         Ok(Self {
-            lowered: FableLowered::new(program, blocks),
-            task_query: None,
+            #[cfg(test)]
+            lowered,
+            task,
             roots: roots.into(),
             declared_types,
-            functions: Rc::new(functions),
             _marker: PhantomData,
         })
     }
@@ -1201,17 +1360,10 @@ where
 
     /// Run this query against explicitly bound root values.
     pub fn evaluate(&self, roots: &mut [FableRootValue<'_>]) -> Result<Output, FableError> {
-        if let Some(task_query) = &self.task_query {
-            validate_runtime_roots(roots)?;
-            return task_query.evaluate();
-        }
         let runtime_roots = self.runtime_roots(roots)?;
-        run_dense_query_in_task(
-            &self.lowered,
-            runtime_roots,
-            self.declared_types.clone(),
-            self.functions.clone(),
-        )
+        self.task
+            .execute_query(runtime_roots, self.declared_types.clone())
+            .and_then(FableQueryOutput::into_result)
     }
 
     /// Run this query and return Weavy execution counters.
@@ -1219,17 +1371,12 @@ where
         &self,
         roots: &mut [FableRootValue<'_>],
     ) -> Result<(Output, RunStats), FableError> {
-        if let Some(task_query) = &self.task_query {
-            validate_runtime_roots(roots)?;
-            return Ok((task_query.evaluate()?, RunStats::default()));
-        }
         let runtime_roots = self.runtime_roots(roots)?;
-        run_dense_query_in_task_with_stats(
-            &self.lowered,
-            runtime_roots,
-            self.declared_types.clone(),
-            self.functions.clone(),
-        )
+        let value = self
+            .task
+            .execute_query(runtime_roots, self.declared_types.clone())
+            .and_then(FableQueryOutput::into_result)?;
+        Ok((value, self.task.run_stats()))
     }
 
     fn runtime_roots(&self, values: &[FableRootValue<'_>]) -> Result<Vec<RuntimeRoot>, FableError> {
@@ -1327,119 +1474,104 @@ where
         .apply(input, output)
 }
 
-#[derive(Clone)]
-struct FableTaskQueryPlan {
-    program: TaskProgram,
-    result: TaskType,
-}
-
-impl FableTaskQueryPlan {
-    fn from_source(
-        root: &ast::SourceFile,
-        roots: &[FableRootSpec],
-        query_type: FableQueryType,
-    ) -> Result<Option<Self>, FableError> {
-        let functions: Vec<&ast::FnDecl> = root
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Fn(function) => Some(function.as_ref()),
-                _ => None,
-            })
-            .collect();
-        if functions.is_empty() {
-            return Ok(None);
-        }
-        if !roots.is_empty() {
-            return Ok(None);
-        }
-
-        let statements: Vec<&Stmt> = root
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Stmt(stmt) => Some(stmt),
-                Item::Struct(_) | Item::Enum(_) | Item::Fn(_) => None,
-            })
-            .collect();
-        let [Stmt::Expr(final_expr)] = statements.as_slice() else {
-            return Err(FableError::Unsupported {
-                feature: "function scripts must end with one query expression".into(),
-            });
-        };
-
-        let mut signatures = BTreeMap::new();
-        for (index, function) in functions.iter().enumerate() {
-            let name = function.name.value.clone();
-            if signatures.contains_key(&name) {
-                return Err(FableError::DuplicateLocal { name });
-            }
-            signatures.insert(
-                name,
-                TaskSignature {
-                    fn_id: TaskFnId(u32::try_from(index + 1).map_err(|_| {
-                        FableError::MalformedProgram {
-                            reason: "too many task functions",
-                        }
-                    })?),
-                    params: function
-                        .params
-                        .params
-                        .iter()
-                        .map(|param| TaskType::from_type_expr(&param.ty))
-                        .collect::<Result<Vec<_>, _>>()?,
-                    result: TaskType::from_type_expr(&function.return_ty)?,
-                },
-            );
-        }
-
-        let mut program = TaskProgram { fns: Vec::new() };
-        let mut root_compiler = TaskFnCompiler::new(&signatures);
-        let result = root_compiler.compile_expr(&final_expr.expr)?;
-        let expected = TaskType::from_query_type(query_type)?;
-        if result.ty != expected {
-            return Err(FableError::TypeMismatch {
-                expected: expected.name().to_owned(),
-                actual: result.ty.name(),
-            });
-        }
-        root_compiler.code.push(TaskOp::Ret {
-            src: result.slot,
-            size: 8,
-        });
-        program.fns.push(root_compiler.finish());
-
-        for function in functions {
-            let signature = signatures
-                .get(function.name.value.as_str())
-                .expect("signature exists");
-            let mut compiler = TaskFnCompiler::new(&signatures);
-            for (param, ty) in function.params.params.iter().zip(&signature.params) {
-                let name = name_text(&param.name).to_owned();
-                let slot = compiler.alloc_slot(*ty);
-                compiler.locals.insert(name, TaskValue { ty: *ty, slot });
-            }
-            let result = compiler.compile_block_value(&function.body, signature.result)?;
-            compiler.copy_slot(result.slot, signature.result, result.slot);
-            compiler.code.push(TaskOp::Ret {
-                src: result.slot,
-                size: 8,
-            });
-            program.fns.push(compiler.finish());
-        }
-
-        Ok(Some(Self {
-            program,
-            result: expected,
-        }))
+impl FableTaskPlan {
+    fn from_lowered(
+        lowered: &FableLowered,
+        functions: &FableFunctions,
+        layout: FableFrameLayout,
+        result: Option<FableQueryType>,
+    ) -> Result<Self, FableError> {
+        FableScalarTaskCompiler::compile(lowered, functions, layout, result)
     }
 
-    fn evaluate<Output>(&self) -> Result<Output, FableError>
-    where
-        Output: FableQueryResult,
-    {
+    fn execute_apply(
+        &self,
+        roots: Vec<RuntimeRoot>,
+        declared_types: FableDeclaredTypes,
+    ) -> Result<(), FableError> {
+        let output = self.execute(roots, declared_types)?;
+        match output {
+            FableQueryOutput::Unit => Ok(()),
+            other => Err(FableError::TypeMismatch {
+                expected: "unit".into(),
+                actual: query_output_kind_name(&other),
+            }),
+        }
+    }
+
+    fn execute_query(
+        &self,
+        roots: Vec<RuntimeRoot>,
+        declared_types: FableDeclaredTypes,
+    ) -> Result<FableQueryOutput, FableError> {
+        let output = self.execute(roots, declared_types)?;
+        if let Some(expected) = self.result {
+            coerce_query_output(expected, output)
+        } else {
+            Ok(output)
+        }
+    }
+
+    fn run_stats(&self) -> RunStats {
+        let mut stats = RunStats::default();
+        stats.step_count = self
+            .program
+            .fns
+            .first()
+            .map(|function| function.code.len().max(1))
+            .unwrap_or(1);
+        stats
+    }
+
+    fn execute(
+        &self,
+        roots: Vec<RuntimeRoot>,
+        declared_types: FableDeclaredTypes,
+    ) -> Result<FableQueryOutput, FableError> {
         let mut task = weavy::task::Task::spawn(&self.program, TaskFnId(0));
-        match task.run(&self.program, &[], &[]) {
+        if self.hosts.ops.is_empty() {
+            match task.run(&self.program, &[], &[]) {
+                weavy::task::TaskStep::Done => {}
+                weavy::task::TaskStep::Parked { .. } => {
+                    return Err(FableError::MalformedProgram {
+                        reason: "synchronous fable task parked",
+                    });
+                }
+            }
+            return self.decode_task_result(&task.result);
+        }
+
+        let runtime = Rc::new(RefCell::new(FableTaskRuntime {
+            roots,
+            value_store: FableValueStore::default(),
+            declared_types,
+            layout: self.layout,
+            result: Ok(FableQueryOutput::Unit),
+            error: None,
+        }));
+        let mut host_boxes: Vec<Box<dyn FnMut(&mut [u8]) + '_>> = self
+            .hosts
+            .ops
+            .iter()
+            .cloned()
+            .map(|op| {
+                let runtime = runtime.clone();
+                Box::new(move |frame: &mut [u8]| {
+                    let mut runtime = runtime.borrow_mut();
+                    if runtime.error.is_some() {
+                        return;
+                    }
+                    if let Err(err) = runtime.run_host_op(&op, frame) {
+                        runtime.error = Some(err);
+                    }
+                }) as Box<dyn FnMut(&mut [u8])>
+            })
+            .collect();
+        let mut hosts: Vec<HostFn<'_>> = host_boxes
+            .iter_mut()
+            .map(|host| host.as_mut() as HostFn<'_>)
+            .collect();
+        match task.run_hosted(&self.program, &[], &[], &mut hosts) {
             weavy::task::TaskStep::Done => {}
             weavy::task::TaskStep::Parked { .. } => {
                 return Err(FableError::MalformedProgram {
@@ -1447,482 +1579,3134 @@ impl FableTaskQueryPlan {
                 });
             }
         }
-        let value = i64::from_le_bytes(task.result[..8].try_into().map_err(|_| {
+        let mut runtime = runtime.borrow_mut();
+        if let Some(err) = runtime.error.take() {
+            return Err(err);
+        }
+        if self.result == Some(FableQueryType::String)
+            && matches!(runtime.result, Ok(FableQueryOutput::Unit))
+        {
+            let handle = usize::try_from(read_frame_word(&task.result, 0)?).map_err(|_| {
+                FableError::MalformedProgram {
+                    reason: "task string result handle was negative",
+                }
+            })?;
+            let value = runtime.value_store.strings.get(handle).cloned().ok_or(
+                FableError::MalformedProgram {
+                    reason: "task string result handle was missing",
+                },
+            )?;
+            return Ok(FableQueryOutput::String(value));
+        }
+        if self.result.is_some() && matches!(runtime.result, Ok(FableQueryOutput::Unit)) {
+            return self.decode_task_result(&task.result);
+        }
+        std::mem::replace(&mut runtime.result, Ok(FableQueryOutput::Unit))
+    }
+
+    fn decode_task_result(&self, bytes: &[u8]) -> Result<FableQueryOutput, FableError> {
+        let Some(result) = self.result else {
+            return Ok(FableQueryOutput::Unit);
+        };
+        if result == FableQueryType::Unit {
+            return Ok(FableQueryOutput::Unit);
+        }
+        let word = i64::from_le_bytes(bytes[..8].try_into().map_err(|_| {
             FableError::MalformedProgram {
                 reason: "task query result was not 8 bytes",
             }
         })?);
-        match self.result {
-            TaskType::I64 => FableQueryOutput::Signed(value as i128).into_result(),
-            TaskType::Bool => FableQueryOutput::Bool(value != 0).into_result(),
-        }
+        Ok(match result {
+            FableQueryType::Unit => FableQueryOutput::Unit,
+            FableQueryType::Bool => FableQueryOutput::Bool(word != 0),
+            FableQueryType::Char => {
+                let value = u32::try_from(word).map_err(|_| FableError::MalformedProgram {
+                    reason: "task char result did not fit u32",
+                })?;
+                FableQueryOutput::Char(char::from_u32(value).ok_or(
+                    FableError::MalformedProgram {
+                        reason: "task char result was invalid",
+                    },
+                )?)
+            }
+            FableQueryType::String => {
+                return Err(FableError::Unsupported {
+                    feature: "native task string result".into(),
+                });
+            }
+            FableQueryType::Signed => FableQueryOutput::Signed(word.into()),
+            FableQueryType::Unsigned => {
+                FableQueryOutput::Unsigned(u64::from_ne_bytes(word.to_ne_bytes()) as u128)
+            }
+            FableQueryType::Float => {
+                FableQueryOutput::Float(f64::from_ne_bytes(word.to_ne_bytes()))
+            }
+        })
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TaskType {
-    I64,
-    Bool,
+struct FableTaskRuntime {
+    roots: Vec<RuntimeRoot>,
+    value_store: FableValueStore,
+    declared_types: FableDeclaredTypes,
+    layout: FableFrameLayout,
+    result: Result<FableQueryOutput, FableError>,
+    error: Option<FableError>,
 }
 
-impl TaskType {
-    fn from_type_expr(ty: &ast::TypeExpr) -> Result<Self, FableError> {
-        match ty {
-            ast::TypeExpr::Scalar(name) if name.value == "i64" => Ok(TaskType::I64),
-            ast::TypeExpr::Scalar(name) if name.value == "bool" => Ok(TaskType::Bool),
-            ast::TypeExpr::Scalar(name) => Err(FableError::Unsupported {
-                feature: format!("task function scalar type {}", name.value),
-            }),
-            ast::TypeExpr::Declared(name) => Err(FableError::Unsupported {
-                feature: format!("task function declared type {}", name.name.value),
-            }),
+impl FableTaskRuntime {
+    fn run_host_op(&mut self, op: &FableHostOp, frame: &mut [u8]) -> Result<(), FableError> {
+        match op {
+            FableHostOp::InternString { dst, value } => {
+                let handle = self.intern_string(value.clone());
+                write_frame_word(frame, *dst, handle as i64)
+            }
+            FableHostOp::ReadPath { dst, path, kind } => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                let output = self.read_path_output(path, ptr, *kind)?;
+                self.write_output_to_frame(frame, *dst, output)
+            }
+            FableHostOp::ReadPathLen { dst, path } => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                let len = match path.shape.def {
+                    Def::List(def) => unsafe { (def.vtable.len)(ptr) },
+                    Def::Array(def) => def.n,
+                    Def::Slice(def) => unsafe { (def.vtable.len)(ptr) },
+                    _ => {
+                        return Err(FableError::TypeMismatch {
+                            expected: "list-like value".into(),
+                            actual: "non-list path",
+                        });
+                    }
+                };
+                write_frame_word(
+                    frame,
+                    *dst,
+                    i64::try_from(len)
+                        .map_err(|_| number_out_of_range(ScalarType::I64, len.to_string()))?,
+                )
+            }
+            FableHostOp::EvalBool { dst, expr } => {
+                let value = self.eval_bool(frame, expr)?;
+                write_frame_word(frame, *dst, i64::from(value))
+            }
+            FableHostOp::EvalString { dst, expr } => {
+                let value = self.eval_string(frame, expr)?;
+                let handle = self.intern_string(value);
+                write_frame_word(frame, *dst, handle as i64)
+            }
+            FableHostOp::ReadValuePath { dst, path } => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                let handle = self.value_store.borrowed_values.len();
+                self.value_store.borrowed_values.push(BorrowedValue {
+                    shape: path.shape,
+                    ptr,
+                });
+                write_frame_word(
+                    frame,
+                    *dst,
+                    i64::try_from(handle).map_err(|_| FableError::MalformedProgram {
+                        reason: "borrowed value handle did not fit i64",
+                    })?,
+                )
+            }
+            FableHostOp::ReadFacetTag { dst, src, shape } => {
+                let value = self.borrowed_value(frame, *src, *shape)?;
+                let variant_index = read_facet_variant_index(value.shape, value.ptr)?;
+                write_frame_word(
+                    frame,
+                    *dst,
+                    i64::try_from(variant_index).map_err(|_| FableError::MalformedProgram {
+                        reason: "facet variant index did not fit i64",
+                    })?,
+                )
+            }
+            FableHostOp::BindFacet {
+                src,
+                shape,
+                variant_index,
+                bindings,
+            } => {
+                let value = self.borrowed_value(frame, *src, *shape)?;
+                self.bind_facet_match(frame, bindings, value.shape, value.ptr, *variant_index)
+            }
+            FableHostOp::EvalDeclared {
+                dst,
+                type_index,
+                expr,
+            } => {
+                let value = self.eval_declared_value(frame, *type_index, expr)?;
+                let handle = self.store_declared_value(value);
+                write_frame_word(frame, *dst, handle as i64)
+            }
+            FableHostOp::ReadDeclaredScalar { dst, read, kind } => {
+                let output = self.read_declared_scalar(frame, *read, *kind)?;
+                self.write_output_to_frame(frame, *dst, output)
+            }
+            FableHostOp::ReadDeclaredTag {
+                dst,
+                src,
+                type_index,
+            } => {
+                let value = self.declared_value(frame, *src, *type_index)?;
+                let selector = self.read_declared_tag(value, *type_index)?;
+                write_frame_word(
+                    frame,
+                    *dst,
+                    i64::try_from(selector).map_err(|_| FableError::MalformedProgram {
+                        reason: "declared enum selector did not fit i64",
+                    })?,
+                )
+            }
+            FableHostOp::BindDeclared { src, bindings } => {
+                self.bind_declared_match(frame, *src, bindings)
+            }
+            FableHostOp::Let { local, value } => self.init_local(frame, *local, value),
+            FableHostOp::Assign { target, value } => self.assign(frame, target, value),
+            FableHostOp::EvalExpr { expr } => self.eval_expr_for_effect(frame, expr),
+            FableHostOp::EvalValue { dst, shape, expr } => {
+                let value = self.eval_value(frame, *shape, expr)?;
+                let handle = self.store_value(value)?;
+                write_frame_word(frame, *dst, handle as i64)
+            }
         }
     }
 
-    fn from_query_type(query_type: FableQueryType) -> Result<Self, FableError> {
-        match query_type {
-            FableQueryType::Bool => Ok(TaskType::Bool),
-            FableQueryType::Signed => Ok(TaskType::I64),
-            other => Err(FableError::Unsupported {
-                feature: format!("task function query result {}", other.name()),
-            }),
+    fn path_ptr_const(&self, frame: &[u8], path: &FieldPath) -> Result<PtrConst, FableError> {
+        let mut ptr = match path.base {
+            FieldPathBase::Root(root) => self
+                .roots
+                .get(root)
+                .ok_or(FableError::MalformedProgram {
+                    reason: "path referenced missing runtime root",
+                })?
+                .ptr
+                .as_const(),
+            FieldPathBase::Local(local) => self.local_borrowed_ptr(frame, local)?,
+        };
+        for step in path.steps.iter() {
+            ptr = unsafe { self.step_ptr_const(frame, step, ptr)? };
         }
+        Ok(ptr)
     }
 
-    fn name(self) -> &'static str {
-        match self {
-            TaskType::I64 => "i64",
-            TaskType::Bool => "bool",
-        }
-    }
-}
-
-#[derive(Clone)]
-struct TaskSignature {
-    fn_id: TaskFnId,
-    params: Vec<TaskType>,
-    result: TaskType,
-}
-
-#[derive(Clone, Copy)]
-struct TaskValue {
-    ty: TaskType,
-    slot: u32,
-}
-
-struct TaskFnCompiler<'a> {
-    signatures: &'a BTreeMap<String, TaskSignature>,
-    locals: BTreeMap<String, TaskValue>,
-    code: Vec<TaskOp>,
-    slot_count: usize,
-}
-
-impl<'a> TaskFnCompiler<'a> {
-    fn new(signatures: &'a BTreeMap<String, TaskSignature>) -> Self {
-        Self {
-            signatures,
-            locals: BTreeMap::new(),
-            code: Vec::new(),
-            slot_count: 0,
-        }
-    }
-
-    fn alloc_slot(&mut self, ty: TaskType) -> u32 {
-        let slot = self.slot_count;
-        self.slot_count += 1;
-        match ty {
-            TaskType::I64 | TaskType::Bool => u32::try_from(slot * 8).expect("frame offset"),
-        }
-    }
-
-    fn finish(self) -> TaskFn {
-        let fields = (0..self.slot_count)
-            .map(|_| declared_mem::i64_(()))
-            .collect();
-        let frame = declared_mem::declared_struct((), fields).layout;
-        TaskFn {
-            frame,
-            code: self.code,
-        }
-    }
-
-    fn compile_block_value(
-        &mut self,
-        block: &Block,
-        expected: TaskType,
-    ) -> Result<TaskValue, FableError> {
-        let Some((last, prefix)) = block.stmts.split_last() else {
+    fn path_ptr_mut(&self, frame: &[u8], path: &FieldPath) -> Result<PtrMut, FableError> {
+        let FieldPathBase::Root(root) = path.base else {
             return Err(FableError::Unsupported {
-                feature: "function block without result expression".into(),
+                feature: "mutable access through borrowed locals".into(),
             });
         };
-        for stmt in prefix {
-            self.compile_stmt(stmt)?;
+        let root = self.roots.get(root).ok_or(FableError::MalformedProgram {
+            reason: "path referenced missing runtime root",
+        })?;
+        let Some(mut ptr) = root.ptr.as_mut() else {
+            return Err(FableError::ReadOnlyRoot {
+                name: root.name.to_owned(),
+            });
+        };
+        for step in path.steps.iter() {
+            ptr = unsafe { self.step_ptr_mut(frame, step, ptr)? };
         }
-        self.compile_stmt_value(last, expected)
+        Ok(ptr)
     }
 
-    fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), FableError> {
-        match stmt {
-            Stmt::Let(let_stmt) => {
-                let value = self.compile_expr(&let_stmt.value)?;
-                let local = self.alloc_slot(value.ty);
-                self.copy_slot(value.slot, value.ty, local);
-                let name = name_text(&let_stmt.name).to_owned();
+    unsafe fn step_ptr_const(
+        &self,
+        frame: &[u8],
+        step: &FieldStep,
+        ptr: PtrConst,
+    ) -> Result<PtrConst, FableError> {
+        match step {
+            FieldStep::DynamicListIndex {
+                source,
+                shape,
+                index,
+            } => {
+                let index = self.eval_index_usize(frame, index)?;
+                let Def::List(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic list index step did not point to a list shape",
+                    });
+                };
+                unsafe { (def.vtable.get)(ptr, index, shape) }.ok_or_else(|| {
+                    let len = unsafe { (def.vtable.len)(ptr) };
+                    index_out_of_bounds(source, index, len)
+                })
+            }
+            FieldStep::DynamicArrayIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let index = self.eval_index_usize(frame, index)?;
+                if index >= *len {
+                    return Err(index_out_of_bounds(source, index, *len));
+                }
+                let Def::Array(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic array index step did not point to an array shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            FieldStep::DynamicSliceIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let index = self.eval_index_usize(frame, index)?;
+                let runtime_len = unsafe { len(ptr) };
+                if index >= runtime_len {
+                    return Err(index_out_of_bounds(source, index, runtime_len));
+                }
+                let Def::Slice(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic slice index step did not point to a slice shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            _ => unsafe { step.ptr_const(ptr) },
+        }
+    }
+
+    unsafe fn step_ptr_mut(
+        &self,
+        frame: &[u8],
+        step: &FieldStep,
+        ptr: PtrMut,
+    ) -> Result<PtrMut, FableError> {
+        match step {
+            FieldStep::PointerDeref { source, .. } => Err(FableError::Unsupported {
+                feature: format!("mutable deref of {source}"),
+            }),
+            FieldStep::DynamicListIndex {
+                source,
+                shape,
+                index,
+            } => {
+                let index = self.eval_index_usize(frame, index)?;
+                let Def::List(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic list index step did not point to a list shape",
+                    });
+                };
+                let Some(get_mut) = def.vtable.get_mut else {
+                    return Err(FableError::Unsupported {
+                        feature: format!("mutable index access on {shape}"),
+                    });
+                };
+                unsafe { get_mut(ptr, index, shape) }.ok_or_else(|| {
+                    let len = unsafe { (def.vtable.len)(ptr.as_const()) };
+                    index_out_of_bounds(source, index, len)
+                })
+            }
+            FieldStep::DynamicArrayIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let index = self.eval_index_usize(frame, index)?;
+                if index >= *len {
+                    return Err(index_out_of_bounds(source, index, *len));
+                }
+                let Def::Array(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic array index step did not point to an array shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_mut_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            FieldStep::DynamicSliceIndex {
+                source,
+                shape,
+                len,
+                stride,
+                index,
+            } => {
+                let index = self.eval_index_usize(frame, index)?;
+                let runtime_len = unsafe { len(ptr.as_const()) };
+                if index >= runtime_len {
+                    return Err(index_out_of_bounds(source, index, runtime_len));
+                }
+                let Def::Slice(def) = shape.def else {
+                    return Err(FableError::MalformedProgram {
+                        reason: "dynamic slice index step did not point to a slice shape",
+                    });
+                };
+                let base = unsafe { (def.vtable.as_mut_ptr)(ptr) };
+                Ok(unsafe { base.field(index * stride) })
+            }
+            _ => unsafe { step.ptr_mut(ptr) },
+        }
+    }
+
+    fn eval_index_usize(&self, frame: &[u8], index: &NumberExpr) -> Result<usize, FableError> {
+        let value = self.eval_index_number_as_u128(frame, index)?;
+        usize::try_from(value).map_err(|_| FableError::InvalidLiteral {
+            literal: value.to_string(),
+            reason: "index value is out of range",
+        })
+    }
+
+    fn eval_index_number_as_u128(
+        &self,
+        frame: &[u8],
+        index: &NumberExpr,
+    ) -> Result<u128, FableError> {
+        match index {
+            NumberExpr::Unsigned(UIntExpr::Literal(value)) => Ok(*value),
+            NumberExpr::Unsigned(UIntExpr::Local(local)) => {
+                let value = read_frame_word(frame, self.layout.local_slot(*local))?;
+                u128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string()))
+            }
+            NumberExpr::Unsigned(UIntExpr::Read(path)) => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                read_unsigned_scalar(field_scalar(path)?, ptr)
+            }
+            NumberExpr::Signed(IntExpr::Literal(value)) => u128::try_from(*value)
+                .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string())),
+            NumberExpr::Signed(IntExpr::Local(local)) => {
+                let value = read_frame_word(frame, self.layout.local_slot(*local))?;
+                u128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string()))
+            }
+            NumberExpr::Signed(IntExpr::Read(path)) => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                let value = read_signed_scalar(field_scalar(path)?, ptr)?;
+                u128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string()))
+            }
+            NumberExpr::Unsigned(UIntExpr::Add(lhs, rhs)) => Ok(self
+                .eval_index_number_as_u128(frame, &NumberExpr::Unsigned((**lhs).clone()))?
+                + self.eval_index_number_as_u128(frame, &NumberExpr::Unsigned((**rhs).clone()))?),
+            NumberExpr::Signed(IntExpr::Add(lhs, rhs)) => {
+                let lhs = self.eval_index_number_as_i128(frame, lhs)?;
+                let rhs = self.eval_index_number_as_i128(frame, rhs)?;
+                u128::try_from(lhs + rhs)
+                    .map_err(|_| number_out_of_range(ScalarType::U128, format!("{lhs} + {rhs}")))
+            }
+            _ => Err(FableError::Unsupported {
+                feature: "native task dynamic index expression".into(),
+            }),
+        }
+    }
+
+    fn eval_index_number_as_i128(
+        &self,
+        frame: &[u8],
+        index: &NumberExpr,
+    ) -> Result<i128, FableError> {
+        match index {
+            NumberExpr::Signed(IntExpr::Literal(value)) => Ok(*value),
+            NumberExpr::Signed(IntExpr::Local(local)) => {
+                Ok(read_frame_word(frame, self.layout.local_slot(*local))?.into())
+            }
+            NumberExpr::Signed(IntExpr::Read(path)) => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                read_signed_scalar(field_scalar(path)?, ptr)
+            }
+            NumberExpr::Unsigned(expr) => {
+                let value =
+                    self.eval_index_number_as_u128(frame, &NumberExpr::Unsigned(expr.clone()))?;
+                i128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::I128, value.to_string()))
+            }
+            _ => Err(FableError::Unsupported {
+                feature: "native task dynamic signed index expression".into(),
+            }),
+        }
+    }
+
+    fn eval_number_as_u128(
+        &mut self,
+        frame: &[u8],
+        index: &NumberExpr,
+    ) -> Result<u128, FableError> {
+        match index {
+            NumberExpr::Unsigned(expr) => self.eval_u128(frame, expr),
+            NumberExpr::Signed(expr) => {
+                let value = self.eval_i128(frame, expr)?;
+                u128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string()))
+            }
+            NumberExpr::Float(_) => Err(FableError::TypeMismatch {
+                expected: "unsigned integer".into(),
+                actual: "float",
+            }),
+        }
+    }
+
+    fn eval_number_as_i128(
+        &mut self,
+        frame: &[u8],
+        index: &NumberExpr,
+    ) -> Result<i128, FableError> {
+        match index {
+            NumberExpr::Signed(expr) => self.eval_i128(frame, expr),
+            NumberExpr::Unsigned(expr) => {
+                let value = self.eval_u128(frame, expr)?;
+                i128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::I128, value.to_string()))
+            }
+            NumberExpr::Float(_) => Err(FableError::TypeMismatch {
+                expected: "integer".into(),
+                actual: "float",
+            }),
+        }
+    }
+
+    fn eval_number_as_f64(&mut self, frame: &[u8], expr: &NumberExpr) -> Result<f64, FableError> {
+        match expr {
+            NumberExpr::Signed(expr) => Ok(self.eval_i128(frame, expr)? as f64),
+            NumberExpr::Unsigned(expr) => Ok(self.eval_u128(frame, expr)? as f64),
+            NumberExpr::Float(expr) => self.eval_f64(frame, expr),
+        }
+    }
+
+    fn local_borrowed_ptr(&self, frame: &[u8], local: LocalRef) -> Result<PtrConst, FableError> {
+        let LocalRef::BorrowedValue { shape, .. } = local else {
+            return Err(local_kind_mismatch("typed value", local));
+        };
+        Ok(self
+            .borrowed_value(frame, self.layout.local_slot(local), shape)?
+            .ptr)
+    }
+
+    fn borrowed_value(
+        &self,
+        frame: &[u8],
+        slot: u32,
+        shape: &'static Shape,
+    ) -> Result<BorrowedValue, FableError> {
+        let handle = usize::try_from(read_frame_word(frame, slot)?).map_err(|_| {
+            FableError::MalformedProgram {
+                reason: "borrowed value handle was negative",
+            }
+        })?;
+        let value = self
+            .value_store
+            .borrowed_values
+            .get(handle)
+            .copied()
+            .ok_or(FableError::MalformedProgram {
+                reason: "borrowed value handle was missing",
+            })?;
+        if value.shape != shape {
+            return Err(FableError::MalformedProgram {
+                reason: "borrowed value handle shape mismatch",
+            });
+        }
+        Ok(value)
+    }
+
+    fn field_ref<'field>(
+        &self,
+        frame: &[u8],
+        field: &'field FieldPath,
+    ) -> Result<FableField<'field>, FableError> {
+        Ok(FableField {
+            path: &field.source,
+            shape: field.shape,
+            scalar: field_scalar(field)?,
+            ptr: self.path_ptr_const(frame, field)?,
+        })
+    }
+
+    fn field_mut<'field>(
+        &self,
+        frame: &[u8],
+        field: &'field FieldPath,
+    ) -> Result<FableFieldMut<'field>, FableError> {
+        Ok(FableFieldMut {
+            path: &field.source,
+            shape: field.shape,
+            scalar: field_scalar(field)?,
+            ptr: self.path_ptr_mut(frame, field)?,
+        })
+    }
+
+    fn init_local(
+        &mut self,
+        frame: &mut [u8],
+        local: LocalRef,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        match local {
+            LocalRef::Unit(_) => {
+                self.eval_unit(frame, expect_unit_expr(expr)?)?;
+                write_frame_word(frame, self.layout.local_slot(local), 1)
+            }
+            LocalRef::Bool(_) => {
+                let value = self.eval_bool(frame, expect_bool_expr(expr)?)?;
+                write_frame_word(frame, self.layout.local_slot(local), i64::from(value))
+            }
+            LocalRef::Char(_) => {
+                let value = self.eval_char_assign(frame, expr)?;
+                write_frame_word(
+                    frame,
+                    self.layout.local_slot(local),
+                    i64::from(value as u32),
+                )
+            }
+            LocalRef::String(_) => {
+                let value = self.eval_string_assign(frame, expr)?;
+                let handle = self.intern_string(value);
+                write_frame_word(frame, self.layout.local_slot(local), handle as i64)
+            }
+            LocalRef::Signed(_) => {
+                let value = self.eval_number_as_i128(frame, expect_number_expr(expr)?)?;
+                let value = i64::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::I64, value.to_string()))?;
+                write_frame_word(frame, self.layout.local_slot(local), value)
+            }
+            LocalRef::Unsigned(_) => {
+                let value = self.eval_number_as_u128(frame, expect_number_expr(expr)?)?;
+                let value = i64::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::I64, value.to_string()))?;
+                write_frame_word(frame, self.layout.local_slot(local), value)
+            }
+            LocalRef::Float(_) => {
+                let value = self.eval_number_as_f64(frame, expect_number_expr(expr)?)?;
+                write_frame_word(
+                    frame,
+                    self.layout.local_slot(local),
+                    i64::from_ne_bytes(value.to_ne_bytes()),
+                )
+            }
+            LocalRef::Value { shape, .. } => {
+                let value = self.eval_value(frame, shape, expect_value_expr(expr)?)?;
+                let handle = self.store_value(value)?;
+                write_frame_word(frame, self.layout.local_slot(local), handle as i64)
+            }
+            LocalRef::BorrowedValue { .. } => Err(FableError::Unsupported {
+                feature: "initializing borrowed value locals".into(),
+            }),
+            LocalRef::Declared { type_index, .. } => {
+                let value =
+                    self.eval_declared_value(frame, type_index, expect_declared_value_expr(expr)?)?;
+                let handle = self.store_declared_value(value);
+                write_frame_word(frame, self.layout.local_slot(local), handle as i64)
+            }
+        }
+    }
+
+    fn assign(
+        &mut self,
+        frame: &mut [u8],
+        target: &FieldPath,
+        value: &ExprPlan,
+    ) -> Result<(), FableError> {
+        let ptr = self.path_ptr_mut(frame, target)?;
+        if let Some(scalar) = target.scalar {
+            unsafe { self.write_scalar(frame, scalar, ptr, value) }
+        } else {
+            unsafe { self.write_value(frame, target.shape, ptr, value) }
+        }
+    }
+
+    fn eval_expr_for_effect(
+        &mut self,
+        frame: &mut [u8],
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        match expr {
+            ExprPlan::Unit(expr) => self.eval_unit(frame, expr),
+            ExprPlan::Bool(expr) => self.eval_bool(frame, expr).map(drop),
+            ExprPlan::Char(expr) => self.eval_char(frame, expr).map(drop),
+            ExprPlan::String(expr) => self.eval_string(frame, expr).map(drop),
+            ExprPlan::Number(expr) => self.eval_number_as_f64(frame, expr).map(drop),
+            ExprPlan::Value(expr) => self.eval_value_for_effect(frame, expr),
+            ExprPlan::Match(_) | ExprPlan::If(_) => Err(FableError::Unsupported {
+                feature: "hosted effect match/if expression".into(),
+            }),
+        }
+    }
+
+    fn eval_unit(&mut self, frame: &mut [u8], expr: &UnitExpr) -> Result<(), FableError> {
+        match expr {
+            UnitExpr::Null => Ok(()),
+            UnitExpr::Read(path) => {
+                let _ = self.path_ptr_const(frame, path)?;
+                Ok(())
+            }
+            UnitExpr::Local(local) => {
+                let _ = read_frame_word(frame, self.layout.local_slot(*local))?;
+                Ok(())
+            }
+            UnitExpr::DeclaredRead(read) => self.read_declared_unit(frame, *read),
+            UnitExpr::HostFieldMut { function, field } => function(self.field_mut(frame, field)?),
+            UnitExpr::FunctionCall(_) => Err(FableError::Unsupported {
+                feature: "hosted unit function call".into(),
+            }),
+        }
+    }
+
+    fn eval_bool(&mut self, frame: &[u8], expr: &BoolExpr) -> Result<bool, FableError> {
+        match expr {
+            BoolExpr::Literal(value) => Ok(*value),
+            BoolExpr::Read(path) => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                Ok(*unsafe { ptr.get::<bool>() })
+            }
+            BoolExpr::Local(local) => {
+                Ok(read_frame_word(frame, self.layout.local_slot(*local))? != 0)
+            }
+            BoolExpr::DeclaredRead(read) => self.read_declared_bool(frame, *read),
+            BoolExpr::HostFieldPredicate { function, field } => {
+                function(self.field_ref(frame, field)?)
+            }
+            BoolExpr::HostStringPredicate { function, lhs, rhs } => {
+                let lhs = self.eval_string(frame, lhs)?;
+                let rhs = self.eval_string(frame, rhs)?;
+                function(&lhs, &rhs)
+            }
+            BoolExpr::StringContains { haystack, needle } => Ok(self
+                .eval_string(frame, haystack)?
+                .contains(&self.eval_string(frame, needle)?)),
+            BoolExpr::StringStartsWith { haystack, prefix } => Ok(self
+                .eval_string(frame, haystack)?
+                .starts_with(&self.eval_string(frame, prefix)?)),
+            BoolExpr::StringEndsWith { haystack, suffix } => Ok(self
+                .eval_string(frame, haystack)?
+                .ends_with(&self.eval_string(frame, suffix)?)),
+            BoolExpr::Not(expr) => Ok(!self.eval_bool(frame, expr)?),
+            BoolExpr::And(lhs, rhs) => {
+                if !self.eval_bool(frame, lhs)? {
+                    return Ok(false);
+                }
+                self.eval_bool(frame, rhs)
+            }
+            BoolExpr::Or(lhs, rhs) => {
+                if self.eval_bool(frame, lhs)? {
+                    return Ok(true);
+                }
+                self.eval_bool(frame, rhs)
+            }
+            BoolExpr::Eq(lhs, rhs) => self.eval_exprs_equal(frame, lhs, rhs),
+            BoolExpr::Neq(lhs, rhs) => Ok(!self.eval_exprs_equal(frame, lhs, rhs)?),
+            BoolExpr::Cmp { op, lhs, rhs } => {
+                let ordering = self.compare_numbers(frame, lhs, rhs)?;
+                Ok(match op {
+                    CmpOp::Lt => ordering == Ordering::Less,
+                    CmpOp::Gt => ordering == Ordering::Greater,
+                    CmpOp::Le => matches!(ordering, Ordering::Less | Ordering::Equal),
+                    CmpOp::Ge => matches!(ordering, Ordering::Greater | Ordering::Equal),
+                })
+            }
+            BoolExpr::FunctionCall(_) => Err(FableError::Unsupported {
+                feature: "hosted bool function call".into(),
+            }),
+        }
+    }
+
+    fn eval_char(&mut self, frame: &[u8], expr: &CharExpr) -> Result<char, FableError> {
+        match expr {
+            CharExpr::Read(path) => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                Ok(*unsafe { ptr.get::<char>() })
+            }
+            CharExpr::Local(local) => {
+                let value = u32::try_from(read_frame_word(frame, self.layout.local_slot(*local))?)
+                    .map_err(|_| FableError::MalformedProgram {
+                        reason: "char local did not fit u32",
+                    })?;
+                char::from_u32(value).ok_or(FableError::MalformedProgram {
+                    reason: "char local was invalid",
+                })
+            }
+            CharExpr::DeclaredRead(read) => self.read_declared_char(frame, *read),
+            CharExpr::FunctionCall(_) => Err(FableError::Unsupported {
+                feature: "hosted char function call".into(),
+            }),
+        }
+    }
+
+    fn eval_i128(&mut self, frame: &[u8], expr: &IntExpr) -> Result<i128, FableError> {
+        match expr {
+            IntExpr::Literal(value) => Ok(*value),
+            IntExpr::Read(path) => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                read_signed_scalar(field_scalar(path)?, ptr)
+            }
+            IntExpr::Local(local) => {
+                Ok(read_frame_word(frame, self.layout.local_slot(*local))?.into())
+            }
+            IntExpr::DeclaredRead(read) => self.read_declared_i128(frame, *read),
+            IntExpr::HostUnary { function, value } => {
+                function(self.eval_number_as_i128(frame, value)?)
+            }
+            IntExpr::Min(lhs, rhs) => {
+                let lhs = self.eval_number_as_i128(frame, lhs)?;
+                let rhs = self.eval_number_as_i128(frame, rhs)?;
+                Ok(lhs.min(rhs))
+            }
+            IntExpr::Max(lhs, rhs) => {
+                let lhs = self.eval_number_as_i128(frame, lhs)?;
+                let rhs = self.eval_number_as_i128(frame, rhs)?;
+                Ok(lhs.max(rhs))
+            }
+            IntExpr::Clamp { value, min, max } => {
+                let value = self.eval_number_as_i128(frame, value)?;
+                let min = self.eval_number_as_i128(frame, min)?;
+                let max = self.eval_number_as_i128(frame, max)?;
+                clamp_i128(value, min, max)
+            }
+            IntExpr::Neg(expr) => {
+                let value = self.eval_number_as_i128(frame, expr)?;
+                value
+                    .checked_neg()
+                    .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("-{value}")))
+            }
+            IntExpr::Add(lhs, rhs) => {
+                let lhs = self.eval_number_as_i128(frame, lhs)?;
+                let rhs = self.eval_number_as_i128(frame, rhs)?;
+                lhs.checked_add(rhs)
+                    .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("{lhs} + {rhs}")))
+            }
+            IntExpr::Sub(lhs, rhs) => {
+                let lhs = self.eval_number_as_i128(frame, lhs)?;
+                let rhs = self.eval_number_as_i128(frame, rhs)?;
+                lhs.checked_sub(rhs)
+                    .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("{lhs} - {rhs}")))
+            }
+            IntExpr::FunctionCall(_) => Err(FableError::Unsupported {
+                feature: "hosted signed function call".into(),
+            }),
+        }
+    }
+
+    fn eval_u128(&mut self, frame: &[u8], expr: &UIntExpr) -> Result<u128, FableError> {
+        match expr {
+            UIntExpr::Literal(value) => Ok(*value),
+            UIntExpr::Read(path) => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                read_unsigned_scalar(field_scalar(path)?, ptr)
+            }
+            UIntExpr::Local(local) => {
+                let value = read_frame_word(frame, self.layout.local_slot(*local))?;
+                u128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string()))
+            }
+            UIntExpr::DeclaredRead(read) => self.read_declared_u128(frame, *read),
+            UIntExpr::HostUnary { function, value } => {
+                function(self.eval_number_as_u128(frame, value)?)
+            }
+            UIntExpr::PathLen(path) => self.path_len(frame, path).map(|len| len as u128),
+            UIntExpr::StringLen(expr) => Ok(self.eval_string(frame, expr)?.len() as u128),
+            UIntExpr::Min(lhs, rhs) => {
+                let lhs = self.eval_u128(frame, lhs)?;
+                let rhs = self.eval_u128(frame, rhs)?;
+                Ok(lhs.min(rhs))
+            }
+            UIntExpr::Max(lhs, rhs) => {
+                let lhs = self.eval_u128(frame, lhs)?;
+                let rhs = self.eval_u128(frame, rhs)?;
+                Ok(lhs.max(rhs))
+            }
+            UIntExpr::Clamp { value, min, max } => {
+                let value = self.eval_u128(frame, value)?;
+                let min = self.eval_u128(frame, min)?;
+                let max = self.eval_u128(frame, max)?;
+                clamp_u128(value, min, max)
+            }
+            UIntExpr::Add(lhs, rhs) => {
+                let lhs = self.eval_u128(frame, lhs)?;
+                let rhs = self.eval_u128(frame, rhs)?;
+                lhs.checked_add(rhs)
+                    .ok_or_else(|| number_out_of_range(ScalarType::U128, format!("{lhs} + {rhs}")))
+            }
+            UIntExpr::FunctionCall(_) => Err(FableError::Unsupported {
+                feature: "hosted unsigned function call".into(),
+            }),
+        }
+    }
+
+    fn eval_f64(&mut self, frame: &[u8], expr: &FloatExpr) -> Result<f64, FableError> {
+        match expr {
+            FloatExpr::Literal(value) => Ok(*value),
+            FloatExpr::Read(path) => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                read_float_scalar(field_scalar(path)?, ptr)
+            }
+            FloatExpr::Local(local) => Ok(f64::from_ne_bytes(
+                read_frame_word(frame, self.layout.local_slot(*local))?.to_ne_bytes(),
+            )),
+            FloatExpr::DeclaredRead(read) => self.read_declared_f64(frame, *read),
+            FloatExpr::HostUnary { function, value } => {
+                function(self.eval_number_as_f64(frame, value)?)
+            }
+            FloatExpr::Min(lhs, rhs) => min_f64(
+                self.eval_number_as_f64(frame, lhs)?,
+                self.eval_number_as_f64(frame, rhs)?,
+            ),
+            FloatExpr::Max(lhs, rhs) => max_f64(
+                self.eval_number_as_f64(frame, lhs)?,
+                self.eval_number_as_f64(frame, rhs)?,
+            ),
+            FloatExpr::Clamp { value, min, max } => clamp_f64(
+                self.eval_number_as_f64(frame, value)?,
+                self.eval_number_as_f64(frame, min)?,
+                self.eval_number_as_f64(frame, max)?,
+            ),
+            FloatExpr::Neg(expr) => Ok(-self.eval_number_as_f64(frame, expr)?),
+            FloatExpr::Add(lhs, rhs) => {
+                Ok(self.eval_number_as_f64(frame, lhs)? + self.eval_number_as_f64(frame, rhs)?)
+            }
+            FloatExpr::Sub(lhs, rhs) => {
+                Ok(self.eval_number_as_f64(frame, lhs)? - self.eval_number_as_f64(frame, rhs)?)
+            }
+            FloatExpr::FunctionCall(_) => Err(FableError::Unsupported {
+                feature: "hosted float function call".into(),
+            }),
+        }
+    }
+
+    fn compare_numbers(
+        &mut self,
+        frame: &[u8],
+        lhs: &NumberExpr,
+        rhs: &NumberExpr,
+    ) -> Result<Ordering, FableError> {
+        match (lhs, rhs) {
+            (NumberExpr::Float(_), _) | (_, NumberExpr::Float(_)) => compare_f64(
+                self.eval_number_as_f64(frame, lhs)?,
+                self.eval_number_as_f64(frame, rhs)?,
+            ),
+            (NumberExpr::Signed(lhs), NumberExpr::Signed(rhs)) => Ok(self
+                .eval_i128(frame, lhs)?
+                .cmp(&self.eval_i128(frame, rhs)?)),
+            (NumberExpr::Unsigned(lhs), NumberExpr::Unsigned(rhs)) => Ok(self
+                .eval_u128(frame, lhs)?
+                .cmp(&self.eval_u128(frame, rhs)?)),
+            (NumberExpr::Signed(lhs), NumberExpr::Unsigned(rhs)) => {
+                let lhs = self.eval_i128(frame, lhs)?;
+                let rhs = self.eval_u128(frame, rhs)?;
+                if lhs < 0 {
+                    Ok(Ordering::Less)
+                } else {
+                    Ok((lhs as u128).cmp(&rhs))
+                }
+            }
+            (NumberExpr::Unsigned(lhs), NumberExpr::Signed(rhs)) => {
+                let lhs = self.eval_u128(frame, lhs)?;
+                let rhs = self.eval_i128(frame, rhs)?;
+                if rhs < 0 {
+                    Ok(Ordering::Greater)
+                } else {
+                    Ok(lhs.cmp(&(rhs as u128)))
+                }
+            }
+        }
+    }
+
+    fn eval_exprs_equal(
+        &mut self,
+        frame: &[u8],
+        lhs: &ExprPlan,
+        rhs: &ExprPlan,
+    ) -> Result<bool, FableError> {
+        match (lhs, rhs) {
+            (ExprPlan::Unit(lhs), ExprPlan::Unit(rhs)) => {
+                let mut scratch = frame.to_vec();
+                self.eval_unit(&mut scratch, lhs)?;
+                self.eval_unit(&mut scratch, rhs)?;
+                Ok(true)
+            }
+            (ExprPlan::Bool(lhs), ExprPlan::Bool(rhs)) => {
+                Ok(self.eval_bool(frame, lhs)? == self.eval_bool(frame, rhs)?)
+            }
+            (ExprPlan::Char(lhs), ExprPlan::Char(rhs)) => {
+                Ok(self.eval_char(frame, lhs)? == self.eval_char(frame, rhs)?)
+            }
+            (ExprPlan::String(lhs), ExprPlan::String(rhs)) => {
+                Ok(self.eval_string(frame, lhs)? == self.eval_string(frame, rhs)?)
+            }
+            (ExprPlan::Char(lhs), ExprPlan::String(rhs)) => Ok(string_is_char(
+                &self.eval_string(frame, rhs)?,
+                self.eval_char(frame, lhs)?,
+            )),
+            (ExprPlan::String(lhs), ExprPlan::Char(rhs)) => Ok(string_is_char(
+                &self.eval_string(frame, lhs)?,
+                self.eval_char(frame, rhs)?,
+            )),
+            (ExprPlan::Number(lhs), ExprPlan::Number(rhs)) => {
+                Ok(self.compare_numbers(frame, lhs, rhs)? == Ordering::Equal)
+            }
+            _ => Err(FableError::Unsupported {
+                feature: "native task hosted equality expression".into(),
+            }),
+        }
+    }
+
+    fn eval_string(&mut self, frame: &[u8], expr: &StringExpr) -> Result<String, FableError> {
+        match expr {
+            StringExpr::Literal(value) => Ok(value.clone()),
+            StringExpr::Read(path) => {
+                let ptr = self.path_ptr_const(frame, path)?;
+                unsafe { self.read_string_path(path, ptr) }
+            }
+            StringExpr::DeclaredRead(read) => self.read_declared_string(frame, *read),
+            StringExpr::Local(local) => {
+                let handle =
+                    usize::try_from(read_frame_word(frame, self.layout.local_slot(*local))?)
+                        .map_err(|_| FableError::MalformedProgram {
+                            reason: "string local handle was negative",
+                        })?;
+                self.value_store
+                    .strings
+                    .get(handle)
+                    .cloned()
+                    .ok_or(FableError::MalformedProgram {
+                        reason: "string local handle was missing",
+                    })
+            }
+            StringExpr::HostUnary { function, value } => {
+                let value = self.eval_string(frame, value)?;
+                function(&value)
+            }
+            StringExpr::Trim(value) => Ok(self.eval_string(frame, value)?.trim().to_owned()),
+            StringExpr::Add(lhs, rhs) => {
+                let mut lhs = self.eval_string(frame, lhs)?;
+                lhs.push_str(&self.eval_string(frame, rhs)?);
+                Ok(lhs)
+            }
+            StringExpr::HostFieldString { function, field } => {
+                function(self.field_ref(frame, field)?)
+            }
+            StringExpr::FunctionCall(_) => Err(FableError::Unsupported {
+                feature: "native task hosted string expression".into(),
+            }),
+        }
+    }
+
+    fn read_path_output(
+        &mut self,
+        path: &FieldPath,
+        ptr: PtrConst,
+        kind: FableHostSlotKind,
+    ) -> Result<FableQueryOutput, FableError> {
+        Ok(match kind {
+            FableHostSlotKind::Unit => FableQueryOutput::Unit,
+            FableHostSlotKind::Bool => FableQueryOutput::Bool(*unsafe { ptr.get::<bool>() }),
+            FableHostSlotKind::Char => FableQueryOutput::Char(*unsafe { ptr.get::<char>() }),
+            FableHostSlotKind::String => {
+                let value = unsafe { self.read_string_path(path, ptr)? };
+                FableQueryOutput::Unsigned(self.intern_string(value) as u128)
+            }
+            FableHostSlotKind::Signed => {
+                FableQueryOutput::Signed(read_signed_scalar(field_scalar(path)?, ptr)?)
+            }
+            FableHostSlotKind::Unsigned => {
+                FableQueryOutput::Unsigned(read_unsigned_scalar(field_scalar(path)?, ptr)?)
+            }
+            FableHostSlotKind::Float => {
+                FableQueryOutput::Float(read_float_scalar(field_scalar(path)?, ptr)?)
+            }
+        })
+    }
+
+    fn write_output_to_frame(
+        &self,
+        frame: &mut [u8],
+        dst: u32,
+        output: FableQueryOutput,
+    ) -> Result<(), FableError> {
+        let word = match output {
+            FableQueryOutput::Unit => 0,
+            FableQueryOutput::Bool(value) => i64::from(value),
+            FableQueryOutput::Char(value) => i64::from(value as u32),
+            FableQueryOutput::String(_) => {
+                return Err(FableError::MalformedProgram {
+                    reason: "string host output should be interned before frame write",
+                });
+            }
+            FableQueryOutput::Signed(value) => i64::try_from(value)
+                .map_err(|_| number_out_of_range(ScalarType::I64, value.to_string()))?,
+            FableQueryOutput::Unsigned(value) => i64::try_from(value)
+                .map_err(|_| number_out_of_range(ScalarType::I64, value.to_string()))?,
+            FableQueryOutput::Float(value) => i64::from_ne_bytes(value.to_ne_bytes()),
+        };
+        write_frame_word(frame, dst, word)
+    }
+
+    unsafe fn read_string_path(
+        &self,
+        path: &FieldPath,
+        ptr: PtrConst,
+    ) -> Result<String, FableError> {
+        let scalar = field_scalar(path)?;
+        match scalar {
+            ScalarType::Str if path.shape.is_type::<&'static str>() => {
+                Ok((*unsafe { ptr.get::<&'static str>() }).to_owned())
+            }
+            ScalarType::String => Ok(unsafe { ptr.get::<String>() }.clone()),
+            ScalarType::CowStr => Ok(unsafe { ptr.get::<Cow<'static, str>>() }
+                .clone()
+                .into_owned()),
+            _ => Err(FableError::Unsupported {
+                feature: format!("reading {scalar:?}"),
+            }),
+        }
+    }
+
+    fn path_len(&self, frame: &[u8], path: &FieldPath) -> Result<usize, FableError> {
+        let ptr = self.path_ptr_const(frame, path)?;
+        match path.shape.def {
+            Def::List(def) => Ok(unsafe { (def.vtable.len)(ptr) }),
+            Def::Array(def) => Ok(def.n),
+            Def::Slice(def) => Ok(unsafe { (def.vtable.len)(ptr) }),
+            _ => Err(FableError::TypeMismatch {
+                expected: "list-like value".into(),
+                actual: "non-list path",
+            }),
+        }
+    }
+
+    fn intern_string(&mut self, value: String) -> usize {
+        if let Some(index) = self
+            .value_store
+            .strings
+            .iter()
+            .position(|seen| seen == &value)
+        {
+            return index;
+        }
+        let index = self.value_store.strings.len();
+        self.value_store.strings.push(value);
+        index
+    }
+
+    fn store_value(&mut self, value: OwnedValue) -> Result<usize, FableError> {
+        let index = self.value_store.values.len();
+        self.value_store.values.push(Some(value));
+        Ok(index)
+    }
+
+    fn take_value(
+        &mut self,
+        frame: &[u8],
+        local: LocalRef,
+        expected_shape: &'static Shape,
+    ) -> Result<OwnedValue, FableError> {
+        match local {
+            LocalRef::Value { shape, .. } => {
+                if shape != expected_shape {
+                    return Err(FableError::TypeMismatch {
+                        expected: format!("{expected_shape}"),
+                        actual: "typed value",
+                    });
+                }
+                let handle =
+                    usize::try_from(read_frame_word(frame, self.layout.local_slot(local))?)
+                        .map_err(|_| FableError::MalformedProgram {
+                            reason: "typed value handle was negative",
+                        })?;
+                self.value_store
+                    .values
+                    .get_mut(handle)
+                    .ok_or(FableError::MalformedProgram {
+                        reason: "typed value handle was missing",
+                    })?
+                    .take()
+                    .ok_or_else(uninitialized_local)
+            }
+            LocalRef::BorrowedValue { shape, .. } => {
+                if shape != expected_shape {
+                    return Err(FableError::TypeMismatch {
+                        expected: format!("{expected_shape}"),
+                        actual: "typed value",
+                    });
+                }
+                if !shape.is_pod() {
+                    return Err(FableError::Unsupported {
+                        feature: format!("copying non-POD borrowed value {shape}"),
+                    });
+                }
+                let ptr = self.local_borrowed_ptr(frame, local)?;
+                OwnedValue::copy_from(shape, ptr)
+            }
+            _ => Err(local_kind_mismatch("typed value", local)),
+        }
+    }
+
+    fn eval_value(
+        &mut self,
+        frame: &[u8],
+        shape: &'static Shape,
+        expr: &ValueExpr,
+    ) -> Result<OwnedValue, FableError> {
+        match expr {
+            ValueExpr::Struct(expr) => {
+                if expr.shape != shape {
+                    return Err(FableError::TypeMismatch {
+                        expected: format!("{shape}"),
+                        actual: expr.kind_name(),
+                    });
+                }
+                unsafe { self.init_struct_value(frame, expr) }
+            }
+            ValueExpr::Read(path) => {
+                if path.shape != shape {
+                    return Err(FableError::TypeMismatch {
+                        expected: format!("{shape}"),
+                        actual: "typed value",
+                    });
+                }
+                if !shape.is_pod() {
+                    return Err(FableError::Unsupported {
+                        feature: format!("copying non-POD path ending at {shape}"),
+                    });
+                }
+                let ptr = self.path_ptr_const(frame, path)?;
+                OwnedValue::copy_from(shape, ptr)
+            }
+            ValueExpr::Local(local) => self.take_value(frame, *local, shape),
+            ValueExpr::Declared(_) => Err(FableError::TypeMismatch {
+                expected: format!("{shape}"),
+                actual: "declared value",
+            }),
+        }
+    }
+
+    fn eval_value_for_effect(&mut self, frame: &[u8], expr: &ValueExpr) -> Result<(), FableError> {
+        match expr {
+            ValueExpr::Struct(expr) => unsafe { self.init_struct_value(frame, expr) }.map(drop),
+            ValueExpr::Read(path) => self.path_ptr_const(frame, path).map(drop),
+            ValueExpr::Declared(expr) => self
+                .eval_declared_value(frame, expr.type_index(), expr)
+                .map(drop),
+            ValueExpr::Local(LocalRef::Value { .. }) => {
+                let shape = local_value_shape(match expr {
+                    ValueExpr::Local(local) => *local,
+                    _ => unreachable!(),
+                })?;
+                let handle = usize::try_from(read_frame_word(
+                    frame,
+                    self.layout.local_slot(match expr {
+                        ValueExpr::Local(local) => *local,
+                        _ => unreachable!(),
+                    }),
+                )?)
+                .map_err(|_| FableError::MalformedProgram {
+                    reason: "typed value handle was negative",
+                })?;
                 if self
-                    .locals
-                    .insert(
-                        name.clone(),
-                        TaskValue {
-                            ty: value.ty,
-                            slot: local,
-                        },
-                    )
+                    .value_store
+                    .values
+                    .get(handle)
+                    .and_then(Option::as_ref)
+                    .filter(|value| value.shape == shape)
                     .is_some()
                 {
-                    return Err(FableError::DuplicateLocal { name });
+                    Ok(())
+                } else {
+                    Err(uninitialized_local())
+                }
+            }
+            ValueExpr::Local(local @ LocalRef::BorrowedValue { .. }) => {
+                self.local_borrowed_ptr(frame, *local).map(drop)
+            }
+            ValueExpr::Local(local) => Err(local_kind_mismatch("typed value", *local)),
+        }
+    }
+
+    unsafe fn init_struct_value(
+        &mut self,
+        frame: &[u8],
+        expr: &StructExpr,
+    ) -> Result<OwnedValue, FableError> {
+        let ptr = expr.shape.allocate().map_err(|_| FableError::Unsupported {
+            feature: format!("allocating unsized value {}", expr.shape),
+        })?;
+        let mut guard = StructInitGuard::new(expr.shape, ptr);
+        for field in expr.fields.iter() {
+            let field_ptr = unsafe { ptr.field_uninit(field.offset) };
+            unsafe { self.init_scalar(frame, field.scalar, field_ptr, &field.value) }?;
+            guard.mark_initialized(field);
+        }
+        Ok(unsafe { guard.finish() })
+    }
+
+    unsafe fn init_scalar(
+        &mut self,
+        frame: &[u8],
+        scalar: ScalarType,
+        ptr: PtrUninit,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        match scalar {
+            ScalarType::Unit => {
+                let mut scratch = frame.to_vec();
+                self.eval_unit(&mut scratch, expect_unit_expr(expr)?)?;
+                unsafe { ptr.put(()) };
+            }
+            ScalarType::Bool => {
+                unsafe { ptr.put(self.eval_bool(frame, expect_bool_expr(expr)?)?) };
+            }
+            ScalarType::Char => {
+                unsafe { ptr.put(self.eval_char_assign(frame, expr)?) };
+            }
+            ScalarType::String => {
+                unsafe { ptr.put(self.eval_string_assign(frame, expr)?) };
+            }
+            ScalarType::CowStr => {
+                unsafe {
+                    ptr.put::<Cow<'static, str>>(Cow::Owned(self.eval_string_assign(frame, expr)?))
+                };
+            }
+            ScalarType::F32 => {
+                unsafe {
+                    ptr.put(self.eval_number_as_f64(frame, expect_number_expr(expr)?)? as f32)
+                };
+            }
+            ScalarType::F64 => {
+                unsafe { ptr.put(self.eval_number_as_f64(frame, expect_number_expr(expr)?)?) };
+            }
+            ScalarType::U8 => unsafe { self.init_unsigned::<u8>(frame, ptr, scalar, expr) }?,
+            ScalarType::U16 => unsafe { self.init_unsigned::<u16>(frame, ptr, scalar, expr) }?,
+            ScalarType::U32 => unsafe { self.init_unsigned::<u32>(frame, ptr, scalar, expr) }?,
+            ScalarType::U64 => unsafe { self.init_unsigned::<u64>(frame, ptr, scalar, expr) }?,
+            ScalarType::U128 => unsafe { self.init_unsigned::<u128>(frame, ptr, scalar, expr) }?,
+            ScalarType::USize => unsafe { self.init_unsigned::<usize>(frame, ptr, scalar, expr) }?,
+            ScalarType::I8 => unsafe { self.init_signed::<i8>(frame, ptr, scalar, expr) }?,
+            ScalarType::I16 => unsafe { self.init_signed::<i16>(frame, ptr, scalar, expr) }?,
+            ScalarType::I32 => unsafe { self.init_signed::<i32>(frame, ptr, scalar, expr) }?,
+            ScalarType::I64 => unsafe { self.init_signed::<i64>(frame, ptr, scalar, expr) }?,
+            ScalarType::I128 => unsafe { self.init_signed::<i128>(frame, ptr, scalar, expr) }?,
+            ScalarType::ISize => unsafe { self.init_signed::<isize>(frame, ptr, scalar, expr) }?,
+            _ => {
+                return Err(FableError::Unsupported {
+                    feature: format!("initializing {scalar:?}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    unsafe fn init_unsigned<T>(
+        &mut self,
+        frame: &[u8],
+        ptr: PtrUninit,
+        target: ScalarType,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<u128>,
+    {
+        let value = self.eval_number_as_u128(frame, expect_number_expr(expr)?)?;
+        let converted =
+            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
+        unsafe { ptr.put(converted) };
+        Ok(())
+    }
+
+    unsafe fn init_signed<T>(
+        &mut self,
+        frame: &[u8],
+        ptr: PtrUninit,
+        target: ScalarType,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<i128>,
+    {
+        let value = self.eval_number_as_i128(frame, expect_number_expr(expr)?)?;
+        let converted =
+            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
+        unsafe { ptr.put(converted) };
+        Ok(())
+    }
+
+    unsafe fn write_value(
+        &mut self,
+        frame: &[u8],
+        shape: &'static Shape,
+        ptr: PtrMut,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        let value = self.eval_value(frame, shape, expect_value_expr(expr)?)?;
+        unsafe { value.move_into(ptr) }
+    }
+
+    unsafe fn write_scalar(
+        &mut self,
+        frame: &[u8],
+        scalar: ScalarType,
+        ptr: PtrMut,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        match scalar {
+            ScalarType::Unit => {
+                let mut scratch = frame.to_vec();
+                self.eval_unit(&mut scratch, expect_unit_expr(expr)?)?;
+            }
+            ScalarType::Bool => {
+                *unsafe { ptr.as_mut::<bool>() } =
+                    self.eval_bool(frame, expect_bool_expr(expr)?)?;
+            }
+            ScalarType::Char => {
+                *unsafe { ptr.as_mut::<char>() } = self.eval_char_assign(frame, expr)?;
+            }
+            ScalarType::String => {
+                *unsafe { ptr.as_mut::<String>() } = self.eval_string_assign(frame, expr)?;
+            }
+            ScalarType::CowStr => {
+                *unsafe { ptr.as_mut::<Cow<'static, str>>() } =
+                    Cow::Owned(self.eval_string_assign(frame, expr)?);
+            }
+            ScalarType::F32 => {
+                *unsafe { ptr.as_mut::<f32>() } =
+                    self.eval_number_as_f64(frame, expect_number_expr(expr)?)? as f32;
+            }
+            ScalarType::F64 => {
+                *unsafe { ptr.as_mut::<f64>() } =
+                    self.eval_number_as_f64(frame, expect_number_expr(expr)?)?;
+            }
+            ScalarType::U8
+            | ScalarType::U16
+            | ScalarType::U32
+            | ScalarType::U64
+            | ScalarType::U128
+            | ScalarType::USize => {
+                let value = self.eval_number_as_u128(frame, expect_number_expr(expr)?)?;
+                write_unsigned_scalar(scalar, ptr, value)?;
+            }
+            ScalarType::I8
+            | ScalarType::I16
+            | ScalarType::I32
+            | ScalarType::I64
+            | ScalarType::I128
+            | ScalarType::ISize => {
+                let value = self.eval_number_as_i128(frame, expect_number_expr(expr)?)?;
+                write_signed_scalar(scalar, ptr, value)?;
+            }
+            _ => {
+                return Err(FableError::Unsupported {
+                    feature: format!("writing {scalar:?}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn eval_char_assign(&mut self, frame: &[u8], expr: &ExprPlan) -> Result<char, FableError> {
+        match expr {
+            ExprPlan::Char(expr) => self.eval_char(frame, expr),
+            ExprPlan::String(expr) => expect_single_char(self.eval_string(frame, expr)?),
+            other => Err(FableError::TypeMismatch {
+                expected: "char".into(),
+                actual: other.kind_name(),
+            }),
+        }
+    }
+
+    fn eval_string_assign(&mut self, frame: &[u8], expr: &ExprPlan) -> Result<String, FableError> {
+        match expr {
+            ExprPlan::String(expr) => self.eval_string(frame, expr),
+            ExprPlan::Char(expr) => Ok(self.eval_char(frame, expr)?.to_string()),
+            other => Err(FableError::TypeMismatch {
+                expected: "string".into(),
+                actual: other.kind_name(),
+            }),
+        }
+    }
+
+    fn bind_facet_match(
+        &mut self,
+        frame: &mut [u8],
+        bindings: &[FacetMatchBindingPlan],
+        shape: &'static Shape,
+        ptr: PtrConst,
+        variant_index: usize,
+    ) -> Result<(), FableError> {
+        let enum_type = facet_enum_type(shape).ok_or(FableError::MalformedProgram {
+            reason: "facet match binding shape was not an enum",
+        })?;
+        let variant =
+            enum_type
+                .variants
+                .get(variant_index)
+                .ok_or(FableError::MalformedProgram {
+                    reason: "facet match variant index was out of bounds",
+                })?;
+        for binding in bindings {
+            let field = variant.data.fields.get(binding.field_index).ok_or(
+                FableError::MalformedProgram {
+                    reason: "facet match binding field index was out of bounds",
+                },
+            )?;
+            let handle = self.value_store.borrowed_values.len();
+            self.value_store.borrowed_values.push(BorrowedValue {
+                shape: field.shape.get(),
+                ptr: unsafe { ptr.field(field.offset) },
+            });
+            write_frame_word(
+                frame,
+                self.layout.local_slot(binding.local),
+                i64::try_from(handle).map_err(|_| FableError::MalformedProgram {
+                    reason: "borrowed value handle did not fit i64",
+                })?,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn declared_value(
+        &self,
+        frame: &[u8],
+        slot: u32,
+        type_index: usize,
+    ) -> Result<&DeclaredOwnedValue, FableError> {
+        let handle = usize::try_from(read_frame_word(frame, slot)?).map_err(|_| {
+            FableError::MalformedProgram {
+                reason: "declared value handle was negative",
+            }
+        })?;
+        let value = self
+            .value_store
+            .declared
+            .get(handle)
+            .ok_or(FableError::MalformedProgram {
+                reason: "declared value handle was missing",
+            })?;
+        if value.type_index != type_index {
+            return Err(FableError::MalformedProgram {
+                reason: "declared value handle pointed at the wrong type",
+            });
+        }
+        Ok(value)
+    }
+
+    fn eval_declared_value(
+        &mut self,
+        frame: &[u8],
+        type_index: usize,
+        expr: &DeclaredValueExpr,
+    ) -> Result<DeclaredOwnedValue, FableError> {
+        if expr.type_index() != type_index {
+            return Err(FableError::TypeMismatch {
+                expected: self.declared_type_name(type_index)?,
+                actual: "declared value",
+            });
+        }
+        match expr {
+            DeclaredValueExpr::Struct(expr) => self.init_declared_struct_value(frame, expr),
+            DeclaredValueExpr::Enum(expr) => self.init_declared_enum_value(frame, expr),
+            DeclaredValueExpr::Local(local) => {
+                let value =
+                    self.declared_value(frame, self.layout.local_slot(*local), type_index)?;
+                let descriptor = self.declared_descriptor(value.type_index)?;
+                DeclaredOwnedValue::copy_from(
+                    value.type_index,
+                    descriptor,
+                    value.ptr().cast_const(),
+                )
+            }
+            DeclaredValueExpr::Field(field) => {
+                let source = self.declared_value(
+                    frame,
+                    self.layout.local_slot(field.local),
+                    field.type_index,
+                )?;
+                self.copy_declared_from_storage(field.type_index, field.storage, unsafe {
+                    source.ptr().add(field.offset).cast_const()
+                })
+            }
+        }
+    }
+
+    fn init_declared_struct_value(
+        &mut self,
+        frame: &[u8],
+        expr: &DeclaredStructExpr,
+    ) -> Result<DeclaredOwnedValue, FableError> {
+        let descriptor = self.declared_descriptor(expr.type_index)?.clone();
+        let value = DeclaredOwnedValue::zeroed(expr.type_index, &descriptor)?;
+        for field in expr.fields.iter() {
+            self.write_declared_field(frame, value.ptr(), field)?;
+        }
+        Ok(value)
+    }
+
+    fn init_declared_enum_value(
+        &mut self,
+        frame: &[u8],
+        expr: &DeclaredEnumExpr,
+    ) -> Result<DeclaredOwnedValue, FableError> {
+        let descriptor = self.declared_descriptor(expr.type_index)?.clone();
+        let value = DeclaredOwnedValue::zeroed(expr.type_index, &descriptor)?;
+        self.write_declared_tag(value.ptr(), expr.tag_offset, expr.tag_width, expr.selector)?;
+        for field in expr.fields.iter() {
+            self.write_declared_field(frame, value.ptr(), field)?;
+        }
+        Ok(value)
+    }
+
+    fn write_declared_field(
+        &mut self,
+        frame: &[u8],
+        base: *mut u8,
+        field: &DeclaredFieldInit,
+    ) -> Result<(), FableError> {
+        let dst = unsafe { base.add(field.offset) };
+        match field.ty {
+            DeclaredFieldType::Scalar(scalar) => {
+                self.write_declared_scalar(frame, dst, scalar, &field.value)
+            }
+            DeclaredFieldType::Declared {
+                type_index,
+                storage,
+            } => {
+                let value = self.eval_declared_value(
+                    frame,
+                    type_index,
+                    expect_declared_value_expr(&field.value)?,
+                )?;
+                match storage {
+                    DeclaredFieldStorage::Inline => {
+                        if value.size != 0 {
+                            unsafe { copy_nonoverlapping(value.ptr(), dst, value.size) };
+                        }
+                    }
+                    DeclaredFieldStorage::Handle => {
+                        let handle = self.store_declared_value(value);
+                        self.write_handle(dst, handle);
+                    }
                 }
                 Ok(())
             }
-            Stmt::Expr(expr) => self.compile_expr(&expr.expr).map(drop),
-            Stmt::If(if_stmt) => self.compile_if_value(if_stmt, TaskType::I64).map(drop),
-            Stmt::Assign(_) => Err(FableError::Unsupported {
-                feature: "assignment inside task functions".into(),
-            }),
         }
     }
 
-    fn compile_stmt_value(
+    fn write_declared_scalar(
         &mut self,
-        stmt: &Stmt,
-        expected: TaskType,
-    ) -> Result<TaskValue, FableError> {
-        match stmt {
-            Stmt::Expr(expr) => {
-                let value = self.compile_expr(&expr.expr)?;
-                self.expect_type(expected, value)?;
-                Ok(value)
+        frame: &[u8],
+        dst: *mut u8,
+        scalar: DeclaredScalar,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError> {
+        match scalar {
+            DeclaredScalar::Unit => Ok(()),
+            DeclaredScalar::Bool => {
+                let value = u8::from(self.eval_task_bool(frame, expect_bool_expr(expr)?)?);
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 1) };
+                Ok(())
             }
-            Stmt::If(if_stmt) => self.compile_if_value(if_stmt, expected),
-            Stmt::Let(_) | Stmt::Assign(_) => Err(FableError::Unsupported {
-                feature: "function block must end with an expression".into(),
+            DeclaredScalar::Char => {
+                let value = self.eval_task_char(frame, expr)? as u32;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 4) };
+                Ok(())
+            }
+            DeclaredScalar::String => {
+                let value = self.eval_string(frame, expect_string_expr_ref(expr)?)?;
+                let handle = self.intern_string(value);
+                self.write_handle(dst, handle);
+                Ok(())
+            }
+            DeclaredScalar::I8 => self.write_declared_signed::<i8>(frame, dst, scalar, expr),
+            DeclaredScalar::I16 => self.write_declared_signed::<i16>(frame, dst, scalar, expr),
+            DeclaredScalar::I32 => self.write_declared_signed::<i32>(frame, dst, scalar, expr),
+            DeclaredScalar::I64 => self.write_declared_signed::<i64>(frame, dst, scalar, expr),
+            DeclaredScalar::I128 => self.write_declared_signed::<i128>(frame, dst, scalar, expr),
+            DeclaredScalar::ISize => self.write_declared_signed::<isize>(frame, dst, scalar, expr),
+            DeclaredScalar::U8 => self.write_declared_unsigned::<u8>(frame, dst, scalar, expr),
+            DeclaredScalar::U16 => self.write_declared_unsigned::<u16>(frame, dst, scalar, expr),
+            DeclaredScalar::U32 => self.write_declared_unsigned::<u32>(frame, dst, scalar, expr),
+            DeclaredScalar::U64 => self.write_declared_unsigned::<u64>(frame, dst, scalar, expr),
+            DeclaredScalar::U128 => self.write_declared_unsigned::<u128>(frame, dst, scalar, expr),
+            DeclaredScalar::USize => {
+                self.write_declared_unsigned::<usize>(frame, dst, scalar, expr)
+            }
+            DeclaredScalar::F32 => {
+                let value = self.eval_task_number_f64(frame, expect_number_expr(expr)?)? as f32;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 4) };
+                Ok(())
+            }
+            DeclaredScalar::F64 => {
+                let value = self.eval_task_number_f64(frame, expect_number_expr(expr)?)?;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 8) };
+                Ok(())
+            }
+        }
+    }
+
+    fn write_declared_unsigned<T>(
+        &self,
+        frame: &[u8],
+        dst: *mut u8,
+        target: DeclaredScalar,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<u128> + Copy,
+        T: DeclaredIntBytes,
+    {
+        let value = self.eval_task_number_u128(frame, expect_number_expr(expr)?)?;
+        let converted = T::try_from(value).map_err(|_| {
+            number_out_of_range(declared_scalar_number_target(target), value.to_string())
+        })?;
+        converted.write_ne_bytes(dst);
+        Ok(())
+    }
+
+    fn write_declared_signed<T>(
+        &self,
+        frame: &[u8],
+        dst: *mut u8,
+        target: DeclaredScalar,
+        expr: &ExprPlan,
+    ) -> Result<(), FableError>
+    where
+        T: TryFrom<i128> + Copy,
+        T: DeclaredIntBytes,
+    {
+        let value = self.eval_task_number_i128(frame, expect_number_expr(expr)?)?;
+        let converted = T::try_from(value).map_err(|_| {
+            number_out_of_range(declared_scalar_number_target(target), value.to_string())
+        })?;
+        converted.write_ne_bytes(dst);
+        Ok(())
+    }
+
+    fn read_declared_scalar(
+        &self,
+        frame: &[u8],
+        read: DeclaredScalarRead,
+        kind: FableHostSlotKind,
+    ) -> Result<FableQueryOutput, FableError> {
+        let value = self.declared_value(
+            frame,
+            self.layout.local_slot(read.local),
+            local_declared_type(read.local)?,
+        )?;
+        let ptr = unsafe { value.ptr().add(read.offset).cast_const() };
+        Ok(match kind {
+            FableHostSlotKind::Unit => FableQueryOutput::Unit,
+            FableHostSlotKind::Bool => FableQueryOutput::Bool(unsafe { *ptr != 0 }),
+            FableHostSlotKind::Char => {
+                let raw = u32::from_ne_bytes(read_ptr_array(ptr));
+                FableQueryOutput::Char(char::from_u32(raw).ok_or(FableError::MalformedProgram {
+                    reason: "declared char bytes were not a valid scalar value",
+                })?)
+            }
+            FableHostSlotKind::String => {
+                let handle = usize::from_ne_bytes(read_ptr_array(ptr));
+                FableQueryOutput::Unsigned(handle as u128)
+            }
+            FableHostSlotKind::Signed => {
+                FableQueryOutput::Signed(read_signed_scalar_from_ptr(read.scalar, ptr)?)
+            }
+            FableHostSlotKind::Unsigned => {
+                FableQueryOutput::Unsigned(read_unsigned_scalar_from_ptr(read.scalar, ptr)?)
+            }
+            FableHostSlotKind::Float => {
+                FableQueryOutput::Float(read_float_scalar_from_ptr(read.scalar, ptr)?)
+            }
+        })
+    }
+
+    fn read_declared_unit(&self, frame: &[u8], read: DeclaredScalarRead) -> Result<(), FableError> {
+        let _ = self.declared_value(
+            frame,
+            self.layout.local_slot(read.local),
+            local_declared_type(read.local)?,
+        )?;
+        Ok(())
+    }
+
+    fn read_declared_bool(
+        &self,
+        frame: &[u8],
+        read: DeclaredScalarRead,
+    ) -> Result<bool, FableError> {
+        match self.read_declared_scalar(frame, read, FableHostSlotKind::Bool)? {
+            FableQueryOutput::Bool(value) => Ok(value),
+            _ => Err(FableError::MalformedProgram {
+                reason: "declared bool read returned non-bool",
             }),
         }
     }
 
-    fn compile_if_value(
+    fn read_declared_char(
+        &self,
+        frame: &[u8],
+        read: DeclaredScalarRead,
+    ) -> Result<char, FableError> {
+        match self.read_declared_scalar(frame, read, FableHostSlotKind::Char)? {
+            FableQueryOutput::Char(value) => Ok(value),
+            _ => Err(FableError::MalformedProgram {
+                reason: "declared char read returned non-char",
+            }),
+        }
+    }
+
+    fn read_declared_string(
+        &self,
+        frame: &[u8],
+        read: DeclaredScalarRead,
+    ) -> Result<String, FableError> {
+        match self.read_declared_scalar(frame, read, FableHostSlotKind::String)? {
+            FableQueryOutput::Unsigned(handle) => self
+                .value_store
+                .strings
+                .get(
+                    usize::try_from(handle).map_err(|_| FableError::MalformedProgram {
+                        reason: "declared string handle did not fit usize",
+                    })?,
+                )
+                .cloned()
+                .ok_or(FableError::MalformedProgram {
+                    reason: "declared string handle was missing",
+                }),
+            _ => Err(FableError::MalformedProgram {
+                reason: "declared string read returned non-handle",
+            }),
+        }
+    }
+
+    fn read_declared_i128(
+        &self,
+        frame: &[u8],
+        read: DeclaredScalarRead,
+    ) -> Result<i128, FableError> {
+        match self.read_declared_scalar(frame, read, FableHostSlotKind::Signed)? {
+            FableQueryOutput::Signed(value) => Ok(value),
+            _ => Err(FableError::MalformedProgram {
+                reason: "declared signed read returned non-signed",
+            }),
+        }
+    }
+
+    fn read_declared_u128(
+        &self,
+        frame: &[u8],
+        read: DeclaredScalarRead,
+    ) -> Result<u128, FableError> {
+        match self.read_declared_scalar(frame, read, FableHostSlotKind::Unsigned)? {
+            FableQueryOutput::Unsigned(value) => Ok(value),
+            _ => Err(FableError::MalformedProgram {
+                reason: "declared unsigned read returned non-unsigned",
+            }),
+        }
+    }
+
+    fn read_declared_f64(&self, frame: &[u8], read: DeclaredScalarRead) -> Result<f64, FableError> {
+        match self.read_declared_scalar(frame, read, FableHostSlotKind::Float)? {
+            FableQueryOutput::Float(value) => Ok(value),
+            _ => Err(FableError::MalformedProgram {
+                reason: "declared float read returned non-float",
+            }),
+        }
+    }
+
+    fn read_declared_tag(
+        &self,
+        value: &DeclaredOwnedValue,
+        type_index: usize,
+    ) -> Result<u64, FableError> {
+        let descriptor = self.declared_descriptor(type_index)?;
+        let WeavyAccess::Enum(access) = &descriptor.access else {
+            return Err(FableError::MalformedProgram {
+                reason: "match scrutinee descriptor was not an enum",
+            });
+        };
+        let WeavyTag::Direct { offset, width } = access.tag else {
+            return Err(FableError::Unsupported {
+                feature: "non-direct declared enum tags".into(),
+            });
+        };
+        let bytes = unsafe { std::slice::from_raw_parts(value.ptr().add(offset), width) };
+        Ok(match width {
+            0 => 0,
+            1 => bytes[0].into(),
+            2 => u16::from_ne_bytes(bytes.try_into().expect("tag width checked")).into(),
+            4 => u32::from_ne_bytes(bytes.try_into().expect("tag width checked")).into(),
+            8 => u64::from_ne_bytes(bytes.try_into().expect("tag width checked")),
+            _ => {
+                return Err(FableError::MalformedProgram {
+                    reason: "declared enum tag width was invalid",
+                });
+            }
+        })
+    }
+
+    fn bind_declared_match(
         &mut self,
-        if_stmt: &IfStmt,
-        expected: TaskType,
-    ) -> Result<TaskValue, FableError> {
-        let condition = self.compile_expr(&if_stmt.condition)?;
-        self.expect_type(TaskType::Bool, condition)?;
-        let out = self.alloc_slot(expected);
+        frame: &mut [u8],
+        src: u32,
+        bindings: &[MatchBindingPlan],
+    ) -> Result<(), FableError> {
+        let handle = usize::try_from(read_frame_word(frame, src)?).map_err(|_| {
+            FableError::MalformedProgram {
+                reason: "declared match scrutinee handle was negative",
+            }
+        })?;
+        let scrutinee =
+            self.value_store
+                .declared
+                .get(handle)
+                .ok_or(FableError::MalformedProgram {
+                    reason: "declared match scrutinee handle was missing",
+                })?;
+        let scrutinee_ptr = scrutinee.ptr();
+        for binding in bindings {
+            match *binding {
+                MatchBindingPlan::Scalar {
+                    local,
+                    offset,
+                    scalar,
+                } => {
+                    let ptr = unsafe { scrutinee_ptr.add(offset).cast_const() };
+                    let word = match local {
+                        LocalRef::Unit(_) => 0,
+                        LocalRef::Bool(_) => i64::from(unsafe { *ptr != 0 }),
+                        LocalRef::Char(_) => i64::from(u32::from_ne_bytes(read_ptr_array(ptr))),
+                        LocalRef::Signed(_) => i64::try_from(read_signed_scalar_from_ptr(
+                            scalar, ptr,
+                        )?)
+                        .map_err(|_| FableError::MalformedProgram {
+                            reason: "declared signed binding did not fit i64",
+                        })?,
+                        LocalRef::Unsigned(_) => i64::try_from(read_unsigned_scalar_from_ptr(
+                            scalar, ptr,
+                        )?)
+                        .map_err(|_| FableError::MalformedProgram {
+                            reason: "declared unsigned binding did not fit i64",
+                        })?,
+                        LocalRef::Float(_) => i64::from_ne_bytes(
+                            read_float_scalar_from_ptr(scalar, ptr)?.to_ne_bytes(),
+                        ),
+                        LocalRef::String(_) => usize::from_ne_bytes(read_ptr_array(ptr)) as i64,
+                        _ => return Err(local_kind_mismatch(scalar.name(), local)),
+                    };
+                    write_frame_word(frame, self.layout.local_slot(local), word)?;
+                }
+                MatchBindingPlan::Declared {
+                    local,
+                    offset,
+                    type_index,
+                    storage,
+                } => {
+                    let src = unsafe { scrutinee_ptr.add(offset).cast_const() };
+                    let value = self.copy_declared_from_storage(type_index, storage, src)?;
+                    let handle = self.store_declared_value(value);
+                    write_frame_word(frame, self.layout.local_slot(local), handle as i64)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn store_declared_value(&mut self, value: DeclaredOwnedValue) -> usize {
+        if let Some(index) = self
+            .value_store
+            .declared
+            .iter()
+            .position(|stored| stored.same_bytes(&value))
+        {
+            return index;
+        }
+        let index = self.value_store.declared.len();
+        self.value_store.declared.push(value);
+        index
+    }
+
+    fn copy_declared_from_storage(
+        &self,
+        type_index: usize,
+        storage: DeclaredFieldStorage,
+        src: *const u8,
+    ) -> Result<DeclaredOwnedValue, FableError> {
+        match storage {
+            DeclaredFieldStorage::Inline => {
+                let descriptor = self.declared_descriptor(type_index)?;
+                DeclaredOwnedValue::copy_from(type_index, descriptor, src)
+            }
+            DeclaredFieldStorage::Handle => {
+                let handle = usize::from_ne_bytes(read_ptr_array(src));
+                let stored =
+                    self.value_store
+                        .declared
+                        .get(handle)
+                        .ok_or(FableError::MalformedProgram {
+                            reason: "declared value handle was missing",
+                        })?;
+                if stored.type_index != type_index {
+                    return Err(FableError::MalformedProgram {
+                        reason: "declared value handle pointed at the wrong type",
+                    });
+                }
+                let descriptor = self.declared_descriptor(type_index)?;
+                DeclaredOwnedValue::copy_from(type_index, descriptor, stored.ptr().cast_const())
+            }
+        }
+    }
+
+    fn declared_descriptor(
+        &self,
+        type_index: usize,
+    ) -> Result<&FableDeclaredDescriptor, FableError> {
+        Ok(self
+            .declared_types
+            .by_index(type_index)
+            .ok_or(FableError::MalformedProgram {
+                reason: "declared type index was missing at runtime",
+            })?
+            .descriptor())
+    }
+
+    fn declared_type_name(&self, type_index: usize) -> Result<String, FableError> {
+        Ok(self
+            .declared_types
+            .by_index(type_index)
+            .ok_or(FableError::MalformedProgram {
+                reason: "declared type index was missing at runtime",
+            })?
+            .name()
+            .to_owned())
+    }
+
+    fn write_declared_tag(
+        &self,
+        base: *mut u8,
+        offset: usize,
+        width: usize,
+        selector: u64,
+    ) -> Result<(), FableError> {
+        let dst = unsafe { base.add(offset) };
+        match width {
+            0 => Ok(()),
+            1 => {
+                let value = u8::try_from(selector)
+                    .map_err(|_| number_out_of_range(ScalarType::U8, selector.to_string()))?;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 1) };
+                Ok(())
+            }
+            2 => {
+                let value = u16::try_from(selector)
+                    .map_err(|_| number_out_of_range(ScalarType::U16, selector.to_string()))?;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 2) };
+                Ok(())
+            }
+            4 => {
+                let value = u32::try_from(selector)
+                    .map_err(|_| number_out_of_range(ScalarType::U32, selector.to_string()))?;
+                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 4) };
+                Ok(())
+            }
+            8 => {
+                unsafe { copy_nonoverlapping(selector.to_ne_bytes().as_ptr(), dst, 8) };
+                Ok(())
+            }
+            _ => Err(FableError::MalformedProgram {
+                reason: "declared enum tag width was invalid",
+            }),
+        }
+    }
+
+    fn write_handle(&self, dst: *mut u8, handle: usize) {
+        unsafe {
+            copy_nonoverlapping(
+                handle.to_ne_bytes().as_ptr(),
+                dst,
+                core::mem::size_of::<usize>(),
+            )
+        };
+    }
+
+    fn eval_task_bool(&self, frame: &[u8], expr: &BoolExpr) -> Result<bool, FableError> {
+        match expr {
+            BoolExpr::Literal(value) => Ok(*value),
+            BoolExpr::Local(local) => {
+                Ok(read_frame_word(frame, self.layout.local_slot(*local))? != 0)
+            }
+            _ => Err(FableError::Unsupported {
+                feature: "declared bool initializer expression".into(),
+            }),
+        }
+    }
+
+    fn eval_task_char(&self, frame: &[u8], expr: &ExprPlan) -> Result<char, FableError> {
+        match expr {
+            ExprPlan::Char(CharExpr::Local(local)) => {
+                let raw = u32::try_from(read_frame_word(frame, self.layout.local_slot(*local))?)
+                    .map_err(|_| FableError::MalformedProgram {
+                        reason: "char local did not fit u32",
+                    })?;
+                char::from_u32(raw).ok_or(FableError::MalformedProgram {
+                    reason: "char local was invalid",
+                })
+            }
+            ExprPlan::String(StringExpr::Literal(value)) => expect_single_char(value.clone()),
+            _ => Err(FableError::Unsupported {
+                feature: "declared char initializer expression".into(),
+            }),
+        }
+    }
+
+    fn eval_task_number_i128(&self, frame: &[u8], expr: &NumberExpr) -> Result<i128, FableError> {
+        match expr {
+            NumberExpr::Signed(IntExpr::Literal(value)) => Ok(*value),
+            NumberExpr::Signed(IntExpr::Local(local)) => {
+                Ok(read_frame_word(frame, self.layout.local_slot(*local))?.into())
+            }
+            NumberExpr::Unsigned(expr) => {
+                let value =
+                    self.eval_task_number_u128(frame, &NumberExpr::Unsigned(expr.clone()))?;
+                i128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::I128, value.to_string()))
+            }
+            _ => Err(FableError::Unsupported {
+                feature: "declared signed initializer expression".into(),
+            }),
+        }
+    }
+
+    fn eval_task_number_u128(&self, frame: &[u8], expr: &NumberExpr) -> Result<u128, FableError> {
+        match expr {
+            NumberExpr::Unsigned(UIntExpr::Literal(value)) => Ok(*value),
+            NumberExpr::Unsigned(UIntExpr::Local(local)) => {
+                Ok(read_frame_word(frame, self.layout.local_slot(*local))? as u128)
+            }
+            NumberExpr::Signed(IntExpr::Literal(value)) => u128::try_from(*value)
+                .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string())),
+            NumberExpr::Signed(IntExpr::Local(local)) => {
+                let value = read_frame_word(frame, self.layout.local_slot(*local))?;
+                u128::try_from(value)
+                    .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string()))
+            }
+            _ => Err(FableError::Unsupported {
+                feature: "declared unsigned initializer expression".into(),
+            }),
+        }
+    }
+
+    fn eval_task_number_f64(&self, frame: &[u8], expr: &NumberExpr) -> Result<f64, FableError> {
+        match expr {
+            NumberExpr::Float(FloatExpr::Literal(value)) => Ok(*value),
+            NumberExpr::Float(FloatExpr::Local(local)) => Ok(f64::from_ne_bytes(
+                read_frame_word(frame, self.layout.local_slot(*local))?.to_ne_bytes(),
+            )),
+            NumberExpr::Signed(_) => Ok(self.eval_task_number_i128(frame, expr)? as f64),
+            NumberExpr::Unsigned(_) => Ok(self.eval_task_number_u128(frame, expr)? as f64),
+            _ => Err(FableError::Unsupported {
+                feature: "declared float initializer expression".into(),
+            }),
+        }
+    }
+}
+
+struct FableScalarTaskCompiler<'plan> {
+    lowered: &'plan FableLowered,
+    functions: &'plan FableFunctions,
+    layout: FableFrameLayout,
+    code: Vec<TaskOp>,
+    hosts: Vec<FableHostOp>,
+    next_temp: usize,
+}
+
+#[derive(Clone, Copy)]
+struct FableTaskValue {
+    slot: u32,
+}
+
+impl<'plan> FableScalarTaskCompiler<'plan> {
+    fn compile(
+        lowered: &'plan FableLowered,
+        functions: &'plan FableFunctions,
+        layout: FableFrameLayout,
+        result: Option<FableQueryType>,
+    ) -> Result<FableTaskPlan, FableError> {
+        let mut fns = Vec::with_capacity(functions.plans.len() + 1);
+        let mut root = Self::new(lowered, functions, layout, Vec::new());
+        root.compile_program(&lowered.program, result)?;
+        if result.is_none() {
+            root.code.push(TaskOp::Ret { src: 0, size: 0 });
+        }
+        let (root_fn, mut hosts) = root.finish();
+        fns.push(root_fn);
+
+        for function in &functions.plans {
+            let mut compiler = Self::new(lowered, functions, layout, hosts);
+            compiler.compile_program(&function.prefix, None)?;
+            let value = compiler.compile_expr(&function.result_expr, function.result)?;
+            compiler.code.push(TaskOp::Ret {
+                src: value.slot,
+                size: result_size(function.result),
+            });
+            let (function_fn, next_hosts) = compiler.finish();
+            hosts = next_hosts;
+            fns.push(function_fn);
+        }
+
+        Ok(FableTaskPlan {
+            program: TaskProgram { fns },
+            hosts: Rc::new(FableTaskHosts { ops: hosts }),
+            result,
+            layout,
+        })
+    }
+
+    fn new(
+        lowered: &'plan FableLowered,
+        functions: &'plan FableFunctions,
+        layout: FableFrameLayout,
+        hosts: Vec<FableHostOp>,
+    ) -> Self {
+        Self {
+            lowered,
+            functions,
+            layout,
+            code: Vec::new(),
+            hosts,
+            next_temp: layout.local_size,
+        }
+    }
+
+    fn finish(self) -> (TaskFn, Vec<FableHostOp>) {
+        let frame = weavy::mem::Layout {
+            size: self.next_temp.max(1),
+            align: 8,
+        };
+        (
+            TaskFn {
+                frame,
+                code: self.code,
+            },
+            self.hosts,
+        )
+    }
+
+    fn compile_program(
+        &mut self,
+        program: &[FableWeavyOp],
+        result: Option<FableQueryType>,
+    ) -> Result<(), FableError> {
+        for op in program {
+            let WeavyOp::Intrinsic(intrinsic) = op else {
+                return Err(FableError::Unsupported {
+                    feature: "native task non-intrinsic fable op".into(),
+                });
+            };
+            self.compile_intrinsic(intrinsic, result)?;
+        }
+        Ok(())
+    }
+
+    fn compile_intrinsic(
+        &mut self,
+        intrinsic: &FableIntrinsic,
+        result: Option<FableQueryType>,
+    ) -> Result<(), FableError> {
+        match intrinsic {
+            FableIntrinsic::Let { local, value } => {
+                if let LocalRef::Value { shape, .. } = *local {
+                    let value = expect_value_expr(value)?.clone();
+                    let slot = self.layout.local_slot(*local);
+                    self.emit_host(FableHostOp::EvalValue {
+                        dst: slot,
+                        shape,
+                        expr: value,
+                    })?;
+                    return Ok(());
+                }
+                if let LocalRef::Declared { type_index, .. } = *local {
+                    let value = self
+                        .compile_declared_value(expect_declared_value_expr(value)?, type_index)?;
+                    self.copy_slot(value, self.layout.local_slot(*local));
+                    return Ok(());
+                }
+                match query_type_for_local(*local).and_then(|ty| self.compile_expr(value, ty)) {
+                    Ok(value) => {
+                        self.copy_slot(value.slot, self.layout.local_slot(*local));
+                        Ok(())
+                    }
+                    Err(FableError::Unsupported { .. }) => self.emit_host(FableHostOp::Let {
+                        local: *local,
+                        value: value.clone(),
+                    }),
+                    Err(err) => Err(err),
+                }
+            }
+            FableIntrinsic::Eval(expr) => {
+                let ty = expr_query_type(expr)?;
+                match self.compile_expr(expr, ty) {
+                    Ok(_) => Ok(()),
+                    Err(FableError::Unsupported { .. }) => {
+                        self.emit_host(FableHostOp::EvalExpr { expr: expr.clone() })
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+            FableIntrinsic::Branch {
+                condition,
+                then_block,
+                else_block,
+            } => self.compile_branch(condition, *then_block, *else_block),
+            FableIntrinsic::Query(expr) => {
+                let expected = result.ok_or(FableError::MalformedProgram {
+                    reason: "query op compiled without result type",
+                })?;
+                let value = self.compile_expr(expr, expected)?;
+                self.code.push(TaskOp::Ret {
+                    src: value.slot,
+                    size: result_size(expected),
+                });
+                Ok(())
+            }
+            FableIntrinsic::Predicate(expr) => {
+                let value = self.compile_bool(expr)?;
+                self.code.push(TaskOp::Ret {
+                    src: value.slot,
+                    size: 8,
+                });
+                Ok(())
+            }
+            FableIntrinsic::Assign { target, value } => self.emit_host(FableHostOp::Assign {
+                target: target.clone(),
+                value: value.clone(),
+            }),
+        }
+    }
+
+    fn compile_branch(
+        &mut self,
+        condition: &BoolExpr,
+        then_block: BlockRef,
+        else_block: Option<BlockRef>,
+    ) -> Result<(), FableError> {
+        let condition = self.compile_bool(condition)?;
         let jump_to_else = self.code.len();
         self.code.push(TaskOp::JumpIfZero {
             value: condition.slot,
             target: 0,
         });
-        let then_value = self.compile_block_value(&if_stmt.then, expected)?;
-        self.copy_slot(then_value.slot, expected, out);
+        let then_program = self.block_program(then_block)?;
+        self.compile_program(&then_program, None)?;
         let jump_to_end = self.code.len();
         self.code.push(TaskOp::Jump { target: 0 });
         let else_start = self.code.len();
         self.patch_jump(jump_to_else, else_start)?;
-        let else_value = self.compile_else_value(&if_stmt.else_clause, expected)?;
-        self.copy_slot(else_value.slot, expected, out);
+        if let Some(block) = else_block {
+            let else_program = self.block_program(block)?;
+            self.compile_program(&else_program, None)?;
+        }
         let end = self.code.len();
-        self.patch_jump(jump_to_end, end)?;
-        Ok(TaskValue {
-            ty: expected,
-            slot: out,
-        })
+        self.patch_jump(jump_to_end, end)
     }
 
-    fn compile_else_value(
+    fn block_program(&self, block: BlockRef) -> Result<FableProgram, FableError> {
+        self.lowered
+            .blocks
+            .get(block.index())
+            .cloned()
+            .ok_or(FableError::MissingBlock { block })
+    }
+
+    fn compile_expr(
         &mut self,
-        else_clause: &Option<ElseClause>,
-        expected: TaskType,
-    ) -> Result<TaskValue, FableError> {
-        let Some(else_clause) = else_clause else {
-            return Err(FableError::Unsupported {
-                feature: "value-producing if without else".into(),
-            });
-        };
-        if let Some(if_stmt) = &else_clause.if_stmt {
-            self.compile_if_value(if_stmt, expected)
-        } else if let Some(block) = &else_clause.block {
-            self.compile_block_value(block, expected)
-        } else {
-            Err(FableError::MalformedSyntax {
-                reason: "else clause without body",
-            })
+        expr: &ExprPlan,
+        expected: FableQueryType,
+    ) -> Result<FableTaskValue, FableError> {
+        if let ExprPlan::If(expr) = expr {
+            return self.compile_if_expr(expr, expected);
+        }
+        if let ExprPlan::Match(expr) = expr {
+            return self.compile_match_expr(expr, expected);
+        }
+        match expected {
+            FableQueryType::Unit => self.compile_unit(expect_unit_expr(expr)?),
+            FableQueryType::Bool => self.compile_bool(expect_bool_expr(expr)?),
+            FableQueryType::Char => self.compile_char(expr),
+            FableQueryType::String => match expr {
+                ExprPlan::String(expr) => self.compile_string(expr),
+                other => Err(FableError::TypeMismatch {
+                    expected: "string".into(),
+                    actual: other.kind_name(),
+                }),
+            },
+            FableQueryType::Signed => {
+                let slot = self.compile_i64(expect_number_expr(expr)?)?;
+                Ok(FableTaskValue { slot })
+            }
+            FableQueryType::Unsigned => {
+                let slot = self.compile_u64(expect_number_expr(expr)?)?;
+                Ok(FableTaskValue { slot })
+            }
+            FableQueryType::Float => {
+                let slot = self.compile_f64(expect_number_expr(expr)?)?;
+                Ok(FableTaskValue { slot })
+            }
         }
     }
 
-    fn compile_expr(&mut self, expr: &Expr) -> Result<TaskValue, FableError> {
+    fn compile_if_expr(
+        &mut self,
+        expr: &IfExprPlan,
+        expected: FableQueryType,
+    ) -> Result<FableTaskValue, FableError> {
+        if expr.result_kind != expected {
+            return Err(FableError::TypeMismatch {
+                expected: expected.name().to_owned(),
+                actual: expr.result_kind.name(),
+            });
+        }
+        let condition = self.compile_bool(&expr.condition)?;
+        let out = self.alloc_temp();
+        let jump_to_else = self.code.len();
+        self.code.push(TaskOp::JumpIfZero {
+            value: condition.slot,
+            target: 0,
+        });
+        self.compile_program(&expr.then_result.prefix, None)?;
+        let then_value = self.compile_expr(&expr.then_result.result, expected)?;
+        self.copy_slot(then_value.slot, out);
+        let jump_to_end = self.code.len();
+        self.code.push(TaskOp::Jump { target: 0 });
+        let else_start = self.code.len();
+        self.patch_jump(jump_to_else, else_start)?;
+        self.compile_program(&expr.else_result.prefix, None)?;
+        let else_value = self.compile_expr(&expr.else_result.result, expected)?;
+        self.copy_slot(else_value.slot, out);
+        let end = self.code.len();
+        self.patch_jump(jump_to_end, end)?;
+        Ok(FableTaskValue { slot: out })
+    }
+
+    fn compile_match_expr(
+        &mut self,
+        expr: &MatchExprPlan,
+        expected: FableQueryType,
+    ) -> Result<FableTaskValue, FableError> {
         match expr {
-            Expr::Literal(literal) => self.compile_literal(literal),
-            Expr::Var(var) => {
-                let name = name_text(&var.name);
-                self.locals
-                    .get(name)
-                    .copied()
-                    .ok_or_else(|| FableError::ExpectedRoot {
-                        found: name.to_owned(),
-                    })
+            MatchExprPlan::Facet(expr) => self.compile_facet_match_expr(expr, expected),
+            MatchExprPlan::Declared(expr) => self.compile_declared_match_expr(expr, expected),
+        }
+    }
+
+    fn compile_declared_match_expr(
+        &mut self,
+        expr: &DeclaredMatchExprPlan,
+        expected: FableQueryType,
+    ) -> Result<FableTaskValue, FableError> {
+        if expr.result_kind != expected {
+            return Err(FableError::TypeMismatch {
+                expected: expected.name().to_owned(),
+                actual: expr.result_kind.name(),
+            });
+        }
+        let scrutinee = self.compile_declared_value(&expr.scrutinee, expr.enum_type_index)?;
+        let tag = self.alloc_temp();
+        self.emit_host(FableHostOp::ReadDeclaredTag {
+            dst: tag,
+            src: scrutinee,
+            type_index: expr.enum_type_index,
+        })?;
+        let out = self.alloc_temp();
+        let mut end_jumps = Vec::new();
+        let mut wildcard = None;
+        for arm in expr.arms.iter() {
+            let Some(selector) = arm.selector else {
+                wildcard = Some(arm);
+                continue;
+            };
+            let expected_tag = self.const_i64(i64::try_from(selector).map_err(|_| {
+                FableError::MalformedProgram {
+                    reason: "declared selector did not fit i64",
+                }
+            })?);
+            let matches = self.alloc_temp();
+            self.code.push(TaskOp::EqI64 {
+                dst: matches,
+                a: tag,
+                b: expected_tag,
+            });
+            let jump_to_next = self.code.len();
+            self.code.push(TaskOp::JumpIfZero {
+                value: matches,
+                target: 0,
+            });
+            self.emit_host(FableHostOp::BindDeclared {
+                src: scrutinee,
+                bindings: arm.bindings.clone(),
+            })?;
+            self.compile_program(&arm.prefix, None)?;
+            let value = self.compile_expr(&arm.result, expected)?;
+            self.copy_slot(value.slot, out);
+            end_jumps.push(self.code.len());
+            self.code.push(TaskOp::Jump { target: 0 });
+            let next = self.code.len();
+            self.patch_jump(jump_to_next, next)?;
+        }
+        if let Some(arm) = wildcard {
+            self.compile_program(&arm.prefix, None)?;
+            let value = self.compile_expr(&arm.result, expected)?;
+            self.copy_slot(value.slot, out);
+        }
+        let end = self.code.len();
+        for jump in end_jumps {
+            self.patch_jump(jump, end)?;
+        }
+        Ok(FableTaskValue { slot: out })
+    }
+
+    fn compile_facet_match_expr(
+        &mut self,
+        expr: &FacetMatchExprPlan,
+        expected: FableQueryType,
+    ) -> Result<FableTaskValue, FableError> {
+        if expr.result_kind != expected {
+            return Err(FableError::TypeMismatch {
+                expected: expected.name().to_owned(),
+                actual: expr.result_kind.name(),
+            });
+        }
+        let scrutinee = self.compile_value_expr(&expr.scrutinee)?;
+        let tag = self.alloc_temp();
+        self.emit_host(FableHostOp::ReadFacetTag {
+            dst: tag,
+            src: scrutinee,
+            shape: expr.enum_shape,
+        })?;
+        let out = self.alloc_temp();
+        let mut end_jumps = Vec::new();
+        let mut wildcard = None;
+        for arm in expr.arms.iter() {
+            let Some(variant_index) = arm.variant_index else {
+                wildcard = Some(arm);
+                continue;
+            };
+            let expected_tag = self.const_i64(i64::try_from(variant_index).map_err(|_| {
+                FableError::MalformedProgram {
+                    reason: "facet variant index did not fit i64",
+                }
+            })?);
+            let matches = self.alloc_temp();
+            self.code.push(TaskOp::EqI64 {
+                dst: matches,
+                a: tag,
+                b: expected_tag,
+            });
+            let jump_to_next = self.code.len();
+            self.code.push(TaskOp::JumpIfZero {
+                value: matches,
+                target: 0,
+            });
+            self.emit_host(FableHostOp::BindFacet {
+                src: scrutinee,
+                shape: expr.enum_shape,
+                variant_index,
+                bindings: arm.bindings.clone(),
+            })?;
+            self.compile_program(&arm.prefix, None)?;
+            let value = self.compile_expr(&arm.result, expected)?;
+            self.copy_slot(value.slot, out);
+            end_jumps.push(self.code.len());
+            self.code.push(TaskOp::Jump { target: 0 });
+            let next = self.code.len();
+            self.patch_jump(jump_to_next, next)?;
+        }
+        if let Some(arm) = wildcard {
+            self.compile_program(&arm.prefix, None)?;
+            let value = self.compile_expr(&arm.result, expected)?;
+            self.copy_slot(value.slot, out);
+        }
+        let end = self.code.len();
+        for jump in end_jumps {
+            self.patch_jump(jump, end)?;
+        }
+        Ok(FableTaskValue { slot: out })
+    }
+
+    fn compile_value_expr(&mut self, expr: &ValueExpr) -> Result<u32, FableError> {
+        match expr {
+            ValueExpr::Read(path) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadValuePath {
+                    dst: slot,
+                    path: path.clone(),
+                })?;
+                Ok(slot)
             }
-            Expr::Paren(paren) => self.compile_expr(&paren.expr),
-            Expr::Unary(unary) => self.compile_unary(unary),
-            Expr::Binary(binary) => self.compile_binary(binary),
-            Expr::Call(call) => self.compile_call(call),
-            Expr::Field(_)
-            | Expr::Index(_)
-            | Expr::StructLiteral(_)
-            | Expr::EnumVariant(_)
-            | Expr::Match(_) => Err(FableError::Unsupported {
-                feature: "task function expression".into(),
+            ValueExpr::Local(local @ LocalRef::BorrowedValue { .. }) => {
+                Ok(self.layout.local_slot(*local))
+            }
+            _ => Err(FableError::Unsupported {
+                feature: "native task value expression".into(),
             }),
         }
     }
 
-    fn compile_literal(&mut self, literal: &Literal) -> Result<TaskValue, FableError> {
-        let (ty, value) = match literal {
-            Literal::True(_) => (TaskType::Bool, 1),
-            Literal::False(_) => (TaskType::Bool, 0),
-            Literal::Int(text) => (
-                TaskType::I64,
-                text.value
-                    .parse::<i64>()
-                    .map_err(|_| FableError::InvalidLiteral {
-                        literal: text.value.clone(),
-                        reason: "integer literal is out of range",
-                    })?,
-            ),
-            Literal::Null(_) | Literal::Float(_) | Literal::Str(_) => {
+    fn compile_declared_value(
+        &mut self,
+        expr: &DeclaredValueExpr,
+        type_index: usize,
+    ) -> Result<u32, FableError> {
+        let slot = self.alloc_temp();
+        self.emit_host(FableHostOp::EvalDeclared {
+            dst: slot,
+            type_index,
+            expr: expr.clone(),
+        })?;
+        Ok(slot)
+    }
+
+    fn compile_unit(&mut self, expr: &UnitExpr) -> Result<FableTaskValue, FableError> {
+        match expr {
+            UnitExpr::Null => {
+                let slot = self.const_i64(0);
+                Ok(FableTaskValue { slot })
+            }
+            UnitExpr::Local(local) => Ok(FableTaskValue {
+                slot: self.layout.local_slot(*local),
+            }),
+            UnitExpr::FunctionCall(call) => self.compile_call(call),
+            UnitExpr::Read(path) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadPath {
+                    dst: slot,
+                    path: path.clone(),
+                    kind: FableHostSlotKind::Unit,
+                })?;
+                Ok(FableTaskValue { slot })
+            }
+            UnitExpr::DeclaredRead(read) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadDeclaredScalar {
+                    dst: slot,
+                    read: *read,
+                    kind: FableHostSlotKind::Unit,
+                })?;
+                Ok(FableTaskValue { slot })
+            }
+            _ => Err(FableError::Unsupported {
+                feature: "native task unit expression".into(),
+            }),
+        }
+    }
+
+    fn compile_bool(&mut self, expr: &BoolExpr) -> Result<FableTaskValue, FableError> {
+        let slot = match expr {
+            BoolExpr::Literal(value) => self.const_i64(i64::from(*value)),
+            BoolExpr::Read(path) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadPath {
+                    dst: slot,
+                    path: path.clone(),
+                    kind: FableHostSlotKind::Bool,
+                })?;
+                slot
+            }
+            BoolExpr::DeclaredRead(read) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadDeclaredScalar {
+                    dst: slot,
+                    read: *read,
+                    kind: FableHostSlotKind::Bool,
+                })?;
+                slot
+            }
+            BoolExpr::Local(local) => self.layout.local_slot(*local),
+            BoolExpr::FunctionCall(call) => return self.compile_call(call),
+            BoolExpr::Not(expr) => {
+                let value = self.compile_bool(expr)?;
+                let zero = self.const_i64(0);
+                let slot = self.alloc_temp();
+                self.code.push(TaskOp::EqI64 {
+                    dst: slot,
+                    a: value.slot,
+                    b: zero,
+                });
+                slot
+            }
+            BoolExpr::And(lhs, rhs) => {
+                let lhs = self.compile_bool(lhs)?;
+                let rhs = self.compile_bool(rhs)?;
+                let slot = self.alloc_temp();
+                self.code.push(TaskOp::MulI64 {
+                    dst: slot,
+                    a: lhs.slot,
+                    b: rhs.slot,
+                });
+                slot
+            }
+            BoolExpr::Or(lhs, rhs) => {
+                let lhs = self.compile_bool(lhs)?;
+                let rhs = self.compile_bool(rhs)?;
+                let sum = self.alloc_temp();
+                self.code.push(TaskOp::AddI64 {
+                    dst: sum,
+                    a: lhs.slot,
+                    b: rhs.slot,
+                });
+                let zero = self.const_i64(0);
+                let slot = self.alloc_temp();
+                self.code.push(TaskOp::NeI64 {
+                    dst: slot,
+                    a: sum,
+                    b: zero,
+                });
+                slot
+            }
+            BoolExpr::Eq(lhs, rhs) => self.compile_eq(lhs, rhs, true)?,
+            BoolExpr::Neq(lhs, rhs) => self.compile_eq(lhs, rhs, false)?,
+            BoolExpr::Cmp { op, lhs, rhs } => {
+                let lhs = self.compile_i64(lhs)?;
+                let rhs = self.compile_i64(rhs)?;
+                let slot = self.alloc_temp();
+                let op = match op {
+                    CmpOp::Lt => TaskOp::LtI64 {
+                        dst: slot,
+                        a: lhs,
+                        b: rhs,
+                    },
+                    CmpOp::Gt => TaskOp::GtI64 {
+                        dst: slot,
+                        a: lhs,
+                        b: rhs,
+                    },
+                    CmpOp::Le => TaskOp::LeI64 {
+                        dst: slot,
+                        a: lhs,
+                        b: rhs,
+                    },
+                    CmpOp::Ge => TaskOp::GeI64 {
+                        dst: slot,
+                        a: lhs,
+                        b: rhs,
+                    },
+                };
+                self.code.push(op);
+                slot
+            }
+            BoolExpr::HostFieldPredicate { .. }
+            | BoolExpr::HostStringPredicate { .. }
+            | BoolExpr::StringContains { .. }
+            | BoolExpr::StringStartsWith { .. }
+            | BoolExpr::StringEndsWith { .. } => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::EvalBool {
+                    dst: slot,
+                    expr: expr.clone(),
+                })?;
+                slot
+            }
+        };
+        Ok(FableTaskValue { slot })
+    }
+
+    fn compile_char(&mut self, expr: &ExprPlan) -> Result<FableTaskValue, FableError> {
+        let slot = match expr {
+            ExprPlan::Char(CharExpr::Read(path)) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadPath {
+                    dst: slot,
+                    path: path.clone(),
+                    kind: FableHostSlotKind::Char,
+                })?;
+                slot
+            }
+            ExprPlan::Char(CharExpr::DeclaredRead(read)) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadDeclaredScalar {
+                    dst: slot,
+                    read: *read,
+                    kind: FableHostSlotKind::Char,
+                })?;
+                slot
+            }
+            ExprPlan::Char(CharExpr::Local(local)) => self.layout.local_slot(*local),
+            ExprPlan::Char(CharExpr::FunctionCall(call)) => return self.compile_call(call),
+            _ => {
                 return Err(FableError::Unsupported {
-                    feature: "task function literal".into(),
+                    feature: "native task char expression".into(),
                 });
             }
         };
-        let slot = self.alloc_slot(ty);
-        self.code.push(TaskOp::ConstI64 { dst: slot, value });
-        Ok(TaskValue { ty, slot })
+        Ok(FableTaskValue { slot })
     }
 
-    fn compile_unary(&mut self, unary: &UnaryExpr) -> Result<TaskValue, FableError> {
-        let operand = self.compile_expr(&unary.operand)?;
-        match unary_op(unary)? {
-            UnaryOp::Not => {
-                self.expect_type(TaskType::Bool, operand)?;
-                let zero = self.const_i64(0);
-                let slot = self.alloc_slot(TaskType::Bool);
-                self.code.push(TaskOp::EqI64 {
+    fn compile_string(&mut self, expr: &StringExpr) -> Result<FableTaskValue, FableError> {
+        let slot = match expr {
+            StringExpr::Literal(value) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::InternString {
                     dst: slot,
-                    a: operand.slot,
-                    b: zero,
-                });
-                Ok(TaskValue {
-                    ty: TaskType::Bool,
-                    slot,
-                })
+                    value: value.clone(),
+                })?;
+                slot
             }
-            UnaryOp::Neg => {
-                self.expect_type(TaskType::I64, operand)?;
+            StringExpr::Read(path) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadPath {
+                    dst: slot,
+                    path: path.clone(),
+                    kind: FableHostSlotKind::String,
+                })?;
+                slot
+            }
+            StringExpr::DeclaredRead(read) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadDeclaredScalar {
+                    dst: slot,
+                    read: *read,
+                    kind: FableHostSlotKind::String,
+                })?;
+                slot
+            }
+            StringExpr::Local(local) => self.layout.local_slot(*local),
+            StringExpr::FunctionCall(call) => return self.compile_call(call),
+            StringExpr::HostUnary { .. } | StringExpr::Trim(_) | StringExpr::Add(_, _) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::EvalString {
+                    dst: slot,
+                    expr: expr.clone(),
+                })?;
+                slot
+            }
+            StringExpr::HostFieldString { .. } => {
+                return Err(FableError::Unsupported {
+                    feature: "native task string expression".into(),
+                });
+            }
+        };
+        Ok(FableTaskValue { slot })
+    }
+
+    fn compile_i64(&mut self, expr: &NumberExpr) -> Result<u32, FableError> {
+        match expr {
+            NumberExpr::Signed(expr) => self.compile_signed(expr),
+            NumberExpr::Unsigned(expr) => self.compile_unsigned(expr),
+            NumberExpr::Float(_) => Err(FableError::TypeMismatch {
+                expected: "integer".into(),
+                actual: "float",
+            }),
+        }
+    }
+
+    fn compile_u64(&mut self, expr: &NumberExpr) -> Result<u32, FableError> {
+        match expr {
+            NumberExpr::Unsigned(expr) => self.compile_unsigned(expr),
+            NumberExpr::Signed(expr) => self.compile_signed(expr),
+            NumberExpr::Float(_) => Err(FableError::TypeMismatch {
+                expected: "unsigned integer".into(),
+                actual: "float",
+            }),
+        }
+    }
+
+    fn compile_signed(&mut self, expr: &IntExpr) -> Result<u32, FableError> {
+        match expr {
+            IntExpr::Literal(value) => {
+                let value = i64::try_from(*value)
+                    .map_err(|_| number_out_of_range(ScalarType::I64, value.to_string()))?;
+                Ok(self.const_i64(value))
+            }
+            IntExpr::Read(path) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadPath {
+                    dst: slot,
+                    path: path.clone(),
+                    kind: FableHostSlotKind::Signed,
+                })?;
+                Ok(slot)
+            }
+            IntExpr::DeclaredRead(read) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadDeclaredScalar {
+                    dst: slot,
+                    read: *read,
+                    kind: FableHostSlotKind::Signed,
+                })?;
+                Ok(slot)
+            }
+            IntExpr::Local(local) => Ok(self.layout.local_slot(*local)),
+            IntExpr::FunctionCall(call) => Ok(self.compile_call(call)?.slot),
+            IntExpr::Neg(expr) => {
+                let value = self.compile_i64(expr)?;
                 let zero = self.const_i64(0);
-                let slot = self.alloc_slot(TaskType::I64);
+                let slot = self.alloc_temp();
                 self.code.push(TaskOp::SubI64 {
                     dst: slot,
                     a: zero,
-                    b: operand.slot,
+                    b: value,
                 });
-                Ok(TaskValue {
-                    ty: TaskType::I64,
-                    slot,
-                })
+                Ok(slot)
             }
-        }
-    }
-
-    fn compile_binary(&mut self, binary: &BinaryExpr) -> Result<TaskValue, FableError> {
-        let lhs = self.compile_expr(&binary.lhs)?;
-        let rhs = self.compile_expr(&binary.rhs)?;
-        match binary_op(binary)? {
-            BinaryOp::Add | BinaryOp::Sub => {
-                self.expect_type(TaskType::I64, lhs)?;
-                self.expect_type(TaskType::I64, rhs)?;
-                let slot = self.alloc_slot(TaskType::I64);
-                let op = match binary_op(binary)? {
-                    BinaryOp::Add => TaskOp::AddI64 {
-                        dst: slot,
-                        a: lhs.slot,
-                        b: rhs.slot,
-                    },
-                    BinaryOp::Sub => TaskOp::SubI64 {
-                        dst: slot,
-                        a: lhs.slot,
-                        b: rhs.slot,
-                    },
-                    _ => unreachable!(),
-                };
-                self.code.push(op);
-                Ok(TaskValue {
-                    ty: TaskType::I64,
-                    slot,
-                })
-            }
-            BinaryOp::Eq
-            | BinaryOp::Neq
-            | BinaryOp::Lt
-            | BinaryOp::Gt
-            | BinaryOp::Le
-            | BinaryOp::Ge => {
-                if lhs.ty != rhs.ty {
-                    return Err(FableError::TypeMismatch {
-                        expected: lhs.ty.name().to_owned(),
-                        actual: rhs.ty.name(),
-                    });
-                }
-                let slot = self.alloc_slot(TaskType::Bool);
-                let op = match binary_op(binary)? {
-                    BinaryOp::Eq => TaskOp::EqI64 {
-                        dst: slot,
-                        a: lhs.slot,
-                        b: rhs.slot,
-                    },
-                    BinaryOp::Neq => TaskOp::NeI64 {
-                        dst: slot,
-                        a: lhs.slot,
-                        b: rhs.slot,
-                    },
-                    BinaryOp::Lt => TaskOp::LtI64 {
-                        dst: slot,
-                        a: lhs.slot,
-                        b: rhs.slot,
-                    },
-                    BinaryOp::Gt => TaskOp::GtI64 {
-                        dst: slot,
-                        a: lhs.slot,
-                        b: rhs.slot,
-                    },
-                    BinaryOp::Le => TaskOp::LeI64 {
-                        dst: slot,
-                        a: lhs.slot,
-                        b: rhs.slot,
-                    },
-                    BinaryOp::Ge => TaskOp::GeI64 {
-                        dst: slot,
-                        a: lhs.slot,
-                        b: rhs.slot,
-                    },
-                    _ => unreachable!(),
-                };
-                self.code.push(op);
-                Ok(TaskValue {
-                    ty: TaskType::Bool,
-                    slot,
-                })
-            }
-            BinaryOp::And | BinaryOp::Or => {
-                self.expect_type(TaskType::Bool, lhs)?;
-                self.expect_type(TaskType::Bool, rhs)?;
-                let slot = self.alloc_slot(TaskType::Bool);
-                match binary_op(binary)? {
-                    BinaryOp::And => self.code.push(TaskOp::MulI64 {
-                        dst: slot,
-                        a: lhs.slot,
-                        b: rhs.slot,
-                    }),
-                    BinaryOp::Or => {
-                        let sum = self.alloc_slot(TaskType::I64);
-                        self.code.push(TaskOp::AddI64 {
-                            dst: sum,
-                            a: lhs.slot,
-                            b: rhs.slot,
-                        });
-                        let zero = self.const_i64(0);
-                        self.code.push(TaskOp::NeI64 {
-                            dst: slot,
-                            a: sum,
-                            b: zero,
-                        });
-                    }
-                    _ => unreachable!(),
-                }
-                Ok(TaskValue {
-                    ty: TaskType::Bool,
-                    slot,
-                })
-            }
-        }
-    }
-
-    fn compile_call(&mut self, call: &CallExpr) -> Result<TaskValue, FableError> {
-        let name = call_callee_name(&call.callee)?;
-        let signature = self
-            .signatures
-            .get(name.as_str())
-            .ok_or_else(|| FableError::Unsupported {
-                feature: format!("task function call to {name}"),
-            })?
-            .clone();
-        if signature.params.len() != call.args.args.len() {
-            return Err(FableError::Unsupported {
-                feature: format!("{} argument count", name),
-            });
-        }
-        let mut copies = Vec::with_capacity(signature.params.len());
-        for (arg, expected) in call.args.args.iter().zip(&signature.params) {
-            let value = self.compile_expr(&arg.expr)?;
-            self.expect_type(*expected, value)?;
-            let dst =
-                u32::try_from(copies.len() * 8).map_err(|_| FableError::MalformedProgram {
-                    reason: "argument offset overflow",
-                })?;
-            copies.push(weavy::task::ArgCopy {
-                src: value.slot,
-                dst,
-                size: 8,
-            });
-        }
-        let slot = self.alloc_slot(signature.result);
-        self.code.push(TaskOp::Call {
-            callee: signature.fn_id,
-            args: copies,
-            ret: slot,
-        });
-        Ok(TaskValue {
-            ty: signature.result,
-            slot,
-        })
-    }
-
-    fn copy_slot(&mut self, src: u32, ty: TaskType, dst: u32) {
-        let zero = self.const_i64(0);
-        match ty {
-            TaskType::I64 | TaskType::Bool => self.code.push(TaskOp::AddI64 {
-                dst,
-                a: src,
-                b: zero,
+            IntExpr::Add(lhs, rhs) => self.compile_i64_binary(lhs, rhs, TaskIntOp::Add),
+            IntExpr::Sub(lhs, rhs) => self.compile_i64_binary(lhs, rhs, TaskIntOp::Sub),
+            _ => Err(FableError::Unsupported {
+                feature: "native task signed expression".into(),
             }),
         }
     }
 
+    fn compile_unsigned(&mut self, expr: &UIntExpr) -> Result<u32, FableError> {
+        match expr {
+            UIntExpr::Literal(value) => {
+                let value = i64::try_from(*value)
+                    .map_err(|_| number_out_of_range(ScalarType::I64, value.to_string()))?;
+                Ok(self.const_i64(value))
+            }
+            UIntExpr::Read(path) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadPath {
+                    dst: slot,
+                    path: path.clone(),
+                    kind: FableHostSlotKind::Unsigned,
+                })?;
+                Ok(slot)
+            }
+            UIntExpr::DeclaredRead(read) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadDeclaredScalar {
+                    dst: slot,
+                    read: *read,
+                    kind: FableHostSlotKind::Unsigned,
+                })?;
+                Ok(slot)
+            }
+            UIntExpr::Local(local) => Ok(self.layout.local_slot(*local)),
+            UIntExpr::FunctionCall(call) => Ok(self.compile_call(call)?.slot),
+            UIntExpr::PathLen(path) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadPathLen {
+                    dst: slot,
+                    path: path.clone(),
+                })?;
+                Ok(slot)
+            }
+            UIntExpr::Add(lhs, rhs) => {
+                let lhs = self.compile_unsigned(lhs)?;
+                let rhs = self.compile_unsigned(rhs)?;
+                let slot = self.alloc_temp();
+                self.code.push(TaskOp::AddI64 {
+                    dst: slot,
+                    a: lhs,
+                    b: rhs,
+                });
+                Ok(slot)
+            }
+            _ => Err(FableError::Unsupported {
+                feature: "native task unsigned expression".into(),
+            }),
+        }
+    }
+
+    fn compile_f64(&mut self, expr: &NumberExpr) -> Result<u32, FableError> {
+        match expr {
+            NumberExpr::Float(FloatExpr::Literal(value)) => {
+                let slot = self.alloc_temp();
+                self.code.push(TaskOp::ConstF64 {
+                    dst: slot,
+                    bits: value.to_bits(),
+                });
+                Ok(slot)
+            }
+            NumberExpr::Float(FloatExpr::Read(path)) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadPath {
+                    dst: slot,
+                    path: path.clone(),
+                    kind: FableHostSlotKind::Float,
+                })?;
+                Ok(slot)
+            }
+            NumberExpr::Float(FloatExpr::DeclaredRead(read)) => {
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ReadDeclaredScalar {
+                    dst: slot,
+                    read: *read,
+                    kind: FableHostSlotKind::Float,
+                })?;
+                Ok(slot)
+            }
+            NumberExpr::Float(FloatExpr::Local(local)) => Ok(self.layout.local_slot(*local)),
+            NumberExpr::Float(FloatExpr::FunctionCall(call)) => Ok(self.compile_call(call)?.slot),
+            NumberExpr::Float(FloatExpr::Neg(expr)) => {
+                let value = self.compile_f64(expr)?;
+                let minus_one = self.const_f64(-1.0);
+                let slot = self.alloc_temp();
+                self.code.push(TaskOp::MulF64 {
+                    dst: slot,
+                    a: value,
+                    b: minus_one,
+                });
+                Ok(slot)
+            }
+            NumberExpr::Float(FloatExpr::Add(lhs, rhs)) => self.compile_f64_binary(lhs, rhs, true),
+            NumberExpr::Float(FloatExpr::Sub(_, _)) => Err(FableError::Unsupported {
+                feature: "native task float subtraction".into(),
+            }),
+            NumberExpr::Signed(expr) => self.compile_signed(expr),
+            NumberExpr::Unsigned(expr) => self.compile_unsigned(expr),
+            _ => Err(FableError::Unsupported {
+                feature: "native task float expression".into(),
+            }),
+        }
+    }
+
+    fn compile_i64_binary(
+        &mut self,
+        lhs: &NumberExpr,
+        rhs: &NumberExpr,
+        op: TaskIntOp,
+    ) -> Result<u32, FableError> {
+        let lhs = self.compile_i64(lhs)?;
+        let rhs = self.compile_i64(rhs)?;
+        let slot = self.alloc_temp();
+        match op {
+            TaskIntOp::Add => self.code.push(TaskOp::AddI64 {
+                dst: slot,
+                a: lhs,
+                b: rhs,
+            }),
+            TaskIntOp::Sub => self.code.push(TaskOp::SubI64 {
+                dst: slot,
+                a: lhs,
+                b: rhs,
+            }),
+        }
+        Ok(slot)
+    }
+
+    fn compile_f64_binary(
+        &mut self,
+        lhs: &NumberExpr,
+        rhs: &NumberExpr,
+        add: bool,
+    ) -> Result<u32, FableError> {
+        let lhs = self.compile_f64(lhs)?;
+        let rhs = self.compile_f64(rhs)?;
+        let slot = self.alloc_temp();
+        debug_assert!(add);
+        self.code.push(TaskOp::AddF64 {
+            dst: slot,
+            a: lhs,
+            b: rhs,
+        });
+        Ok(slot)
+    }
+
+    fn compile_eq(
+        &mut self,
+        lhs: &ExprPlan,
+        rhs: &ExprPlan,
+        equal: bool,
+    ) -> Result<u32, FableError> {
+        let ty = expr_query_type(lhs)?;
+        if expr_query_type(rhs)? != ty {
+            return Err(FableError::TypeMismatch {
+                expected: ty.name().to_owned(),
+                actual: rhs.kind_name(),
+            });
+        }
+        let lhs = self.compile_expr(lhs, ty)?;
+        let rhs = self.compile_expr(rhs, ty)?;
+        let slot = self.alloc_temp();
+        if equal {
+            self.code.push(TaskOp::EqI64 {
+                dst: slot,
+                a: lhs.slot,
+                b: rhs.slot,
+            });
+        } else {
+            self.code.push(TaskOp::NeI64 {
+                dst: slot,
+                a: lhs.slot,
+                b: rhs.slot,
+            });
+        }
+        Ok(slot)
+    }
+
+    fn compile_call(&mut self, call: &FunctionCallExpr) -> Result<FableTaskValue, FableError> {
+        let function = self.functions.get(call.function)?;
+        if call.result != function.result {
+            return Err(FableError::MalformedProgram {
+                reason: "function call result type did not match function plan",
+            });
+        }
+        if call.args.len() != function.params.len() {
+            return Err(FableError::MalformedProgram {
+                reason: "function call argument count did not match function plan",
+            });
+        }
+        let mut args = Vec::with_capacity(call.args.len());
+        for (arg, (local, expected)) in call.args.iter().zip(function.params.iter()) {
+            if arg.expected != *expected {
+                return Err(FableError::MalformedProgram {
+                    reason: "function call argument type did not match function plan",
+                });
+            }
+            let value = self.compile_expr(&arg.expr, *expected)?;
+            args.push(weavy::task::ArgCopy {
+                src: value.slot,
+                dst: self.layout.local_slot(*local),
+                size: result_size(*expected),
+            });
+        }
+        let slot = self.alloc_temp();
+        self.code.push(TaskOp::Call {
+            callee: TaskFnId(u32::try_from(call.function + 1).map_err(|_| {
+                FableError::MalformedProgram {
+                    reason: "function index overflowed task fn id",
+                }
+            })?),
+            args,
+            ret: slot,
+        });
+        Ok(FableTaskValue { slot })
+    }
+
+    fn copy_slot(&mut self, src: u32, dst: u32) {
+        let zero = self.const_i64(0);
+        self.code.push(TaskOp::AddI64 {
+            dst,
+            a: src,
+            b: zero,
+        });
+    }
+
     fn const_i64(&mut self, value: i64) -> u32 {
-        let slot = self.alloc_slot(TaskType::I64);
+        let slot = self.alloc_temp();
         self.code.push(TaskOp::ConstI64 { dst: slot, value });
         slot
     }
 
-    fn expect_type(&self, expected: TaskType, value: TaskValue) -> Result<(), FableError> {
-        if value.ty == expected {
-            Ok(())
-        } else {
-            Err(FableError::TypeMismatch {
-                expected: expected.name().to_owned(),
-                actual: value.ty.name(),
-            })
-        }
+    fn const_f64(&mut self, value: f64) -> u32 {
+        let slot = self.alloc_temp();
+        self.code.push(TaskOp::ConstF64 {
+            dst: slot,
+            bits: value.to_bits(),
+        });
+        slot
+    }
+
+    fn alloc_temp(&mut self) -> u32 {
+        let slot = self.next_temp;
+        self.next_temp += FableFrameLayout::SLOT_SIZE;
+        u32::try_from(slot).expect("fable task temporary offset")
+    }
+
+    fn emit_host(&mut self, op: FableHostOp) -> Result<(), FableError> {
+        let host = u32::try_from(self.hosts.len()).map_err(|_| FableError::MalformedProgram {
+            reason: "too many fable task host operations",
+        })?;
+        self.hosts.push(op);
+        self.code.push(TaskOp::HostCall { host });
+        Ok(())
     }
 
     fn patch_jump(&mut self, index: usize, target: usize) -> Result<(), FableError> {
@@ -1941,247 +4725,38 @@ impl<'a> TaskFnCompiler<'a> {
     }
 }
 
-fn run_error(err: RunError<BlockRef, FableError>) -> FableError {
-    match err {
-        RunError::Step(err) => err,
-        RunError::MissingBlock(block) => FableError::MissingBlock { block },
-    }
+enum TaskIntOp {
+    Add,
+    Sub,
 }
 
-fn host_task_program(result_size: u32) -> TaskProgram {
-    TaskProgram {
-        fns: vec![TaskFn {
-            frame: weavy::mem::Layout {
-                size: result_size as usize,
-                align: 1,
-            },
-            code: vec![
-                TaskOp::HostCall { host: 0 },
-                TaskOp::Ret {
-                    src: 0,
-                    size: result_size,
-                },
-            ],
-        }],
-    }
+fn query_type_for_local(local: LocalRef) -> Result<FableQueryType, FableError> {
+    Ok(match local {
+        LocalRef::Unit(_) => FableQueryType::Unit,
+        LocalRef::Bool(_) => FableQueryType::Bool,
+        LocalRef::Char(_) => FableQueryType::Char,
+        LocalRef::String(_) => FableQueryType::String,
+        LocalRef::Signed(_) => FableQueryType::Signed,
+        LocalRef::Unsigned(_) => FableQueryType::Unsigned,
+        LocalRef::Float(_) => FableQueryType::Float,
+        LocalRef::Value { .. } | LocalRef::BorrowedValue { .. } | LocalRef::Declared { .. } => {
+            return Err(FableError::Unsupported {
+                feature: "native task typed-value local".into(),
+            });
+        }
+    })
 }
 
-fn run_single_host_task(host: &mut dyn FnMut(&mut [u8])) {
-    let program = host_task_program(0);
-    let mut task = weavy::task::Task::spawn(&program, TaskFnId(0));
-    let mut hosts: [HostFn<'_>; 1] = [host];
-    let step = task.run_hosted(&program, &[], &[], &mut hosts);
-    debug_assert_eq!(step, weavy::task::TaskStep::Done);
-}
-
-fn dense_interp(
-    roots: Vec<RuntimeRoot>,
-    declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
-) -> FableInterp {
-    FableInterp {
-        roots,
-        locals: LocalSlots::default(),
-        value_store: FableValueStore::default(),
-        declared_types,
-        functions,
-        predicate_result: None,
-        query_result: None,
+fn result_size(ty: FableQueryType) -> u32 {
+    match ty {
+        FableQueryType::Unit => 0,
+        FableQueryType::Bool
+        | FableQueryType::Char
+        | FableQueryType::String
+        | FableQueryType::Signed
+        | FableQueryType::Unsigned
+        | FableQueryType::Float => 8,
     }
-}
-
-fn run_dense_apply_in_task(
-    lowered: &FableLowered,
-    roots: Vec<RuntimeRoot>,
-    declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
-) -> Result<(), FableError> {
-    let mut roots = Some(roots);
-    let mut result = Ok(());
-    {
-        let mut host = |_: &mut [u8]| {
-            let Some(roots) = roots.take() else {
-                result = Err(FableError::MalformedProgram {
-                    reason: "apply host task ran more than once",
-                });
-                return;
-            };
-            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
-            result = weavy::run_dense(lowered, &mut interp).map_err(run_error);
-        };
-        run_single_host_task(&mut host);
-    }
-    result
-}
-
-fn run_dense_apply_in_task_with_stats(
-    lowered: &FableLowered,
-    roots: Vec<RuntimeRoot>,
-    declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
-) -> Result<RunStats, FableError> {
-    let mut roots = Some(roots);
-    let mut result = Err(FableError::MalformedProgram {
-        reason: "apply host task did not run",
-    });
-    {
-        let mut host = |_: &mut [u8]| {
-            let Some(roots) = roots.take() else {
-                result = Err(FableError::MalformedProgram {
-                    reason: "apply host task ran more than once",
-                });
-                return;
-            };
-            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
-            result = weavy::run_dense_with_stats(lowered, &mut interp).map_err(run_error);
-        };
-        run_single_host_task(&mut host);
-    }
-    result
-}
-
-fn run_dense_predicate_in_task(
-    lowered: &FableLowered,
-    roots: Vec<RuntimeRoot>,
-    declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
-) -> Result<bool, FableError> {
-    let mut roots = Some(roots);
-    let mut result = Err(FableError::MalformedProgram {
-        reason: "predicate host task did not run",
-    });
-    {
-        let mut host = |_: &mut [u8]| {
-            let Some(roots) = roots.take() else {
-                result = Err(FableError::MalformedProgram {
-                    reason: "predicate host task ran more than once",
-                });
-                return;
-            };
-            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
-            result = weavy::run_dense(lowered, &mut interp)
-                .map_err(run_error)
-                .and_then(|()| {
-                    interp.predicate_result.ok_or(FableError::MalformedProgram {
-                        reason: "predicate plan did not write a result",
-                    })
-                });
-        };
-        run_single_host_task(&mut host);
-    }
-    result
-}
-
-fn run_dense_predicate_in_task_with_stats(
-    lowered: &FableLowered,
-    roots: Vec<RuntimeRoot>,
-    declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
-) -> Result<(bool, RunStats), FableError> {
-    let mut roots = Some(roots);
-    let mut result = Err(FableError::MalformedProgram {
-        reason: "predicate host task did not run",
-    });
-    {
-        let mut host = |_: &mut [u8]| {
-            let Some(roots) = roots.take() else {
-                result = Err(FableError::MalformedProgram {
-                    reason: "predicate host task ran more than once",
-                });
-                return;
-            };
-            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
-            result = weavy::run_dense_with_stats(lowered, &mut interp)
-                .map_err(run_error)
-                .and_then(|stats| {
-                    let value = interp
-                        .predicate_result
-                        .ok_or(FableError::MalformedProgram {
-                            reason: "predicate plan did not write a result",
-                        })?;
-                    Ok((value, stats))
-                });
-        };
-        run_single_host_task(&mut host);
-    }
-    result
-}
-
-fn run_dense_query_in_task<Output>(
-    lowered: &FableLowered,
-    roots: Vec<RuntimeRoot>,
-    declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
-) -> Result<Output, FableError>
-where
-    Output: FableQueryResult,
-{
-    let mut roots = Some(roots);
-    let mut result = Err(FableError::MalformedProgram {
-        reason: "query host task did not run",
-    });
-    {
-        let mut host = |_: &mut [u8]| {
-            let Some(roots) = roots.take() else {
-                result = Err(FableError::MalformedProgram {
-                    reason: "query host task ran more than once",
-                });
-                return;
-            };
-            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
-            result = weavy::run_dense(lowered, &mut interp)
-                .map_err(run_error)
-                .and_then(|()| {
-                    interp
-                        .query_result
-                        .ok_or(FableError::MalformedProgram {
-                            reason: "query plan did not write a result",
-                        })?
-                        .into_result()
-                });
-        };
-        run_single_host_task(&mut host);
-    }
-    result
-}
-
-fn run_dense_query_in_task_with_stats<Output>(
-    lowered: &FableLowered,
-    roots: Vec<RuntimeRoot>,
-    declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
-) -> Result<(Output, RunStats), FableError>
-where
-    Output: FableQueryResult,
-{
-    let mut roots = Some(roots);
-    let mut result = Err(FableError::MalformedProgram {
-        reason: "query host task did not run",
-    });
-    {
-        let mut host = |_: &mut [u8]| {
-            let Some(roots) = roots.take() else {
-                result = Err(FableError::MalformedProgram {
-                    reason: "query host task ran more than once",
-                });
-                return;
-            };
-            let mut interp = dense_interp(roots, declared_types.clone(), functions.clone());
-            result = weavy::run_dense_with_stats(lowered, &mut interp)
-                .map_err(run_error)
-                .and_then(|stats| {
-                    let value = interp
-                        .query_result
-                        .ok_or(FableError::MalformedProgram {
-                            reason: "query plan did not write a result",
-                        })?
-                        .into_result()?;
-                    Ok((value, stats))
-                });
-        };
-        run_single_host_task(&mut host);
-    }
-    result
 }
 
 fn validate_root_specs(roots: &[FableRootSpec]) -> Result<(), FableError> {
@@ -2535,7 +5110,7 @@ impl fmt::Display for FableError {
 
 impl std::error::Error for FableError {}
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum FableIntrinsic {
     Let {
         local: LocalRef,
@@ -2638,7 +5213,7 @@ impl FableQueryOutput {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct FableFunctions {
     plans: Vec<FableFunctionPlan>,
 }
@@ -2658,6 +5233,7 @@ struct FableFunctionSignature {
     result: FableQueryType,
 }
 
+#[derive(Clone)]
 struct FableFunctionPlan {
     params: Box<[(LocalRef, FableQueryType)]>,
     result: FableQueryType,
@@ -2665,20 +5241,20 @@ struct FableFunctionPlan {
     result_expr: ExprPlan,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FunctionCallExpr {
     function: usize,
     args: Box<[FunctionArgPlan]>,
     result: FableQueryType,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FunctionArgPlan {
     expected: FableQueryType,
     expr: ExprPlan,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum ExprPlan {
     Unit(UnitExpr),
     Bool(BoolExpr),
@@ -2816,7 +5392,7 @@ struct DeclaredScalarRead {
     scalar: DeclaredScalar,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum UnitExpr {
     Null,
     Read(FieldPath),
@@ -2829,7 +5405,7 @@ enum UnitExpr {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum BoolExpr {
     Literal(bool),
     Read(FieldPath),
@@ -2877,7 +5453,7 @@ enum CmpOp {
     Ge,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum CharExpr {
     Read(FieldPath),
     Local(LocalRef),
@@ -2885,7 +5461,7 @@ enum CharExpr {
     FunctionCall(Box<FunctionCallExpr>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum StringExpr {
     Literal(String),
     Read(FieldPath),
@@ -2904,14 +5480,14 @@ enum StringExpr {
     Add(Box<StringExpr>, Box<StringExpr>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum NumberExpr {
     Signed(IntExpr),
     Unsigned(UIntExpr),
     Float(FloatExpr),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum IntExpr {
     Literal(i128),
     Read(FieldPath),
@@ -2934,7 +5510,7 @@ enum IntExpr {
     Sub(Box<NumberExpr>, Box<NumberExpr>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum UIntExpr {
     Read(FieldPath),
     Local(LocalRef),
@@ -2957,7 +5533,7 @@ enum UIntExpr {
     Add(Box<UIntExpr>, Box<UIntExpr>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum FloatExpr {
     Read(FieldPath),
     Local(LocalRef),
@@ -2980,7 +5556,7 @@ enum FloatExpr {
     Sub(Box<NumberExpr>, Box<NumberExpr>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum ValueExpr {
     Struct(StructExpr),
     Read(FieldPath),
@@ -2988,13 +5564,13 @@ enum ValueExpr {
     Declared(DeclaredValueExpr),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct StructExpr {
     shape: &'static Shape,
     fields: Box<[StructFieldInit]>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct StructFieldInit {
     offset: usize,
     shape: &'static Shape,
@@ -3002,7 +5578,7 @@ struct StructFieldInit {
     value: ExprPlan,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum DeclaredValueExpr {
     Struct(DeclaredStructExpr),
     Enum(DeclaredEnumExpr),
@@ -3010,13 +5586,13 @@ enum DeclaredValueExpr {
     Field(DeclaredValueField),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DeclaredStructExpr {
     type_index: usize,
     fields: Box<[DeclaredFieldInit]>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DeclaredEnumExpr {
     type_index: usize,
     selector: u64,
@@ -3033,7 +5609,7 @@ struct DeclaredValueField {
     offset: usize,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DeclaredFieldInit {
     offset: usize,
     ty: DeclaredFieldType,
@@ -3093,7 +5669,7 @@ impl DeclaredValueExpr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum MatchExprPlan {
     Declared(DeclaredMatchExprPlan),
     Facet(FacetMatchExprPlan),
@@ -3108,7 +5684,7 @@ impl MatchExprPlan {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DeclaredMatchExprPlan {
     scrutinee: DeclaredValueExpr,
     enum_type_index: usize,
@@ -3116,7 +5692,7 @@ struct DeclaredMatchExprPlan {
     arms: Box<[MatchArmPlan]>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FacetMatchExprPlan {
     scrutinee: ValueExpr,
     enum_shape: &'static Shape,
@@ -3124,7 +5700,7 @@ struct FacetMatchExprPlan {
     arms: Box<[FacetMatchArmPlan]>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct MatchArmPlan {
     selector: Option<u64>,
     bindings: Box<[MatchBindingPlan]>,
@@ -3132,7 +5708,7 @@ struct MatchArmPlan {
     result: ExprPlan,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FacetMatchArmPlan {
     variant_index: Option<usize>,
     bindings: Box<[FacetMatchBindingPlan]>,
@@ -3140,13 +5716,13 @@ struct FacetMatchArmPlan {
     result: ExprPlan,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FacetMatchBindingPlan {
     local: LocalRef,
     field_index: usize,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum MatchBindingPlan {
     Scalar {
         local: LocalRef,
@@ -3174,13 +5750,13 @@ struct ExpectedDeclaredVariant {
     fields: Vec<ExpectedDeclaredField>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct LoweredBlockResult {
     prefix: FableProgram,
     result: ExprPlan,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct IfExprPlan {
     condition: BoolExpr,
     then_result: LoweredBlockResult,
@@ -3188,7 +5764,7 @@ struct IfExprPlan {
     result_kind: FableQueryType,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FieldPath {
     base: FieldPathBase,
     source: Box<str>,
@@ -3203,7 +5779,7 @@ enum FieldPathBase {
     Local(LocalRef),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum FieldStep {
     Field {
         offset: usize,
@@ -3813,12 +6389,14 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         }
     }
 
-    fn finish(self) -> (Vec<FableProgram>, FableFunctions) {
+    fn finish(self) -> (Vec<FableProgram>, FableFunctions, FableFrameLayout) {
+        let layout = FableFrameLayout::from_allocator(&self.locals);
         (
             self.blocks,
             FableFunctions {
                 plans: self.functions,
             },
+            layout,
         )
     }
 
@@ -6275,23 +8853,11 @@ fn read_ptr_array<const N: usize>(ptr: *const u8) -> [u8; N] {
 }
 
 #[derive(Default)]
-struct LocalSlots {
-    units: Vec<bool>,
-    bools: Vec<Option<bool>>,
-    chars: Vec<Option<char>>,
-    strings: Vec<Option<String>>,
-    signed: Vec<Option<i128>>,
-    unsigned: Vec<Option<u128>>,
-    floats: Vec<Option<f64>>,
-    values: Vec<Option<OwnedValue>>,
-    borrowed_values: Vec<Option<BorrowedValue>>,
-    declared: Vec<Option<DeclaredOwnedValue>>,
-}
-
-#[derive(Default)]
 struct FableValueStore {
     strings: Vec<String>,
+    values: Vec<Option<OwnedValue>>,
     declared: Vec<DeclaredOwnedValue>,
+    borrowed_values: Vec<BorrowedValue>,
 }
 
 struct OwnedValue {
@@ -6458,2183 +9024,6 @@ impl Drop for StructInitGuard {
     }
 }
 
-struct FableInterp {
-    roots: Vec<RuntimeRoot>,
-    locals: LocalSlots,
-    value_store: FableValueStore,
-    declared_types: FableDeclaredTypes,
-    functions: Rc<FableFunctions>,
-    predicate_result: Option<bool>,
-    query_result: Option<FableQueryOutput>,
-}
-
-impl<'program> Step<'program, BlockRef, FableWeavyOp> for FableInterp {
-    type Error = FableError;
-    type Continuation = ();
-
-    fn step(
-        &mut self,
-        op: &'program FableWeavyOp,
-    ) -> Result<Control<'program, BlockRef, FableWeavyOp>, Self::Error> {
-        match op {
-            WeavyOp::Control(ControlOp::CallBlock { block, base_offset }) => {
-                if *base_offset != 0 {
-                    return Err(FableError::MalformedProgram {
-                        reason: "Fable canonical block calls must use base offset 0",
-                    });
-                }
-                Ok(Control::CallBlock(*block))
-            }
-            WeavyOp::Control(ControlOp::Return) => Ok(Control::Return),
-            WeavyOp::Memory(_) | WeavyOp::Init(_) | WeavyOp::Aggregate(_) => {
-                Err(FableError::MalformedProgram {
-                    reason: "Fable cannot execute canonical typed-memory ops yet",
-                })
-            }
-            WeavyOp::Intrinsic(intrinsic) => self.step_intrinsic(intrinsic),
-            _ => Err(FableError::MalformedProgram {
-                reason: "Fable cannot execute this canonical Weavy op",
-            }),
-        }
-    }
-}
-
-impl FableInterp {
-    fn step_intrinsic<'program>(
-        &mut self,
-        intrinsic: &'program FableIntrinsic,
-    ) -> Result<Control<'program, BlockRef, FableWeavyOp>, FableError> {
-        match intrinsic {
-            FableIntrinsic::Let { local, value } => {
-                self.init_local(*local, value)?;
-                Ok(Control::Continue)
-            }
-            FableIntrinsic::Assign { target, value } => {
-                let ptr = self.path_ptr_mut(target)?;
-                if let Some(scalar) = target.scalar {
-                    unsafe { self.write_scalar(scalar, ptr, value) }?;
-                } else {
-                    unsafe { self.write_value(target.shape, ptr, value) }?;
-                }
-                Ok(Control::Continue)
-            }
-            FableIntrinsic::Eval(expr) => {
-                self.eval_expr(expr)?;
-                Ok(Control::Continue)
-            }
-            FableIntrinsic::Branch {
-                condition,
-                then_block,
-                else_block,
-            } => {
-                let condition = self.eval_bool(condition)?;
-                if condition {
-                    Ok(Control::CallBlock(*then_block))
-                } else if let Some(block) = else_block {
-                    Ok(Control::CallBlock(*block))
-                } else {
-                    Ok(Control::Continue)
-                }
-            }
-            FableIntrinsic::Predicate(value) => {
-                self.predicate_result = Some(self.eval_bool(value)?);
-                Ok(Control::Continue)
-            }
-            FableIntrinsic::Query(value) => {
-                self.query_result = Some(self.eval_query(value)?);
-                Ok(Control::Continue)
-            }
-        }
-    }
-}
-
-impl FableInterp {
-    fn path_ptr_const(&self, path: &FieldPath) -> Result<PtrConst, FableError> {
-        let mut ptr = match path.base {
-            FieldPathBase::Root(root) => self
-                .roots
-                .get(root)
-                .ok_or(FableError::MalformedProgram {
-                    reason: "path referenced missing runtime root",
-                })?
-                .ptr
-                .as_const(),
-            FieldPathBase::Local(local) => self.borrowed_local_ptr(local)?,
-        };
-        for step in path.steps.iter() {
-            ptr = unsafe { self.step_ptr_const(step, ptr)? };
-        }
-        Ok(ptr)
-    }
-
-    fn path_ptr_mut(&self, path: &FieldPath) -> Result<PtrMut, FableError> {
-        let FieldPathBase::Root(root) = path.base else {
-            return Err(FableError::Unsupported {
-                feature: "mutable access through borrowed locals".into(),
-            });
-        };
-        let root = self.roots.get(root).ok_or(FableError::MalformedProgram {
-            reason: "path referenced missing runtime root",
-        })?;
-        let Some(ptr) = root.ptr.as_mut() else {
-            return Err(FableError::ReadOnlyRoot {
-                name: root.name.to_owned(),
-            });
-        };
-        let mut ptr = ptr;
-        for step in path.steps.iter() {
-            ptr = unsafe { self.step_ptr_mut(step, ptr)? };
-        }
-        Ok(ptr)
-    }
-
-    unsafe fn step_ptr_const(
-        &self,
-        step: &FieldStep,
-        ptr: PtrConst,
-    ) -> Result<PtrConst, FableError> {
-        match step {
-            FieldStep::PointerDeref { source, shape } => {
-                let Def::Pointer(def) = shape.def else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "pointer deref step did not point to a pointer shape",
-                    });
-                };
-                let Some(borrow) = def.vtable.borrow_fn else {
-                    return Err(FableError::Unsupported {
-                        feature: format!("deref of {source}"),
-                    });
-                };
-                Ok(unsafe { borrow(ptr) })
-            }
-            FieldStep::DynamicListIndex {
-                source,
-                shape,
-                index,
-            } => {
-                let index = self.eval_index_usize(index)?;
-                let Def::List(def) = shape.def else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "dynamic list index step did not point to a list shape",
-                    });
-                };
-                unsafe { (def.vtable.get)(ptr, index, shape) }.ok_or_else(|| {
-                    let len = unsafe { (def.vtable.len)(ptr) };
-                    index_out_of_bounds(source, index, len)
-                })
-            }
-            FieldStep::DynamicArrayIndex {
-                source,
-                shape,
-                len,
-                stride,
-                index,
-            } => {
-                let index = self.eval_index_usize(index)?;
-                if index >= *len {
-                    return Err(index_out_of_bounds(source, index, *len));
-                }
-                let Def::Array(def) = shape.def else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "dynamic array index step did not point to an array shape",
-                    });
-                };
-                let base = unsafe { (def.vtable.as_ptr)(ptr) };
-                Ok(unsafe { base.field(index * stride) })
-            }
-            FieldStep::DynamicSliceIndex {
-                source,
-                shape,
-                len,
-                stride,
-                index,
-            } => {
-                let index = self.eval_index_usize(index)?;
-                let runtime_len = unsafe { len(ptr) };
-                if index >= runtime_len {
-                    return Err(index_out_of_bounds(source, index, runtime_len));
-                }
-                let Def::Slice(def) = shape.def else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "dynamic slice index step did not point to a slice shape",
-                    });
-                };
-                let base = unsafe { (def.vtable.as_ptr)(ptr) };
-                Ok(unsafe { base.field(index * stride) })
-            }
-            _ => unsafe { step.ptr_const(ptr) },
-        }
-    }
-
-    unsafe fn step_ptr_mut(&self, step: &FieldStep, ptr: PtrMut) -> Result<PtrMut, FableError> {
-        match step {
-            FieldStep::PointerDeref { source, .. } => Err(FableError::Unsupported {
-                feature: format!("mutable deref of {source}"),
-            }),
-            FieldStep::DynamicListIndex {
-                source,
-                shape,
-                index,
-            } => {
-                let index = self.eval_index_usize(index)?;
-                let Def::List(def) = shape.def else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "dynamic list index step did not point to a list shape",
-                    });
-                };
-                let Some(get_mut) = def.vtable.get_mut else {
-                    return Err(FableError::Unsupported {
-                        feature: format!("mutable index access on {shape}"),
-                    });
-                };
-                unsafe { get_mut(ptr, index, shape) }.ok_or_else(|| {
-                    let len = unsafe { (def.vtable.len)(ptr.as_const()) };
-                    index_out_of_bounds(source, index, len)
-                })
-            }
-            FieldStep::DynamicArrayIndex {
-                source,
-                shape,
-                len,
-                stride,
-                index,
-            } => {
-                let index = self.eval_index_usize(index)?;
-                if index >= *len {
-                    return Err(index_out_of_bounds(source, index, *len));
-                }
-                let Def::Array(def) = shape.def else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "dynamic array index step did not point to an array shape",
-                    });
-                };
-                let base = unsafe { (def.vtable.as_mut_ptr)(ptr) };
-                Ok(unsafe { base.field(index * stride) })
-            }
-            FieldStep::DynamicSliceIndex {
-                source,
-                shape,
-                len,
-                stride,
-                index,
-            } => {
-                let index = self.eval_index_usize(index)?;
-                let runtime_len = unsafe { len(ptr.as_const()) };
-                if index >= runtime_len {
-                    return Err(index_out_of_bounds(source, index, runtime_len));
-                }
-                let Def::Slice(def) = shape.def else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "dynamic slice index step did not point to a slice shape",
-                    });
-                };
-                let base = unsafe { (def.vtable.as_mut_ptr)(ptr) };
-                Ok(unsafe { base.field(index * stride) })
-            }
-            _ => unsafe { step.ptr_mut(ptr) },
-        }
-    }
-
-    fn eval_index_usize(&self, index: &NumberExpr) -> Result<usize, FableError> {
-        let value = self.eval_number_as_u128(index)?;
-        usize::try_from(value).map_err(|_| FableError::InvalidLiteral {
-            literal: value.to_string(),
-            reason: "index value is out of range",
-        })
-    }
-
-    fn eval_function_call(&self, call: &FunctionCallExpr) -> Result<FableQueryOutput, FableError> {
-        let function = self.functions.get(call.function)?;
-        if call.result != function.result {
-            return Err(FableError::MalformedProgram {
-                reason: "function call result type did not match function plan",
-            });
-        }
-        if call.args.len() != function.params.len() {
-            return Err(FableError::MalformedProgram {
-                reason: "function call argument count did not match function plan",
-            });
-        }
-
-        let mut frame = LocalSlots::default();
-        for (arg, (local, expected)) in call.args.iter().zip(function.params.iter()) {
-            if arg.expected != *expected {
-                return Err(FableError::MalformedProgram {
-                    reason: "function call argument type did not match function plan",
-                });
-            }
-            let value = self.eval_function_arg(arg.expected, &arg.expr)?;
-            init_query_local(&mut frame, *local, arg.expected, value)?;
-        }
-
-        let mut child = FableInterp {
-            roots: self.roots.clone(),
-            locals: frame,
-            value_store: FableValueStore::default(),
-            declared_types: self.declared_types.clone(),
-            functions: self.functions.clone(),
-            predicate_result: None,
-            query_result: None,
-        };
-        child.eval_arm_prefix(&function.prefix)?;
-        let output = child.eval_query(&function.result_expr)?;
-        coerce_query_output(function.result, output)
-    }
-
-    fn eval_function_arg(
-        &self,
-        expected: FableQueryType,
-        expr: &ExprPlan,
-    ) -> Result<FableQueryOutput, FableError> {
-        match expected {
-            FableQueryType::Unit => {
-                self.eval_unit(expect_unit_expr(expr)?)?;
-                Ok(FableQueryOutput::Unit)
-            }
-            FableQueryType::Bool => Ok(FableQueryOutput::Bool(
-                self.eval_bool(expect_bool_expr(expr)?)?,
-            )),
-            FableQueryType::Char => Ok(FableQueryOutput::Char(self.eval_char_assign(expr)?)),
-            FableQueryType::String => Ok(FableQueryOutput::String(self.eval_string_assign(expr)?)),
-            FableQueryType::Signed => Ok(FableQueryOutput::Signed(
-                self.eval_number_as_i128(expect_number_expr(expr)?)?,
-            )),
-            FableQueryType::Unsigned => Ok(FableQueryOutput::Unsigned(
-                self.eval_number_as_u128(expect_number_expr(expr)?)?,
-            )),
-            FableQueryType::Float => Ok(FableQueryOutput::Float(
-                self.eval_number_as_f64(expect_number_expr(expr)?)?,
-            )),
-        }
-    }
-
-    fn init_local(&mut self, local: LocalRef, expr: &ExprPlan) -> Result<(), FableError> {
-        match local {
-            LocalRef::Unit(index) => {
-                self.eval_unit(expect_unit_expr(expr)?)?;
-                set_slot(&mut self.locals.units, index, true);
-            }
-            LocalRef::Bool(index) => {
-                let value = self.eval_bool(expect_bool_expr(expr)?)?;
-                set_slot(&mut self.locals.bools, index, Some(value));
-            }
-            LocalRef::Char(index) => {
-                let value = self.eval_char_assign(expr)?;
-                set_slot(&mut self.locals.chars, index, Some(value));
-            }
-            LocalRef::String(index) => {
-                let value = self.eval_string_assign(expr)?;
-                set_slot(&mut self.locals.strings, index, Some(value));
-            }
-            LocalRef::Signed(index) => {
-                let value = self.eval_number_as_i128(expect_number_expr(expr)?)?;
-                set_slot(&mut self.locals.signed, index, Some(value));
-            }
-            LocalRef::Unsigned(index) => {
-                let value = self.eval_number_as_u128(expect_number_expr(expr)?)?;
-                set_slot(&mut self.locals.unsigned, index, Some(value));
-            }
-            LocalRef::Float(index) => {
-                let value = self.eval_number_as_f64(expect_number_expr(expr)?)?;
-                set_slot(&mut self.locals.floats, index, Some(value));
-            }
-            LocalRef::Value { index, shape } => {
-                let value = self.eval_value(shape, expect_value_expr(expr)?)?;
-                set_slot(&mut self.locals.values, index, Some(value));
-            }
-            LocalRef::BorrowedValue { .. } => {
-                return Err(FableError::Unsupported {
-                    feature: "initializing borrowed value locals".into(),
-                });
-            }
-            LocalRef::Declared { index, type_index } => {
-                let value =
-                    self.eval_declared_value(type_index, expect_declared_value_expr(expr)?)?;
-                set_slot(&mut self.locals.declared, index, Some(value));
-            }
-        }
-        Ok(())
-    }
-
-    fn eval_expr(&mut self, expr: &ExprPlan) -> Result<(), FableError> {
-        match expr {
-            ExprPlan::Unit(expr) => self.eval_unit(expr),
-            ExprPlan::Bool(expr) => self.eval_bool(expr).map(drop),
-            ExprPlan::Char(expr) => self.eval_char(expr).map(drop),
-            ExprPlan::String(expr) => self.eval_string(expr).map(drop),
-            ExprPlan::Number(expr) => self.eval_number_for_effect(expr),
-            ExprPlan::Value(expr) => self.eval_value_for_effect(expr),
-            ExprPlan::Match(expr) => self.eval_match_for_effect(expr),
-            ExprPlan::If(expr) => self.eval_if_for_effect(expr),
-        }
-    }
-
-    fn eval_query(&mut self, expr: &ExprPlan) -> Result<FableQueryOutput, FableError> {
-        match expr {
-            ExprPlan::Unit(expr) => {
-                self.eval_unit(expr)?;
-                Ok(FableQueryOutput::Unit)
-            }
-            ExprPlan::Bool(expr) => Ok(FableQueryOutput::Bool(self.eval_bool(expr)?)),
-            ExprPlan::Char(expr) => Ok(FableQueryOutput::Char(self.eval_char(expr)?)),
-            ExprPlan::String(expr) => Ok(FableQueryOutput::String(self.eval_string(expr)?)),
-            ExprPlan::Number(NumberExpr::Signed(expr)) => {
-                Ok(FableQueryOutput::Signed(self.eval_i128(expr)?))
-            }
-            ExprPlan::Number(NumberExpr::Unsigned(expr)) => {
-                Ok(FableQueryOutput::Unsigned(self.eval_u128(expr)?))
-            }
-            ExprPlan::Number(NumberExpr::Float(expr)) => {
-                Ok(FableQueryOutput::Float(self.eval_f64(expr)?))
-            }
-            ExprPlan::Match(expr) => self.eval_match_query(expr),
-            ExprPlan::If(expr) => self.eval_if_query(expr),
-            ExprPlan::Value(_) => Err(FableError::Unsupported {
-                feature: "querying typed values".into(),
-            }),
-        }
-    }
-
-    fn selected_if_branch<'expr>(
-        &mut self,
-        expr: &'expr IfExprPlan,
-    ) -> Result<&'expr LoweredBlockResult, FableError> {
-        if self.eval_bool(&expr.condition)? {
-            Ok(&expr.then_result)
-        } else {
-            Ok(&expr.else_result)
-        }
-    }
-
-    fn eval_if_for_effect(&mut self, expr: &IfExprPlan) -> Result<(), FableError> {
-        let branch = self.selected_if_branch(expr)?;
-        self.eval_arm_prefix(&branch.prefix)?;
-        self.eval_expr(&branch.result)
-    }
-
-    fn eval_if_query(&mut self, expr: &IfExprPlan) -> Result<FableQueryOutput, FableError> {
-        let branch = self.selected_if_branch(expr)?;
-        self.eval_arm_prefix(&branch.prefix)?;
-        self.eval_query(&branch.result)
-    }
-
-    fn eval_match_for_effect(&mut self, expr: &MatchExprPlan) -> Result<(), FableError> {
-        match expr {
-            MatchExprPlan::Declared(expr) => self.eval_declared_match_for_effect(expr),
-            MatchExprPlan::Facet(expr) => self.eval_facet_match_for_effect(expr),
-        }
-    }
-
-    fn eval_match_query(&mut self, expr: &MatchExprPlan) -> Result<FableQueryOutput, FableError> {
-        match expr {
-            MatchExprPlan::Declared(expr) => self.eval_declared_match_query(expr),
-            MatchExprPlan::Facet(expr) => self.eval_facet_match_query(expr),
-        }
-    }
-
-    fn eval_declared_match_for_effect(
-        &mut self,
-        expr: &DeclaredMatchExprPlan,
-    ) -> Result<(), FableError> {
-        let scrutinee = self.eval_declared_value(expr.enum_type_index, &expr.scrutinee)?;
-        let selector = self.read_declared_tag(&scrutinee, expr.enum_type_index)?;
-        let arm = expr
-            .arms
-            .iter()
-            .find(|arm| arm.selector == Some(selector))
-            .or_else(|| expr.arms.iter().find(|arm| arm.selector.is_none()))
-            .ok_or(FableError::MalformedProgram {
-                reason: "match had no selected arm",
-            })?;
-        self.init_match_bindings(&arm.bindings, &scrutinee)?;
-        self.eval_arm_prefix(&arm.prefix)?;
-        self.eval_expr(&arm.result)
-    }
-
-    fn eval_declared_match_query(
-        &mut self,
-        expr: &DeclaredMatchExprPlan,
-    ) -> Result<FableQueryOutput, FableError> {
-        let scrutinee = self.eval_declared_value(expr.enum_type_index, &expr.scrutinee)?;
-        let selector = self.read_declared_tag(&scrutinee, expr.enum_type_index)?;
-        let arm = expr
-            .arms
-            .iter()
-            .find(|arm| arm.selector == Some(selector))
-            .or_else(|| expr.arms.iter().find(|arm| arm.selector.is_none()))
-            .ok_or(FableError::MalformedProgram {
-                reason: "match had no selected arm",
-            })?;
-        self.init_match_bindings(&arm.bindings, &scrutinee)?;
-        self.eval_arm_prefix(&arm.prefix)?;
-        self.eval_query(&arm.result)
-    }
-
-    fn eval_facet_match_for_effect(&mut self, expr: &FacetMatchExprPlan) -> Result<(), FableError> {
-        let (ptr, shape) = self.value_ptr_const(&expr.scrutinee)?;
-        if shape != expr.enum_shape {
-            return Err(FableError::MalformedProgram {
-                reason: "facet match scrutinee shape changed",
-            });
-        }
-        let variant_index = self.read_facet_variant_index(shape, ptr)?;
-        let arm = expr
-            .arms
-            .iter()
-            .find(|arm| arm.variant_index == Some(variant_index))
-            .or_else(|| expr.arms.iter().find(|arm| arm.variant_index.is_none()))
-            .ok_or(FableError::MalformedProgram {
-                reason: "match had no selected arm",
-            })?;
-        self.init_facet_match_bindings(&arm.bindings, shape, ptr, variant_index)?;
-        self.eval_arm_prefix(&arm.prefix)?;
-        self.eval_expr(&arm.result)
-    }
-
-    fn eval_facet_match_query(
-        &mut self,
-        expr: &FacetMatchExprPlan,
-    ) -> Result<FableQueryOutput, FableError> {
-        let (ptr, shape) = self.value_ptr_const(&expr.scrutinee)?;
-        if shape != expr.enum_shape {
-            return Err(FableError::MalformedProgram {
-                reason: "facet match scrutinee shape changed",
-            });
-        }
-        let variant_index = self.read_facet_variant_index(shape, ptr)?;
-        let arm = expr
-            .arms
-            .iter()
-            .find(|arm| arm.variant_index == Some(variant_index))
-            .or_else(|| expr.arms.iter().find(|arm| arm.variant_index.is_none()))
-            .ok_or(FableError::MalformedProgram {
-                reason: "match had no selected arm",
-            })?;
-        self.init_facet_match_bindings(&arm.bindings, shape, ptr, variant_index)?;
-        self.eval_arm_prefix(&arm.prefix)?;
-        self.eval_query(&arm.result)
-    }
-
-    fn value_ptr_const(&self, expr: &ValueExpr) -> Result<(PtrConst, &'static Shape), FableError> {
-        match expr {
-            ValueExpr::Read(path) => Ok((self.path_ptr_const(path)?, path.shape)),
-            ValueExpr::Local(local @ LocalRef::BorrowedValue { shape, .. }) => {
-                Ok((self.borrowed_local_ptr(*local)?, *shape))
-            }
-            ValueExpr::Local(LocalRef::Value { .. }) => Err(FableError::Unsupported {
-                feature: "matching moved typed value locals".into(),
-            }),
-            ValueExpr::Struct(_) => Err(FableError::Unsupported {
-                feature: "matching temporary struct literals".into(),
-            }),
-            ValueExpr::Declared(_) => Err(FableError::TypeMismatch {
-                expected: "facet value".into(),
-                actual: "declared value",
-            }),
-            ValueExpr::Local(local) => Err(local_kind_mismatch("typed value", *local)),
-        }
-    }
-
-    fn read_facet_variant_index(
-        &self,
-        shape: &'static Shape,
-        ptr: PtrConst,
-    ) -> Result<usize, FableError> {
-        let enum_type = facet_enum_type(shape).ok_or(FableError::TypeMismatch {
-            expected: "facet enum".into(),
-            actual: "non-enum value",
-        })?;
-        let discriminant = match enum_type.enum_repr {
-            EnumRepr::Rust => {
-                return Err(FableError::Unsupported {
-                    feature: format!("matching opaque Rust enum {shape}"),
-                });
-            }
-            EnumRepr::RustNPO => {
-                return Err(FableError::Unsupported {
-                    feature: format!("matching niche-optimized enum {shape}"),
-                });
-            }
-            EnumRepr::U8 => i64::from(*unsafe { ptr.get::<u8>() }),
-            EnumRepr::U16 => i64::from(*unsafe { ptr.get::<u16>() }),
-            EnumRepr::U32 => i64::from(*unsafe { ptr.get::<u32>() }),
-            EnumRepr::U64 => i64::try_from(*unsafe { ptr.get::<u64>() }).map_err(|_| {
-                FableError::MalformedProgram {
-                    reason: "facet enum discriminant did not fit i64",
-                }
-            })?,
-            EnumRepr::USize => i64::try_from(*unsafe { ptr.get::<usize>() }).map_err(|_| {
-                FableError::MalformedProgram {
-                    reason: "facet enum discriminant did not fit i64",
-                }
-            })?,
-            EnumRepr::I8 => i64::from(*unsafe { ptr.get::<i8>() }),
-            EnumRepr::I16 => i64::from(*unsafe { ptr.get::<i16>() }),
-            EnumRepr::I32 => i64::from(*unsafe { ptr.get::<i32>() }),
-            EnumRepr::I64 => *unsafe { ptr.get::<i64>() },
-            EnumRepr::ISize => (*unsafe { ptr.get::<isize>() }) as i64,
-        };
-        enum_type
-            .variants
-            .iter()
-            .position(|variant| variant.discriminant == Some(discriminant))
-            .ok_or(FableError::MalformedProgram {
-                reason: "facet enum discriminant did not match a variant",
-            })
-    }
-
-    fn init_facet_match_bindings(
-        &mut self,
-        bindings: &[FacetMatchBindingPlan],
-        shape: &'static Shape,
-        ptr: PtrConst,
-        variant_index: usize,
-    ) -> Result<(), FableError> {
-        let enum_type = facet_enum_type(shape).ok_or(FableError::MalformedProgram {
-            reason: "facet match binding shape was not an enum",
-        })?;
-        let variant =
-            enum_type
-                .variants
-                .get(variant_index)
-                .ok_or(FableError::MalformedProgram {
-                    reason: "facet match variant index was out of bounds",
-                })?;
-        for binding in bindings {
-            let field = variant.data.fields.get(binding.field_index).ok_or(
-                FableError::MalformedProgram {
-                    reason: "facet match binding field index was out of bounds",
-                },
-            )?;
-            let LocalRef::BorrowedValue { index, .. } = binding.local else {
-                return Err(local_kind_mismatch("typed value", binding.local));
-            };
-            let ptr = unsafe { ptr.field(field.offset) };
-            set_slot(
-                &mut self.locals.borrowed_values,
-                index,
-                Some(BorrowedValue {
-                    shape: field.shape.get(),
-                    ptr,
-                }),
-            );
-        }
-        Ok(())
-    }
-
-    fn read_declared_tag(
-        &self,
-        value: &DeclaredOwnedValue,
-        type_index: usize,
-    ) -> Result<u64, FableError> {
-        let descriptor = self.declared_descriptor(type_index)?;
-        let WeavyAccess::Enum(access) = &descriptor.access else {
-            return Err(FableError::MalformedProgram {
-                reason: "match scrutinee descriptor was not an enum",
-            });
-        };
-        let WeavyTag::Direct { offset, width } = access.tag else {
-            return Err(FableError::Unsupported {
-                feature: "non-direct declared enum tags".into(),
-            });
-        };
-        let bytes = unsafe { std::slice::from_raw_parts(value.ptr().add(offset), width) };
-        Ok(match width {
-            0 => 0,
-            1 => bytes[0].into(),
-            2 => u16::from_ne_bytes(bytes.try_into().expect("tag width checked")).into(),
-            4 => u32::from_ne_bytes(bytes.try_into().expect("tag width checked")).into(),
-            8 => u64::from_ne_bytes(bytes.try_into().expect("tag width checked")),
-            _ => {
-                return Err(FableError::MalformedProgram {
-                    reason: "declared enum tag width was invalid",
-                });
-            }
-        })
-    }
-
-    fn init_match_bindings(
-        &mut self,
-        bindings: &[MatchBindingPlan],
-        scrutinee: &DeclaredOwnedValue,
-    ) -> Result<(), FableError> {
-        for binding in bindings {
-            match *binding {
-                MatchBindingPlan::Scalar {
-                    local,
-                    offset,
-                    scalar,
-                } => {
-                    self.init_scalar_binding(local, scalar, unsafe { scrutinee.ptr().add(offset) })?
-                }
-                MatchBindingPlan::Declared {
-                    local,
-                    offset,
-                    type_index,
-                    storage,
-                } => {
-                    let LocalRef::Declared { index, .. } = local else {
-                        return Err(local_kind_mismatch("declared value", local));
-                    };
-                    let src = unsafe { scrutinee.ptr().add(offset).cast_const() };
-                    let value = self.copy_declared_from_storage(type_index, storage, src)?;
-                    set_slot(&mut self.locals.declared, index, Some(value));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn init_scalar_binding(
-        &mut self,
-        local: LocalRef,
-        scalar: DeclaredScalar,
-        ptr: *const u8,
-    ) -> Result<(), FableError> {
-        match (local, scalar) {
-            (LocalRef::Unit(index), DeclaredScalar::Unit) => {
-                set_slot(&mut self.locals.units, index, true);
-            }
-            (LocalRef::Bool(index), DeclaredScalar::Bool) => {
-                set_slot(&mut self.locals.bools, index, Some(unsafe { *ptr != 0 }));
-            }
-            (LocalRef::Char(index), DeclaredScalar::Char) => {
-                let bytes = unsafe { std::slice::from_raw_parts(ptr, 4) };
-                let value = u32::from_ne_bytes(bytes.try_into().expect("char width checked"));
-                let value = char::from_u32(value).ok_or(FableError::MalformedProgram {
-                    reason: "declared char bytes were not a valid scalar value",
-                })?;
-                set_slot(&mut self.locals.chars, index, Some(value));
-            }
-            (LocalRef::Signed(index), _) => {
-                let value = read_signed_scalar_from_ptr(scalar, ptr)?;
-                set_slot(&mut self.locals.signed, index, Some(value));
-            }
-            (LocalRef::Unsigned(index), _) => {
-                let value = read_unsigned_scalar_from_ptr(scalar, ptr)?;
-                set_slot(&mut self.locals.unsigned, index, Some(value));
-            }
-            (LocalRef::Float(index), _) => {
-                let value = read_float_scalar_from_ptr(scalar, ptr)?;
-                set_slot(&mut self.locals.floats, index, Some(value));
-            }
-            (LocalRef::String(_), DeclaredScalar::String) => {
-                return Err(FableError::Unsupported {
-                    feature: "declared string field runtime".into(),
-                });
-            }
-            _ => return Err(local_kind_mismatch(scalar.name(), local)),
-        }
-        Ok(())
-    }
-
-    fn eval_arm_prefix(&mut self, prefix: &[FableWeavyOp]) -> Result<(), FableError> {
-        for op in prefix {
-            let WeavyOp::Intrinsic(intrinsic) = op else {
-                return Err(FableError::Unsupported {
-                    feature: "non-intrinsic match arm prefix".into(),
-                });
-            };
-            match intrinsic {
-                FableIntrinsic::Branch { .. } => {
-                    return Err(FableError::Unsupported {
-                        feature: "branching inside match arm prefixes".into(),
-                    });
-                }
-                _ => {
-                    self.step_intrinsic(intrinsic)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn eval_unit(&self, expr: &UnitExpr) -> Result<(), FableError> {
-        match expr {
-            UnitExpr::Null => Ok(()),
-            UnitExpr::Read(path) => {
-                let _ = self.path_ptr_const(path)?;
-                Ok(())
-            }
-            UnitExpr::Local(local) => self.local_unit(*local),
-            UnitExpr::DeclaredRead(read) => self.read_declared_unit(*read),
-            UnitExpr::FunctionCall(call) => {
-                let value = self.eval_function_call(call)?;
-                let FableQueryOutput::Unit = coerce_query_output(FableQueryType::Unit, value)?
-                else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "unit function call returned non-unit value",
-                    });
-                };
-                Ok(())
-            }
-            UnitExpr::HostFieldMut { function, field } => function(self.field_mut(field)?),
-        }
-    }
-
-    fn eval_bool(&self, expr: &BoolExpr) -> Result<bool, FableError> {
-        match expr {
-            BoolExpr::Literal(value) => Ok(*value),
-            BoolExpr::Read(path) => {
-                let ptr = self.path_ptr_const(path)?;
-                Ok(*unsafe { ptr.get::<bool>() })
-            }
-            BoolExpr::Local(local) => self.local_bool(*local),
-            BoolExpr::DeclaredRead(read) => self.read_declared_bool(*read),
-            BoolExpr::FunctionCall(call) => {
-                let FableQueryOutput::Bool(value) =
-                    coerce_query_output(FableQueryType::Bool, self.eval_function_call(call)?)?
-                else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "bool function call returned non-bool value",
-                    });
-                };
-                Ok(value)
-            }
-            BoolExpr::HostFieldPredicate { function, field } => function(self.field_ref(field)?),
-            BoolExpr::HostStringPredicate { function, lhs, rhs } => {
-                let lhs = self.eval_string(lhs)?;
-                let rhs = self.eval_string(rhs)?;
-                function(&lhs, &rhs)
-            }
-            BoolExpr::StringContains { haystack, needle } => {
-                let haystack = self.eval_string(haystack)?;
-                let needle = self.eval_string(needle)?;
-                Ok(haystack.contains(&needle))
-            }
-            BoolExpr::StringStartsWith { haystack, prefix } => {
-                let haystack = self.eval_string(haystack)?;
-                let prefix = self.eval_string(prefix)?;
-                Ok(haystack.starts_with(&prefix))
-            }
-            BoolExpr::StringEndsWith { haystack, suffix } => {
-                let haystack = self.eval_string(haystack)?;
-                let suffix = self.eval_string(suffix)?;
-                Ok(haystack.ends_with(&suffix))
-            }
-            BoolExpr::Not(expr) => Ok(!self.eval_bool(expr)?),
-            BoolExpr::And(lhs, rhs) => {
-                if !self.eval_bool(lhs)? {
-                    return Ok(false);
-                }
-                self.eval_bool(rhs)
-            }
-            BoolExpr::Or(lhs, rhs) => {
-                if self.eval_bool(lhs)? {
-                    return Ok(true);
-                }
-                self.eval_bool(rhs)
-            }
-            BoolExpr::Eq(lhs, rhs) => self.exprs_equal(lhs, rhs),
-            BoolExpr::Neq(lhs, rhs) => Ok(!self.exprs_equal(lhs, rhs)?),
-            BoolExpr::Cmp { op, lhs, rhs } => {
-                let ordering = self.compare_numbers(lhs, rhs)?;
-                Ok(match op {
-                    CmpOp::Lt => ordering == Ordering::Less,
-                    CmpOp::Gt => ordering == Ordering::Greater,
-                    CmpOp::Le => matches!(ordering, Ordering::Less | Ordering::Equal),
-                    CmpOp::Ge => matches!(ordering, Ordering::Greater | Ordering::Equal),
-                })
-            }
-        }
-    }
-
-    fn eval_char(&self, expr: &CharExpr) -> Result<char, FableError> {
-        match expr {
-            CharExpr::Read(path) => {
-                let ptr = self.path_ptr_const(path)?;
-                Ok(*unsafe { ptr.get::<char>() })
-            }
-            CharExpr::Local(local) => self.local_char(*local),
-            CharExpr::DeclaredRead(read) => self.read_declared_char(*read),
-            CharExpr::FunctionCall(call) => {
-                let FableQueryOutput::Char(value) =
-                    coerce_query_output(FableQueryType::Char, self.eval_function_call(call)?)?
-                else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "char function call returned non-char value",
-                    });
-                };
-                Ok(value)
-            }
-        }
-    }
-
-    fn eval_string(&self, expr: &StringExpr) -> Result<String, FableError> {
-        match expr {
-            StringExpr::Literal(value) => Ok(value.clone()),
-            StringExpr::Read(path) => {
-                let ptr = self.path_ptr_const(path)?;
-                unsafe { self.read_string_path(path, ptr) }
-            }
-            StringExpr::Local(local) => self.local_string(*local),
-            StringExpr::DeclaredRead(read) => self.read_declared_string(*read),
-            StringExpr::FunctionCall(call) => {
-                let FableQueryOutput::String(value) =
-                    coerce_query_output(FableQueryType::String, self.eval_function_call(call)?)?
-                else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "string function call returned non-string value",
-                    });
-                };
-                Ok(value)
-            }
-            StringExpr::HostFieldString { function, field } => function(self.field_ref(field)?),
-            StringExpr::HostUnary { function, value } => {
-                let value = self.eval_string(value)?;
-                function(&value)
-            }
-            StringExpr::Trim(expr) => Ok(self.eval_string(expr)?.trim().to_owned()),
-            StringExpr::Add(lhs, rhs) => {
-                let mut lhs = self.eval_string(lhs)?;
-                lhs.push_str(&self.eval_string(rhs)?);
-                Ok(lhs)
-            }
-        }
-    }
-
-    fn field_ref<'field>(
-        &self,
-        field: &'field FieldPath,
-    ) -> Result<FableField<'field>, FableError> {
-        Ok(FableField {
-            path: &field.source,
-            shape: field.shape,
-            scalar: field_scalar(field)?,
-            ptr: self.path_ptr_const(field)?,
-        })
-    }
-
-    fn field_mut<'field>(
-        &self,
-        field: &'field FieldPath,
-    ) -> Result<FableFieldMut<'field>, FableError> {
-        Ok(FableFieldMut {
-            path: &field.source,
-            shape: field.shape,
-            scalar: field_scalar(field)?,
-            ptr: self.path_ptr_mut(field)?,
-        })
-    }
-
-    unsafe fn read_string_path(
-        &self,
-        path: &FieldPath,
-        ptr: PtrConst,
-    ) -> Result<String, FableError> {
-        let scalar = field_scalar(path)?;
-        match scalar {
-            ScalarType::Str if path.shape.is_type::<&'static str>() => {
-                Ok((*unsafe { ptr.get::<&'static str>() }).to_owned())
-            }
-            ScalarType::String => Ok(unsafe { ptr.get::<String>() }.clone()),
-            ScalarType::CowStr => Ok(unsafe { ptr.get::<Cow<'static, str>>() }
-                .clone()
-                .into_owned()),
-            _ => Err(FableError::Unsupported {
-                feature: format!("reading {scalar:?}"),
-            }),
-        }
-    }
-
-    fn eval_number_for_effect(&self, expr: &NumberExpr) -> Result<(), FableError> {
-        match expr {
-            NumberExpr::Signed(expr) => self.eval_i128(expr).map(drop),
-            NumberExpr::Unsigned(expr) => self.eval_u128(expr).map(drop),
-            NumberExpr::Float(expr) => self.eval_f64(expr).map(drop),
-        }
-    }
-
-    fn eval_i128(&self, expr: &IntExpr) -> Result<i128, FableError> {
-        match expr {
-            IntExpr::Literal(value) => Ok(*value),
-            IntExpr::Read(path) => {
-                let ptr = self.path_ptr_const(path)?;
-                unsafe { self.read_signed_path(field_scalar(path)?, ptr) }
-            }
-            IntExpr::Local(local) => self.local_i128(*local),
-            IntExpr::DeclaredRead(read) => self.read_declared_i128(*read),
-            IntExpr::FunctionCall(call) => {
-                let FableQueryOutput::Signed(value) =
-                    coerce_query_output(FableQueryType::Signed, self.eval_function_call(call)?)?
-                else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "signed function call returned non-signed value",
-                    });
-                };
-                Ok(value)
-            }
-            IntExpr::HostUnary { function, value } => function(self.eval_number_as_i128(value)?),
-            IntExpr::Min(lhs, rhs) => {
-                let lhs = self.eval_number_as_i128(lhs)?;
-                let rhs = self.eval_number_as_i128(rhs)?;
-                Ok(lhs.min(rhs))
-            }
-            IntExpr::Max(lhs, rhs) => {
-                let lhs = self.eval_number_as_i128(lhs)?;
-                let rhs = self.eval_number_as_i128(rhs)?;
-                Ok(lhs.max(rhs))
-            }
-            IntExpr::Clamp { value, min, max } => {
-                let value = self.eval_number_as_i128(value)?;
-                let min = self.eval_number_as_i128(min)?;
-                let max = self.eval_number_as_i128(max)?;
-                clamp_i128(value, min, max)
-            }
-            IntExpr::Neg(expr) => {
-                let value = self.eval_number_as_i128(expr)?;
-                value
-                    .checked_neg()
-                    .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("-{value}")))
-            }
-            IntExpr::Add(lhs, rhs) => {
-                let lhs = self.eval_number_as_i128(lhs)?;
-                let rhs = self.eval_number_as_i128(rhs)?;
-                lhs.checked_add(rhs)
-                    .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("{lhs} + {rhs}")))
-            }
-            IntExpr::Sub(lhs, rhs) => {
-                let lhs = self.eval_number_as_i128(lhs)?;
-                let rhs = self.eval_number_as_i128(rhs)?;
-                lhs.checked_sub(rhs)
-                    .ok_or_else(|| number_out_of_range(ScalarType::I128, format!("{lhs} - {rhs}")))
-            }
-        }
-    }
-
-    unsafe fn read_signed_path(
-        &self,
-        scalar: ScalarType,
-        ptr: PtrConst,
-    ) -> Result<i128, FableError> {
-        let value = match scalar {
-            ScalarType::I8 => (*unsafe { ptr.get::<i8>() }).into(),
-            ScalarType::I16 => (*unsafe { ptr.get::<i16>() }).into(),
-            ScalarType::I32 => (*unsafe { ptr.get::<i32>() }).into(),
-            ScalarType::I64 => (*unsafe { ptr.get::<i64>() }).into(),
-            ScalarType::I128 => *unsafe { ptr.get::<i128>() },
-            ScalarType::ISize => (*unsafe { ptr.get::<isize>() }) as i128,
-            _ => {
-                return Err(FableError::MalformedProgram {
-                    reason: "signed read path did not point to a signed scalar",
-                });
-            }
-        };
-        Ok(value)
-    }
-
-    fn eval_u128(&self, expr: &UIntExpr) -> Result<u128, FableError> {
-        match expr {
-            UIntExpr::Literal(value) => Ok(*value),
-            UIntExpr::Read(path) => {
-                let ptr = self.path_ptr_const(path)?;
-                unsafe { self.read_unsigned_path(field_scalar(path)?, ptr) }
-            }
-            UIntExpr::Local(local) => self.local_u128(*local),
-            UIntExpr::DeclaredRead(read) => self.read_declared_u128(*read),
-            UIntExpr::FunctionCall(call) => {
-                let FableQueryOutput::Unsigned(value) =
-                    coerce_query_output(FableQueryType::Unsigned, self.eval_function_call(call)?)?
-                else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "unsigned function call returned non-unsigned value",
-                    });
-                };
-                Ok(value)
-            }
-            UIntExpr::HostUnary { function, value } => function(self.eval_number_as_u128(value)?),
-            UIntExpr::PathLen(path) => self.path_len(path).map(|len| len as u128),
-            UIntExpr::StringLen(expr) => Ok(self.eval_string(expr)?.len() as u128),
-            UIntExpr::Min(lhs, rhs) => {
-                let lhs = self.eval_u128(lhs)?;
-                let rhs = self.eval_u128(rhs)?;
-                Ok(lhs.min(rhs))
-            }
-            UIntExpr::Max(lhs, rhs) => {
-                let lhs = self.eval_u128(lhs)?;
-                let rhs = self.eval_u128(rhs)?;
-                Ok(lhs.max(rhs))
-            }
-            UIntExpr::Clamp { value, min, max } => {
-                let value = self.eval_u128(value)?;
-                let min = self.eval_u128(min)?;
-                let max = self.eval_u128(max)?;
-                clamp_u128(value, min, max)
-            }
-            UIntExpr::Add(lhs, rhs) => {
-                let lhs = self.eval_u128(lhs)?;
-                let rhs = self.eval_u128(rhs)?;
-                lhs.checked_add(rhs)
-                    .ok_or_else(|| number_out_of_range(ScalarType::U128, format!("{lhs} + {rhs}")))
-            }
-        }
-    }
-
-    fn path_len(&self, path: &FieldPath) -> Result<usize, FableError> {
-        let ptr = self.path_ptr_const(path)?;
-        match path.shape.def {
-            Def::List(def) => Ok(unsafe { (def.vtable.len)(ptr) }),
-            Def::Array(def) => Ok(def.n),
-            Def::Slice(def) => Ok(unsafe { (def.vtable.len)(ptr) }),
-            _ => Err(FableError::TypeMismatch {
-                expected: "list-like value".into(),
-                actual: "non-list path",
-            }),
-        }
-    }
-
-    fn borrowed_local_ptr(&self, local: LocalRef) -> Result<PtrConst, FableError> {
-        let LocalRef::BorrowedValue { index, .. } = local else {
-            return Err(local_kind_mismatch("typed value", local));
-        };
-        self.locals
-            .borrowed_values
-            .get(index)
-            .and_then(|value| *value)
-            .map(|value| {
-                debug_assert_eq!(
-                    value.shape,
-                    local_value_shape(local).expect("borrowed shape")
-                );
-                value.ptr
-            })
-            .ok_or_else(uninitialized_local)
-    }
-
-    unsafe fn read_unsigned_path(
-        &self,
-        scalar: ScalarType,
-        ptr: PtrConst,
-    ) -> Result<u128, FableError> {
-        let value = match scalar {
-            ScalarType::U8 => (*unsafe { ptr.get::<u8>() }).into(),
-            ScalarType::U16 => (*unsafe { ptr.get::<u16>() }).into(),
-            ScalarType::U32 => (*unsafe { ptr.get::<u32>() }).into(),
-            ScalarType::U64 => (*unsafe { ptr.get::<u64>() }).into(),
-            ScalarType::U128 => *unsafe { ptr.get::<u128>() },
-            ScalarType::USize => (*unsafe { ptr.get::<usize>() }) as u128,
-            _ => {
-                return Err(FableError::MalformedProgram {
-                    reason: "unsigned read path did not point to an unsigned scalar",
-                });
-            }
-        };
-        Ok(value)
-    }
-
-    fn eval_f64(&self, expr: &FloatExpr) -> Result<f64, FableError> {
-        match expr {
-            FloatExpr::Literal(value) => Ok(*value),
-            FloatExpr::Read(path) => {
-                let ptr = self.path_ptr_const(path)?;
-                match field_scalar(path)? {
-                    ScalarType::F32 => Ok((*unsafe { ptr.get::<f32>() }).into()),
-                    ScalarType::F64 => Ok(*unsafe { ptr.get::<f64>() }),
-                    _ => Err(FableError::MalformedProgram {
-                        reason: "float read path did not point to a float scalar",
-                    }),
-                }
-            }
-            FloatExpr::Local(local) => self.local_f64(*local),
-            FloatExpr::DeclaredRead(read) => self.read_declared_f64(*read),
-            FloatExpr::FunctionCall(call) => {
-                let FableQueryOutput::Float(value) =
-                    coerce_query_output(FableQueryType::Float, self.eval_function_call(call)?)?
-                else {
-                    return Err(FableError::MalformedProgram {
-                        reason: "float function call returned non-float value",
-                    });
-                };
-                Ok(value)
-            }
-            FloatExpr::HostUnary { function, value } => function(self.eval_number_as_f64(value)?),
-            FloatExpr::Min(lhs, rhs) => {
-                min_f64(self.eval_number_as_f64(lhs)?, self.eval_number_as_f64(rhs)?)
-            }
-            FloatExpr::Max(lhs, rhs) => {
-                max_f64(self.eval_number_as_f64(lhs)?, self.eval_number_as_f64(rhs)?)
-            }
-            FloatExpr::Clamp { value, min, max } => clamp_f64(
-                self.eval_number_as_f64(value)?,
-                self.eval_number_as_f64(min)?,
-                self.eval_number_as_f64(max)?,
-            ),
-            FloatExpr::Neg(expr) => Ok(-self.eval_number_as_f64(expr)?),
-            FloatExpr::Add(lhs, rhs) => {
-                Ok(self.eval_number_as_f64(lhs)? + self.eval_number_as_f64(rhs)?)
-            }
-            FloatExpr::Sub(lhs, rhs) => {
-                Ok(self.eval_number_as_f64(lhs)? - self.eval_number_as_f64(rhs)?)
-            }
-        }
-    }
-
-    fn eval_number_as_i128(&self, expr: &NumberExpr) -> Result<i128, FableError> {
-        match expr {
-            NumberExpr::Signed(expr) => self.eval_i128(expr),
-            NumberExpr::Unsigned(expr) => {
-                let value = self.eval_u128(expr)?;
-                i128::try_from(value)
-                    .map_err(|_| number_out_of_range(ScalarType::I128, value.to_string()))
-            }
-            NumberExpr::Float(_) => Err(FableError::TypeMismatch {
-                expected: "integer".into(),
-                actual: "float",
-            }),
-        }
-    }
-
-    fn eval_number_as_u128(&self, expr: &NumberExpr) -> Result<u128, FableError> {
-        match expr {
-            NumberExpr::Unsigned(expr) => self.eval_u128(expr),
-            NumberExpr::Signed(expr) => {
-                let value = self.eval_i128(expr)?;
-                u128::try_from(value)
-                    .map_err(|_| number_out_of_range(ScalarType::U128, value.to_string()))
-            }
-            NumberExpr::Float(_) => Err(FableError::TypeMismatch {
-                expected: "unsigned integer".into(),
-                actual: "float",
-            }),
-        }
-    }
-
-    fn eval_number_as_f64(&self, expr: &NumberExpr) -> Result<f64, FableError> {
-        match expr {
-            NumberExpr::Signed(expr) => Ok(self.eval_i128(expr)? as f64),
-            NumberExpr::Unsigned(expr) => Ok(self.eval_u128(expr)? as f64),
-            NumberExpr::Float(expr) => self.eval_f64(expr),
-        }
-    }
-
-    fn declared_local(&self, local: LocalRef) -> Result<&DeclaredOwnedValue, FableError> {
-        let LocalRef::Declared { index, .. } = local else {
-            return Err(local_kind_mismatch("declared value", local));
-        };
-        self.locals
-            .declared
-            .get(index)
-            .and_then(Option::as_ref)
-            .ok_or_else(uninitialized_local)
-    }
-
-    fn read_declared_unit(&self, read: DeclaredScalarRead) -> Result<(), FableError> {
-        let _ = self.declared_local(read.local)?;
-        Ok(())
-    }
-
-    fn read_declared_bool(&self, read: DeclaredScalarRead) -> Result<bool, FableError> {
-        Ok(self.read_declared_bytes(read, 1)?[0] != 0)
-    }
-
-    fn read_declared_char(&self, read: DeclaredScalarRead) -> Result<char, FableError> {
-        let value = u32::from_ne_bytes(self.read_declared_array(read)?);
-        char::from_u32(value).ok_or(FableError::MalformedProgram {
-            reason: "declared char bytes were not a valid scalar value",
-        })
-    }
-
-    fn read_declared_string(&self, read: DeclaredScalarRead) -> Result<String, FableError> {
-        let bytes = self.read_declared_bytes(read, core::mem::size_of::<usize>())?;
-        let handle = usize::from_ne_bytes(bytes.try_into().expect("usize width"));
-        self.value_store
-            .strings
-            .get(handle)
-            .cloned()
-            .ok_or(FableError::MalformedProgram {
-                reason: "declared string handle was missing",
-            })
-    }
-
-    fn read_declared_i128(&self, read: DeclaredScalarRead) -> Result<i128, FableError> {
-        Ok(match read.scalar {
-            DeclaredScalar::I8 => i8::from_ne_bytes(self.read_declared_array(read)?) as i128,
-            DeclaredScalar::I16 => i16::from_ne_bytes(self.read_declared_array(read)?) as i128,
-            DeclaredScalar::I32 => i32::from_ne_bytes(self.read_declared_array(read)?) as i128,
-            DeclaredScalar::I64 => i64::from_ne_bytes(self.read_declared_array(read)?) as i128,
-            DeclaredScalar::I128 => i128::from_ne_bytes(self.read_declared_array(read)?),
-            DeclaredScalar::ISize => isize::from_ne_bytes(self.read_declared_array(read)?) as i128,
-            _ => {
-                return Err(FableError::MalformedProgram {
-                    reason: "declared signed read used non-signed scalar",
-                });
-            }
-        })
-    }
-
-    fn read_declared_u128(&self, read: DeclaredScalarRead) -> Result<u128, FableError> {
-        Ok(match read.scalar {
-            DeclaredScalar::U8 => u8::from_ne_bytes(self.read_declared_array(read)?) as u128,
-            DeclaredScalar::U16 => u16::from_ne_bytes(self.read_declared_array(read)?) as u128,
-            DeclaredScalar::U32 => u32::from_ne_bytes(self.read_declared_array(read)?) as u128,
-            DeclaredScalar::U64 => u64::from_ne_bytes(self.read_declared_array(read)?) as u128,
-            DeclaredScalar::U128 => u128::from_ne_bytes(self.read_declared_array(read)?),
-            DeclaredScalar::USize => usize::from_ne_bytes(self.read_declared_array(read)?) as u128,
-            _ => {
-                return Err(FableError::MalformedProgram {
-                    reason: "declared unsigned read used non-unsigned scalar",
-                });
-            }
-        })
-    }
-
-    fn read_declared_f64(&self, read: DeclaredScalarRead) -> Result<f64, FableError> {
-        Ok(match read.scalar {
-            DeclaredScalar::F32 => f32::from_ne_bytes(self.read_declared_array(read)?) as f64,
-            DeclaredScalar::F64 => f64::from_ne_bytes(self.read_declared_array(read)?),
-            _ => {
-                return Err(FableError::MalformedProgram {
-                    reason: "declared float read used non-float scalar",
-                });
-            }
-        })
-    }
-
-    fn read_declared_array<const N: usize>(
-        &self,
-        read: DeclaredScalarRead,
-    ) -> Result<[u8; N], FableError> {
-        let bytes = self.read_declared_bytes(read, N)?;
-        let mut out = [0; N];
-        out.copy_from_slice(bytes);
-        Ok(out)
-    }
-
-    fn read_declared_bytes(
-        &self,
-        read: DeclaredScalarRead,
-        len: usize,
-    ) -> Result<&[u8], FableError> {
-        let value = self.declared_local(read.local)?;
-        let start = read.offset;
-        let end = start.checked_add(len).ok_or(FableError::MalformedProgram {
-            reason: "declared scalar read offset overflowed",
-        })?;
-        if end > value.size {
-            return Err(FableError::MalformedProgram {
-                reason: "declared scalar read exceeded value layout",
-            });
-        }
-        Ok(unsafe { std::slice::from_raw_parts(value.ptr().add(start), len) })
-    }
-
-    fn compare_numbers(&self, lhs: &NumberExpr, rhs: &NumberExpr) -> Result<Ordering, FableError> {
-        match (lhs, rhs) {
-            (NumberExpr::Float(_), _) | (_, NumberExpr::Float(_)) => {
-                compare_f64(self.eval_number_as_f64(lhs)?, self.eval_number_as_f64(rhs)?)
-            }
-            (NumberExpr::Signed(lhs), NumberExpr::Signed(rhs)) => {
-                Ok(self.eval_i128(lhs)?.cmp(&self.eval_i128(rhs)?))
-            }
-            (NumberExpr::Unsigned(lhs), NumberExpr::Unsigned(rhs)) => {
-                Ok(self.eval_u128(lhs)?.cmp(&self.eval_u128(rhs)?))
-            }
-            (NumberExpr::Signed(lhs), NumberExpr::Unsigned(rhs)) => {
-                let lhs = self.eval_i128(lhs)?;
-                let rhs = self.eval_u128(rhs)?;
-                if lhs < 0 {
-                    Ok(Ordering::Less)
-                } else {
-                    Ok((lhs as u128).cmp(&rhs))
-                }
-            }
-            (NumberExpr::Unsigned(lhs), NumberExpr::Signed(rhs)) => {
-                let lhs = self.eval_u128(lhs)?;
-                let rhs = self.eval_i128(rhs)?;
-                if rhs < 0 {
-                    Ok(Ordering::Greater)
-                } else {
-                    Ok(lhs.cmp(&(rhs as u128)))
-                }
-            }
-        }
-    }
-
-    fn exprs_equal(&self, lhs: &ExprPlan, rhs: &ExprPlan) -> Result<bool, FableError> {
-        match (lhs, rhs) {
-            (ExprPlan::Unit(lhs), ExprPlan::Unit(rhs)) => {
-                self.eval_unit(lhs)?;
-                self.eval_unit(rhs)?;
-                Ok(true)
-            }
-            (ExprPlan::Bool(lhs), ExprPlan::Bool(rhs)) => {
-                Ok(self.eval_bool(lhs)? == self.eval_bool(rhs)?)
-            }
-            (ExprPlan::Char(lhs), ExprPlan::Char(rhs)) => {
-                Ok(self.eval_char(lhs)? == self.eval_char(rhs)?)
-            }
-            (ExprPlan::String(lhs), ExprPlan::String(rhs)) => {
-                Ok(self.eval_string(lhs)? == self.eval_string(rhs)?)
-            }
-            (ExprPlan::Char(lhs), ExprPlan::String(rhs)) => Ok(string_is_char(
-                &self.eval_string(rhs)?,
-                self.eval_char(lhs)?,
-            )),
-            (ExprPlan::String(lhs), ExprPlan::Char(rhs)) => Ok(string_is_char(
-                &self.eval_string(lhs)?,
-                self.eval_char(rhs)?,
-            )),
-            (ExprPlan::Number(lhs), ExprPlan::Number(rhs)) => {
-                Ok(self.compare_numbers(lhs, rhs)? == Ordering::Equal)
-            }
-            _ => Ok(false),
-        }
-    }
-
-    unsafe fn write_value(
-        &mut self,
-        shape: &'static Shape,
-        ptr: PtrMut,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError> {
-        let value = self.eval_value(shape, expect_value_expr(expr)?)?;
-        unsafe { value.move_into(ptr) }
-    }
-
-    fn eval_value(
-        &mut self,
-        shape: &'static Shape,
-        expr: &ValueExpr,
-    ) -> Result<OwnedValue, FableError> {
-        match expr {
-            ValueExpr::Struct(expr) => {
-                if expr.shape != shape {
-                    return Err(FableError::TypeMismatch {
-                        expected: format!("{shape}"),
-                        actual: expr.kind_name(),
-                    });
-                }
-                unsafe { self.init_struct_value(expr) }
-            }
-            ValueExpr::Read(path) => {
-                if path.shape != shape {
-                    return Err(FableError::TypeMismatch {
-                        expected: format!("{shape}"),
-                        actual: "typed value",
-                    });
-                }
-                if !shape.is_pod() {
-                    return Err(FableError::Unsupported {
-                        feature: format!("copying non-POD path ending at {shape}"),
-                    });
-                }
-                let ptr = self.path_ptr_const(path)?;
-                OwnedValue::copy_from(shape, ptr)
-            }
-            ValueExpr::Local(local) => self.take_local_value(*local, shape),
-            ValueExpr::Declared(_) => Err(FableError::TypeMismatch {
-                expected: format!("{shape}"),
-                actual: "declared value",
-            }),
-        }
-    }
-
-    fn eval_declared_value(
-        &mut self,
-        type_index: usize,
-        expr: &DeclaredValueExpr,
-    ) -> Result<DeclaredOwnedValue, FableError> {
-        if expr.type_index() != type_index {
-            let expected = self.declared_type_name(type_index)?;
-            return Err(FableError::TypeMismatch {
-                expected,
-                actual: "declared value",
-            });
-        }
-        match expr {
-            DeclaredValueExpr::Struct(expr) => self.init_declared_struct_value(expr),
-            DeclaredValueExpr::Enum(expr) => self.init_declared_enum_value(expr),
-            DeclaredValueExpr::Local(local) => self.copy_declared_local(*local),
-            DeclaredValueExpr::Field(field) => self.copy_declared_field(*field),
-        }
-    }
-
-    fn init_declared_struct_value(
-        &mut self,
-        expr: &DeclaredStructExpr,
-    ) -> Result<DeclaredOwnedValue, FableError> {
-        let descriptor = self.declared_descriptor(expr.type_index)?.clone();
-        let value = DeclaredOwnedValue::zeroed(expr.type_index, &descriptor)?;
-        for field in expr.fields.iter() {
-            self.write_declared_field(value.ptr(), field)?;
-        }
-        Ok(value)
-    }
-
-    fn init_declared_enum_value(
-        &mut self,
-        expr: &DeclaredEnumExpr,
-    ) -> Result<DeclaredOwnedValue, FableError> {
-        let descriptor = self.declared_descriptor(expr.type_index)?.clone();
-        let value = DeclaredOwnedValue::zeroed(expr.type_index, &descriptor)?;
-        self.write_declared_tag(value.ptr(), expr.tag_offset, expr.tag_width, expr.selector)?;
-        for field in expr.fields.iter() {
-            self.write_declared_field(value.ptr(), field)?;
-        }
-        Ok(value)
-    }
-
-    fn copy_declared_local(&self, local: LocalRef) -> Result<DeclaredOwnedValue, FableError> {
-        let value = self.declared_local(local)?;
-        let descriptor = self.declared_descriptor(value.type_index)?;
-        DeclaredOwnedValue::copy_from(value.type_index, descriptor, value.ptr().cast_const())
-    }
-
-    fn copy_declared_field(
-        &self,
-        field: DeclaredValueField,
-    ) -> Result<DeclaredOwnedValue, FableError> {
-        let source = self.declared_local(field.local)?;
-        self.copy_declared_from_storage(field.type_index, field.storage, unsafe {
-            source.ptr().add(field.offset).cast_const()
-        })
-    }
-
-    fn copy_declared_from_storage(
-        &self,
-        type_index: usize,
-        storage: DeclaredFieldStorage,
-        src: *const u8,
-    ) -> Result<DeclaredOwnedValue, FableError> {
-        match storage {
-            DeclaredFieldStorage::Inline => {
-                let descriptor = self.declared_descriptor(type_index)?;
-                DeclaredOwnedValue::copy_from(type_index, descriptor, src)
-            }
-            DeclaredFieldStorage::Handle => {
-                let handle = self.read_handle(src);
-                let stored =
-                    self.value_store
-                        .declared
-                        .get(handle)
-                        .ok_or(FableError::MalformedProgram {
-                            reason: "declared value handle was missing",
-                        })?;
-                if stored.type_index != type_index {
-                    return Err(FableError::MalformedProgram {
-                        reason: "declared value handle pointed at the wrong type",
-                    });
-                }
-                let descriptor = self.declared_descriptor(type_index)?;
-                DeclaredOwnedValue::copy_from(type_index, descriptor, stored.ptr().cast_const())
-            }
-        }
-    }
-
-    fn store_declared_value(&mut self, value: DeclaredOwnedValue) -> usize {
-        if let Some(index) = self
-            .value_store
-            .declared
-            .iter()
-            .position(|stored| stored.same_bytes(&value))
-        {
-            return index;
-        }
-        let index = self.value_store.declared.len();
-        self.value_store.declared.push(value);
-        index
-    }
-
-    fn intern_string(&mut self, value: String) -> usize {
-        if let Some(index) = self
-            .value_store
-            .strings
-            .iter()
-            .position(|seen| seen == &value)
-        {
-            return index;
-        }
-        let index = self.value_store.strings.len();
-        self.value_store.strings.push(value);
-        index
-    }
-
-    fn read_handle(&self, src: *const u8) -> usize {
-        usize::from_ne_bytes(read_ptr_array(src))
-    }
-
-    fn write_handle(&self, dst: *mut u8, handle: usize) {
-        unsafe {
-            copy_nonoverlapping(
-                handle.to_ne_bytes().as_ptr(),
-                dst,
-                core::mem::size_of::<usize>(),
-            )
-        };
-    }
-
-    fn declared_descriptor(
-        &self,
-        type_index: usize,
-    ) -> Result<&FableDeclaredDescriptor, FableError> {
-        Ok(self
-            .declared_types
-            .by_index(type_index)
-            .ok_or(FableError::MalformedProgram {
-                reason: "declared type index was missing at runtime",
-            })?
-            .descriptor())
-    }
-
-    fn declared_type_name(&self, type_index: usize) -> Result<String, FableError> {
-        Ok(self
-            .declared_types
-            .by_index(type_index)
-            .ok_or(FableError::MalformedProgram {
-                reason: "declared type index was missing at runtime",
-            })?
-            .name()
-            .to_owned())
-    }
-
-    fn write_declared_field(
-        &mut self,
-        base: *mut u8,
-        field: &DeclaredFieldInit,
-    ) -> Result<(), FableError> {
-        let dst = unsafe { base.add(field.offset) };
-        match field.ty {
-            DeclaredFieldType::Scalar(scalar) => {
-                self.write_declared_scalar(dst, scalar, &field.value)
-            }
-            DeclaredFieldType::Declared {
-                type_index,
-                storage,
-            } => {
-                let value = self
-                    .eval_declared_value(type_index, expect_declared_value_expr(&field.value)?)?;
-                match storage {
-                    DeclaredFieldStorage::Inline => {
-                        if value.size != 0 {
-                            unsafe { copy_nonoverlapping(value.ptr(), dst, value.size) };
-                        }
-                    }
-                    DeclaredFieldStorage::Handle => {
-                        let handle = self.store_declared_value(value);
-                        self.write_handle(dst, handle);
-                    }
-                }
-                Ok(())
-            }
-        }
-    }
-
-    fn write_declared_tag(
-        &self,
-        base: *mut u8,
-        offset: usize,
-        width: usize,
-        selector: u64,
-    ) -> Result<(), FableError> {
-        let dst = unsafe { base.add(offset) };
-        match width {
-            0 => Ok(()),
-            1 => {
-                let value = u8::try_from(selector)
-                    .map_err(|_| number_out_of_range(ScalarType::U8, selector.to_string()))?;
-                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 1) };
-                Ok(())
-            }
-            2 => {
-                let value = u16::try_from(selector)
-                    .map_err(|_| number_out_of_range(ScalarType::U16, selector.to_string()))?;
-                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 2) };
-                Ok(())
-            }
-            4 => {
-                let value = u32::try_from(selector)
-                    .map_err(|_| number_out_of_range(ScalarType::U32, selector.to_string()))?;
-                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 4) };
-                Ok(())
-            }
-            8 => {
-                unsafe { copy_nonoverlapping(selector.to_ne_bytes().as_ptr(), dst, 8) };
-                Ok(())
-            }
-            _ => Err(FableError::MalformedProgram {
-                reason: "declared enum tag width was invalid",
-            }),
-        }
-    }
-
-    fn write_declared_scalar(
-        &mut self,
-        dst: *mut u8,
-        scalar: DeclaredScalar,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError> {
-        match scalar {
-            DeclaredScalar::Unit => self.eval_unit(expect_unit_expr(expr)?),
-            DeclaredScalar::Bool => {
-                let value = u8::from(self.eval_bool(expect_bool_expr(expr)?)?);
-                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 1) };
-                Ok(())
-            }
-            DeclaredScalar::Char => {
-                let value = self.eval_char_assign(expr)? as u32;
-                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 4) };
-                Ok(())
-            }
-            DeclaredScalar::String => {
-                let value = self.eval_string_assign(expr)?;
-                let handle = self.intern_string(value);
-                self.write_handle(dst, handle);
-                Ok(())
-            }
-            DeclaredScalar::I8 => self.write_declared_signed::<i8>(dst, scalar, expr),
-            DeclaredScalar::I16 => self.write_declared_signed::<i16>(dst, scalar, expr),
-            DeclaredScalar::I32 => self.write_declared_signed::<i32>(dst, scalar, expr),
-            DeclaredScalar::I64 => self.write_declared_signed::<i64>(dst, scalar, expr),
-            DeclaredScalar::I128 => self.write_declared_signed::<i128>(dst, scalar, expr),
-            DeclaredScalar::ISize => self.write_declared_signed::<isize>(dst, scalar, expr),
-            DeclaredScalar::U8 => self.write_declared_unsigned::<u8>(dst, scalar, expr),
-            DeclaredScalar::U16 => self.write_declared_unsigned::<u16>(dst, scalar, expr),
-            DeclaredScalar::U32 => self.write_declared_unsigned::<u32>(dst, scalar, expr),
-            DeclaredScalar::U64 => self.write_declared_unsigned::<u64>(dst, scalar, expr),
-            DeclaredScalar::U128 => self.write_declared_unsigned::<u128>(dst, scalar, expr),
-            DeclaredScalar::USize => self.write_declared_unsigned::<usize>(dst, scalar, expr),
-            DeclaredScalar::F32 => {
-                let value = self.eval_number_as_f64(expect_number_expr(expr)?)? as f32;
-                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 4) };
-                Ok(())
-            }
-            DeclaredScalar::F64 => {
-                let value = self.eval_number_as_f64(expect_number_expr(expr)?)?;
-                unsafe { copy_nonoverlapping(value.to_ne_bytes().as_ptr(), dst, 8) };
-                Ok(())
-            }
-        }
-    }
-
-    fn write_declared_unsigned<T>(
-        &self,
-        dst: *mut u8,
-        target: DeclaredScalar,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError>
-    where
-        T: TryFrom<u128> + Copy,
-        T: DeclaredIntBytes,
-    {
-        let value = self.eval_number_as_u128(expect_number_expr(expr)?)?;
-        let converted = T::try_from(value).map_err(|_| {
-            number_out_of_range(declared_scalar_number_target(target), value.to_string())
-        })?;
-        converted.write_ne_bytes(dst);
-        Ok(())
-    }
-
-    fn write_declared_signed<T>(
-        &self,
-        dst: *mut u8,
-        target: DeclaredScalar,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError>
-    where
-        T: TryFrom<i128> + Copy,
-        T: DeclaredIntBytes,
-    {
-        let value = self.eval_number_as_i128(expect_number_expr(expr)?)?;
-        let converted = T::try_from(value).map_err(|_| {
-            number_out_of_range(declared_scalar_number_target(target), value.to_string())
-        })?;
-        converted.write_ne_bytes(dst);
-        Ok(())
-    }
-
-    fn eval_value_for_effect(&mut self, expr: &ValueExpr) -> Result<(), FableError> {
-        match expr {
-            ValueExpr::Struct(expr) => unsafe { self.init_struct_value(expr) }.map(drop),
-            ValueExpr::Read(path) => {
-                let _ = self.path_ptr_const(path)?;
-                Ok(())
-            }
-            ValueExpr::Declared(expr) => {
-                self.eval_declared_value(expr.type_index(), expr).map(drop)
-            }
-            ValueExpr::Local(local) => match *local {
-                LocalRef::Value { index, .. } => {
-                    if self
-                        .locals
-                        .values
-                        .get(index)
-                        .and_then(Option::as_ref)
-                        .is_some()
-                    {
-                        Ok(())
-                    } else {
-                        Err(uninitialized_local())
-                    }
-                }
-                LocalRef::BorrowedValue { .. } => self.borrowed_local_ptr(*local).map(drop),
-                _ => Err(local_kind_mismatch("typed value", *local)),
-            },
-        }
-    }
-
-    unsafe fn init_struct_value(&self, expr: &StructExpr) -> Result<OwnedValue, FableError> {
-        let ptr = expr.shape.allocate().map_err(|_| FableError::Unsupported {
-            feature: format!("allocating unsized value {}", expr.shape),
-        })?;
-        let mut guard = StructInitGuard::new(expr.shape, ptr);
-        for field in expr.fields.iter() {
-            let field_ptr = unsafe { ptr.field_uninit(field.offset) };
-            unsafe { self.init_scalar(field.scalar, field_ptr, &field.value) }?;
-            guard.mark_initialized(field);
-        }
-        Ok(unsafe { guard.finish() })
-    }
-
-    fn take_local_value(
-        &mut self,
-        local: LocalRef,
-        expected_shape: &'static Shape,
-    ) -> Result<OwnedValue, FableError> {
-        match local {
-            LocalRef::Value { index, shape } => {
-                if shape != expected_shape {
-                    return Err(FableError::TypeMismatch {
-                        expected: format!("{expected_shape}"),
-                        actual: "typed value",
-                    });
-                }
-                let Some(slot) = self.locals.values.get_mut(index) else {
-                    return Err(uninitialized_local());
-                };
-                slot.take().ok_or_else(uninitialized_local)
-            }
-            LocalRef::BorrowedValue { shape, .. } => {
-                if shape != expected_shape {
-                    return Err(FableError::TypeMismatch {
-                        expected: format!("{expected_shape}"),
-                        actual: "typed value",
-                    });
-                }
-                if !shape.is_pod() {
-                    return Err(FableError::Unsupported {
-                        feature: format!("copying non-POD borrowed value {shape}"),
-                    });
-                }
-                OwnedValue::copy_from(shape, self.borrowed_local_ptr(local)?)
-            }
-            _ => Err(local_kind_mismatch("typed value", local)),
-        }
-    }
-
-    unsafe fn init_scalar(
-        &self,
-        scalar: ScalarType,
-        ptr: PtrUninit,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError> {
-        match scalar {
-            ScalarType::Unit => {
-                self.eval_unit(expect_unit_expr(expr)?)?;
-                unsafe { ptr.put(()) };
-            }
-            ScalarType::Bool => {
-                unsafe { ptr.put(self.eval_bool(expect_bool_expr(expr)?)?) };
-            }
-            ScalarType::Char => {
-                unsafe { ptr.put(self.eval_char_assign(expr)?) };
-            }
-            ScalarType::String => {
-                unsafe { ptr.put(self.eval_string_assign(expr)?) };
-            }
-            ScalarType::CowStr => {
-                unsafe { ptr.put::<Cow<'static, str>>(Cow::Owned(self.eval_string_assign(expr)?)) };
-            }
-            ScalarType::F32 => {
-                unsafe { ptr.put(self.eval_number_as_f64(expect_number_expr(expr)?)? as f32) };
-            }
-            ScalarType::F64 => {
-                unsafe { ptr.put(self.eval_number_as_f64(expect_number_expr(expr)?)?) };
-            }
-            ScalarType::U8 => unsafe { self.init_unsigned::<u8>(ptr, scalar, expr) }?,
-            ScalarType::U16 => unsafe { self.init_unsigned::<u16>(ptr, scalar, expr) }?,
-            ScalarType::U32 => unsafe { self.init_unsigned::<u32>(ptr, scalar, expr) }?,
-            ScalarType::U64 => unsafe { self.init_unsigned::<u64>(ptr, scalar, expr) }?,
-            ScalarType::U128 => unsafe { self.init_unsigned::<u128>(ptr, scalar, expr) }?,
-            ScalarType::USize => unsafe { self.init_unsigned::<usize>(ptr, scalar, expr) }?,
-            ScalarType::I8 => unsafe { self.init_signed::<i8>(ptr, scalar, expr) }?,
-            ScalarType::I16 => unsafe { self.init_signed::<i16>(ptr, scalar, expr) }?,
-            ScalarType::I32 => unsafe { self.init_signed::<i32>(ptr, scalar, expr) }?,
-            ScalarType::I64 => unsafe { self.init_signed::<i64>(ptr, scalar, expr) }?,
-            ScalarType::I128 => unsafe { self.init_signed::<i128>(ptr, scalar, expr) }?,
-            ScalarType::ISize => unsafe { self.init_signed::<isize>(ptr, scalar, expr) }?,
-            _ => {
-                return Err(FableError::Unsupported {
-                    feature: format!("initializing {scalar:?}"),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    unsafe fn init_unsigned<T>(
-        &self,
-        ptr: PtrUninit,
-        target: ScalarType,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError>
-    where
-        T: TryFrom<u128>,
-    {
-        let value = self.eval_number_as_u128(expect_number_expr(expr)?)?;
-        let converted =
-            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
-        unsafe { ptr.put(converted) };
-        Ok(())
-    }
-
-    unsafe fn init_signed<T>(
-        &self,
-        ptr: PtrUninit,
-        target: ScalarType,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError>
-    where
-        T: TryFrom<i128>,
-    {
-        let value = self.eval_number_as_i128(expect_number_expr(expr)?)?;
-        let converted =
-            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
-        unsafe { ptr.put(converted) };
-        Ok(())
-    }
-
-    unsafe fn write_scalar(
-        &self,
-        scalar: ScalarType,
-        ptr: PtrMut,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError> {
-        match scalar {
-            ScalarType::Unit => self.eval_unit(expect_unit_expr(expr)?)?,
-            ScalarType::Bool => {
-                *unsafe { ptr.as_mut::<bool>() } = self.eval_bool(expect_bool_expr(expr)?)?;
-            }
-            ScalarType::Char => {
-                *unsafe { ptr.as_mut::<char>() } = self.eval_char_assign(expr)?;
-            }
-            ScalarType::String => {
-                *unsafe { ptr.as_mut::<String>() } = self.eval_string_assign(expr)?;
-            }
-            ScalarType::CowStr => {
-                *unsafe { ptr.as_mut::<Cow<'static, str>>() } =
-                    Cow::Owned(self.eval_string_assign(expr)?);
-            }
-            ScalarType::F32 => {
-                *unsafe { ptr.as_mut::<f32>() } =
-                    self.eval_number_as_f64(expect_number_expr(expr)?)? as f32;
-            }
-            ScalarType::F64 => {
-                *unsafe { ptr.as_mut::<f64>() } =
-                    self.eval_number_as_f64(expect_number_expr(expr)?)?;
-            }
-            ScalarType::U8 => unsafe { self.write_unsigned::<u8>(ptr, scalar, expr) }?,
-            ScalarType::U16 => unsafe { self.write_unsigned::<u16>(ptr, scalar, expr) }?,
-            ScalarType::U32 => unsafe { self.write_unsigned::<u32>(ptr, scalar, expr) }?,
-            ScalarType::U64 => unsafe { self.write_unsigned::<u64>(ptr, scalar, expr) }?,
-            ScalarType::U128 => unsafe { self.write_unsigned::<u128>(ptr, scalar, expr) }?,
-            ScalarType::USize => unsafe { self.write_unsigned::<usize>(ptr, scalar, expr) }?,
-            ScalarType::I8 => unsafe { self.write_signed::<i8>(ptr, scalar, expr) }?,
-            ScalarType::I16 => unsafe { self.write_signed::<i16>(ptr, scalar, expr) }?,
-            ScalarType::I32 => unsafe { self.write_signed::<i32>(ptr, scalar, expr) }?,
-            ScalarType::I64 => unsafe { self.write_signed::<i64>(ptr, scalar, expr) }?,
-            ScalarType::I128 => unsafe { self.write_signed::<i128>(ptr, scalar, expr) }?,
-            ScalarType::ISize => unsafe { self.write_signed::<isize>(ptr, scalar, expr) }?,
-            _ => {
-                return Err(FableError::Unsupported {
-                    feature: format!("writing {scalar:?}"),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn eval_char_assign(&self, expr: &ExprPlan) -> Result<char, FableError> {
-        match expr {
-            ExprPlan::Char(expr) => self.eval_char(expr),
-            ExprPlan::String(expr) => expect_single_char(self.eval_string(expr)?),
-            other => Err(FableError::TypeMismatch {
-                expected: "char".into(),
-                actual: other.kind_name(),
-            }),
-        }
-    }
-
-    fn eval_string_assign(&self, expr: &ExprPlan) -> Result<String, FableError> {
-        match expr {
-            ExprPlan::String(expr) => self.eval_string(expr),
-            ExprPlan::Char(expr) => Ok(self.eval_char(expr)?.to_string()),
-            other => Err(FableError::TypeMismatch {
-                expected: "string".into(),
-                actual: other.kind_name(),
-            }),
-        }
-    }
-
-    unsafe fn write_unsigned<T>(
-        &self,
-        ptr: PtrMut,
-        target: ScalarType,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError>
-    where
-        T: TryFrom<u128>,
-    {
-        let value = self.eval_number_as_u128(expect_number_expr(expr)?)?;
-        let converted =
-            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
-        *unsafe { ptr.as_mut::<T>() } = converted;
-        Ok(())
-    }
-
-    unsafe fn write_signed<T>(
-        &self,
-        ptr: PtrMut,
-        target: ScalarType,
-        expr: &ExprPlan,
-    ) -> Result<(), FableError>
-    where
-        T: TryFrom<i128>,
-    {
-        let value = self.eval_number_as_i128(expect_number_expr(expr)?)?;
-        let converted =
-            T::try_from(value).map_err(|_| number_out_of_range(target, value.to_string()))?;
-        *unsafe { ptr.as_mut::<T>() } = converted;
-        Ok(())
-    }
-
-    fn local_unit(&self, local: LocalRef) -> Result<(), FableError> {
-        let LocalRef::Unit(index) = local else {
-            return Err(local_kind_mismatch("unit", local));
-        };
-        if self.locals.units.get(index).copied().unwrap_or(false) {
-            Ok(())
-        } else {
-            Err(uninitialized_local())
-        }
-    }
-
-    fn local_bool(&self, local: LocalRef) -> Result<bool, FableError> {
-        let LocalRef::Bool(index) = local else {
-            return Err(local_kind_mismatch("bool", local));
-        };
-        self.locals
-            .bools
-            .get(index)
-            .and_then(|value| *value)
-            .ok_or_else(uninitialized_local)
-    }
-
-    fn local_char(&self, local: LocalRef) -> Result<char, FableError> {
-        let LocalRef::Char(index) = local else {
-            return Err(local_kind_mismatch("char", local));
-        };
-        self.locals
-            .chars
-            .get(index)
-            .and_then(|value| *value)
-            .ok_or_else(uninitialized_local)
-    }
-
-    fn local_string(&self, local: LocalRef) -> Result<String, FableError> {
-        let LocalRef::String(index) = local else {
-            return Err(local_kind_mismatch("string", local));
-        };
-        self.locals
-            .strings
-            .get(index)
-            .and_then(|value| value.as_ref())
-            .cloned()
-            .ok_or_else(uninitialized_local)
-    }
-
-    fn local_i128(&self, local: LocalRef) -> Result<i128, FableError> {
-        let LocalRef::Signed(index) = local else {
-            return Err(local_kind_mismatch("signed number", local));
-        };
-        self.locals
-            .signed
-            .get(index)
-            .and_then(|value| *value)
-            .ok_or_else(uninitialized_local)
-    }
-
-    fn local_u128(&self, local: LocalRef) -> Result<u128, FableError> {
-        let LocalRef::Unsigned(index) = local else {
-            return Err(local_kind_mismatch("unsigned number", local));
-        };
-        self.locals
-            .unsigned
-            .get(index)
-            .and_then(|value| *value)
-            .ok_or_else(uninitialized_local)
-    }
-
-    fn local_f64(&self, local: LocalRef) -> Result<f64, FableError> {
-        let LocalRef::Float(index) = local else {
-            return Err(local_kind_mismatch("float", local));
-        };
-        self.locals
-            .floats
-            .get(index)
-            .and_then(|value| *value)
-            .ok_or_else(uninitialized_local)
-    }
-}
-
-fn set_slot<T: Default>(slots: &mut Vec<T>, index: usize, value: T) {
-    if slots.len() <= index {
-        slots.resize_with(index + 1, T::default);
-    }
-    slots[index] = value;
-}
-
-fn init_query_local(
-    locals: &mut LocalSlots,
-    local: LocalRef,
-    expected: FableQueryType,
-    value: FableQueryOutput,
-) -> Result<(), FableError> {
-    match (local, expected, value) {
-        (LocalRef::Unit(index), FableQueryType::Unit, FableQueryOutput::Unit) => {
-            set_slot(&mut locals.units, index, true);
-        }
-        (LocalRef::Bool(index), FableQueryType::Bool, FableQueryOutput::Bool(value)) => {
-            set_slot(&mut locals.bools, index, Some(value));
-        }
-        (LocalRef::Char(index), FableQueryType::Char, FableQueryOutput::Char(value)) => {
-            set_slot(&mut locals.chars, index, Some(value));
-        }
-        (LocalRef::String(index), FableQueryType::String, FableQueryOutput::String(value)) => {
-            set_slot(&mut locals.strings, index, Some(value));
-        }
-        (LocalRef::Signed(index), FableQueryType::Signed, FableQueryOutput::Signed(value)) => {
-            set_slot(&mut locals.signed, index, Some(value));
-        }
-        (
-            LocalRef::Unsigned(index),
-            FableQueryType::Unsigned,
-            FableQueryOutput::Unsigned(value),
-        ) => {
-            set_slot(&mut locals.unsigned, index, Some(value));
-        }
-        (LocalRef::Float(index), FableQueryType::Float, FableQueryOutput::Float(value)) => {
-            set_slot(&mut locals.floats, index, Some(value));
-        }
-        (local, expected, _) => {
-            return Err(FableError::TypeMismatch {
-                expected: expected.name().to_owned(),
-                actual: local.kind_name(),
-            });
-        }
-    }
-    Ok(())
-}
-
 fn coerce_query_output(
     expected: FableQueryType,
     value: FableQueryOutput,
@@ -8692,6 +9081,37 @@ fn query_output_kind_name(value: &FableQueryOutput) -> &'static str {
         FableQueryOutput::Unsigned(_) => "unsigned number",
         FableQueryOutput::Float(_) => "float",
     }
+}
+
+fn read_frame_word(frame: &[u8], offset: u32) -> Result<i64, FableError> {
+    let offset = usize::try_from(offset).map_err(|_| FableError::MalformedProgram {
+        reason: "frame offset did not fit usize",
+    })?;
+    let end = offset.checked_add(8).ok_or(FableError::MalformedProgram {
+        reason: "frame offset overflowed",
+    })?;
+    let bytes = frame.get(offset..end).ok_or(FableError::MalformedProgram {
+        reason: "frame read exceeded task frame",
+    })?;
+    Ok(i64::from_le_bytes(
+        bytes.try_into().expect("frame word width"),
+    ))
+}
+
+fn write_frame_word(frame: &mut [u8], offset: u32, value: i64) -> Result<(), FableError> {
+    let offset = usize::try_from(offset).map_err(|_| FableError::MalformedProgram {
+        reason: "frame offset did not fit usize",
+    })?;
+    let end = offset.checked_add(8).ok_or(FableError::MalformedProgram {
+        reason: "frame offset overflowed",
+    })?;
+    let bytes = frame
+        .get_mut(offset..end)
+        .ok_or(FableError::MalformedProgram {
+            reason: "frame write exceeded task frame",
+        })?;
+    bytes.copy_from_slice(&value.to_le_bytes());
+    Ok(())
 }
 
 fn local_kind_mismatch(expected: &'static str, actual: LocalRef) -> FableError {
@@ -8916,6 +9336,23 @@ fn expect_declared_value_expr(expr: &ExprPlan) -> Result<&DeclaredValueExpr, Fab
     }
 }
 
+fn expect_string_expr_ref(expr: &ExprPlan) -> Result<&StringExpr, FableError> {
+    match expr {
+        ExprPlan::String(expr) => Ok(expr),
+        other => Err(FableError::TypeMismatch {
+            expected: "string".into(),
+            actual: other.kind_name(),
+        }),
+    }
+}
+
+fn local_declared_type(local: LocalRef) -> Result<usize, FableError> {
+    match local {
+        LocalRef::Declared { type_index, .. } => Ok(type_index),
+        _ => Err(local_kind_mismatch("declared value", local)),
+    }
+}
+
 #[derive(Debug)]
 enum PathSegment {
     Name(String),
@@ -9106,6 +9543,50 @@ fn facet_enum_type(shape: &'static Shape) -> Option<facet_core::EnumType> {
         Type::User(UserType::Enum(enum_type)) => Some(enum_type),
         _ => None,
     }
+}
+
+fn read_facet_variant_index(shape: &'static Shape, ptr: PtrConst) -> Result<usize, FableError> {
+    let enum_type = facet_enum_type(shape).ok_or(FableError::TypeMismatch {
+        expected: "facet enum".into(),
+        actual: "non-enum value",
+    })?;
+    let discriminant = match enum_type.enum_repr {
+        EnumRepr::Rust => {
+            return Err(FableError::Unsupported {
+                feature: format!("matching opaque Rust enum {shape}"),
+            });
+        }
+        EnumRepr::RustNPO => {
+            return Err(FableError::Unsupported {
+                feature: format!("matching niche-optimized enum {shape}"),
+            });
+        }
+        EnumRepr::U8 => i64::from(*unsafe { ptr.get::<u8>() }),
+        EnumRepr::U16 => i64::from(*unsafe { ptr.get::<u16>() }),
+        EnumRepr::U32 => i64::from(*unsafe { ptr.get::<u32>() }),
+        EnumRepr::U64 => i64::try_from(*unsafe { ptr.get::<u64>() }).map_err(|_| {
+            FableError::MalformedProgram {
+                reason: "facet enum discriminant did not fit i64",
+            }
+        })?,
+        EnumRepr::USize => i64::try_from(*unsafe { ptr.get::<usize>() }).map_err(|_| {
+            FableError::MalformedProgram {
+                reason: "facet enum discriminant did not fit i64",
+            }
+        })?,
+        EnumRepr::I8 => i64::from(*unsafe { ptr.get::<i8>() }),
+        EnumRepr::I16 => i64::from(*unsafe { ptr.get::<i16>() }),
+        EnumRepr::I32 => i64::from(*unsafe { ptr.get::<i32>() }),
+        EnumRepr::I64 => *unsafe { ptr.get::<i64>() },
+        EnumRepr::ISize => (*unsafe { ptr.get::<isize>() }) as i64,
+    };
+    enum_type
+        .variants
+        .iter()
+        .position(|variant| variant.discriminant == Some(discriminant))
+        .ok_or(FableError::MalformedProgram {
+            reason: "facet enum discriminant did not match a variant",
+        })
 }
 
 fn element_stride(
