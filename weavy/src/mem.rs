@@ -5,6 +5,7 @@
 //! constructing `Vec`/map/set handles, reading `Option`/`Result` presence,
 //! validating string bytes, and delegating opaque payloads.
 
+pub mod declared;
 pub mod runtime;
 
 use std::collections::BTreeMap;
