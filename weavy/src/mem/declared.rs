@@ -228,11 +228,14 @@ pub fn declared_enum<SchemaRef>(
 /// `variant_count` distinct selectors.
 #[must_use]
 pub fn tag_width_for(variant_count: usize) -> usize {
-    if variant_count <= 1 << 8 {
+    // u64 arithmetic: `1usize << 32` overflows on 32-bit targets
+    // (wasm32 caught this — the substrate must stay wasm-clean).
+    let n = variant_count as u64;
+    if n <= 1 << 8 {
         1
-    } else if variant_count <= 1 << 16 {
+    } else if n <= 1 << 16 {
         2
-    } else if variant_count <= 1 << 32 {
+    } else if n <= 1 << 32 {
         4
     } else {
         8
