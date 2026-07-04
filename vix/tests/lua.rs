@@ -14,7 +14,8 @@ fn lua_source() -> String {
 #[test]
 fn lua_sketch_lowers_to_typed_ast() {
     let parser = vix::VixParser::new();
-    let file = parser.parse(&lua_source()).expect("lua.vix parses");
+    let source = lua_source();
+    let file = parser.parse(&source).expect("lua.vix parses");
 
     // use vix::{Tree, Path, Target}; use caps::{Cc, Ar}; fn sources; fn object; pub fn lua
     assert_eq!(file.items.len(), 5);
@@ -85,7 +86,12 @@ fn lua_sketch_lowers_to_typed_ast() {
 
     // pub fn lua(target: Target) -> Tree
     assert_eq!(lua.name.value, "lua");
-    assert_eq!(lua.vis.as_deref(), Some("pub"));
+    assert_eq!(
+        lua.vis
+            .as_ref()
+            .map(|span| &source[span.start as usize..span.end as usize]),
+        Some("pub")
+    );
     assert_eq!(lua.body.stmts.len(), 8);
 
     // let defines = match target.os { Linux => [-DLUA_USE_LINUX], Macos => …, _ => [] };

@@ -26,17 +26,23 @@ embedded grammar JSON.
 3. Preserve fields on anonymous token steps in the resolved tree. Both vix and
    fable route around this today by scanning anonymous children against
    grammar-derived token sets.
-   Status: parked. The current runtime emits `TreeEvent::Field { child: None }`
-   for token steps, so the resolved-CST builder has no token identity to attach.
-   Fixing this cleanly needs an event-level child identity or a deliberate
-   resolved-builder reconstruction pass keyed by parent production structure.
+   Status: generator capability landed. Anonymous token fields now generate
+   typed AST fields: single-literal fields lower to `Span` unit markers, and
+   token choices lower to `Spanned<String>`. The generated lowering prefers
+   fielded anonymous token nodes when present and falls back to the direct-child
+   token scan for current resolved trees; repeated token fields are supported.
 4. Make hidden-rule enum aliases explicit and deterministic. `_expr`,
    `_scrutinee`, and `_call_callee` can share the same Rust enum name today, and
    the emitter relies on the broad declaration being emitted first.
+   Status: landed. Same-name hidden enum aliases are grouped before emission and
+   generate one deterministic union enum in grammar order.
 5. Tighten repeat/sepBy field collection tests around the current walker. The
    main `repeat(field(...))` bug is fixed, but repeated anonymous token fields,
    nested fields inside field content, and token/rule mixed fields still have
    sharp generator behavior.
+   Status: landed for direct repeat/repeat1/sepBy fixtures, including trailing
+   separators and repeated anonymous token fields. Nested fields inside field
+   content and token/rule mixed fields remain rejected/out of scope.
 6. Decide whether gingembre should use the same generator API now or stay as a
    separate spike. Folding it in is lower payoff until it needs the fielded
    lowering emitted for vix/fable.
@@ -161,20 +167,15 @@ binary
   rhs: ident
 ```
 
-Current property: `lhs` and `rhs` are fielded, but the anonymous operator token
-is present only as an anonymous child, so codegen has to recover it by token-set
-scan. This is a snark resolved-tree limitation first; once fixed, the generator
-can lower token fields through the same `field_one`/`field_opt` route as named
-children.
+Current generator behavior: token-valued fields are first-class typed AST
+fields. Single-literal token fields lower to `Span` unit markers. Token choices
+lower to `Spanned<String>`, so operator text and location survive. Repeated token
+fields lower to `Vec<Span>` or `Vec<Spanned<String>>`.
 
-Precise blocker for Part 2: the runtime currently emits
-`TreeEvent::Field { child: None, field, structural_index, .. }` for anonymous
-token steps. `ResolvedCstBuilder` ignores that event because the field has no
-child `TreeNodeId`; shifted tokens have no `TreeNodeId`, so there is no direct
-identity to attach. A robust fix should either extend tree events with token
-child identity or teach the resolved builder to reconstruct the fielded token
-from the parent production/structural index after direct children have been
-materialized. Until then, the shared codegen must keep the token-set scan path.
+The generated lowering prefers direct fielded token children when the resolved
+tree has them and falls back to scanning matching direct anonymous children when
+the current runtime only materializes the token as an unfielded child. This keeps
+the accepted language unchanged while preserving typed-AST information.
 
 ## 4. repeat()/sepBy() field collection
 
@@ -201,7 +202,7 @@ patterns, command parts, and similar forms.
 Remaining edge cases worth tests in the shared generator:
 
 ```js
-// Repeated anonymous token fields are discovered, but lowering panics as unsupported.
+// Repeated anonymous token fields lower to Vec<Span> or Vec<Spanned<String>>.
 ops: ($) => repeat(field("op", choice("+", "-"))),
 
 // Nested fields inside field content are intentionally out of scope in the
@@ -240,9 +241,10 @@ _scrutinee: { enum: "Expr" },
 _call_callee: { enum: "Expr" },
 ```
 
-The emitter dedupes by Rust enum name and says the first declaration wins.
-`RawGrammarJson::rules` preserves Tree-sitter source order, so current grammars
-put the broad `_expr` before subset rules and generate the desired enum.
+The emitter now groups hidden rules by Rust enum name and emits one
+deterministic union. `RawGrammarJson::rules` preserves Tree-sitter source order,
+and the union preserves first occurrence order of member kinds while adding
+members from later same-name hidden rules.
 
 Minimal failure reproducer:
 
@@ -252,10 +254,10 @@ _expr: ($) => choice($.ident, $.call),
 call: ($) => seq(field("callee", $._small), field("args", $.args)),
 ```
 
-with both `_small` and `_expr` annotated as `Expr`, if `_small` is emitted first
-the generated `Expr` type misses `Call`. Capability target: group hidden rules
-by `enum` name, emit a deterministic union or validated superset, and report a
-clear diagnostic when same-name hidden rules are incompatible.
+with both `_small` and `_expr` annotated as `Expr`, the generated `Expr` type
+now contains both `Ident` and `Call` regardless of which hidden rule appears
+first. The regression test regenerates the fixture twice and requires
+byte-identical output.
 
 ## 6. Per-language patches revealed by the generator copies
 

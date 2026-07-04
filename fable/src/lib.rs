@@ -312,6 +312,12 @@ pub mod support {
         }
     }
 
+    impl PartialEq<&str> for Spanned<String> {
+        fn eq(&self, other: &&str) -> bool {
+            self.value == *other
+        }
+    }
+
     pub fn span(n: &ResolvedCstNode) -> Span {
         let bytes = n.bytes();
         Span {

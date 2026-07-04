@@ -8,12 +8,6 @@
 //!   - mixed-alternative fields (e.g. array elements: flag | expr) become ad-hoc
 //!     enums named by ast() annotations,
 //!   - unfielded leaves (identifier, string, …) decode per their annotation.
-//!
-//! Known snark gap this codegen routes around: fields on anonymous TOKEN steps
-//! (`field("op", …)` on operators, `field("vis", "pub")`) never reach the resolved
-//! tree — token steps emit `Field { child: None }`, which the resolved builder
-//! discards. Token-valued fields are therefore lowered by scanning the node's
-//! anonymous children against the token set derived from the grammar.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -280,7 +274,7 @@ impl Decode {
 /// Resolved type/lowering shape for one field.
 #[derive(Clone, Debug)]
 enum Shape {
-    /// Anonymous literal token(s) — lowered by token-set scan (see module docs).
+    /// Anonymous literal token(s).
     TokenSet(Vec<String>),
     /// A hidden choice rule — the generated enum.
     Enum(String),
@@ -325,7 +319,10 @@ struct StructDef {
 
 #[derive(Clone, Debug)]
 struct EnumDef {
+    /// Canonical hidden rule kind for diagnostics.
     kind: String,
+    /// Hidden rule kinds that share this Rust enum name.
+    source_kinds: Vec<String>,
     name: String,
     member_kinds: Vec<String>,
 }
@@ -348,7 +345,10 @@ impl<'a> Model<'a> {
             adhocs: Vec::new(),
         };
 
-        // Hidden enums first (shape resolution needs them), in grammar order.
+        // Hidden enums first (shape resolution needs them), grouped by Rust enum
+        // name. Subset hidden aliases such as `_scrutinee` and `_expr` can share
+        // one generated enum; the generated enum is the deterministic union of
+        // all same-name hidden rules in grammar order.
         for (name, rule) in raw.rules.iter() {
             let kind = name.as_str();
             if !kind.starts_with('_') {
@@ -361,18 +361,28 @@ impl<'a> Model<'a> {
             let RawRuleJson::Choice { members } = unwrap_transparent(rule) else {
                 panic!("hidden enum rule `{kind}` must be a choice");
             };
-            let member_kinds = members
+            let member_kinds: Vec<String> = members
                 .iter()
                 .map(|m| match unwrap_transparent(m) {
                     RawRuleJson::Symbol { name } => name.clone(),
                     other => panic!("hidden enum `{kind}` member must be a symbol: {other:?}"),
                 })
                 .collect();
-            model.enums.push(EnumDef {
-                kind: kind.to_string(),
-                name: enum_name,
-                member_kinds,
-            });
+            if let Some(existing) = model.enums.iter_mut().find(|e| e.name == enum_name) {
+                existing.source_kinds.push(kind.to_string());
+                for member in member_kinds {
+                    if !existing.member_kinds.contains(&member) {
+                        existing.member_kinds.push(member);
+                    }
+                }
+            } else {
+                model.enums.push(EnumDef {
+                    kind: kind.to_string(),
+                    source_kinds: vec![kind.to_string()],
+                    name: enum_name,
+                    member_kinds,
+                });
+            }
         }
 
         // Structs: every fielded visible rule, in grammar order.
@@ -425,7 +435,9 @@ impl<'a> Model<'a> {
     }
 
     fn hidden_enum(&self, kind: &str) -> Option<&EnumDef> {
-        self.enums.iter().find(|e| e.kind == kind)
+        self.enums
+            .iter()
+            .find(|e| e.source_kinds.iter().any(|source| source == kind))
     }
 
     /// The visible node kinds an enum can dispatch on, hidden members expanded.
@@ -635,7 +647,22 @@ impl<'a> Model<'a> {
         out.push_str(
             "// Structure derived from grammar fields + cardinality; names/decodes from ast().\n\n\
              use snark::parser::ResolvedCstNode;\n\n\
-             pub use crate::support::{Span, Spanned};\n\n",
+             pub use crate::support::{Span, Spanned};\n\n\
+             fn token_field_nodes<'a>(n: &'a ResolvedCstNode, name: &str, set: &[&str]) -> Vec<&'a ResolvedCstNode> {\n    \
+             let fielded = n\n        \
+                 .children()\n        \
+                 .iter()\n        \
+                 .filter(|c| c.field() == Some(name) && !c.extra())\n        \
+                 .filter(|c| c.text().is_some_and(|t| set.contains(&t)))\n        \
+                 .collect::<Vec<_>>();\n    \
+             if !fielded.is_empty() {\n        \
+                 return fielded;\n    \
+             }\n    \
+             n.children()\n        \
+                 .iter()\n        \
+                 .filter(|c| !c.named() && !c.extra())\n        \
+                 .filter(|c| c.text().is_some_and(|t| set.contains(&t)))\n        \
+                 .collect()\n}\n\n",
         );
         // Several hidden rules may share one enum (e.g. `_scrutinee` is a
         // syntactic restriction of `_expr`): emit each NAME once, first
@@ -682,7 +709,10 @@ impl<'a> Model<'a> {
     fn strip_field(&self, f: &FieldDef) -> Option<String> {
         let name = &f.rust_name;
         let inner = match &f.shape {
-            Shape::TokenSet(_) => return None,
+            Shape::TokenSet(tokens) if tokens.len() == 1 => {
+                "*x = crate::support::Span { start: 0, end: 0 };"
+            }
+            Shape::TokenSet(_) => "x.span = crate::support::Span { start: 0, end: 0 };",
             Shape::Enum(_) | Shape::Struct(_) | Shape::AdHoc(_) => "x.strip_spans();",
             Shape::Leaf(Decode::Unit) => "*x = crate::support::Span { start: 0, end: 0 };",
             Shape::Leaf(_) => "x.span = crate::support::Span { start: 0, end: 0 };",
@@ -910,7 +940,8 @@ impl<'a> Model<'a> {
 
     fn field_type(&self, f: &FieldDef) -> String {
         let mut base = match &f.shape {
-            Shape::TokenSet(_) => "String".to_string(),
+            Shape::TokenSet(tokens) if tokens.len() == 1 => "crate::support::Span".to_string(),
+            Shape::TokenSet(_) => "crate::support::Spanned<String>".to_string(),
             Shape::Enum(name) => name.clone(),
             Shape::Struct(kind) => self.struct_name(kind),
             Shape::Leaf(decode) => decode.rust_type().to_string(),
@@ -926,10 +957,38 @@ impl<'a> Model<'a> {
         }
     }
 
+    fn token_lower_expr(&self, f: &FieldDef, s: &StructDef, tokens: &[String]) -> String {
+        let set = tokens
+            .iter()
+            .map(|t| format!("{t:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let lower = if tokens.len() == 1 {
+            "crate::support::span"
+        } else {
+            "crate::support::node_text"
+        };
+        match f.mult {
+            Mult::Opt => format!(
+                "token_field_nodes(n, {:?}, &[{set}]).into_iter().next().map({lower})",
+                f.grammar_name
+            ),
+            Mult::One => format!(
+                "token_field_nodes(n, {:?}, &[{set}]).into_iter().next().map({lower})\n            \
+                 .unwrap_or_else(|| panic!(\"missing token field `{}` on `{}`\"))",
+                f.grammar_name, f.grammar_name, s.kind
+            ),
+            Mult::Many => format!(
+                "token_field_nodes(n, {:?}, &[{set}]).into_iter().map({lower}).collect()",
+                f.grammar_name
+            ),
+        }
+    }
+
     /// The single-argument function lowering one child node of this field.
     fn field_lower_fn(&self, f: &FieldDef) -> String {
         match &f.shape {
-            Shape::TokenSet(_) => unreachable!("token fields lower via token_field"),
+            Shape::TokenSet(_) => unreachable!("token fields lower via token_field_nodes"),
             Shape::Enum(name) => format!("lower_{}", snake(name)),
             Shape::Struct(kind) => format!("lower_{kind}"),
             Shape::Leaf(decode) => decode.lower_fn().to_string(),
@@ -959,23 +1018,7 @@ impl<'a> Model<'a> {
         .unwrap();
         for f in &s.fields {
             let expr = if let Shape::TokenSet(tokens) = &f.shape {
-                let set = tokens
-                    .iter()
-                    .map(|t| format!("{t:?}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                match f.mult {
-                    Mult::Opt => format!("crate::support::token_field(n, &[{set}])"),
-                    Mult::One => format!(
-                        "crate::support::token_field(n, &[{set}])\n            \
-                         .unwrap_or_else(|| panic!(\"missing token field `{}` on `{}`\"))",
-                        f.grammar_name, s.kind
-                    ),
-                    Mult::Many => panic!(
-                        "repeated token field `{}` on `{}` — unsupported",
-                        f.grammar_name, s.kind
-                    ),
-                }
+                self.token_lower_expr(f, s, tokens)
             } else {
                 let lower = self.field_lower_fn(f);
                 match f.mult {
@@ -1130,6 +1173,10 @@ mod tests {
 
     use super::{Annotations, Model, TypedAstConfig};
     use snark::grammar::RawGrammarJson;
+    use snark::lexical::LexicalFacts;
+    use snark::lower::weavy::{WeavyParsePlan, parse_prepared_weavy_with_report};
+    use snark::parser::{ParseTable, ParserGrammar, ResolvedCstNode};
+    use snark::validated::ValidatedGrammar;
 
     fn generate(grammar_source: &str) -> String {
         let (grammar_json, annotations_json) =
@@ -1147,6 +1194,57 @@ mod tests {
             language_name: "cycle",
         };
         Model::build(&raw, &anns).generate(&config)
+    }
+
+    fn parse_resolved(grammar_source: &str, input: &str) -> ResolvedCstNode {
+        let (grammar_json, _) =
+            crate::emit_source_with_annotations_boa(grammar_source, "fixture.js").unwrap();
+        let raw = RawGrammarJson::from_tree_sitter_json_str(&grammar_json).unwrap();
+        let validated = ValidatedGrammar::from_raw(&raw).unwrap();
+        let lexical = LexicalFacts::from_grammar(&validated);
+        let parser = ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .unwrap()
+            .prepare_productions_for_items()
+            .unwrap();
+        let table = ParseTable::from_grammar(&parser).unwrap();
+        let plan = WeavyParsePlan::new(&validated, &parser, &table).unwrap();
+        let report = parse_prepared_weavy_with_report(&plan, &parser, &table, input).unwrap();
+        report.accepted_resolved_tree(&parser, input).unwrap()
+    }
+
+    fn child<'a>(n: &'a ResolvedCstNode, field: &str) -> &'a ResolvedCstNode {
+        n.children()
+            .iter()
+            .find(|c| c.field() == Some(field))
+            .unwrap()
+    }
+
+    fn field_count(n: &ResolvedCstNode, field: &str) -> usize {
+        n.children()
+            .iter()
+            .filter(|c| c.field() == Some(field))
+            .count()
+    }
+
+    fn fixture_token_field_nodes<'a>(
+        n: &'a ResolvedCstNode,
+        name: &str,
+        set: &[&str],
+    ) -> Vec<&'a ResolvedCstNode> {
+        let fielded = n
+            .children()
+            .iter()
+            .filter(|c| c.field() == Some(name) && !c.extra())
+            .filter(|c| c.text().is_some_and(|t| set.contains(&t)))
+            .collect::<Vec<_>>();
+        if !fielded.is_empty() {
+            return fielded;
+        }
+        n.children()
+            .iter()
+            .filter(|c| !c.named() && !c.extra())
+            .filter(|c| c.text().is_some_and(|t| set.contains(&t)))
+            .collect()
     }
 
     #[test]
@@ -1177,5 +1275,111 @@ module.exports = grammar({
         assert!(generated.contains(
             r#"if_stmt: crate::support::field_opt(n, "if_stmt").map(|n| Box::new(lower_if_statement(n))),"#
         ));
+    }
+
+    #[test]
+    fn anonymous_token_fields_generate_spanned_text_or_unit_markers() {
+        let grammar = r#"
+module.exports = grammar({
+  name: "tokens",
+  rules: {
+    source_file: $ => seq(field("expr", $.binary), repeat(field("mark", "!"))),
+    binary: $ => seq(field("lhs", $.ident), field("op", choice("+", "-")), field("rhs", $.ident)),
+    ident: $ => /[a-z]+/,
+  },
+});
+"#;
+        let generated = generate(grammar);
+
+        assert!(generated.contains("pub op: crate::support::Spanned<String>,"));
+        assert!(generated.contains("pub marks: Vec<crate::support::Span>,"));
+        assert!(generated.contains(
+            r#"op: token_field_nodes(n, "op", &["+", "-"]).into_iter().next().map(crate::support::node_text)"#
+        ));
+        assert!(generated.contains(
+            r#"marks: token_field_nodes(n, "mark", &["!"]).into_iter().map(crate::support::span).collect(),"#
+        ));
+
+        let root = parse_resolved(grammar, "a + b!!!");
+        let binary = child(&root, "expr");
+        let ops = fixture_token_field_nodes(binary, "op", &["+", "-"]);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].text(), Some("+"));
+        let marks = fixture_token_field_nodes(&root, "mark", &["!"]);
+        assert_eq!(marks.len(), 3);
+        assert!(marks.iter().all(|mark| mark.text() == Some("!")));
+    }
+
+    #[test]
+    fn hidden_enum_aliases_generate_deterministic_union() {
+        let grammar = r#"
+module.exports = grammar({
+  name: "aliases",
+  rules: {
+    source_file: $ => field("expr", $._expr),
+    _small: $ => choice($.ident),
+    _expr: $ => choice($.ident, $.call),
+    call: $ => seq(field("callee", $._small), "(", field("arg", $.ident), ")"),
+    ident: $ => /[a-z]+/,
+  },
+});
+ast({
+  _small: { enum: "Expr" },
+  _expr: { enum: "Expr" },
+});
+"#;
+
+        let first = generate(grammar);
+        let second = generate(grammar);
+        assert_eq!(first, second);
+        assert_eq!(first.matches("pub enum Expr").count(), 1);
+        assert!(first.contains("    Ident(crate::support::Spanned<String>),"));
+        assert!(first.contains("    Call(Box<Call>),"));
+        assert!(first.contains(r#""call" => Expr::Call(Box::new(lower_call(n))),"#));
+    }
+
+    #[test]
+    fn repeat_and_sep_by_fields_generate_collections_and_parse() {
+        let grammar = r#"
+function sepBy(sep, rule) {
+  return optional(seq(rule, repeat(seq(sep, rule)), optional(sep)));
+}
+
+module.exports = grammar({
+  name: "collections",
+  rules: {
+    source_file: $ => seq(
+      field("many", $.many),
+      field("one_or_more", $.one_or_more),
+      field("list", $.list),
+      field("trail", $.trail),
+    ),
+    many: $ => seq("{", repeat(field("item", $.ident)), "}"),
+    one_or_more: $ => seq("<", repeat1(field("item", $.ident)), ">"),
+    list: $ => seq("[", sepBy(",", field("elem", $.ident)), "]"),
+    trail: $ => seq("(", sepBy(";", field("entry", $.ident)), ")"),
+    ident: $ => /[a-z]+/,
+  },
+});
+"#;
+        let generated = generate(grammar);
+
+        assert!(generated.contains("pub items: Vec<crate::support::Spanned<String>>"));
+        assert!(generated.contains("pub elems: Vec<crate::support::Spanned<String>>"));
+        assert!(generated.contains("pub entries: Vec<crate::support::Spanned<String>>"));
+        assert!(generated.contains(r#"items: crate::support::fields(n, "item").map(crate::support::node_text).collect(),"#));
+        assert!(generated.contains(r#"elems: crate::support::fields(n, "elem").map(crate::support::node_text).collect(),"#));
+        assert!(generated.contains(r#"entries: crate::support::fields(n, "entry").map(crate::support::node_text).collect(),"#));
+
+        let root = parse_resolved(grammar, "{a b}<c>[d,e,](f;g;)");
+        assert_eq!(field_count(child(&root, "many"), "item"), 2);
+        assert_eq!(field_count(child(&root, "one_or_more"), "item"), 1);
+        assert_eq!(field_count(child(&root, "list"), "elem"), 2);
+        assert_eq!(field_count(child(&root, "trail"), "entry"), 2);
+
+        let empty = parse_resolved(grammar, "{}<c>[]()");
+        assert_eq!(field_count(child(&empty, "many"), "item"), 0);
+        assert_eq!(field_count(child(&empty, "list"), "elem"), 0);
+        assert_eq!(field_count(child(&empty, "trail"), "entry"), 0);
     }
 }
