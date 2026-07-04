@@ -471,6 +471,18 @@ impl MachineEventAdapter {
                 key: key_text.clone(),
                 replayed: *replayed,
             }),
+            DriveEvent::ArtifactProbe {
+                format,
+                projection,
+                input,
+                cache_hit,
+                timestamp_us,
+            } => Some(DemandEvent::Observation {
+                generation: self.generation,
+                at: *timestamp_us,
+                key: format!("artifact:{format}:{projection}:{input:016x}"),
+                replayed: *cache_hit,
+            }),
             DriveEvent::Demanded { .. }
             | DriveEvent::ParkedOn { .. }
             | DriveEvent::Completed { .. }
