@@ -3,9 +3,13 @@
 //! oracle demands, runs join/cut off, and trees move executor→executor while
 //! the orchestrator holds hashes.
 
-use vix::exec::ExecEvent;
+use vix::exec::{ExecEvent, Tree};
+use vix::fetch::FakeFetchBackend;
 use vix::oracle::{Event, Oracle, Value};
 use vix_wire::{ExecutorDispatcher, ExecutorService, FleetBackend, Placement, Transfer};
+
+const LUA_URL: &str = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
+const LUA_ARCHIVE_BYTES: &[u8] = b"lua-5.4.8 fixture archive";
 
 fn lua_source() -> String {
     std::fs::read_to_string(concat!(
@@ -13,6 +17,26 @@ fn lua_source() -> String {
         "/../playgrounds/snark/src/bundled/vix/samples/lua.vix"
     ))
     .expect("read lua.vix corpus")
+}
+
+fn lua_fetch_backend() -> FakeFetchBackend {
+    FakeFetchBackend::new().with_archive(
+        LUA_URL,
+        LUA_ARCHIVE_BYTES,
+        Tree::of(&[
+            ("lua-5.4.8/src/lua.h", "// lua.h api"),
+            (
+                "lua-5.4.8/src/lua.c",
+                "#include \"lua.h\"\n// interpreter main",
+            ),
+            ("lua-5.4.8/src/lapi.c", "#include \"lua.h\"\n// api impl"),
+            ("lua-5.4.8/src/lauxlib.c", "#include \"lua.h\"\n// aux lib"),
+            (
+                "lua-5.4.8/src/luac.c",
+                "#include \"lua.h\"\n// compiler main",
+            ),
+        ]),
+    )
 }
 
 async fn spawn_executor() -> String {
@@ -49,6 +73,7 @@ async fn lua_builds_across_two_machines() {
 
     let oracle = Oracle::load(&lua_source())
         .expect("lua.vix loads")
+        .with_fetch_backend(lua_fetch_backend())
         .with_backend(Box::new(fleet));
 
     let out = oracle.call("lua", &[("target", target())]).unwrap();
@@ -100,7 +125,9 @@ async fn trees_gravity_pull_between_executors() {
         .await
         .expect("fleet connects");
 
-    let oracle = Oracle::load(&lua_source()).expect("lua.vix loads");
+    let oracle = Oracle::load(&lua_source())
+        .expect("lua.vix loads")
+        .with_fetch_backend(lua_fetch_backend());
     // Run and THEN inspect the fleet's transfer log (with_backend consumes
     // it, so keep a probe first).
     let probe = std::sync::Arc::new(fleet);
