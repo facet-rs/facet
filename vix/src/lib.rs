@@ -25,6 +25,7 @@ pub mod exec;
 pub mod fetch;
 pub mod graph;
 pub mod ide;
+pub mod machine;
 pub(crate) mod module;
 pub mod oracle;
 
