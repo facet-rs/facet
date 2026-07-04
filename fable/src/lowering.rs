@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
+use std::mem::{align_of, size_of};
 use std::ptr::copy_nonoverlapping;
 
 use facet_core::{
@@ -12,6 +13,7 @@ use weavy::ir::{
     ControlOp, DenseWeavyLowered, DenseWeavyProgram, EffectContract, EffectResource,
     IntrinsicDescriptor, IntrinsicOp, MemoryRegion, TypedMemoryAccess, WeavyOp,
 };
+use weavy::mem::declared as declared_mem;
 use weavy::{BlockRef, Control, RunError, RunStats, Step};
 
 use crate::ast::{
@@ -67,6 +69,7 @@ pub struct FableQueryPlan<T, Output> {
 pub struct FableRootPlan {
     lowered: FableLowered,
     roots: Box<[FableRootSpec]>,
+    declared_types: FableDeclaredTypes,
 }
 
 /// A reusable lowered Fable predicate over explicitly named roots.
@@ -76,6 +79,7 @@ pub struct FableRootPlan {
 pub struct FableRootPredicatePlan {
     lowered: FableLowered,
     roots: Box<[FableRootSpec]>,
+    declared_types: FableDeclaredTypes,
 }
 
 /// A reusable lowered Fable query over explicitly named roots.
@@ -86,6 +90,7 @@ pub struct FableRootPredicatePlan {
 pub struct FableRootQueryPlan<Output> {
     lowered: FableLowered,
     roots: Box<[FableRootSpec]>,
+    declared_types: FableDeclaredTypes,
     _marker: PhantomData<fn() -> Output>,
 }
 
@@ -123,6 +128,103 @@ impl FableQueryType {
             FableQueryType::Unsigned => "unsigned number",
             FableQueryType::Float => "float",
         }
+    }
+}
+
+/// A fable-declared type descriptor keyed by fable schema/type names.
+pub type FableDeclaredDescriptor = weavy::mem::Descriptor<String>;
+
+/// Type declarations compiled from a fable source file.
+#[derive(Clone, Debug, Default)]
+pub struct FableDeclaredTypes {
+    types: Vec<FableDeclaredType>,
+    by_name: BTreeMap<String, usize>,
+}
+
+impl FableDeclaredTypes {
+    /// Look up a declared type by name.
+    pub fn get(&self, name: &str) -> Option<&FableDeclaredType> {
+        self.by_name.get(name).map(|&index| &self.types[index])
+    }
+
+    /// Iterate declared types in source declaration order.
+    pub fn iter(&self) -> impl Iterator<Item = &FableDeclaredType> {
+        self.types.iter()
+    }
+
+    /// Whether the source declared no fable types.
+    pub fn is_empty(&self) -> bool {
+        self.types.is_empty()
+    }
+}
+
+/// One fable-declared type plus its computed memory descriptor.
+#[derive(Clone, Debug)]
+pub struct FableDeclaredType {
+    name: String,
+    kind: FableDeclaredTypeKind,
+    descriptor: FableDeclaredDescriptor,
+}
+
+impl FableDeclaredType {
+    /// Declared type name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Fable-owned name/index metadata.
+    pub fn kind(&self) -> &FableDeclaredTypeKind {
+        &self.kind
+    }
+
+    /// The ordinary Weavy memory descriptor for this declared type.
+    pub fn descriptor(&self) -> &FableDeclaredDescriptor {
+        &self.descriptor
+    }
+}
+
+/// Fable-owned metadata for a declared type.
+#[derive(Clone, Debug)]
+pub enum FableDeclaredTypeKind {
+    Struct { fields: Vec<FableDeclaredField> },
+    Enum { variants: Vec<FableDeclaredVariant> },
+}
+
+/// Fable-owned metadata for a declared field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FableDeclaredField {
+    name: String,
+    type_name: String,
+}
+
+impl FableDeclaredField {
+    /// Field name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Resolved fable scalar or declared type name.
+    pub fn type_name(&self) -> &str {
+        &self.type_name
+    }
+}
+
+/// Fable-owned metadata for one enum variant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FableDeclaredVariant {
+    name: String,
+    fields: Vec<FableDeclaredField>,
+}
+
+impl FableDeclaredVariant {
+    /// Variant name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Variant payload fields in source order.
+    pub fn fields(&self) -> &[FableDeclaredField] {
+        &self.fields
     }
 }
 
@@ -746,6 +848,11 @@ where
         })
     }
 
+    /// Fable-declared types compiled with this plan.
+    pub fn declared_types(&self) -> &FableDeclaredTypes {
+        self.plan.declared_types()
+    }
+
     /// Run this plan against `value`.
     pub fn apply(&self, value: &mut T) -> Result<(), FableError> {
         let mut roots = [FableRootValue::read_write("root", value)];
@@ -784,6 +891,11 @@ where
             plan,
             _marker: PhantomData,
         })
+    }
+
+    /// Fable-declared types compiled with this plan.
+    pub fn declared_types(&self) -> &FableDeclaredTypes {
+        self.plan.declared_types()
     }
 
     /// Run this transform from `input` into `output`.
@@ -832,6 +944,11 @@ where
         })
     }
 
+    /// Fable-declared types compiled with this plan.
+    pub fn declared_types(&self) -> &FableDeclaredTypes {
+        self.plan.declared_types()
+    }
+
     /// Run this predicate against `value`.
     pub fn evaluate(&self, value: &T) -> Result<bool, FableError> {
         let mut roots = [FableRootValue::read_only("root", value)];
@@ -869,6 +986,11 @@ where
         })
     }
 
+    /// Fable-declared types compiled with this plan.
+    pub fn declared_types(&self) -> &FableDeclaredTypes {
+        self.plan.declared_types()
+    }
+
     /// Run this query against `value`.
     pub fn evaluate(&self, value: &T) -> Result<Output, FableError> {
         let mut roots = [FableRootValue::read_only("root", value)];
@@ -899,12 +1021,19 @@ impl FableRootPlan {
         let root = parse(src).map_err(|error| FableError::Parse { error })?;
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_root(&root)?;
+        let declared_types = lowerer.declared_types.clone();
         let blocks = lowerer.into_blocks();
 
         Ok(Self {
             lowered: FableLowered::new(program, blocks),
             roots: roots.into(),
+            declared_types,
         })
+    }
+
+    /// Fable-declared types compiled with this plan.
+    pub fn declared_types(&self) -> &FableDeclaredTypes {
+        &self.declared_types
     }
 
     /// Run this plan against explicitly bound root values.
@@ -957,12 +1086,19 @@ impl FableRootPredicatePlan {
         let root = parse(src).map_err(|error| FableError::Parse { error })?;
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_predicate_root(&root)?;
+        let declared_types = lowerer.declared_types.clone();
         let blocks = lowerer.into_blocks();
 
         Ok(Self {
             lowered: FableLowered::new(program, blocks),
             roots: roots.into(),
+            declared_types,
         })
+    }
+
+    /// Fable-declared types compiled with this plan.
+    pub fn declared_types(&self) -> &FableDeclaredTypes {
+        &self.declared_types
     }
 
     /// Run this predicate against explicitly bound root values.
@@ -1027,13 +1163,20 @@ where
         let root = parse(src).map_err(|error| FableError::Parse { error })?;
         let mut lowerer = Lowerer::new(roots, intrinsics);
         let program = lowerer.lower_query_root(&root, Output::query_type())?;
+        let declared_types = lowerer.declared_types.clone();
         let blocks = lowerer.into_blocks();
 
         Ok(Self {
             lowered: FableLowered::new(program, blocks),
             roots: roots.into(),
+            declared_types,
             _marker: PhantomData,
         })
+    }
+
+    /// Fable-declared types compiled with this plan.
+    pub fn declared_types(&self) -> &FableDeclaredTypes {
+        &self.declared_types
     }
 
     /// Run this query against explicitly bound root values.
@@ -2108,12 +2251,217 @@ impl LocalAllocator {
     }
 }
 
+#[derive(Clone, Copy)]
+enum DeclRef<'ast> {
+    Struct(&'ast ast::StructDecl),
+    Enum(&'ast ast::EnumDecl),
+}
+
+enum DeclBuildState {
+    Pending,
+    Building,
+    Built(Box<FableDeclaredType>),
+}
+
+struct DeclaredTypeBuilder<'ast> {
+    decls: Vec<(String, DeclRef<'ast>)>,
+    by_name: BTreeMap<String, usize>,
+    states: Vec<DeclBuildState>,
+}
+
+impl FableDeclaredTypes {
+    fn from_source(root: &ast::SourceFile) -> Result<Self, FableError> {
+        let mut decls = Vec::new();
+        let mut by_name = BTreeMap::new();
+        for item in &root.items {
+            let (name, decl) = match item {
+                Item::Struct(decl) => (decl.name.value.clone(), DeclRef::Struct(decl)),
+                Item::Enum(decl) => (decl.name.value.clone(), DeclRef::Enum(decl)),
+                Item::Stmt(_) => continue,
+            };
+            if by_name.insert(name.clone(), decls.len()).is_some() {
+                return Err(FableError::AmbiguousType { name });
+            }
+            decls.push((name, decl));
+        }
+
+        let mut builder = DeclaredTypeBuilder {
+            states: (0..decls.len()).map(|_| DeclBuildState::Pending).collect(),
+            decls,
+            by_name,
+        };
+
+        let mut types = Vec::with_capacity(builder.decls.len());
+        let mut public_by_name = BTreeMap::new();
+        for index in 0..builder.decls.len() {
+            let declared = builder.build_index(index)?;
+            public_by_name.insert(declared.name.clone(), types.len());
+            types.push(declared);
+        }
+
+        Ok(Self {
+            types,
+            by_name: public_by_name,
+        })
+    }
+}
+
+impl<'ast> DeclaredTypeBuilder<'ast> {
+    fn build_name(&mut self, name: &str) -> Result<FableDeclaredType, FableError> {
+        let index = *self
+            .by_name
+            .get(name)
+            .ok_or_else(|| FableError::UnknownType {
+                name: name.to_owned(),
+            })?;
+        self.build_index(index)
+    }
+
+    fn build_index(&mut self, index: usize) -> Result<FableDeclaredType, FableError> {
+        match &self.states[index] {
+            DeclBuildState::Built(declared) => return Ok((**declared).clone()),
+            DeclBuildState::Building => {
+                let name = self.decls[index].0.clone();
+                return Err(FableError::Unsupported {
+                    feature: format!("recursive declared type {name}"),
+                });
+            }
+            DeclBuildState::Pending => {}
+        }
+
+        self.states[index] = DeclBuildState::Building;
+        let name = self.decls[index].0.clone();
+        let decl = self.decls[index].1;
+        let declared = match decl {
+            DeclRef::Struct(decl) => self.build_struct(name, decl)?,
+            DeclRef::Enum(decl) => self.build_enum(name, decl)?,
+        };
+        self.states[index] = DeclBuildState::Built(Box::new(declared.clone()));
+        Ok(declared)
+    }
+
+    fn build_struct(
+        &mut self,
+        name: String,
+        decl: &ast::StructDecl,
+    ) -> Result<FableDeclaredType, FableError> {
+        let (fields, descriptors) = self.build_type_fields(&decl.fields.fields)?;
+        let descriptor = declared_mem::declared_struct(name.clone(), descriptors);
+        Ok(FableDeclaredType {
+            name,
+            kind: FableDeclaredTypeKind::Struct { fields },
+            descriptor,
+        })
+    }
+
+    fn build_enum(
+        &mut self,
+        name: String,
+        decl: &ast::EnumDecl,
+    ) -> Result<FableDeclaredType, FableError> {
+        let mut seen = BTreeMap::new();
+        let mut variants = Vec::with_capacity(decl.variants.len());
+        let mut variant_descriptors = Vec::with_capacity(decl.variants.len());
+        for variant in &decl.variants {
+            let variant_name = variant.name.value.clone();
+            if seen.insert(variant_name.clone(), variants.len()).is_some() {
+                return Err(FableError::DuplicateStructField {
+                    field: variant_name,
+                });
+            }
+            let (fields, descriptors) = if let Some(fields) = &variant.fields {
+                self.build_type_fields(&fields.fields)?
+            } else {
+                (Vec::new(), Vec::new())
+            };
+            variants.push(FableDeclaredVariant {
+                name: variant_name,
+                fields,
+            });
+            variant_descriptors.push(descriptors);
+        }
+        let descriptor = declared_mem::declared_enum(name.clone(), variant_descriptors);
+        Ok(FableDeclaredType {
+            name,
+            kind: FableDeclaredTypeKind::Enum { variants },
+            descriptor,
+        })
+    }
+
+    fn build_type_fields(
+        &mut self,
+        fields: &[ast::TypeField],
+    ) -> Result<(Vec<FableDeclaredField>, Vec<FableDeclaredDescriptor>), FableError> {
+        let mut seen = BTreeMap::new();
+        let mut metadata = Vec::with_capacity(fields.len());
+        let mut descriptors = Vec::with_capacity(fields.len());
+        for field in fields {
+            let name = name_text(&field.name).to_owned();
+            if seen.insert(name.clone(), metadata.len()).is_some() {
+                return Err(FableError::DuplicateStructField { field: name });
+            }
+            let (type_name, descriptor) = self.resolve_type_expr(&field.ty)?;
+            metadata.push(FableDeclaredField { name, type_name });
+            descriptors.push(descriptor);
+        }
+        Ok((metadata, descriptors))
+    }
+
+    fn resolve_type_expr(
+        &mut self,
+        ty: &ast::TypeExpr,
+    ) -> Result<(String, FableDeclaredDescriptor), FableError> {
+        match ty {
+            ast::TypeExpr::Scalar(name) => {
+                let type_name = name.value.clone();
+                let descriptor = scalar_declared_descriptor(&type_name)?;
+                Ok((type_name, descriptor))
+            }
+            ast::TypeExpr::Declared(declared) => {
+                let declared = self.build_name(&declared.name.value)?;
+                Ok((declared.name.clone(), declared.descriptor))
+            }
+        }
+    }
+}
+
+fn scalar_declared_descriptor(name: &str) -> Result<FableDeclaredDescriptor, FableError> {
+    let schema = name.to_owned();
+    let descriptor = match name {
+        "unit" => declared_mem::unit(schema),
+        "bool" => declared_mem::bool_(schema),
+        "char" => declared_mem::scalar(schema, size_of::<char>(), align_of::<char>()),
+        "string" => declared_mem::scalar(schema, size_of::<String>(), align_of::<String>()),
+        "i8" => declared_mem::scalar(schema, size_of::<i8>(), align_of::<i8>()),
+        "i16" => declared_mem::scalar(schema, size_of::<i16>(), align_of::<i16>()),
+        "i32" => declared_mem::scalar(schema, size_of::<i32>(), align_of::<i32>()),
+        "i64" => declared_mem::i64_(schema),
+        "i128" => declared_mem::scalar(schema, size_of::<i128>(), align_of::<i128>()),
+        "isize" => declared_mem::scalar(schema, size_of::<isize>(), align_of::<isize>()),
+        "u8" => declared_mem::scalar(schema, size_of::<u8>(), align_of::<u8>()),
+        "u16" => declared_mem::scalar(schema, size_of::<u16>(), align_of::<u16>()),
+        "u32" => declared_mem::scalar(schema, size_of::<u32>(), align_of::<u32>()),
+        "u64" => declared_mem::scalar(schema, size_of::<u64>(), align_of::<u64>()),
+        "u128" => declared_mem::scalar(schema, size_of::<u128>(), align_of::<u128>()),
+        "usize" => declared_mem::scalar(schema, size_of::<usize>(), align_of::<usize>()),
+        "f32" => declared_mem::scalar(schema, size_of::<f32>(), align_of::<f32>()),
+        "f64" => declared_mem::f64_(schema),
+        other => {
+            return Err(FableError::UnknownType {
+                name: other.to_owned(),
+            });
+        }
+    };
+    Ok(descriptor)
+}
+
 struct Lowerer<'intrinsics> {
     roots: Box<[FableRootSpec]>,
     intrinsics: &'intrinsics FableIntrinsics,
     scopes: Vec<BTreeMap<String, LocalRef>>,
     locals: LocalAllocator,
     type_shapes: Vec<&'static Shape>,
+    declared_types: FableDeclaredTypes,
     blocks: Vec<FableProgram>,
 }
 
@@ -2129,6 +2477,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
             scopes: vec![BTreeMap::new()],
             locals: LocalAllocator::default(),
             type_shapes,
+            declared_types: FableDeclaredTypes::default(),
             blocks: Vec::new(),
         }
     }
@@ -2138,12 +2487,12 @@ impl<'intrinsics> Lowerer<'intrinsics> {
     }
 
     fn lower_root(&mut self, root: &ast::SourceFile) -> Result<FableProgram, FableError> {
-        let statements = self.root_statements(root)?;
+        let statements = self.prepare_source(root)?;
         self.lower_statements(statements)
     }
 
     fn lower_predicate_root(&mut self, root: &ast::SourceFile) -> Result<FableProgram, FableError> {
-        let statements = self.root_statements(root)?;
+        let statements = self.prepare_source(root)?;
         let Some((last, prefix)) = statements.split_last() else {
             return Err(FableError::MalformedSyntax {
                 reason: "predicate source did not contain a final boolean expression",
@@ -2170,7 +2519,7 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         root: &ast::SourceFile,
         query_type: FableQueryType,
     ) -> Result<FableProgram, FableError> {
-        let statements = self.root_statements(root)?;
+        let statements = self.prepare_source(root)?;
         let Some((last, prefix)) = statements.split_last() else {
             return Err(FableError::MalformedSyntax {
                 reason: "query source did not contain a final expression",
@@ -2200,19 +2549,16 @@ impl<'intrinsics> Lowerer<'intrinsics> {
         result
     }
 
-    fn root_statements<'ast>(
-        &self,
+    fn prepare_source<'ast>(
+        &mut self,
         root: &'ast ast::SourceFile,
     ) -> Result<Vec<&'ast Stmt>, FableError> {
+        self.declared_types = FableDeclaredTypes::from_source(root)?;
         let mut statements = Vec::new();
         for item in &root.items {
             match item {
                 Item::Stmt(stmt) => statements.push(stmt),
-                Item::Struct(_) | Item::Enum(_) => {
-                    return Err(FableError::Unsupported {
-                        feature: "type declarations before checker wiring".into(),
-                    });
-                }
+                Item::Struct(_) | Item::Enum(_) => {}
             }
         }
         Ok(statements)
@@ -2323,6 +2669,11 @@ impl<'intrinsics> Lowerer<'intrinsics> {
 
     fn lower_struct_literal(&mut self, literal: &StructLiteral) -> Result<ExprPlan, FableError> {
         let type_name = literal.type_name.value.as_str();
+        if self.declared_types.get(type_name).is_some() {
+            return Err(FableError::Unsupported {
+                feature: "declared struct construction before value lowering".into(),
+            });
+        }
         let shape = self.resolve_type_name(type_name)?;
         if !shape.is_pod() {
             return Err(FableError::NonPodStructLiteral { shape });
@@ -4993,6 +5344,7 @@ fn binary_actual(lhs: &'static str, rhs: &'static str) -> &'static str {
 mod tests {
     use facet::Facet;
     use weavy::ir::{IntrinsicDescriptor, dense_lowered_analysis};
+    use weavy::mem::{Access, Tag};
 
     use super::*;
 
@@ -6300,9 +6652,114 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn declared_type_descriptors_are_observable_from_rust() {
+        let plan = FableRootPlan::compile(
+            r#"
+struct Packed { small: u8, large: i64, flag: bool }
+enum MaybePacked {
+  None,
+  Some { payload: Packed, code: i32 },
+}
+"#,
+            &[],
+        )
+        .expect("declared types compile");
+
+        let packed = plan
+            .declared_types()
+            .get("Packed")
+            .expect("Packed descriptor");
+        let Access::Record(record) = &packed.descriptor().access else {
+            panic!("Packed must be a record descriptor");
+        };
+        assert!(matches!(record.construct, weavy::mem::Construct::InPlace));
+        assert_eq!(packed.descriptor().layout.size, 16);
+        assert_eq!(packed.descriptor().layout.align, 8);
+        assert_eq!(record.fields.len(), 3);
+        assert_eq!(record.fields[0].offset, 8);
+        assert_eq!(record.fields[0].descriptor.schema, "u8");
+        assert_eq!(record.fields[1].offset, 0);
+        assert_eq!(record.fields[1].descriptor.schema, "i64");
+        assert_eq!(record.fields[2].offset, 9);
+        assert_eq!(record.fields[2].descriptor.schema, "bool");
+
+        let maybe = plan
+            .declared_types()
+            .get("MaybePacked")
+            .expect("MaybePacked descriptor");
+        let Access::Enum(access) = &maybe.descriptor().access else {
+            panic!("MaybePacked must be an enum descriptor");
+        };
+        let Tag::Direct { offset, width } = access.tag else {
+            panic!("declared enums use direct tags");
+        };
+        assert_eq!(offset, 0);
+        assert_eq!(width, 1);
+        assert_eq!(access.variants.len(), 2);
+        assert_eq!(access.variants[0].index, 0);
+        assert_eq!(access.variants[0].selector, 0);
+        assert_eq!(access.variants[1].index, 1);
+        assert_eq!(access.variants[1].selector, 1);
+        assert!(matches!(
+            access.variants[1].payload.construct,
+            weavy::mem::Construct::InPlace
+        ));
+        assert_eq!(access.variants[1].payload.fields.len(), 2);
+        assert_eq!(access.variants[1].payload.fields[0].offset, 8);
+        assert_eq!(
+            access.variants[1].payload.fields[0].descriptor.schema,
+            "Packed"
+        );
+        assert_eq!(access.variants[1].payload.fields[1].offset, 24);
+        assert_eq!(
+            access.variants[1].payload.fields[1].descriptor.schema,
+            "i32"
+        );
+    }
+
+    #[test]
+    fn declared_type_checker_rejects_duplicate_and_unknown_names() {
+        let duplicate_type = root_compile_err(
+            r#"
+struct Same { x: i64 }
+enum Same { Other }
+"#,
+        );
+        assert!(matches!(
+            duplicate_type,
+            FableError::AmbiguousType { name } if name == "Same"
+        ));
+
+        let duplicate_field = root_compile_err("struct Bad { x: i64, x: bool }");
+        assert!(matches!(
+            duplicate_field,
+            FableError::DuplicateStructField { field } if field == "x"
+        ));
+
+        let duplicate_variant = root_compile_err("enum Bad { Same, Same }");
+        assert!(matches!(
+            duplicate_variant,
+            FableError::DuplicateStructField { field } if field == "Same"
+        ));
+
+        let unknown_type = root_compile_err("struct Bad { missing: Missing }");
+        assert!(matches!(
+            unknown_type,
+            FableError::UnknownType { name } if name == "Missing"
+        ));
+    }
+
     fn compile_err(src: &str) -> FableError {
         match FablePlan::<State>::compile(src) {
             Ok(_) => panic!("expected Fable compilation to fail"),
+            Err(err) => err,
+        }
+    }
+
+    fn root_compile_err(src: &str) -> FableError {
+        match FableRootPlan::compile(src, &[]) {
+            Ok(_) => panic!("expected Fable root compilation to fail"),
             Err(err) => err,
         }
     }
