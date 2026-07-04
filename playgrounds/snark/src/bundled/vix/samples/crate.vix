@@ -1,0 +1,23 @@
+use vix::{Tree, Target};
+use caps::Rustc;
+
+fn doc_string(doc: Doc, key: String) -> String {
+    doc.get(key).unwrap()
+}
+
+pub fn crate_lib(target: Target, manifest: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let doc = toml(manifest / p"Cargo.toml");
+    let package = doc.get("package").unwrap();
+    let name = doc_string(package, "name");
+    let edition = doc_string(package, "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type lib
+        -L {manifest}
+        {manifest / p"src/lib.rs"}
+        -o {p"libmini_vendored.rlib"}
+    }
+}

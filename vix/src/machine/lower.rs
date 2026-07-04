@@ -473,6 +473,7 @@ fn schema_names_for(
         "Os".to_string(),
         "Cc".to_string(),
         "Ar".to_string(),
+        "Rustc".to_string(),
         "Flag".to_string(),
         "Tree".to_string(),
         "Array".to_string(),
@@ -2456,7 +2457,7 @@ impl<'a> FnLowerer<'a> {
         };
         let segments: Vec<&str> = path.segments.iter().map(|s| s.value.as_str()).collect();
         match segments.as_slice() {
-            [kind @ ("Cc" | "Ar"), "acquire"] => {
+            [kind @ ("Cc" | "Ar" | "Rustc"), "acquire"] => {
                 let [ast::Arg::Expr(target)] = call.args.args.as_slice() else {
                     return Err(format!("{kind}::acquire takes one target"));
                 };
@@ -3846,9 +3847,9 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn command_block(&mut self, command: &ast::CommandBlock) -> Result<ValueSlot, String> {
-        if !matches!(command.command.value.as_str(), "cc" | "ar") {
+        if !matches!(command.command.value.as_str(), "cc" | "ar" | "rustc") {
             return Err(format!(
-                "command {} is outside the machine B4 subset",
+                "command {} is outside the machine exec subset",
                 command.command.value
             ));
         }
@@ -4225,7 +4226,10 @@ fn command_kind(command: &str) -> Result<i64, String> {
     match command {
         "cc" => Ok(0),
         "ar" => Ok(1),
-        other => Err(format!("command {other} is outside B4")),
+        "rustc" => Ok(2),
+        other => Err(format!(
+            "command {other} is outside the machine exec subset"
+        )),
     }
 }
 
@@ -4416,6 +4420,24 @@ pub fn poly(n: Int) -> Int {
                 ),
             ]),
         )
+    }
+
+    fn mini_vendored_tree(readme: &str) -> Tree {
+        Tree::of(&[
+            (
+                "Cargo.toml",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/mini_vendored/Cargo.toml"
+                ),
+            ),
+            (
+                "src/lib.rs",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/mini_vendored/src/lib.rs"
+                ),
+            ),
+            ("README.md", readme),
+        ])
     }
 
     #[test]
@@ -6163,6 +6185,138 @@ pub fn moved(n: Int) -> Map<String, Float> {
                 machine.driver.raw_string(facet_version, "String").unwrap(),
                 "0.50.0-rc.5",
                 "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn crate_vix_fake_rustc_builds_lib_on_the_machine() {
+        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = machine.linux_target_handle();
+            let crate_tree =
+                machine.intern_tree_concrete(mini_vendored_tree("not read by slice-1 rustc\n"));
+
+            let built = machine
+                .demand_i64("crate_lib", vec![target, crate_tree])
+                .unwrap();
+            let entries = machine.tree_entries(built).unwrap();
+            assert_eq!(
+                entries.keys().collect::<Vec<_>>(),
+                vec![&"libmini_vendored.rlib".to_string()],
+                "{lane:?}: {entries:?}"
+            );
+            assert!(
+                entries["libmini_vendored.rlib"].starts_with("rlib("),
+                "{lane:?}: {entries:?}"
+            );
+
+            let requested = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::RunRequested {
+                        command_name, argv, ..
+                    } => Some((command_name.as_str(), argv.as_slice())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                requested,
+                vec![(
+                    "rustc",
+                    &[
+                        "--crate-name".to_string(),
+                        "mini_vendored".to_string(),
+                        "--edition".to_string(),
+                        "2021".to_string(),
+                        "--crate-type".to_string(),
+                        "lib".to_string(),
+                        "-L".to_string(),
+                        "/m/0".to_string(),
+                        "/m/1/lib.rs".to_string(),
+                        "-o".to_string(),
+                        "libmini_vendored.rlib".to_string(),
+                    ][..],
+                )],
+                "{lane:?}: {requested:?}"
+            );
+            let completed = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::RunCompleted {
+                        command_name,
+                        serving,
+                        outputs,
+                        ..
+                    } => Some((command_name.as_str(), serving, outputs)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(completed.len(), 1, "{lane:?}: {completed:?}");
+            assert!(matches!(
+                completed.as_slice(),
+                [("rustc", ExecEvent::Ran, outputs)]
+                    if outputs.iter().any(|(path, _)| path == "libmini_vendored.rlib")
+            ));
+
+            let crate_hash = machine.fn_hash("crate_lib").expect("crate_lib hash");
+            machine.clear_trace();
+            let warm = machine
+                .demand_i64("crate_lib", vec![target, crate_tree])
+                .unwrap();
+            assert_eq!(warm, built, "{lane:?}");
+            assert_eq!(
+                machine.trace(),
+                &[
+                    DriveEvent::Demanded {
+                        fn_hash: crate_hash
+                    },
+                    DriveEvent::MemoHit {
+                        fn_hash: crate_hash
+                    },
+                ],
+                "warm re-demand is exactly root memo hit and zero runs on {lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn crate_vix_fake_rustc_unread_crate_file_cuts_off_at_tier2() {
+        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = machine.linux_target_handle();
+            let crate_v1 = machine.intern_tree_concrete(mini_vendored_tree("not read by rustc\n"));
+            let first = machine
+                .demand_i64("crate_lib", vec![target, crate_v1])
+                .unwrap();
+            let first_entries = machine.tree_entries(first).unwrap();
+
+            let crate_v2 = machine
+                .intern_tree_concrete(mini_vendored_tree("edited, still not read by rustc\n"));
+            machine.clear_trace();
+            let second = machine
+                .demand_i64("crate_lib", vec![target, crate_v2])
+                .unwrap();
+            assert_eq!(
+                machine.tree_entries(second).unwrap(),
+                first_entries,
+                "{lane:?}"
+            );
+            assert!(
+                machine.trace().iter().any(|event| matches!(
+                    event,
+                    DriveEvent::RunCompleted {
+                        command_name,
+                        serving: ExecEvent::Tier2Cutoff { verified: 1 },
+                        ..
+                    } if command_name == "rustc"
+                )),
+                "{lane:?}: {:?}",
+                machine.trace()
             );
         }
     }

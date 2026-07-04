@@ -593,6 +593,49 @@ impl Tool for FakeCc {
     }
 }
 
+/// A fake rustc sibling for plan/cache tests. It reads its source inputs and
+/// emits the requested artifact, but it does not spawn rustc or model Cargo.
+pub struct FakeRustc;
+
+impl Tool for FakeRustc {
+    fn run(&self, plan: &ExecPlan, world: &mut ObservedWorld<'_>) -> Result<Tree, String> {
+        let output = plan
+            .argv
+            .iter()
+            .find(|(_, role)| *role == Role::Output)
+            .map(|(arg, _)| arg.clone())
+            .ok_or("rustc: no output")?;
+        let mut digest = DefaultHasher::new();
+        let mut crate_type = "lib";
+        for (index, (arg, role)) in plan.argv.iter().enumerate() {
+            match role {
+                Role::Flag => {
+                    arg.hash(&mut digest);
+                    if index > 0 && plan.argv[index - 1].0 == "--crate-type" {
+                        crate_type = arg;
+                    }
+                }
+                Role::SearchDir => {
+                    arg.hash(&mut digest);
+                }
+                Role::Output => {}
+                Role::Input => {
+                    let source = world.read(arg).ok_or_else(|| {
+                        format!("rustc: cannot read `{arg}` (outside the mounts?)")
+                    })?;
+                    source.hash(&mut digest);
+                }
+            }
+        }
+
+        let kind = if crate_type == "bin" { "bin" } else { "rlib" };
+        Ok(Tree::of(&[(
+            output.as_str(),
+            &format!("{kind}({:016x})", digest.finish()),
+        )]))
+    }
+}
+
 /// A fake archiver/linker sibling: concatenates what it reads. Enough to
 /// exercise OUTPUTS-AS-MOUNTS composition (`ar!` consuming `cc!` products).
 pub struct FakeAr;

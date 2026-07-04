@@ -1939,6 +1939,7 @@ impl Driver {
                 let command = match read_frame_word(frame, primitive_region + 8) {
                     0 => "cc",
                     1 => "ar",
+                    2 => "rustc",
                     other => {
                         *host_error.borrow_mut() = Some(format!("unknown command kind {other}"));
                         return;
@@ -2972,7 +2973,7 @@ fn compare_words(
             ) as u64));
             Ok(a.cmp(&b))
         }
-        "String" | "Path" | "Flag" | "Cc" | "Ar" => {
+        "String" | "Path" | "Flag" | "Cc" | "Ar" | "Rustc" => {
             let a = store.string_value(a, schema)?;
             let b = store.string_value(b, schema)?;
             Ok(a.cmp(&b))
@@ -3295,7 +3296,7 @@ fn render_word(
             render_map(store, descriptors, schema_refs, names, schema, word)
         }
         schema => {
-            if matches!(schema, "Cc" | "Ar") {
+            if matches!(schema, "Cc" | "Ar" | "Rustc") {
                 return Ok(RenderedValue::Raw {
                     schema: schema.to_string(),
                     bytes_utf8: Some(store.string_value(word, schema)?),
@@ -4333,6 +4334,7 @@ fn cap_schema(command: &str) -> String {
     match command {
         "cc" => "Cc",
         "ar" => "Ar",
+        "rustc" => "Rustc",
         _ => "Cc",
     }
     .to_string()

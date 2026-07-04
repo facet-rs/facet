@@ -1906,13 +1906,17 @@ pub(crate) fn assign_roles(
             }
         }
         "rustc" => {
+            let mut prev: Option<&str> = None;
             for arg in argv {
-                let role = if arg.starts_with("/m/") {
-                    Role::Input
-                } else {
-                    Role::Flag
+                let role = match prev {
+                    Some("-o") => Role::Output,
+                    Some("-L") => Role::SearchDir,
+                    _ if arg.starts_with("/m/") => Role::Input,
+                    _ if arg.starts_with("-L") && arg.contains("/m/") => Role::SearchDir,
+                    _ => Role::Flag,
                 };
                 out.push((arg.clone(), role));
+                prev = Some(arg.as_str());
             }
         }
         other => return Err(format!("no command grammar for `{other}`")),
@@ -1924,6 +1928,7 @@ pub(crate) fn tool_for(command: &str) -> Result<&'static dyn crate::exec::Tool, 
     match command {
         "cc" => Ok(&crate::exec::FakeCc),
         "ar" => Ok(&crate::exec::FakeAr),
+        "rustc" => Ok(&crate::exec::FakeRustc),
         other => Err(format!("no tool for `{other}`")),
     }
 }
