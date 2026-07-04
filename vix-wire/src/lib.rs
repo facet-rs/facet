@@ -71,13 +71,26 @@ pub enum CacheSource {
 pub enum WireExecEvent {
     Started,
     /// How this demand is being served (right after Started).
-    Serving { source: CacheSource },
+    Serving {
+        source: CacheSource,
+    },
     /// An output path landed — fetchable NOW via fetch_path, before Finished.
-    PathReady { path: String, content_hash: u64 },
+    PathReady {
+        path: String,
+        content_hash: u64,
+    },
     /// The observer's result (oracle::ship bytes of the vix value).
-    ObserverResult { value: Vec<u8> },
-    Finished { ok: bool, tree: u64, read_set_len: u64 },
-    Failed { error: String },
+    ObserverResult {
+        value: Vec<u8>,
+    },
+    Finished {
+        ok: bool,
+        tree: u64,
+        read_set_len: u64,
+    },
+    Failed {
+        error: String,
+    },
 }
 
 // Owned DTOs — streamed channel payloads need a lifetime-shortening view.
@@ -323,7 +336,9 @@ impl Executor for ExecutorService {
                 }
                 Some(RunState::Failed(error)) => {
                     let _ = events
-                        .send(WireExecEvent::Failed { error: error.clone() })
+                        .send(WireExecEvent::Failed {
+                            error: error.clone(),
+                        })
                         .await;
                     return;
                 }
@@ -344,7 +359,9 @@ impl Executor for ExecutorService {
                     match cutoff {
                         Some(done) => {
                             let verified = done.read_set.entries.len() as u64;
-                            table.states.insert(identity, RunState::Complete(done.clone()));
+                            table
+                                .states
+                                .insert(identity, RunState::Complete(done.clone()));
                             ServeRole::Replay(done, CacheSource::Tier2 { verified })
                         }
                         None => {
@@ -381,7 +398,8 @@ impl Executor for ExecutorService {
                         })
                         .await;
                 }
-                self.finish_with_observer(&request, identity, &done, &events).await;
+                self.finish_with_observer(&request, identity, &done, &events)
+                    .await;
             }
             ServeRole::Join { log, mut feed } => {
                 let _ = events
@@ -516,7 +534,9 @@ impl ExecutorService {
             };
             match value {
                 Ok(v) => {
-                    let _ = events.send(WireExecEvent::ObserverResult { value: v }).await;
+                    let _ = events
+                        .send(WireExecEvent::ObserverResult { value: v })
+                        .await;
                 }
                 Err(error) => {
                     let _ = events.send(WireExecEvent::Failed { error }).await;
@@ -556,7 +576,9 @@ impl ExecutorService {
                 .await
                 .states
                 .insert(identity, RunState::Failed(error.clone()));
-            let _ = feed.send(WireExecEvent::Failed { error: error.clone() });
+            let _ = feed.send(WireExecEvent::Failed {
+                error: error.clone(),
+            });
             let _ = events.send(WireExecEvent::Failed { error }).await;
         };
 
@@ -617,7 +639,9 @@ impl ExecutorService {
         };
         {
             let mut table = self.runs_table.lock().await;
-            table.states.insert(identity, RunState::Complete(done.clone()));
+            table
+                .states
+                .insert(identity, RunState::Complete(done.clone()));
             table
                 .candidates
                 .entry(comp_identity)
@@ -631,7 +655,8 @@ impl ExecutorService {
             read_set_len: done.read_set.entries.len() as u64,
         });
 
-        self.finish_with_observer(request, identity, &done, events).await;
+        self.finish_with_observer(request, identity, &done, events)
+            .await;
     }
 }
 
@@ -707,7 +732,10 @@ impl FleetBackend {
                     mount_hashes
                         .iter()
                         .filter(|h| {
-                            state.locations.get(h).is_some_and(|locs| locs.contains(idx))
+                            state
+                                .locations
+                                .get(h)
+                                .is_some_and(|locs| locs.contains(idx))
                         })
                         .count()
                 })
@@ -865,7 +893,10 @@ impl vix::oracle::PendingRun for FleetRun {
                             state.source.clone().unwrap_or(vix::exec::ExecEvent::Ran),
                         ));
                     }
-                    break (hash, state.source.clone().unwrap_or(vix::exec::ExecEvent::Ran));
+                    break (
+                        hash,
+                        state.source.clone().unwrap_or(vix::exec::ExecEvent::Ran),
+                    );
                 }
                 state = self.wake.wait(state).unwrap();
             }
@@ -899,8 +930,7 @@ impl vix::oracle::ExecBackend for FleetBackend {
         // The oracle is sync; bridge onto the runtime this fleet was born on.
         tokio::task::block_in_place(|| {
             self.handle.clone().block_on(async {
-                let mount_hashes: Vec<u64> =
-                    mounts.iter().map(|m| m.tree.fingerprint()).collect();
+                let mount_hashes: Vec<u64> = mounts.iter().map(|m| m.tree.fingerprint()).collect();
                 let target = self.choose(&mount_hashes);
                 let client = self.executors[target].1.clone();
 

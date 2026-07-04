@@ -280,5 +280,9 @@ pub fn pipeline(rustc: Rustc, cc: Cc, a_src: Tree, b_src: Tree) -> Tree {
         })
         .collect();
     assert_eq!(spawns, vec!["rustc", "cc"], "{events:?}");
-    assert_eq!(flushes, vec!["cc"], "A never flushed — projection doesn't force");
+    assert_eq!(
+        flushes,
+        vec!["cc"],
+        "A never flushed — projection doesn't force"
+    );
 }

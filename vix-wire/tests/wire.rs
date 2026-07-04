@@ -7,8 +7,8 @@ use std::sync::Arc;
 use vix::exec::{ExecPlan, Role, Tree};
 use vix::oracle::{Oracle, Value};
 use vix_wire::{
-    ExecutorClient, ExecutorDispatcher, ExecutorService, FakeRustc, WireExecEvent,
-    WireExecRequest, WireMount, WireTool, tree_to_bytes,
+    ExecutorClient, ExecutorDispatcher, ExecutorService, FakeRustc, WireExecEvent, WireExecRequest,
+    WireMount, WireTool, tree_to_bytes,
 };
 
 async fn serve(service: ExecutorService) -> (String, tokio::task::JoinHandle<()>) {
@@ -39,7 +39,10 @@ async fn rmeta_streams_before_rlib_finishes() {
         plan: ExecPlan {
             argv: vec![("/m/0/lib.rs".to_string(), Role::Input)],
         },
-        mounts: vec![WireMount { at: "/m/0".into(), tree: src_hash }],
+        mounts: vec![WireMount {
+            at: "/m/0".into(),
+            tree: src_hash,
+        }],
         capability: 0xcafe,
         command: "rustc".into(),
         observer: None,
@@ -94,7 +97,11 @@ async fn rmeta_streams_before_rlib_finishes() {
     }
     exec_call.await.unwrap().unwrap();
     let flushed = finished_tree.expect("run finished");
-    let bytes = client.fetch_tree(flushed).await.unwrap().expect("flushed tree");
+    let bytes = client
+        .fetch_tree(flushed)
+        .await
+        .unwrap()
+        .expect("flushed tree");
     let tree = vix_wire::tree_from_bytes(&bytes).unwrap();
     assert!(tree.entries.contains_key("lib.rmeta"));
     assert!(tree.entries.contains_key("lib.rlib"));
@@ -128,7 +135,10 @@ fn make_observer() -> fn(Run) -> Path {
                 ("main.o".to_string(), Role::Output),
             ],
         },
-        mounts: vec![WireMount { at: "/m/0".into(), tree: src_hash }],
+        mounts: vec![WireMount {
+            at: "/m/0".into(),
+            tree: src_hash,
+        }],
         capability: 0xcc,
         command: "cc".into(),
         observer: Some(observer_bytes),
@@ -205,9 +215,7 @@ impl<T: WireTool> WireTool for Counting<T> {
     }
 }
 
-async fn drain(
-    rx: &mut vox::Rx<WireExecEvent>,
-) -> (Vec<WireExecEvent>, Option<CacheSource>) {
+async fn drain(rx: &mut vox::Rx<WireExecEvent>) -> (Vec<WireExecEvent>, Option<CacheSource>) {
     let mut events = Vec::new();
     let mut source = None;
     while let Ok(Some(event)) = rx.recv().await {
@@ -236,7 +244,10 @@ fn cc_request(src_hash: u64) -> WireExecRequest {
                 ("main.o".to_string(), Role::Output),
             ],
         },
-        mounts: vec![WireMount { at: "/m/0".into(), tree: src_hash }],
+        mounts: vec![WireMount {
+            at: "/m/0".into(),
+            tree: src_hash,
+        }],
         capability: 0xcc,
         command: "cc".into(),
         observer: None,
@@ -249,10 +260,7 @@ async fn identical_concurrent_demands_join_one_process() {
     // Mid-flight there is no cache entry — there is a live run to ATTACH to.
     let (rustc, open_gate) = FakeRustc::gated();
     let runs = Arc::new(AtomicUsize::new(0));
-    let counting: Arc<dyn WireTool> = Arc::new(Counting(
-        ArcTool(rustc),
-        runs.clone(),
-    ));
+    let counting: Arc<dyn WireTool> = Arc::new(Counting(ArcTool(rustc), runs.clone()));
     let tools: HashMap<String, Arc<dyn WireTool>> =
         HashMap::from([("rustc".to_string(), counting)]);
     let (addr, _server) = serve(ExecutorService::new(tools)).await;
@@ -264,7 +272,10 @@ async fn identical_concurrent_demands_join_one_process() {
         plan: ExecPlan {
             argv: vec![("/m/0/lib.rs".to_string(), Role::Input)],
         },
-        mounts: vec![WireMount { at: "/m/0".into(), tree: src_hash }],
+        mounts: vec![WireMount {
+            at: "/m/0".into(),
+            tree: src_hash,
+        }],
         capability: 0xcafe,
         command: "rustc".into(),
         observer: None,
@@ -291,7 +302,10 @@ async fn identical_concurrent_demands_join_one_process() {
     let r2 = request.clone();
     let second = tokio::spawn(async move { c2.exec(r2, 202, tx2).await });
     // It sees the already-produced rmeta from the log without a new process.
-    let (events2_task, gate) = (tokio::spawn(async move { drain(&mut rx2).await }), open_gate);
+    let (events2_task, gate) = (
+        tokio::spawn(async move { drain(&mut rx2).await }),
+        open_gate,
+    );
 
     // Give the joiner a beat to attach, then let "codegen" finish.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -320,9 +334,9 @@ async fn identical_concurrent_demands_join_one_process() {
 
     assert_eq!(source2, Some(CacheSource::Joined), "{events2:?}");
     assert!(
-        events2.iter().any(
-            |e| matches!(e, WireExecEvent::PathReady { path, .. } if path == "lib.rmeta")
-        ),
+        events2
+            .iter()
+            .any(|e| matches!(e, WireExecEvent::PathReady { path, .. } if path == "lib.rmeta")),
         "joiner replays the log: {events2:?}"
     );
     assert_eq!(runs.load(Ordering::SeqCst), 1, "ONE process, two demands");
@@ -354,8 +368,7 @@ async fn one_run_many_observers_distinct_values() {
     let runs = Arc::new(AtomicUsize::new(0));
     let counting: Arc<dyn WireTool> =
         Arc::new(Counting(vix_wire::Atomic(vix::exec::FakeCc), runs.clone()));
-    let tools: HashMap<String, Arc<dyn WireTool>> =
-        HashMap::from([("cc".to_string(), counting)]);
+    let tools: HashMap<String, Arc<dyn WireTool>> = HashMap::from([("cc".to_string(), counting)]);
     let (addr, _server) = serve(ExecutorService::new(tools)).await;
     let client: ExecutorClient = vox::connect_lane(&addr).await.unwrap();
 
@@ -395,9 +408,7 @@ fn just_ok() -> fn(Run) -> Bool {
 
     let value = |events: &[WireExecEvent]| {
         events.iter().find_map(|e| match e {
-            WireExecEvent::ObserverResult { value } => {
-                Some(vix::oracle::receive(value).unwrap())
-            }
+            WireExecEvent::ObserverResult { value } => Some(vix::oracle::receive(value).unwrap()),
             _ => None,
         })
     };
@@ -413,8 +424,7 @@ async fn unread_mount_change_cuts_off_at_tier2_over_the_wire() {
     let runs = Arc::new(AtomicUsize::new(0));
     let counting: Arc<dyn WireTool> =
         Arc::new(Counting(vix_wire::Atomic(vix::exec::FakeCc), runs.clone()));
-    let tools: HashMap<String, Arc<dyn WireTool>> =
-        HashMap::from([("cc".to_string(), counting)]);
+    let tools: HashMap<String, Arc<dyn WireTool>> = HashMap::from([("cc".to_string(), counting)]);
     let (addr, _server) = serve(ExecutorService::new(tools)).await;
     let client: ExecutorClient = vox::connect_lane(&addr).await.unwrap();
 
