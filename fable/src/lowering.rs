@@ -175,6 +175,11 @@ enum FableHostOp {
         dst: u32,
         expr: StringExpr,
     },
+    ConcatString {
+        dst: u32,
+        lhs: u32,
+        rhs: u32,
+    },
     ReadValuePath {
         dst: u32,
         path: FieldPath,
@@ -1685,6 +1690,12 @@ impl FableTaskRuntime {
                 let handle = self.intern_string(value);
                 write_frame_word(frame, *dst, handle as i64)
             }
+            FableHostOp::ConcatString { dst, lhs, rhs } => {
+                let mut value = self.string_from_slot(frame, *lhs)?;
+                value.push_str(&self.string_from_slot(frame, *rhs)?);
+                let handle = self.intern_string(value);
+                write_frame_word(frame, *dst, handle as i64)
+            }
             FableHostOp::ReadValuePath { dst, path } => {
                 let ptr = self.path_ptr_const(frame, path)?;
                 let handle = self.value_store.borrowed_values.len();
@@ -2548,18 +2559,7 @@ impl FableTaskRuntime {
             }
             StringExpr::DeclaredRead(read) => self.read_declared_string(frame, *read),
             StringExpr::Local(local) => {
-                let handle =
-                    usize::try_from(read_frame_word(frame, self.layout.local_slot(*local))?)
-                        .map_err(|_| FableError::MalformedProgram {
-                            reason: "string local handle was negative",
-                        })?;
-                self.value_store
-                    .strings
-                    .get(handle)
-                    .cloned()
-                    .ok_or(FableError::MalformedProgram {
-                        reason: "string local handle was missing",
-                    })
+                self.string_from_slot(frame, self.layout.local_slot(*local))
             }
             StringExpr::HostUnary { function, value } => {
                 let value = self.eval_string(frame, value)?;
@@ -2675,6 +2675,21 @@ impl FableTaskRuntime {
         let index = self.value_store.strings.len();
         self.value_store.strings.push(value);
         index
+    }
+
+    fn string_from_slot(&self, frame: &[u8], slot: u32) -> Result<String, FableError> {
+        let handle = usize::try_from(read_frame_word(frame, slot)?).map_err(|_| {
+            FableError::MalformedProgram {
+                reason: "string handle was negative",
+            }
+        })?;
+        self.value_store
+            .strings
+            .get(handle)
+            .cloned()
+            .ok_or(FableError::MalformedProgram {
+                reason: "string handle was missing",
+            })
     }
 
     fn store_value(&mut self, value: OwnedValue) -> Result<usize, FableError> {
@@ -4357,18 +4372,26 @@ impl<'plan> FableScalarTaskCompiler<'plan> {
             }
             StringExpr::Local(local) => self.layout.local_slot(*local),
             StringExpr::FunctionCall(call) => return self.compile_call(call),
-            StringExpr::HostUnary { .. } | StringExpr::Trim(_) | StringExpr::Add(_, _) => {
+            StringExpr::Add(lhs, rhs) => {
+                let lhs = self.compile_string(lhs)?;
+                let rhs = self.compile_string(rhs)?;
+                let slot = self.alloc_temp();
+                self.emit_host(FableHostOp::ConcatString {
+                    dst: slot,
+                    lhs: lhs.slot,
+                    rhs: rhs.slot,
+                })?;
+                slot
+            }
+            StringExpr::HostUnary { .. }
+            | StringExpr::Trim(_)
+            | StringExpr::HostFieldString { .. } => {
                 let slot = self.alloc_temp();
                 self.emit_host(FableHostOp::EvalString {
                     dst: slot,
                     expr: expr.clone(),
                 })?;
                 slot
-            }
-            StringExpr::HostFieldString { .. } => {
-                return Err(FableError::Unsupported {
-                    feature: "native task string expression".into(),
-                });
             }
         };
         Ok(FableTaskValue { slot })
@@ -10428,6 +10451,73 @@ find_item(0);
     }
 
     #[test]
+    fn fable_query_finds_identifier_references_in_generated_ast() {
+        let source = bridge_query_source();
+        let ast = parse(source).unwrap();
+        let roots = [
+            FableRootSpec::read_only::<ast::SourceFile>("root"),
+            FableRootSpec::read_only::<String>("wanted"),
+        ];
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics
+            .add_field_string_unary("show", field_value_text)
+            .unwrap();
+        let plan = FableRootQueryPlan::<String>::compile_with_intrinsics(
+            FIND_REFERENCES_QUERY,
+            &roots,
+            &intrinsics,
+        )
+        .unwrap();
+
+        for name in ["answer", "make_answer", "value", "missing"] {
+            let wanted = name.to_owned();
+            let mut values = [
+                FableRootValue::read_only("root", &ast),
+                FableRootValue::read_only("wanted", &wanted),
+            ];
+            let actual = plan.evaluate(&mut values).unwrap();
+            let expected = rust_find_references(&ast, name);
+            assert_eq!(actual, expected, "references for {name}");
+        }
+    }
+
+    #[test]
+    fn fable_query_finds_enclosing_function_in_generated_ast() {
+        let source = bridge_query_source();
+        let ast = parse(source).unwrap();
+        let roots = [
+            FableRootSpec::read_only::<ast::SourceFile>("root"),
+            FableRootSpec::read_only::<usize>("offset"),
+        ];
+        let mut intrinsics = FableIntrinsics::standard();
+        intrinsics
+            .add_field_string_unary("show", field_value_text)
+            .unwrap();
+        let plan = FableRootQueryPlan::<String>::compile_with_intrinsics(
+            ENCLOSING_FUNCTION_QUERY,
+            &roots,
+            &intrinsics,
+        )
+        .unwrap();
+
+        let positions = [
+            source.find("1;").unwrap(),
+            source.find("make_answer() ->").unwrap(),
+            source.find("let value").unwrap(),
+            source.len() + 5,
+        ];
+        for offset in positions {
+            let mut values = [
+                FableRootValue::read_only("root", &ast),
+                FableRootValue::read_only("offset", &offset),
+            ];
+            let actual = plan.evaluate(&mut values).unwrap();
+            let expected = rust_enclosing_function(&ast, offset);
+            assert_eq!(actual, expected, "enclosing function for offset {offset}");
+        }
+    }
+
+    #[test]
     fn evaluates_root_query_plan_over_explicit_roots() {
         let roots = [
             FableRootSpec::read_only::<TransformInput>("in"),
@@ -11601,6 +11691,286 @@ even(101);
         match FableRootQueryPlan::<Output>::compile(src, &[]) {
             Ok(_) => panic!("expected Fable root query compilation to fail"),
             Err(err) => err,
+        }
+    }
+
+    const FIND_REFERENCES_QUERY: &str = r#"
+fn top_stmt_refs(item_i: usize) -> string {
+  match root.items[item_i] {
+    Item::Stmt { stmt } => {
+      match stmt {
+        Stmt::Let { let_stmt } => {
+          match let_stmt.value {
+            Expr::Var { var } => {
+              match var.name {
+                Name::Ident { ident } => {
+                  if ident.value == wanted {
+                    show(ident.span.start) + "-" + show(ident.span.end) + ";";
+                  } else {
+                    "";
+                  }
+                },
+                _ => { ""; },
+              };
+            },
+            Expr::Call { call } => {
+              match call.callee {
+                Expr::Var { var } => {
+                  match var.name {
+                    Name::Ident { ident } => {
+                      if ident.value == wanted {
+                        show(ident.span.start) + "-" + show(ident.span.end) + ";";
+                      } else {
+                        "";
+                      }
+                    },
+                    _ => { ""; },
+                  };
+                },
+                _ => { ""; },
+              };
+            },
+            _ => { ""; },
+          };
+        },
+        Stmt::Expr { expr_stmt } => {
+          match expr_stmt.expr {
+            Expr::Var { var } => {
+              match var.name {
+                Name::Ident { ident } => {
+                  if ident.value == wanted {
+                    show(ident.span.start) + "-" + show(ident.span.end) + ";";
+                  } else {
+                    "";
+                  }
+                },
+                _ => { ""; },
+              };
+            },
+            Expr::Call { call } => {
+              match call.callee {
+                Expr::Var { var } => {
+                  match var.name {
+                    Name::Ident { ident } => {
+                      if ident.value == wanted {
+                        show(ident.span.start) + "-" + show(ident.span.end) + ";";
+                      } else {
+                        "";
+                      }
+                    },
+                    _ => { ""; },
+                  };
+                },
+                _ => { ""; },
+              };
+            },
+            _ => { ""; },
+          };
+        },
+        _ => { ""; },
+      };
+    },
+    _ => { ""; },
+  }
+}
+
+fn item_refs(item_i: usize) -> string {
+  if item_i >= len(root.items) {
+    "";
+  } else {
+    match root.items[item_i] {
+      Item::Fn { fn_decl } => {
+        item_refs(item_i + 1);
+      },
+      Item::Stmt { stmt } => {
+        top_stmt_refs(item_i) + item_refs(item_i + 1);
+      },
+      _ => { item_refs(item_i + 1); },
+    };
+  }
+}
+
+item_refs(0);
+"#;
+
+    const ENCLOSING_FUNCTION_QUERY: &str = r#"
+fn find_fn(item_i: usize) -> string {
+  if item_i >= len(root.items) {
+    "";
+  } else {
+    match root.items[item_i] {
+      Item::Fn { fn_decl } => {
+        if offset >= fn_decl.span.start and offset < fn_decl.span.end {
+          fn_decl.name.value + "@" + show(fn_decl.span.start) + "-" + show(fn_decl.span.end);
+        } else {
+          find_fn(item_i + 1);
+        }
+      },
+      _ => { find_fn(item_i + 1); },
+    };
+  }
+}
+
+find_fn(0);
+"#;
+
+    fn bridge_query_source() -> &'static str {
+        r#"
+fn make_answer() -> usize {
+  1;
+}
+
+let answer = make_answer();
+answer;
+let value = make_answer();
+value;
+"#
+    }
+
+    fn rust_find_references(root: &ast::SourceFile, wanted: &str) -> String {
+        let mut spans = Vec::new();
+        for item in &root.items {
+            walk_item_references(item, wanted, &mut spans);
+        }
+        spans_to_text(&spans)
+    }
+
+    fn walk_item_references(item: &Item, wanted: &str, out: &mut Vec<ast::Span>) {
+        match item {
+            Item::Fn(function) => walk_block_references(&function.body, wanted, out),
+            Item::Stmt(stmt) => walk_stmt_references(stmt, wanted, out),
+            Item::Struct(_) | Item::Enum(_) => {}
+        }
+    }
+
+    fn walk_block_references(block: &ast::Block, wanted: &str, out: &mut Vec<ast::Span>) {
+        for stmt in &block.stmts {
+            walk_stmt_references(stmt, wanted, out);
+        }
+    }
+
+    fn walk_stmt_references(stmt: &Stmt, wanted: &str, out: &mut Vec<ast::Span>) {
+        match stmt {
+            Stmt::If(stmt) => {
+                walk_expr_references(&stmt.condition, wanted, out);
+                walk_block_references(&stmt.then, wanted, out);
+                if let Some(else_clause) = &stmt.else_clause {
+                    if let Some(if_stmt) = &else_clause.if_stmt {
+                        walk_stmt_references(&Stmt::If(if_stmt.clone()), wanted, out);
+                    }
+                    if let Some(block) = &else_clause.block {
+                        walk_block_references(block, wanted, out);
+                    }
+                }
+            }
+            Stmt::Let(stmt) => walk_expr_references(&stmt.value, wanted, out),
+            Stmt::Assign(stmt) => {
+                walk_expr_references(&stmt.target, wanted, out);
+                walk_expr_references(&stmt.value, wanted, out);
+            }
+            Stmt::Expr(stmt) => walk_expr_references(&stmt.expr, wanted, out),
+        }
+    }
+
+    fn walk_expr_references(expr: &Expr, wanted: &str, out: &mut Vec<ast::Span>) {
+        match expr {
+            Expr::Binary(expr) => {
+                walk_expr_references(&expr.lhs, wanted, out);
+                walk_expr_references(&expr.rhs, wanted, out);
+            }
+            Expr::Unary(expr) => walk_expr_references(&expr.operand, wanted, out),
+            Expr::Field(expr) => walk_expr_references(&expr.base, wanted, out),
+            Expr::Index(expr) => {
+                walk_expr_references(&expr.base, wanted, out);
+                walk_expr_references(&expr.index, wanted, out);
+            }
+            Expr::Call(expr) => {
+                walk_expr_references(&expr.callee, wanted, out);
+                for arg in &expr.args.args {
+                    walk_expr_references(&arg.expr, wanted, out);
+                }
+            }
+            Expr::StructLiteral(expr) => {
+                for field in &expr.fields {
+                    walk_expr_references(&field.value, wanted, out);
+                }
+            }
+            Expr::EnumVariant(expr) => {
+                if let Some(fields) = &expr.fields {
+                    for field in &fields.fields {
+                        walk_expr_references(&field.value, wanted, out);
+                    }
+                }
+            }
+            Expr::Match(expr) => {
+                walk_expr_references(&expr.scrutinee, wanted, out);
+                for arm in &expr.arms {
+                    walk_block_references(&arm.body, wanted, out);
+                }
+            }
+            Expr::Paren(expr) => walk_expr_references(&expr.expr, wanted, out),
+            Expr::Var(var) => push_name_reference(&var.name, wanted, out),
+            Expr::Literal(_) => {}
+        }
+    }
+
+    fn push_name_reference(name: &Name, wanted: &str, out: &mut Vec<ast::Span>) {
+        match name {
+            Name::Ident(name) | Name::TypeIdent(name) if name.value == wanted => {
+                out.push(name.span);
+            }
+            Name::Ident(_) | Name::TypeIdent(_) => {}
+        }
+    }
+
+    fn rust_enclosing_function(root: &ast::SourceFile, offset: usize) -> String {
+        root.items
+            .iter()
+            .find_map(|item| match item {
+                Item::Fn(function)
+                    if (function.span.start as usize) <= offset
+                        && offset < function.span.end as usize =>
+                {
+                    Some(format!(
+                        "{}@{}-{}",
+                        function.name.value, function.span.start, function.span.end
+                    ))
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn spans_to_text(spans: &[ast::Span]) -> String {
+        let mut out = String::new();
+        for span in spans {
+            out.push_str(&format!("{}-{};", span.start, span.end));
+        }
+        out
+    }
+
+    fn field_value_text(field: FableField<'_>) -> Result<String, FableError> {
+        match field.scalar() {
+            ScalarType::Bool => Ok(field.read_bool()?.to_string()),
+            ScalarType::Char => Ok(field.read_char()?.to_string()),
+            ScalarType::Str | ScalarType::String | ScalarType::CowStr => field.read_string(),
+            ScalarType::F32 | ScalarType::F64 => Ok(field.read_f64()?.to_string()),
+            ScalarType::I8
+            | ScalarType::I16
+            | ScalarType::I32
+            | ScalarType::I64
+            | ScalarType::I128
+            | ScalarType::ISize => Ok(field.read_i128()?.to_string()),
+            ScalarType::U8
+            | ScalarType::U16
+            | ScalarType::U32
+            | ScalarType::U64
+            | ScalarType::U128
+            | ScalarType::USize => Ok(field.read_u128()?.to_string()),
+            other => Err(FableError::TypeMismatch {
+                expected: "scalar field".into(),
+                actual: scalar_kind_name(other),
+            }),
         }
     }
 
