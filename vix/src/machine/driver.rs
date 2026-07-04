@@ -73,6 +73,7 @@ pub const GLOB_HOST: u32 = 20;
 pub const DOC_PARSE_HOST: u32 = 21;
 pub const DOC_GET_HOST: u32 = 22;
 pub const DOC_COERCE_HOST: u32 = 23;
+pub const ELF_DOC_HOST: u32 = 24;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -181,6 +182,13 @@ pub enum DriveEvent {
         key: u64,
         replayed: bool,
         key_text: String,
+        timestamp_us: u64,
+    },
+    ArtifactProbe {
+        format: String,
+        projection: String,
+        input: u64,
+        cache_hit: bool,
         timestamp_us: u64,
     },
 }
@@ -510,9 +518,15 @@ struct OrderedMapPair {
 #[derive(Clone, Debug)]
 struct PendingInvocation {
     closure_hash: u64,
+    primitive: Option<PendingPrimitive>,
     args: Vec<i64>,
     remaining_arity: usize,
     identity_hash: ContentHash,
+}
+
+#[derive(Clone, Debug)]
+struct PendingPrimitive {
+    projection: super::elf::Projection,
 }
 
 #[derive(Clone, Debug)]
@@ -1032,6 +1046,7 @@ pub struct Driver {
     journal: BTreeMap<String, i64>,
     exec_cache: crate::exec::ExecCache,
     fetch_backend: Arc<dyn FetchBackend>,
+    elf_projection_memo: HashMap<(ContentHash, super::elf::Projection), i64>,
     runs: BTreeMap<u64, PendingExecRun>,
     next_run_id: u64,
     trace_clock: u64,
@@ -1073,6 +1088,7 @@ impl Driver {
             journal: BTreeMap::new(),
             exec_cache: crate::exec::ExecCache::new(),
             fetch_backend: Arc::new(NoFetchBackend),
+            elf_projection_memo: HashMap::new(),
             runs: BTreeMap::new(),
             next_run_id: 0,
             trace_clock: 0,
@@ -1431,7 +1447,15 @@ impl Driver {
                     let mut new_requests = new_requests;
                     for req in pending_coercions {
                         match self.pending_coercion(req, ix) {
-                            Ok(invoke) => new_requests.push(invoke),
+                            Ok(PendingForce::Invoke(invoke)) => new_requests.push(invoke),
+                            Ok(PendingForce::Ready { input_slot, value }) => {
+                                if exec.ready.len() <= input_slot {
+                                    exec.ready.resize(input_slot + 1, false);
+                                    exec.awaited.resize(input_slot + 1, 0);
+                                }
+                                exec.ready[input_slot] = true;
+                                exec.awaited[input_slot] = value;
+                            }
                             Err(err) => return Err(err),
                         }
                     }
@@ -2049,6 +2073,19 @@ impl Driver {
                 }
             };
 
+            let mut elf_doc_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let input = read_frame_word(frame, primitive_region + 8);
+                    let handle = alloc_elf_doc(store_cell, descriptors, schema_refs, input)?;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut array_filter_exclude = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -2200,7 +2237,7 @@ impl Driver {
                 });
             };
 
-            let mut hosts: [HostFn<'_>; 24] = [
+            let mut hosts: [HostFn<'_>; 25] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -2225,6 +2262,7 @@ impl Driver {
                 &mut doc_parse_host,
                 &mut doc_get_host,
                 &mut doc_coerce_host,
+                &mut elf_doc_host,
             ];
             let step = exec
                 .task
@@ -2307,6 +2345,9 @@ impl Driver {
             TreeEntry::Merge(pending) => {
                 for handle in pending.into_iter().rev() {
                     let invocation = self.store.borrow().pending_invocation(handle)?;
+                    if invocation.primitive.is_some() {
+                        return Err("primitive pending value cannot produce a tree".into());
+                    }
                     let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
                     let value = self.demand(fn_ref, invocation.args)?;
                     if let Some(found) = self.project_tree_path_optional(value, path)? {
@@ -2344,6 +2385,9 @@ impl Driver {
                 let mut merged = crate::exec::Tree::default();
                 for handle in pending {
                     let invocation = self.store.borrow().pending_invocation(handle)?;
+                    if invocation.primitive.is_some() {
+                        return Err("primitive pending value cannot produce a tree".into());
+                    }
                     let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
                     let value = self.demand(fn_ref, invocation.args)?;
                     let value = self.force_tree_handle(value)?;
@@ -2364,10 +2408,10 @@ impl Driver {
     }
 
     fn pending_coercion(
-        &self,
+        &mut self,
         req: PendingCoerceRequest,
         caller: usize,
-    ) -> Result<InvokeRequest, String> {
+    ) -> Result<PendingForce, String> {
         let entry_schema = self
             .store
             .borrow()
@@ -2387,16 +2431,26 @@ impl Driver {
                 invocation.remaining_arity
             ));
         }
-        Ok(InvokeRequest {
+        if let Some(primitive) = invocation.primitive {
+            let value = self.force_elf_projection(primitive.projection, &invocation.args)?;
+            return Ok(PendingForce::Ready {
+                input_slot: req.input_slot,
+                value,
+            });
+        }
+        Ok(PendingForce::Invoke(InvokeRequest {
             caller,
             input_slot: req.input_slot,
             fn_ref: self.fn_ref_for_hash(invocation.closure_hash)?,
             args: invocation.args,
-        })
+        }))
     }
 
     fn pending_invocation_call(&self, req: PendingInvokeRequest) -> Result<InvokeRequest, String> {
         let invocation = self.store.borrow().pending_invocation(req.pending)?;
+        if invocation.primitive.is_some() {
+            return Err("primitive pending values are not callable".into());
+        }
         if invocation.remaining_arity != req.args.len() {
             return Err(format!(
                 "pending invocation expected {} argument(s), got {}",
@@ -2748,6 +2802,83 @@ impl Driver {
             )),
         }
     }
+
+    fn force_elf_projection(
+        &mut self,
+        projection: super::elf::Projection,
+        args: &[i64],
+    ) -> Result<i64, String> {
+        let [input] = args else {
+            return Err(format!(
+                "elf projection {} expected one input, got {}",
+                projection.name(),
+                args.len()
+            ));
+        };
+        let bytes = self.elf_input_bytes(*input)?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"vix-elf-input");
+        hasher.update(&bytes);
+        let input_hash: ContentHash = hasher.finalize().into();
+        if let Some(&handle) = self.elf_projection_memo.get(&(input_hash, projection)) {
+            let timestamp_us = self.next_timestamp();
+            self.emit(DriveEvent::ArtifactProbe {
+                format: "elf".to_string(),
+                projection: projection.name().to_string(),
+                input: hash_u64(input_hash),
+                cache_hit: true,
+                timestamp_us,
+            });
+            return Ok(handle);
+        }
+        let value = super::elf::project(&bytes, projection)?;
+        let handle =
+            alloc_doc_from_value(&self.store, &self.descriptors, &self.schema_refs, value)?;
+        self.elf_projection_memo
+            .insert((input_hash, projection), handle);
+        let timestamp_us = self.next_timestamp();
+        self.emit(DriveEvent::ArtifactProbe {
+            format: "elf".to_string(),
+            projection: projection.name().to_string(),
+            input: hash_u64(input_hash),
+            cache_hit: false,
+            timestamp_us,
+        });
+        Ok(handle)
+    }
+
+    fn elf_input_bytes(&mut self, handle: i64) -> Result<Vec<u8>, String> {
+        let entry = self
+            .store
+            .borrow()
+            .entry(handle)
+            .cloned()
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        match entry.schema.as_str() {
+            "Blob" | "String" => Ok(entry.bytes),
+            "Tree" => {
+                let forced = self.force_tree_handle(handle)?;
+                let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
+                    return Err("elf input tree stayed pending".into());
+                };
+                let [(path, contents)] =
+                    <[(String, String); 1]>::try_from(tree.entries.into_iter().collect::<Vec<_>>())
+                        .map_err(|entries| {
+                            format!(
+                                "elf input tree must contain exactly one blob, got {}",
+                                entries.len()
+                            )
+                        })?;
+                if contents.is_empty() {
+                    return Err(format!("elf input blob `{path}` is empty"));
+                }
+                Ok(contents.into_bytes())
+            }
+            other => Err(format!(
+                "elf input must be Blob, String, or Tree, got {other}"
+            )),
+        }
+    }
 }
 
 enum Burst {
@@ -2764,6 +2895,11 @@ enum Burst {
         parked_input: usize,
     },
     Error(String),
+}
+
+enum PendingForce {
+    Invoke(InvokeRequest),
+    Ready { input_slot: usize, value: i64 },
 }
 
 fn hash_u64(value: impl Hash) -> u64 {
@@ -2926,9 +3062,14 @@ fn doc_get(
         .borrow_mut()
         .alloc_raw("String", key.as_bytes().to_vec())
         .0;
-    store
-        .borrow_mut()
-        .map_get(map, "String", key_word, "Doc", descriptors, schema_refs)
+    store.borrow_mut().map_get(
+        map,
+        "String",
+        key_word,
+        "Realized<Doc>",
+        descriptors,
+        schema_refs,
+    )
 }
 
 fn doc_coerce(
@@ -2948,6 +3089,74 @@ fn doc_coerce(
         (DocPayload::Array(value), "Array") => Ok(value),
         (DocPayload::Map(value), "Map<String,Doc>") => Ok(value),
         (payload, schema) => Err(format!("cannot coerce Doc::{payload:?} to {schema}")),
+    }
+}
+
+fn alloc_elf_doc(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    input: i64,
+) -> Result<i64, String> {
+    let input_hash = {
+        let store = store.borrow();
+        let entry = store
+            .entry(input)
+            .ok_or_else(|| format!("store handle {input}"))?;
+        match entry.schema.as_str() {
+            "Blob" | "String" => entry.content_hash,
+            "Tree" => {
+                let TreeEntry::Concrete(_) = store.tree_entry(input)? else {
+                    return Err("elf input tree must be concrete at probe creation".into());
+                };
+                entry.content_hash
+            }
+            other => {
+                return Err(format!(
+                    "elf input must be Blob, String, or Tree, got {other}"
+                ));
+            }
+        }
+    };
+    let mut pairs = Vec::new();
+    for projection in super::elf::Projection::ALL {
+        let key = store
+            .borrow_mut()
+            .alloc_raw("String", projection.name().as_bytes().to_vec())
+            .0;
+        let pending = elf_projection_pending(input, input_hash, projection);
+        let pending = store.borrow_mut().alloc_pending("Doc", pending).0;
+        pairs.push(MapPair {
+            key_schema: "String".to_string(),
+            key_word: key,
+            value_schema: pending_schema("Doc"),
+            value_word: pending,
+            value_realization: None,
+        });
+    }
+    let map = store
+        .borrow_mut()
+        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors)?
+        .0;
+    alloc_doc_variant(store, descriptors, 6, &[map])
+}
+
+fn elf_projection_pending(
+    input: i64,
+    input_hash: ContentHash,
+    projection: super::elf::Projection,
+) -> PendingInvocation {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-elf-projection");
+    hasher.update(projection.name().as_bytes());
+    hasher.update(input_hash);
+    let identity_hash = hasher.finalize().into();
+    PendingInvocation {
+        closure_hash: hash_u64(("elf", projection.name())),
+        primitive: Some(PendingPrimitive { projection }),
+        args: vec![input],
+        remaining_arity: 0,
+        identity_hash,
     }
 }
 
@@ -2972,6 +3181,11 @@ fn compare_words(
                 "Float", b,
             ) as u64));
             Ok(a.cmp(&b))
+        }
+        "Blob" => {
+            let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
+            let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
+            Ok(a.bytes.cmp(&b.bytes))
         }
         "String" | "Path" | "Flag" | "Cc" | "Ar" | "Rustc" => {
             let a = store.string_value(a, schema)?;
@@ -3296,6 +3510,15 @@ fn render_word(
             render_map(store, descriptors, schema_refs, names, schema, word)
         }
         schema => {
+            if schema == "Blob" {
+                let entry = store
+                    .entry(word)
+                    .ok_or_else(|| format!("store handle {word}"))?;
+                return Ok(RenderedValue::Raw {
+                    schema: schema.to_string(),
+                    bytes_utf8: String::from_utf8(entry.bytes.clone()).ok(),
+                });
+            }
             if matches!(schema, "Cc" | "Ar" | "Rustc") {
                 return Ok(RenderedValue::Raw {
                     schema: schema.to_string(),
@@ -3792,6 +4015,7 @@ fn pending_invocation_for(
     let identity_hash = pending_identity_hash(lowered, &store, &args);
     PendingInvocation {
         closure_hash: lowered.hash,
+        primitive: None,
         remaining_arity: lowered.arg_schemas.len().saturating_sub(args.len()),
         args,
         identity_hash,
@@ -4102,6 +4326,12 @@ fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
             .expect("remaining arity fits i64")
             .to_le_bytes(),
     );
+    let primitive = invocation
+        .primitive
+        .as_ref()
+        .map(|primitive| primitive.projection.to_word())
+        .unwrap_or(-1);
+    bytes.extend_from_slice(&primitive.to_le_bytes());
     bytes.extend_from_slice(&invocation.identity_hash);
     for arg in &invocation.args {
         bytes.extend_from_slice(&arg.to_le_bytes());
@@ -4110,7 +4340,7 @@ fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
 }
 
 fn decode_pending_invocation(bytes: &[u8]) -> Result<PendingInvocation, String> {
-    if bytes.len() < 56 {
+    if bytes.len() < 64 {
         return Err("pending invocation too short".into());
     }
     let closure_hash =
@@ -4118,10 +4348,16 @@ fn decode_pending_invocation(bytes: &[u8]) -> Result<PendingInvocation, String> 
     let argc = usize::try_from(read_frame_word(bytes, 8)).map_err(|_| "argc")?;
     let remaining_arity =
         usize::try_from(read_frame_word(bytes, 16)).map_err(|_| "remaining arity")?;
-    let identity_hash: ContentHash = bytes[24..56]
+    let primitive = match read_frame_word(bytes, 24) {
+        -1 => None,
+        word => Some(PendingPrimitive {
+            projection: super::elf::Projection::from_word(word)?,
+        }),
+    };
+    let identity_hash: ContentHash = bytes[32..64]
         .try_into()
         .expect("pending identity hash length");
-    let expected = 56 + argc * 8;
+    let expected = 64 + argc * 8;
     if bytes.len() != expected {
         return Err(format!(
             "pending invocation has {} bytes, expected {expected}",
@@ -4129,10 +4365,11 @@ fn decode_pending_invocation(bytes: &[u8]) -> Result<PendingInvocation, String> 
         ));
     }
     let args = (0..argc)
-        .map(|i| read_frame_word(bytes, 56 + i * 8))
+        .map(|i| read_frame_word(bytes, 64 + i * 8))
         .collect();
     Ok(PendingInvocation {
         closure_hash,
+        primitive,
         args,
         remaining_arity,
         identity_hash,

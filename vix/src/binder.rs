@@ -46,7 +46,7 @@ pub enum SymbolKind {
 
 /// Primitive scalar types need no declaration or import; they resolve silently
 /// (no ref recorded — there is no def site to jump to).
-const BUILTIN_TYPES: &[&str] = &["Int", "Float", "String", "Bool"];
+const BUILTIN_TYPES: &[&str] = &["Int", "Float", "String", "Bool", "Blob", "Doc", "Tree"];
 
 #[derive(Debug, Clone)]
 pub struct Symbol {

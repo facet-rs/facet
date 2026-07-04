@@ -61,6 +61,7 @@
 //! never executing (trace absence), through the VM and JIT.
 
 pub mod driver;
+mod elf;
 pub mod lower;
 pub mod value;
 

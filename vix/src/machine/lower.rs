@@ -29,10 +29,11 @@ use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST,
     ARRAY_MAP_PENDING_HOST, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PARSE_HOST, DriveEvent,
-    DriveEventSink, Driver, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn,
-    MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
-    PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames, RenderVariant,
-    RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, StepMode, TREE_PROJECT_HOST,
+    DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane,
+    LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, OPTION_UNWRAP_HOST,
+    PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames,
+    RenderVariant, RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, StepMode,
+    TREE_PROJECT_HOST,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -468,6 +469,7 @@ fn schema_names_for(
     schema_names.extend([
         "String".to_string(),
         "Path".to_string(),
+        "Blob".to_string(),
         "Bool".to_string(),
         "Target".to_string(),
         "Os".to_string(),
@@ -480,7 +482,11 @@ fn schema_names_for(
         "Map".to_string(),
         "Doc".to_string(),
         "Option<Doc>".to_string(),
+        "Pending<Doc>".to_string(),
+        "Realized<Doc>".to_string(),
+        "Option<Realized<Doc>>".to_string(),
         "Map<String,Doc>".to_string(),
+        "Map<String,Realized<Doc>>".to_string(),
     ]);
     for schema in fn_returns.values() {
         push_schema_closure(schema, &mut schema_names);
@@ -820,7 +826,12 @@ fn collect_expr_strings(expr: &ast::Expr, out: &mut BTreeSet<String>) {
             }
         }
         ast::Expr::Paren(p) => collect_expr_strings(&p.inner, out),
-        ast::Expr::Field(f) => collect_expr_strings(&f.receiver, out),
+        ast::Expr::Field(f) => {
+            collect_expr_strings(&f.receiver, out);
+            if let ast::Member::Identifier(name) = &f.name {
+                out.insert(name.value.clone());
+            }
+        }
         ast::Expr::Tuple(t) => {
             for elem in &t.elems {
                 collect_expr_strings(elem, out);
@@ -1209,6 +1220,9 @@ fn collect_expr_schemas(
                 ("with_ext", Some("Path")) => Ok(Some("Path".into())),
                 ("insert", Some(schema)) if map_schemas(schema).is_some() => {
                     Ok(Some(schema.to_string()))
+                }
+                ("get", Some("Doc")) | ("get", Some("Realized<Doc>")) => {
+                    Ok(Some(option_schema("Realized<Doc>")))
                 }
                 ("get", Some(schema)) => Ok(map_value_schema(schema).map(option_schema)),
                 ("unwrap", Some(schema)) => Ok(option_value_schema(schema).map(str::to_string)),
@@ -1828,7 +1842,7 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Scoped(path) => self.scoped_value(path),
             ast::Expr::StructLit(lit) => self.struct_literal(lit),
             ast::Expr::Tuple(tuple) => self.tuple_literal(tuple, expected),
-            ast::Expr::Field(field) => self.field_access(field),
+            ast::Expr::Field(field) => self.field_access(field, expected),
             ast::Expr::Binary(b) if b.op.as_str() == "/" => {
                 let left = self.expr(&b.left)?;
                 let right = self.expr(&b.right)?;
@@ -2250,6 +2264,7 @@ impl<'a> FnLowerer<'a> {
             "extract" => return self.extract_call(call),
             "toml" => return self.doc_parse_call(call, 0),
             "json" => return self.doc_parse_call(call, 1),
+            "elf" => return self.elf_call(call),
             _ => {}
         }
         if let Some(&fn_ref) = self.fn_refs.get(name) {
@@ -2473,7 +2488,10 @@ impl<'a> FnLowerer<'a> {
         call: &ast::MethodCall,
         expected: Option<&str>,
     ) -> Result<ValueSlot, String> {
-        let receiver = self.expr(&call.receiver)?;
+        let mut receiver = self.expr(&call.receiver)?;
+        if receiver.schema == "Realized<Doc>" {
+            receiver = self.coerce_to_schema(receiver, "Doc")?;
+        }
         match call.name.value.as_str() {
             "with_ext" => {
                 if receiver.schema != "Path" {
@@ -2618,7 +2636,11 @@ impl<'a> FnLowerer<'a> {
         self.store_alloc(&tuple_schema(&schemas), 0, &fields)
     }
 
-    fn field_access(&mut self, field: &ast::FieldAccess) -> Result<ValueSlot, String> {
+    fn field_access(
+        &mut self,
+        field: &ast::FieldAccess,
+        expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
         let receiver = self.expr(&field.receiver)?;
         match &field.name {
             ast::Member::Index(index) => {
@@ -2635,6 +2657,13 @@ impl<'a> FnLowerer<'a> {
                 Ok(self.store_read(&receiver, field_index, schema))
             }
             ast::Member::Identifier(name) => {
+                if receiver.schema == "Realized<Doc>" {
+                    let receiver = self.coerce_to_schema(receiver, "Doc")?;
+                    return self.doc_field_access(receiver, name.value.as_str(), expected);
+                }
+                if receiver.schema == "Doc" {
+                    return self.doc_field_access(receiver, name.value.as_str(), expected);
+                }
                 if receiver.schema == "Target" && name.value == "os" {
                     return Ok(self.store_read(&receiver, 0, "Os".into()));
                 }
@@ -2654,6 +2683,40 @@ impl<'a> FnLowerer<'a> {
                 Ok(self.store_read(&receiver, field_index, schema))
             }
         }
+    }
+
+    fn doc_field_access(
+        &mut self,
+        receiver: ValueSlot,
+        name: &str,
+        expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
+        let key = *self
+            .literal_handles
+            .strings
+            .get(name)
+            .ok_or_else(|| format!("doc field key {name:?} was not interned"))?;
+        let key_slot = self.alloc();
+        self.code.push(Op::ConstI64 {
+            dst: key_slot,
+            value: key,
+        });
+        let key = ValueSlot {
+            slot: key_slot,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        };
+        let option = self.doc_get(&receiver, &key)?;
+        let value = self.option_unwrap(&option, "Realized<Doc>");
+        let Some(expected) = expected else {
+            return Ok(value);
+        };
+        if expected == "Realized<Doc>" {
+            return Ok(value);
+        }
+        let doc = self.coerce_to_schema(value, "Doc")?;
+        self.coerce_to_schema(doc, expected)
     }
 
     fn struct_literal(&mut self, lit: &ast::StructLiteral) -> Result<ValueSlot, String> {
@@ -2892,6 +2955,10 @@ impl<'a> FnLowerer<'a> {
         }
         if value.schema == realized_schema(expected) {
             return self.coerce_realized_to_schema(value, expected);
+        }
+        if value.schema == "Realized<Doc>" && expected != "Realized<Doc>" {
+            let doc = self.coerce_realized_to_schema(value, "Doc")?;
+            return self.coerce_to_schema(doc, expected);
         }
         if value.schema == "Doc"
             && matches!(
@@ -3806,7 +3873,7 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::HostCall { host: DOC_GET_HOST });
         Ok(ValueSlot {
             slot: dst,
-            schema: option_schema("Doc"),
+            schema: option_schema("Realized<Doc>"),
             realization: None,
             pending: None,
         })
@@ -4032,6 +4099,33 @@ impl<'a> FnLowerer<'a> {
             return Err("extract takes a tree".into());
         };
         self.expr_expected(arg, Some("Tree"))
+    }
+
+    fn elf_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("elf takes one Blob, String, or single-blob Tree".into());
+        };
+        let input = self.expr(arg)?;
+        if !matches!(input.schema.as_str(), "Blob" | "String" | "Tree") {
+            return Err(format!("elf called on {}", input.schema));
+        }
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: input.slot,
+        });
+        self.code.push(Op::HostCall { host: ELF_DOC_HOST });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Doc".into(),
+            realization: None,
+            pending: None,
+        })
     }
 
     fn path_with_ext(&mut self, path: &ValueSlot, ext: &ValueSlot) -> Result<ValueSlot, String> {
@@ -6355,6 +6449,159 @@ pub fn parse(input: String) -> (String, Int, Bool) {
     }
 
     #[test]
+    fn elf_structural_projection_contracts_are_pinned() {
+        let src = r#"
+pub fn arch(input: Blob) -> String { elf(input).arch }
+pub fn kind(input: Blob) -> String { elf(input).kind }
+pub fn deps(input: Blob) -> [String] { elf(input).dynamic_deps }
+pub fn glibc(input: Blob) -> String { elf(input).needs_glibc }
+pub fn symbols(input: Blob) -> [String] { elf(input).symbols }
+pub fn sections(input: Blob) -> [Doc] { elf(input).sections }
+pub fn linker_metadata(input: Blob) -> [String] { elf(input).linker_metadata }
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let hello = machine
+                .driver
+                .intern_raw_value(
+                    "Blob",
+                    include_bytes!("../../tests/fixtures/elf/hello-x86_64").to_vec(),
+                )
+                .0;
+            let libtiny = machine
+                .driver
+                .intern_raw_value(
+                    "Blob",
+                    include_bytes!("../../tests/fixtures/elf/libtiny-x86_64.so").to_vec(),
+                )
+                .0;
+            assert!(matches!(
+                super::super::elf::project(
+                    include_bytes!("../../tests/fixtures/elf/libtiny-x86_64.so"),
+                    super::super::elf::Projection::NeedsGlibc,
+                )
+                .unwrap(),
+                crate::oracle::Value::Str(value) if value == "GLIBC_2.2.5"
+            ));
+
+            let arch = machine.demand_i64("arch", vec![hello]).unwrap();
+            assert_eq!(machine.driver.raw_string(arch, "String").unwrap(), "x86_64");
+
+            let kind = machine.demand_i64("kind", vec![hello]).unwrap();
+            assert_eq!(machine.driver.raw_string(kind, "String").unwrap(), "dyn");
+
+            let deps = machine.demand_i64("deps", vec![hello]).unwrap();
+            assert_eq!(
+                rendered_doc_strings(&machine, "deps", deps),
+                vec!["libc.so.6"]
+            );
+
+            let glibc = machine.demand_i64("glibc", vec![hello]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(glibc, "String").unwrap(),
+                "GLIBC_2.34"
+            );
+
+            let lib_glibc = machine.demand_i64("glibc", vec![libtiny]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(lib_glibc, "String").unwrap(),
+                "GLIBC_2.2.5"
+            );
+
+            let symbols = machine.demand_i64("symbols", vec![libtiny]).unwrap();
+            let symbols = rendered_doc_strings(&machine, "symbols", symbols);
+            assert!(
+                symbols.windows(2).all(|pair| pair[0] <= pair[1]),
+                "{lane:?}: {symbols:?}"
+            );
+            assert!(
+                symbols.contains(&"strlen".to_string())
+                    && symbols.contains(&"vix_fixture_len".to_string()),
+                "{lane:?}: {symbols:?}"
+            );
+
+            let metadata = machine
+                .demand_i64("linker_metadata", vec![libtiny])
+                .unwrap();
+            assert_eq!(
+                rendered_doc_strings(&machine, "linker_metadata", metadata),
+                vec!["GCC: (Ubuntu 15.2.0-16ubuntu1) 15.2.0"]
+            );
+
+            let sections = machine.demand_i64("sections", vec![hello]).unwrap();
+            let sections = rendered_doc_maps(&machine, "sections", sections);
+            assert!(
+                sections.iter().any(|section| {
+                    section.get("name") == Some(&".dynamic".to_string())
+                        && section.get("size") == Some(&"496".to_string())
+                }),
+                "{lane:?}: {sections:?}"
+            );
+            assert!(
+                sections.iter().any(|section| {
+                    section.get("name") == Some(&".gnu.version_r".to_string())
+                        && section.get("size") == Some(&"48".to_string())
+                }),
+                "{lane:?}: {sections:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn elf_arch_projection_does_not_parse_symbols() {
+        let src = r#"
+pub fn arch(input: Blob) -> String { elf(input).arch }
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let hello = machine
+                .driver
+                .intern_raw_value(
+                    "Blob",
+                    include_bytes!("../../tests/fixtures/elf/hello-x86_64").to_vec(),
+                )
+                .0;
+            let arch = machine.demand_i64("arch", vec![hello]).unwrap();
+            assert_eq!(machine.driver.raw_string(arch, "String").unwrap(), "x86_64");
+            let probes = artifact_probes(&machine);
+            assert_eq!(probes, vec![("arch".to_string(), false)], "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn elf_projection_results_are_memoized_by_content() {
+        let src = r#"
+pub fn arch_twice(input: Blob) -> (String, String) {
+    (elf(input).arch, elf(input).arch)
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let hello = machine
+                .driver
+                .intern_raw_value(
+                    "Blob",
+                    include_bytes!("../../tests/fixtures/elf/hello-x86_64").to_vec(),
+                )
+                .0;
+            let tuple = machine.demand_i64("arch_twice", vec![hello]).unwrap();
+            let left = machine.driver.store_field(tuple, 0).unwrap();
+            let right = machine.driver.store_field(tuple, 1).unwrap();
+            assert_eq!(left, right, "string result is store-deduped on {lane:?}");
+            assert_eq!(
+                machine.driver.raw_string(left, "String").unwrap(),
+                "x86_64",
+                "{lane:?}"
+            );
+            assert_eq!(
+                artifact_probes(&machine),
+                vec![("arch".to_string(), false), ("arch".to_string(), true)],
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
     fn scalar_array_collect_sorts_and_rejects_arguments() {
         let bad = r#"
 pub fn bad() -> [Int] {
@@ -6671,6 +6918,96 @@ pub fn lazy(n: Int) -> Map<String, Float> {
                 "driver trace diverged between {first_lane:?} and {lane:?}"
             );
         }
+    }
+
+    fn rendered_doc_strings(machine: &Machine, name: &str, handle: i64) -> Vec<String> {
+        let RenderedValue::Array { items, .. } = machine.render_result(name, handle).unwrap()
+        else {
+            panic!("{name} did not render as an array");
+        };
+        items
+            .into_iter()
+            .map(|item| match item {
+                RenderedValue::Doc {
+                    variant,
+                    value: Some(value),
+                } if variant == "String" => match *value {
+                    RenderedValue::String { value } => value,
+                    other => panic!("{name} doc string payload rendered as {other:?}"),
+                },
+                RenderedValue::String { value } => value,
+                other => panic!("{name} array item rendered as {other:?}"),
+            })
+            .collect()
+    }
+
+    fn rendered_doc_maps(
+        machine: &Machine,
+        name: &str,
+        handle: i64,
+    ) -> Vec<BTreeMap<String, String>> {
+        let RenderedValue::Array { items, .. } = machine.render_result(name, handle).unwrap()
+        else {
+            panic!("{name} did not render as an array");
+        };
+        items
+            .into_iter()
+            .map(|item| {
+                let RenderedValue::Doc {
+                    variant,
+                    value: Some(value),
+                } = item
+                else {
+                    panic!("{name} item did not render as Doc::Map");
+                };
+                assert_eq!(variant, "Map");
+                let RenderedValue::Map { entries, .. } = *value else {
+                    panic!("{name} doc map payload did not render as a map");
+                };
+                entries
+                    .into_iter()
+                    .map(|entry| {
+                        let RenderedValue::String { value: key } = entry.key else {
+                            panic!("{name} map key was not a string");
+                        };
+                        let value = match entry.value {
+                            RenderedValue::Doc {
+                                variant,
+                                value: Some(value),
+                            } if variant == "String" => match *value {
+                                RenderedValue::String { value } => value,
+                                other => panic!("{name} string field rendered as {other:?}"),
+                            },
+                            RenderedValue::Doc {
+                                variant,
+                                value: Some(value),
+                            } if variant == "Int" => match *value {
+                                RenderedValue::Int { value } => value.to_string(),
+                                other => panic!("{name} int field rendered as {other:?}"),
+                            },
+                            other => panic!("{name} map value rendered as {other:?}"),
+                        };
+                        (key, value)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn artifact_probes(machine: &Machine) -> Vec<(String, bool)> {
+        machine
+            .trace()
+            .iter()
+            .filter_map(|event| match event {
+                DriveEvent::ArtifactProbe {
+                    format,
+                    projection,
+                    cache_hit,
+                    ..
+                } if format == "elf" => Some((projection.clone(), *cache_hit)),
+                _ => None,
+            })
+            .collect()
     }
 
     fn trace_hash(value: &str) -> u64 {

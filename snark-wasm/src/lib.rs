@@ -143,6 +143,13 @@ pub enum VixDriveEvent {
         key_text: String,
         timestamp_us: u64,
     },
+    ArtifactProbe {
+        format: String,
+        projection: String,
+        input: String,
+        cache_hit: bool,
+        timestamp_us: u64,
+    },
 }
 
 #[derive(Facet)]
@@ -358,6 +365,19 @@ fn trace_events(events: &[vix::machine::driver::DriveEvent]) -> Vec<VixDriveEven
                 key: hex_hash(*key),
                 replayed: *replayed,
                 key_text: key_text.clone(),
+                timestamp_us: *timestamp_us,
+            },
+            vix::machine::driver::DriveEvent::ArtifactProbe {
+                format,
+                projection,
+                input,
+                cache_hit,
+                timestamp_us,
+            } => VixDriveEvent::ArtifactProbe {
+                format: format.clone(),
+                projection: projection.clone(),
+                input: hex_hash(*input),
+                cache_hit: *cache_hit,
                 timestamp_us: *timestamp_us,
             },
         })
