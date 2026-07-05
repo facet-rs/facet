@@ -28,14 +28,14 @@ use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 
 use super::TotalF64;
 use super::driver::{
-    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_LEN_HOST,
-    ARRAY_MAP_PENDING_HOST, AST_DOC_HOST, AST_FN_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST,
-    DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
-    GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
-    MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
-    PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames, RenderVariant, RenderedValue,
-    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, StepMode, StoreHandle, TREE_PROJECT_HOST,
-    ValueBundle,
+    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
+    ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, AST_DOC_HOST, AST_FN_HOST, CodeBundle, DOC_COERCE_HOST,
+    DOC_GET_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST,
+    FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
+    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
+    PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames, RenderVariant,
+    RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, StepMode,
+    StoreHandle, TREE_PROJECT_HOST, ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -1430,9 +1430,16 @@ fn collect_expr_schemas(
             Ok(Some(schema))
         }
         ast::Expr::Binary(binary) => {
-            let _ = collect_expr_schemas(&binary.left, out, tables, fn_returns, env)?;
-            let _ = collect_expr_schemas(&binary.right, out, tables, fn_returns, env)?;
-            Ok(None)
+            let left = collect_expr_schemas(&binary.left, out, tables, fn_returns, env)?;
+            let right = collect_expr_schemas(&binary.right, out, tables, fn_returns, env)?;
+            if binary.op == "+"
+                && left.as_deref() == Some("String")
+                && right.as_deref() == Some("String")
+            {
+                Ok(Some("String".into()))
+            } else {
+                Ok(None)
+            }
         }
         ast::Expr::Unary(unary) => {
             collect_expr_schemas(&unary.operand, out, tables, fn_returns, env)
@@ -1475,6 +1482,7 @@ fn collect_expr_schemas(
                 }
                 ("get", Some(schema)) => Ok(map_value_schema(schema).map(option_schema)),
                 ("unwrap", Some(schema)) => Ok(option_value_schema(schema).map(str::to_string)),
+                ("join", Some("Array" | "Doc" | "Realized<Doc>")) => Ok(Some("String".into())),
                 _ => Ok(None),
             }
         }
@@ -2127,6 +2135,9 @@ impl<'a> FnLowerer<'a> {
                 {
                     a = self.coerce_to_schema(a, &schema)?;
                     r = self.coerce_to_schema(r, &schema)?;
+                }
+                if b.op == "+" && a.schema == "String" && r.schema == "String" {
+                    return self.string_concat(&a, &r);
                 }
                 let dst = self.alloc();
                 let (op, schema) = match (b.op.as_str(), a.schema.as_str(), r.schema.as_str()) {
@@ -2805,6 +2816,22 @@ impl<'a> FnLowerer<'a> {
                     return Err("collect takes no arguments".into());
                 }
                 self.array_collect(&receiver, expected)
+            }
+            "join" => {
+                let receiver = match receiver.schema.as_str() {
+                    "Array" => receiver,
+                    "Doc" => self.coerce_doc_to_schema(receiver, "Array")?,
+                    "Realized<Doc>" => {
+                        let doc = self.coerce_to_schema(receiver, "Doc")?;
+                        self.coerce_doc_to_schema(doc, "Array")?
+                    }
+                    _ => return Err(format!("join called on {}", receiver.schema)),
+                };
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("Array.join takes one separator".into());
+                };
+                let separator = self.method_arg(arg, Some("String"))?;
+                self.array_join(&receiver, &separator)
             }
             "insert" => {
                 let Some((key_schema, value_schema)) = map_schemas(&receiver.schema) else {
@@ -4178,6 +4205,66 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn array_join(
+        &mut self,
+        receiver: &ValueSlot,
+        separator: &ValueSlot,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        self.expect_schema(separator, "String")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: separator.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: ARRAY_JOIN_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn string_concat(&mut self, left: &ValueSlot, right: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(left, "String")?;
+        self.expect_schema(right, "String")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: left.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: right.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: STRING_CONCAT_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
     fn doc_get(&mut self, doc: &ValueSlot, key: &ValueSlot) -> Result<ValueSlot, String> {
         self.expect_schema(doc, "Doc")?;
         self.expect_schema(key, "String")?;
@@ -4646,6 +4733,7 @@ fn strict_binary_operand_schema<'a>(op: &str, left: &'a str, right: &'a str) -> 
     match (op, left) {
         ("+" | "-" | "*", "Int")
         | ("+" | "*", "Float")
+        | ("+", "String")
         | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool")
         | ("&&", "Bool") => Some(left),
         _ => None,

@@ -1,0 +1,76 @@
+// The bootstrap checker v0. This is deliberately Vix source: Rust only loads it
+// and asserts the corpus facts it returns.
+
+pub fn resolve_ref(source: String, name: String) -> String {
+    let f = ast(source).fn(name);
+    f.name
+}
+
+pub fn type_of(source: String, function: String) -> String {
+    let kind: String = ast(source).fn(function).tail.kind;
+    match kind {
+        "number" => "Int",
+        "string" => "String",
+        "path" => "Path",
+        "bool" => "Bool",
+        _ => "Error",
+    }
+}
+
+pub fn function_signature(source: String, name: String) -> String {
+    let f = ast(source).fn(name);
+    let params: String = f.param_types.join(",");
+    let ret: String = f.return_type_text;
+    visibility_prefix(f)
+        + "fn"
+        + generic_params(f)
+        + "("
+        + params
+        + ")->"
+        + ret
+        + " abi="
+        + abi_class(ret)
+}
+
+pub fn diagnostic_kind(source: String, function: String) -> String {
+    let status: String = ast(source).fn(function).return_type_status;
+    match status {
+        "some" => "None",
+        "none" => "OmittedReturnType",
+        _ => "Error",
+    }
+}
+
+pub fn diagnostic_span_start(source: String, function: String) -> Int {
+    ast(source).fn(function).name_span.start
+}
+
+pub fn diagnostic_span_end(source: String, function: String) -> Int {
+    ast(source).fn(function).name_span.end
+}
+
+pub fn diagnostic_suggestion(source: String, function: String) -> String {
+    type_of(source, function)
+}
+
+fn visibility_prefix(f: Doc) -> String {
+    let prefix: String = f.visibility_prefix;
+    prefix
+}
+
+fn generic_params(f: Doc) -> String {
+    let params = f.generic_params.join(",");
+    match params {
+        "" => "",
+        _ => "<" + params + ">",
+    }
+}
+
+fn abi_class(ty: String) -> String {
+    match ty {
+        "Int" => "BitsWord",
+        "Float" => "BitsWord",
+        "Bool" => "BitsWord",
+        _ => "Handle<" + ty + ">",
+    }
+}
