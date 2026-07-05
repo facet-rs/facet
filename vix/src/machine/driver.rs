@@ -136,6 +136,7 @@ pub const ELF_DOC_HOST: u32 = 24;
 pub const AST_DOC_HOST: u32 = 25;
 pub const AST_FN_HOST: u32 = 26;
 pub const ARRAY_LEN_HOST: u32 = 27;
+pub const OCI_DOC_HOST: u32 = 28;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -587,13 +588,36 @@ struct PendingInvocation {
 }
 
 #[derive(Clone, Debug)]
-enum PendingPrimitive {
-    Elf {
-        projection: super::elf::Projection,
-    },
-    Ast {
-        projection: super::ast_probe::Projection,
-    },
+struct PendingPrimitive {
+    kind: PendingPrimitiveKind,
+}
+
+#[derive(Clone, Debug)]
+enum PendingPrimitiveKind {
+    Elf(super::elf::Projection),
+    Ast(super::ast_probe::Projection),
+    Oci(super::oci::Projection),
+}
+
+impl PendingPrimitive {
+    fn to_word(&self) -> i64 {
+        match self.kind {
+            PendingPrimitiveKind::Elf(projection) => projection.to_word(),
+            PendingPrimitiveKind::Ast(projection) => projection.to_word(),
+            PendingPrimitiveKind::Oci(projection) => 2_000 + projection.to_word(),
+        }
+    }
+
+    fn from_word(word: i64) -> Result<Self, String> {
+        let kind = if word >= 2_000 {
+            PendingPrimitiveKind::Oci(super::oci::Projection::from_word(word - 2_000)?)
+        } else if word >= 1_000 {
+            PendingPrimitiveKind::Ast(super::ast_probe::Projection::from_word(word)?)
+        } else {
+            PendingPrimitiveKind::Elf(super::elf::Projection::from_word(word)?)
+        };
+        Ok(Self { kind })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1150,6 +1174,8 @@ pub struct Driver {
     ast_roots: HashMap<i64, i64>,
     ast_parse_memo: HashMap<ContentHash, Arc<ast::SourceFile>>,
     ast_projection_memo: HashMap<(ContentHash, super::ast_probe::Projection, String), i64>,
+    oci_projection_memo: HashMap<(ContentHash, super::oci::Projection), i64>,
+    oci_file_memo: HashMap<(ContentHash, String), Option<i64>>,
     runs: BTreeMap<u64, PendingExecRun>,
     next_run_id: u64,
     trace_clock: u64,
@@ -1196,6 +1222,8 @@ impl Driver {
             ast_roots: HashMap::new(),
             ast_parse_memo: HashMap::new(),
             ast_projection_memo: HashMap::new(),
+            oci_projection_memo: HashMap::new(),
+            oci_file_memo: HashMap::new(),
             runs: BTreeMap::new(),
             next_run_id: 0,
             trace_clock: 0,
@@ -1793,6 +1821,7 @@ impl Driver {
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
             let ast_roots_cell = RefCell::new(&mut self.ast_roots);
+            let oci_file_memo_cell = RefCell::new(&mut self.oci_file_memo);
             let journal_cell = RefCell::new(&mut self.journal);
             let clock_cell = RefCell::new(&mut self.trace_clock);
             let lowered_fns = &self.fns;
@@ -2267,7 +2296,18 @@ impl Driver {
                     let doc = read_frame_word(frame, primitive_region + 8);
                     let key = read_frame_word(frame, primitive_region + 16);
                     let key = store_cell.borrow().string_value(key, "String")?;
-                    let (handle, _) = doc_get(store_cell, descriptors, schema_refs, doc, &key)?;
+                    let (handle, _) = doc_get_with_virtual(
+                        &VirtualDocGetCtx {
+                            store: store_cell,
+                            descriptors,
+                            schema_refs,
+                            oci_file_memo: &oci_file_memo_cell,
+                            store_events: &store_events,
+                            clock_cell: &clock_cell,
+                        },
+                        doc,
+                        &key,
+                    )?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -2312,6 +2352,19 @@ impl Driver {
                     let input = read_frame_word(frame, primitive_region + 8);
                     let handle = alloc_ast_doc(store_cell, descriptors, schema_refs, input)?;
                     ast_roots_cell.borrow_mut().insert(handle, input);
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut oci_doc_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let input = read_frame_word(frame, primitive_region + 8);
+                    let handle = alloc_oci_doc(store_cell, descriptors, schema_refs, input)?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -2520,7 +2573,7 @@ impl Driver {
                 });
             };
 
-            let mut hosts: [HostFn<'_>; 28] = [
+            let mut hosts: [HostFn<'_>; 29] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -2549,6 +2602,7 @@ impl Driver {
                 &mut ast_doc_host,
                 &mut ast_fn_host,
                 &mut array_len_host,
+                &mut oci_doc_host,
             ];
             let step = exec
                 .task
@@ -2714,12 +2768,15 @@ impl Driver {
             ));
         }
         if let Some(primitive) = invocation.primitive {
-            let value = match primitive {
-                PendingPrimitive::Elf { projection } => {
+            let value = match primitive.kind {
+                PendingPrimitiveKind::Elf(projection) => {
                     self.force_elf_projection(projection, &invocation.args)?
                 }
-                PendingPrimitive::Ast { projection } => {
+                PendingPrimitiveKind::Ast(projection) => {
                     self.force_ast_projection(projection, &invocation.args)?
+                }
+                PendingPrimitiveKind::Oci(projection) => {
+                    self.force_oci_projection(projection, &invocation.args)?
                 }
             };
             return Ok(PendingForce::Ready {
@@ -3363,6 +3420,51 @@ impl Driver {
         Ok(handle)
     }
 
+    fn force_oci_projection(
+        &mut self,
+        projection: super::oci::Projection,
+        args: &[i64],
+    ) -> Result<i64, String> {
+        let [input] = args else {
+            return Err(format!(
+                "OCI projection {} expected one input, got {}",
+                projection.name(),
+                args.len()
+            ));
+        };
+        let tree = self.oci_input_tree(*input)?;
+        let input_hash = super::oci::input_hash(&tree);
+        if let Some(&handle) = self.oci_projection_memo.get(&(input_hash, projection)) {
+            let timestamp_us = self.next_timestamp();
+            self.emit(DriveEvent::ArtifactProbe {
+                format: "oci".to_string(),
+                projection: projection.name().to_string(),
+                input: hash_u64(input_hash),
+                cache_hit: true,
+                timestamp_us,
+            });
+            return Ok(handle);
+        }
+        let handle = if projection == super::oci::Projection::Files {
+            alloc_oci_files_doc(&self.store, &self.descriptors, input_hash, *input)?
+        } else {
+            let layout = super::oci::parse_layout(tree)?;
+            let value = super::oci::project(&layout, projection)?;
+            alloc_doc_from_value(&self.store, &self.descriptors, &self.schema_refs, value)?
+        };
+        self.oci_projection_memo
+            .insert((input_hash, projection), handle);
+        let timestamp_us = self.next_timestamp();
+        self.emit(DriveEvent::ArtifactProbe {
+            format: "oci".to_string(),
+            projection: projection.name().to_string(),
+            input: hash_u64(input_hash),
+            cache_hit: false,
+            timestamp_us,
+        });
+        Ok(handle)
+    }
+
     fn ast_input_source(&mut self, handle: i64) -> Result<(String, ContentHash), String> {
         let entry = self
             .store
@@ -3394,6 +3496,25 @@ impl Driver {
         hasher.update(b"vix-ast-input");
         hasher.update(source.as_bytes());
         Ok((source, hasher.finalize().into()))
+    }
+
+    fn oci_input_tree(&mut self, handle: i64) -> Result<crate::exec::Tree, String> {
+        let store = self.store.borrow();
+        let entry = store
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        if entry.schema == "Tree" {
+            drop(store);
+            {
+                let forced = self.force_tree_handle(handle)?;
+                let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
+                    return Err("OCI input tree stayed pending".into());
+                };
+                Ok(tree)
+            }
+        } else {
+            oci_tree_from_entry(entry)
+        }
     }
 }
 
@@ -3433,6 +3554,7 @@ enum DocPayload {
     String(i64),
     Array(i64),
     Map(i64),
+    Virtual(i64),
 }
 
 fn alloc_doc_from_value(
@@ -3557,6 +3679,10 @@ fn doc_payload(
             &entry.bytes,
             field_offset(descriptor, &entry.bytes, 0),
         )),
+        7 => DocPayload::Virtual(read_frame_word(
+            &entry.bytes,
+            field_offset(descriptor, &entry.bytes, 0),
+        )),
         other => return Err(format!("unknown Doc tag {other}")),
     })
 }
@@ -3586,6 +3712,132 @@ fn doc_get(
     )
 }
 
+struct VirtualDocGetCtx<'a> {
+    store: &'a RefCell<ValueStore>,
+    descriptors: &'a HashMap<String, Descriptor<String>>,
+    schema_refs: &'a [String],
+    oci_file_memo: &'a RefCell<&'a mut HashMap<(ContentHash, String), Option<i64>>>,
+    store_events: &'a RefCell<Vec<DriveEvent>>,
+    clock_cell: &'a RefCell<&'a mut u64>,
+}
+
+fn doc_get_with_virtual(
+    ctx: &VirtualDocGetCtx<'_>,
+    doc: i64,
+    key: &str,
+) -> Result<(i64, bool), String> {
+    let virtual_input = {
+        let store = ctx.store.borrow();
+        oci_virtual_files_input(&store, ctx.descriptors, doc)?
+    };
+    if let Some(input) = virtual_input {
+        return oci_virtual_file_get(ctx, input, key);
+    }
+    doc_get(ctx.store, ctx.descriptors, ctx.schema_refs, doc, key)
+}
+
+fn oci_virtual_file_get(
+    ctx: &VirtualDocGetCtx<'_>,
+    input: i64,
+    path: &str,
+) -> Result<(i64, bool), String> {
+    let tree = {
+        let store = ctx.store.borrow();
+        oci_tree_from_store(&store, input)?
+    };
+    let input_hash = super::oci::input_hash(&tree);
+    let key = (input_hash, path.to_string());
+    if let Some(cached) = ctx.oci_file_memo.borrow().get(&key).cloned() {
+        emit_artifact_probe(
+            ctx.store_events,
+            ctx.clock_cell,
+            "oci",
+            &format!("files/{path}"),
+            input_hash,
+            true,
+        );
+        return match cached {
+            Some(handle) => ctx.store.borrow_mut().alloc_option_some(
+                "Realized<Doc>",
+                handle,
+                Some(Realization::Ready),
+                ctx.schema_refs,
+            ),
+            None => ctx
+                .store
+                .borrow_mut()
+                .alloc_option_none("Realized<Doc>", ctx.schema_refs),
+        };
+    }
+    let layout = super::oci::parse_layout(tree)?;
+    let projected = super::oci::project_file(&layout, path)?;
+    let handle = projected
+        .map(|file| {
+            alloc_doc_from_value(
+                ctx.store,
+                ctx.descriptors,
+                ctx.schema_refs,
+                Value::Map(BTreeMap::from([
+                    (Value::Str("path".to_string()), Value::Str(path.to_string())),
+                    (
+                        Value::Str("contents".to_string()),
+                        Value::Str(file.contents),
+                    ),
+                    (
+                        Value::Str("layer_digest".to_string()),
+                        Value::Str(file.layer_digest),
+                    ),
+                    (Value::Str("size".to_string()), Value::Int(file.size)),
+                ])),
+            )
+        })
+        .transpose()?;
+    ctx.oci_file_memo.borrow_mut().insert(key, handle);
+    emit_artifact_probe(
+        ctx.store_events,
+        ctx.clock_cell,
+        "oci",
+        &format!("files/{path}"),
+        input_hash,
+        false,
+    );
+    match handle {
+        Some(handle) => ctx.store.borrow_mut().alloc_option_some(
+            "Realized<Doc>",
+            handle,
+            Some(Realization::Ready),
+            ctx.schema_refs,
+        ),
+        None => ctx
+            .store
+            .borrow_mut()
+            .alloc_option_none("Realized<Doc>", ctx.schema_refs),
+    }
+}
+
+fn emit_artifact_probe(
+    store_events: &RefCell<Vec<DriveEvent>>,
+    clock_cell: &RefCell<&mut u64>,
+    format: &str,
+    projection: &str,
+    input_hash: ContentHash,
+    cache_hit: bool,
+) {
+    let timestamp_us = {
+        let mut clock = clock_cell.borrow_mut();
+        let timestamp_us = **clock;
+        **clock = timestamp_us.saturating_add(1);
+        timestamp_us
+    };
+    store_events.borrow_mut().push(DriveEvent::ArtifactProbe {
+        format: format.to_string(),
+        projection: projection.to_string(),
+        input: hash_u64(input_hash),
+        cache_hit,
+        timestamp_us,
+    });
+}
+
 fn doc_coerce(
     store: &RefCell<ValueStore>,
     descriptors: &HashMap<String, Descriptor<String>>,
@@ -3602,6 +3854,7 @@ fn doc_coerce(
         (DocPayload::String(value), "String") => Ok(value),
         (DocPayload::Array(value), "Array") => Ok(value),
         (DocPayload::Map(value), "Map<String,Doc>") => Ok(value),
+        (DocPayload::Virtual(_), schema) => Err(format!("cannot coerce Doc::Virtual to {schema}")),
         (payload, schema) => Err(format!("cannot coerce Doc::{payload:?} to {schema}")),
     }
 }
@@ -3655,6 +3908,54 @@ fn alloc_elf_doc(
     alloc_doc_variant(store, descriptors, 6, &[map])
 }
 
+fn alloc_oci_doc(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    input: i64,
+) -> Result<i64, String> {
+    let input_hash = {
+        let store = store.borrow();
+        let tree = oci_tree_from_store(&store, input)?;
+        super::oci::input_hash(&tree)
+    };
+    let mut pairs = Vec::new();
+    for projection in super::oci::Projection::ALL {
+        let key = store
+            .borrow_mut()
+            .alloc_raw("String", projection.name().as_bytes().to_vec())
+            .0;
+        let pending = oci_projection_pending(input, input_hash, projection);
+        let pending = store.borrow_mut().alloc_pending("Doc", pending).0;
+        pairs.push(MapPair {
+            key_schema: "String".to_string(),
+            key_word: key,
+            value_schema: pending_schema("Doc"),
+            value_word: pending,
+            value_realization: None,
+        });
+    }
+    let map = store
+        .borrow_mut()
+        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors)?
+        .0;
+    alloc_doc_variant(store, descriptors, 6, &[map])
+}
+
+fn alloc_oci_files_doc(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    input_hash: ContentHash,
+    input: i64,
+) -> Result<i64, String> {
+    let marker = format!("oci-files:{}:{input}", hex_content_hash(&input_hash));
+    let marker = store
+        .borrow_mut()
+        .alloc_raw("String", marker.into_bytes())
+        .0;
+    alloc_doc_variant(store, descriptors, 7, &[marker])
+}
+
 fn elf_projection_pending(
     input: i64,
     input_hash: ContentHash,
@@ -3667,7 +3968,9 @@ fn elf_projection_pending(
     let identity_hash = hasher.finalize().into();
     PendingInvocation {
         closure_hash: hash_u64(("elf", projection.name())),
-        primitive: Some(PendingPrimitive::Elf { projection }),
+        primitive: Some(PendingPrimitive {
+            kind: PendingPrimitiveKind::Elf(projection),
+        }),
         args: vec![input],
         remaining_arity: 0,
         identity_hash,
@@ -3788,7 +4091,9 @@ fn ast_projection_pending(
     args.extend(extra_args);
     PendingInvocation {
         closure_hash: hash_u64(("ast", projection.name())),
-        primitive: Some(PendingPrimitive::Ast { projection }),
+        primitive: Some(PendingPrimitive {
+            kind: PendingPrimitiveKind::Ast(projection),
+        }),
         args,
         remaining_arity: 0,
         identity_hash: hasher.finalize().into(),
@@ -3817,6 +4122,71 @@ fn alloc_doc_object(
         .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors)?
         .0;
     alloc_doc_variant(store, descriptors, 6, &[map])
+}
+
+fn oci_projection_pending(
+    input: i64,
+    input_hash: ContentHash,
+    projection: super::oci::Projection,
+) -> PendingInvocation {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-oci-projection");
+    hasher.update(projection.name().as_bytes());
+    hasher.update(input_hash);
+    let identity_hash = hasher.finalize().into();
+    PendingInvocation {
+        closure_hash: hash_u64(("oci", projection.name())),
+        primitive: Some(PendingPrimitive {
+            kind: PendingPrimitiveKind::Oci(projection),
+        }),
+        args: vec![input],
+        remaining_arity: 0,
+        identity_hash,
+    }
+}
+
+fn oci_virtual_files_input(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    doc: i64,
+) -> Result<Option<i64>, String> {
+    let DocPayload::Virtual(marker) = doc_payload(store, descriptors, doc)? else {
+        return Ok(None);
+    };
+    let marker = store.string_value(marker, "String")?;
+    let Some(rest) = marker.strip_prefix("oci-files:") else {
+        return Ok(None);
+    };
+    let Some((_, input)) = rest.rsplit_once(':') else {
+        return Err(format!("bad OCI files marker `{marker}`"));
+    };
+    input
+        .parse::<i64>()
+        .map(Some)
+        .map_err(|err| format!("bad OCI files marker `{marker}`: {err}"))
+}
+
+fn oci_tree_from_store(store: &ValueStore, input: i64) -> Result<crate::exec::Tree, String> {
+    let entry = store
+        .entry(input)
+        .ok_or_else(|| format!("store handle {input}"))?;
+    if entry.schema == "Tree" {
+        let TreeEntry::Concrete(tree) = store.tree_entry(input)? else {
+            return Err("OCI input tree must be concrete".into());
+        };
+        Ok(tree)
+    } else {
+        oci_tree_from_entry(entry)
+    }
+}
+
+fn oci_tree_from_entry(entry: &StoreEntry) -> Result<crate::exec::Tree, String> {
+    match entry.schema.as_str() {
+        "Blob" | "String" => super::oci::archive_to_tree(&entry.bytes),
+        other => Err(format!(
+            "OCI input must be Blob, String, or Tree, got {other}"
+        )),
+    }
 }
 
 fn compare_words(
@@ -3952,6 +4322,7 @@ fn compare_docs(
         DocPayload::String(_) => 4,
         DocPayload::Array(_) => 5,
         DocPayload::Map(_) => 6,
+        DocPayload::Virtual(_) => 7,
     };
     let tag_order = tag(&a_payload).cmp(&tag(&b_payload));
     if tag_order != Ordering::Equal {
@@ -3972,6 +4343,9 @@ fn compare_docs(
         }
         (DocPayload::Map(a), DocPayload::Map(b)) => {
             compare_words(store, descriptors, schema_refs, "Map<String,Doc>", a, b)
+        }
+        (DocPayload::Virtual(a), DocPayload::Virtual(b)) => {
+            compare_words(store, descriptors, schema_refs, "String", a, b)
         }
         _ => Ok(Ordering::Equal),
     }
@@ -4424,6 +4798,17 @@ fn render_doc(
                 schema_refs,
                 names,
                 "Map<String,Doc>",
+                word,
+            )?)),
+        ),
+        DocPayload::Virtual(word) => (
+            "Virtual".to_string(),
+            Some(Box::new(render_word(
+                store,
+                descriptors,
+                schema_refs,
+                names,
+                "String",
                 word,
             )?)),
         ),
@@ -4972,25 +5357,6 @@ fn map_schemas(schema: &str) -> Option<(&str, &str)> {
     Some((key, value))
 }
 
-fn pending_primitive_to_word(primitive: &PendingPrimitive) -> i64 {
-    match primitive {
-        PendingPrimitive::Elf { projection } => projection.to_word(),
-        PendingPrimitive::Ast { projection } => projection.to_word(),
-    }
-}
-
-fn pending_primitive_from_word(word: i64) -> Result<PendingPrimitive, String> {
-    if word >= 1000 {
-        Ok(PendingPrimitive::Ast {
-            projection: super::ast_probe::Projection::from_word(word)?,
-        })
-    } else {
-        Ok(PendingPrimitive::Elf {
-            projection: super::elf::Projection::from_word(word)?,
-        })
-    }
-}
-
 fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&invocation.closure_hash.to_le_bytes());
@@ -5007,7 +5373,7 @@ fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
     let primitive = invocation
         .primitive
         .as_ref()
-        .map(pending_primitive_to_word)
+        .map(PendingPrimitive::to_word)
         .unwrap_or(-1);
     bytes.extend_from_slice(&primitive.to_le_bytes());
     bytes.extend_from_slice(&invocation.identity_hash);
@@ -5028,7 +5394,7 @@ fn decode_pending_invocation(bytes: &[u8]) -> Result<PendingInvocation, String> 
         usize::try_from(read_frame_word(bytes, 16)).map_err(|_| "remaining arity")?;
     let primitive = match read_frame_word(bytes, 24) {
         -1 => None,
-        word => Some(pending_primitive_from_word(word)?),
+        word => Some(PendingPrimitive::from_word(word)?),
     };
     let identity_hash: ContentHash = bytes[32..64]
         .try_into()

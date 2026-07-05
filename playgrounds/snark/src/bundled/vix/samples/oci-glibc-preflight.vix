@@ -1,0 +1,12 @@
+// OCI preflight shape: image bytes are never executed.
+// The current comparison surface supports string equality/inequality;
+// semantic GLIBC floor ordering is the next policy primitive.
+
+pub fn shipped_glibc(image: Tree) -> String {
+    let libc = oci(image).files.get("usr/lib/libc.so.6").unwrap().contents;
+    elf(libc).needs_glibc
+}
+
+pub fn matches_floor(image: Tree) -> Bool {
+    shipped_glibc(image) == "GLIBC_2.35"
+}

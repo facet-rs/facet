@@ -32,7 +32,7 @@ use super::driver::{
     ARRAY_MAP_PENDING_HOST, AST_DOC_HOST, AST_FN_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST,
     DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
     GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST,
-    MachineExecBackend, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
+    MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
     PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames, RenderVariant, RenderedValue,
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, StepMode, StoreHandle, TREE_PROJECT_HOST,
     ValueBundle,
@@ -1607,6 +1607,7 @@ fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>
                     "DocMap".into(),
                     "Map<String,Doc>".into(),
                 )],
+                vec![declared_mem::handle("DocVirtual".into(), "String".into())],
             ],
         )
     });
@@ -2478,6 +2479,7 @@ impl<'a> FnLowerer<'a> {
             "json" => return self.doc_parse_call(call, 1),
             "elf" => return self.elf_call(call),
             "ast" => return self.ast_call(call),
+            "oci" => return self.oci_call(call),
             _ => {}
         }
         if let Some(&fn_ref) = self.fn_refs.get(name) {
@@ -4414,6 +4416,33 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn oci_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("oci takes one OCI layout Blob, String, or Tree".into());
+        };
+        let input = self.expr(arg)?;
+        if !matches!(input.schema.as_str(), "Blob" | "String" | "Tree") {
+            return Err(format!("oci called on {}", input.schema));
+        }
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: input.slot,
+        });
+        self.code.push(Op::HostCall { host: OCI_DOC_HOST });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Doc".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
     fn ast_fn(&mut self, receiver: &ValueSlot, name: &ValueSlot) -> Result<ValueSlot, String> {
         self.expect_schema(receiver, "Doc")?;
         self.expect_schema(name, "String")?;
@@ -4780,6 +4809,7 @@ mod tests {
     use super::*;
     use crate::exec::{ExecEvent, Tree};
     use crate::fetch::FakeFetchBackend;
+    use sha2::{Digest, Sha256};
     use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::hash::{DefaultHasher, Hash, Hasher};
@@ -4845,6 +4875,105 @@ pub fn poly(n: Int) -> Int {
             ),
             ("README.md", readme),
         ])
+    }
+
+    fn tiny_oci_layout() -> (Tree, String) {
+        let config =
+            r#"{"config":{"Env":["A=base","B=top"],"Entrypoint":["/bin/app"],"Cmd":["--serve"]}}"#;
+        let config_digest = digest(config.as_bytes());
+        let config_path = blob_path(&config_digest);
+
+        let base = tar(&[
+            ("etc/message", b"base\n".as_slice()),
+            ("etc/remove", b"remove me\n".as_slice()),
+            ("bin/app", b"not-an-elf\n".as_slice()),
+        ]);
+        let overlay = tar(&[("etc/message", b"overlay\n".as_slice())]);
+        let whiteout = tar(&[("etc/.wh.remove", b"".as_slice())]);
+        let base_digest = digest(base.as_bytes());
+        let overlay_digest = digest(overlay.as_bytes());
+        let whiteout_digest = digest(whiteout.as_bytes());
+
+        let manifest = format!(
+            r#"{{"schemaVersion":2,"config":{{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"{config_digest}","size":{config_size}}},"layers":[{{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"{base_digest}","size":{base_size}}},{{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"{overlay_digest}","size":{overlay_size}}},{{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"{whiteout_digest}","size":{whiteout_size}}}]}}"#,
+            config_size = config.len(),
+            base_size = base.len(),
+            overlay_size = overlay.len(),
+            whiteout_size = whiteout.len(),
+        );
+        let manifest_digest = digest(manifest.as_bytes());
+        let manifest_path = blob_path(&manifest_digest);
+        let index = format!(
+            r#"{{"schemaVersion":2,"manifests":[{{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"{manifest_digest}","size":{manifest_size}}}]}}"#,
+            manifest_size = manifest.len(),
+        );
+        (
+            Tree::of(&[
+                ("oci-layout", r#"{"imageLayoutVersion":"1.0.0"}"#),
+                ("index.json", index.as_str()),
+                (manifest_path.as_str(), manifest.as_str()),
+                (config_path.as_str(), config),
+                (blob_path(&base_digest).as_str(), base.as_str()),
+                (blob_path(&overlay_digest).as_str(), overlay.as_str()),
+                (blob_path(&whiteout_digest).as_str(), whiteout.as_str()),
+            ]),
+            overlay_digest,
+        )
+    }
+
+    fn digest(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        format!("sha256:{}", hex::encode(hasher.finalize()))
+    }
+
+    fn blob_path(digest: &str) -> String {
+        let (algorithm, hex) = digest.split_once(':').expect("digest algorithm");
+        format!("blobs/{algorithm}/{hex}")
+    }
+
+    fn tar(entries: &[(&str, &[u8])]) -> String {
+        let mut out = Vec::new();
+        for (path, contents) in entries {
+            let mut header = [0u8; 512];
+            assert!(path.len() <= 100, "test tar path too long: {path}");
+            header[..path.len()].copy_from_slice(path.as_bytes());
+            header[100..108].copy_from_slice(b"0000644\0");
+            header[108..116].copy_from_slice(b"0000000\0");
+            header[116..124].copy_from_slice(b"0000000\0");
+            write_octal(&mut header[124..136], contents.len() as u64);
+            header[136..148].copy_from_slice(b"00000000000\0");
+            header[148..156].fill(b' ');
+            header[156] = b'0';
+            header[257..263].copy_from_slice(b"ustar\0");
+            header[263..265].copy_from_slice(b"00");
+            let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
+            write_checksum(&mut header[148..156], checksum);
+            out.extend_from_slice(&header);
+            out.extend_from_slice(contents);
+            out.resize(out.len().div_ceil(512) * 512, 0);
+        }
+        out.resize(out.len() + 1024, 0);
+        String::from_utf8(out).expect("test tar is valid UTF-8")
+    }
+
+    fn write_octal(dst: &mut [u8], value: u64) {
+        let text = format!("{value:011o}\0");
+        dst.copy_from_slice(text.as_bytes());
+    }
+
+    fn write_checksum(dst: &mut [u8], value: u32) {
+        let text = format!("{value:06o}\0 ");
+        dst.copy_from_slice(text.as_bytes());
+    }
+
+    fn tree_archive(tree: &Tree) -> String {
+        let entries = tree
+            .entries
+            .iter()
+            .map(|(path, contents)| (path.as_str(), contents.as_bytes()))
+            .collect::<Vec<_>>();
+        tar(&entries)
     }
 
     #[test]
@@ -7047,6 +7176,149 @@ pub fn body_twice(source: String) -> (Int, Int) {
     }
 
     #[test]
+    fn oci_structural_projection_contracts_are_pinned() {
+        let src = r#"
+pub fn layers(input: Tree) -> [Doc] { oci(input).layers }
+pub fn env(input: Tree) -> [String] { oci(input).env }
+pub fn entrypoint(input: Tree) -> [String] { oci(input).entrypoint }
+pub fn cmd(input: Tree) -> [String] { oci(input).cmd }
+pub fn shadow(input: Tree) -> String { oci(input).files.get("etc/message").unwrap().contents }
+pub fn shadow_layer(input: Tree) -> String { oci(input).files.get("etc/message").unwrap().layer_digest }
+"#;
+        let (layout, overlay_digest) = tiny_oci_layout();
+        let parsed = super::super::oci::parse_layout(layout.clone()).unwrap();
+        assert_eq!(
+            super::super::oci::project_file(&parsed, "etc/remove").unwrap(),
+            None
+        );
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let input = machine.intern_tree_concrete(layout.clone());
+
+            let layers = machine.demand_i64("layers", vec![input]).unwrap();
+            let layers = rendered_doc_maps(&machine, "layers", layers);
+            assert_eq!(layers.len(), 3, "{lane:?}");
+
+            let env = machine.demand_i64("env", vec![input]).unwrap();
+            assert_eq!(
+                rendered_doc_strings(&machine, "env", env),
+                vec!["A=base".to_string(), "B=top".to_string()],
+                "{lane:?}"
+            );
+            let entrypoint = machine.demand_i64("entrypoint", vec![input]).unwrap();
+            assert_eq!(
+                rendered_doc_strings(&machine, "entrypoint", entrypoint),
+                vec!["/bin/app".to_string()],
+                "{lane:?}"
+            );
+            let cmd = machine.demand_i64("cmd", vec![input]).unwrap();
+            assert_eq!(
+                rendered_doc_strings(&machine, "cmd", cmd),
+                vec!["--serve".to_string()],
+                "{lane:?}"
+            );
+
+            let shadow = machine.demand_i64("shadow", vec![input]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(shadow, "String").unwrap(),
+                "overlay\n",
+                "{lane:?}"
+            );
+            let layer = machine.demand_i64("shadow_layer", vec![input]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(layer, "String").unwrap(),
+                overlay_digest,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn oci_config_projection_does_not_parse_layers() {
+        let src = r#"
+pub fn env(input: Tree) -> [String] { oci(input).config.config.Env }
+"#;
+        let (layout, _) = tiny_oci_layout();
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let input = machine.intern_tree_concrete(layout.clone());
+            let env = machine.demand_i64("env", vec![input]).unwrap();
+            assert_eq!(
+                rendered_doc_strings(&machine, "env", env),
+                vec!["A=base".to_string(), "B=top".to_string()],
+                "{lane:?}"
+            );
+            assert_eq!(
+                artifact_probes_for(&machine, "oci"),
+                vec![("config".to_string(), false)],
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn oci_accepts_layout_blob_archives() {
+        let src = r#"
+pub fn env(input: Blob) -> [String] { oci(input).env }
+"#;
+        let (layout, _) = tiny_oci_layout();
+        let archive = tree_archive(&layout);
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let input = machine
+                .driver
+                .intern_raw_value("Blob", archive.as_bytes().to_vec())
+                .0;
+            let env = machine.demand_i64("env", vec![input]).unwrap();
+            assert_eq!(
+                rendered_doc_strings(&machine, "env", env),
+                vec!["A=base".to_string(), "B=top".to_string()],
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn oci_file_projection_is_path_local_and_memoized() {
+        let src = r#"
+pub fn shadow_twice(input: Tree) -> (String, String) {
+    let files = oci(input).files;
+    (
+        files.get("etc/message").unwrap().contents,
+        files.get("etc/message").unwrap().contents,
+    )
+}
+"#;
+        let (layout, _) = tiny_oci_layout();
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let input = machine.intern_tree_concrete(layout.clone());
+            let tuple = machine.demand_i64("shadow_twice", vec![input]).unwrap();
+            let left = machine.driver.store_field(tuple, 0).unwrap();
+            let right = machine.driver.store_field(tuple, 1).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(left, "String").unwrap(),
+                "overlay\n",
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.driver.raw_string(right, "String").unwrap(),
+                "overlay\n",
+                "{lane:?}"
+            );
+            assert_eq!(
+                artifact_probes_for(&machine, "oci"),
+                vec![
+                    ("files".to_string(), false),
+                    ("files/etc/message".to_string(), false),
+                    ("files/etc/message".to_string(), true),
+                ],
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
     fn scalar_array_collect_sorts_and_rejects_arguments() {
         let bad = r#"
 pub fn bad() -> [Int] {
@@ -7440,6 +7712,10 @@ pub fn lazy(n: Int) -> Map<String, Float> {
     }
 
     fn artifact_probes(machine: &Machine) -> Vec<(String, bool)> {
+        artifact_probes_for(machine, "elf")
+    }
+
+    fn artifact_probes_for(machine: &Machine, wanted: &str) -> Vec<(String, bool)> {
         machine
             .trace()
             .iter()
@@ -7449,7 +7725,7 @@ pub fn lazy(n: Int) -> Map<String, Float> {
                     projection,
                     cache_hit,
                     ..
-                } if format == "elf" => Some((projection.clone(), *cache_hit)),
+                } if format == wanted => Some((projection.clone(), *cache_hit)),
                 _ => None,
             })
             .collect()

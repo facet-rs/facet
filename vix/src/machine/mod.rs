@@ -64,6 +64,7 @@ mod ast_probe;
 pub mod driver;
 mod elf;
 pub mod lower;
+mod oci;
 pub mod value;
 
 pub use driver::{

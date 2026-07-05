@@ -502,8 +502,12 @@ mod tests {
         ];
         for ops in programs {
             let n = await_count(ops);
-            let inners_i: Vec<_> = (0..n).map(|k| later(2 + k as i64, 20)).collect();
-            let inners_j: Vec<_> = (0..n).map(|k| later(2 + k as i64, 20)).collect();
+            let inners_i: Vec<_> = (0..n)
+                .map(|k| later(2 + k as i64, 20 + k as u64 * 20))
+                .collect();
+            let inners_j: Vec<_> = (0..n)
+                .map(|k| later(2 + k as i64, 20 + k as u64 * 20))
+                .collect();
 
             let (ri, _, ti) = drive(AsyncExec::interpret(ops, inners_i)).await;
             let exec_j = AsyncExec::new(ops, inners_j);
