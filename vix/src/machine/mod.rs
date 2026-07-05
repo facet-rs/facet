@@ -66,6 +66,7 @@ mod elf;
 pub mod lower;
 mod oci;
 pub mod value;
+mod version;
 
 pub use driver::{
     CodeBundle, CodeRef, DriveEvent, MachineExecBackend, MachineExecRequest, MachinePathDemand,

@@ -87,7 +87,9 @@ impl ModuleBindings {
 
 /// Primitive scalar types need no declaration or import; they resolve silently
 /// (no ref recorded — there is no def site to jump to).
-const BUILTIN_TYPES: &[&str] = &["Int", "Float", "String", "Bool", "Blob", "Doc", "Tree"];
+const BUILTIN_TYPES: &[&str] = &[
+    "Int", "Float", "String", "Bool", "Blob", "Doc", "Tree", "Version",
+];
 
 #[derive(Debug, Clone)]
 pub struct Symbol {
@@ -339,7 +341,7 @@ fn builtin_module_item(module: &str, name: &str) -> Option<ModuleItem> {
         (
             "vix",
             "Int" | "Float" | "String" | "Bool" | "Blob" | "Doc" | "Tree" | "Path" | "Target"
-            | "Map" | "Array" | "Flag" | "Run" | "Os" | "Arch",
+            | "Map" | "Array" | "Flag" | "Run" | "Os" | "Arch" | "Version",
         ) => ImportKind::Type,
         ("caps", "Cc" | "Ar" | "Rustc") => ImportKind::Type,
         _ => return None,
