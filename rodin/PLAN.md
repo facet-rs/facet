@@ -109,6 +109,24 @@ Each is a full slice of the real model, cargo-checked — not a throwaway subset
 ## Current state
 
 - `rodin/rodin.vix`: full type surface compiles through the machine; `compat_of`
-  (CompatClass::from_version) lowers faithfully. Committed + pushed (`origin/rodin`).
-- `vix/tests/rodin.rs`: `#[ignore]`'d, green the moment gap #1 lands.
-- Immediate next step: **gap #1, Version accessors.**
+  (CompatClass::from_version) lowers + RUNS faithfully.
+- **Gap #1 (Version accessors) — CLOSED.** `.major/.minor/.patch` lower to a
+  `VERSION_FIELD` host op over `version::parse_bytes`. Field access special-cased
+  in `lower.rs::field_access` + schema inference in `collect_expr_schemas`.
+- **Gap #2 (Option construction + matching) — CLOSED.** `Some`/`None` and
+  `match { Some(x) => .., None => .. }` now work, generic over any `Option<T>`.
+  DECISION: reused the machine's existing content-addressed Option store entry
+  (the one `map.get`/`.unwrap()` already produce/consume) instead of a parallel
+  store-alloc'd prelude enum — one Option representation, pending-aware, no god
+  enum. Host ops: `OPTION_CONSTRUCT` (Some/None), `OPTION_DESTRUCT` (tag +
+  payload for matching). Construction routed in `lower.rs::call` ("Some") and the
+  `Identifier` arm ("None", using the expected type); matching in `match_expr`.
+- `vix/tests/rodin.rs`: both green — `compat_class_matches_rodin_core_from_version`
+  (gap #1, runs) and `option_round_trips_some_and_none` (gap #2, Some/None ×
+  match over `Option<Version>`). Run: `cargo nextest run -p vix --test rodin`.
+- Immediate next step: **gap #4, expose `VersionSet` ops to vix** (contains /
+  intersect / union / complement / subset / from_req — Rust methods exist, the
+  vix-facing dispatch is partly wired in `lower.rs` ~3573; confirm the full set),
+  then the algorithm core (version domains + propagate + backtrack on a 2-crate
+  cargo fixture). Gap #3 (first-class `Set`) stays deferred: `Map<K,Bool>` stands
+  until a measurement says otherwise.

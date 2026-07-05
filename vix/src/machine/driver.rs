@@ -160,6 +160,8 @@ pub const FLESH_DUP_HOST: u32 = 47;
 pub const RECORD_UPDATE_HOST: u32 = 48;
 pub const CRATE_ARCHIVE_HOST: u32 = 49;
 pub const VERSION_FIELD_HOST: u32 = 50;
+pub const OPTION_CONSTRUCT_HOST: u32 = 51;
+pub const OPTION_DESTRUCT_HOST: u32 = 52;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -3402,6 +3404,63 @@ impl Driver {
                 }
             };
 
+            // Option construction: `Some(x)` / `None` build the same content-
+            // addressed Option store entry that `map.get` produces, so the whole
+            // language shares one Option representation.
+            let mut option_construct_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let tag = read_frame_word(frame, primitive_region + 8);
+                    let value_ref = read_frame_word(frame, primitive_region + 16);
+                    let value_word = read_frame_word(frame, primitive_region + 24);
+                    let value_schema = schema_name_for(value_ref, schema_refs)?;
+                    let (handle, _) = match tag {
+                        0 => store_cell
+                            .borrow_mut()
+                            .alloc_option_none(&value_schema, schema_refs)?,
+                        1 => store_cell.borrow_mut().alloc_option_some(
+                            &value_schema,
+                            value_word,
+                            None,
+                            schema_refs,
+                        )?,
+                        other => return Err(format!("unknown Option tag {other}")),
+                    };
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            // Option matching: selector 0 reads the tag (0 = None, 1 = Some),
+            // selector 1 reads the Some payload word for binding.
+            let mut option_destruct_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let handle = read_frame_word(frame, primitive_region + 8);
+                    let selector = read_frame_word(frame, primitive_region + 16);
+                    let payload = store_cell.borrow().option_payload(handle, schema_refs)?;
+                    let value = match (selector, payload) {
+                        (0, OptionPayload::None) => 0,
+                        (0, OptionPayload::Some { .. }) => 1,
+                        (1, OptionPayload::Some { word, .. }) => word,
+                        (1, OptionPayload::None) => {
+                            return Err("Option payload read on None".into());
+                        }
+                        (other, _) => {
+                            return Err(format!("unknown Option destruct selector {other}"));
+                        }
+                    };
+                    write_frame_word(frame, dst_slot, value);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut value_compare_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -4478,7 +4537,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 51] = [
+            let mut hosts: [HostFn<'_>; 53] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -4530,6 +4589,8 @@ impl Driver {
                 &mut record_update,
                 &mut crate_archive_host,
                 &mut version_field_host,
+                &mut option_construct_host,
+                &mut option_destruct_host,
             ];
             let step = exec
                 .task

@@ -12,13 +12,12 @@
 
 // VIX SURFACE GAPS this port surfaced (to add to the machine, in the order hit):
 //   1. no `Set` type (has Map/Array) — sets modeled here as `Map<K, Bool>`.
-//   2. `Option` has no user-facing construction/matching (only `.unwrap()`),
-//      and generic enums don't lower ("expected Option, got Option<Int>,
-//      machine slice-2 subset"). Option belongs in a prelude once generic
-//      enum monomorphization lands.
-//   3. no accessors on the `Version` host value ("field access on Version") —
-//      need `.major/.minor/.patch` (version::parse_bytes already has them).
-//      This is the current runtime blocker for compat_of.
+//   2. [CLOSED] `Option` now has user-facing construction (`Some`/`None`) and
+//      matching, backed by the machine's existing content-addressed Option
+//      store entry (the one `map.get`/`.unwrap()` already use) — one Option
+//      representation, generic over any payload via the `Option<T>` schema.
+//   3. [CLOSED] `Version` host value now has `.major/.minor/.patch` accessors
+//      (VERSION_FIELD host op over version::parse_bytes).
 
 use vix::{Version, VersionSet, Map};
 
@@ -188,4 +187,26 @@ fn compat_code(v: Version) -> Int {
 pub fn main(seed: Int) -> Int {
     // 2.3.4 -> major bucket 2 ; 0.5.1 -> 1005 ; 0.0.7 -> 2007
     compat_code(version("2.3.4")) + compat_code(version("0.5.1")) + compat_code(version("0.0.7")) + seed - seed
+}
+
+// ---------------------------------------------------------------------------
+// Second verified slice: the Option surface, over the `Domain.selected:
+// Option<Version>` shape. Constructs Some/None and matches both arms — the
+// exact round-trip the resolver's per-package domain narrowing will lean on.
+// ---------------------------------------------------------------------------
+
+fn no_version() -> Option<Version> {
+    None
+}
+
+fn selected_or(sel: Option<Version>, fallback: Int) -> Int {
+    match sel {
+        Some(v) => compat_code(v),
+        None => fallback,
+    }
+}
+
+pub fn option_probe(seed: Int) -> Int {
+    // Some(2.3.4) -> compat_code 2 ; None -> fallback 9000 -> 9002
+    selected_or(Some(version("2.3.4")), 0) + selected_or(no_version(), 9000) + seed - seed
 }

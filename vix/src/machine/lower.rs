@@ -34,7 +34,8 @@ use super::driver::{
     AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PACKAGE_HOST,
     DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
     FLESH_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
-    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
+    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST,
+    OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
     PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames,
     RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
@@ -2587,6 +2588,9 @@ impl<'a> FnLowerer<'a> {
                 })
             }
             ast::Expr::Identifier(name) => {
+                if name.value == "None" && !self.slots.contains_key("None") {
+                    return self.option_none(expected);
+                }
                 if let Some(info) = self.tables.structs.get(&name.value)
                     && info.is_unit
                     && !self.slots.contains_key(&name.value)
@@ -2913,6 +2917,24 @@ impl<'a> FnLowerer<'a> {
                     let (enum_name, variant_index, _) = self.resolve_scoped_variant(path)?;
                     self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
                 }
+                ast::Pattern::Variant(p) if scrut.schema.starts_with("Option<") => {
+                    let segments = path_ref_segments(&p.path)?;
+                    let variant = segments.last().map(String::as_str).unwrap_or_default();
+                    if variant != "Some" {
+                        return Err(format!(
+                            "Option pattern `{variant}` is not Some or None"
+                        ));
+                    }
+                    let value_schema = option_value_schema(&scrut.schema)
+                        .ok_or_else(|| format!("scrutinee {} is not an Option", scrut.schema))?
+                        .to_string();
+                    self.option_tag_test(&scrut, 1, &mut skip_patches);
+                    let [pattern] = p.args.as_slice() else {
+                        return Err("Some pattern takes one binding".into());
+                    };
+                    let payload = self.option_destruct(&scrut, 1, &value_schema);
+                    self.bind_option_payload(pattern, payload)?;
+                }
                 ast::Pattern::Variant(p) => {
                     let (enum_name, variant_index, shape) = self.resolve_path_variant(&p.path)?;
                     self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
@@ -2961,6 +2983,11 @@ impl<'a> FnLowerer<'a> {
                     if i != last {
                         return Err("wildcard arm must be last".into());
                     }
+                }
+                ast::Pattern::Identifier(name)
+                    if scrut.schema.starts_with("Option<") && name.value == "None" =>
+                {
+                    self.option_tag_test(&scrut, 0, &mut skip_patches);
                 }
                 ast::Pattern::Identifier(name) => {
                     if let Some(variant_index) =
@@ -3132,6 +3159,7 @@ impl<'a> FnLowerer<'a> {
             "build_directives" => return self.doc_parse_call(call, 2),
             "crate_archive" => return self.crate_archive_call(call),
             "version" => return self.version_call(call),
+            "Some" => return self.option_some_call(call),
             "render" => return self.render_call(call),
             "elf" => return self.elf_call(call),
             "ast" => return self.ast_call(call),
@@ -6076,6 +6104,140 @@ impl<'a> FnLowerer<'a> {
             schema: "Int".into(),
             realization: None,
             pending: None,
+        }
+    }
+
+    fn option_some_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("Some takes one value".into());
+        };
+        let value = self.expr(arg)?;
+        let value_schema = value.schema.clone();
+        self.option_construct(1, &value_schema, Some(&value))
+    }
+
+    fn option_none(&mut self, expected: Option<&str>) -> Result<ValueSlot, String> {
+        let Some(option_schema) = expected else {
+            return Err("None requires a known Option type from context".into());
+        };
+        let Some(value_schema) = option_value_schema(option_schema) else {
+            return Err(format!(
+                "None used where non-Option type {option_schema} is expected"
+            ));
+        };
+        let value_schema = value_schema.to_string();
+        self.option_construct(0, &value_schema, None)
+    }
+
+    fn option_construct(
+        &mut self,
+        tag: i64,
+        value_schema: &str,
+        value: Option<&ValueSlot>,
+    ) -> Result<ValueSlot, String> {
+        let value_ref = *self
+            .schema_refs
+            .get(value_schema)
+            .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: tag,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: value_ref,
+        });
+        if let Some(value) = value {
+            self.code.push(Op::CopyI64 {
+                dst: region + 24,
+                src: value.slot,
+            });
+        } else {
+            self.code.push(Op::ConstI64 {
+                dst: region + 24,
+                value: 0,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: OPTION_CONSTRUCT_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: option_schema(value_schema),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn option_destruct(&mut self, scrut: &ValueSlot, selector: i64, schema: &str) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: scrut.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: selector,
+        });
+        self.code.push(Op::HostCall {
+            host: OPTION_DESTRUCT_HOST,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: schema.into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    /// Emit the tag test for an Option match arm: skip to the next arm unless
+    /// the scrutinee's tag equals `want_tag` (0 = None, 1 = Some).
+    fn option_tag_test(&mut self, scrut: &ValueSlot, want_tag: i64, skip_patches: &mut Vec<usize>) {
+        let tag = self.option_destruct(scrut, 0, "Int");
+        let lit = self.alloc();
+        self.code.push(Op::ConstI64 {
+            dst: lit,
+            value: want_tag,
+        });
+        let test = self.alloc();
+        self.code.push(Op::EqI64 {
+            dst: test,
+            a: tag.slot,
+            b: lit,
+        });
+        skip_patches.push(self.code.len());
+        self.code.push(Op::JumpIfZero {
+            value: test,
+            target: 0,
+        });
+    }
+
+    fn bind_option_payload(
+        &mut self,
+        pattern: &ast::Pattern,
+        payload: ValueSlot,
+    ) -> Result<(), String> {
+        match pattern {
+            ast::Pattern::Identifier(name) => {
+                self.slots
+                    .insert(name.value.clone(), BindingCell::value(payload));
+                Ok(())
+            }
+            ast::Pattern::Wildcard(_) => Ok(()),
+            other => Err(format!(
+                "Some pattern binding {other:?} is outside the machine slice-2 subset"
+            )),
         }
     }
 
