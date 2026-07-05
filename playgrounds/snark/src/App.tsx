@@ -338,6 +338,8 @@ type VixExecServing =
 type VixDriveEvent =
   | { type: "Demanded"; fn_hash: string }
   | { type: "MemoHit"; fn_hash: string }
+  | { type: "MemoProjectionHit"; fn_hash: string; verified: number }
+  | { type: "MemoSemanticHit"; fn_hash: string; verified: number }
   | { type: "Spawned"; fn_hash: string }
   | { type: "ParkedOn"; fn_hash: string }
   | { type: "Completed"; fn_hash: string }
@@ -370,6 +372,14 @@ type VixDriveEvent =
       command_name: string;
       serving: VixExecServing;
       outputs: RunOutput[];
+      timestamp_us: number;
+    }
+  | {
+      type: "ArtifactProbe";
+      format: string;
+      projection: string;
+      input: string;
+      cache_hit: boolean;
       timestamp_us: number;
     }
   | {
@@ -2053,6 +2063,8 @@ function formatDriveEvent(
   switch (event.type) {
     case "Demanded":
     case "MemoHit":
+    case "MemoProjectionHit":
+    case "MemoSemanticHit":
     case "Spawned":
     case "ParkedOn":
     case "Completed":
@@ -2071,6 +2083,8 @@ function formatDriveEvent(
       }`;
     case "Observation":
       return `Observation ${event.replayed ? "replayed" : "cold"} ${event.key_text || shortHash(event.key)}`;
+    case "ArtifactProbe":
+      return `ArtifactProbe ${event.cache_hit ? "replayed" : "cold"} ${event.format}:${event.projection}`;
   }
 }
 
