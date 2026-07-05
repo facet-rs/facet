@@ -244,17 +244,18 @@ pub fn bind_module_set(
             };
             let import_specs = import_specs(use_item)?;
             for (target_module, name) in import_specs {
-                if target_module == "vix" || target_module == "caps" {
-                    continue;
-                }
-                let target = files.get(&target_module).ok_or_else(|| {
-                    format!(
-                        "module `{from}` imports `{name}` from missing module `{target_module}`"
-                    )
-                })?;
-                let item = module_item(target, &name).ok_or_else(|| {
-                    format!("module `{target_module}` has no item named `{name}`")
-                })?;
+                let item = if let Some(item) = builtin_module_item(&target_module, &name) {
+                    item
+                } else {
+                    let target = files.get(&target_module).ok_or_else(|| {
+                        format!(
+                            "module `{from}` imports `{name}` from missing module `{target_module}`"
+                        )
+                    })?;
+                    module_item(target, &name).ok_or_else(|| {
+                        format!("module `{target_module}` has no item named `{name}`")
+                    })?
+                };
                 if from != &target_module && !item.public {
                     return Err(format!(
                         "module `{from}` cannot import private item `{target_module}::{name}`"
@@ -331,6 +332,19 @@ fn module_item(file: &SourceFile, name: &str) -> Option<ModuleItem> {
         }),
         _ => None,
     })
+}
+
+fn builtin_module_item(module: &str, name: &str) -> Option<ModuleItem> {
+    let kind = match (module, name) {
+        (
+            "vix",
+            "Int" | "Float" | "String" | "Bool" | "Blob" | "Doc" | "Tree" | "Path" | "Target"
+            | "Map" | "Array" | "Flag" | "Run" | "Os",
+        ) => ImportKind::Type,
+        ("caps", "Cc" | "Ar" | "Rustc") => ImportKind::Type,
+        _ => return None,
+    };
+    Some(ModuleItem { kind, public: true })
 }
 
 struct Binder {

@@ -2749,6 +2749,9 @@ impl<'a> FnLowerer<'a> {
         let segments: Vec<&str> = path.segments.iter().map(|s| s.value.as_str()).collect();
         match segments.as_slice() {
             [kind @ ("Cc" | "Ar" | "Rustc"), "acquire"] => {
+                if self.tables.resolve_type_module(self.current_module, kind) != Some("caps") {
+                    return Ok(None);
+                }
                 let [ast::Arg::Expr(target)] = call.args.args.as_slice() else {
                     return Err(format!("{kind}::acquire takes one target"));
                 };

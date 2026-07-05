@@ -46,16 +46,27 @@ impl ModuleTables {
         let imported = info.imports.get(name)?;
         (imported.kind == ImportKind::Fn).then_some(imported.name.as_str())
     }
+
+    pub(crate) fn resolve_type_module(&self, module: &str, name: &str) -> Option<&str> {
+        let info = self.modules.get(module)?;
+        if let Some(local_module) = info.types.get(name) {
+            return Some(local_module.as_str());
+        }
+        let imported = info.imports.get(name)?;
+        (imported.kind == ImportKind::Type).then_some(imported.module.as_str())
+    }
 }
 
 #[derive(Clone)]
 struct ModuleInfo {
     fns: BTreeMap<String, String>,
+    types: BTreeMap<String, String>,
     imports: BTreeMap<String, ResolvedModuleItem>,
 }
 
 #[derive(Clone)]
 struct ResolvedModuleItem {
+    module: String,
     name: String,
     kind: ImportKind,
 }
@@ -94,6 +105,7 @@ pub(crate) fn load_module_tables_from_modules(
                 path.clone(),
                 ModuleInfo {
                     fns: BTreeMap::new(),
+                    types: BTreeMap::new(),
                     imports: BTreeMap::new(),
                 },
             )
@@ -120,6 +132,11 @@ pub(crate) fn load_module_tables_from_modules(
                 Item::Enum(e) => {
                     insert_unique_type_hash(&mut type_hashes, &e.name.value, canon_enum_hash(e))?;
                     insert_unique_span(&mut type_spans, &e.name.value, e.span)?;
+                    module_infos
+                        .get_mut(module)
+                        .expect("module info exists")
+                        .types
+                        .insert(e.name.value.clone(), module.clone());
                     let variants = e
                         .variants
                         .iter()
@@ -141,6 +158,11 @@ pub(crate) fn load_module_tables_from_modules(
                 Item::Struct(s) => {
                     insert_unique_type_hash(&mut type_hashes, &s.name.value, canon_struct_hash(s))?;
                     insert_unique_span(&mut type_spans, &s.name.value, s.span)?;
+                    module_infos
+                        .get_mut(module)
+                        .expect("module info exists")
+                        .types
+                        .insert(s.name.value.clone(), module.clone());
                     let fields = s
                         .fields
                         .iter()
@@ -164,15 +186,14 @@ pub(crate) fn load_module_tables_from_modules(
     }
 
     for ((module, imported_name), import) in bindings.imports() {
-        if import.module == "vix" || import.module == "caps" {
-            continue;
-        }
         let resolved = match import.kind {
             ImportKind::Fn => ResolvedModuleItem {
+                module: import.module.clone(),
                 name: canonical_fn_name(root, &import.module, &import.name),
                 kind: import.kind,
             },
             ImportKind::Type => ResolvedModuleItem {
+                module: import.module.clone(),
                 name: import.name.clone(),
                 kind: import.kind,
             },
@@ -413,7 +434,9 @@ fn closure_fn_hashes(
                             .entry(owner.to_string())
                             .or_default()
                             .insert(target);
-                    } else if let Some(owner) = owner_for(span, type_spans) {
+                    } else if type_hashes.contains_key(&target)
+                        && let Some(owner) = owner_for(span, type_spans)
+                    {
                         type_edges
                             .entry(owner.to_string())
                             .or_default()
