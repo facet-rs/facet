@@ -139,6 +139,7 @@ pub const ARRAY_LEN_HOST: u32 = 27;
 pub const OCI_DOC_HOST: u32 = 28;
 pub const STRING_CONCAT_HOST: u32 = 29;
 pub const ARRAY_JOIN_HOST: u32 = 30;
+pub const DOC_PACKAGE_HOST: u32 = 31;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -2629,6 +2630,21 @@ impl Driver {
                 }
             };
 
+            let mut doc_package_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let doc = read_frame_word(frame, primitive_region + 8);
+                    let name = read_frame_word(frame, primitive_region + 16);
+                    let name = store_cell.borrow().string_value(name, "String")?;
+                    let handle = doc_package(store_cell, descriptors, schema_refs, doc, &name)?;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut doc_coerce_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -2995,7 +3011,7 @@ impl Driver {
                 });
             };
 
-            let mut hosts: [HostFn<'_>; 31] = [
+            let mut hosts: [HostFn<'_>; 32] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -3027,6 +3043,7 @@ impl Driver {
                 &mut oci_doc_host,
                 &mut string_concat_host,
                 &mut array_join_host,
+                &mut doc_package_host,
             ];
             let step = exec
                 .task
@@ -4393,6 +4410,72 @@ fn doc_get_with_virtual(
         return oci_virtual_file_get(ctx, input, key);
     }
     doc_get(ctx.store, ctx.descriptors, ctx.schema_refs, doc, key)
+}
+
+fn doc_package(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    lock_doc: i64,
+    wanted_name: &str,
+) -> Result<i64, String> {
+    let (package_option, _) = doc_get(store, descriptors, schema_refs, lock_doc, "package")?;
+    let packages = match store.borrow().option_payload(package_option, schema_refs)? {
+        OptionPayload::Some { word, .. } => {
+            match doc_payload(&store.borrow(), descriptors, word)? {
+                DocPayload::Array(array) => array,
+                other => {
+                    return Err(format!(
+                        "Cargo.lock `package` expected array, got {other:?}"
+                    ));
+                }
+            }
+        }
+        OptionPayload::None => {
+            return Ok(store
+                .borrow_mut()
+                .alloc_option_none("Realized<Doc>", schema_refs)?
+                .0);
+        }
+    };
+    let package_words = match store.borrow().array_entry(packages, schema_refs)? {
+        ArrayEntry::Words { elem_schema, words } if elem_schema == "Doc" => words,
+        ArrayEntry::Words { elem_schema, .. } => {
+            return Err(format!("Cargo.lock `package` array contains {elem_schema}"));
+        }
+        ArrayEntry::Pending(_) => return Err("Cargo.lock `package` array is pending".into()),
+    };
+    for package in package_words {
+        let (name_option, _) = doc_get(store, descriptors, schema_refs, package, "name")?;
+        let name = match store.borrow().option_payload(name_option, schema_refs)? {
+            OptionPayload::Some { word, .. } => {
+                match doc_payload(&store.borrow(), descriptors, word)? {
+                    DocPayload::String(handle) => store.borrow().string_value(handle, "String")?,
+                    other => {
+                        return Err(format!(
+                            "Cargo.lock package `name` expected string, got {other:?}"
+                        ));
+                    }
+                }
+            }
+            OptionPayload::None => continue,
+        };
+        if name == wanted_name {
+            return Ok(store
+                .borrow_mut()
+                .alloc_option_some(
+                    "Realized<Doc>",
+                    package,
+                    Some(Realization::Ready),
+                    schema_refs,
+                )?
+                .0);
+        }
+    }
+    Ok(store
+        .borrow_mut()
+        .alloc_option_none("Realized<Doc>", schema_refs)?
+        .0)
 }
 
 fn oci_virtual_file_get(

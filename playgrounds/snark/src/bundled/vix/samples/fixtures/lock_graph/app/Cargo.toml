@@ -1,0 +1,8 @@
+[package]
+name = "mini_app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alpha_lib = { path = "../crates/alpha_lib" }
+formatting_lib = { path = "../crates/formatting_lib" }

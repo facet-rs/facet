@@ -1,0 +1,24 @@
+version = 4
+
+[[package]]
+name = "alpha_lib"
+version = "0.1.0"
+dependencies = [
+ "core_lib",
+]
+
+[[package]]
+name = "core_lib"
+version = "0.1.0"
+
+[[package]]
+name = "formatting_lib"
+version = "0.1.0"
+
+[[package]]
+name = "mini_app"
+version = "0.1.0"
+dependencies = [
+ "alpha_lib",
+ "formatting_lib",
+]
