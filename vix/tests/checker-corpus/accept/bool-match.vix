@@ -1,0 +1,6 @@
+pub fn choose(cond: Bool) -> Int {
+    match cond {
+        true => 1,
+        false => 0,
+    }
+}

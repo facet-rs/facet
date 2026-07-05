@@ -617,7 +617,7 @@ impl Binder {
     /// `name: new_name` — rename_edits doesn't know that yet.
     fn pattern(&mut self, p: &Pattern, top: bool) {
         match p {
-            Pattern::Wildcard(_) | Pattern::Str(_) | Pattern::Number(_) => {}
+            Pattern::Wildcard(_) | Pattern::Str(_) | Pattern::Number(_) | Pattern::Bool(_) => {}
             Pattern::Identifier(name) => {
                 if top {
                     self.out.unresolved.push(name.clone());

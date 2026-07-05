@@ -157,6 +157,21 @@ pub(super) fn fn_fields(item: &FnItem) -> BTreeMap<Value, Value> {
                 .map(|tail| expr_summary("tail", tail))
                 .unwrap_or_else(option_none),
         ),
+        (
+            string_key("lets"),
+            Value::Map(
+                item.body
+                    .stmts
+                    .iter()
+                    .filter_map(|stmt| match stmt {
+                        ast::Stmt::Let(stmt) => {
+                            Some((string_key(&stmt.name.value), let_stmt_summary(stmt)))
+                        }
+                        ast::Stmt::Expr(_) => None,
+                    })
+                    .collect(),
+            ),
+        ),
     ])
 }
 
@@ -182,9 +197,19 @@ fn fn_summary(item: &FnItem) -> Value {
 
 fn stmt_summary(stmt: &ast::Stmt) -> Value {
     match stmt {
-        ast::Stmt::Let(stmt) => node_summary("let", Some(&stmt.name.value), stmt.span),
+        ast::Stmt::Let(stmt) => let_stmt_summary(stmt),
         ast::Stmt::Expr(stmt) => node_summary("expr", None, stmt.span),
     }
+}
+
+fn let_stmt_summary(stmt: &ast::LetStmt) -> Value {
+    let mut fields = node_fields("let", Some(&stmt.name.value), stmt.span);
+    fields.insert(string_key("name_span"), span_value(stmt.name.span));
+    if let Some(ty) = &stmt.ty {
+        fields.insert(string_key("type"), type_value(ty));
+    }
+    fields.insert(string_key("value"), expr_summary("value", &stmt.value));
+    Value::Map(fields)
 }
 
 fn expr_summary(role: &str, expr: &ast::Expr) -> Value {
@@ -195,6 +220,76 @@ fn expr_summary(role: &str, expr: &ast::Expr) -> Value {
     ]);
     if let Some(text) = expr_leaf_text(expr) {
         fields.insert(string_key("text"), Value::Str(text));
+    }
+    match expr {
+        ast::Expr::Binary(expr) => {
+            fields.insert(string_key("op"), Value::Str(expr.op.value.clone()));
+            fields.insert(string_key("left"), expr_summary("left", &expr.left));
+            fields.insert(string_key("right"), expr_summary("right", &expr.right));
+        }
+        ast::Expr::Unary(expr) => {
+            fields.insert(string_key("op"), Value::Str(expr.op.value.clone()));
+            fields.insert(
+                string_key("operand"),
+                expr_summary("operand", &expr.operand),
+            );
+        }
+        ast::Expr::Call(expr) => {
+            fields.insert(string_key("callee"), path_ref_value(&expr.callee));
+        }
+        ast::Expr::MethodCall(expr) => {
+            fields.insert(string_key("name"), Value::Str(expr.name.value.clone()));
+            fields.insert(
+                string_key("receiver"),
+                expr_summary("receiver", &expr.receiver),
+            );
+        }
+        ast::Expr::Field(expr) => {
+            fields.insert(string_key("member"), member_value(&expr.name));
+            fields.insert(
+                string_key("receiver"),
+                expr_summary("receiver", &expr.receiver),
+            );
+        }
+        ast::Expr::Match(expr) => {
+            fields.insert(
+                string_key("scrutinee"),
+                expr_summary("scrutinee", &expr.scrutinee),
+            );
+            fields.insert(
+                string_key("patterns"),
+                Value::Array(
+                    expr.arms
+                        .iter()
+                        .map(|arm| Value::Str(pattern_text(&arm.pattern)))
+                        .collect(),
+                ),
+            );
+            fields.insert(
+                string_key("unguarded_patterns"),
+                Value::Array(
+                    expr.arms
+                        .iter()
+                        .filter(|arm| arm.guard.is_none())
+                        .map(|arm| Value::Str(pattern_text(&arm.pattern)))
+                        .collect(),
+                ),
+            );
+        }
+        ast::Expr::Paren(_)
+        | ast::Expr::Tuple(_)
+        | ast::Expr::Array(_)
+        | ast::Expr::Closure(_)
+        | ast::Expr::Command(_)
+        | ast::Expr::StructLit(_)
+        | ast::Expr::Map(_)
+        | ast::Expr::Scoped(_)
+        | ast::Expr::Identifier(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Template(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
     }
     Value::Map(fields)
 }
@@ -237,6 +332,10 @@ fn expr_leaf_text(expr: &ast::Expr) -> Option<String> {
 }
 
 fn node_summary(kind: &str, name: Option<&str>, span: Span) -> Value {
+    Value::Map(node_fields(kind, name, span))
+}
+
+fn node_fields(kind: &str, name: Option<&str>, span: Span) -> BTreeMap<Value, Value> {
     let mut fields = BTreeMap::from([
         (string_key("kind"), Value::Str(kind.to_string())),
         (string_key("span"), span_value(span)),
@@ -244,7 +343,87 @@ fn node_summary(kind: &str, name: Option<&str>, span: Span) -> Value {
     if let Some(name) = name {
         fields.insert(string_key("name"), Value::Str(name.to_string()));
     }
-    Value::Map(fields)
+    fields
+}
+
+fn path_ref_value(path: &ast::PathRef) -> Value {
+    Value::Map(BTreeMap::from([
+        (
+            string_key("kind"),
+            Value::Str(path_ref_kind(path).to_string()),
+        ),
+        (string_key("text"), Value::Str(path_ref_text(path))),
+    ]))
+}
+
+fn path_ref_kind(path: &ast::PathRef) -> &'static str {
+    match path {
+        ast::PathRef::Identifier(_) => "identifier",
+        ast::PathRef::Scoped(_) => "scoped",
+    }
+}
+
+fn path_ref_text(path: &ast::PathRef) -> String {
+    match path {
+        ast::PathRef::Identifier(identifier) => identifier.value.clone(),
+        ast::PathRef::Scoped(scoped) => scoped
+            .segments
+            .iter()
+            .map(|segment| segment.value.as_str())
+            .collect::<Vec<_>>()
+            .join("::"),
+    }
+}
+
+fn member_value(member: &ast::Member) -> Value {
+    match member {
+        ast::Member::Identifier(identifier) => Value::Map(BTreeMap::from([
+            (string_key("kind"), Value::Str("identifier".to_string())),
+            (string_key("text"), Value::Str(identifier.value.clone())),
+            (string_key("span"), span_value(identifier.span)),
+        ])),
+        ast::Member::Index(index) => Value::Map(BTreeMap::from([
+            (string_key("kind"), Value::Str("index".to_string())),
+            (string_key("text"), Value::Str(index.value.clone())),
+            (string_key("span"), span_value(index.span)),
+        ])),
+    }
+}
+
+fn pattern_text(pattern: &ast::Pattern) -> String {
+    match pattern {
+        ast::Pattern::Wildcard(_) => "_".to_string(),
+        ast::Pattern::Identifier(identifier) => identifier.value.clone(),
+        ast::Pattern::Scoped(scoped) => scoped
+            .segments
+            .iter()
+            .map(|segment| segment.value.as_str())
+            .collect::<Vec<_>>()
+            .join("::"),
+        ast::Pattern::Str(value) => value.value.clone(),
+        ast::Pattern::Number(value) => value.value.clone(),
+        ast::Pattern::Bool(value) => value.value.to_string(),
+        ast::Pattern::Variant(pattern) => format!(
+            "{}({})",
+            path_ref_text(&pattern.path),
+            pattern
+                .args
+                .iter()
+                .map(pattern_text)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        ast::Pattern::Struct(pattern) => format!("{}{{...}}", path_ref_text(&pattern.path)),
+        ast::Pattern::Tuple(pattern) => format!(
+            "({})",
+            pattern
+                .elems
+                .iter()
+                .map(pattern_text)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
 }
 
 fn param_value(param: &ast::Param) -> Value {

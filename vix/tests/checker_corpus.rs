@@ -120,22 +120,29 @@ fn checker_corpus_matches_vix_checker() {
     assert_eq!(
         covered,
         vec![
+            "accept.bool-match:exhaustive:choose.match",
             "accept.cargo-manifest:function_signature:cargo_manifest",
+            "accept.cargo-manifest:type_of:toml(manifest/p\"Cargo.toml\")",
             "accept.crate-build:function_signature:crate_lib",
             "accept.crate-build:function_signature:doc_string",
             "accept.elf-policy:function_signature:glibc_policy",
+            "accept.elf-policy:type_of:elf(input).needs_glibc",
             "accept.eval-self-hosting:function_signature:demo",
             "accept.eval-self-hosting:function_signature:eval",
             "accept.lua-build:function_signature:lua",
             "accept.lua-build:function_signature:object",
             "accept.lua-build:function_signature:sources",
+            "accept.lua-build:type_of:lua.units",
             "accept.merge-demand:function_signature:fallback",
             "accept.merge-demand:function_signature:object",
             "accept.merge-demand:function_signature:selected",
             "accept.merge-demand:function_signature:subtree_chain",
+            "accept.merge-demand:type_of:units.map(|u| object(cc,u)).collect()/p\"wanted.o\"",
             "accept.types-tour:function_signature:classify",
+            "accept.types-tour:function_signature:depths",
             "accept.types-tour:function_signature:scaled",
             "accept.types-tour:function_signature:toolchain",
+            "reject.bool-match-missing-false:diagnostics:NonExhaustiveMatch",
             "reject.omitted-return-type:diagnostics:OmittedReturnType",
         ],
         "covered checker v0 assertions stay explicit"
@@ -144,23 +151,18 @@ fn checker_corpus_matches_vix_checker() {
     assert_eq!(
         pending,
         vec![
-            "accept.cargo-manifest:type_of:toml(manifest/p\"Cargo.toml\")",
             "accept.crate-build:abi_class:rustc! block",
-            "accept.elf-policy:type_of:elf(input).needs_glibc",
             "accept.eval-self-hosting:abi_class:Expr",
             "accept.eval-self-hosting:decls:crate",
             "accept.eval-self-hosting:exhaustive:eval.match",
             "accept.lua-build:abi_class:cc! blocks",
             "accept.lua-build:exhaustive:lua.target.os.match",
             "accept.lua-build:module_graph:crate.imports",
-            "accept.lua-build:type_of:lua.units",
-            "accept.merge-demand:type_of:units.map(|u| object(cc,u)).collect()/p\"wanted.o\"",
             "accept.types-tour:abi_class:Toolchain",
             "accept.types-tour:decls:crate",
             "accept.types-tour:exhaustive:classify.match",
             "accept.types-tour:exhaustive:toolchain.target.os.match",
             "accept.types-tour:function_signature:apply",
-            "accept.types-tour:function_signature:depths",
             "accept.types-tour:function_signature:partials",
             "accept.types-tour:function_signature:swap",
             "reject.duplicate-argument:diagnostics:DuplicateArgument",
@@ -208,6 +210,40 @@ fn run_covered_assertion(entry: &CorpusEntry, assertion: &CorpusAssertion) -> Re
             if actual != assertion.expect {
                 return Err(format!(
                     "function_signature({}) = {actual:?}, expected {:?}",
+                    assertion.subject, assertion.expect
+                ));
+            }
+            Ok(true)
+        }
+        ("accept", "type_of") => {
+            let source = entry_source(entry)?;
+            let actual = checker_string(
+                "type_of_subject",
+                &[
+                    ("source", MachineArg::String(source)),
+                    ("subject", MachineArg::String(assertion.subject.clone())),
+                ],
+            )?;
+            if actual != assertion.expect {
+                return Err(format!(
+                    "type_of({}) = {actual:?}, expected {:?}",
+                    assertion.subject, assertion.expect
+                ));
+            }
+            Ok(true)
+        }
+        ("accept", "exhaustive") if entry.id == "accept.bool-match" => {
+            let source = entry_source(entry)?;
+            let actual = checker_string(
+                "exhaustive",
+                &[
+                    ("source", MachineArg::String(source)),
+                    ("subject", MachineArg::String(assertion.subject.clone())),
+                ],
+            )?;
+            if actual != assertion.expect {
+                return Err(format!(
+                    "exhaustive({}) = {actual:?}, expected {:?}",
                     assertion.subject, assertion.expect
                 ));
             }
@@ -263,6 +299,49 @@ fn run_covered_assertion(entry: &CorpusEntry, assertion: &CorpusAssertion) -> Re
             }
             Ok(true)
         }
+        ("reject", "diagnostics")
+            if entry.id == "reject.bool-match-missing-false"
+                && assertion.subject == "NonExhaustiveMatch" =>
+        {
+            let source = entry_source(entry)?;
+            let function = "choose".to_string();
+            let kind = checker_string(
+                "diagnostic_kind",
+                &[
+                    ("source", MachineArg::String(source.clone())),
+                    ("function", MachineArg::String(function.clone())),
+                ],
+            )?;
+            let span_start = checker_int(
+                "diagnostic_span_start",
+                &[
+                    ("source", MachineArg::String(source.clone())),
+                    ("function", MachineArg::String(function.clone())),
+                ],
+            )?;
+            let span_end = checker_int(
+                "diagnostic_span_end",
+                &[
+                    ("source", MachineArg::String(source)),
+                    ("function", MachineArg::String(function)),
+                ],
+            )?;
+            if kind != assertion.subject {
+                return Err(format!("diagnostic kind = {kind:?}"));
+            }
+            if (span_start, span_end)
+                != (
+                    i64::from(assertion.span_start),
+                    i64::from(assertion.span_end),
+                )
+            {
+                return Err(format!(
+                    "diagnostic span = {span_start}..{span_end}, expected {}..{}",
+                    assertion.span_start, assertion.span_end
+                ));
+            }
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }
@@ -272,7 +351,6 @@ fn plain_signature_assertion(assertion: &CorpusAssertion) -> bool {
         && !assertion.expect.contains(" checked ")
         && !assertion.expect.contains(" callable_param=")
         && !assertion.expect.contains(" partial=")
-        && !assertion.expect.contains(" tuple_index=")
 }
 
 fn entry_source(entry: &CorpusEntry) -> Result<String, String> {

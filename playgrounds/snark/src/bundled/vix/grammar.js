@@ -275,6 +275,7 @@ module.exports = grammar({
         $.identifier,
         $.string,
         $.number,
+        $.boolean,
       ),
     wildcard_pattern: () => "_",
     // `Artifact::Object(p)` / `Some(x)` — payload patterns recurse.
