@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.guarded-arm-does-not-cover",
+  "outcome": "reject",
+  "description": "Guarded enum arms do not count toward exhaustiveness coverage.",
+  "sources": [
+    {
+      "path": "reject/guarded-arm-does-not-cover.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "GuardedArmDoesNotCover",
+      "expect": "enum=Mode variant=A",
+      "span_start": 77,
+      "span_end": 92
+    }
+  ]
+}

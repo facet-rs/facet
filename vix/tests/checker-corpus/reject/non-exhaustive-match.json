@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.non-exhaustive-match",
+  "outcome": "reject",
+  "description": "Enum matches must cover every variant or end with an irrefutable arm.",
+  "sources": [
+    {
+      "path": "reject/non-exhaustive-match.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "NonExhaustiveMatch",
+      "expect": "enum=Mode missing=B",
+      "span_start": 59,
+      "span_end": 66
+    }
+  ]
+}

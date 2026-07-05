@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.duplicate-partial-marker",
+  "outcome": "reject",
+  "description": "A call can contain at most one partial marker.",
+  "sources": [
+    {
+      "path": "reject/duplicate-partial-marker.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "DuplicatePartialMarker",
+      "expect": "call=add",
+      "span_start": 82,
+      "span_end": 84
+    }
+  ]
+}

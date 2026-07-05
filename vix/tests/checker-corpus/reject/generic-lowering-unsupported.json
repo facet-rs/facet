@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.generic-lowering-unsupported",
+  "outcome": "reject",
+  "description": "Generic functions are checked, but lowering a generic instantiation rejects loudly until monomorphization lands.",
+  "sources": [
+    {
+      "path": "reject/generic-lowering-unsupported.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "lowering_plan",
+      "subject": "GenericLoweringUnsupported",
+      "expect": "function=id mono_args=Int intended_abi=monomorphization",
+      "span_start": 91,
+      "span_end": 96
+    }
+  ]
+}

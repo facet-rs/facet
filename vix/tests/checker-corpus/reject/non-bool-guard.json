@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.non-bool-guard",
+  "outcome": "reject",
+  "description": "Match guards must have type Bool.",
+  "sources": [
+    {
+      "path": "reject/non-bool-guard.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "NonBoolGuard",
+      "expect": "expected=Bool actual=Int",
+      "span_start": 88,
+      "span_end": 89
+    }
+  ]
+}

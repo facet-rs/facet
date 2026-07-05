@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.pattern-payload-mismatch",
+  "outcome": "reject",
+  "description": "Enum pattern payload shape must match the variant declaration.",
+  "sources": [
+    {
+      "path": "reject/pattern-payload-mismatch.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "PatternPayloadMismatch",
+      "expect": "variant=Artifact::Object expected=1 actual=2",
+      "span_start": 106,
+      "span_end": 110
+    }
+  ]
+}
