@@ -1,0 +1,191 @@
+// rodin.vix — the cargo-shaped version resolver, in vix.
+//
+// A faithful port of the Rust reference `rodin-core` (in vixenware/vixen:
+// crates/rodin-core, crates/rodin-facts). It is not line-by-line: the Rust
+// kernel is imperative/`&mut`, this is persistent `State` threaded through
+// recursion (the functional recasting in docs/design/rodin-pure-kernel.md §6).
+// cargo is the oracle; rodin-core is the differential reference during the port.
+//
+// The algorithm is CSP-style domain narrowing over per-package `VersionSet`
+// intervals with region-based conflict learning and a fixpoint clause-
+// application loop — NOT literal 2-watched CDCL.
+
+// VIX SURFACE GAPS this port surfaced (to add to the machine, in the order hit):
+//   1. no `Set` type (has Map/Array) — sets modeled here as `Map<K, Bool>`.
+//   2. `Option` has no user-facing construction/matching (only `.unwrap()`),
+//      and generic enums don't lower ("expected Option, got Option<Int>,
+//      machine slice-2 subset"). Option belongs in a prelude once generic
+//      enum monomorphization lands.
+//   3. no accessors on the `Version` host value ("field access on Version") —
+//      need `.major/.minor/.patch` (version::parse_bytes already has them).
+//      This is the current runtime blocker for compat_of.
+
+use vix::{Version, VersionSet, Map};
+
+// ---------------------------------------------------------------------------
+// Package identity  (rodin-facts/src/interner.rs: PkgId, CompatClass, SourceIx)
+//
+// Identity is a composite, not a bare name: `serde@1` and `serde@2` cohabitate
+// (compat class), and crates.io / git / path are distinct provenances (source).
+// ---------------------------------------------------------------------------
+
+enum Source {
+    CratesIo,
+    Registry(String),
+    Git { url: String, rev: String },
+    Path(String),
+}
+
+// CompatClass::from_version — major!=0 => {major}; else minor!=0 => {0,minor};
+// else {0,0,patch}. The semver coexistence bucket.
+enum CompatClass {
+    Major(Int),   // >=1.0.0 : bucket by major
+    Minor(Int),   // 0.minor : bucket by minor
+    Patch(Int),   // 0.0.patch : bucket by patch
+}
+
+struct PackageId {
+    source: Source,
+    name: String,
+    compat: Option<CompatClass>,
+}
+
+fn compat_of(v: Version) -> CompatClass {
+    match v.major != 0 {
+        true => CompatClass::Major(v.major),
+        false => match v.minor != 0 {
+            true => CompatClass::Minor(v.minor),
+            false => CompatClass::Patch(v.patch),
+        },
+    }
+}
+
+fn domain_id(source: Source, name: String, v: Version) -> PackageId {
+    PackageId { source: source, name: name, compat: Some(compat_of(v)) }
+}
+
+// ---------------------------------------------------------------------------
+// Clauses  (rodin-core/src/lib.rs: Guard, Consequent, CompiledClause)
+//
+// A compiled dependency edge. Antecedents (a lazy AND of guards) imply a
+// consequent. The gate is the resolver-v2 per-context consumption predicate.
+// ---------------------------------------------------------------------------
+
+enum Guard {
+    InGraph(PackageId),
+    Selected(PackageId, Version),
+    Feature(PackageId, String),
+}
+
+enum Consequent {
+    InGraph(PackageId),
+    VersionSet(PackageId, VersionSet),
+    Feature(PackageId, String),
+}
+
+struct Gate {
+    kind: String,
+    target: Option<String>,
+    parent: String,
+}
+
+struct Clause {
+    id: Int,
+    antecedents: [Guard],
+    consequent: Consequent,
+    gate: Option<Gate>,
+}
+
+// ---------------------------------------------------------------------------
+// Search state  (lib.rs: State, Domain, Hypothesis)
+//
+// `State` is the search node — cloned-per-branch in Rust, here a persistent
+// value produced anew by each narrowing step (O(1) structural sharing).
+// ---------------------------------------------------------------------------
+
+struct Domain {
+    active: Bool,
+    allowed: VersionSet,
+    selected: Option<Version>,
+}
+
+struct Hypothesis {
+    pkg: PackageId,
+    version: Version,
+}
+
+struct State {
+    domains: Map<PackageId, Domain>,
+    features: Map<(PackageId, String), Bool>,
+    hypotheses: [Hypothesis],
+    applied: Map<Int, Bool>,
+}
+
+// ---------------------------------------------------------------------------
+// Conflict learning  (lib.rs / rodin-facts/region.rs: Region, LearnedNoGood)
+//
+// A learned no-good is a Region (a conjunction of per-package VersionSet
+// bounds + feature polarities) that must not recur. Subsumption is subset
+// containment over Regions, not hash-equality.
+// ---------------------------------------------------------------------------
+
+struct Region {
+    versions: Map<PackageId, VersionSet>,
+    features: Map<(PackageId, String, Bool), Bool>,
+}
+
+struct LearnedNoGood {
+    region: Region,
+    active: Bool,
+}
+
+// ---------------------------------------------------------------------------
+// Problem + index  (lib.rs: RootReq, Problem, CompiledIndex)
+// ---------------------------------------------------------------------------
+
+struct RootReq {
+    name: String,
+    req: String,
+    features: [String],
+    default_features: Bool,
+}
+
+struct Index {
+    // Available versions per package domain, and the compiled clause set.
+    versions: Map<PackageId, [Version]>,
+    clauses: [Clause],
+}
+
+struct Problem {
+    roots: [RootReq],
+}
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
+
+struct SolveResult {
+    selected: Map<PackageId, Version>,
+    enabled_features: Map<PackageId, Map<String, Bool>>,
+}
+
+// ---------------------------------------------------------------------------
+// First verified slice: compat_of against rodin-core's from_version. Returns a
+// digit-encoding so the harness can check the class without decoding a record:
+//   >=1.0.0  -> major
+//   0.minor  -> 1000 + minor
+//   0.0.patch-> 2000 + patch
+// ---------------------------------------------------------------------------
+
+fn compat_code(v: Version) -> Int {
+    match compat_of(v) {
+        CompatClass::Major(m) => m,
+        CompatClass::Minor(m) => 1000 + m,
+        CompatClass::Patch(p) => 2000 + p,
+    }
+}
+
+pub fn main(seed: Int) -> Int {
+    // 2.3.4 -> major bucket 2 ; 0.5.1 -> 1005 ; 0.0.7 -> 2007
+    compat_code(version("2.3.4")) + compat_code(version("0.5.1")) + compat_code(version("0.0.7")) + seed - seed
+}
