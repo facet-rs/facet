@@ -39,7 +39,9 @@ use super::driver::{
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
-use crate::module::{ModuleTables, VariantShape, load_module_tables, type_schema_name};
+use crate::module::{
+    ModuleTables, VariantShape, load_module_tables_from_modules, type_schema_name,
+};
 
 /// The machine facade for this slice: load source, demand a function's
 /// value at the edge.
@@ -85,8 +87,22 @@ impl Machine {
     }
 
     pub fn load_with_lane(source: &str, lane: Lane) -> Result<Machine, String> {
-        let module_hash = module_hash(source);
-        let tables = load_module_tables(source)?;
+        let mut modules = BTreeMap::new();
+        modules.insert("root".to_string(), source.to_string());
+        Self::load_modules_with_lane("root", modules, lane)
+    }
+
+    pub fn load_modules(root: &str, modules: BTreeMap<String, String>) -> Result<Machine, String> {
+        Self::load_modules_with_lane(root, modules, Lane::Interp)
+    }
+
+    pub fn load_modules_with_lane(
+        root: &str,
+        modules: BTreeMap<String, String>,
+        lane: Lane,
+    ) -> Result<Machine, String> {
+        let module_hash = module_set_hash(root, &modules);
+        let tables = load_module_tables_from_modules(root, &modules)?;
 
         // Deterministic fn_ref assignment: sorted names.
         let mut names: Vec<&String> = tables.fns.keys().collect();
@@ -176,6 +192,7 @@ impl Machine {
                 FnLowerer::lower(
                     item,
                     &tables,
+                    &tables.fn_modules[*name],
                     &fn_refs,
                     signatures,
                     &schema_refs,
@@ -250,7 +267,7 @@ impl Machine {
             fn_param_names: fn_param_names.into_iter().collect(),
             fn_returns: fn_returns.into_iter().collect(),
             render_names,
-            source: source.to_string(),
+            source: modules.get(root).cloned().unwrap_or_default(),
             module_hash,
         })
     }
@@ -271,9 +288,19 @@ impl Machine {
     }
 
     pub fn reload(&mut self, source: &str) -> Result<ReloadDiff, String> {
+        let mut modules = BTreeMap::new();
+        modules.insert("root".to_string(), source.to_string());
+        self.reload_modules("root", modules)
+    }
+
+    pub fn reload_modules(
+        &mut self,
+        root: &str,
+        modules: BTreeMap<String, String>,
+    ) -> Result<ReloadDiff, String> {
         let before = self.fn_hashes();
-        let module_hash = module_hash(source);
-        let tables = load_module_tables(source)?;
+        let module_hash = module_set_hash(root, &modules);
+        let tables = load_module_tables_from_modules(root, &modules)?;
 
         let mut names: Vec<&String> = tables.fns.keys().collect();
         names.sort();
@@ -353,6 +380,7 @@ impl Machine {
                 FnLowerer::lower(
                     item,
                     &tables,
+                    &tables.fn_modules[*name],
                     &fn_refs,
                     signatures,
                     &schema_refs,
@@ -395,7 +423,7 @@ impl Machine {
         self.fn_param_names = fn_param_names.into_iter().collect();
         self.fn_returns = fn_returns.into_iter().collect();
         self.render_names = render_names;
-        self.source = source.to_string();
+        self.source = modules.get(root).cloned().unwrap_or_default();
         self.module_hash = module_hash;
 
         let after = self.fn_hashes();
@@ -659,6 +687,24 @@ fn module_hash(source: &str) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(b"vix-machine-module");
     hasher.update(source.as_bytes());
+    hasher.finalize().to_vec()
+}
+
+fn module_set_hash(root: &str, modules: &BTreeMap<String, String>) -> Vec<u8> {
+    if modules.len() == 1
+        && root == "root"
+        && let Some(source) = modules.get(root)
+    {
+        return module_hash(source);
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-machine-module-set");
+    hasher.update(root.as_bytes());
+    for (path, source) in modules {
+        hasher.update(path.as_bytes());
+        hasher.update((source.len() as u64).to_le_bytes());
+        hasher.update(source.as_bytes());
+    }
     hasher.finalize().to_vec()
 }
 
@@ -1819,6 +1865,7 @@ fn fork_binding_cell(cell: &BindingCell) -> BindingCell {
 
 struct FnLowerer<'a> {
     tables: &'a ModuleTables,
+    current_module: &'a str,
     fn_refs: &'a HashMap<String, usize>,
     signatures: FnSignatures<'a>,
     schema_refs: &'a HashMap<String, i64>,
@@ -1838,6 +1885,7 @@ impl<'a> FnLowerer<'a> {
     fn lower(
         item: &ast::FnItem,
         tables: &'a ModuleTables,
+        current_module: &'a str,
         fn_refs: &'a HashMap<String, usize>,
         signatures: FnSignatures<'a>,
         schema_refs: &'a HashMap<String, i64>,
@@ -1845,6 +1893,7 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<(TaskFn, LoweredInfo), String> {
         let mut this = FnLowerer {
             tables,
+            current_module,
             fn_refs,
             signatures,
             schema_refs,
@@ -2482,22 +2531,30 @@ impl<'a> FnLowerer<'a> {
             "oci" => return self.oci_call(call),
             _ => {}
         }
-        if let Some(&fn_ref) = self.fn_refs.get(name) {
+        if let Some(resolved_name) = self.resolve_function_name(name).map(str::to_string)
+            && let Some(&fn_ref) = self.fn_refs.get(&resolved_name)
+        {
             let param_names = self
                 .signatures
                 .param_names
-                .get(name)
-                .ok_or_else(|| format!("missing param names for {name}"))?
+                .get(&resolved_name)
+                .ok_or_else(|| format!("missing param names for {resolved_name}"))?
                 .clone();
             let param_schemas = self
                 .signatures
                 .params
-                .get(name)
-                .ok_or_else(|| format!("missing param schemas for {name}"))?
+                .get(&resolved_name)
+                .ok_or_else(|| format!("missing param schemas for {resolved_name}"))?
                 .clone();
-            let bound =
-                self.bind_call_args(name, &param_names, &param_schemas, &call.args, 0, true)?;
-            let return_schema = self.signatures.returns[name].clone();
+            let bound = self.bind_call_args(
+                &resolved_name,
+                &param_names,
+                &param_schemas,
+                &call.args,
+                0,
+                true,
+            )?;
+            let return_schema = self.signatures.returns[&resolved_name].clone();
             if bound.partial {
                 return self.pending_alloc_for_fn(
                     fn_ref,
@@ -2541,6 +2598,10 @@ impl<'a> FnLowerer<'a> {
             .ok_or_else(|| format!("callee {name} is `{}`, not pending", callee.schema))?
             .to_string();
         self.pending_invoke(callee, bound.args, &value_schema)
+    }
+
+    fn resolve_function_name(&self, name: &str) -> Option<&str> {
+        self.tables.resolve_fn(self.current_module, name)
     }
 
     fn invoke_fn(
@@ -2688,6 +2749,9 @@ impl<'a> FnLowerer<'a> {
         let segments: Vec<&str> = path.segments.iter().map(|s| s.value.as_str()).collect();
         match segments.as_slice() {
             [kind @ ("Cc" | "Ar" | "Rustc"), "acquire"] => {
+                if self.tables.resolve_type_module(self.current_module, kind) != Some("caps") {
+                    return Ok(None);
+                }
                 let [ast::Arg::Expr(target)] = call.args.args.as_slice() else {
                     return Err(format!("{kind}::acquire takes one target"));
                 };
@@ -4839,6 +4903,23 @@ pub fn poly(n: Int) -> Int {
         })
     }
 
+    fn load_modules_with_lane(
+        root: &str,
+        modules: BTreeMap<String, String>,
+        lane: Lane,
+    ) -> Machine {
+        Machine::load_modules_with_lane(root, modules, lane).unwrap_or_else(|err| {
+            panic!("module set loads on {lane:?}: {err}");
+        })
+    }
+
+    fn modules(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(path, source)| ((*path).to_string(), (*source).to_string()))
+            .collect()
+    }
+
     fn lua_fetch_backend() -> FakeFetchBackend {
         FakeFetchBackend::new().with_archive(
             "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
@@ -5988,6 +6069,204 @@ pub fn src_tree(nonce: Int) -> Tree {{
                 vec![(key.clone(), false), (key, true)],
                 "{lane:?}"
             );
+        }
+    }
+
+    #[test]
+    fn module_set_imported_pub_fn_resolves_and_runs() {
+        let set = modules(&[
+            (
+                "root",
+                r#"
+use a::answer;
+
+pub fn main() -> Int {
+    answer()
+}
+"#,
+            ),
+            (
+                "a",
+                r#"
+pub fn answer() -> Int {
+    42
+}
+"#,
+            ),
+        ]);
+        for lane in lanes() {
+            let mut machine = load_modules_with_lane("root", set.clone(), lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 42, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn module_set_importing_private_item_errors_loudly() {
+        let set = modules(&[
+            (
+                "root",
+                r#"
+use a::answer;
+
+pub fn main() -> Int {
+    answer()
+}
+"#,
+            ),
+            (
+                "a",
+                r#"
+fn answer() -> Int {
+    42
+}
+"#,
+            ),
+        ]);
+        let err = match Machine::load_modules("root", set) {
+            Ok(_) => panic!("private import loaded"),
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("cannot import private item `a::answer`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn cross_module_hashes_match_same_content_in_one_file() {
+        let single = r#"
+pub fn answer() -> Int {
+    40 + 2
+}
+
+pub fn main() -> Int {
+    answer()
+}
+"#;
+        let split = modules(&[
+            (
+                "root",
+                r#"
+use a::answer;
+
+pub fn main() -> Int {
+    answer()
+}
+"#,
+            ),
+            (
+                "a",
+                r#"
+pub fn answer() -> Int {
+    40 + 2
+}
+"#,
+            ),
+        ]);
+        for lane in lanes() {
+            let single = load_with_lane(single, lane);
+            let split = load_modules_with_lane("root", split.clone(), lane);
+            assert_eq!(single.fn_hash("main"), split.fn_hash("main"), "{lane:?}");
+            assert_eq!(
+                single.fn_hash("answer"),
+                split.fn_hash("a::answer"),
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn warm_reload_cross_module_leaf_edit_misses_transitive_users_only() {
+        let initial = modules(&[
+            (
+                "root",
+                r#"
+use a::bridge;
+
+fn independent() -> Int {
+    5
+}
+
+pub fn main() -> Int {
+    bridge() + independent()
+}
+"#,
+            ),
+            (
+                "a",
+                r#"
+fn leaf() -> Int {
+    1
+}
+
+pub fn bridge() -> Int {
+    leaf() + 10
+}
+
+fn unused() -> Int {
+    100
+}
+"#,
+            ),
+        ]);
+        let edited = modules(&[
+            (
+                "root",
+                r#"
+use a::bridge;
+
+fn independent() -> Int {
+    5
+}
+
+pub fn main() -> Int {
+    bridge() + independent()
+}
+"#,
+            ),
+            (
+                "a",
+                r#"
+fn leaf() -> Int {
+    2
+}
+
+pub fn bridge() -> Int {
+    leaf() + 10
+}
+
+fn unused() -> Int {
+    100
+}
+"#,
+            ),
+        ]);
+        for lane in lanes() {
+            let mut machine = load_modules_with_lane("root", initial.clone(), lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 16, "{lane:?}");
+            let diff = machine.reload_modules("root", edited.clone()).unwrap();
+            assert_eq!(
+                diff.changed,
+                BTreeSet::from([
+                    "a::bridge".to_string(),
+                    "a::leaf".to_string(),
+                    "main".to_string(),
+                ]),
+                "{lane:?}"
+            );
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 17, "{lane:?}");
+            assert_eq!(
+                spawned_functions(&machine),
+                BTreeSet::from([
+                    "a::bridge".to_string(),
+                    "a::leaf".to_string(),
+                    "main".to_string(),
+                ]),
+                "{lane:?}"
+            );
+            let hits = memo_hit_functions(&machine);
+            assert!(hits.contains("independent"), "{lane:?}: {hits:?}");
+            assert!(!hits.contains("a::unused"), "{lane:?}: {hits:?}");
         }
     }
 

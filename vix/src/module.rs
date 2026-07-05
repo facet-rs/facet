@@ -6,7 +6,7 @@ use weavy::mem::{Access, Descriptor, Layout};
 
 use crate::VixParser;
 use crate::ast::{self, EnumItem, Expr, Item, SourceFile, Span, StructItem};
-use crate::binder::{self, SymbolKind};
+use crate::binder::{self, ImportKind, ModuleBindings, SymbolKind};
 
 #[derive(Clone)]
 pub(crate) struct EnumInfo {
@@ -29,83 +29,201 @@ pub(crate) struct StructInfo {
 
 pub(crate) struct ModuleTables {
     pub(crate) fns: HashMap<String, ast::FnItem>,
+    pub(crate) fn_modules: HashMap<String, String>,
     pub(crate) fn_hashes: HashMap<String, u64>,
     pub(crate) enums: HashMap<String, EnumInfo>,
     pub(crate) structs: HashMap<String, StructInfo>,
     pub(crate) descriptors: HashMap<String, Descriptor<String>>,
+    modules: BTreeMap<String, ModuleInfo>,
 }
 
-pub(crate) fn load_module_tables(source: &str) -> Result<ModuleTables, String> {
+impl ModuleTables {
+    pub(crate) fn resolve_fn(&self, module: &str, name: &str) -> Option<&str> {
+        let info = self.modules.get(module)?;
+        if let Some(local) = info.fns.get(name) {
+            return Some(local.as_str());
+        }
+        let imported = info.imports.get(name)?;
+        (imported.kind == ImportKind::Fn).then_some(imported.name.as_str())
+    }
+
+    pub(crate) fn resolve_type_module(&self, module: &str, name: &str) -> Option<&str> {
+        let info = self.modules.get(module)?;
+        if let Some(local_module) = info.types.get(name) {
+            return Some(local_module.as_str());
+        }
+        let imported = info.imports.get(name)?;
+        (imported.kind == ImportKind::Type).then_some(imported.module.as_str())
+    }
+}
+
+#[derive(Clone)]
+struct ModuleInfo {
+    fns: BTreeMap<String, String>,
+    types: BTreeMap<String, String>,
+    imports: BTreeMap<String, ResolvedModuleItem>,
+}
+
+#[derive(Clone)]
+struct ResolvedModuleItem {
+    module: String,
+    name: String,
+    kind: ImportKind,
+}
+
+pub(crate) fn load_module_tables_from_modules(
+    root: &str,
+    modules: &BTreeMap<String, String>,
+) -> Result<ModuleTables, String> {
     // Table construction is the expensive part (seconds in dev profile);
     // the parser itself is immutable after build — share one per process.
     static PARSER: std::sync::OnceLock<VixParser> = std::sync::OnceLock::new();
     let parser = PARSER.get_or_init(VixParser::new);
-    let file: SourceFile = parser.parse(source).map_err(|e| e.message)?;
+    let files: BTreeMap<String, SourceFile> = modules
+        .iter()
+        .map(|(path, source)| {
+            parser
+                .parse(source)
+                .map(|file| (path.clone(), file))
+                .map_err(|e| format!("parsing module `{path}`: {}", e.message))
+        })
+        .collect::<Result<_, _>>()?;
+    let bindings = binder::bind_module_set(root, &files)?;
+
     let mut fns = HashMap::new();
+    let mut fn_modules = HashMap::new();
     let mut bare_fn_hashes = BTreeMap::new();
     let mut enums = HashMap::new();
     let mut structs = HashMap::new();
     let mut type_hashes = BTreeMap::new();
-    let mut fn_spans = BTreeMap::new();
-    let mut type_spans = BTreeMap::new();
-    for item in &file.items {
-        match item {
-            Item::Fn(f) => {
-                bare_fn_hashes.insert(f.name.value.clone(), canon_fn_hash(f));
-                fn_spans.insert(f.name.value.clone(), f.span);
-                fns.insert(f.name.value.clone(), (**f).clone());
-            }
-            Item::Enum(e) => {
-                type_hashes.insert(e.name.value.clone(), canon_enum_hash(e));
-                type_spans.insert(e.name.value.clone(), e.span);
-                let variants = e
-                    .variants
-                    .iter()
-                    .map(|v| {
-                        let shape = if let Some(t) = &v.tuple {
-                            VariantShape::Tuple(t.types.len())
-                        } else if let Some(fl) = &v.fields {
-                            VariantShape::Record(
-                                fl.fields.iter().map(|f| f.name.value.clone()).collect(),
-                            )
-                        } else {
-                            VariantShape::Unit
-                        };
-                        (v.name.value.clone(), shape)
-                    })
-                    .collect();
-                enums.insert(e.name.value.clone(), EnumInfo { variants });
-            }
-            Item::Struct(s) => {
-                type_hashes.insert(s.name.value.clone(), canon_struct_hash(s));
-                type_spans.insert(s.name.value.clone(), s.span);
-                let fields = s
-                    .fields
-                    .iter()
-                    .flat_map(|fl| &fl.fields)
-                    .map(|f| (f.name.value.clone(), f.default.clone()))
-                    .collect();
-                structs.insert(
-                    s.name.value.clone(),
-                    StructInfo {
-                        fields,
-                        is_unit: s.fields.is_none() && s.tuple.is_none(),
-                    },
-                );
-            }
-            Item::Use(_) => {}
-        }
-    }
-    let descriptors = declared_descriptors(&file)?;
-    let fn_hashes = closure_fn_hashes(&file, &bare_fn_hashes, &type_hashes, &fn_spans, &type_spans)
-        .into_iter()
+    let mut fn_spans_by_module = BTreeMap::new();
+    let mut type_spans_by_module = BTreeMap::new();
+    let mut module_infos: BTreeMap<String, ModuleInfo> = files
+        .keys()
+        .map(|path| {
+            (
+                path.clone(),
+                ModuleInfo {
+                    fns: BTreeMap::new(),
+                    types: BTreeMap::new(),
+                    imports: BTreeMap::new(),
+                },
+            )
+        })
         .collect();
+
+    for (module, file) in &files {
+        let mut fn_spans = BTreeMap::new();
+        let mut type_spans = BTreeMap::new();
+        for item in &file.items {
+            match item {
+                Item::Fn(f) => {
+                    let canonical = canonical_fn_name(root, module, &f.name.value);
+                    bare_fn_hashes.insert(canonical.clone(), canon_fn_hash(f));
+                    fn_spans.insert(canonical.clone(), f.span);
+                    module_infos
+                        .get_mut(module)
+                        .expect("module info exists")
+                        .fns
+                        .insert(f.name.value.clone(), canonical.clone());
+                    fn_modules.insert(canonical.clone(), module.clone());
+                    fns.insert(canonical, (**f).clone());
+                }
+                Item::Enum(e) => {
+                    insert_unique_type_hash(&mut type_hashes, &e.name.value, canon_enum_hash(e))?;
+                    insert_unique_span(&mut type_spans, &e.name.value, e.span)?;
+                    module_infos
+                        .get_mut(module)
+                        .expect("module info exists")
+                        .types
+                        .insert(e.name.value.clone(), module.clone());
+                    let variants = e
+                        .variants
+                        .iter()
+                        .map(|v| {
+                            let shape = if let Some(t) = &v.tuple {
+                                VariantShape::Tuple(t.types.len())
+                            } else if let Some(fl) = &v.fields {
+                                VariantShape::Record(
+                                    fl.fields.iter().map(|f| f.name.value.clone()).collect(),
+                                )
+                            } else {
+                                VariantShape::Unit
+                            };
+                            (v.name.value.clone(), shape)
+                        })
+                        .collect();
+                    insert_unique(&mut enums, &e.name.value, EnumInfo { variants })?;
+                }
+                Item::Struct(s) => {
+                    insert_unique_type_hash(&mut type_hashes, &s.name.value, canon_struct_hash(s))?;
+                    insert_unique_span(&mut type_spans, &s.name.value, s.span)?;
+                    module_infos
+                        .get_mut(module)
+                        .expect("module info exists")
+                        .types
+                        .insert(s.name.value.clone(), module.clone());
+                    let fields = s
+                        .fields
+                        .iter()
+                        .flat_map(|fl| &fl.fields)
+                        .map(|f| (f.name.value.clone(), f.default.clone()))
+                        .collect();
+                    insert_unique(
+                        &mut structs,
+                        &s.name.value,
+                        StructInfo {
+                            fields,
+                            is_unit: s.fields.is_none() && s.tuple.is_none(),
+                        },
+                    )?;
+                }
+                Item::Use(_) => {}
+            }
+        }
+        fn_spans_by_module.insert(module.clone(), fn_spans);
+        type_spans_by_module.insert(module.clone(), type_spans);
+    }
+
+    for ((module, imported_name), import) in bindings.imports() {
+        let resolved = match import.kind {
+            ImportKind::Fn => ResolvedModuleItem {
+                module: import.module.clone(),
+                name: canonical_fn_name(root, &import.module, &import.name),
+                kind: import.kind,
+            },
+            ImportKind::Type => ResolvedModuleItem {
+                module: import.module.clone(),
+                name: import.name.clone(),
+                kind: import.kind,
+            },
+        };
+        module_infos
+            .get_mut(module)
+            .expect("module info exists")
+            .imports
+            .insert(imported_name.clone(), resolved);
+    }
+
+    let descriptors = declared_descriptors(&files)?;
+    let fn_hashes = closure_fn_hashes(
+        &bindings,
+        &bare_fn_hashes,
+        &type_hashes,
+        &fn_spans_by_module,
+        &type_spans_by_module,
+        &module_infos,
+    )
+    .into_iter()
+    .collect();
     Ok(ModuleTables {
         fns,
+        fn_modules,
         fn_hashes,
         enums,
         structs,
         descriptors,
+        modules: module_infos,
     })
 }
 
@@ -144,63 +262,110 @@ pub(crate) fn type_path_schema_name(path: &ast::TypePath) -> Result<String, Stri
     }
 }
 
-fn declared_descriptors(file: &SourceFile) -> Result<HashMap<String, Descriptor<String>>, String> {
+fn canonical_fn_name(root: &str, module: &str, name: &str) -> String {
+    if module == root {
+        name.to_string()
+    } else {
+        format!("{module}::{name}")
+    }
+}
+
+fn insert_unique<T>(map: &mut HashMap<String, T>, name: &str, value: T) -> Result<(), String> {
+    if map.insert(name.to_string(), value).is_some() {
+        return Err(format!(
+            "duplicate type name `{name}` across module set is outside vix v1"
+        ));
+    }
+    Ok(())
+}
+
+fn insert_unique_type_hash(
+    map: &mut BTreeMap<String, u64>,
+    name: &str,
+    value: u64,
+) -> Result<(), String> {
+    if map.insert(name.to_string(), value).is_some() {
+        return Err(format!(
+            "duplicate type name `{name}` across module set is outside vix v1"
+        ));
+    }
+    Ok(())
+}
+
+fn insert_unique_span(
+    map: &mut BTreeMap<String, Span>,
+    name: &str,
+    value: Span,
+) -> Result<(), String> {
+    if map.insert(name.to_string(), value).is_some() {
+        return Err(format!(
+            "duplicate type name `{name}` across module set is outside vix v1"
+        ));
+    }
+    Ok(())
+}
+
+fn declared_descriptors(
+    files: &BTreeMap<String, SourceFile>,
+) -> Result<HashMap<String, Descriptor<String>>, String> {
     let mut descriptors = HashMap::new();
     descriptors.insert("Int".into(), declared_mem::i64_("Int".into()));
     descriptors.insert("Float".into(), declared_mem::f64_("Float".into()));
     descriptors.insert("Bool".into(), declared_mem::i64_("Bool".into()));
 
-    for item in &file.items {
-        match item {
-            Item::Struct(s) => {
-                let fields = if let Some(fields) = &s.fields {
-                    fields
-                        .fields
+    for file in files.values() {
+        for item in &file.items {
+            match item {
+                Item::Struct(s) => {
+                    let fields = if let Some(fields) = &s.fields {
+                        fields
+                            .fields
+                            .iter()
+                            .map(|field| descriptor_for_type(&field.ty))
+                            .collect::<Result<Vec<_>, _>>()?
+                    } else if let Some(tuple) = &s.tuple {
+                        tuple
+                            .types
+                            .iter()
+                            .map(descriptor_for_type)
+                            .collect::<Result<Vec<_>, _>>()?
+                    } else {
+                        Vec::new()
+                    };
+                    descriptors.insert(
+                        s.name.value.clone(),
+                        declared_mem::declared_struct(s.name.value.clone(), fields),
+                    );
+                }
+                Item::Enum(e) => {
+                    let variants = e
+                        .variants
                         .iter()
-                        .map(|field| descriptor_for_type(&field.ty))
-                        .collect::<Result<Vec<_>, _>>()?
-                } else if let Some(tuple) = &s.tuple {
-                    tuple
-                        .types
-                        .iter()
-                        .map(descriptor_for_type)
-                        .collect::<Result<Vec<_>, _>>()?
-                } else {
-                    Vec::new()
-                };
-                descriptors.insert(
-                    s.name.value.clone(),
-                    declared_mem::declared_struct(s.name.value.clone(), fields),
-                );
+                        .map(|variant| {
+                            if let Some(tuple) = &variant.tuple {
+                                tuple
+                                    .types
+                                    .iter()
+                                    .map(descriptor_for_type)
+                                    .collect::<Result<Vec<_>, _>>()
+                            } else if let Some(fields) = &variant.fields {
+                                fields
+                                    .fields
+                                    .iter()
+                                    .map(|field| descriptor_for_type(&field.ty))
+                                    .collect::<Result<Vec<_>, _>>()
+                            } else {
+                                Ok(Vec::new())
+                            }
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    descriptors.insert(
+                        e.name.value.clone(),
+                        declared_mem::declared_enum(e.name.value.clone(), variants),
+                    );
+                }
+                Item::Fn(_) | Item::Use(_) => {}
             }
-            Item::Enum(e) => {
-                let variants = e
-                    .variants
-                    .iter()
-                    .map(|variant| {
-                        if let Some(tuple) = &variant.tuple {
-                            tuple
-                                .types
-                                .iter()
-                                .map(descriptor_for_type)
-                                .collect::<Result<Vec<_>, _>>()
-                        } else if let Some(fields) = &variant.fields {
-                            fields
-                                .fields
-                                .iter()
-                                .map(|field| descriptor_for_type(&field.ty))
-                                .collect::<Result<Vec<_>, _>>()
-                        } else {
-                            Ok(Vec::new())
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                descriptors.insert(
-                    e.name.value.clone(),
-                    declared_mem::declared_enum(e.name.value.clone(), variants),
-                );
-            }
-            Item::Fn(_) | Item::Use(_) => {}
         }
     }
     Ok(descriptors)
@@ -228,13 +393,13 @@ fn handle_i64(schema: impl Into<String>, target: impl Into<String>) -> Descripto
 }
 
 fn closure_fn_hashes(
-    file: &SourceFile,
+    bindings: &ModuleBindings,
     bare_fn_hashes: &BTreeMap<String, u64>,
     type_hashes: &BTreeMap<String, u64>,
-    fn_spans: &BTreeMap<String, Span>,
-    type_spans: &BTreeMap<String, Span>,
+    fn_spans_by_module: &BTreeMap<String, BTreeMap<String, Span>>,
+    type_spans_by_module: &BTreeMap<String, BTreeMap<String, Span>>,
+    modules: &BTreeMap<String, ModuleInfo>,
 ) -> BTreeMap<String, u64> {
-    let bindings = binder::bind(file);
     let mut fn_edges: BTreeMap<String, BTreeSet<String>> = bare_fn_hashes
         .keys()
         .map(|name| (name.clone(), BTreeSet::new()))
@@ -248,36 +413,38 @@ fn closure_fn_hashes(
         .map(|name| (name.clone(), BTreeSet::new()))
         .collect();
 
-    for (span, id) in bindings.refs() {
-        let symbol = bindings.symbol(id);
-        match symbol.kind {
-            SymbolKind::Fn => {
-                if let Some(owner) = owner_for(span, fn_spans) {
-                    fn_edges
-                        .entry(owner.to_string())
-                        .or_default()
-                        .insert(symbol.name.clone());
+    for (module, module_bindings) in bindings.modules() {
+        let fn_spans = &fn_spans_by_module[module];
+        let type_spans = &type_spans_by_module[module];
+        for (span, id) in module_bindings.refs() {
+            let symbol = module_bindings.symbol(id);
+            let resolved = resolve_symbol_ref(modules, module, symbol.kind, &symbol.name);
+            match resolved {
+                Some(ResolvedSymbolRef::Fn(target)) => {
+                    if let Some(owner) = owner_for(span, fn_spans) {
+                        fn_edges
+                            .entry(owner.to_string())
+                            .or_default()
+                            .insert(target);
+                    }
                 }
-            }
-            SymbolKind::Type => {
-                if let Some(owner) = owner_for(span, fn_spans) {
-                    fn_type_refs
-                        .entry(owner.to_string())
-                        .or_default()
-                        .insert(symbol.name.clone());
-                } else if let Some(owner) = owner_for(span, type_spans) {
-                    type_edges
-                        .entry(owner.to_string())
-                        .or_default()
-                        .insert(symbol.name.clone());
+                Some(ResolvedSymbolRef::Type(target)) => {
+                    if let Some(owner) = owner_for(span, fn_spans) {
+                        fn_type_refs
+                            .entry(owner.to_string())
+                            .or_default()
+                            .insert(target);
+                    } else if type_hashes.contains_key(&target)
+                        && let Some(owner) = owner_for(span, type_spans)
+                    {
+                        type_edges
+                            .entry(owner.to_string())
+                            .or_default()
+                            .insert(target);
+                    }
                 }
+                None => {}
             }
-            SymbolKind::Param
-            | SymbolKind::Let
-            | SymbolKind::ClosureParam
-            | SymbolKind::Import
-            | SymbolKind::TypeParam
-            | SymbolKind::Binding => {}
         }
     }
 
@@ -293,6 +460,39 @@ fn closure_fn_hashes(
         })
         .collect();
     graph_closure_hashes(bare_fn_hashes, &fn_edges, &fn_type_hashes)
+}
+
+enum ResolvedSymbolRef {
+    Fn(String),
+    Type(String),
+}
+
+fn resolve_symbol_ref(
+    modules: &BTreeMap<String, ModuleInfo>,
+    module: &str,
+    kind: SymbolKind,
+    name: &str,
+) -> Option<ResolvedSymbolRef> {
+    match kind {
+        SymbolKind::Fn => modules[module]
+            .fns
+            .get(name)
+            .cloned()
+            .map(ResolvedSymbolRef::Fn),
+        SymbolKind::Type => Some(ResolvedSymbolRef::Type(name.to_string())),
+        SymbolKind::Import => {
+            let item = modules[module].imports.get(name)?;
+            match item.kind {
+                ImportKind::Fn => Some(ResolvedSymbolRef::Fn(item.name.clone())),
+                ImportKind::Type => Some(ResolvedSymbolRef::Type(item.name.clone())),
+            }
+        }
+        SymbolKind::Param
+        | SymbolKind::Let
+        | SymbolKind::ClosureParam
+        | SymbolKind::TypeParam
+        | SymbolKind::Binding => None,
+    }
 }
 
 fn owner_for(span: Span, owners: &BTreeMap<String, Span>) -> Option<&str> {

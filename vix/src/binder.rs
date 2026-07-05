@@ -21,6 +21,8 @@
 //! Unresolved references are values, not errors: the future type/prelude layers
 //! consume this list.
 
+use std::collections::BTreeMap;
+
 use crate::ast::{
     Arg, ArrayElem, Block, CommandPart, EnumItem, Expr, FieldList, GenericParams, Item, PathRef,
     Pattern, SourceFile, Span, Spanned, Stmt, StructItem, TupleFields, Type,
@@ -42,6 +44,45 @@ pub enum SymbolKind {
     TypeParam,
     /// A name bound by a match pattern (payload/shorthand positions).
     Binding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportKind {
+    Fn,
+    Type,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedImport {
+    pub module: String,
+    pub name: String,
+    pub kind: ImportKind,
+}
+
+#[derive(Debug)]
+pub struct ModuleBindings {
+    modules: BTreeMap<String, Bindings>,
+    imports: BTreeMap<(String, String), ResolvedImport>,
+}
+
+impl ModuleBindings {
+    pub fn module(&self, path: &str) -> Option<&Bindings> {
+        self.modules.get(path)
+    }
+
+    pub fn modules(&self) -> impl Iterator<Item = (&str, &Bindings)> {
+        self.modules
+            .iter()
+            .map(|(path, bindings)| (path.as_str(), bindings))
+    }
+
+    pub fn import(&self, module: &str, name: &str) -> Option<&ResolvedImport> {
+        self.imports.get(&(module.to_string(), name.to_string()))
+    }
+
+    pub fn imports(&self) -> impl Iterator<Item = (&(String, String), &ResolvedImport)> {
+        self.imports.iter()
+    }
 }
 
 /// Primitive scalar types need no declaration or import; they resolve silently
@@ -181,6 +222,129 @@ pub fn bind(file: &SourceFile) -> Bindings {
     }
 
     b.out
+}
+
+pub fn bind_module_set(
+    root: &str,
+    files: &BTreeMap<String, SourceFile>,
+) -> Result<ModuleBindings, String> {
+    if !files.contains_key(root) {
+        return Err(format!("root module `{root}` is not in the module set"));
+    }
+
+    let modules = files
+        .iter()
+        .map(|(path, file)| (path.clone(), bind(file)))
+        .collect();
+    let mut imports = BTreeMap::new();
+    for (from, file) in files {
+        for item in &file.items {
+            let Item::Use(use_item) = item else {
+                continue;
+            };
+            let import_specs = import_specs(use_item)?;
+            for (target_module, name) in import_specs {
+                let item = if let Some(item) = builtin_module_item(&target_module, &name) {
+                    item
+                } else {
+                    let target = files.get(&target_module).ok_or_else(|| {
+                        format!(
+                            "module `{from}` imports `{name}` from missing module `{target_module}`"
+                        )
+                    })?;
+                    module_item(target, &name).ok_or_else(|| {
+                        format!("module `{target_module}` has no item named `{name}`")
+                    })?
+                };
+                if from != &target_module && !item.public {
+                    return Err(format!(
+                        "module `{from}` cannot import private item `{target_module}::{name}`"
+                    ));
+                }
+                imports.insert(
+                    (from.clone(), name.clone()),
+                    ResolvedImport {
+                        module: target_module,
+                        name,
+                        kind: item.kind,
+                    },
+                );
+            }
+        }
+    }
+
+    Ok(ModuleBindings { modules, imports })
+}
+
+struct ModuleItem {
+    kind: ImportKind,
+    public: bool,
+}
+
+fn import_specs(use_item: &crate::ast::UseItem) -> Result<Vec<(String, String)>, String> {
+    let segments = &use_item.tree.segments;
+    if segments.is_empty() {
+        return Err("empty use path".into());
+    }
+    if use_item.tree.leaves.is_empty() {
+        let Some((name, module_segments)) = segments.split_last() else {
+            return Err("empty use path".into());
+        };
+        if module_segments.is_empty() {
+            return Err(format!("use `{}` has no module path", name.value));
+        }
+        return Ok(vec![(
+            module_segments
+                .iter()
+                .map(|segment| segment.value.as_str())
+                .collect::<Vec<_>>()
+                .join("::"),
+            name.value.clone(),
+        )]);
+    }
+
+    let module = segments
+        .iter()
+        .map(|segment| segment.value.as_str())
+        .collect::<Vec<_>>()
+        .join("::");
+    Ok(use_item
+        .tree
+        .leaves
+        .iter()
+        .map(|leaf| (module.clone(), leaf.value.clone()))
+        .collect())
+}
+
+fn module_item(file: &SourceFile, name: &str) -> Option<ModuleItem> {
+    file.items.iter().find_map(|item| match item {
+        Item::Fn(f) if f.name.value == name => Some(ModuleItem {
+            kind: ImportKind::Fn,
+            public: f.vis.is_some(),
+        }),
+        Item::Struct(s) if s.name.value == name => Some(ModuleItem {
+            kind: ImportKind::Type,
+            public: s.vis.is_some(),
+        }),
+        Item::Enum(e) if e.name.value == name => Some(ModuleItem {
+            kind: ImportKind::Type,
+            public: e.vis.is_some(),
+        }),
+        _ => None,
+    })
+}
+
+fn builtin_module_item(module: &str, name: &str) -> Option<ModuleItem> {
+    let kind = match (module, name) {
+        (
+            "vix",
+            "Int" | "Float" | "String" | "Bool" | "Blob" | "Doc" | "Tree" | "Path" | "Target"
+            | "Map" | "Array" | "Flag" | "Run" | "Os",
+        ) => ImportKind::Type,
+        ("caps", "Cc" | "Ar" | "Rustc") => ImportKind::Type,
+        _ => return None,
+    };
+    Some(ModuleItem { kind, public: true })
 }
 
 struct Binder {
