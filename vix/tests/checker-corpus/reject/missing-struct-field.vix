@@ -1,0 +1,8 @@
+struct Config {
+    name: String,
+    path: Path,
+}
+
+fn main() -> Config {
+    Config { name: "a" }
+}

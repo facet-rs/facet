@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "accept.cargo-manifest",
+  "outcome": "accept",
+  "description": "The Cargo manifest projection sample checks Doc projection into a tuple of Strings.",
+  "sources": [
+    {
+      "path": "../../../playgrounds/snark/src/bundled/vix/samples/cargo.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "function_signature",
+      "subject": "cargo_manifest",
+      "expect": "pub fn(Tree)->(String,String,String) abi=Handle<(String,String,String)>",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "type_of",
+      "subject": "toml(manifest/p\"Cargo.toml\")",
+      "expect": "Doc",
+      "span_start": 0,
+      "span_end": 0
+    }
+  ]
+}

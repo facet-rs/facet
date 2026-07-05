@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.missing-struct-field",
+  "outcome": "reject",
+  "description": "Struct literals must provide required fields unless a default or update base supplies them.",
+  "sources": [
+    {
+      "path": "reject/missing-struct-field.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "MissingStructField",
+      "expect": "type=Config field=path",
+      "span_start": 79,
+      "span_end": 99
+    }
+  ]
+}

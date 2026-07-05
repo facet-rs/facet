@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.duplicate-field",
+  "outcome": "reject",
+  "description": "Record fields in a type declaration must be unique.",
+  "sources": [
+    {
+      "path": "reject/duplicate-field.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "DuplicateField",
+      "expect": "type=Config field=path first_span=20..24",
+      "span_start": 36,
+      "span_end": 48
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "id": "accept.types-tour",
+  "outcome": "accept",
+  "description": "The public type tour checks with local inference, generics, partial callable sugar, ABI facts, and strict enum exhaustiveness.",
+  "sources": [
+    {
+      "path": "../../../playgrounds/snark/src/bundled/vix/samples/types.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "decls",
+      "subject": "crate",
+      "expect": "structs=Toolchain,Sha256,Probe,Pair; enums=Os,Artifact; functions=classify,swap,apply,scaled,partials,depths,toolchain",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "classify",
+      "expect": "fn(Artifact)->String abi=Handle<String>",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "swap",
+      "expect": "fn<A,B>(Pair<A,B>)->Pair<B,A> checked lowering=GenericLoweringUnsupported",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "apply",
+      "expect": "fn(fn(Int)->Int,Int)->Int callable_param=PendingCallable<(Int),Int> abi=BitsWord",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "scaled",
+      "expect": "fn(Int,Int)->Int abi=BitsWord",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "partials",
+      "expect": "fn()->Int abi=BitsWord partial=scaled(k:2,..)->PendingCallable<(x:Int),Int>",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "depths",
+      "expect": "fn()->Int abi=BitsWord tuple_index=deep.0.1",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "function_signature",
+      "subject": "toolchain",
+      "expect": "pub fn(Target)->Toolchain abi=Handle<Toolchain>",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "abi_class",
+      "subject": "Toolchain",
+      "expect": "Handle<Toolchain> fields=cc:Handle<Cc>,ar:Handle<Ar>,opt:BitsWord,env:Handle<Map<String,String>>",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "exhaustive",
+      "subject": "classify.match",
+      "expect": "enum Artifact exhaustive=true covered=Object,Archive,Phony guarded_do_not_count=Object",
+      "span_start": 0,
+      "span_end": 0
+    },
+    {
+      "query": "exhaustive",
+      "subject": "toolchain.target.os.match",
+      "expect": "enum Os exhaustive=true final_irrefutable=_",
+      "span_start": 0,
+      "span_end": 0
+    }
+  ]
+}

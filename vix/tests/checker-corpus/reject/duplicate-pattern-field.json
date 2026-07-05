@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.duplicate-pattern-field",
+  "outcome": "reject",
+  "description": "Record pattern fields cannot be repeated.",
+  "sources": [
+    {
+      "path": "reject/duplicate-pattern-field.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "DuplicatePatternField",
+      "expect": "variant=Artifact::Archive field=name",
+      "span_start": 130,
+      "span_end": 134
+    }
+  ]
+}

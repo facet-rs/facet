@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.duplicate-argument",
+  "outcome": "reject",
+  "description": "Named call arguments cannot be repeated.",
+  "sources": [
+    {
+      "path": "reject/duplicate-argument.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "DuplicateArgument",
+      "expect": "call=add argument=x",
+      "span_start": 78,
+      "span_end": 82
+    }
+  ]
+}

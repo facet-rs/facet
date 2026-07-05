@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "reject.duplicate-type-param",
+  "outcome": "reject",
+  "description": "Type parameter names must be unique within one generic binder.",
+  "sources": [
+    {
+      "path": "reject/duplicate-type-param.vix",
+      "module": "crate"
+    }
+  ],
+  "assertions": [
+    {
+      "query": "diagnostics",
+      "subject": "DuplicateTypeParam",
+      "expect": "owner=Pair param=A first_span=12..13",
+      "span_start": 15,
+      "span_end": 16
+    }
+  ]
+}
