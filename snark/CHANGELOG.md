@@ -1,5 +1,464 @@
 # Changelog
 
+## [0.0.2](https://github.com/facet-rs/facet/compare/snark-v0.0.1...snark-v0.0.2) - 2026-07-05
+
+### Other
+
+- vix + fable on the snark/weavy substrate: demand-driven build language, typed frames, one codegen ([#2431](https://github.com/facet-rs/facet/pull/2431))
+- skip disabled Weavy rematch accounting
+- prefill resolved CST node index
+- hash Weavy replay membership
+- hash Weavy reuse node maps
+- avoid reuse replay event copy
+- tighten Weavy reuse index build
+- use dense Weavy goto rows
+- trim Weavy reduction overhead
+- fold nested lexer choices into direct pattern sets
+- group Weavy direct-set scratch buffers
+- split Weavy reduction field borrows
+- avoid RefCell for lexer execution stats
+- share resolved CST source storage
+- shrink Weavy tree journal entries
+- fast path empty Weavy child lists
+- trust guarded Weavy tree events
+- avoid slicing known token kinds
+- split uncached Weavy lex set path
+- fast path single-line Weavy points
+- cache resolved CST names in Weavy plan
+- reserve Weavy parse storage
+- inline small resolved CST children
+- densify Weavy action lookup
+- precompute Weavy stat slots
+- precompute Weavy execution keys
+- attach resolved CST children online
+- reserve resolved CST attachment slots
+- reuse Weavy workspace for resolved CST parses
+- keep metered Weavy lane test-only
+- use state lexer lookahead rows
+- fast-path clean recovering parses
+- fast-path collecting Weavy reports
+- guard direct pattern slot reset
+- count direct Weavy stats by descriptor
+- index Weavy goto rows by nonterminal
+- index Weavy action entries by lookahead
+- precompute Weavy scanner externals by state
+- precompute Weavy auto-close terminals
+- avoid scanning state lookahead terminals
+- index Weavy state lexer terminals
+- trim composite choice matcher storage
+- deduplicate state lexer rows by id
+- streamline Weavy pattern-set setup
+- clarify Weavy execution docs
+- skip disabled stat materialization
+- carry Weavy recovery queue keys
+- disable lexer stats for lex-one
+- gate lexer stats for tree-only Weavy parses
+- avoid disabled input point allocation
+- clone Weavy reuse branches only on hits
+- capture Weavy state stacks lazily
+- avoid cloning reuse-index candidates
+- inline Weavy recovery stack keys
+- prune tree-only sink stencils
+- disable lex-one stats collection
+- attach resolved CST children by range
+- report runtime intrinsic descriptors
+- report runtime backend execution
+- normalize stencil effect summaries
+- report backend stencil state
+- aggregate backend stencil effects
+- expose lexer stencil effects
+- report stats for arena CST parses
+- reserve resolved CST attachment stack
+- add arena resolved CST path
+- expose parse node view
+- size resolved CST node side tables
+- share resolved CST token source text
+- derive resolved CST parents from event order
+- *(weavy)* replay linear tree journals directly
+- cache resolved CST grammar names
+- *(weavy)* reuse direct lookahead across reductions
+- use unstable resolved CST ordering sorts
+- use dense resolved CST side tables
+- share resolved CST strings
+- reserve resolved CST builder storage
+- make resolved CST parent assignment linear
+- *(weavy)* avoid heap stack in tree materialization
+- keep direct weavy stepper alive
+- skip point indexing for tree-only parses
+- skip unused weavy tree event work
+- skip unused direct parse stats
+- collapse direct weavy deterministic steps
+- avoid stashing direct weavy dispatches
+- cache weavy input point lookups
+- avoid copying weavy lex candidates
+- remove retired native parser names from docs
+- cache state lookaheads in weavy lex modes
+- skip state block lookup in direct weavy probe
+- skip action block lookup in direct weavy execution
+- inline direct weavy action semantics
+- execute direct weavy actions without block runner
+- execute weavy state probes directly
+- merge composite choice terminals into pattern sets
+- merge composite regex terminals into pattern sets
+- reuse weavy parse workspaces
+- cache regex leaf automata in weavy lexer
+- count parser stats without maps
+- count lexer stats without maps
+- avoid semantic contracts in runtime stats
+- reuse probed action dispatch
+- fast-path hostcall reports
+- split uncached lexer set stats
+- account for errored hostcall blocks
+- report hostcall block execution stats
+- report weavy bench execution lanes
+- expose weavy parse execution lane
+- cover hostcall execution stats
+- report parser execution hot lanes
+- summarize lexer execution hot lanes
+- account lexer graph execution
+- surface dominant backend stencil lane
+- report hostcall sites separately
+- use weavy hostcall layout facts
+- rename copy-patch jit readiness
+- count hostcall chain stencil footprint
+- rename weavy hostcall execution lane
+- summarize backend execution stencil lanes
+- summarize profile backend stencil work
+- include lexer stencils in profile readiness
+- bundle stencil readiness by profile
+- document weavy-only parser execution
+- report lexer graph stencils in examples
+- expose lexer graph stencil readiness
+- expose native hostcall resolved CST parse
+- expose native hostcall tree parse
+- project stencil descriptors by runtime profile
+- expose weavy parse failure stack
+- expose tree-only stencil profile
+- use direct weavy for tree-only fixtures
+- use direct weavy in parser ratchets
+- keep recovery queue comment ascii
+- use direct weavy in tree-sitter oracles
+- defer Weavy accept tree materialization
+- exercise direct Weavy reports in parser tests
+- type deterministic Weavy outputs
+- project Weavy stencils by runtime profile
+- time resolved Weavy CST paths
+- defer Weavy tree event collection
+- add direct Weavy resolved tree parse
+- return deterministic tree parses without reports
+- time Weavy tree and report paths separately
+- split Weavy bench tree and report parses
+- add tree-only Weavy parse path
+- preflight direct Weavy parses deterministically
+- stream resolved CST from Weavy events
+- replay accepted Weavy tree events
+- expose prepared Weavy lex_one
+- skip trace construction on direct Weavy parses
+- collapse unmetered Weavy aliases
+- make direct Weavy parse the default
+- route ts-diff perf modes through direct Weavy
+- use direct Weavy execution for parse sessions
+- skip trace collection in direct Weavy runs
+- add explicit native hostcall parse lane
+- expose native hostcall block readiness
+- scope weavy lexer sets by parse state
+- add unmetered strict weavy parse
+- clarify weavy conflict dispatch guard
+- clarify missing weavy scanner host error
+- drop query intrinsics from weavy parser dialect
+- remove weavy regex fallback
+- defer reusable subtree materialization
+- skip weavy counters while parsing
+- update weavy-only runtime docs
+- lower regexable lexer repeats
+- lower regexable lexer choices
+- bucket direct literal lexing
+- remove stale native interpreter wording
+- lower plain lexer sequences to regex leaves
+- avoid direct pattern rematch after dfa scan
+- index weavy terminal lookaheads
+- fix weavy clone audit table
+- clarify resolved weavy clone audit items
+- collect weavy tree events from journal
+- share weavy tree kind names
+- update weavy tree retention notes
+- resolve report cst kinds from events
+- state weavy as the parser runtime
+- index weavy lexer scratch by mode
+- reuse weavy lexer match bitsets by mode
+- reduce weavy branches without pop buffers
+- journal weavy reductions while emitting
+- carry weavy action block refs
+- scan matched weavy lexer terminals
+- size weavy journal collection from heads
+- journal weavy reductions from report events
+- reuse weavy branch outcome buffer
+- keep weavy branch failures compact
+- keep weavy step errors lightweight
+- avoid eager weavy no-token errors
+- trust dfa direct pattern misses
+- expose merged pattern dfa readiness
+- expose native jit readiness
+- skip direct-set memo for strict fresh parses
+- expose stencil execution readiness
+- expose stencil state readiness output
+- prioritize stencil descriptor readiness output
+- expose stencil family effect surfaces
+- expose stencil family state surfaces
+- prioritize stencil family readiness output
+- name timing parse plan directly
+- expose stencil family readiness summaries
+- name weavy parser execution state
+- group timing readiness by stencil family
+- print weavy lowering readiness in timing example
+- clarify weavy lexer oracle boundary
+- keep regex leaf storage in weavy
+- route lexer test execution through weavy
+- move lexer primitive execution into weavy
+- clean parser tree wording
+- name query execution after tree events
+- retire native runtime API names
+- *(weavy)* best-first recovery search (was FIFO) — kills the branch explosion
+- *(weavy)* describe snark stencil contracts
+- *(weavy)* expose stencil effect contracts
+- *(weavy)* own regex leaf engines
+- *(weavy)* keep direct pattern slots stable
+- *(weavy)* print stencil obligations in bench
+- *(weavy)* summarize snark stencil obligations
+- *(weavy)* own lexer candidate ordering
+- *(weavy)* cache lexer compilation across modes
+- *(weavy)* reuse lexer state in recovery probes
+- Make Snark Weavy lowering unconditional
+- Merge branch 'main' into snark-lookahead-bitset
+- *(parser)* store packed lookahead words in ItemSet for goto grouping
+- *(parser)* FxHashMap for the lookahead interner (was BTreeMap)
+- *(parser)* dense integer item indexing (no (prod,dot) hashing)
+- *(parser)* precompute per-(prod,dot) suffix FIRST sets
+- *(parser)* reuse signature/keys scratch in push_item_set
+- *(parser)* reuse closure scratch (queue/worklist/bitsets) across closures
+- *(parser)* recycle ItemMap buffers through a pool
+- *(parser)* arena-backed ItemMap (flat words, fixed-width rows)
+- *(parser)* FxHashMap for closure item map + queue (drop BTreeMap)
+- *(parser)* dedup states before materializing (ItemMap through the loop)
+- *(parser)* hash-bucket state dedup + sorted interner (no per-item sort)
+- *(parser)* FIRST sets as bitsets over a shared interner (pure-OR closure)
+- *(parser)* worklist LR closure (process only items whose lookahead grew)
+- *(parser)* allocation-free LR closure loop (kill the -> Vec churn)
+- *(parser)* bitset lookahead sets in LR closure (kill the 3.7s table build)
+- Refresh Snark Weavy audit names
+- Retain Snark intrinsic semantic contracts
+- Expose Snark intrinsic descriptor stats
+- Remove stale Snark runtime support API
+- Retain Weavy lexer leaf payloads
+- Report Snark Weavy lowering readiness
+- Expose Snark intrinsic semantic stats
+- Tighten Snark Weavy effect contracts
+- Preserve overlapping Weavy pattern matches
+- Refresh Weavy lexer audit status
+- Reuse Weavy lexer match scratch
+- Use automata for Weavy pattern sets
+- Back Weavy regex leaves with automata
+- Expose Weavy regex fallback leaves
+- Report merged Weavy lexer coverage
+- Merge literal terminals in Weavy lexer
+- Own direct pattern sets in Weavy lexer
+- Split Weavy pattern leaf storage
+- Expose Weavy parse plan readiness
+- Classify Weavy lexer pattern leaves
+- Expose Weavy parse plan analysis
+- Expose Weavy lexer graph stats
+- Remove stale native runtime wording
+- Expose Snark intrinsic semantics
+- Move direct pattern sets into lex matcher
+- Remove parser matcher wrapper shims
+- Extract Snark lexical leaf matchers
+- Move Weavy lexer matchers behind Weavy types
+- Wrap Weavy lex terminals in lexer program
+- Move direct-pattern matching into Weavy lexer modes
+- Introduce Weavy lexer program boundary
+- Document Weavy-native lexer lowering direction
+- Refresh Snark Weavy perf audit status
+- Align Snark docs with Weavy-only execution
+- Document Snark weavy-only conflict path
+- clone/alloc audit reports (lexer hot path + tree/CST materialization)
+- conflict-collapse example suite + fix writeup (tree-sitter-verified)
+- *(weavy)* apply prec.dynamic to resolve ambiguous GLR parses
+- Compile Snark until lexers with Aho-Corasick
+- Remove scannerless parser milestone
+- Precompute Weavy extra node lookup
+- Store dense Weavy block refs in parse plans
+- Index Weavy action blocks directly
+- Index Weavy dispatch actions directly
+- Avoid allocating Weavy dispatch actions
+- Run Snark dense blocks directly
+- Run Snark Weavy blocks through dense refs
+- Report Weavy bench program stats
+- Polish Weavy parse naming
+- Rename public Weavy parse types
+- Update Snark Weavy runtime docs
+- Rename Weavy execution driver
+- Rename Weavy parse entrypoints
+- Store Weavy parse trees by handle
+- Share Weavy auto-close stack tags
+- Move accepted Weavy report payloads
+- Reuse Weavy direct pattern scratch buffer
+- Index Weavy input points
+- Make Weavy reusable-node collection opt-in
+- Borrow Weavy branches during state probe
+- Index Weavy action block dispatch
+- Index Weavy auto-close runtime metadata
+- Split Weavy benchmark strict and recovering lanes
+- Clarify S-expression oracle wording
+- Clean up runtime scanner assertion wording
+- Update Weavy journal docs for runtime deletion
+- Rename parser runtime support types
+- Rename runtime external scanner API
+- Rename Weavy parser runtime surface
+- Route Weavy tests through prepared runtime plans
+- Remove reduced Weavy executor
+- Delete native parser executor
+- static collapse of declared conflicts (runtime prec.dynamic for free)
+- Box compiled auto-close lexer specs
+- Box JSON import errors
+- Format snark files after parser cleanup
+- Remove old reduced parser executor
+- Remove native RuntimeParser constructors
+- Remove unused native parse session
+- Clean up snark clippy nits
+- Route parser session tests through Weavy
+- Drop native lexer test oracle
+- Route auto-close tests through Weavy
+- Route authored Gingembre tests through Weavy
+- Drop native tree-sitter duplicate tests
+- Route tree-sitter corpus helpers through Weavy
+- Route remaining Snark examples through Weavy
+- Route corpus examples through Weavy runtime
+- answer the Weavy journal retention question — session compacts
+- Stop mirroring reduced parser in Weavy tests
+- Weavy tree journal — cactus stack + memory design space
+- Stop mirroring native in Weavy oracle tests
+- Route query tests through Weavy events
+- Route playground parsing through Weavy runtime
+- Route playground recovery through Weavy
+- Add prepared Weavy runtime resolved tree
+- Add ranged runtime tree and branch journal
+- Cover remaining CSS statement corpus cases
+- pipeline_timing measures all 3 parse entry points
+- pipeline_timing example (per-phase grammar pipeline timing)
+- Support table-driven auto close rules
+- Add node-driven auto close primitive
+- Route auto close through Weavy runtime
+- Add declarative auto close runtime primitive
+- Honor injection include-children semantics
+- vendor a 'fences' injection demo (markdown code blocks)
+- Use regex predicates for query captures
+- Honor injection query text predicates
+- Pair dynamic injection languages with content
+- Extract runtime injection regions
+- Align nginx probe recovery budget
+- Exclude recovered nodes from incremental reuse
+- Cover incremental reuse chains
+- Gate Weavy bench example
+- Replay reused tree events for highlights
+- Prefer widest runtime reuse node
+- Tighten runtime reuse metadata
+- Route playground reparse through runtime reuse
+- Pin runtime reuse seam behavior
+- Track lexer lookahead for runtime reuse
+- Recover Arborium nginx sample in playground
+- Add conservative runtime subtree reuse
+- Add Snark incremental reparse session seam
+- Cache Snark playground runtime sessions
+- Preserve regex flags in Snark lexer
+- weavy_bench + gingembre_corpus phase timings (perf tooling)
+- Propagate lexical precedence through symbols
+- Resolve lexical symbols in token expressions
+- Compile regex leaves into lex expressions
+- Add gingembre corpus timing probe
+- Bound playground recovery attempts
+- Cover lexical primitives through Weavy runtime
+- Honor lexical precedence before token length
+- Add declarative lexical primitives
+- Route Weavy runtime lexing through compiled modes
+- Parse playground inputs strictly by default
+- auto-discover vendored grammars; add 11 scanner-free arborium langs
+- Use compact runtime reports in playground
+- Compile reduced lexer modes
+- gingembre grammar + native corpus runner (61/61 templates parse clean)
+- Memoize reduced lexer results during parses
+- Expose nginx recovery boundary in playground flow
+- Cache runtime regex patterns per parser
+- Speed up runtime parser range facts
+- CodeMirror 6 editor + ship nginx grammar as default
+- Recover nginx grammar.js playground sample
+- Bound recovering runtime search
+- native-sync editor scroll + restore light mode via light-dark()
+- Redesign snark playground: line-numbered editor, inline diagnostics, dark theme
+- snapshot before playground UI rework (parser regex + UI experiment)
+- Select first playground sample on upload
+- Fix playground word patterns and source highlights
+- Parse CSS namespace URLs through Snark
+- Add Snark WASM playground
+- Document generated metadata boundary
+- Remove generated node-types inputs from snark
+- Ratchet CSS statement runtime parity
+- Harden gingembre string matcher escapes
+- Ratchet authored gingembre compound primaries
+- Ratchet authored gingembre optional postfix
+- Ratchet authored gingembre index postfix
+- Ratchet authored gingembre unary precedence
+- Respect gingembre word operator boundaries
+- Ratchet authored gingembre filters and tests
+- Ratchet authored gingembre binary operator ladder
+- Scope gingembre identifier keyword matching
+- Ratchet authored gingembre binary precedence
+- Ratchet authored gingembre field and call expressions
+- Ratchet Styx-authored gingembre grammar ingress
+- Highlight visible extras from runtime events
+- Replay compiled scanner snapshots
+- Tighten scanner fixture ABI boundary
+- Ratchet CSS multi-value call arguments
+- Use compiled CSS scanner fixture
+- Fix runtime field highlight edges
+- Execute JSON field-aware highlights
+- Query highlights on GLR accepted lineage
+- Run highlights on accepted runtime events
+- Execute CSS highlight assertions from runtime trees
+- Carry scanner snapshots in runtime branches
+- Trace runtime scanner snapshots
+- Scope runtime tree events to stack versions
+- Carry runtime stack tree through Weavy
+- Parse CSS important declarations through runtime stack tree
+- Pin CSS descendant scanner through Weavy
+- Run CSS pseudo-class scanner through Weavy
+- Run CSS GLR conflict through Weavy lowering
+- Run CSS class selectors through Weavy lowering
+- Preserve leading visible extras at accept
+- Run JSON visible extras through Weavy lowering
+- Preserve visible extras in reduced parses
+- Parse first JSON corpus case through Snark
+- Lower universal selector parse through Weavy
+- Tie reduced GLR conflicts to branch outcomes
+- Prove first CSS GLR conflict corpus case
+- Pin skipped CSS selector corpus cases
+- Parse CSS function call declaration corpus case
+- Parse CSS escape selector corpus case
+- Parse more CSS selector corpus cases
+- Parse CSS descendant selector corpus case
+- Parse CSS pseudo-class selector corpus case
+- Parse more CSS selector corpus cases
+- Parse CSS type selector corpus case
+- Parse first snark CSS corpus case
+- Build snark LR item sets
+- Prepare snark productions for LR items
+- Harden snark production prep invariants
+- Harden snark production normalization
+- Normalize snark grammar productions
+- Enrich snark parser runtime facts
+- Harden snark LR GLR scaffold
+- Scaffold snark LR/GLR parser path
+- Tighten snark scanner ABI boundaries
+
 ## 0.0.1
 
 - Initial Tree-sitter package import scaffold.

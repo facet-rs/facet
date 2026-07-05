@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/facet-rs/facet/compare/fable-v0.1.3...fable-v0.2.0) - 2026-07-05
+
+### Other
+
+- vix + fable on the snark/weavy substrate: demand-driven build language, typed frames, one codegen ([#2431](https://github.com/facet-rs/facet/pull/2431))
+
 ## [0.1.3](https://github.com/facet-rs/facet/compare/fable-v0.1.2...fable-v0.1.3) - 2026-06-28
 
 ### Other
