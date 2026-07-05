@@ -137,6 +137,8 @@ pub const AST_DOC_HOST: u32 = 25;
 pub const AST_FN_HOST: u32 = 26;
 pub const ARRAY_LEN_HOST: u32 = 27;
 pub const OCI_DOC_HOST: u32 = 28;
+pub const STRING_CONCAT_HOST: u32 = 29;
+pub const ARRAY_JOIN_HOST: u32 = 30;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -2422,6 +2424,75 @@ impl Driver {
                 }
             };
 
+            let mut string_concat_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let left = read_frame_word(frame, primitive_region + 8);
+                    let right = read_frame_word(frame, primitive_region + 16);
+                    let left = store_cell.borrow().string_value(left, "String")?;
+                    let right = store_cell.borrow().string_value(right, "String")?;
+                    let handle = store_cell
+                        .borrow_mut()
+                        .alloc_raw(
+                            "String",
+                            [left.as_str(), right.as_str()].concat().into_bytes(),
+                        )
+                        .0;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut array_join_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let array = read_frame_word(frame, primitive_region + 8);
+                    let separator = read_frame_word(frame, primitive_region + 16);
+                    let separator = store_cell.borrow().string_value(separator, "String")?;
+                    let joined = match store_cell.borrow().array_entry(array, schema_refs)? {
+                        ArrayEntry::Words { elem_schema, words } => {
+                            if elem_schema != "String" && elem_schema != "Doc" {
+                                return Err(format!("join called on Array<{elem_schema}>"));
+                            }
+                            words
+                                .into_iter()
+                                .map(|word| {
+                                    if elem_schema == "String" {
+                                        store_cell.borrow().string_value(word, "String")
+                                    } else {
+                                        let DocPayload::String(handle) =
+                                            doc_payload(&store_cell.borrow(), descriptors, word)?
+                                        else {
+                                            return Err(
+                                                "join called on non-string Doc array element"
+                                                    .to_string(),
+                                            );
+                                        };
+                                        store_cell.borrow().string_value(handle, "String")
+                                    }
+                                })
+                                .collect::<Result<Vec<_>, _>>()?
+                                .join(&separator)
+                        }
+                        ArrayEntry::Pending(_) => {
+                            return Err("join called on pending array".to_string());
+                        }
+                    };
+                    let handle = store_cell
+                        .borrow_mut()
+                        .alloc_raw("String", joined.into_bytes())
+                        .0;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut array_filter_exclude = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -2573,7 +2644,7 @@ impl Driver {
                 });
             };
 
-            let mut hosts: [HostFn<'_>; 29] = [
+            let mut hosts: [HostFn<'_>; 31] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -2603,6 +2674,8 @@ impl Driver {
                 &mut ast_fn_host,
                 &mut array_len_host,
                 &mut oci_doc_host,
+                &mut string_concat_host,
+                &mut array_join_host,
             ];
             let step = exec
                 .task

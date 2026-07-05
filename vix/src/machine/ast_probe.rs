@@ -80,7 +80,7 @@ pub(super) fn fn_item<'a>(file: &'a SourceFile, name: &str) -> Result<&'a FnItem
 pub(super) fn fn_body_children(item: &FnItem) -> Value {
     let mut children = item.body.stmts.iter().map(stmt_summary).collect::<Vec<_>>();
     if let Some(tail) = &item.body.tail {
-        children.push(node_summary("tail", None, expr_span(tail)));
+        children.push(expr_summary("tail", tail));
     }
     Value::Array(children)
 }
@@ -89,16 +89,72 @@ pub(super) fn fn_fields(item: &FnItem) -> BTreeMap<Value, Value> {
     BTreeMap::from([
         (string_key("kind"), Value::Str("fn".to_string())),
         (string_key("name"), Value::Str(item.name.value.clone())),
+        (string_key("name_span"), span_value(item.name.span)),
+        (string_key("public"), Value::Bool(item.vis.is_some())),
+        (
+            string_key("visibility_prefix"),
+            Value::Str(if item.vis.is_some() { "pub " } else { "" }.to_string()),
+        ),
         (string_key("span"), span_value(item.span)),
         (
             string_key("params"),
             Value::Array(item.params.params.iter().map(param_value).collect()),
         ),
         (
+            string_key("param_types"),
+            Value::Array(
+                item.params
+                    .params
+                    .iter()
+                    .map(|param| Value::Str(type_text(&param.ty)))
+                    .collect(),
+            ),
+        ),
+        (
+            string_key("generic_params"),
+            Value::Array(
+                item.generics
+                    .iter()
+                    .flat_map(|generics| &generics.params)
+                    .map(|param| Value::Str(param.value.clone()))
+                    .collect(),
+            ),
+        ),
+        (
             string_key("return_type"),
             item.return_type
                 .as_ref()
                 .map(type_value)
+                .unwrap_or_else(option_none),
+        ),
+        (
+            string_key("has_return_type"),
+            Value::Bool(item.return_type.is_some()),
+        ),
+        (
+            string_key("return_type_status"),
+            Value::Str(
+                if item.return_type.is_some() {
+                    "some"
+                } else {
+                    "none"
+                }
+                .to_string(),
+            ),
+        ),
+        (
+            string_key("return_type_text"),
+            item.return_type
+                .as_ref()
+                .map(|ty| Value::Str(type_text(ty)))
+                .unwrap_or_else(option_none),
+        ),
+        (
+            string_key("tail"),
+            item.body
+                .tail
+                .as_ref()
+                .map(|tail| expr_summary("tail", tail))
                 .unwrap_or_else(option_none),
         ),
     ])
@@ -128,6 +184,53 @@ fn stmt_summary(stmt: &ast::Stmt) -> Value {
     match stmt {
         ast::Stmt::Let(stmt) => node_summary("let", Some(&stmt.name.value), stmt.span),
         ast::Stmt::Expr(stmt) => node_summary("expr", None, stmt.span),
+    }
+}
+
+fn expr_summary(role: &str, expr: &ast::Expr) -> Value {
+    let mut fields = BTreeMap::from([
+        (string_key("role"), Value::Str(role.to_string())),
+        (string_key("kind"), Value::Str(expr_kind(expr).to_string())),
+        (string_key("span"), span_value(expr_span(expr))),
+    ]);
+    if let Some(text) = expr_leaf_text(expr) {
+        fields.insert(string_key("text"), Value::Str(text));
+    }
+    Value::Map(fields)
+}
+
+fn expr_kind(expr: &ast::Expr) -> &'static str {
+    match expr {
+        ast::Expr::Binary(_) => "binary",
+        ast::Expr::Unary(_) => "unary",
+        ast::Expr::Call(_) => "call",
+        ast::Expr::MethodCall(_) => "method_call",
+        ast::Expr::Field(_) => "field",
+        ast::Expr::Match(_) => "match",
+        ast::Expr::Closure(_) => "closure",
+        ast::Expr::Command(_) => "command",
+        ast::Expr::StructLit(_) => "struct_lit",
+        ast::Expr::Map(_) => "map",
+        ast::Expr::Tuple(_) => "tuple",
+        ast::Expr::Array(_) => "array",
+        ast::Expr::Paren(_) => "paren",
+        ast::Expr::Scoped(_) => "scoped",
+        ast::Expr::Identifier(_) => "identifier",
+        ast::Expr::Str(_) => "string",
+        ast::Expr::Path(_) => "path",
+        ast::Expr::Number(_) => "number",
+        ast::Expr::Bool(_) => "bool",
+    }
+}
+
+fn expr_leaf_text(expr: &ast::Expr) -> Option<String> {
+    match expr {
+        ast::Expr::Identifier(expr)
+        | ast::Expr::Str(expr)
+        | ast::Expr::Path(expr)
+        | ast::Expr::Number(expr) => Some(expr.value.clone()),
+        ast::Expr::Bool(expr) => Some(expr.value.to_string()),
+        _ => None,
     }
 }
 
@@ -187,9 +290,9 @@ fn type_text(ty: &Type) -> String {
                 .iter()
                 .map(type_text)
                 .collect::<Vec<_>>()
-                .join(", ");
+                .join(",");
             match &func.return_type {
-                Some(ret) => format!("fn({params}) -> {}", type_text(ret)),
+                Some(ret) => format!("fn({params})->{}", type_text(ret)),
                 None => format!("fn({params})"),
             }
         }
@@ -200,7 +303,7 @@ fn type_text(ty: &Type) -> String {
                 .iter()
                 .map(type_text)
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(",")
         ),
         Type::Generic(generic) => format!(
             "{}<{}>",
@@ -210,7 +313,7 @@ fn type_text(ty: &Type) -> String {
                 .iter()
                 .map(type_text)
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(",")
         ),
         Type::Path(path) => type_path_text(path),
     }
