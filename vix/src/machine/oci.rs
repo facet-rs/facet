@@ -77,8 +77,14 @@ struct LayerDescriptor {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FileProjection {
     pub layer_digest: String,
-    pub contents: String,
+    pub contents: FileContents,
     pub size: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum FileContents {
+    Text(String),
+    Blob(Vec<u8>),
 }
 
 pub(super) fn parse_layout(tree: Tree) -> Result<Layout, String> {
@@ -178,8 +184,10 @@ pub(super) fn project_file(layout: &Layout, path: &str) -> Result<Option<FilePro
                 return Ok(Some(FileProjection {
                     layer_digest: layer.digest.clone(),
                     size: i64::try_from(contents.len()).unwrap_or(i64::MAX),
-                    contents: String::from_utf8(contents)
-                        .map_err(|err| format!("OCI file `{path}` is not UTF-8: {err}"))?,
+                    contents: match String::from_utf8(contents) {
+                        Ok(text) => FileContents::Text(text),
+                        Err(err) => FileContents::Blob(err.into_bytes()),
+                    },
                 }));
             }
             LayerHit::Whiteout => return Ok(None),
@@ -193,6 +201,7 @@ pub(super) fn input_hash(tree: &Tree) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"vix-oci-layout-tree");
     for (path, contents) in &tree.entries {
+        hasher.update([0]);
         hasher.update(
             i64::try_from(path.len())
                 .expect("path length fits i64")
@@ -205,6 +214,21 @@ pub(super) fn input_hash(tree: &Tree) -> [u8; 32] {
                 .to_le_bytes(),
         );
         hasher.update(contents.as_bytes());
+    }
+    for (path, contents) in &tree.blobs {
+        hasher.update([1]);
+        hasher.update(
+            i64::try_from(path.len())
+                .expect("path length fits i64")
+                .to_le_bytes(),
+        );
+        hasher.update(path.as_bytes());
+        hasher.update(
+            i64::try_from(contents.len())
+                .expect("contents length fits i64")
+                .to_le_bytes(),
+        );
+        hasher.update(contents);
     }
     hasher.finalize().into()
 }
@@ -283,12 +307,13 @@ fn blob_path(digest: &str) -> Result<String, String> {
 
 fn layer_bytes<'a>(layout: &'a Layout, digest: &str) -> Result<&'a [u8], String> {
     let path = blob_path(digest)?;
-    let contents = layout
-        .tree
-        .entries
-        .get(&path)
-        .ok_or_else(|| format!("OCI layout is missing layer blob `{path}`"))?;
-    Ok(contents.as_bytes())
+    if let Some(contents) = layout.tree.entries.get(&path) {
+        return Ok(contents.as_bytes());
+    }
+    if let Some(contents) = layout.tree.blobs.get(&path) {
+        return Ok(contents);
+    }
+    Err(format!("OCI layout is missing layer blob `{path}`"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

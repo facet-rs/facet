@@ -141,6 +141,8 @@ pub const STRING_CONCAT_HOST: u32 = 29;
 pub const ARRAY_JOIN_HOST: u32 = 30;
 pub const DOC_PACKAGE_HOST: u32 = 31;
 pub const TARGET_HOST: u32 = 32;
+pub const VERSION_PARSE_HOST: u32 = 33;
+pub const VALUE_COMPARE_HOST: u32 = 34;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -323,6 +325,9 @@ pub enum RenderedValue {
         value: String,
     },
     Flag {
+        value: String,
+    },
+    Version {
         value: String,
     },
     Raw {
@@ -1626,6 +1631,14 @@ impl Driver {
         self.store.borrow_mut().alloc_raw(schema, bytes)
     }
 
+    pub fn intern_version_value(&self, text: &str) -> Result<(i64, bool), String> {
+        let version = super::version::parse(text)?;
+        Ok(self
+            .store
+            .borrow_mut()
+            .alloc_raw("Version", super::version::canonical_bytes(&version)))
+    }
+
     pub fn intern_linux_target(&self) -> (i64, bool) {
         self.intern_structured_target(OS_LINUX, host_arch_index())
             .unwrap_or_else(|_| {
@@ -2711,6 +2724,57 @@ impl Driver {
                 }
             };
 
+            let mut version_parse_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let input = read_frame_word(frame, primitive_region + 8);
+                    let text = store_cell.borrow().string_value(input, "String")?;
+                    let version = super::version::parse(&text)?;
+                    let (handle, _) = store_cell
+                        .borrow_mut()
+                        .alloc_raw("Version", super::version::canonical_bytes(&version));
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut value_compare_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let schema =
+                        schema_name_for(read_frame_word(frame, primitive_region + 8), schema_refs)?;
+                    let op = read_frame_word(frame, primitive_region + 16);
+                    let left = read_frame_word(frame, primitive_region + 24);
+                    let right = read_frame_word(frame, primitive_region + 32);
+                    let store = store_cell.borrow();
+                    let ordering = compare_expression_words(
+                        &store,
+                        descriptors,
+                        schema_refs,
+                        &schema,
+                        left,
+                        right,
+                    )?;
+                    let value = match op {
+                        0 => ordering == Ordering::Equal,
+                        1 => ordering != Ordering::Equal,
+                        2 => ordering == Ordering::Less,
+                        3 => ordering != Ordering::Greater,
+                        4 => ordering == Ordering::Greater,
+                        5 => ordering != Ordering::Less,
+                        other => return Err(format!("unknown compare op {other}")),
+                    };
+                    write_frame_word(frame, dst_slot, i64::from(value));
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut ast_fn_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -3021,7 +3085,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 33] = [
+            let mut hosts: [HostFn<'_>; 35] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -3055,6 +3119,8 @@ impl Driver {
                 &mut array_join_host,
                 &mut doc_package_host,
                 &mut target_host,
+                &mut version_parse_host,
+                &mut value_compare_host,
             ];
             let step = exec
                 .task
@@ -4239,6 +4305,7 @@ enum DocPayload {
     Int(i64),
     Float(i64),
     String(i64),
+    Blob(i64),
     Array(i64),
     Map(i64),
     Virtual(i64),
@@ -4262,6 +4329,10 @@ fn alloc_doc_from_value(
         Value::Str(value) => {
             let handle = store.borrow_mut().alloc_raw("String", value.into_bytes()).0;
             alloc_doc_variant(store, descriptors, 4, &[handle])
+        }
+        Value::Blob(value) => {
+            let handle = store.borrow_mut().alloc_raw("Blob", value).0;
+            alloc_doc_variant(store, descriptors, 8, &[handle])
         }
         Value::Array(values) => {
             let words = values
@@ -4355,6 +4426,10 @@ fn doc_payload(
             field_offset(descriptor, &entry.bytes, 0),
         )),
         4 => DocPayload::String(read_frame_word(
+            &entry.bytes,
+            field_offset(descriptor, &entry.bytes, 0),
+        )),
+        8 => DocPayload::Blob(read_frame_word(
             &entry.bytes,
             field_offset(descriptor, &entry.bytes, 0),
         )),
@@ -4534,7 +4609,10 @@ fn oci_virtual_file_get(
                     (Value::Str("path".to_string()), Value::Str(path.to_string())),
                     (
                         Value::Str("contents".to_string()),
-                        Value::Str(file.contents),
+                        match file.contents {
+                            super::oci::FileContents::Text(contents) => Value::Str(contents),
+                            super::oci::FileContents::Blob(contents) => Value::Blob(contents),
+                        },
                     ),
                     (
                         Value::Str("layer_digest".to_string()),
@@ -4605,6 +4683,7 @@ fn doc_coerce(
         (DocPayload::Int(value), "Int") => Ok(value),
         (DocPayload::Float(value), "Float") => Ok(value),
         (DocPayload::String(value), "String") => Ok(value),
+        (DocPayload::Blob(value), "Blob") => Ok(value),
         (DocPayload::Array(value), "Array") => Ok(value),
         (DocPayload::Map(value), "Map<String,Doc>") => Ok(value),
         (DocPayload::Virtual(_), schema) => Err(format!("cannot coerce Doc::Virtual to {schema}")),
@@ -4974,11 +5053,44 @@ fn compare_words(
             let b = store.string_value(b, schema)?;
             Ok(a.cmp(&b))
         }
+        "Version" => {
+            let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
+            let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
+            if a.schema != "Version" || b.schema != "Version" {
+                return Err(format!(
+                    "compare expected Version, got {} and {}",
+                    a.schema, b.schema
+                ));
+            }
+            super::version::cmp_total(&a.bytes, &b.bytes)
+        }
         "Array" => compare_arrays(store, descriptors, schema_refs, a, b),
         schema if schema.starts_with("Map<") => compare_maps(store, descriptors, schema_refs, a, b),
         "Doc" => compare_docs(store, descriptors, schema_refs, a, b),
         schema => compare_declared_value(store, descriptors, schema_refs, schema, a, b),
     }
+}
+
+fn compare_expression_words(
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    schema: &str,
+    a: i64,
+    b: i64,
+) -> Result<Ordering, String> {
+    if schema == "Version" {
+        let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
+        let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
+        if a.schema != "Version" || b.schema != "Version" {
+            return Err(format!(
+                "compare expected Version, got {} and {}",
+                a.schema, b.schema
+            ));
+        }
+        return super::version::cmp_precedence(&a.bytes, &b.bytes);
+    }
+    compare_words(store, descriptors, schema_refs, schema, a, b)
 }
 
 fn compare_arrays(
@@ -5076,6 +5188,7 @@ fn compare_docs(
         DocPayload::Array(_) => 5,
         DocPayload::Map(_) => 6,
         DocPayload::Virtual(_) => 7,
+        DocPayload::Blob(_) => 8,
     };
     let tag_order = tag(&a_payload).cmp(&tag(&b_payload));
     if tag_order != Ordering::Equal {
@@ -5090,6 +5203,9 @@ fn compare_docs(
         }
         (DocPayload::String(a), DocPayload::String(b)) => {
             compare_words(store, descriptors, schema_refs, "String", a, b)
+        }
+        (DocPayload::Blob(a), DocPayload::Blob(b)) => {
+            compare_words(store, descriptors, schema_refs, "Blob", a, b)
         }
         (DocPayload::Array(a), DocPayload::Array(b)) => {
             compare_words(store, descriptors, schema_refs, "Array", a, b)
@@ -5285,6 +5401,9 @@ fn render_word(
         }),
         "Path" => Ok(RenderedValue::Path {
             value: store.string_value(word, "Path")?,
+        }),
+        "Version" => Ok(RenderedValue::Version {
+            value: store.string_value(word, "Version")?,
         }),
         "Flag" => Ok(RenderedValue::Flag {
             value: store.string_value(word, "Flag")?,
@@ -5531,6 +5650,15 @@ fn render_doc(
                 "String",
                 word,
             )?)),
+        ),
+        DocPayload::Blob(word) => (
+            "Blob".to_string(),
+            Some(Box::new(RenderedValue::Raw {
+                schema: "Blob".to_string(),
+                bytes_utf8: store
+                    .entry(word)
+                    .and_then(|entry| String::from_utf8(entry.bytes.clone()).ok()),
+            })),
         ),
         DocPayload::Array(word) => (
             "Array".to_string(),
@@ -6235,7 +6363,10 @@ fn doc_get_observation_hash(
                     (Value::Str("path".to_string()), Value::Str(key.to_string())),
                     (
                         Value::Str("contents".to_string()),
-                        Value::Str(file.contents),
+                        match file.contents {
+                            super::oci::FileContents::Text(contents) => Value::Str(contents),
+                            super::oci::FileContents::Blob(contents) => Value::Blob(contents),
+                        },
                     ),
                     (
                         Value::Str("layer_digest".to_string()),

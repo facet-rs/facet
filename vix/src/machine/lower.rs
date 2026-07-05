@@ -35,7 +35,7 @@ use super::driver::{
     MAP_GET_HOST, MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST,
     PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames,
     RenderVariant, RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
-    STRING_CONCAT_HOST, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST, ValueBundle,
+    STRING_CONCAT_HOST, StepMode, StoreHandle, TARGET_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, TREE_PROJECT_HOST, ValueBundle,
 
 };
 use crate::ast;
@@ -496,6 +496,9 @@ impl Machine {
             ("Int", MachineArg::Int(value)) => Ok(StoreHandle(value)),
             ("Float", MachineArg::Float(value)) => Ok(StoreHandle(value.to_bits() as i64)),
             ("Bool", MachineArg::Bool(value)) => Ok(StoreHandle(value as i64)),
+            ("Version", MachineArg::String(value)) => {
+                Ok(StoreHandle(self.driver.intern_version_value(&value)?.0))
+            }
             ("String", MachineArg::String(value)) => Ok(StoreHandle(
                 self.driver.intern_raw_value("String", value.into_bytes()).0,
             )),
@@ -732,6 +735,7 @@ fn schema_names_for(
         "Array".to_string(),
         "Map".to_string(),
         "Doc".to_string(),
+        "Version".to_string(),
         "Option<Doc>".to_string(),
         "Pending<Doc>".to_string(),
         "Realized<Doc>".to_string(),
@@ -1480,6 +1484,12 @@ fn collect_expr_schemas(
             {
                 return Ok(Some(schema.clone()));
             }
+            if let ast::PathRef::Identifier(name) = &call.callee
+                && name.value == "version"
+            {
+                out.push("Version".to_string());
+                return Ok(Some("Version".to_string()));
+            }
             if let Ok((enum_name, _, _)) = resolve_path_variant_for_collect(tables, &call.callee) {
                 return Ok(Some(enum_name));
             }
@@ -1697,6 +1707,7 @@ fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>
                     "Map<String,Doc>".into(),
                 )],
                 vec![declared_mem::handle("DocVirtual".into(), "String".into())],
+                vec![declared_mem::handle("DocBlob".into(), "Blob".into())],
             ],
         )
     });
@@ -2174,6 +2185,12 @@ impl<'a> FnLowerer<'a> {
                 if b.op == "+" && a.schema == "String" && r.schema == "String" {
                     return self.string_concat(&a, &r);
                 }
+                if a.schema == "Version"
+                    && r.schema == "Version"
+                    && matches!(b.op.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=")
+                {
+                    return self.compare_value(b.op.as_str(), &a, &r, "Version");
+                }
                 let dst = self.alloc();
                 let (op, schema) = match (b.op.as_str(), a.schema.as_str(), r.schema.as_str()) {
                     ("+", "Int", "Int") => (
@@ -2248,6 +2265,38 @@ impl<'a> FnLowerer<'a> {
                             "Bool",
                         )
                     }
+                    ("<", "Int", "Int") => (
+                        Op::LtI64 {
+                            dst,
+                            a: a.slot,
+                            b: r.slot,
+                        },
+                        "Bool",
+                    ),
+                    ("<=", "Int", "Int") => (
+                        Op::LeI64 {
+                            dst,
+                            a: a.slot,
+                            b: r.slot,
+                        },
+                        "Bool",
+                    ),
+                    (">", "Int", "Int") => (
+                        Op::GtI64 {
+                            dst,
+                            a: a.slot,
+                            b: r.slot,
+                        },
+                        "Bool",
+                    ),
+                    (">=", "Int", "Int") => (
+                        Op::GeI64 {
+                            dst,
+                            a: a.slot,
+                            b: r.slot,
+                        },
+                        "Bool",
+                    ),
                     ("&&", "Bool", "Bool") => (
                         Op::MulI64 {
                             dst,
@@ -2572,6 +2621,7 @@ impl<'a> FnLowerer<'a> {
             "extract" => return self.extract_call(call),
             "toml" => return self.doc_parse_call(call, 0),
             "json" => return self.doc_parse_call(call, 1),
+            "version" => return self.version_call(call),
             "elf" => return self.elf_call(call),
             "ast" => return self.ast_call(call),
             "oci" => return self.oci_call(call),
@@ -3404,7 +3454,7 @@ impl<'a> FnLowerer<'a> {
         if value.schema == "Doc"
             && matches!(
                 expected,
-                "String" | "Int" | "Bool" | "Float" | "Array" | "Map<String,Doc>"
+                "String" | "Int" | "Bool" | "Float" | "Blob" | "Array" | "Map<String,Doc>"
             )
         {
             return self.coerce_doc_to_schema(value, expected);
@@ -4673,7 +4723,13 @@ impl<'a> FnLowerer<'a> {
         let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
             return Err("elf takes one Blob, String, or single-blob Tree".into());
         };
-        let input = self.expr(arg)?;
+        let mut input = self.expr(arg)?;
+        if input.schema == "Realized<Doc>" {
+            input = self.coerce_to_schema(input, "Doc")?;
+        }
+        if input.schema == "Doc" {
+            input = self.coerce_to_schema(input, "Blob")?;
+        }
         if !matches!(input.schema.as_str(), "Blob" | "String" | "Tree") {
             return Err(format!("elf called on {}", input.schema));
         }
@@ -4745,6 +4801,88 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Doc".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn version_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("version takes one String".into());
+        };
+        let input = self.expr_expected(arg, Some("String"))?;
+        if input.schema != "String" {
+            return Err(format!("version called on {}", input.schema));
+        }
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: input.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: VERSION_PARSE_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Version".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn compare_value(
+        &mut self,
+        op: &str,
+        left: &ValueSlot,
+        right: &ValueSlot,
+        schema: &str,
+    ) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let schema_ref = *self
+            .schema_refs
+            .get(schema)
+            .ok_or_else(|| format!("no schema ref for {schema}"))?;
+        let op_code = match op {
+            "==" => 0,
+            "!=" => 1,
+            "<" => 2,
+            "<=" => 3,
+            ">" => 4,
+            ">=" => 5,
+            other => return Err(format!("unknown comparison operator {other:?}")),
+        };
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: schema_ref,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: op_code,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 24,
+            src: left.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 32,
+            src: right.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: VALUE_COMPARE_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Bool".into(),
             realization: None,
             pending: None,
         })
@@ -4890,7 +5028,8 @@ fn strict_binary_operand_schema<'a>(op: &str, left: &'a str, right: &'a str) -> 
         ("+" | "-" | "*", "Int")
         | ("+" | "*", "Float")
         | ("+", "String")
-        | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool")
+        | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool" | "Version")
+        | ("<" | "<=" | ">" | ">=", "Int" | "Version")
         | ("&&", "Bool") => Some(left),
         _ => None,
     }
@@ -5263,6 +5402,37 @@ pub fn poly(n: Int) -> Int {
         )
     }
 
+    fn oci_layout_with_libc(libc: &[u8]) -> Tree {
+        let config = r#"{"config":{"Env":[],"Entrypoint":[],"Cmd":[]}}"#;
+        let config_digest = digest(config.as_bytes());
+        let config_path = blob_path(&config_digest);
+        let layer = tar_blob(&[("usr/lib/libc.so.6", libc)]);
+        let layer_digest = digest(&layer);
+        let manifest = format!(
+            r#"{{"schemaVersion":2,"config":{{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"{config_digest}","size":{config_size}}},"layers":[{{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":"{layer_digest}","size":{layer_size}}}]}}"#,
+            config_size = config.len(),
+            layer_size = layer.len(),
+        );
+        let manifest_digest = digest(manifest.as_bytes());
+        let manifest_path = blob_path(&manifest_digest);
+        let index = format!(
+            r#"{{"schemaVersion":2,"manifests":[{{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"{manifest_digest}","size":{manifest_size}}}]}}"#,
+            manifest_size = manifest.len(),
+        );
+        Tree {
+            entries: BTreeMap::from([
+                (
+                    "oci-layout".to_string(),
+                    r#"{"imageLayoutVersion":"1.0.0"}"#.to_string(),
+                ),
+                ("index.json".to_string(), index),
+                (manifest_path, manifest),
+                (config_path, config.to_string()),
+            ]),
+            blobs: BTreeMap::from([(blob_path(&layer_digest), layer)]),
+        }
+    }
+
     fn digest(bytes: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(bytes);
@@ -5275,6 +5445,10 @@ pub fn poly(n: Int) -> Int {
     }
 
     fn tar(entries: &[(&str, &[u8])]) -> String {
+        String::from_utf8(tar_blob(entries)).expect("test tar is valid UTF-8")
+    }
+
+    fn tar_blob(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut out = Vec::new();
         for (path, contents) in entries {
             let mut header = [0u8; 512];
@@ -5296,7 +5470,7 @@ pub fn poly(n: Int) -> Int {
             out.resize(out.len().div_ceil(512) * 512, 0);
         }
         out.resize(out.len() + 1024, 0);
-        String::from_utf8(out).expect("test tar is valid UTF-8")
+        out
     }
 
     fn write_octal(dst: &mut [u8], value: u64) {
@@ -8439,6 +8613,30 @@ pub fn env(input: Blob) -> [String] { oci(input).env }
     }
 
     #[test]
+    fn oci_glibc_preflight_uses_version_ordering_without_execution() {
+        let src = include_str!(
+            "../../../playgrounds/snark/src/bundled/vix/samples/oci-glibc-preflight.vix"
+        );
+        let meets = oci_layout_with_libc(include_bytes!("../../tests/fixtures/elf/hello-x86_64"));
+        let below =
+            oci_layout_with_libc(include_bytes!("../../tests/fixtures/elf/libtiny-x86_64.so"));
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let meets = machine.intern_tree_concrete(meets.clone());
+            let below = machine.intern_tree_concrete(below.clone());
+            assert_eq!(machine.demand_i64("matches_floor", vec![meets]).unwrap(), 1);
+            assert_eq!(machine.demand_i64("matches_floor", vec![below]).unwrap(), 0);
+            assert!(
+                machine
+                    .trace()
+                    .iter()
+                    .all(|event| !matches!(event, DriveEvent::RunRequested { .. })),
+                "{lane:?}: preflight must not execute"
+            );
+        }
+    }
+
+    #[test]
     fn oci_file_projection_is_path_local_and_memoized() {
         let src = r#"
 pub fn shadow_twice(input: Tree) -> (String, String) {
@@ -8596,6 +8794,60 @@ pub fn az() -> Map<String, Int> {
                     .unwrap(),
                 std::cmp::Ordering::Equal,
                 "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn version_values_parse_and_compare_by_semver_precedence() {
+        let src = r#"
+pub fn release_after_pre() -> Bool { version("1.0.0") > version("1.0.0-rc.1") }
+pub fn numeric_pre_before_alpha() -> Bool { version("1.0.0-1") < version("1.0.0-alpha") }
+pub fn prerelease_chain() -> Bool {
+    version("1.0.0-alpha") < version("1.0.0-alpha.1")
+        && version("1.0.0-alpha.1") < version("1.0.0-alpha.beta")
+        && version("1.0.0-beta.2") < version("1.0.0-beta.11")
+}
+pub fn build_metadata_ignored_by_language_equality() -> Bool {
+    version("1.2.3+abc") == version("1.2.3+xyz")
+}
+pub fn glibc_name_normalizes() -> Bool { version("GLIBC_2.35") == version("2.35.0") }
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            for name in [
+                "release_after_pre",
+                "numeric_pre_before_alpha",
+                "prerelease_chain",
+                "build_metadata_ignored_by_language_equality",
+                "glibc_name_normalizes",
+            ] {
+                assert_eq!(
+                    machine.demand_i64(name, vec![]).unwrap(),
+                    1,
+                    "{lane:?}: {name}"
+                );
+            }
+
+            let a = machine.driver.intern_version_value("1.2.3+abc").unwrap().0;
+            let b = machine.driver.intern_version_value("1.2.3+xyz").unwrap().0;
+            assert_eq!(
+                machine.driver.compare_store_words("Version", a, b).unwrap(),
+                std::cmp::Ordering::Less,
+                "store ordering remains total on {lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_version_parse_is_a_loud_machine_error() {
+        let src = r#"pub fn bad() -> Version { version("1.x") }"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let err = machine.demand_i64("bad", vec![]).unwrap_err();
+            assert!(
+                err.contains("version(\"1.x\") parse error"),
+                "{lane:?}: {err}"
             );
         }
     }

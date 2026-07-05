@@ -9,6 +9,7 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
+    Blob(Vec<u8>),
     Str(String),
     Path(String),
     Flag(String),
@@ -68,6 +69,7 @@ impl Value {
             Value::Closure { .. } => 12,
             Value::Partial { .. } => 13,
             Value::Tree(_) => 14,
+            Value::Blob(_) => 15,
         }
     }
 
@@ -83,6 +85,7 @@ impl Value {
             Value::Int(v) => v.to_string(),
             Value::Float(v) => v.to_string(),
             Value::Bool(v) => v.to_string(),
+            Value::Blob(v) => format!("blob({} bytes)", v.len()),
             Value::Str(v) => format!("{v:?}"),
             Value::Path(v) => v.clone(),
             Value::Flag(v) => v.clone(),
@@ -120,6 +123,7 @@ impl Value {
             Value::Int(v) => v.hash(h),
             Value::Float(v) => normalize_float(*v).to_bits().hash(h),
             Value::Bool(v) => v.hash(h),
+            Value::Blob(v) => v.hash(h),
             Value::Str(v) | Value::Path(v) | Value::Flag(v) => v.hash(h),
             Value::Tuple(vs) | Value::Array(vs) => {
                 vs.len().hash(h);
@@ -224,6 +228,7 @@ impl Ord for Value {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
             (Value::Float(a), Value::Float(b)) => float_cmp(*a, *b),
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            (Value::Blob(a), Value::Blob(b)) => a.cmp(b),
             (Value::Str(a), Value::Str(b))
             | (Value::Path(a), Value::Path(b))
             | (Value::Flag(a), Value::Flag(b)) => a.cmp(b),
