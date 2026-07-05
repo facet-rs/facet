@@ -35,7 +35,8 @@ use super::driver::{
     MAP_GET_HOST, MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST,
     PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames,
     RenderVariant, RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
-    STRING_CONCAT_HOST, StepMode, StoreHandle, TREE_PROJECT_HOST, ValueBundle,
+    STRING_CONCAT_HOST, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST, ValueBundle,
+
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -720,6 +721,7 @@ fn schema_names_for(
         "Blob".to_string(),
         "Bool".to_string(),
         "Target".to_string(),
+        "Arch".to_string(),
         "Os".to_string(),
         "Cc".to_string(),
         "Ar".to_string(),
@@ -756,7 +758,7 @@ fn schema_names_for(
 }
 
 fn render_names_for(tables: &ModuleTables) -> RenderNames {
-    let structs = tables
+    let mut structs: BTreeMap<String, Vec<String>> = tables
         .structs
         .iter()
         .map(|(name, info)| {
@@ -769,7 +771,10 @@ fn render_names_for(tables: &ModuleTables) -> RenderNames {
             )
         })
         .collect();
-    let enums = tables
+    structs
+        .entry("Target".into())
+        .or_insert_with(|| vec!["os".into(), "arch".into()]);
+    let mut enums: BTreeMap<String, Vec<RenderVariant>> = tables
         .enums
         .iter()
         .map(|(name, info)| {
@@ -791,6 +796,24 @@ fn render_names_for(tables: &ModuleTables) -> RenderNames {
             )
         })
         .collect();
+    enums.entry("Os".into()).or_insert_with(|| {
+        ["Linux", "Macos", "Windows"]
+            .into_iter()
+            .map(|name| RenderVariant {
+                name: name.into(),
+                fields: Vec::new(),
+            })
+            .collect()
+    });
+    enums.entry("Arch".into()).or_insert_with(|| {
+        ["X86_64", "Aarch64", "Arm", "Riscv64", "Wasm32", "Unknown"]
+            .into_iter()
+            .map(|name| RenderVariant {
+                name: name.into(),
+                fields: Vec::new(),
+            })
+            .collect()
+    });
     RenderNames { structs, enums }
 }
 
@@ -1635,12 +1658,21 @@ fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>
     descriptors.entry("Target".into()).or_insert_with(|| {
         declared_mem::declared_struct(
             "Target".into(),
-            vec![declared_mem::handle("OsRef".into(), "Os".into())],
+            vec![
+                declared_mem::handle("OsRef".into(), "Os".into()),
+                declared_mem::handle("ArchRef".into(), "Arch".into()),
+            ],
         )
     });
     descriptors
         .entry("Os".into())
         .or_insert_with(|| declared_mem::declared_enum("Os".into(), vec![vec![], vec![], vec![]]));
+    descriptors.entry("Arch".into()).or_insert_with(|| {
+        declared_mem::declared_enum(
+            "Arch".into(),
+            vec![vec![], vec![], vec![], vec![], vec![], vec![]],
+        )
+    });
     descriptors.entry("Run".into()).or_insert_with(|| {
         declared_mem::declared_struct(
             "Run".into(),
@@ -2772,6 +2804,19 @@ impl<'a> FnLowerer<'a> {
                 let target = self.expr_expected(target, Some("Target"))?;
                 Ok(Some(self.acquire(kind, &target)?))
             }
+            ["Target", "host"] => {
+                if self
+                    .tables
+                    .resolve_type_module(self.current_module, "Target")
+                    != Some("vix")
+                {
+                    return Ok(None);
+                }
+                if !call.args.args.is_empty() {
+                    return Err("Target::host takes no arguments".into());
+                }
+                Ok(Some(self.target_host()))
+            }
             _ => Ok(None),
         }
     }
@@ -3007,6 +3052,9 @@ impl<'a> FnLowerer<'a> {
                 if receiver.schema == "Target" && name.value == "os" {
                     return Ok(self.store_read(&receiver, 0, "Os".into()));
                 }
+                if receiver.schema == "Target" && name.value == "arch" {
+                    return Ok(self.store_read(&receiver, 1, "Arch".into()));
+                }
                 let info = self
                     .tables
                     .structs
@@ -3063,6 +3111,9 @@ impl<'a> FnLowerer<'a> {
         let path = path_ref_segments(&lit.path)?;
         if path.len() == 1 {
             let name = &path[0];
+            if name == "Target" {
+                return self.target_literal(lit);
+            }
             let info = self
                 .tables
                 .structs
@@ -3127,6 +3178,61 @@ impl<'a> FnLowerer<'a> {
             fields.push(self.expr(&init.value)?);
         }
         self.store_alloc(&enum_name, variant_index, &fields)
+    }
+
+    fn target_literal(&mut self, lit: &ast::StructLiteral) -> Result<ValueSlot, String> {
+        if lit.spreads.len() > 1 {
+            return Err("multiple Target record update spreads are outside the B3 subset".into());
+        }
+        let mut os = None;
+        let mut arch = None;
+        for field in &lit.fields {
+            match field.name.value.as_str() {
+                "os" => {
+                    if os
+                        .replace(self.expr_expected(&field.value, Some("Os"))?)
+                        .is_some()
+                    {
+                        return Err("duplicate field `os` in struct literal `Target`".into());
+                    }
+                }
+                "arch" => {
+                    if arch
+                        .replace(self.expr_expected(&field.value, Some("Arch"))?)
+                        .is_some()
+                    {
+                        return Err("duplicate field `arch` in struct literal `Target`".into());
+                    }
+                }
+                other => return Err(format!("unknown field {other} on Target")),
+            }
+        }
+        let base = match lit.spreads.as_slice() {
+            [] => None,
+            [spread] => {
+                let Some(base) = &spread.base else {
+                    return Err("Target record update spread requires a base expression".into());
+                };
+                Some(self.expr_expected(base, Some("Target"))?)
+            }
+            _ => unreachable!("length checked above"),
+        };
+        let os = if let Some(os) = os {
+            os
+        } else if let Some(base) = &base {
+            self.store_read(base, 0, "Os".into())
+        } else {
+            return Err("missing field os for struct Target".into());
+        };
+        let arch = if let Some(arch) = arch {
+            arch
+        } else if let Some(base) = &base {
+            self.store_read(base, 1, "Arch".into())
+        } else {
+            let host = self.target_host();
+            self.store_read(&host, 1, "Arch".into())
+        };
+        self.store_alloc("Target", 0, &[os, arch])
     }
 
     fn struct_field_schema(&self, struct_name: &str, field_index: usize) -> Result<String, String> {
@@ -3216,12 +3322,7 @@ impl<'a> FnLowerer<'a> {
                 name == variant_name && matches!(shape, VariantShape::Unit)
             });
         }
-        match (enum_name, variant_name) {
-            ("Os", "Linux") => Some(0),
-            ("Os", "Macos") => Some(1),
-            ("Os", "Windows") => Some(2),
-            _ => None,
-        }
+        builtin_unit_variant_index(enum_name, variant_name)
     }
 
     fn bind_payload_pattern(
@@ -3941,6 +4042,22 @@ impl<'a> FnLowerer<'a> {
             realization: None,
             pending: None,
         })
+    }
+
+    fn target_host(&mut self) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::HostCall { host: TARGET_HOST });
+        ValueSlot {
+            slot: dst,
+            schema: "Target".to_string(),
+            realization: None,
+            pending: None,
+        }
     }
 
     fn array_literal(&mut self, array: &ast::Array) -> Result<ValueSlot, String> {
@@ -4867,10 +4984,12 @@ fn resolve_variant_segments(
     let [enum_name, variant_name] = segments else {
         return Err(format!("path {segments:?} is not a declared variant path"));
     };
-    let info = tables
-        .enums
-        .get(enum_name)
-        .ok_or_else(|| format!("unknown enum {enum_name}"))?;
+    let Some(info) = tables.enums.get(enum_name) else {
+        let Some(index) = builtin_unit_variant_index(enum_name, variant_name) else {
+            return Err(format!("unknown enum {enum_name}"));
+        };
+        return Ok((enum_name.clone(), index, VariantShape::Unit));
+    };
     let (index, (_, shape)) = info
         .variants
         .iter()
@@ -4878,6 +4997,21 @@ fn resolve_variant_segments(
         .find(|(_, (name, _))| name == variant_name)
         .ok_or_else(|| format!("unknown variant {enum_name}::{variant_name}"))?;
     Ok((enum_name.clone(), index, shape.clone()))
+}
+
+fn builtin_unit_variant_index(enum_name: &str, variant_name: &str) -> Option<usize> {
+    match (enum_name, variant_name) {
+        ("Os", "Linux") => Some(0),
+        ("Os", "Macos") => Some(1),
+        ("Os", "Windows") => Some(2),
+        ("Arch", "X86_64") => Some(0),
+        ("Arch", "Aarch64") => Some(1),
+        ("Arch", "Arm") => Some(2),
+        ("Arch", "Riscv64") => Some(3),
+        ("Arch", "Wasm32") => Some(4),
+        ("Arch", "Unknown") => Some(5),
+        _ => None,
+    }
 }
 
 fn max_call_argc(block: &ast::Block) -> usize {
@@ -6362,8 +6496,8 @@ pub fn main() -> String {
 
     #[test]
     fn types_vix_toolchain_acquires_capabilities_and_updates_records() {
-        const CC_PIN: &str = "acquire:Cc:1c17ad644df20b15";
-        const AR_PIN: &str = "acquire:Ar:1c17ad644df20b15";
+        const CC_PIN: &str = "acquire:Cc:a67daa6cb12f954f";
+        const AR_PIN: &str = "acquire:Ar:a67daa6cb12f954f";
 
         let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/types.vix");
         let mut traces = Vec::new();
@@ -6428,6 +6562,103 @@ pub fn main() -> String {
             traces.push((lane, machine.trace().to_vec()));
         }
         assert_lane_traces_equal(&traces);
+    }
+
+    #[test]
+    fn capability_identity_includes_target_arch() {
+        let src = r#"
+use vix::{Target, Arch};
+use caps::Cc;
+
+pub fn cc_for(target: Target) -> Cc {
+    Cc::acquire(target)
+}
+
+pub fn classify_arch(target: Target) -> Int {
+    match target.arch {
+        Arch::Aarch64 => 64,
+        Arch::X86_64 => 86,
+        _ => 0,
+    }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let (linux_x86, _) = machine.driver.intern_target(0, 0).unwrap();
+            let (linux_arm64, _) = machine.driver.intern_target(0, 1).unwrap();
+
+            let x86_cc = machine.demand_i64("cc_for", vec![linux_x86]).unwrap();
+            let arm64_cc = machine.demand_i64("cc_for", vec![linux_arm64]).unwrap();
+
+            let x86_fingerprint = machine.driver.raw_string(x86_cc, "Cc").unwrap();
+            let arm64_fingerprint = machine.driver.raw_string(arm64_cc, "Cc").unwrap();
+            assert_ne!(x86_fingerprint, arm64_fingerprint, "{lane:?}");
+            assert!(x86_fingerprint.starts_with("acquire:Cc:"), "{lane:?}");
+            assert!(arm64_fingerprint.starts_with("acquire:Cc:"), "{lane:?}");
+            assert_eq!(
+                machine
+                    .demand_i64("classify_arch", vec![linux_arm64])
+                    .unwrap(),
+                64,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn target_host_and_cross_target_are_distinct_capabilities() {
+        let src = r#"
+use vix::{Target, Os, Arch};
+use caps::{Cc, Rustc};
+
+pub fn host_cc() -> Cc {
+    Cc::acquire(Target::host())
+}
+
+pub fn cross_cc() -> Cc {
+    Cc::acquire(Target { os: Os::Linux, arch: Arch::Aarch64 })
+}
+
+pub fn cross_x86_cc() -> Cc {
+    Cc::acquire(Target { os: Os::Linux, arch: Arch::X86_64 })
+}
+
+pub fn os_only_cc() -> Cc {
+    Cc::acquire(Target { os: Os::Linux })
+}
+
+pub fn cross_rustc() -> Rustc {
+    Rustc::acquire(Target { os: Os::Linux, arch: Arch::Aarch64 })
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+
+            let host_cc = machine.demand_i64("host_cc", vec![]).unwrap();
+            let cross_cc = machine.demand_i64("cross_cc", vec![]).unwrap();
+            let cross_x86_cc = machine.demand_i64("cross_x86_cc", vec![]).unwrap();
+            let os_only_cc = machine.demand_i64("os_only_cc", vec![]).unwrap();
+            let cross_rustc = machine.demand_i64("cross_rustc", vec![]).unwrap();
+
+            let host_cc = machine.driver.raw_string(host_cc, "Cc").unwrap();
+            let cross_cc = machine.driver.raw_string(cross_cc, "Cc").unwrap();
+            let cross_x86_cc = machine.driver.raw_string(cross_x86_cc, "Cc").unwrap();
+            let os_only_cc = machine.driver.raw_string(os_only_cc, "Cc").unwrap();
+            let cross_rustc = machine.driver.raw_string(cross_rustc, "Rustc").unwrap();
+
+            // This is the crate.vix slice-3b split: proc-macro producers acquire
+            // host tools, target units acquire target tools, and artifact probes
+            // can key ELF/OCI facts by architecture.
+            assert!(
+                host_cc != cross_cc || host_cc != cross_x86_cc,
+                "{lane:?}: host={host_cc} cross_aarch64={cross_cc} cross_x86_64={cross_x86_cc}"
+            );
+            assert_ne!(cross_cc, cross_rustc, "{lane:?}");
+            assert!(cross_cc.starts_with("acquire:Cc:"), "{lane:?}");
+            assert!(cross_x86_cc.starts_with("acquire:Cc:"), "{lane:?}");
+            assert!(os_only_cc.starts_with("acquire:Cc:"), "{lane:?}");
+            assert!(cross_rustc.starts_with("acquire:Rustc:"), "{lane:?}");
+        }
     }
 
     #[test]

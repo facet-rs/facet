@@ -140,6 +140,7 @@ pub const OCI_DOC_HOST: u32 = 28;
 pub const STRING_CONCAT_HOST: u32 = 29;
 pub const ARRAY_JOIN_HOST: u32 = 30;
 pub const DOC_PACKAGE_HOST: u32 = 31;
+pub const TARGET_HOST: u32 = 32;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -1626,42 +1627,34 @@ impl Driver {
     }
 
     pub fn intern_linux_target(&self) -> (i64, bool) {
-        self.intern_structured_target(0).unwrap_or_else(|_| {
-            self.store
-                .borrow_mut()
-                .alloc_raw("Target", 0x391c555cf0975f9cu64.to_le_bytes().to_vec())
-        })
+        self.intern_structured_target(OS_LINUX, host_arch_index())
+            .unwrap_or_else(|_| {
+                self.store
+                    .borrow_mut()
+                    .alloc_raw("Target", 0x391c555cf0975f9cu64.to_le_bytes().to_vec())
+            })
     }
 
     #[cfg(test)]
     pub fn intern_windows_target(&self) -> Result<(i64, bool), String> {
-        self.intern_structured_target(2)
+        self.intern_structured_target(OS_WINDOWS, host_arch_index())
     }
 
-    fn intern_structured_target(&self, os_index: u64) -> Result<(i64, bool), String> {
-        let os_descriptor = self
-            .descriptors
-            .get("Os")
-            .ok_or_else(|| "missing Os descriptor".to_string())?;
-        let mut os_bytes = vec![0u8; os_descriptor.layout.size];
-        write_variant_tag(&mut os_bytes, os_descriptor, os_index);
-        let os = self
-            .store
-            .borrow_mut()
-            .alloc("Os", os_bytes, &self.descriptors)
-            .0;
+    pub fn intern_host_target(&self) -> Result<(i64, bool), String> {
+        self.intern_structured_target(host_os_index(), host_arch_index())
+    }
 
-        let target_descriptor = self
-            .descriptors
-            .get("Target")
-            .ok_or_else(|| "missing Target descriptor".to_string())?;
-        let mut target_bytes = vec![0u8; target_descriptor.layout.size];
-        let offset = field_offset(target_descriptor, &target_bytes, 0);
-        target_bytes[offset..offset + 8].copy_from_slice(&os.to_le_bytes());
-        Ok(self
-            .store
-            .borrow_mut()
-            .alloc("Target", target_bytes, &self.descriptors))
+    #[cfg(test)]
+    pub fn intern_target(&self, os_index: u64, arch_index: u64) -> Result<(i64, bool), String> {
+        self.intern_structured_target(os_index, arch_index)
+    }
+
+    fn intern_structured_target(
+        &self,
+        os_index: u64,
+        arch_index: u64,
+    ) -> Result<(i64, bool), String> {
+        intern_structured_target(&self.store, &self.descriptors, os_index, arch_index)
     }
 
     /// Demand one invocation's identity: the edge of the machine.
@@ -3011,7 +3004,24 @@ impl Driver {
                 });
             };
 
-            let mut hosts: [HostFn<'_>; 32] = [
+            let mut target_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let (handle, _) = intern_structured_target(
+                        store_cell,
+                        descriptors,
+                        host_os_index(),
+                        host_arch_index(),
+                    )?;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut hosts: [HostFn<'_>; 33] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -3044,6 +3054,7 @@ impl Driver {
                 &mut string_concat_host,
                 &mut array_join_host,
                 &mut doc_package_host,
+                &mut target_host,
             ];
             let step = exec
                 .task
@@ -6830,6 +6841,98 @@ fn decode_bytes(bytes: &[u8], at: &mut usize) -> Result<Vec<u8>, String> {
     Ok(value)
 }
 
+const OS_LINUX: u64 = 0;
+const OS_MACOS: u64 = 1;
+const OS_WINDOWS: u64 = 2;
+
+const ARCH_X86_64: u64 = 0;
+const ARCH_AARCH64: u64 = 1;
+const ARCH_ARM: u64 = 2;
+const ARCH_RISCV64: u64 = 3;
+const ARCH_WASM32: u64 = 4;
+const ARCH_UNKNOWN: u64 = 5;
+
+fn host_os_index() -> u64 {
+    if cfg!(target_os = "linux") {
+        OS_LINUX
+    } else if cfg!(target_os = "macos") {
+        OS_MACOS
+    } else if cfg!(target_os = "windows") {
+        OS_WINDOWS
+    } else {
+        OS_LINUX
+    }
+}
+
+fn host_arch_index() -> u64 {
+    if cfg!(target_arch = "x86_64") {
+        ARCH_X86_64
+    } else if cfg!(target_arch = "aarch64") {
+        ARCH_AARCH64
+    } else if cfg!(target_arch = "arm") {
+        ARCH_ARM
+    } else if cfg!(target_arch = "riscv64") {
+        ARCH_RISCV64
+    } else if cfg!(target_arch = "wasm32") {
+        ARCH_WASM32
+    } else {
+        ARCH_UNKNOWN
+    }
+}
+
+fn os_variant_name(index: usize) -> &'static str {
+    match index {
+        0 => "Linux",
+        1 => "Macos",
+        2 => "Windows",
+        _ => "Unknown",
+    }
+}
+
+fn arch_variant_name(index: usize) -> &'static str {
+    match index {
+        0 => "X86_64",
+        1 => "Aarch64",
+        2 => "Arm",
+        3 => "Riscv64",
+        4 => "Wasm32",
+        _ => "Unknown",
+    }
+}
+
+fn intern_structured_target(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    os_index: u64,
+    arch_index: u64,
+) -> Result<(i64, bool), String> {
+    let os_descriptor = descriptors
+        .get("Os")
+        .ok_or_else(|| "missing Os descriptor".to_string())?;
+    let mut os_bytes = vec![0u8; os_descriptor.layout.size];
+    write_variant_tag(&mut os_bytes, os_descriptor, os_index);
+    let os = store.borrow_mut().alloc("Os", os_bytes, descriptors).0;
+
+    let arch_descriptor = descriptors
+        .get("Arch")
+        .ok_or_else(|| "missing Arch descriptor".to_string())?;
+    let mut arch_bytes = vec![0u8; arch_descriptor.layout.size];
+    write_variant_tag(&mut arch_bytes, arch_descriptor, arch_index);
+    let arch = store.borrow_mut().alloc("Arch", arch_bytes, descriptors).0;
+
+    let target_descriptor = descriptors
+        .get("Target")
+        .ok_or_else(|| "missing Target descriptor".to_string())?;
+    let mut target_bytes = vec![0u8; target_descriptor.layout.size];
+    let os_offset = field_offset(target_descriptor, &target_bytes, 0);
+    target_bytes[os_offset..os_offset + 8].copy_from_slice(&os.to_le_bytes());
+    let arch_offset = field_offset(target_descriptor, &target_bytes, 1);
+    target_bytes[arch_offset..arch_offset + 8].copy_from_slice(&arch.to_le_bytes());
+    Ok(store
+        .borrow_mut()
+        .alloc("Target", target_bytes, descriptors))
+}
+
 fn target_hash(store: &RefCell<ValueStore>, handle: i64) -> Result<u64, String> {
     let store = store.borrow();
     let entry = store
@@ -6838,31 +6941,48 @@ fn target_hash(store: &RefCell<ValueStore>, handle: i64) -> Result<u64, String> 
     if entry.schema != "Target" {
         return Err(format!("handle {handle} is `{}`, not Target", entry.schema));
     }
-    if entry.bytes.len() != 8 {
+    if entry.bytes.len() != 8 && entry.bytes.len() != 16 {
         return Err(format!("Target entry has {} bytes", entry.bytes.len()));
     }
-    let word = i64::from_le_bytes(entry.bytes[..8].try_into().expect("target hash bytes"));
-    if let Some(os) = store.entry(word)
+    let os_word = i64::from_le_bytes(entry.bytes[..8].try_into().expect("target os bytes"));
+    if let Some(os) = store.entry(os_word)
         && os.schema == "Os"
     {
         let index = usize::from(*os.bytes.first().ok_or("empty Os entry")?);
+        let arch = if entry.bytes.len() >= 16 {
+            let arch_word =
+                i64::from_le_bytes(entry.bytes[8..16].try_into().expect("target arch bytes"));
+            match store.entry(arch_word) {
+                Some(arch) if arch.schema == "Arch" => {
+                    usize::from(*arch.bytes.first().ok_or("empty Arch entry")?)
+                }
+                _ => usize::try_from(host_arch_index()).expect("host arch index fits usize"),
+            }
+        } else {
+            usize::try_from(host_arch_index()).expect("host arch index fits usize")
+        };
         let value = Value::Struct {
             name: "Target".into(),
-            fields: vec![(
-                "os".into(),
-                Value::Variant {
-                    enum_name: "Os".into(),
-                    index,
-                    name: match index {
-                        0 => "Linux",
-                        1 => "Macos",
-                        2 => "Windows",
-                        _ => "Unknown",
-                    }
-                    .into(),
-                    payload: Payload::Unit,
-                },
-            )],
+            fields: vec![
+                (
+                    "os".into(),
+                    Value::Variant {
+                        enum_name: "Os".into(),
+                        index,
+                        name: os_variant_name(index).into(),
+                        payload: Payload::Unit,
+                    },
+                ),
+                (
+                    "arch".into(),
+                    Value::Variant {
+                        enum_name: "Arch".into(),
+                        index: arch,
+                        name: arch_variant_name(arch).into(),
+                        payload: Payload::Unit,
+                    },
+                ),
+            ],
         };
         return Ok(value.canon_hash());
     }
